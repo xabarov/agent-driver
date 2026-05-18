@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from agent_driver.contracts import AgentProfile, PromptTemplate, ToolManifest
+from agent_driver.contracts import (
+    AgentProfile,
+    AgentRunInput,
+    PromptTemplate,
+    ToolManifest,
+)
 from agent_driver.runtime import (
     PromptTemplateRegistry,
     render_tool_doc,
     render_tool_docs,
     rendered_tool_docs_hash,
 )
+from agent_driver.runtime.single_agent.llm import build_single_agent_llm_request
 
 
 def _sample_manifest() -> ToolManifest:
@@ -111,3 +117,22 @@ def test_render_tool_docs_profile_filtering() -> None:
     text = render_tool_docs(manifests, AgentProfile.REACT_TEXT)
     assert "common_tool" in text
     assert "call_only_tool" not in text
+
+
+def test_build_single_agent_llm_request_renders_code_agent_prompt() -> None:
+    """Code-agent request builder should emit prompt_render payload."""
+    run_input = AgentRunInput(
+        input="Solve task",
+        agent_id="agent",
+        graph_preset="single_react",
+        agent_profile=AgentProfile.CODE_AGENT,
+    )
+    request, payload = build_single_agent_llm_request(
+        run_input=run_input,
+        clarification=None,
+        tool_docs="def calc(x: object) -> dict[str, object]",
+        authorized_imports=("math",),
+        observations=[],
+    )
+    assert payload["prompt_render"] is not None
+    assert "final_answer(...)" in request.messages[-1].content

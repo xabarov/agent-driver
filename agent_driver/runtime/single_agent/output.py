@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_driver.context import (
+    build_memory_projection,
     planning_state_event,
     planning_step_event,
     split_preview_and_artifact,
@@ -137,7 +138,7 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
             normalized_results.append(payload)
         return normalized_results, artifact_refs
 
-    def _build_output(
+    def _build_output(  # pylint: disable=too-many-locals
         self,
         context: RunContext,
         terminal: TerminalResult,
@@ -166,6 +167,40 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
             context=context, answer=answer, artifact_refs=artifact_refs
         )
         self._emit_planning_events(context)
+        observations_payload = context.metadata.get("observations", [])
+        observations = (
+            [item for item in observations_payload if isinstance(item, dict)]
+            if isinstance(observations_payload, list)
+            else []
+        )
+        trim_metadata = context.metadata.get("trim_metadata", {})
+        projection = build_memory_projection(
+            run_id=context.run_id,
+            attempt_id=context.attempt_id,
+            answer=answer,
+            observations=observations,
+            planning_state=(
+                context.metadata.get("planning_state")
+                if isinstance(context.metadata.get("planning_state"), dict)
+                else None
+            ),
+            trim_metadata=trim_metadata if isinstance(trim_metadata, dict) else {},
+            artifact_refs=[item for item in artifact_refs if isinstance(item, dict)],
+            digest_refs=[item for item in digest_refs if isinstance(item, dict)],
+            prompt_render=(
+                context.metadata.get("prompt_render")
+                if isinstance(context.metadata.get("prompt_render"), dict)
+                else None
+            ),
+            tool_results=normalized_tool_results,
+        )
+        memory_audit = {
+            "trim_audit": context.metadata.get("trim_audit", []),
+            "microcompaction_audit": context.metadata.get("microcompaction_audit", []),
+            "token_pressure": context.metadata.get("token_pressure", {}),
+            "retained_digest_ids": context.metadata.get("retained_digest_ids", []),
+            "retained_artifact_ids": context.metadata.get("retained_artifact_ids", []),
+        }
         return AgentRunOutput(
             run_id=context.run_id,
             attempt_id=context.attempt_id,
@@ -178,6 +213,8 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
             usage=usage,
             interrupt=context.metadata.get("interrupt_payload"),
             terminal_reason=terminal.reason,
+            memory_projection=projection,
+            memory_audit=memory_audit,
             metadata={
                 "graph_id": self.graph_id,
                 "tool_results": normalized_tool_results,
@@ -188,6 +225,12 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
                 "observations": context.metadata.get("observations", []),
                 "trim_audit": context.metadata.get("trim_audit", []),
                 "trim_metadata": context.metadata.get("trim_metadata", {}),
+                "microcompaction_audit": context.metadata.get(
+                    "microcompaction_audit", []
+                ),
+                "microcompaction": context.metadata.get("microcompaction", {}),
+                "token_pressure": context.metadata.get("token_pressure", {}),
+                "prompt_render": context.metadata.get("prompt_render"),
                 "approval_payload": (
                     ApprovalPayload.from_interrupt(
                         InterruptRequest.model_validate(
@@ -209,6 +252,37 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
         digest_refs = context.metadata.get("digest_refs", [])
         if not isinstance(digest_refs, list):
             digest_refs = []
+        observations_payload = context.metadata.get("observations", [])
+        observations = (
+            [item for item in observations_payload if isinstance(item, dict)]
+            if isinstance(observations_payload, list)
+            else []
+        )
+        trim_metadata = context.metadata.get("trim_metadata", {})
+        projection = build_memory_projection(
+            run_id=context.run_id,
+            attempt_id=context.attempt_id,
+            answer=None,
+            observations=observations,
+            planning_state=(
+                context.metadata.get("planning_state")
+                if isinstance(context.metadata.get("planning_state"), dict)
+                else None
+            ),
+            trim_metadata=trim_metadata if isinstance(trim_metadata, dict) else {},
+            artifact_refs=[item for item in artifact_refs if isinstance(item, dict)],
+            digest_refs=[item for item in digest_refs if isinstance(item, dict)],
+            prompt_render=(
+                context.metadata.get("prompt_render")
+                if isinstance(context.metadata.get("prompt_render"), dict)
+                else None
+            ),
+            tool_results=(
+                context.metadata.get("tool_results", [])
+                if isinstance(context.metadata.get("tool_results"), list)
+                else []
+            ),
+        )
         return AgentRunOutput(
             run_id=context.run_id,
             attempt_id=context.attempt_id,
@@ -217,6 +291,14 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
             events=self._deps.event_log.list_for_run(context.run_id),
             tool_trace=result.traces,
             interrupt=result.interrupt,
+            memory_projection=projection,
+            memory_audit={
+                "trim_audit": context.metadata.get("trim_audit", []),
+                "microcompaction_audit": context.metadata.get(
+                    "microcompaction_audit", []
+                ),
+                "token_pressure": context.metadata.get("token_pressure", {}),
+            },
             metadata={
                 "graph_id": self.graph_id,
                 "tool_results": context.metadata.get("tool_results", []),
@@ -228,6 +310,12 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
                 "observations": context.metadata.get("observations", []),
                 "trim_audit": context.metadata.get("trim_audit", []),
                 "trim_metadata": context.metadata.get("trim_metadata", {}),
+                "microcompaction_audit": context.metadata.get(
+                    "microcompaction_audit", []
+                ),
+                "microcompaction": context.metadata.get("microcompaction", {}),
+                "token_pressure": context.metadata.get("token_pressure", {}),
+                "prompt_render": context.metadata.get("prompt_render"),
                 "approval_payload": ApprovalPayload.from_interrupt(
                     result.interrupt
                 ).model_dump(mode="json"),

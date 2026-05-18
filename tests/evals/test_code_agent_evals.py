@@ -65,3 +65,4 @@ async def test_code_agent_replay_contains_action_events() -> None:
     assert "run_started" in replay
     assert "tool_call_completed" in replay
     assert "run_completed" in replay
+    assert "[1] run_started" in replay

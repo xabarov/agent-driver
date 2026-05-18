@@ -15,6 +15,7 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - [Context engineering, tools, and MCP integration](architecture/context-tools-and-mcp.md)
 - [Multi-agent orchestration and parallel subagents](architecture/multi-agent-orchestration.md)
 - [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md)
+- [Testing and live trace policy](architecture/testing-and-live-trace-policy.md)
 - [Package layout and shim policy](architecture/package-layout.md)
 - [Implementation roadmap](roadmap.md)
 

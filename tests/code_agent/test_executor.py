@@ -45,6 +45,7 @@ async def test_executor_captures_stdout_observation() -> None:
     assert result.observations
     assert result.observations[0].source == "stdout"
     assert result.observations[0].truncated is True
+    assert result.tool_results == []
 
 
 @pytest.mark.asyncio

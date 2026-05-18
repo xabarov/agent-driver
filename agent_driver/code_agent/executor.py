@@ -163,6 +163,7 @@ class FakeRestrictedCodeExecutor:
         return CodeAgentExecutionResult(
             final_answer=final_answer,
             observations=observations,
+            tool_results=planned_calls,
             metadata={"elapsed_ms": elapsed_ms, **payload},
         )
 

@@ -37,6 +37,15 @@ class RunnerConfig:  # pylint: disable=too-many-instance-attributes
     observation_max_chars: int = 400
     trim_max_chars: int = 6000
     trim_max_messages: int | None = 24
+    trim_max_observations: int | None = 24
+    microcompact_preserve_recent: int = 6
+    microcompact_max_preview_chars: int = 180
+    context_window_estimate: int = 12000
+    token_warning_threshold: int = 7500
+    token_compact_threshold: int = 9000
+    token_blocking_threshold: int = 10500
+    output_token_reserve: int = 1500
+    include_planning_prompt: bool = False
     code_executor: CodeActionExecutor | None = None
     code_limits: CodeAgentLimits = field(default_factory=CodeAgentLimits)
     authorized_imports: tuple[str, ...] = ()

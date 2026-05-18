@@ -1,8 +1,14 @@
 # Agent Driver Implementation Roadmap
 
-This roadmap updates the initial MVP order after reviewing current agent-runtime best practices. The main change: durable execution, interrupts, guardrails, and evaluation move earlier. Subagents and LLM compaction remain important, but they should sit on a reliable runtime foundation.
+This roadmap updates the initial MVP order after reviewing current agent-runtime best practices. The main change: durable execution, interrupts, guardrails, and evaluation move earlier. Subagents and context compaction remain important, but they should sit on a reliable runtime foundation.
 
 Additional smolagents review: keep the durable-first order, but make agent profiles, prompt templates, model-facing tool contracts, planning steps, and CodeAgent-style execution explicit instead of implicit in one generic ReAct loop. See [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md).
+
+Additional OpenClaude context review: treat context engineering as a layered runtime system, not a single "summarize the chat" feature. The strongest pattern is a five-layer stack: cheap deterministic tool-result microcompaction; background session-memory extraction; session-memory-based compaction that can skip an LLM summary; full LLM compaction with no-tool isolation, PTL retries, and structured prompt output; and partial/reactive compaction plus post-compact cleanup. Phases 6, 8, and 9 below should implement this stack incrementally.
+
+Verification policy reference: all tool/runtime/context feature work must follow
+[Testing and live trace policy](architecture/testing-and-live-trace-policy.md)
+before merge (offline + live + trace-review gates).
 
 ## Repository structure policy
 
@@ -18,7 +24,7 @@ Reserved top-level packages (create when implementation starts; avoid empty dire
 | 3 | Tool registry, policy, governed executor | `agent_driver.tools`, `agent_driver.tools.executor` |
 | 5 | Evaluation harness, deterministic runners | `agent_driver.evals` |
 | 5 | Trace export, telemetry sinks | `agent_driver.observability` |
-| 6 | Sessions, artifacts, planning, trimming (runtime) | `agent_driver.context` |
+| 6 / 8 | Sessions, artifacts, planning, trimming, compaction (runtime) | `agent_driver.context` |
 | 6 | Future context/session/artifact **contracts** | `agent_driver.contracts.context` |
 | 7 | CodeAgent profile, sandbox | `agent_driver.code_agent` (create on phase start) |
 | 9 | Subagent **orchestration** (not contract enums/models) | `agent_driver.subagents` (create on phase start) |
@@ -165,6 +171,76 @@ Implementation notes from tail catch-up pass:
 - governed tool envelopes now carry `agent_profile` and prompt-template
   metadata while keeping existing executor behavior backward-compatible.
 
+OpenClaude tool import backlog:
+
+- Treat `/home/roman/pyprojects/ML/openclaude/src/tools.ts` and
+  `/home/roman/pyprojects/ML/openclaude/src/tools/` as the source inventory,
+  but port contracts, policies, and algorithms instead of TypeScript/Ink UI
+  implementations.
+- Codebase and filesystem analysis tools, first wave:
+  - `FileReadTool`: bounded text read with line windows, binary/media detection,
+    image/PDF handling hooks, and stable truncation metadata;
+  - `GlobTool`: fast path search with deterministic ordering and workspace
+    boundary checks;
+  - `GrepTool`: ripgrep-backed content search with ignored-path handling,
+    context windows, result caps, and provenance;
+  - `FileWriteTool` / `FileEditTool`: governed write and patch primitives behind
+    approval-aware filesystem policy;
+  - `NotebookEditTool`: targeted `.ipynb` cell edits as a separate filesystem
+    tool, not an ad-hoc JSON edit path;
+  - `LSPTool`: defer as a heavier code-intelligence project for definitions,
+    references, hover, and symbols once process management exists.
+- Programming and execution tools:
+  - `BashTool`: import command-risk classification, read-only/destructive
+    detection, path validation, output budgets, long-running task handoff, and
+    git-safety rules before exposing a real shell;
+  - `PowerShellTool`: defer until Windows support is explicit, but keep the
+    same policy shape as shell;
+  - `TaskOutputTool` / `MonitorTool`: model background process output as durable
+    task artifacts with bounded previews;
+  - `REPLTool`: defer unless CodeAgent needs a persistent interpreter beyond the
+    current restricted executor.
+- Web and research tools:
+  - `WebFetchTool`: URL fetch with content-type checks, byte/token budgets,
+    markdown extraction, robots/security policy, and optional provider backends;
+  - `WebSearchTool`: provider interface for Tavily/Jina/Firecrawl/Mojeek/
+    DuckDuckGo/custom search, with query limits and normalized result schema;
+  - `WebBrowserTool`: do not build as a first native tool; prefer Playwright or
+    browser MCP adapters first.
+- MCP and external tool import:
+  - `MCPTool`: generic manifest wrapper for MCP tool descriptors, preserving
+    schemas, annotations, server provenance, and security policy;
+  - `ListMcpResourcesTool` / `ReadMcpResourceTool`: resource discovery and read
+    operations with the same approval and output-budget path as native tools;
+  - `McpAuthTool`: explicit auth flow for servers that need OAuth or token setup;
+  - `assembleToolPool` / `getMergedTools`: deterministic built-in + MCP merge
+    with deny-rules and stable prompt-cache ordering.
+- Planning, task, and human interaction tools:
+  - `TodoWriteTool`: session-local structured checklist events;
+  - `TaskCreateTool`, `TaskGetTool`, `TaskUpdateTool`, `TaskListTool`: durable
+    task objects for larger multi-step work, separate from lightweight todos;
+  - `AskUserQuestionTool`: structured choice questions for approval/clarify
+    flows;
+  - `EnterPlanModeTool` / `ExitPlanModeV2Tool`: map to Phase 6 planning state
+    instead of making them independent side-effect tools.
+- Subagent and collaboration tools:
+  - `AgentTool`: map to Phase 9 `spawn_subagent` and child-run rows, not an
+    opaque tool result;
+  - `SendMessageTool`, `TeamCreateTool`, `TeamDeleteTool`, `ListPeersTool`: defer
+    until the subagent orchestration model supports teammate sessions and swarms;
+  - `EnterWorktreeTool` / `ExitWorktreeTool`: consider after filesystem/shell
+    policy exists, because worktree changes are high-risk filesystem actions.
+- Skills, workflows, and product automation:
+  - `SkillTool`: support repository/user skill discovery as prompt/context input,
+    with explicit trust and path provenance;
+  - `ToolSearchTool`: defer until the manifest is large enough to require lazy
+    tool discovery;
+  - `BriefTool`: map to runtime messages plus artifact attachments, not a core
+    execution primitive;
+  - `WorkflowTool`, cron, remote trigger, PR subscription, push notification, and
+    file-send tools are product automation adapters and should remain deferred
+    until the core registry, context, and adapter layers are stable.
+
 Exit criteria:
 
 - high-risk tools can be blocked or interrupted;
@@ -234,6 +310,12 @@ Exit criteria:
 - Implement in-memory and SQLite sessions.
 - Add turn digest.
 - Add artifact/context store protocol.
+- Add context block/projection contracts for:
+  - full debug memory;
+  - model-facing working context;
+  - compact summary messages;
+  - artifact pointers;
+  - replay views.
 - Add planning/todo state tool.
 - Add optional planning step prompt shaped around:
   - facts given;
@@ -244,7 +326,18 @@ Exit criteria:
 - Persist planning-step events separately from ordinary chat/tool observations.
 - Add tool-result preview/artifact split.
 - Add observation memory for model-facing stdout/stderr/tool-log previews.
+- Add deterministic microcompaction for tool observations before model calls:
+  - preserve tool call ids and provenance;
+  - replace old large stdout/stderr/file/search/web results with bounded stubs;
+  - record token estimates and bytes saved;
+  - never split a tool call from its observation.
 - Add deterministic context trimming.
+- Add token-pressure accounting:
+  - context-window estimate;
+  - warning threshold;
+  - compact threshold;
+  - blocking threshold;
+  - per-profile output-token reserve.
 
 Exit criteria:
 
@@ -254,6 +347,9 @@ Exit criteria:
 - planning updates are replayable and compactable separately from chat history;
 - observations include provenance, trust labels, and truncation metadata;
 - digest and artifact references are included in run metadata.
+- microcompaction is deterministic, traceable, and safe for replay;
+- trimming preserves tool/action invariants and never creates orphan observations;
+- token-pressure state is emitted in run metadata and events.
 
 Implementation notes from integration pass:
 
@@ -305,14 +401,84 @@ Implementation notes from first cut:
   `ToolManifest` and reused by code-agent execution path;
 - side-effecting tools in code-agent flow route through approval interrupts using
   existing policy interrupt payloads.
+- planned follow-up backlog after first cut:
+  [Phase 7 follow-ups from smolagents](architecture/phase7-smolagents-followups.md).
+
+Implementation notes from follow-up pass (`7.2`-`7.4`):
+
+- code-agent prompt assembly now uses dedicated deterministic renderer with
+  explicit imports/tool-docs/final-answer contract and hashed prompt payload;
+- runtime step transitions now support iterative `code_agent` loop
+  (`llm_call -> tool_stage -> llm_call`) until `final_answer` is produced or
+  terminal limits/interrupts are hit;
+- replay and metadata paths now include richer projection payloads for
+  inspectability (`prompt_render`/`tool_results_count` in memory projection);
+- added subprocess-backed executor adapter behind existing
+  `CodeActionExecutor` contract with hard wall-clock timeout and reliable
+  process termination;
+- subprocess adapter preserves compatibility by falling back to local executor
+  when callable tools are present, while still enforcing fail-closed policy and
+  bounded observations.
+
+Implementation notes from follow-up pass (7.3/7.4):
+
+- runtime `code_agent` path now supports iterative loop semantics
+  (`llm_call -> tool_stage -> llm_call`) until `final_answer(...)` is produced,
+  while preserving deterministic `max_steps` termination behavior;
+- `CodeAgentStageResult` now carries explicit `has_final_answer`, allowing runtime
+  step transitions to distinguish non-terminal code actions from terminal answers;
+- new executor adapter `SubprocessRestrictedCodeExecutor` added behind existing
+  `CodeActionExecutor` interface, with hard wall-clock timeout termination and
+  compatible fallback to local restricted executor when callable tools are present;
+- runtime memory projection now includes prompt/tool debug facets
+  (`prompt_render` summary and `tool_results_count`) and replay CLI output
+  surfaces these fields for operator-facing inspection without raw log digging.
 
 ## Phase 8: LLM Compaction
 
-- Add LLM full-history compaction.
+- Implement layered compaction orchestration inspired by OpenClaude:
+  - first run deterministic microcompaction from Phase 6;
+  - then try session-memory compaction when session memory is current enough;
+  - then fall back to full LLM compaction;
+  - later add partial/reactive compaction as a separate path.
+- Add session-memory extraction:
+  - background/forked run that updates durable session notes;
+  - thresholds based on message tokens and tool-call count;
+  - last-summarized turn/checkpoint tracking;
+  - session-memory file/record stored as a first-class context artifact.
+- Add session-memory-based compaction:
+  - build a compacted run context from existing session memory;
+  - preserve a bounded recent tail after the summary;
+  - enforce minimum recent tokens/messages and maximum tail cap;
+  - preserve action/observation pairs and streaming fragments that share ids;
+  - skip full LLM compaction when this path is sufficient.
+- Add LLM full-history compaction:
+  - no-tool compact profile;
+  - structured prompt with private drafting section and persisted summary section;
+  - summary sections for request intent, key concepts, files/code, errors/fixes,
+    solved/open problems, user messages, pending tasks, current work, and next step;
+  - deterministic post-processing that strips draft/analysis text before reuse.
+- Add partial compaction:
+  - summarize prefix while keeping recent suffix intact;
+  - summarize recent suffix while keeping older context intact;
+  - record the pivot/checkpoint and cache invalidation semantics.
 - Add compaction eligibility audit.
 - Add compaction lock.
-- Add PTL-style retry by dropping oldest digest groups.
-- Add sanitizers before compaction prompt.
+- Add PTL-style retry by dropping oldest digest/API-round groups.
+- Add sanitizers before compaction prompt:
+  - strip or mark media blocks;
+  - remove attachments that will be re-injected after compaction;
+  - redact secrets using existing guardrails.
+- Add post-compact cleanup:
+  - clear microcompact state;
+  - reset stale approval/cache/planning baselines where required;
+  - re-inject active plan, selected artifacts, and relevant profile instructions
+    under explicit token budgets.
+- Add autocompact controls:
+  - warning/error/compact thresholds;
+  - output-token reserve per model/profile;
+  - circuit breaker after repeated compaction failures;
+  - trace events for skipped, successful, and failed compactions.
 
 Exit criteria:
 
@@ -320,6 +486,12 @@ Exit criteria:
 - skipped compaction records reason;
 - summary preserves required facts in eval cases;
 - compaction trace includes model, latency, token/cost data.
+- session-memory compaction can avoid a full LLM summary in deterministic tests;
+- full compaction strips draft/analysis text and preserves the structured summary;
+- PTL retry unblocks over-limit compaction without corrupting action/observation
+  ordering;
+- post-compact context contains active plan/artifact references under budget;
+- autocompact stops retrying after repeated failures and records the circuit-breaker state.
 
 ## Phase 9: Subagents And Parallel Orchestration
 
@@ -346,6 +518,12 @@ Exit criteria:
   - `task` input;
   - typed `additional_args`/artifact references;
   - bounded child final-answer summary.
+- Add context handoff and merge policy for child agents:
+  - child receives a scoped model-facing context projection, not the full parent
+    debug memory by default;
+  - child outputs bounded final summary plus artifact references;
+  - child session memory can be merged into parent only with provenance;
+  - parent compact/replay views show which facts came from which child run.
 - Add merge provenance.
 - Add merge modes:
   - append;
@@ -367,6 +545,8 @@ Exit criteria:
 - parent run records subagent group lifecycle and join policy;
 - managed-agent calls create child run rows, not opaque tool traces;
 - child output merges with provenance and partial-failure metadata;
+- child context handoff and merged summaries are bounded, replayable, and
+  provenance-preserving;
 - retry after parent crash does not duplicate already-spawned children;
 - `race` and cancellation policies stop pending/running children deterministically;
 - failed/timed-out child does not leave stale running rows;

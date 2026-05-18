@@ -113,3 +113,60 @@ async def test_runtime_emits_planning_events_and_trim_audit() -> None:
     assert planning_events
     assert "trim_audit" in output.metadata
     assert "trim_metadata" in output.metadata
+    assert "token_pressure" in output.metadata
+    assert "microcompaction_audit" in output.metadata
+    assert output.memory_projection is not None
+    assert output.memory_audit is not None
+    assert output.memory_projection.metadata["trim"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_applies_planning_update_tool() -> None:
+    """Planning tool output should update planning state in runtime metadata."""
+    registry = ToolRegistry()
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ok"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            )
+        ),
+    )
+    output = await runner.run(
+        AgentRunInput(
+            input="update plan",
+            run_id="run_phase6_planning_tool",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy={
+                "mode": "allow_tools",
+                "metadata": {
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="planning_state_update",
+                            args={
+                                "step": {
+                                    "step_id": "step_runtime",
+                                    "facts_given": ["update plan"],
+                                    "facts_learned": ["tool used"],
+                                    "facts_to_lookup": [],
+                                    "facts_to_derive": [],
+                                    "next_plan": "ship phase6",
+                                }
+                            },
+                        ).model_dump(mode="json")
+                    ]
+                },
+            },
+        )
+    )
+    planning_events = [
+        event for event in output.events if event.payload.get("channel") == "planning"
+    ]
+    assert planning_events
+    state_events = [
+        event for event in planning_events if event.payload.get("todos") is not None
+    ]
+    assert state_events

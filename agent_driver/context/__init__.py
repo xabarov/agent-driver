@@ -9,6 +9,7 @@ from agent_driver.context.artifacts import (
     SqliteContextStore,
     split_preview_and_artifact,
 )
+from agent_driver.context.microcompaction import microcompact_observations
 from agent_driver.context.observations import build_observation_memory
 from agent_driver.context.planning import (
     planning_state_event,
@@ -19,11 +20,13 @@ from agent_driver.context.planning import (
     planning_step_event,
     render_planning_step_prompt,
 )
+from agent_driver.context.projections import build_memory_projection
 from agent_driver.context.sessions import (
     InMemorySessionStore,
     SessionStore,
     SqliteSessionStore,
 )
+from agent_driver.context.token_pressure import estimate_token_pressure
 from agent_driver.context.trimming import trim_context
 
 __all__ = [
@@ -44,6 +47,9 @@ __all__ = [
     "render_planning_step_prompt",
     "planning_step_event",
     "planning_state_event",
+    "build_memory_projection",
     "build_observation_memory",
+    "microcompact_observations",
+    "estimate_token_pressure",
     "trim_context",
 ]

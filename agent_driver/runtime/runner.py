@@ -29,6 +29,7 @@ from agent_driver.runtime.single_agent.types import (
 from agent_driver.runtime.single_agent.types import RunnerDeps
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import fake_noop_tool_executor
+from agent_driver.tools import register_builtin_tools, register_planning_tool
 from agent_driver.tools.registry import ToolRegistry
 
 
@@ -46,6 +47,14 @@ class SingleAgentRunner(
     - `SingleAgentOutputMixin` assembles terminal/paused `AgentRunOutput`.
     - `SingleAgentJournalMixin` provides event emission and checkpoint persistence.
     """
+
+    @staticmethod
+    def _build_default_tool_registry() -> ToolRegistry:
+        """Build default tool registry with built-in read/search tools."""
+        registry = ToolRegistry()
+        register_builtin_tools(registry)
+        register_planning_tool(registry)
+        return registry
 
     def __init__(
         self,
@@ -65,7 +74,8 @@ class SingleAgentRunner(
             artifact_store=self._config.artifact_store or InMemoryArtifactStore(),
             context_store=self._config.context_store or InMemoryContextStore(),
             code_executor=self._config.code_executor or FakeRestrictedCodeExecutor(),
-            tool_registry=self._config.tool_registry or ToolRegistry(),
+            tool_registry=self._config.tool_registry
+            or self._build_default_tool_registry(),
         )
 
     async def run(self, run_input: AgentRunInput) -> AgentRunOutput:

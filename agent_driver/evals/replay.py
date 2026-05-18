@@ -40,6 +40,13 @@ def render_succinct_view(output: AgentRunOutput) -> dict[str, Any]:
         "event_types": event_types,
         "tool_calls": len(output.tool_trace),
         "warnings": len(output.warnings),
+        "planning_event_count": len(
+            [
+                event
+                for event in output.events
+                if event.payload.get("channel") == "planning"
+            ]
+        ),
     }
 
 
@@ -52,6 +59,25 @@ def render_cli_replay(output: AgentRunOutput) -> str:
     ]
     if output.terminal_reason is not None:
         lines.append(f"terminal_reason={output.terminal_reason.value}")
+    if output.memory_projection is not None:
+        lines.append(
+            "memory_projection="
+            f"{output.memory_projection.view.value} "
+            f"steps={len(output.memory_projection.steps)}"
+        )
+        projection_meta = output.memory_projection.metadata
+        if isinstance(projection_meta, dict):
+            prompt_meta = projection_meta.get("prompt_render")
+            if isinstance(prompt_meta, dict):
+                lines.append(
+                    "prompt_render="
+                    f"{prompt_meta.get('template_id')}#"
+                    f"{prompt_meta.get('template_version')} "
+                    f"hash={prompt_meta.get('rendered_hash')}"
+                )
+            tool_results_count = projection_meta.get("tool_results_count")
+            if isinstance(tool_results_count, int):
+                lines.append(f"tool_results_count={tool_results_count}")
     for event in sorted(output.events, key=lambda item: item.seq):
         lines.append(f"[{event.seq}] {event.type.value} payload={event.payload}")
     return "\n".join(lines)

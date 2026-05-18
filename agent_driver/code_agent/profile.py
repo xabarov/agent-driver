@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
-from uuid import uuid4
 
-from agent_driver.code_agent.contracts import CodeAgentAction
 from agent_driver.code_agent.executor import CodeExecutionError
+from agent_driver.code_agent.parse import parse_code_action
 from agent_driver.code_agent.tool_surface import build_callable_tool_surface
 from agent_driver.contracts.enums import (
     AgentProfile,
@@ -33,15 +33,22 @@ class CodeAgentStageResult:
     traces: list[ToolTrace] = field(default_factory=list)
     envelopes: list[ToolResultEnvelope] = field(default_factory=list)
     interrupt: Any = None
+    has_final_answer: bool = False
 
 
-def _extract_code_action(response_metadata: dict[str, Any]) -> CodeAgentAction | None:
-    payload = response_metadata.get("code_action")
-    if isinstance(payload, dict):
-        return CodeAgentAction.model_validate(payload)
-    if isinstance(payload, str) and payload.strip():
-        return CodeAgentAction(action_id=f"act_{uuid4().hex[:8]}", code=payload)
-    return None
+def _called_tool_names(code: str) -> set[str]:
+    """Extract direct callable names referenced in code action."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return set()
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            names.add(node.func.id)
+    return names
 
 
 async def run_code_agent_stage(  # pylint: disable=too-many-locals
@@ -51,13 +58,15 @@ async def run_code_agent_stage(  # pylint: disable=too-many-locals
 ) -> CodeAgentStageResult:
     """Execute code-agent stage with approval and policy checks."""
     if context.llm_response is None:
-        return CodeAgentStageResult()
-    action = _extract_code_action(context.llm_response.metadata)
+        return CodeAgentStageResult(has_final_answer=False)
+    action = parse_code_action(context.llm_response)
     if action is None:
-        return CodeAgentStageResult()
+        # No executable action means model already produced direct answer text.
+        return CodeAgentStageResult(has_final_answer=True)
 
     registry = runner._deps.tool_registry  # pylint: disable=protected-access
     tool_specs = build_callable_tool_surface(registry)
+    called_tools = _called_tool_names(action.code)
     callable_tools: dict[str, Callable[..., object]] = {}
     planned_envelopes: list[ToolResultEnvelope] = []
     traces: list[ToolTrace] = []
@@ -66,16 +75,24 @@ async def run_code_agent_stage(  # pylint: disable=too-many-locals
         if registered is None:
             continue
         tool_call = ToolCall(tool_name=spec.name, args={})
-        policy = evaluate_tool_policy(
-            policy=context.run_input.tool_policy,
-            manifest=registered.manifest,
-            call=tool_call,
-            current_tool_calls=context.tool_calls,
-        )
-        if spec.side_effect in {
-            SideEffectClass.EXTERNAL_ACTION,
-            SideEffectClass.IRREVERSIBLE_WRITE,
-        }:
+        if spec.name in called_tools:
+            policy = evaluate_tool_policy(
+                policy=context.run_input.tool_policy,
+                manifest=registered.manifest,
+                call=tool_call,
+                current_tool_calls=context.tool_calls,
+            )
+        else:
+            policy = None
+        if (
+            spec.name in called_tools
+            and spec.side_effect
+            in {
+                SideEffectClass.EXTERNAL_ACTION,
+                SideEffectClass.IRREVERSIBLE_WRITE,
+            }
+            and policy is not None
+        ):
             interrupt = build_tool_approval_interrupt(
                 ToolApprovalContext(
                     run_input=context.run_input,
@@ -105,7 +122,10 @@ async def run_code_agent_stage(  # pylint: disable=too-many-locals
                 )
             )
             return CodeAgentStageResult(
-                traces=traces, envelopes=planned_envelopes, interrupt=interrupt
+                traces=traces,
+                envelopes=planned_envelopes,
+                interrupt=interrupt,
+                has_final_answer=False,
             )
         callable_tools[spec.name] = registered.handler
     context.metadata["code_tool_docs"] = "\n".join(
@@ -140,7 +160,9 @@ async def run_code_agent_stage(  # pylint: disable=too-many-locals
             result_summary=envelope.summary,
             error_code="interpreter_error",
         )
-        return CodeAgentStageResult(envelopes=[envelope], traces=[trace])
+        return CodeAgentStageResult(
+            envelopes=[envelope], traces=[trace], has_final_answer=False
+        )
     envelope = ToolResultEnvelope(
         call=ToolCall(tool_name="code_action", args={"action_id": action.action_id}),
         summary=(
@@ -161,7 +183,11 @@ async def run_code_agent_stage(  # pylint: disable=too-many-locals
         approval_mode=ApprovalMode.NEVER,
         result_summary=envelope.summary,
     )
-    return CodeAgentStageResult(envelopes=[envelope], traces=[trace])
+    return CodeAgentStageResult(
+        envelopes=[envelope],
+        traces=[trace],
+        has_final_answer=result.final_answer is not None,
+    )
 
 
 __all__ = ["run_code_agent_stage"]

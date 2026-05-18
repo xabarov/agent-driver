@@ -9,6 +9,7 @@ from agent_driver.contracts import (
     TerminalReason,
     new_runtime_event,
 )
+from agent_driver.contracts.memory import MemoryProjection, MemoryStep
 from agent_driver.evals import (
     build_support_bundle,
     render_cli_replay,
@@ -23,6 +24,20 @@ def _output() -> AgentRunOutput:
         attempt_id="attempt_1",
         status=RunStatus.COMPLETED,
         terminal_reason=TerminalReason.FINAL_ANSWER,
+        memory_projection=MemoryProjection(
+            run_id="run_replay_1",
+            attempt_id="attempt_1",
+            view="succinct",
+            steps=[MemoryStep(step_index=1, kind="action", title="Tool results")],
+            metadata={
+                "prompt_render": {
+                    "template_id": "code_agent.default",
+                    "template_version": 1,
+                    "rendered_hash": "abc123",
+                },
+                "tool_results_count": 1,
+            },
+        ),
         events=[
             new_runtime_event(
                 event_type=RuntimeEventType.RUN_STARTED,
@@ -45,6 +60,8 @@ def test_render_views_have_expected_shape() -> None:
     assert full_view["status"] == "completed"
     assert succinct["event_count"] == 2
     assert "run_replay_1" in cli
+    assert "memory_projection=succinct steps=1" in cli
+    assert "tool_results_count=1" in cli
 
 
 def test_support_bundle_contains_trace_and_redaction_metadata() -> None:

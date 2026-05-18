@@ -8,8 +8,10 @@ from uuid import uuid4
 from agent_driver.code_agent.profile import run_code_agent_stage
 from agent_driver.context import (
     build_observation_memory,
+    microcompact_observations,
     planning_state_init,
     planning_state_set_step,
+    render_planning_step_prompt,
 )
 from agent_driver.contracts.context import PlanningState, PlanningStep
 from agent_driver.contracts.enums import (
@@ -36,6 +38,7 @@ from agent_driver.runtime.single_agent.types import (
     TerminalResult,
 )
 from agent_driver.runtime.tools import ToolExecutionResult
+from agent_driver.tools import apply_planning_state_tool_update
 
 
 class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
@@ -59,6 +62,33 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
                 tool_call_id=envelope.call.tool_call_id,
             )
             observations.append(observation.model_dump(mode="json"))
+            structured = envelope.structured_output
+            if isinstance(structured, dict):
+                raw_observations = structured.get("observations")
+                if isinstance(raw_observations, list):
+                    for row in raw_observations:
+                        if not isinstance(row, dict):
+                            continue
+                        preview = row.get("text_preview")
+                        source_raw = row.get("source")
+                        if not isinstance(preview, str):
+                            continue
+                        source_map = {
+                            "stdout": ObservationSource.TOOL_STDOUT,
+                            "stderr": ObservationSource.TOOL_STDERR,
+                        }
+                        source = source_map.get(
+                            str(source_raw).lower(), ObservationSource.TOOL_LOG
+                        )
+                        extra_observation = build_observation_memory(
+                            text=preview,
+                            source=source,
+                            trust=ObservationTrust.UNVERIFIED,
+                            max_chars=self._config.observation_max_chars,
+                            tool_name=envelope.call.tool_name,
+                            tool_call_id=envelope.call.tool_call_id,
+                        )
+                        observations.append(extra_observation.model_dump(mode="json"))
         return observations
 
     def _update_planning_state(self, context: RunContext) -> None:
@@ -160,18 +190,46 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
             observations = context.metadata.get("observations", [])
             if not isinstance(observations, list):
                 observations = []
+            micro = microcompact_observations(
+                [item for item in observations if isinstance(item, dict)],
+                preserve_recent=self._config.microcompact_preserve_recent,
+                max_preview_chars=self._config.microcompact_max_preview_chars,
+            )
+            observations = micro.observations
+            context.metadata["observations"] = observations
+            context.metadata["microcompaction_audit"] = micro.audit
+            context.metadata["microcompaction"] = {
+                "bytes_saved": micro.bytes_saved,
+                "estimated_tokens_saved": micro.estimated_tokens_saved,
+            }
             digest_refs = context.metadata.get("digest_refs", [])
             if not isinstance(digest_refs, list):
                 digest_refs = []
             artifact_refs = context.metadata.get("artifact_refs", [])
             if not isinstance(artifact_refs, list):
                 artifact_refs = []
+            planning_prompt = None
+            planning_step_payload = context.metadata.get("planning_step")
+            if self._config.include_planning_prompt and isinstance(
+                planning_step_payload, dict
+            ):
+                planning_prompt = render_planning_step_prompt(
+                    PlanningStep.model_validate(planning_step_payload)
+                )
             request, trim_payload = build_single_agent_llm_request(
                 run_input=context.run_input,
                 clarification=(
                     clarification if isinstance(clarification, str) else None
                 ),
+                tool_docs=(
+                    context.metadata["code_tool_docs"]
+                    if isinstance(context.metadata.get("code_tool_docs"), str)
+                    else None
+                ),
+                authorized_imports=self._config.authorized_imports,
+                registry=self._deps.tool_registry,
                 observations=[item for item in observations if isinstance(item, dict)],
+                planning_prompt=planning_prompt,
                 digest_ids=[
                     str(item.get("digest_id"))
                     for item in digest_refs
@@ -184,9 +242,17 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
                 ],
                 max_chars=self._config.trim_max_chars,
                 max_messages=self._config.trim_max_messages,
+                max_observations=self._config.trim_max_observations,
+                context_window_estimate=self._config.context_window_estimate,
+                warning_threshold=self._config.token_warning_threshold,
+                compact_threshold=self._config.token_compact_threshold,
+                blocking_threshold=self._config.token_blocking_threshold,
+                output_token_reserve=self._config.output_token_reserve,
             )
             context.metadata["trim_audit"] = trim_payload["trim_audit"]
             context.metadata["trim_metadata"] = trim_payload["trim_metadata"]
+            context.metadata["token_pressure"] = trim_payload["token_pressure"]
+            context.metadata["prompt_render"] = trim_payload["prompt_render"]
             context.llm_response = await self._deps.provider.complete(request)
         except (RuntimeError, ValueError) as exc:
             self._emit(
@@ -210,6 +276,27 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
                 },
             )
         )
+        token_pressure = context.metadata.get("token_pressure", {})
+        if isinstance(token_pressure, dict):
+            state = str(token_pressure.get("state", "ok"))
+            if state in {"warning", "compact_recommended", "blocking"}:
+                self._emit(
+                    EventSpec(
+                        run_id=context.run_id,
+                        attempt_id=context.attempt_id,
+                        event_type=RuntimeEventType.WARNING,
+                        payload={
+                            "kind": "token_pressure",
+                            "state": state,
+                            "used_tokens_estimate": token_pressure.get(
+                                "used_tokens_estimate"
+                            ),
+                            "blocking_threshold": token_pressure.get(
+                                "blocking_threshold"
+                            ),
+                        },
+                    )
+                )
         context.step_count += 1
         context.metadata.update(
             {
@@ -223,13 +310,35 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
         self._maybe_fail_after_step("llm_call")
         return RuntimeStepResult(next_step="tool_stage")
 
-    async def _execute_tool_stage(self, context: RunContext) -> RuntimeStepResult:
+    async def _execute_tool_stage(  # pylint: disable=too-many-branches
+        self, context: RunContext
+    ) -> RuntimeStepResult:
         result = await self._tool_result_with_approved_override(context)
         self._store_tool_stage_outputs(context, result)
+        planning_state_payload = context.metadata.get("planning_state")
+        if isinstance(planning_state_payload, dict):
+            planning_state = PlanningState.model_validate(planning_state_payload)
+        else:
+            planning_state = planning_state_init(context.run_id)
+        planning_updated_by_tool = False
+        for envelope in result.envelopes:
+            if envelope.call.tool_name != "planning_state_update":
+                continue
+            structured = envelope.structured_output
+            if not isinstance(structured, dict):
+                continue
+            planning_updated_by_tool = True
+            planning_state = apply_planning_state_tool_update(
+                planning_state, structured.get("applied_args", {})
+            )
+            if isinstance(structured.get("planning_step"), dict):
+                context.metadata["planning_step"] = structured["planning_step"]
+        context.metadata["planning_state"] = planning_state.model_dump(mode="json")
         observations = self._build_observations(result)
         if observations:
             context.metadata["observations"] = observations
-        self._update_planning_state(context)
+        if not planning_updated_by_tool:
+            self._update_planning_state(context)
         if result.interrupt is not None:
             pending = pending_interrupt_from_execution_result(result)
             if pending is None:
@@ -263,6 +372,33 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
                 context, latest_output=paused_output, node_id="tool_stage"
             )
             return RuntimeStepResult(next_step="done")
+        if context.run_input.agent_profile == AgentProfile.CODE_AGENT and not getattr(
+            result, "has_final_answer", False
+        ):
+            context.step_count += 1
+            context.metadata.update(
+                {
+                    "next_step": "llm_call",
+                    "step_count": context.step_count,
+                    "tool_calls": context.tool_calls,
+                    "resume_target_step": "llm_call",
+                }
+            )
+            self._save_checkpoint(context, latest_output=None, node_id="tool_stage")
+            if result.traces:
+                self._emit(
+                    EventSpec(
+                        run_id=context.run_id,
+                        attempt_id=context.attempt_id,
+                        event_type=RuntimeEventType.TOOL_CALL_COMPLETED,
+                        payload={
+                            "tool_calls": len(result.traces),
+                            "statuses": [trace.status.value for trace in result.traces],
+                        },
+                    )
+                )
+            self._maybe_fail_after_step("tool_stage")
+            return RuntimeStepResult(next_step="llm_call")
         context.step_count += 1
         context.metadata.update(
             {

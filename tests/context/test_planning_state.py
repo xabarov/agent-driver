@@ -12,6 +12,7 @@ from agent_driver.context.planning import (
     render_planning_step_prompt,
 )
 from agent_driver.contracts import PlanningStep, PlanningTodoStatus, TodoState
+from agent_driver.runtime import apply_planning_state_tool_update
 
 
 def test_planning_state_transitions_and_prompt() -> None:
@@ -59,3 +60,31 @@ def test_planning_events_use_dedicated_channel() -> None:
     )
     assert event_step.payload["channel"] == "planning"
     assert event_state.payload["channel"] == "planning"
+
+
+def test_apply_planning_state_tool_update_sets_step_and_todo() -> None:
+    """Planning tool update helper should mutate step and todo deterministically."""
+    state = planning_state_init("run_3")
+    updated = apply_planning_state_tool_update(
+        state,
+        {
+            "step": {
+                "step_id": "s1",
+                "facts_given": ["input"],
+                "facts_learned": ["observation"],
+                "facts_to_lookup": [],
+                "facts_to_derive": [],
+                "next_plan": "continue",
+            },
+            "todo": {
+                "todo_id": "todo_1",
+                "content": "Check logs",
+                "status": "pending",
+                "priority": 1,
+            },
+            "todo_status": {"todo_id": "todo_1", "status": "in_progress"},
+        },
+    )
+    assert updated.latest_step is not None
+    assert updated.latest_step.step_id == "s1"
+    assert updated.todos[0].status == PlanningTodoStatus.IN_PROGRESS

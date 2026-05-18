@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from agent_driver.contracts.enums import GuardrailDecision, ToolPolicyDecision
 from agent_driver.contracts.tools import ToolError, ToolResultEnvelope
 from agent_driver.tools.executor.blocks import append_blocked_call
@@ -16,6 +18,19 @@ from agent_driver.tools.executor.trace import (
     trace_spec_denied,
 )
 from agent_driver.tools.guardrails import GuardrailPipeline, enforce_output_budget
+
+
+def _planning_update_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    """Normalize planning tool output payload for runtime state updates."""
+    applied_args = raw.get("applied_args")
+    if not isinstance(applied_args, dict):
+        applied_args = {}
+    return {
+        "summary": raw.get("summary", "planning updated"),
+        "applied_args": applied_args,
+        "planning_step": raw.get("planning_step"),
+        "planning_state": raw.get("planning_state"),
+    }
 
 
 async def execute_allowed_path(
@@ -69,6 +84,8 @@ async def execute_allowed_path(
             ),
         )
         return False
+    if spec.call.tool_name == "planning_state_update":
+        raw = _planning_update_payload(raw if isinstance(raw, dict) else {})
     summary = raw.get("summary") if isinstance(raw.get("summary"), str) else None
     bounded_summary, truncated = enforce_output_budget(
         summary, spec.manifest.output_char_budget

@@ -51,6 +51,37 @@ async def test_code_agent_profile_executes_code_action() -> None:
 
 
 @pytest.mark.asyncio
+async def test_code_agent_profile_parses_fenced_code_action_from_response_text() -> (
+    None
+):
+    """Code-agent should parse fenced python action from model message content."""
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(
+            response_text="```python\nprint('hello')\nfinal_answer(6)\n```"
+        ),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(code_executor=FakeRestrictedCodeExecutor()),
+    )
+    output = await runner.run(
+        AgentRunInput(
+            input="do arithmetic",
+            run_id="run_code_profile_fenced",
+            agent_id="agent",
+            graph_preset="single_react",
+            agent_profile=AgentProfile.CODE_AGENT,
+        )
+    )
+    assert output.status.value == "completed"
+    assert output.metadata["tool_results"][0]["summary"] == "6"
+    observations = output.metadata.get("observations", [])
+    assert any(
+        item.get("provenance", {}).get("source") == "tool_stdout"
+        for item in observations
+    )
+
+
+@pytest.mark.asyncio
 async def test_code_agent_profile_interrupts_side_effect_tool() -> None:
     """Side-effecting tools in code profile should request approval."""
     registry = ToolRegistry()

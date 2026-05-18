@@ -52,3 +52,47 @@ def test_trim_context_uses_artifact_when_digest_missing() -> None:
     )
     assert trimmed.retained_artifact_ids == ["art_1"]
     assert trimmed.audit[0].action == TrimAction.REPLACED_WITH_ARTIFACT
+
+
+def test_trim_context_limits_observations_deterministically() -> None:
+    """Trimming should keep only newest observations under max_observations."""
+    observations = [
+        {
+            "observation_id": "obs_1",
+            "text_preview": "one",
+            "provenance": {"source": "tool_log", "tool_call_id": "call_1"},
+        },
+        {
+            "observation_id": "obs_2",
+            "text_preview": "two",
+            "provenance": {"source": "tool_stdout", "tool_call_id": "call_2"},
+        },
+        {
+            "observation_id": "obs_3",
+            "text_preview": "three",
+            "provenance": {"source": "tool_stderr", "tool_call_id": "call_3"},
+        },
+    ]
+    trimmed = trim_context(
+        budget=ContextBudget(max_chars=200, max_observations=2),
+        prompt_messages=[{"role": "user", "content": "task"}],
+        observation_rows=observations,
+    )
+    assert trimmed.metadata["input_observations"] == 3
+    assert trimmed.metadata["kept_observations"] == 2
+    assert trimmed.metadata["dropped_observations"] == 1
+    retained = trimmed.metadata["retained_observations"]
+    assert [item["observation_id"] for item in retained] == ["obs_2", "obs_3"]
+    dropped = [
+        item
+        for item in trimmed.audit
+        if item.kind == "observation" and item.action == TrimAction.DROPPED
+    ]
+    assert len(dropped) == 1
+    assert dropped[0].reason == "max_observations_exceeded"
+    kept = [
+        item
+        for item in trimmed.audit
+        if item.kind == "observation" and item.action == TrimAction.KEPT
+    ]
+    assert len(kept) == 2

@@ -12,8 +12,10 @@ from agent_driver.code_agent.executor import (
     CodeExecutionError,
     FakeRestrictedCodeExecutor,
 )
+from agent_driver.code_agent.subprocess_executor import SubprocessRestrictedCodeExecutor
 from agent_driver.code_agent.policy import PolicyViolation, validate_code_action
 from agent_driver.code_agent.profile import run_code_agent_stage
+from agent_driver.code_agent.prompt import render_code_agent_prompt
 from agent_driver.code_agent.serialization import deserialize_payload, serialize_payload
 from agent_driver.code_agent.tool_surface import (
     CallableToolSpec,
@@ -31,9 +33,11 @@ __all__ = [
     "CodeActionExecutor",
     "CodeExecutionError",
     "FakeRestrictedCodeExecutor",
+    "SubprocessRestrictedCodeExecutor",
     "PolicyViolation",
     "validate_code_action",
     "run_code_agent_stage",
+    "render_code_agent_prompt",
     "serialize_payload",
     "deserialize_payload",
     "CallableToolSpec",
