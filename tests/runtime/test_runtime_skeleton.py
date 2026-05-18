@@ -4,14 +4,22 @@ from __future__ import annotations
 
 import pytest
 
+from agent_driver.contracts.enums import ResumeAction, RuntimeEventType
+from agent_driver.contracts.events import new_runtime_event
+from agent_driver.contracts.interrupts import ResumeCommand
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput
+from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.fake import FakeProvider
 from agent_driver.runtime import (
     FakeSingleStepRunner,
     InMemoryCheckpointStore,
     InMemoryEventLog,
+    RunnerConfig,
+    SqliteRuntimeStore,
+    fake_noop_tool_executor,
 )
+from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.state import RuntimeState
 
 
@@ -31,6 +39,25 @@ def test_inmemory_checkpoint_store_save_and_latest() -> None:
     assert latest is not None
     assert latest.ref.checkpoint_id == second_ref.checkpoint_id
     assert latest.ref.parent_checkpoint_id == first_ref.checkpoint_id
+    loaded = store.load(first_ref.checkpoint_id)
+    assert loaded is not None
+    assert loaded.ref.checkpoint_id == first_ref.checkpoint_id
+
+
+def test_inmemory_event_log_after_seq_filter() -> None:
+    """Event log should support filtering by sequence number."""
+    events = InMemoryEventLog()
+    run_id = "run_evt_1"
+    for seq in (1, 2, 3):
+        events.append(
+            new_runtime_event(
+                event_type=RuntimeEventType.NODE_COMPLETED,
+                context={"run_id": run_id, "attempt_id": "att_1", "seq": seq},
+            )
+        )
+    assert len(events.list_for_run(run_id)) == 3
+    filtered = events.list_for_run(run_id, after_seq=1)
+    assert [event.seq for event in filtered] == [2, 3]
 
 
 @pytest.mark.asyncio
@@ -57,5 +84,177 @@ async def test_fake_single_step_runner_persists_events_and_checkpoint() -> None:
     assert output.checkpoint is not None
     assert output.status.value == "completed"
     run_events = events.list_for_run("run_test_runtime")
-    assert len(run_events) == 2
-    assert run_events[-1].type.value == "run_completed"
+    assert len(run_events) >= 2
+    assert any(event.type.value == "run_completed" for event in run_events)
+
+
+@pytest.mark.asyncio
+async def test_single_agent_runner_resume_after_injected_failure() -> None:
+    """Runner should resume from checkpoint after injected step failure."""
+    provider = FakeProvider(response_text="resume answer")
+    checkpoints = InMemoryCheckpointStore()
+    events = InMemoryEventLog()
+    failing = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=checkpoints,
+        event_log=events,
+        config=RunnerConfig(fail_after_step="llm_call"),
+    )
+    run_input = AgentRunInput(
+        input="hello runner",
+        run_id="run_resume_1",
+        agent_id="agent-test",
+        graph_preset="single_react",
+    )
+    with pytest.raises(RuntimeExecutionError):
+        await failing.run(run_input)
+
+    latest = checkpoints.latest("run_resume_1")
+    assert latest is not None
+    resume_runner = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=checkpoints,
+        event_log=events,
+    )
+    resumed_output = await resume_runner.run(
+        AgentRunInput(
+            resume=ResumeCommand(
+                interrupt_id=latest.ref.checkpoint_id, action=ResumeAction.APPROVE
+            ),
+            agent_id="agent-test",
+            graph_preset="single_react",
+        )
+    )
+    assert resumed_output.status.value == "completed"
+    assert resumed_output.answer == "resume answer"
+    run_events = events.list_for_run("run_resume_1")
+    assert any(event.type.value == "run_resumed" for event in run_events)
+
+
+@pytest.mark.asyncio
+async def test_single_agent_runner_cancellation() -> None:
+    """Runner should emit cancelled terminal state when probe is set."""
+    provider = FakeProvider(response_text="ignored")
+    checkpoints = InMemoryCheckpointStore()
+    events = InMemoryEventLog()
+    runner = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=checkpoints,
+        event_log=events,
+        config=RunnerConfig(cancellation_probe=lambda: True),
+    )
+    output = await runner.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_cancel_1",
+            agent_id="agent-test",
+            graph_preset="single_react",
+        )
+    )
+    assert output.status.value == "cancelled"
+    assert output.terminal_reason.value == "cancelled_by_user"
+
+
+@pytest.mark.asyncio
+async def test_single_agent_runner_deadline_timeout() -> None:
+    """Runner should return timed_out when deadline is exceeded."""
+    provider = FakeProvider(response_text="slow")
+    checkpoints = InMemoryCheckpointStore()
+    events = InMemoryEventLog()
+    runner = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=checkpoints,
+        event_log=events,
+    )
+    output = await runner.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_deadline_1",
+            agent_id="agent-test",
+            graph_preset="single_react",
+            deadline_seconds=0.000001,
+        )
+    )
+    assert output.status.value == "timed_out"
+    assert output.terminal_reason.value == "deadline_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_single_agent_runner_max_steps_exceeded() -> None:
+    """Runner should fail when max_steps budget is reached."""
+    provider = FakeProvider(response_text="hello")
+    checkpoints = InMemoryCheckpointStore()
+    events = InMemoryEventLog()
+    runner = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=checkpoints,
+        event_log=events,
+    )
+    output = await runner.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_steps_1",
+            agent_id="agent-test",
+            graph_preset="single_react",
+            max_steps=1,
+        )
+    )
+    assert output.status.value == "failed"
+    assert output.terminal_reason.value == "max_steps_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_fake_tool_executor_is_used_by_runner() -> None:
+    """Runner should invoke custom tool executor in tool stage."""
+    calls = {"count": 0}
+
+    async def _counting_executor(run_input: AgentRunInput, llm_response: LlmResponse):
+        calls["count"] += 1
+        return await fake_noop_tool_executor(run_input, llm_response)
+
+    provider = FakeProvider(response_text="tools")
+    checkpoints = InMemoryCheckpointStore()
+    events = InMemoryEventLog()
+    runner = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=checkpoints,
+        event_log=events,
+        config=RunnerConfig(tool_executor=_counting_executor),
+    )
+    output = await runner.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_tools_1",
+            agent_id="agent-test",
+            graph_preset="single_react",
+        )
+    )
+    assert output.status.value == "completed"
+    assert calls["count"] == 1
+
+
+def test_sqlite_runtime_store_round_trip(tmp_path) -> None:
+    """SQLite runtime store should persist checkpoints and events."""
+    store = SqliteRuntimeStore(path=str(tmp_path / "runtime.db"))
+    run_input = AgentRunInput(
+        input="hello",
+        run_id="run_sqlite_1",
+        agent_id="agent-test",
+        graph_preset="single_react",
+    )
+    state = RuntimeState(run_input=run_input, metadata={"next_step": "llm_call"})
+    ref = store.save(
+        graph_id="single_agent_runtime", node_id="run_started", state=state
+    )
+    loaded = store.load(ref.checkpoint_id)
+    assert loaded is not None
+    assert loaded.ref.checkpoint_id == ref.checkpoint_id
+
+    event = new_runtime_event(
+        event_type=RuntimeEventType.RUN_STARTED,
+        context={"run_id": "run_sqlite_1", "attempt_id": "attempt_1", "seq": 1},
+    )
+    store.append(event)
+    events = store.list_for_run("run_sqlite_1")
+    assert len(events) == 1
+    assert events[0].event_id == event.event_id

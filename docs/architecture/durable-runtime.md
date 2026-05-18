@@ -25,11 +25,64 @@ The engine should define a storage-neutral checkpoint interface:
 - fork from a checkpoint into a new run branch;
 - attach checkpoint metadata: graph id, node id, channel versions, run id, tenant/user metadata, created time.
 
+Current implementation status (after Phase 2 first cut):
+
+- protocol exists in `agent_driver/runtime/storage.py` (`CheckpointStore`, `RuntimeEventLog`);
+- in-memory backend exists for tests and fast local runs;
+- SQLite backend exists for local durability and replay tests;
+- runner persists checkpoint after successful steps and can resume from checkpoint id.
+
+Gaps to close before production-grade multi-DB support:
+
+- checkpoint listing API in protocol is still minimal (`snapshot` is internal-oriented);
+- no explicit backend capability flags (branching support, transactional guarantees, retention support);
+- no migration/versioning contract for persistent stores yet.
+
 Initial backends:
 
 - in-memory for tests;
 - SQLite for local/single-node usage;
 - Postgres for multi-worker production.
+
+### DB Strategy For Checkpoints (What To Add Next)
+
+Recommended backend priority for `agent-driver`:
+
+1. SQLite (already implemented) for local dev, demos, single-process deployment.
+2. Postgres (next logical production backend) for multi-worker/API deployments.
+3. Optional adapters later (for specific constraints): MySQL/MariaDB, Redis, document DB.
+
+Why Postgres is the most logical next step:
+
+- strong transactional semantics and indexing for run/checkpoint/event timelines;
+- mature JSON/JSONB support for metadata and evolving payloads;
+- reliable concurrency controls for worker leases and resume flows;
+- ubiquitous managed offerings and tooling for migrations/backups/observability.
+
+When to consider others:
+
+- MySQL/MariaDB: if target infra is already standardized there and features needed are basic.
+- Redis: good for ephemeral queue/lease state, but weak as primary durable checkpoint history.
+- MongoDB/document DB: acceptable for JSON-heavy payloads, but replay ordering and strict transactional flow should be carefully validated.
+
+### Compatibility Contract For Future Backends
+
+To avoid forgetting multi-DB support, each new backend should satisfy a shared contract:
+
+- atomic `save` semantics per step;
+- stable ordering for `latest` and event `seq`;
+- idempotent writes for retry paths;
+- explicit parent-chain behavior (`parent_checkpoint_id`);
+- backend migration version field in persisted payload;
+- deterministic replay tests shared across all backends.
+
+Minimal backend conformance test matrix:
+
+- save/load/latest parity with in-memory reference backend;
+- resume after simulated failure;
+- concurrent write safety (at least smoke-level worker contention test);
+- replay consistency for stored events/checkpoints;
+- retention/cleanup behavior does not break resume invariants.
 
 ### Atomic Step Model
 

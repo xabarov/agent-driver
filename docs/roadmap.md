@@ -46,20 +46,25 @@ Exit criteria:
 
 ## Phase 2: Durable Single-Agent Runtime
 
-- Build `single_react` graph.
-- Add in-memory checkpoint backend.
-- Add SQLite checkpoint backend.
-- Save checkpoint after successful graph step.
-- Resume from latest checkpoint.
-- Add cancellation token.
-- Emit typed events with `run_id` and `checkpoint_id`.
+- Build durable `SingleAgentRunner` with explicit step loop.
+- Add storage protocols for checkpoints/events.
+- Add in-memory checkpoint backend and event log.
+- Add SQLite checkpoint+event backend for local replay tests.
+- Save checkpoint after each successful runtime step.
+- Resume from latest/explicit checkpoint with `run_resumed` event.
+- Add cancellation probe and run limits (`deadline_seconds`, `max_steps`).
+- Emit typed events with stable `run_id`, monotonic `seq`, and checkpoint references.
+- Add minimal `ToolExecutor` protocol and noop implementation for Phase 3 prep.
+- Document backend-neutral checkpoint/event storage contract boundaries for future DB adapters.
 
 Exit criteria:
 
-- run can resume after simulated node failure;
-- run can be cancelled;
-- stream can reconnect from persisted events or event log;
-- checkpoint replay works with fake LLM/tools.
+- run resumes after simulated post-checkpoint failure;
+- run can be cancelled and timed out;
+- max-step budget transitions to terminal failed state deterministically;
+- checkpoint replay works with in-memory and sqlite stores;
+- tool stage seam exists via `ToolExecutor` without full governance coupling.
+- docs record explicit criteria for adding new checkpoint backends.
 
 ## Phase 3: Tool Governance And Guardrails
 
@@ -193,6 +198,22 @@ Do not include in the first implementation:
 - scientific paper tools;
 - Neo4j/Qdrant assumptions;
 - distributed worker backends;
-- production Postgres checkpoint backend, unless a real app needs it immediately;
+- production Postgres checkpoint backend is deferred from first cut, but should be prioritized once multi-worker or shared API deployment is required;
 - LangSmith exporter, unless it becomes a target integration;
 - complex LLM-as-judge evaluation before deterministic evals exist.
+
+## Phase 2.5: Persistent Backend Expansion (Checkpoint/Event Stores)
+
+Goal: add first production-grade persistent backend without changing runtime contracts.
+
+- Implement `PostgresRuntimeStore` behind existing `CheckpointStore` / `RuntimeEventLog`.
+- Add schema migration strategy (versioned SQL migrations).
+- Add backend conformance tests shared with SQLite/in-memory.
+- Add retention and indexing guidance for long-lived runs.
+- Add operational notes for transaction isolation and connection pooling.
+
+Exit criteria:
+
+- PostgreSQL backend passes the same deterministic replay/resume suite as SQLite.
+- no runtime API changes required for switching SQLite -> Postgres.
+- docs include backend selection matrix (local, single-node, multi-worker, managed cloud).

@@ -511,6 +511,20 @@ The updated implementation sequence is maintained in [Implementation roadmap](ro
 - Should planning/todo state be always available, or only enabled by graph preset?
 - What is the default approval policy for local shell/filesystem tools?
 
+### Updates After First Phase-2 Implementation
+
+After implementing the first durable runtime cut, several decisions are now clearer:
+
+- storage protocols are already stable enough to add additional DB adapters without changing runner contracts;
+- SQLite + in-memory baseline is proven by replay/resume tests and should remain the default local path;
+- next backend priority should be PostgreSQL (for multi-worker/shared API deployments), not Redis as primary checkpoint storage;
+- Redis is better treated as optional queue/lease acceleration, while durable checkpoint history remains SQL-backed;
+- documentation should keep backend conformance criteria explicit to prevent drift between adapters.
+
+New practical architecture note:
+
+- backend-specific logic should stay inside runtime store adapters only; `SingleAgentRunner` and event/checkpoint contracts must remain backend-agnostic.
+
 ## Recommended First Cut
 
 The first implementation should be intentionally small:

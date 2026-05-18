@@ -172,6 +172,32 @@ async def test_openai_stream_adapter_uses_mock_transport_progressively() -> None
 
 
 @pytest.mark.asyncio
+async def test_openai_stream_adapter_marks_failure_on_stream_error() -> None:
+    """OpenAI provider stream should update telemetry on stream failure."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        _ = request
+        raise httpx.ReadTimeout("stream failed")
+
+    transport = httpx.MockTransport(handler)
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleProvider.Config(
+            name="openai-mock",
+            base_url="https://mock.local/v1",
+            api_key=None,
+            model="gpt-test",
+            http_client_config=HttpClientConfig(transport=transport),
+        )
+    )
+    request = LlmRequest(messages=[ChatMessage(role="user", content="hi")], stream=True)
+    with pytest.raises(httpx.ReadTimeout):
+        _ = [event async for event in provider.stream(request)]
+    assert provider.status.request_count == 1
+    assert provider.status.error_count == 1
+    assert provider.status.healthy is False
+
+
+@pytest.mark.asyncio
 async def test_ollama_stream_adapter_uses_mock_transport_progressively() -> None:
     """Ollama provider stream should emit progressive events from mocked transport."""
 

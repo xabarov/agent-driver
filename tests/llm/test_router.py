@@ -93,18 +93,24 @@ class _StreamStubProvider(_StubProvider):
         *,
         startup_fail: bool = False,
         fail_after_first_chunk: bool = False,
+        fail_with_value_error: bool = False,
     ) -> None:
         super().__init__(config)
         self._startup_fail = startup_fail
         self._fail_after_first_chunk = fail_after_first_chunk
+        self._fail_with_value_error = fail_with_value_error
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         """Yield deterministic stream with optional startup/midstream failures."""
         _ = request
         if self._startup_fail:
+            if self._fail_with_value_error:
+                raise ValueError(f"{self.name} startup failed")
             raise RuntimeError(f"{self.name} startup failed")
         yield LlmStreamEvent(event="delta", delta_text=f"{self.name}-chunk1")
         if self._fail_after_first_chunk:
+            if self._fail_with_value_error:
+                raise ValueError(f"{self.name} midstream failed")
             raise RuntimeError(f"{self.name} midstream failed")
         yield LlmStreamEvent(
             event="done",
@@ -230,3 +236,23 @@ async def test_router_stream_does_not_fallback_after_first_chunk() -> None:
     request = LlmRequest(messages=[ChatMessage(role="user", content="hi")], model="m")
     with pytest.raises(RuntimeError):
         _ = [chunk async for chunk in router.stream(request)]
+
+
+@pytest.mark.asyncio
+async def test_router_stream_startup_value_error_fallback_to_backup() -> None:
+    """Router should fallback when startup throws ValueError before first chunk."""
+    failing = _StreamStubProvider(
+        _StubProvider.Config(name="stream-failing", healthy=True, avg_latency_ms=1.0),
+        startup_fail=True,
+        fail_with_value_error=True,
+    )
+    backup = _StreamStubProvider(
+        _StubProvider.Config(name="stream-backup", healthy=True, avg_latency_ms=5.0)
+    )
+    router = HealthAwareRouter(
+        providers=[failing, backup], strategy=RouterStrategy.LATENCY
+    )
+    request = LlmRequest(messages=[ChatMessage(role="user", content="hi")], model="m")
+    chunks = [chunk async for chunk in router.stream(request)]
+
+    assert chunks[0].delta_text == "stream-backup-chunk1"

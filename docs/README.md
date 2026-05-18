@@ -21,11 +21,13 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - `.venv/bin/black agent_driver tests`
 - `.venv/bin/pylint agent_driver tests`
 - `.venv/bin/python -m pytest tests`
+- `.venv/bin/python -m pytest tests/runtime/test_runtime_skeleton.py`
 
 ## Optional Live Checks
 
 - `AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests`
 - `AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests/llm/test_live_providers.py`
+- If `.env` exists in repository root, live tests auto-load it (without printing secret values).
 - Optional env vars for live adapters:
   - `AGENT_DRIVER_OPENAI_BASE_URL`, `AGENT_DRIVER_OPENAI_MODEL`, `AGENT_DRIVER_OPENAI_API_KEY`
   - `AGENT_DRIVER_OLLAMA_BASE_URL`, `AGENT_DRIVER_OLLAMA_MODEL`
