@@ -1,6 +1,12 @@
 """Shared enum contracts for phase 0 models."""
 
 from agent_driver.contracts.enums.base import StrEnum
+from agent_driver.contracts.enums.context import (
+    ObservationSource,
+    ObservationTrust,
+    PlanningTodoStatus,
+    TrimAction,
+)
 from agent_driver.contracts.enums.memory import MemoryProjectionView, MemoryStepKind
 from agent_driver.contracts.enums.misc import (
     AgentProfile,
@@ -69,4 +75,8 @@ __all__ = [
     "SubagentJoinPolicy",
     "SubagentMergeMode",
     "SubagentGroupStatus",
+    "PlanningTodoStatus",
+    "ObservationSource",
+    "ObservationTrust",
+    "TrimAction",
 ]

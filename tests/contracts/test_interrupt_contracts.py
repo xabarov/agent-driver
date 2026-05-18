@@ -64,6 +64,10 @@ def test_approval_payload_from_interrupt_renders_args_preview() -> None:
     assert payload.tool_name == "danger"
     assert payload.tool_call_id == "call_1"
     assert payload.args_preview == '{"target": "x"}'
+    assert payload.interrupt_id == "int_1"
+    assert payload.allowed_actions == [ResumeAction.APPROVE, ResumeAction.REJECT]
+    assert payload.editable_fields == ["args"]
+    assert payload.metadata == {"source": "policy"}
 
 
 def test_approval_payload_truncates_large_args_preview() -> None:

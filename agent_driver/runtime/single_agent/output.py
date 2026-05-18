@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_driver.context import (
+    InMemoryArtifactStore,
+    split_preview_and_artifact,
+)
 from agent_driver.contracts.enums import RunStatus
 from agent_driver.contracts.interrupts import ApprovalPayload, InterruptRequest
 from agent_driver.contracts.messages import ChatMessage
@@ -21,6 +25,29 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
 
     _deps: RunnerDeps
 
+    @staticmethod
+    def _metadata_with_artifact_refs(
+        tool_results: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Split oversized tool summaries into artifact refs + bounded previews."""
+        artifact_store = InMemoryArtifactStore()
+        artifact_refs: list[dict[str, Any]] = []
+        normalized_results: list[dict[str, Any]] = []
+        for item in tool_results:
+            payload = dict(item)
+            summary = payload.get("summary")
+            if isinstance(summary, str) and len(summary) > 512:
+                preview, stored = split_preview_and_artifact(
+                    content=summary,
+                    max_preview_chars=512,
+                )
+                ref = artifact_store.put(stored)
+                payload["summary"] = preview.text
+                payload["summary_artifact_ref"] = ref.model_dump(mode="json")
+                artifact_refs.append(ref.model_dump(mode="json"))
+            normalized_results.append(payload)
+        return normalized_results, artifact_refs
+
     def _build_output(
         self,
         context: RunContext,
@@ -37,6 +64,12 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
                 for item in tool_trace_payload
                 if isinstance(item, dict)
             ]
+        tool_results_payload = context.metadata.get("tool_results", [])
+        if not isinstance(tool_results_payload, list):
+            tool_results_payload = []
+        normalized_tool_results, artifact_refs = self._metadata_with_artifact_refs(
+            [item for item in tool_results_payload if isinstance(item, dict)]
+        )
         return AgentRunOutput(
             run_id=context.run_id,
             attempt_id=context.attempt_id,
@@ -51,7 +84,9 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
             terminal_reason=terminal.reason,
             metadata={
                 "graph_id": self.graph_id,
-                "tool_results": context.metadata.get("tool_results", []),
+                "tool_results": normalized_tool_results,
+                "artifact_refs": artifact_refs,
+                "digest_refs": context.metadata.get("digest_refs", []),
                 "approval_payload": (
                     ApprovalPayload.from_interrupt(
                         InterruptRequest.model_validate(
@@ -77,6 +112,8 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
             metadata={
                 "graph_id": self.graph_id,
                 "tool_results": context.metadata.get("tool_results", []),
+                "artifact_refs": context.metadata.get("artifact_refs", []),
+                "digest_refs": context.metadata.get("digest_refs", []),
                 "approval_payload": ApprovalPayload.from_interrupt(
                     result.interrupt
                 ).model_dump(mode="json"),

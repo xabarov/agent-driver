@@ -63,27 +63,6 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             )
         return checkpoint_row
 
-    def _handle_resume_without_pending(
-        self,
-        *,
-        context: RunContext,
-        resume_interrupt_id: str,
-        resume_action: ResumeAction,
-    ) -> None:
-        """Keep legacy checkpoint-based resume path backward compatible."""
-        self._emit(
-            EventSpec(
-                run_id=context.run_id,
-                attempt_id=context.attempt_id,
-                event_type=RuntimeEventType.RUN_RESUMED,
-                payload={
-                    "interrupt_id": resume_interrupt_id,
-                    "action": resume_action.value,
-                    "mode": "checkpoint_resume",
-                },
-            )
-        )
-
     def _set_terminal_output(
         self,
         *,
@@ -236,12 +215,9 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
         if resume is not None:
             pending = pending_interrupt_from_metadata(metadata)
             if pending is None:
-                self._handle_resume_without_pending(
-                    context=context,
-                    resume_interrupt_id=resume.interrupt_id,
-                    resume_action=resume.action,
+                raise RuntimeExecutionError(
+                    "resume command requires pending interrupt in checkpoint metadata"
                 )
-                return context
             self._handle_resume_with_pending(
                 context=context,
                 checkpoint_row=checkpoint_row,

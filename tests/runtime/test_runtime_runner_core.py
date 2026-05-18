@@ -76,19 +76,16 @@ async def test_single_agent_runner_resume_after_injected_failure() -> None:
         checkpoint_store=checkpoints,
         event_log=events,
     )
-    resumed_output = await resume_runner.run(
-        AgentRunInput(
-            resume=ResumeCommand(
-                interrupt_id=latest.ref.checkpoint_id, action=ResumeAction.APPROVE
-            ),
-            agent_id="agent-test",
-            graph_preset="single_react",
+    with pytest.raises(RuntimeExecutionError):
+        await resume_runner.run(
+            AgentRunInput(
+                resume=ResumeCommand(
+                    interrupt_id=latest.ref.checkpoint_id, action=ResumeAction.APPROVE
+                ),
+                agent_id="agent-test",
+                graph_preset="single_react",
+            )
         )
-    )
-    assert resumed_output.status.value == "completed"
-    assert resumed_output.answer == "resume answer"
-    run_events = events.list_for_run("run_resume_1")
-    assert any(event.type.value == "run_resumed" for event in run_events)
 
 
 @pytest.mark.asyncio

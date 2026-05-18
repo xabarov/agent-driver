@@ -119,6 +119,69 @@ _ = AgentRunInput(
 )
 ```
 
+## Observability Entry Points (Phase 5)
+
+- Build deterministic trace payload from one run output:
+  - `build_trace_export(output)`
+- Export to local/no-op sinks:
+  - `NoOpTraceExporter`
+  - `LocalTraceExporter`
+
+Example:
+
+```python
+from agent_driver.observability import (
+    LocalTraceExporter,
+    NoOpTraceExporter,
+    build_trace_export,
+)
+
+trace_payload = build_trace_export(run_output)
+_ = NoOpTraceExporter().export(trace_payload)
+
+local_exporter = LocalTraceExporter()
+sink_result = local_exporter.export(trace_payload)
+stored = local_exporter.get(trace_payload.trace_id)
+```
+
+## Evaluation Harness Entry Points (Phase 5)
+
+- Deterministic evaluators:
+  - `default_evaluators()`
+  - `evaluate_event_schema(...)`
+  - `evaluate_terminal_state(...)`
+  - `evaluate_tool_policy(...)`
+  - `evaluate_checkpoint_replay(...)`
+  - `evaluate_cost_latency_budget(...)`
+- Dataset runner and report compare:
+  - `run_dataset(...)`
+  - `compare_reports(...)`
+- Replay/devtools projections:
+  - `render_full_debug_view(...)`
+  - `render_succinct_view(...)`
+  - `render_cli_replay(...)`
+  - `build_support_bundle(...)`
+
+Example:
+
+```python
+from agent_driver.evals import (
+    BudgetLimits,
+    DatasetCase,
+    compare_reports,
+    run_dataset,
+)
+
+budget = BudgetLimits(max_total_tokens=20_000, max_latency_ms=30_000)
+report = await run_dataset(
+    cases=[DatasetCase(...)],
+    run_executor=run_case,
+    candidate_id="local-candidate",
+    limits=budget,
+)
+comparison = compare_reports(baseline=baseline_report, candidate=report)
+```
+
 ## Optional Live Checks
 
 - `AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests`

@@ -39,6 +39,7 @@ def build_tool_approval_interrupt(ctx: ToolApprovalContext) -> InterruptRequest:
             ResumeAction.APPROVE,
             ResumeAction.REJECT,
             ResumeAction.EDIT,
+            ResumeAction.CLARIFY,
             ResumeAction.CANCEL,
         ],
         editable_fields=["args"],

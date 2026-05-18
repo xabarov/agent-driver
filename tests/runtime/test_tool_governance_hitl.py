@@ -21,6 +21,7 @@ from agent_driver.runtime import (
     ToolRegistry,
     wrap_governed_executor,
 )
+from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
 from tests.runtime.conftest import danger_tool_manifest, planned_danger_tool_policy
 
 
@@ -223,3 +224,130 @@ async def test_runner_resume_reject_and_cancel_are_terminal() -> None:
     )
     assert cancelled.status.value == "cancelled"
     assert cancelled.terminal_reason.value == "cancelled_by_user"
+
+
+@pytest.mark.asyncio
+async def test_runner_resume_clarify_continues_with_clarification() -> None:
+    """Clarify resume should continue run and include clarification in metadata."""
+    registry = ToolRegistry()
+
+    async def _danger(_args):
+        return {"summary": "danger"}
+
+    registry.register(danger_tool_manifest(), _danger)
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ok"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            )
+        ),
+    )
+    paused = await runner.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_hitl_clarify",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=planned_danger_tool_policy(),
+        )
+    )
+    resumed = await runner.run(
+        AgentRunInput(
+            run_id="run_hitl_clarify",
+            resume=ResumeCommand(
+                interrupt_id=(
+                    paused.interrupt.interrupt_id if paused.interrupt else "missing"
+                ),
+                action=ResumeAction.CLARIFY,
+                message="Use safer approach",
+            ),
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.NO_TOOLS),
+        )
+    )
+    assert resumed.status.value == "completed"
+    assert any(event.type.value == "run_resumed" for event in resumed.events)
+
+
+@pytest.mark.asyncio
+async def test_runner_resume_rejects_mismatched_interrupt_id() -> None:
+    """Runtime should fail when resume interrupt_id mismatches pending payload."""
+    registry = ToolRegistry()
+
+    async def _danger(_args):
+        return {"summary": "danger"}
+
+    registry.register(danger_tool_manifest(), _danger)
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ok"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            )
+        ),
+    )
+    paused = await runner.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_hitl_bad_id",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=planned_danger_tool_policy(),
+        )
+    )
+    assert paused.status.value == "paused"
+    with pytest.raises(
+        MissingCheckpointError, match="Checkpoint 'interrupt_other' not found"
+    ):
+        await runner.run(
+            AgentRunInput(
+                run_id="run_hitl_bad_id",
+                resume=ResumeCommand(
+                    interrupt_id="interrupt_other",
+                    action=ResumeAction.APPROVE,
+                ),
+                agent_id="agent",
+                graph_preset="single_react",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_runner_resume_requires_pending_interrupt() -> None:
+    """Runtime should reject resume when checkpoint has no pending interrupt."""
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ok"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+    )
+    completed = await runner.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_no_pending",
+            agent_id="agent",
+            graph_preset="single_react",
+        )
+    )
+    assert completed.status.value == "completed"
+    with pytest.raises(RuntimeExecutionError, match="requires pending interrupt"):
+        await runner.run(
+            AgentRunInput(
+                run_id="run_no_pending",
+                resume=ResumeCommand(
+                    interrupt_id=(
+                        completed.checkpoint.checkpoint_id
+                        if completed.checkpoint
+                        else "missing"
+                    ),
+                    action=ResumeAction.APPROVE,
+                ),
+                agent_id="agent",
+                graph_preset="single_react",
+            )
+        )
