@@ -182,6 +182,58 @@ report = await run_dataset(
 comparison = compare_reports(baseline=baseline_report, candidate=report)
 ```
 
+## CodeAgent Entry Points (Phase 7)
+
+- Code-agent contracts and limits:
+  - `CodeAgentAction`
+  - `CodeAgentLimits`
+  - `CodeAgentExecutionResult`
+- Sandboxed executor:
+  - `FakeRestrictedCodeExecutor`
+  - `validate_code_action(...)`
+  - `serialize_payload(...)` / `deserialize_payload(...)`
+- Callable tool surface:
+  - `build_callable_tool_surface(...)`
+  - `render_callable_tool_docs(...)`
+- Runtime integration:
+  - set `agent_profile=AgentProfile.CODE_AGENT` in `AgentRunInput`
+  - pass code action via `tool_policy.metadata["code_action"]`
+  - use `RunnerConfig(code_executor=..., tool_registry=..., authorized_imports=(...))`
+
+Example:
+
+```python
+from agent_driver.contracts import AgentProfile, AgentRunInput
+from agent_driver.code_agent import FakeRestrictedCodeExecutor
+from agent_driver.llm.providers_impl.fake import FakeProvider
+from agent_driver.runtime import (
+    FakeSingleStepRunner,
+    InMemoryCheckpointStore,
+    InMemoryEventLog,
+    RunnerConfig,
+)
+
+runner = FakeSingleStepRunner(
+    provider=FakeProvider(response_text="ignored"),
+    checkpoint_store=InMemoryCheckpointStore(),
+    event_log=InMemoryEventLog(),
+    config=RunnerConfig(
+        code_executor=FakeRestrictedCodeExecutor(),
+        authorized_imports=("math",),
+    ),
+)
+output = await runner.run(
+    AgentRunInput(
+        input="compute",
+        run_id="run_code",
+        agent_id="agent.default",
+        graph_preset="single_react",
+        agent_profile=AgentProfile.CODE_AGENT,
+        tool_policy={"metadata": {"code_action": "final_answer(2 + 2)"}},
+    )
+)
+```
+
 ## Optional Live Checks
 
 - `AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests`

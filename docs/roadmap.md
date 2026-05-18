@@ -255,6 +255,17 @@ Exit criteria:
 - observations include provenance, trust labels, and truncation metadata;
 - digest and artifact references are included in run metadata.
 
+Implementation notes from integration pass:
+
+- runtime config now accepts injectable `session_store`, `artifact_store`, and
+  `context_store` dependencies; defaults remain in-memory;
+- output assembly persists session turns/digests and includes populated
+  `digest_refs` and durable `artifact_refs` in metadata;
+- dedicated planning events (`channel=planning`) are emitted from runtime path,
+  enabling replay/compaction separation from ordinary chat/tool observations;
+- LLM request assembly now applies deterministic context trimming and supports
+  bounded observation previews before model completion.
+
 ## Phase 7: CodeAgent Profile And Sandboxed Action Execution
 
 - Add opt-in `code_agent` profile.
@@ -278,6 +289,22 @@ Exit criteria:
 - unsafe serialized payloads and forbidden interpreter operations fail closed;
 - stdout/stderr observations are persisted and budgeted;
 - action, observation, and final-answer events replay deterministically.
+
+Implementation notes from first cut:
+
+- new package `agent_driver/code_agent` added with explicit submodules for
+  contracts, policy checks, serialization, executor, tool-surface rendering, and
+  runtime profile adapter;
+- `RunnerConfig` now supports `code_executor`, `code_limits`,
+  `authorized_imports`, and `tool_registry` for opt-in `code_agent` runs;
+- `FakeRestrictedCodeExecutor` enforces import/dunder/forbidden-call checks,
+  execution/output limits, and bounded stdout/stderr observations;
+- safe executor-boundary serialization uses `ExecutorSerializationPolicy` with
+  fail-closed behavior unless unsafe mode is explicitly enabled;
+- callable Python tool docs/signatures are generated deterministically from
+  `ToolManifest` and reused by code-agent execution path;
+- side-effecting tools in code-agent flow route through approval interrupts using
+  existing policy interrupt payloads.
 
 ## Phase 8: LLM Compaction
 

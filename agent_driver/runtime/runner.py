@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from agent_driver.code_agent.executor import FakeRestrictedCodeExecutor
+from agent_driver.context import (
+    InMemoryArtifactStore,
+    InMemoryContextStore,
+    InMemorySessionStore,
+)
 from agent_driver.contracts.enums import RuntimeEventType, TerminalReason
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.llm.providers import LlmProvider
@@ -23,6 +29,7 @@ from agent_driver.runtime.single_agent.types import (
 from agent_driver.runtime.single_agent.types import RunnerDeps
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import fake_noop_tool_executor
+from agent_driver.tools.registry import ToolRegistry
 
 
 class SingleAgentRunner(
@@ -54,6 +61,11 @@ class SingleAgentRunner(
             checkpoint_store=checkpoint_store,
             event_log=event_log,
             tool_executor=self._config.tool_executor or fake_noop_tool_executor,
+            session_store=self._config.session_store or InMemorySessionStore(),
+            artifact_store=self._config.artifact_store or InMemoryArtifactStore(),
+            context_store=self._config.context_store or InMemoryContextStore(),
+            code_executor=self._config.code_executor or FakeRestrictedCodeExecutor(),
+            tool_registry=self._config.tool_registry or ToolRegistry(),
         )
 
     async def run(self, run_input: AgentRunInput) -> AgentRunOutput:

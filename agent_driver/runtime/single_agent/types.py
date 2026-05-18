@@ -7,6 +7,10 @@ from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any
 
+from agent_driver.code_agent.contracts import CodeAgentLimits
+from agent_driver.code_agent.executor import CodeActionExecutor
+from agent_driver.context.artifacts import ArtifactStore, ContextStore
+from agent_driver.context.sessions import SessionStore
 from agent_driver.contracts.checkpoints import CheckpointRef
 from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
 from agent_driver.contracts.interrupts import InterruptRequest
@@ -16,16 +20,27 @@ from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import ToolExecutor
+from agent_driver.tools.registry import ToolRegistry
 
 
 @dataclass(slots=True)
-class RunnerConfig:
+class RunnerConfig:  # pylint: disable=too-many-instance-attributes
     """Configuration for durable single-agent runtime runner."""
 
     graph_id: str = "single_agent_runtime"
     cancellation_probe: Callable[[], bool] | None = None
     fail_after_step: str | None = None
     tool_executor: ToolExecutor | None = None
+    session_store: SessionStore | None = None
+    artifact_store: ArtifactStore | None = None
+    context_store: ContextStore | None = None
+    observation_max_chars: int = 400
+    trim_max_chars: int = 6000
+    trim_max_messages: int | None = 24
+    code_executor: CodeActionExecutor | None = None
+    code_limits: CodeAgentLimits = field(default_factory=CodeAgentLimits)
+    authorized_imports: tuple[str, ...] = ()
+    tool_registry: ToolRegistry | None = None
 
 
 @dataclass(slots=True)
@@ -103,13 +118,18 @@ class TerminalResult:
 
 
 @dataclass(frozen=True, slots=True)
-class RunnerDeps:
+class RunnerDeps:  # pylint: disable=too-many-instance-attributes
     """External dependencies for the runner loop."""
 
     provider: LlmProvider
     checkpoint_store: CheckpointStore
     event_log: RuntimeEventLog
     tool_executor: ToolExecutor
+    session_store: SessionStore
+    artifact_store: ArtifactStore
+    context_store: ContextStore
+    code_executor: CodeActionExecutor
+    tool_registry: ToolRegistry
 
 
 @dataclass(slots=True)

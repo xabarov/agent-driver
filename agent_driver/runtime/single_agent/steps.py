@@ -2,7 +2,24 @@
 
 from __future__ import annotations
 
-from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
+from typing import Any
+from uuid import uuid4
+
+from agent_driver.code_agent.profile import run_code_agent_stage
+from agent_driver.context import (
+    build_observation_memory,
+    planning_state_init,
+    planning_state_set_step,
+)
+from agent_driver.contracts.context import PlanningState, PlanningStep
+from agent_driver.contracts.enums import (
+    AgentProfile,
+    ObservationSource,
+    ObservationTrust,
+    RunStatus,
+    RuntimeEventType,
+    TerminalReason,
+)
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.single_agent.llm import build_single_agent_llm_request
@@ -13,6 +30,7 @@ from agent_driver.runtime.single_agent.pending import (
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
     RunContext,
+    RunnerConfig,
     RunnerDeps,
     RuntimeStepResult,
     TerminalResult,
@@ -24,11 +42,62 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
     """Mixin: deterministic step transitions after journal/output/resume."""
 
     _deps: RunnerDeps
+    _config: RunnerConfig
+
+    def _build_observations(self, result: ToolExecutionResult) -> list[dict[str, Any]]:
+        """Build bounded observation rows from tool envelopes."""
+        observations: list[dict[str, Any]] = []
+        for envelope in result.envelopes:
+            if envelope.summary is None:
+                continue
+            observation = build_observation_memory(
+                text=envelope.summary,
+                source=ObservationSource.TOOL_LOG,
+                trust=ObservationTrust.UNVERIFIED,
+                max_chars=self._config.observation_max_chars,
+                tool_name=envelope.call.tool_name,
+                tool_call_id=envelope.call.tool_call_id,
+            )
+            observations.append(observation.model_dump(mode="json"))
+        return observations
+
+    def _update_planning_state(self, context: RunContext) -> None:
+        """Update minimal planning state and latest planning step payload."""
+        tool_results = context.metadata.get("tool_results", [])
+        if not isinstance(tool_results, list):
+            tool_results = []
+        facts_learned = [
+            str(item.get("summary", ""))
+            for item in tool_results
+            if isinstance(item, dict) and isinstance(item.get("summary"), str)
+        ]
+        planning_step = PlanningStep(
+            step_id=f"plan_{uuid4().hex[:8]}",
+            facts_given=[context.run_input.input or ""],
+            facts_learned=facts_learned[:3],
+            facts_to_lookup=[],
+            facts_to_derive=[],
+            next_plan="Continue execution",
+            metadata={"run_id": context.run_id},
+        )
+        planning_state_payload = context.metadata.get("planning_state")
+        if isinstance(planning_state_payload, dict):
+            state = planning_state_set_step(
+                PlanningState.model_validate(planning_state_payload), planning_step
+            )
+        else:
+            state = planning_state_set_step(
+                planning_state_init(context.run_id), planning_step
+            )
+        context.metadata["planning_step"] = planning_step.model_dump(mode="json")
+        context.metadata["planning_state"] = state.model_dump(mode="json")
 
     async def _tool_result_with_approved_override(
         self, context: RunContext
     ) -> ToolExecutionResult:
         """Execute tool stage, honoring approved-call override on resume."""
+        if context.run_input.agent_profile == AgentProfile.CODE_AGENT:
+            return await run_code_agent_stage(runner=self, context=context)
         if context.llm_response is None:
             raise RuntimeExecutionError("Missing LLM response before tool stage")
         approved_call = context.metadata.get("approved_tool_call")
@@ -88,14 +157,37 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
         )
         clarification = context.metadata.get("clarification")
         try:
-            context.llm_response = await self._deps.provider.complete(
-                build_single_agent_llm_request(
-                    run_input=context.run_input,
-                    clarification=(
-                        clarification if isinstance(clarification, str) else None
-                    ),
-                )
+            observations = context.metadata.get("observations", [])
+            if not isinstance(observations, list):
+                observations = []
+            digest_refs = context.metadata.get("digest_refs", [])
+            if not isinstance(digest_refs, list):
+                digest_refs = []
+            artifact_refs = context.metadata.get("artifact_refs", [])
+            if not isinstance(artifact_refs, list):
+                artifact_refs = []
+            request, trim_payload = build_single_agent_llm_request(
+                run_input=context.run_input,
+                clarification=(
+                    clarification if isinstance(clarification, str) else None
+                ),
+                observations=[item for item in observations if isinstance(item, dict)],
+                digest_ids=[
+                    str(item.get("digest_id"))
+                    for item in digest_refs
+                    if isinstance(item, dict) and item.get("digest_id")
+                ],
+                artifact_ids=[
+                    str(item.get("artifact_id"))
+                    for item in artifact_refs
+                    if isinstance(item, dict) and item.get("artifact_id")
+                ],
+                max_chars=self._config.trim_max_chars,
+                max_messages=self._config.trim_max_messages,
             )
+            context.metadata["trim_audit"] = trim_payload["trim_audit"]
+            context.metadata["trim_metadata"] = trim_payload["trim_metadata"]
+            context.llm_response = await self._deps.provider.complete(request)
         except (RuntimeError, ValueError) as exc:
             self._emit(
                 EventSpec(
@@ -134,6 +226,10 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
     async def _execute_tool_stage(self, context: RunContext) -> RuntimeStepResult:
         result = await self._tool_result_with_approved_override(context)
         self._store_tool_stage_outputs(context, result)
+        observations = self._build_observations(result)
+        if observations:
+            context.metadata["observations"] = observations
+        self._update_planning_state(context)
         if result.interrupt is not None:
             pending = pending_interrupt_from_execution_result(result)
             if pending is None:

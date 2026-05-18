@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import pytest
 
-from agent_driver.contracts import AgentRunInput
+from agent_driver.contracts import AgentRunInput, ToolCall, ToolManifest
+from agent_driver.contracts.enums import ApprovalMode, SideEffectClass, ToolRisk
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime import (
     FakeSingleStepRunner,
+    GovernedToolExecutor,
     InMemoryCheckpointStore,
     InMemoryEventLog,
+    RunnerConfig,
+    ToolRegistry,
+    wrap_governed_executor,
 )
 
 
@@ -33,3 +38,78 @@ async def test_runtime_output_exposes_phase6_artifact_and_digest_refs() -> None:
     assert "digest_refs" in output.metadata
     assert isinstance(output.metadata["artifact_refs"], list)
     assert isinstance(output.metadata["digest_refs"], list)
+    assert output.metadata["digest_refs"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_stores_oversized_tool_output_as_artifact_ref() -> None:
+    """Long tool output should be moved to artifact store with summary preview."""
+    registry = ToolRegistry()
+
+    async def _lookup(_args):
+        return {"summary": "x" * 900}
+
+    registry.register(
+        ToolManifest(
+            name="lookup",
+            description="Lookup tool",
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.READ_ONLY,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _lookup,
+    )
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ok"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            )
+        ),
+    )
+    output = await runner.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_phase6_artifacts",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy={
+                "mode": "allow_tools",
+                "metadata": {
+                    "planned_tool_calls": [
+                        ToolCall(tool_name="lookup", args={}).model_dump(mode="json")
+                    ]
+                },
+            },
+        )
+    )
+    tool_results = output.metadata["tool_results"]
+    assert tool_results
+    assert tool_results[0]["summary_artifact_ref"]["artifact_id"]
+    assert output.metadata["artifact_refs"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_emits_planning_events_and_trim_audit() -> None:
+    """Run events should include planning channel and trim metadata."""
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ok"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+    )
+    output = await runner.run(
+        AgentRunInput(
+            input="plan this task",
+            run_id="run_phase6_planning",
+            agent_id="agent",
+            graph_preset="single_react",
+        )
+    )
+    planning_events = [
+        event for event in output.events if event.payload.get("channel") == "planning"
+    ]
+    assert planning_events
+    assert "trim_audit" in output.metadata
+    assert "trim_metadata" in output.metadata
