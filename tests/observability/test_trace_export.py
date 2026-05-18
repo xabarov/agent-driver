@@ -78,6 +78,8 @@ def test_build_trace_export_is_deterministic() -> None:
     assert first.trace_id == second.trace_id
     assert [span.seq for span in first.spans] == [1, 2]
     assert first.metadata["status"] == "completed"
+    assert first.metadata["subagent_group_count"] == 0
+    assert first.metadata["subagent_run_count"] == 0
 
 
 def test_noop_exporter_returns_sink_metadata() -> None:

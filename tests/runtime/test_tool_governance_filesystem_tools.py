@@ -1,7 +1,5 @@
 """Integration tests for built-in filesystem tools via governed executor."""
 
-# pylint: disable=duplicate-code
-
 from __future__ import annotations
 
 import json
@@ -15,7 +13,7 @@ from agent_driver.contracts import (
     ToolPolicyMode,
 )
 from agent_driver.llm.providers_impl.fake import FakeProvider
-from agent_driver.runtime import GovernedToolExecutor, ToolRegistry
+from agent_driver.tools import GovernedToolExecutor, ToolRegistry
 from agent_driver.tools import register_builtin_tools
 from tests.runtime.conftest import llm_request_with_planned_calls
 

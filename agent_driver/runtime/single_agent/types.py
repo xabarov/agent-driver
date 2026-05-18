@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from time import monotonic
 from typing import Any
 
-from agent_driver.code_agent.contracts import CodeAgentLimits
 from agent_driver.code_agent.executor import CodeActionExecutor
+from agent_driver.runtime.single_agent.config_sections import (
+    CodeAgentSettings,
+    CompactionSettings,
+    SubagentSettings,
+    TrimmingSettings,
+)
 from agent_driver.context.artifacts import ArtifactStore, ContextStore
 from agent_driver.context.sessions import SessionStore
 from agent_driver.contracts.checkpoints import CheckpointRef
@@ -20,42 +25,152 @@ from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import ToolExecutor
+from agent_driver.subagents.store import InMemorySubagentStore
 from agent_driver.tools.registry import ToolRegistry
 
 
-@dataclass(slots=True)
-class RunnerConfig:  # pylint: disable=too-many-instance-attributes
+_TRIMMING_FIELDS = {item.name for item in fields(TrimmingSettings)}
+_COMPACTION_FIELDS = {item.name for item in fields(CompactionSettings)}
+_SUBAGENT_FIELDS = {item.name for item in fields(SubagentSettings)}
+_CODE_AGENT_FIELDS = {item.name for item in fields(CodeAgentSettings)}
+
+
+@dataclass(init=False, slots=True)
+class RunnerConfig:
     """Configuration for durable single-agent runtime runner."""
 
-    graph_id: str = "single_agent_runtime"
-    cancellation_probe: Callable[[], bool] | None = None
-    fail_after_step: str | None = None
-    tool_executor: ToolExecutor | None = None
-    session_store: SessionStore | None = None
-    artifact_store: ArtifactStore | None = None
-    context_store: ContextStore | None = None
-    observation_max_chars: int = 400
-    trim_max_chars: int = 6000
-    trim_max_messages: int | None = 24
-    trim_max_observations: int | None = 24
-    microcompact_preserve_recent: int = 6
-    microcompact_max_preview_chars: int = 180
-    context_window_estimate: int = 12000
-    token_warning_threshold: int = 7500
-    token_compact_threshold: int = 9000
-    token_blocking_threshold: int = 10500
-    output_token_reserve: int = 1500
-    include_planning_prompt: bool = False
-    enable_compaction: bool = False
-    enable_session_memory_compaction: bool = False
-    enable_llm_compaction: bool = False
-    compaction_failure_limit: int = 3
-    session_memory_stale_after_turns: int = 4
-    compaction_model: str = "default"
-    code_executor: CodeActionExecutor | None = None
-    code_limits: CodeAgentLimits = field(default_factory=CodeAgentLimits)
-    authorized_imports: tuple[str, ...] = ()
-    tool_registry: ToolRegistry | None = None
+    graph_id: str
+    cancellation_probe: Callable[[], bool] | None
+    fail_after_step: str | None
+    tool_executor: ToolExecutor | None
+    session_store: SessionStore | None
+    artifact_store: ArtifactStore | None
+    context_store: ContextStore | None
+    observation_max_chars: int
+    include_planning_prompt: bool
+    subagent_store: InMemorySubagentStore | None
+    code_executor: CodeActionExecutor | None
+    tool_registry: ToolRegistry | None
+    trimming: TrimmingSettings
+    compaction: CompactionSettings
+    subagents: SubagentSettings
+    code_agent: CodeAgentSettings
+
+    def __init__(self, **kwargs: Any) -> None:
+        trimming = kwargs.pop("trimming", None) or TrimmingSettings(
+            **{key: kwargs.pop(key) for key in list(kwargs) if key in _TRIMMING_FIELDS}
+        )
+        compaction = kwargs.pop("compaction", None) or CompactionSettings(
+            **{key: kwargs.pop(key) for key in list(kwargs) if key in _COMPACTION_FIELDS}
+        )
+        subagents = kwargs.pop("subagents", None) or SubagentSettings(
+            **{key: kwargs.pop(key) for key in list(kwargs) if key in _SUBAGENT_FIELDS}
+        )
+        code_agent = kwargs.pop("code_agent", None) or CodeAgentSettings(
+            **{key: kwargs.pop(key) for key in list(kwargs) if key in _CODE_AGENT_FIELDS}
+        )
+        self.graph_id = kwargs.pop("graph_id", "single_agent_runtime")
+        self.cancellation_probe = kwargs.pop("cancellation_probe", None)
+        self.fail_after_step = kwargs.pop("fail_after_step", None)
+        self.tool_executor = kwargs.pop("tool_executor", None)
+        self.session_store = kwargs.pop("session_store", None)
+        self.artifact_store = kwargs.pop("artifact_store", None)
+        self.context_store = kwargs.pop("context_store", None)
+        self.observation_max_chars = kwargs.pop("observation_max_chars", 400)
+        self.include_planning_prompt = kwargs.pop("include_planning_prompt", False)
+        self.subagent_store = kwargs.pop("subagent_store", None)
+        self.code_executor = kwargs.pop("code_executor", None)
+        self.tool_registry = kwargs.pop("tool_registry", None)
+        self.trimming = trimming
+        self.compaction = compaction
+        self.subagents = subagents
+        self.code_agent = code_agent
+        if kwargs:
+            raise TypeError(f"Unexpected RunnerConfig arguments: {sorted(kwargs)}")
+
+    @property
+    def trim_max_chars(self) -> int:
+        return self.trimming.trim_max_chars
+
+    @property
+    def trim_max_messages(self) -> int | None:
+        return self.trimming.trim_max_messages
+
+    @property
+    def trim_max_observations(self) -> int | None:
+        return self.trimming.trim_max_observations
+
+    @property
+    def microcompact_preserve_recent(self) -> int:
+        return self.trimming.microcompact_preserve_recent
+
+    @property
+    def microcompact_max_preview_chars(self) -> int:
+        return self.trimming.microcompact_max_preview_chars
+
+    @property
+    def context_window_estimate(self) -> int:
+        return self.trimming.context_window_estimate
+
+    @property
+    def token_warning_threshold(self) -> int:
+        return self.trimming.token_warning_threshold
+
+    @property
+    def token_compact_threshold(self) -> int:
+        return self.trimming.token_compact_threshold
+
+    @property
+    def token_blocking_threshold(self) -> int:
+        return self.trimming.token_blocking_threshold
+
+    @property
+    def output_token_reserve(self) -> int:
+        return self.trimming.output_token_reserve
+
+    @property
+    def enable_compaction(self) -> bool:
+        return self.compaction.enable_compaction
+
+    @property
+    def enable_session_memory_compaction(self) -> bool:
+        return self.compaction.enable_session_memory_compaction
+
+    @property
+    def enable_llm_compaction(self) -> bool:
+        return self.compaction.enable_llm_compaction
+
+    @property
+    def compaction_failure_limit(self) -> int:
+        return self.compaction.compaction_failure_limit
+
+    @property
+    def session_memory_stale_after_turns(self) -> int:
+        return self.compaction.session_memory_stale_after_turns
+
+    @property
+    def compaction_model(self) -> str:
+        return self.compaction.compaction_model
+
+    @property
+    def enable_subagents(self) -> bool:
+        return self.subagents.enable_subagents
+
+    @property
+    def max_child_runs(self) -> int:
+        return self.subagents.max_child_runs
+
+    @property
+    def default_child_deadline_seconds(self) -> float | None:
+        return self.subagents.default_child_deadline_seconds
+
+    @property
+    def code_limits(self):
+        return self.code_agent.code_limits
+
+    @property
+    def authorized_imports(self) -> tuple[str, ...]:
+        return self.code_agent.authorized_imports
 
 
 @dataclass(slots=True)
@@ -133,7 +248,7 @@ class TerminalResult:
 
 
 @dataclass(frozen=True, slots=True)
-class RunnerDeps:  # pylint: disable=too-many-instance-attributes
+class RunnerDeps:
     """External dependencies for the runner loop."""
 
     provider: LlmProvider
@@ -143,6 +258,7 @@ class RunnerDeps:  # pylint: disable=too-many-instance-attributes
     session_store: SessionStore
     artifact_store: ArtifactStore
     context_store: ContextStore
+    subagent_store: InMemorySubagentStore
     code_executor: CodeActionExecutor
     tool_registry: ToolRegistry
 

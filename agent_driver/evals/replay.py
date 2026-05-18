@@ -47,6 +47,8 @@ def render_succinct_view(output: AgentRunOutput) -> dict[str, Any]:
                 if event.payload.get("channel") == "planning"
             ]
         ),
+        "subagent_group_count": len(output.subagent_groups),
+        "subagent_run_count": len(output.subagent_runs),
     }
 
 
@@ -78,6 +80,10 @@ def render_cli_replay(output: AgentRunOutput) -> str:
             tool_results_count = projection_meta.get("tool_results_count")
             if isinstance(tool_results_count, int):
                 lines.append(f"tool_results_count={tool_results_count}")
+    if output.subagent_groups:
+        lines.append(f"subagent_groups={len(output.subagent_groups)}")
+    if output.subagent_runs:
+        lines.append(f"subagent_runs={len(output.subagent_runs)}")
     for event in sorted(output.events, key=lambda item: item.seq):
         lines.append(f"[{event.seq}] {event.type.value} payload={event.payload}")
     return "\n".join(lines)
@@ -98,6 +104,8 @@ def build_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
         "trace": trace_export.model_dump(mode="json"),
         "warnings": [warning.model_dump(mode="json") for warning in output.warnings],
         "tool_trace": [trace.model_dump(mode="json") for trace in output.tool_trace],
+        "subagent_groups": [group.model_dump(mode="json") for group in output.subagent_groups],
+        "subagent_runs": [row.model_dump(mode="json") for row in output.subagent_runs],
         "checkpoint": (
             output.checkpoint.model_dump(mode="json") if output.checkpoint else None
         ),

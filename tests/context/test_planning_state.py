@@ -12,7 +12,7 @@ from agent_driver.context.planning import (
     render_planning_step_prompt,
 )
 from agent_driver.contracts import PlanningStep, PlanningTodoStatus, TodoState
-from agent_driver.runtime import apply_planning_state_tool_update
+from agent_driver.tools import apply_planning_state_tool_update
 
 
 def test_planning_state_transitions_and_prompt() -> None:

@@ -260,6 +260,44 @@ OpenClaude tool import backlog:
     file-send tools are product automation adapters and should remain deferred
     until the core registry, context, and adapter layers are stable.
 
+Tool-set ergonomics and user extension backlog:
+
+- Add a first-class `ToolSet` / tool-pack concept on top of `ToolRegistry`:
+  - create a registry from explicit tools only;
+  - compose named built-in packs such as filesystem-read, filesystem-write, web,
+    shell, planning, tasking, and MCP;
+  - filter a pack by names, risk, side-effect class, supported profile, or
+    application tag before tools are rendered to the model.
+- Separate two user-facing concepts clearly in API and docs:
+  - tool-set selection controls the model-visible and executable tool surface;
+  - per-run `ToolPolicyInput.allowed_tools` / `denied_tools` remains a safety
+    guard that can deny execution even when a tool exists in the registry.
+- Add a high-level runner/agent construction helper so application code does not
+  have to manually keep `tool_registry` and `GovernedToolExecutor` in sync, for
+  example `create_agent(..., tools=ToolSet.only("web_fetch"))` or equivalent.
+- Add an ergonomic custom-tool registration path:
+  - decorator or builder for typed Python functions;
+  - automatic JSON-schema extraction where practical;
+  - explicit overrides for name, description, risk, side-effect class, approval
+    mode, timeouts, output budgets, and supported profiles;
+  - validation that generated model-facing docs include argument descriptions and
+    failure remediation hints.
+- Add external-user examples that demonstrate:
+  - agent with no tools;
+  - agent with exactly one custom tool;
+  - agent with one built-in group plus one custom tool;
+  - code-agent profile with only Python-identifier-compatible tools;
+  - MCP-imported tools narrowed to an explicit allowlisted subset.
+- Acceptance criteria for this backlog:
+  - users can build an agent with an arbitrary selected tool surface without
+    constructing `GovernedToolExecutor` directly;
+  - disallowed tools are absent from prompt/tool docs, not only denied at call
+    time;
+  - existing low-level `ToolRegistry` and policy APIs remain available for
+    advanced embedders;
+  - tests cover registry filtering, prompt-surface filtering, executor wiring,
+    and policy denial as separate behaviors.
+
 Exit criteria:
 
 - high-risk tools can be blocked or interrupted;
@@ -268,6 +306,8 @@ Exit criteria:
 - profile-incompatible tool names/prompts fail validation;
 - guardrail decisions are traceable;
 - retry of side-effecting tools requires idempotency or explicit policy.
+- selected tool sets define both model-visible docs and executable handlers, while
+  run policy remains an additional execution-time guard.
 
 ## Phase 4: Human-In-The-Loop
 

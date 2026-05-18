@@ -14,13 +14,12 @@ from agent_driver.contracts.interrupts import ResumeCommand
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime import (
     FakeSingleStepRunner,
-    GovernedToolExecutor,
     InMemoryCheckpointStore,
     InMemoryEventLog,
     RunnerConfig,
-    ToolRegistry,
     wrap_governed_executor,
 )
+from agent_driver.tools import GovernedToolExecutor, ToolRegistry
 from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
 from tests.runtime.conftest import danger_tool_manifest, planned_danger_tool_policy
 

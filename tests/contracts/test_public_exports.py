@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent_driver import contracts, runtime
+from agent_driver import contracts, runtime, tools
 
 
 def test_contracts_public_exports_are_stable() -> None:
@@ -20,7 +20,7 @@ def test_contracts_public_exports_are_stable() -> None:
 
 
 def test_runtime_public_exports_remain_runtime_focused() -> None:
-    """Runtime facade should expose core runner/store/governance bridge symbols."""
+    """Runtime facade should expose runner/store symbols only."""
     required = {
         "SingleAgentRunner",
         "RunnerConfig",
@@ -30,7 +30,14 @@ def test_runtime_public_exports_remain_runtime_focused() -> None:
         "RuntimeStoreFactoryConfig",
         "create_runtime_store_bundle",
         "wrap_governed_executor",
-        "ToolRegistry",
-        "GovernedToolExecutor",
     }
-    assert required.issubset(set(runtime.__all__))
+    forbidden = {"ToolRegistry", "GovernedToolExecutor", "SubagentGroupSpec"}
+    exports = set(runtime.__all__)
+    assert required.issubset(exports)
+    assert forbidden.isdisjoint(exports)
+
+
+def test_tools_public_exports_cover_governance_surface() -> None:
+    """Tools package should own registry and governed executor exports."""
+    required = {"ToolRegistry", "GovernedToolExecutor", "register_planning_tool"}
+    assert required.issubset(set(tools.__all__))

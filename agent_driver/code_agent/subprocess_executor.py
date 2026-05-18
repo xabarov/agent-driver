@@ -1,7 +1,5 @@
 """Subprocess-backed CodeActionExecutor with hard timeout enforcement."""
 
-# pylint: disable=exec-used
-
 from __future__ import annotations
 
 import contextlib
@@ -19,17 +17,17 @@ from agent_driver.code_agent.contracts import (
     CodeAgentLimits,
     CodeAgentObservation,
 )
-from agent_driver.code_agent.executor import (
-    _SAFE_BUILTINS,
+from agent_driver.code_agent.execution_common import (
+    SAFE_BUILTINS,
     CodeExecutionError,
-    FakeRestrictedCodeExecutor,
+    CodeExecutionRequest,
+    validate_or_raise,
 )
-from agent_driver.code_agent.policy import validate_code_action
-from agent_driver.code_agent.serialization import serialize_payload
+from agent_driver.code_agent.executor import FakeRestrictedCodeExecutor
 from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 
 
-def _worker(payload: dict[str, Any], queue: Any) -> None:  # pylint: disable=too-many-locals
+def _worker(payload: dict[str, Any], queue: Any) -> None:
     """Run restricted python action in child process and push result payload."""
     action_code = str(payload.get("code", ""))
     max_output_chars = int(payload.get("max_output_chars", 400))
@@ -41,18 +39,17 @@ def _worker(payload: dict[str, Any], queue: Any) -> None:  # pylint: disable=too
         return text
 
     locals_env: dict[str, object] = {"final_answer": _final_answer}
-    globals_env: dict[str, object] = {"__builtins__": _SAFE_BUILTINS}
+    globals_env: dict[str, object] = {"__builtins__": SAFE_BUILTINS}
     stdout = io.StringIO()
     stderr = io.StringIO()
     started = monotonic()
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             exec(action_code, globals_env, locals_env)  # noqa: S102
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except Exception as exc:
         queue.put({"error": str(exc)})
         return
     elapsed_ms = int((monotonic() - started) * 1000)
-
     observations: list[dict[str, Any]] = []
     for source, raw_text in (("stdout", stdout.getvalue()), ("stderr", stderr.getvalue())):
         if not raw_text:
@@ -86,7 +83,7 @@ class SubprocessRestrictedCodeExecutor:
         default_factory=FakeRestrictedCodeExecutor
     )
 
-    async def execute(  # pylint: disable=too-many-arguments,too-many-locals
+    async def execute(
         self,
         *,
         action: CodeAgentAction,
@@ -96,13 +93,13 @@ class SubprocessRestrictedCodeExecutor:
         callable_tools: dict[str, Callable[..., object]],
     ) -> CodeAgentExecutionResult:
         """Execute code action with policy checks and process-level timeout."""
-        violations = validate_code_action(
-            code=action.code,
+        request = CodeExecutionRequest(
+            action=action,
             limits=limits,
             authorized_imports=authorized_imports,
+            serialization_policy=serialization_policy,
         )
-        if violations:
-            raise CodeExecutionError("; ".join(item.message for item in violations))
+        validate_or_raise(request)
         if callable_tools:
             fallback = await self._fallback.execute(
                 action=action,
@@ -146,6 +143,8 @@ class SubprocessRestrictedCodeExecutor:
         error = payload.get("error")
         if isinstance(error, str) and error:
             raise CodeExecutionError(error)
+
+        from agent_driver.code_agent.serialization import serialize_payload
 
         serialized_meta = serialize_payload(
             {"planned_tool_calls": []}, serialization_policy

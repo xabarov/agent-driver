@@ -9,7 +9,6 @@ from agent_driver.context import (
     COMPACTION_DECISION_KEY,
     COMPACTION_FAILURES_KEY,
     COMPACTION_RESULT_KEY,
-    build_memory_projection,
     planning_state_event,
     planning_step_event,
     split_preview_and_artifact,
@@ -26,15 +25,22 @@ from agent_driver.contracts.enums import RunStatus
 from agent_driver.contracts.interrupts import ApprovalPayload, InterruptRequest
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunOutput
-from agent_driver.contracts.tools import ToolTrace
+from agent_driver.runtime.single_agent.output_builders import (
+    build_memory_audit,
+    build_memory_projection_for_context,
+    collect_tool_trace,
+    dict_metadata,
+    list_dict_metadata,
+)
 from agent_driver.runtime.single_agent.types import (
     RunContext,
     RunnerDeps,
     TerminalResult,
 )
+from agent_driver.subagents import summarize_child_runs_for_parent
 
 
-class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
+class SingleAgentOutputMixin:
     """Mixin: normalized run output envelopes."""
 
     _deps: RunnerDeps
@@ -142,7 +148,7 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
             normalized_results.append(payload)
         return normalized_results, artifact_refs
 
-    def _build_output(  # pylint: disable=too-many-locals
+    def _build_output(
         self,
         context: RunContext,
         terminal: TerminalResult,
@@ -150,65 +156,22 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
         answer = context.llm_response.message.content if context.llm_response else None
         usage = context.llm_response.usage if context.llm_response else None
         messages = [ChatMessage(role="assistant", content=answer)] if answer else []
-        tool_trace_payload = context.metadata.get("tool_trace", [])
-        tool_trace = []
-        if isinstance(tool_trace_payload, list):
-            tool_trace = [
-                ToolTrace.model_validate(item)
-                for item in tool_trace_payload
-                if isinstance(item, dict)
-            ]
-        tool_results_payload = context.metadata.get("tool_results", [])
-        if not isinstance(tool_results_payload, list):
-            tool_results_payload = []
+        tool_trace = collect_tool_trace(context)
         normalized_tool_results, artifact_refs = self._metadata_with_artifact_refs(
             run_id=context.run_id,
-            tool_results=[
-                item for item in tool_results_payload if isinstance(item, dict)
-            ],
+            tool_results=list_dict_metadata(context, "tool_results"),
         )
         digest_refs = self._persist_session_artifacts(
             context=context, answer=answer, artifact_refs=artifact_refs
         )
         self._emit_planning_events(context)
-        observations_payload = context.metadata.get("observations", [])
-        observations = (
-            [item for item in observations_payload if isinstance(item, dict)]
-            if isinstance(observations_payload, list)
-            else []
-        )
-        trim_metadata = context.metadata.get("trim_metadata", {})
-        projection = build_memory_projection(
-            run_id=context.run_id,
-            attempt_id=context.attempt_id,
+        projection = build_memory_projection_for_context(
+            context,
             answer=answer,
-            observations=observations,
-            planning_state=(
-                context.metadata.get("planning_state")
-                if isinstance(context.metadata.get("planning_state"), dict)
-                else None
-            ),
-            trim_metadata=trim_metadata if isinstance(trim_metadata, dict) else {},
-            artifact_refs=[item for item in artifact_refs if isinstance(item, dict)],
-            digest_refs=[item for item in digest_refs if isinstance(item, dict)],
-            prompt_render=(
-                context.metadata.get("prompt_render")
-                if isinstance(context.metadata.get("prompt_render"), dict)
-                else None
-            ),
-            tool_results=normalized_tool_results,
+            normalized_tool_results=normalized_tool_results,
+            artifact_refs=artifact_refs,
+            digest_refs=digest_refs,
         )
-        memory_audit = {
-            "trim_audit": context.metadata.get("trim_audit", []),
-            "microcompaction_audit": context.metadata.get("microcompaction_audit", []),
-            "token_pressure": context.metadata.get("token_pressure", {}),
-            "compaction_decision": context.metadata.get(COMPACTION_DECISION_KEY),
-            "compaction_audit": context.metadata.get(COMPACTION_AUDIT_KEY),
-            "compaction_result": context.metadata.get(COMPACTION_RESULT_KEY),
-            "compaction_failures": context.metadata.get(COMPACTION_FAILURES_KEY, []),
-            "retained_digest_ids": context.metadata.get("retained_digest_ids", []),
-            "retained_artifact_ids": context.metadata.get("retained_artifact_ids", []),
-        }
         return AgentRunOutput(
             run_id=context.run_id,
             attempt_id=context.attempt_id,
@@ -222,10 +185,85 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
             interrupt=context.metadata.get("interrupt_payload"),
             terminal_reason=terminal.reason,
             memory_projection=projection,
-            memory_audit=memory_audit,
+            memory_audit=build_memory_audit(context),
+            metadata=self._terminal_metadata(
+                context,
+                normalized_tool_results=normalized_tool_results,
+                artifact_refs=artifact_refs,
+                digest_refs=digest_refs,
+            ),
+        )
+
+    def _terminal_metadata(
+        self,
+        context: RunContext,
+        *,
+        normalized_tool_results: list[dict[str, Any]],
+        artifact_refs: list[dict[str, Any]],
+        digest_refs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        subagent_runs_raw = list_dict_metadata(context, "subagent_runs")
+        return {
+            "graph_id": self.graph_id,
+            "tool_results": normalized_tool_results,
+            "artifact_refs": self._normalize_context_artifacts(
+                context.run_id, artifact_refs
+            ),
+            "digest_refs": digest_refs,
+            "observations": context.metadata.get("observations", []),
+            "trim_audit": context.metadata.get("trim_audit", []),
+            "trim_metadata": context.metadata.get("trim_metadata", {}),
+            "microcompaction_audit": context.metadata.get("microcompaction_audit", []),
+            "microcompaction": context.metadata.get("microcompaction", {}),
+            "token_pressure": context.metadata.get("token_pressure", {}),
+            "subagent_groups": list_dict_metadata(context, "subagent_groups"),
+            "subagent_runs": summarize_child_runs_for_parent(subagent_runs_raw),
+            COMPACTION_DECISION_KEY: context.metadata.get(COMPACTION_DECISION_KEY),
+            COMPACTION_AUDIT_KEY: context.metadata.get(COMPACTION_AUDIT_KEY),
+            COMPACTION_RESULT_KEY: context.metadata.get(COMPACTION_RESULT_KEY),
+            COMPACTION_FAILURES_KEY: context.metadata.get(COMPACTION_FAILURES_KEY, []),
+            "prompt_render": context.metadata.get("prompt_render"),
+            "approval_payload": self._approval_payload_from_context(context),
+        }
+
+    def _approval_payload_from_context(
+        self, context: RunContext
+    ) -> dict[str, Any] | None:
+        interrupt_payload = context.metadata.get("interrupt_payload")
+        if not isinstance(interrupt_payload, dict):
+            return None
+        return ApprovalPayload.from_interrupt(
+            InterruptRequest.model_validate(interrupt_payload)
+        ).model_dump(mode="json")
+
+    def _build_paused_output(self, context: RunContext, result: Any) -> AgentRunOutput:
+        """Build paused output envelope for pending interrupt."""
+        self._emit_planning_events(context)
+        artifact_refs = list_dict_metadata(context, "artifact_refs")
+        digest_refs = list_dict_metadata(context, "digest_refs")
+        tool_results = list_dict_metadata(context, "tool_results")
+        projection = build_memory_projection_for_context(
+            context,
+            answer=None,
+            normalized_tool_results=tool_results,
+            artifact_refs=artifact_refs,
+            digest_refs=digest_refs,
+        )
+        return AgentRunOutput(
+            run_id=context.run_id,
+            attempt_id=context.attempt_id,
+            thread_id=context.run_input.thread_id,
+            status=RunStatus.PAUSED,
+            events=self._deps.event_log.list_for_run(context.run_id),
+            tool_trace=result.traces,
+            interrupt=result.interrupt,
+            memory_projection=projection,
+            memory_audit=build_memory_audit(context),
+            subagent_groups=list_dict_metadata(context, "subagent_groups"),
+            subagent_runs=list_dict_metadata(context, "subagent_runs"),
             metadata={
                 "graph_id": self.graph_id,
-                "tool_results": normalized_tool_results,
+                "tool_results": tool_results,
                 "artifact_refs": self._normalize_context_artifacts(
                     context.run_id, artifact_refs
                 ),
@@ -238,99 +276,8 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
                 ),
                 "microcompaction": context.metadata.get("microcompaction", {}),
                 "token_pressure": context.metadata.get("token_pressure", {}),
-                COMPACTION_DECISION_KEY: context.metadata.get(COMPACTION_DECISION_KEY),
-                COMPACTION_AUDIT_KEY: context.metadata.get(COMPACTION_AUDIT_KEY),
-                COMPACTION_RESULT_KEY: context.metadata.get(COMPACTION_RESULT_KEY),
-                COMPACTION_FAILURES_KEY: context.metadata.get(COMPACTION_FAILURES_KEY, []),
-                "prompt_render": context.metadata.get("prompt_render"),
-                "approval_payload": (
-                    ApprovalPayload.from_interrupt(
-                        InterruptRequest.model_validate(
-                            context.metadata["interrupt_payload"]
-                        )
-                    ).model_dump(mode="json")
-                    if isinstance(context.metadata.get("interrupt_payload"), dict)
-                    else None
-                ),
-            },
-        )
-
-    def _build_paused_output(self, context: RunContext, result: Any) -> AgentRunOutput:
-        """Build paused output envelope for pending interrupt."""
-        self._emit_planning_events(context)
-        artifact_refs = context.metadata.get("artifact_refs", [])
-        if not isinstance(artifact_refs, list):
-            artifact_refs = []
-        digest_refs = context.metadata.get("digest_refs", [])
-        if not isinstance(digest_refs, list):
-            digest_refs = []
-        observations_payload = context.metadata.get("observations", [])
-        observations = (
-            [item for item in observations_payload if isinstance(item, dict)]
-            if isinstance(observations_payload, list)
-            else []
-        )
-        trim_metadata = context.metadata.get("trim_metadata", {})
-        projection = build_memory_projection(
-            run_id=context.run_id,
-            attempt_id=context.attempt_id,
-            answer=None,
-            observations=observations,
-            planning_state=(
-                context.metadata.get("planning_state")
-                if isinstance(context.metadata.get("planning_state"), dict)
-                else None
-            ),
-            trim_metadata=trim_metadata if isinstance(trim_metadata, dict) else {},
-            artifact_refs=[item for item in artifact_refs if isinstance(item, dict)],
-            digest_refs=[item for item in digest_refs if isinstance(item, dict)],
-            prompt_render=(
-                context.metadata.get("prompt_render")
-                if isinstance(context.metadata.get("prompt_render"), dict)
-                else None
-            ),
-            tool_results=(
-                context.metadata.get("tool_results", [])
-                if isinstance(context.metadata.get("tool_results"), list)
-                else []
-            ),
-        )
-        return AgentRunOutput(
-            run_id=context.run_id,
-            attempt_id=context.attempt_id,
-            thread_id=context.run_input.thread_id,
-            status=RunStatus.PAUSED,
-            events=self._deps.event_log.list_for_run(context.run_id),
-            tool_trace=result.traces,
-            interrupt=result.interrupt,
-            memory_projection=projection,
-            memory_audit={
-                "trim_audit": context.metadata.get("trim_audit", []),
-                "microcompaction_audit": context.metadata.get(
-                    "microcompaction_audit", []
-                ),
-                "token_pressure": context.metadata.get("token_pressure", {}),
-                "compaction_decision": context.metadata.get(COMPACTION_DECISION_KEY),
-                "compaction_audit": context.metadata.get(COMPACTION_AUDIT_KEY),
-                "compaction_result": context.metadata.get(COMPACTION_RESULT_KEY),
-                "compaction_failures": context.metadata.get(COMPACTION_FAILURES_KEY, []),
-            },
-            metadata={
-                "graph_id": self.graph_id,
-                "tool_results": context.metadata.get("tool_results", []),
-                "artifact_refs": self._normalize_context_artifacts(
-                    context.run_id,
-                    [item for item in artifact_refs if isinstance(item, dict)],
-                ),
-                "digest_refs": [item for item in digest_refs if isinstance(item, dict)],
-                "observations": context.metadata.get("observations", []),
-                "trim_audit": context.metadata.get("trim_audit", []),
-                "trim_metadata": context.metadata.get("trim_metadata", {}),
-                "microcompaction_audit": context.metadata.get(
-                    "microcompaction_audit", []
-                ),
-                "microcompaction": context.metadata.get("microcompaction", {}),
-                "token_pressure": context.metadata.get("token_pressure", {}),
+                "subagent_groups": list_dict_metadata(context, "subagent_groups"),
+                "subagent_runs": list_dict_metadata(context, "subagent_runs"),
                 "prompt_render": context.metadata.get("prompt_render"),
                 "approval_payload": ApprovalPayload.from_interrupt(
                     result.interrupt

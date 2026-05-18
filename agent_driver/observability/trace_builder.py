@@ -56,5 +56,11 @@ def build_trace_export(output: AgentRunOutput) -> TraceExport:
                 output.terminal_reason.value if output.terminal_reason else None
             ),
             "warning_count": len(output.warnings),
+            "subagent_group_count": len(output.subagent_groups),
+            "subagent_run_count": len(output.subagent_runs),
+            "subagent_group_ids": [item.group_id for item in output.subagent_groups[:20]],
+            "subagent_join_policies": [
+                item.join_policy.value for item in output.subagent_groups[:20]
+            ],
         },
     )

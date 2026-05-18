@@ -59,6 +59,8 @@ def test_render_views_have_expected_shape() -> None:
     cli = render_cli_replay(payload)
     assert full_view["status"] == "completed"
     assert succinct["event_count"] == 2
+    assert succinct["subagent_group_count"] == 0
+    assert succinct["subagent_run_count"] == 0
     assert "run_replay_1" in cli
     assert "memory_projection=succinct steps=1" in cli
     assert "tool_results_count=1" in cli
@@ -70,4 +72,6 @@ def test_support_bundle_contains_trace_and_redaction_metadata() -> None:
     bundle = build_support_bundle(payload)
     assert bundle["run"]["run_id"] == "run_replay_1"
     assert bundle["trace"]["run_id"] == "run_replay_1"
+    assert bundle["subagent_groups"] == []
+    assert bundle["subagent_runs"] == []
     assert bundle["redaction"]["safe_by_default"] is True

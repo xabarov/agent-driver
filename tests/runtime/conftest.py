@@ -14,7 +14,7 @@ from agent_driver.contracts import (
 )
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmRequest
-from agent_driver.runtime import GuardrailPipeline, GuardrailResult
+from agent_driver.tools import GuardrailPipeline, GuardrailResult
 
 
 def danger_tool_manifest() -> ToolManifest:

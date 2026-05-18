@@ -7,7 +7,7 @@ import json
 import pytest
 
 from agent_driver.tools.registry import ToolRegistry
-from agent_driver.tools import register_builtin_tools
+from agent_driver.tools import register_builtin_tools, register_planning_tool
 from agent_driver.tools.builtin.filesystem import register_filesystem_tools
 
 
@@ -16,6 +16,7 @@ async def test_register_builtin_tools_contains_first_wave_names() -> None:
     """Default built-ins should include filesystem and web first-wave tools."""
     registry = ToolRegistry()
     register_builtin_tools(registry)
+    register_planning_tool(registry)
     assert registry.get("read_file") is not None
     assert registry.get("glob_search") is not None
     assert registry.get("grep_search") is not None
@@ -25,6 +26,16 @@ async def test_register_builtin_tools_contains_first_wave_names() -> None:
     assert registry.get("web_fetch") is not None
     assert registry.get("web_search") is not None
     assert registry.get("bash") is not None
+    assert registry.get("task_create") is not None
+    assert registry.get("task_get") is not None
+    assert registry.get("task_list") is not None
+    assert registry.get("task_update") is not None
+    assert registry.get("task_output") is not None
+    assert registry.get("mcp_tool") is not None
+    assert registry.get("mcp_list_resources") is not None
+    assert registry.get("mcp_read_resource") is not None
+    assert registry.get("todo_write") is not None
+    assert registry.get("ask_user_question") is not None
 
 
 @pytest.mark.asyncio

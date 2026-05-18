@@ -68,6 +68,8 @@ async def test_web_fetch_returns_text_payload(monkeypatch) -> None:
     assert out["status_code"] == 200
     assert out["content"] == "hello web tool"
     assert out["truncated"] is False
+    assert out["extract_mode"] == "raw"
+    assert out["bytes_total"] == out["bytes_loaded"]
 
 
 @pytest.mark.asyncio
@@ -124,6 +126,17 @@ async def test_web_fetch_rejects_non_http_scheme() -> None:
 
 
 @pytest.mark.asyncio
+async def test_web_fetch_rejects_private_host_by_default() -> None:
+    """web_fetch should reject localhost/private host without explicit override."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    with pytest.raises(ValueError, match="private/localhost"):
+        await tool.handler({"url": "http://127.0.0.1:8080/health"})
+
+
+@pytest.mark.asyncio
 async def test_web_fetch_truncates_when_response_exceeds_max_bytes(monkeypatch) -> None:
     """web_fetch should mark truncated when response is byte-capped."""
     response = _DummyResponse(
@@ -145,6 +158,57 @@ async def test_web_fetch_truncates_when_response_exceeds_max_bytes(monkeypatch) 
     out = await tool.handler({"url": "https://example.com", "max_chars": 64})
     assert len(out["content"]) == 64
     assert out["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_extract_mode_text_for_html(monkeypatch) -> None:
+    """web_fetch should strip tags in text extraction mode."""
+    html = "<html><body><h1>Title</h1><p>Paragraph</p></body></html>"
+    response = _DummyResponse(
+        url="https://example.com",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    out = await tool.handler(
+        {"url": "https://example.com", "extract_mode": "text", "max_chars": 200}
+    )
+    assert "Title Paragraph" == out["content"]
+    assert out["extract_mode"] == "text"
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_wraps_http_errors(monkeypatch) -> None:
+    """web_fetch should wrap HTTP exceptions with stable error prefix."""
+    response = _DummyResponse(
+        url="https://example.com/fail",
+        status_code=500,
+        content=b"fail",
+        headers={"content-type": "text/plain"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    with pytest.raises(ValueError, match="web_fetch failed"):
+        await tool.handler({"url": "https://example.com/fail"})
 
 
 @pytest.mark.asyncio

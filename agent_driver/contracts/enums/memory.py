@@ -12,6 +12,7 @@ class MemoryStepKind(StrEnum):
     SYSTEM_PROMPT = "system_prompt"
     ACTION = "action"
     PLANNING = "planning"
+    SUBAGENT = "subagent"
     FINAL_ANSWER = "final_answer"
 
 

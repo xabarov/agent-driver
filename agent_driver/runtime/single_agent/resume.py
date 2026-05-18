@@ -192,7 +192,16 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                     "run_id": run_id,
                     "attempt_id": f"attempt_{uuid4().hex[:8]}",
                 },
-                metadata={"next_step": "run_started", "step_count": 0, "tool_calls": 0},
+                metadata={
+                    "next_step": "run_started",
+                    "step_count": 0,
+                    "tool_calls": 0,
+                    **(
+                        run_input.app_metadata
+                        if isinstance(run_input.app_metadata, dict)
+                        else {}
+                    ),
+                },
             )
         metadata = dict(checkpoint_row.state.metadata)
         context = RunContext(

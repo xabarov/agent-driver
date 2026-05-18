@@ -29,6 +29,7 @@ from agent_driver.runtime.single_agent.types import (
 from agent_driver.runtime.single_agent.types import RunnerDeps
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import fake_noop_tool_executor
+from agent_driver.subagents.store import InMemorySubagentStore
 from agent_driver.tools import register_builtin_tools, register_planning_tool
 from agent_driver.tools.registry import ToolRegistry
 
@@ -73,10 +74,21 @@ class SingleAgentRunner(
             session_store=self._config.session_store or InMemorySessionStore(),
             artifact_store=self._config.artifact_store or InMemoryArtifactStore(),
             context_store=self._config.context_store or InMemoryContextStore(),
+            subagent_store=self._config.subagent_store or InMemorySubagentStore(),
             code_executor=self._config.code_executor or FakeRestrictedCodeExecutor(),
             tool_registry=self._config.tool_registry
             or self._build_default_tool_registry(),
         )
+
+    @property
+    def config(self) -> RunnerConfig:
+        """Runner configuration (read-only for stage adapters)."""
+        return self._config
+
+    @property
+    def deps(self) -> RunnerDeps:
+        """Runner dependencies (read-only for stage adapters)."""
+        return self._deps
 
     async def run(self, run_input: AgentRunInput) -> AgentRunOutput:
         """Execute deterministic step loop with per-step checkpointing."""

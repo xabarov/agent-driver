@@ -1,4 +1,4 @@
-"""Runtime skeleton exports for phase 2 preparation."""
+"""Runtime skeleton exports (runtime-only public surface)."""
 
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
 from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
@@ -20,21 +20,6 @@ from agent_driver.runtime.tools import (
     ToolExecutor,
     fake_noop_tool_executor,
     wrap_governed_executor,
-)
-from agent_driver.tools import (
-    GovernedToolExecutor,
-    GuardrailPipeline,
-    GuardrailResult,
-    PromptTemplateRegistry,
-    RegisteredTool,
-    ToolRegistry,
-    apply_planning_state_tool_update,
-    evaluate_tool_policy,
-    planning_state_update_tool,
-    register_planning_tool,
-    render_tool_doc,
-    render_tool_docs,
-    rendered_tool_docs_hash,
 )
 
 __all__ = [
@@ -58,17 +43,4 @@ __all__ = [
     "ToolExecutionResult",
     "fake_noop_tool_executor",
     "wrap_governed_executor",
-    "ToolRegistry",
-    "RegisteredTool",
-    "GuardrailPipeline",
-    "GuardrailResult",
-    "GovernedToolExecutor",
-    "PromptTemplateRegistry",
-    "apply_planning_state_tool_update",
-    "planning_state_update_tool",
-    "register_planning_tool",
-    "evaluate_tool_policy",
-    "render_tool_doc",
-    "render_tool_docs",
-    "rendered_tool_docs_hash",
 ]

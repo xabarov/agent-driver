@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any
@@ -123,6 +124,7 @@ class PostgresRuntimeStore:
         )
         state_with_checkpoint = state.model_copy(update={"checkpoint": checkpoint})
         payload = state_with_checkpoint.model_dump(mode="json")
+        payload_json = json.dumps(payload, ensure_ascii=False)
         with connect(self._config.dsn, autocommit=False) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -130,7 +132,7 @@ class PostgresRuntimeStore:
                     (
                         checkpoint.checkpoint_id,
                         checkpoint.run_id,
-                        payload,
+                        payload_json,
                     ),
                 )
             conn.commit()
@@ -215,11 +217,12 @@ class PostgresRuntimeStore:
         """Persist one runtime event row."""
         connect, _ = _pg_dependencies()
         payload = event.model_dump(mode="json")
+        payload_json = json.dumps(payload, ensure_ascii=False)
         with connect(self._config.dsn, autocommit=False) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     upsert_event_sql(events_table=self._events_table),
-                    (event.event_id, event.run_id, event.seq, payload),
+                    (event.event_id, event.run_id, event.seq, payload_json),
                 )
             conn.commit()
 

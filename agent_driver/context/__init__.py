@@ -39,7 +39,7 @@ from agent_driver.context.sessions import (
     SessionStore,
     SqliteSessionStore,
 )
-from agent_driver.context.token_pressure import estimate_token_pressure
+from agent_driver.context.token_pressure import TokenPressureInput, estimate_token_pressure
 from agent_driver.context.trimming import trim_context
 
 __all__ = [
@@ -74,6 +74,7 @@ __all__ = [
     "build_memory_projection",
     "build_observation_memory",
     "microcompact_observations",
+    "TokenPressureInput",
     "estimate_token_pressure",
     "trim_context",
 ]

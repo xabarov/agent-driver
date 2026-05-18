@@ -19,8 +19,8 @@ from agent_driver.runtime import (
     InMemoryCheckpointStore,
     InMemoryEventLog,
     RunnerConfig,
-    ToolRegistry,
 )
+from agent_driver.tools.registry import ToolRegistry
 
 
 @pytest.mark.asyncio

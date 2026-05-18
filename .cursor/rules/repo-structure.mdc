@@ -45,3 +45,5 @@ Exception policy at this stage: none. Compatibility layers begin only after road
 | Sessions, artifacts, trimming (runtime) | `agent_driver.context` |
 | Future context contracts | `agent_driver.contracts.context` |
 | Subagent orchestration runtime | `agent_driver.subagents` |
+
+Refactor backlog and “no pylint cheating” rules: [`docs/refactor/README.md`](../../docs/refactor/README.md).

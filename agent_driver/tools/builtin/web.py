@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from html import unescape
+import ipaddress
 import re
 from typing import Any
 from urllib.parse import quote_plus
@@ -26,6 +27,7 @@ _DEFAULT_MAX_BYTES = 150_000
 _DEFAULT_MAX_RESULTS = 5
 _DEFAULT_PREVIEW_CHARS = 1_500
 _DEFAULT_USER_AGENT = "agent-driver/0.1"
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _TEXT_CONTENT_TYPES = (
     "text/",
     "application/json",
@@ -45,6 +47,8 @@ class _HttpPayload:
     status_code: int
     content_type: str
     text: str
+    bytes_total: int
+    bytes_loaded: int
 
 
 def register_web_tools(registry: ToolRegistry) -> None:
@@ -86,6 +90,15 @@ def _web_fetch_manifest() -> ToolManifest:
                     "minimum": 64,
                     "maximum": 50_000,
                     "description": "Maximum returned content chars",
+                },
+                "extract_mode": {
+                    "type": "string",
+                    "enum": ["raw", "text", "markdown"],
+                    "description": "Response extraction mode",
+                },
+                "allow_private_host": {
+                    "type": "boolean",
+                    "description": "Allow localhost/private host targets",
                 },
             },
             "required": ["url"],
@@ -139,21 +152,33 @@ def _web_search_manifest() -> ToolManifest:
 
 
 async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
-    url = _validate_http_url(args.get("url"))
+    url = _validate_http_url(
+        args.get("url"),
+        allow_private_host=bool(args.get("allow_private_host", False)),
+    )
     timeout_seconds = _as_float(
         args.get("timeout_seconds"), default=_DEFAULT_TIMEOUT_SECONDS, minimum=0.1
     )
     max_bytes = _as_int(args.get("max_bytes"), default=_DEFAULT_MAX_BYTES, minimum=256)
     max_chars = _as_int(args.get("max_chars"), default=5_000, minimum=64)
-    payload = await _fetch_url_text(
-        url=url,
-        timeout_seconds=timeout_seconds,
-        max_bytes=max_bytes,
-    )
+    extract_mode = _extract_mode(args.get("extract_mode"))
+    try:
+        payload = await _fetch_url_text(
+            url=url,
+            timeout_seconds=timeout_seconds,
+            max_bytes=max_bytes,
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ValueError(f"web_fetch failed: {exc}") from exc
     if not _is_text_content_type(payload.content_type):
         raise ValueError(f"unsupported content type: {payload.content_type}")
-    content = payload.text[:max_chars]
-    truncated = len(payload.text) > max_chars
+    extracted = _extract_payload_text(
+        text=payload.text,
+        content_type=payload.content_type,
+        mode=extract_mode,
+    )
+    content = extracted[:max_chars]
+    truncated = len(extracted) > max_chars
     return {
         "summary": (
             f"fetched {payload.url} "
@@ -162,6 +187,10 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
         "url": payload.url,
         "status_code": payload.status_code,
         "content_type": payload.content_type,
+        "extract_mode": extract_mode,
+        "bytes_total": payload.bytes_total,
+        "bytes_loaded": payload.bytes_loaded,
+        "bytes_truncated": payload.bytes_loaded < payload.bytes_total,
         "content": content,
         "truncated": truncated,
     }
@@ -182,11 +211,14 @@ async def _web_search_handler(args: dict[str, Any]) -> dict[str, Any]:
         normalized = _normalize_mock_results(mock_rows, max_results=max_results)
         return _search_payload(query=query, source="mock", rows=normalized)
     search_url = f"https://duckduckgo.com/html/?q={quote_plus(query)}"
-    payload = await _fetch_url_text(
-        url=search_url,
-        timeout_seconds=timeout_seconds,
-        max_bytes=_DEFAULT_MAX_BYTES,
-    )
+    try:
+        payload = await _fetch_url_text(
+            url=search_url,
+            timeout_seconds=timeout_seconds,
+            max_bytes=_DEFAULT_MAX_BYTES,
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ValueError(f"web_search failed: {exc}") from exc
     rows = _parse_duckduckgo_html(payload.text, max_results=max_results)
     return _search_payload(query=query, source="duckduckgo_html", rows=rows)
 
@@ -245,18 +277,22 @@ async def _fetch_url_text(
         response = await client.get(url, headers=headers)
     response.raise_for_status()
     content = response.content
+    bytes_total = len(content)
     if len(content) > max_bytes:
         content = content[:max_bytes]
+    bytes_loaded = len(content)
     text = content.decode(response.encoding or "utf-8", errors="replace")
     return _HttpPayload(
         url=str(response.url),
         status_code=response.status_code,
         content_type=response.headers.get("content-type", "").lower(),
         text=text,
+        bytes_total=bytes_total,
+        bytes_loaded=bytes_loaded,
     )
 
 
-def _validate_http_url(raw: Any) -> str:
+def _validate_http_url(raw: Any, *, allow_private_host: bool = False) -> str:
     if not isinstance(raw, str) or not raw.strip():
         raise ValueError("url must be a non-empty string")
     value = raw.strip()
@@ -265,6 +301,17 @@ def _validate_http_url(raw: Any) -> str:
         raise ValueError("url scheme must be http or https")
     if not parsed.netloc:
         raise ValueError("url must include host")
+    if not allow_private_host:
+        host = (parsed.hostname or "").strip().lower()
+        if host in _LOCAL_HOSTS:
+            raise ValueError("private/localhost hosts are blocked by policy")
+        if host:
+            try:
+                addr = ipaddress.ip_address(host)
+            except ValueError:
+                addr = None
+            if addr is not None and (addr.is_private or addr.is_loopback):
+                raise ValueError("private/localhost hosts are blocked by policy")
     return value
 
 
@@ -278,6 +325,26 @@ def _is_text_content_type(content_type: str) -> bool:
 def _clean_html_text(raw: str) -> str:
     no_tags = _TAG_RE.sub(" ", raw)
     return " ".join(unescape(no_tags).split())
+
+
+def _extract_mode(raw: Any) -> str:
+    value = str(raw or "raw").strip().lower()
+    if value not in {"raw", "text", "markdown"}:
+        raise ValueError("extract_mode must be one of: raw, text, markdown")
+    return value
+
+
+def _extract_payload_text(*, text: str, content_type: str, mode: str) -> str:
+    if mode == "raw":
+        return text
+    is_html = "html" in content_type
+    if mode == "text":
+        return _clean_html_text(text) if is_html else text
+    if is_html:
+        normalized = _TAG_RE.sub("\n", text)
+        cleaned = "\n".join(line.strip() for line in normalized.splitlines() if line.strip())
+        return unescape(cleaned)
+    return text
 
 
 def _as_int(raw: Any, *, default: int, minimum: int) -> int:

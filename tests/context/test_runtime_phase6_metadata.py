@@ -9,13 +9,12 @@ from agent_driver.contracts.enums import ApprovalMode, SideEffectClass, ToolRisk
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime import (
     FakeSingleStepRunner,
-    GovernedToolExecutor,
     InMemoryCheckpointStore,
     InMemoryEventLog,
     RunnerConfig,
-    ToolRegistry,
     wrap_governed_executor,
 )
+from agent_driver.tools import GovernedToolExecutor, ToolRegistry
 
 
 @pytest.mark.asyncio

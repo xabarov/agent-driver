@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import re
 import shlex
 from dataclasses import dataclass
@@ -38,13 +39,16 @@ _READONLY_PREFIXES = {
     ".venv/bin/python",
     ".venv/bin/pytest",
 }
+_NETWORK_READ_PREFIXES = {"curl", "wget"}
 _READONLY_GIT_SUBCOMMANDS = {"status", "log", "show", "diff", "branch", "rev-parse"}
 _FORBIDDEN_PATTERN = re.compile(
     r"(^|[\s;&|])(rm|mv|cp|chmod|chown|sudo|dd|mkfs|mount|umount|shutdown|reboot)\b"
 )
 _REDIRECTION_PATTERN = re.compile(r"(>>|>|<|\|\s*tee\b)")
-_SPLIT_PATTERN = re.compile(r"\s*(?:&&|\|\|)\s*")
+_SPLIT_PATTERN = re.compile(r"\s*(?:&&|\|\||\|)\s*")
 _STATEMENT_SEPARATOR_PATTERN = re.compile(r"(^|[^\\]);")
+_NETWORK_TARGET_RE = re.compile(r"https?://([^/\s]+)")
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +63,7 @@ class _BashRequest:
 class _CommandPolicyResult:
     allowed: bool
     risk: str
+    category: str
     reasons: list[str]
 
 
@@ -129,7 +134,7 @@ async def _bash_handler(args: dict[str, Any]) -> dict[str, Any]:
     summary = (
         f"bash command completed (exit={execution['exit_code']}, "
         f"timed_out={execution['timed_out']}, "
-        f"risk={policy.risk})"
+        f"risk={policy.risk}, category={policy.category})"
     )
     return {
         "summary": summary,
@@ -138,6 +143,7 @@ async def _bash_handler(args: dict[str, Any]) -> dict[str, Any]:
         "exit_code": execution["exit_code"],
         "timed_out": execution["timed_out"],
         "risk_level": policy.risk,
+        "risk_category": policy.category,
         "policy_reasons": policy.reasons,
         "stdout": stdout_preview,
         "stderr": stderr_preview,
@@ -156,19 +162,42 @@ def _evaluate_command_policy(command: str) -> _CommandPolicyResult:
     segments = [segment.strip() for segment in _SPLIT_PATTERN.split(command) if segment]
     if not segments:
         reasons.append("command is empty after parsing")
+    categories: list[str] = []
     for segment in segments:
         first = _first_token(segment)
         if first is None:
             reasons.append("unable to parse command segment")
             continue
         if first not in _READONLY_PREFIXES:
+            if first in _NETWORK_READ_PREFIXES:
+                if _is_private_network_target(segment):
+                    reasons.append("network command target must not be localhost/private")
+                    categories.append("destructive")
+                else:
+                    categories.append("network_read")
+                continue
             reasons.append(f"command prefix '{first}' is not in read-only allowlist")
+            categories.append("unknown")
             continue
-        if first == "git" and not _is_readonly_git(segment):
-            reasons.append("git command must be one of status/log/show/diff/branch/rev-parse")
+        if first == "git":
+            if not _is_readonly_git(segment):
+                reasons.append(
+                    "git command must be one of status/log/show/diff/branch/rev-parse"
+                )
+                categories.append("write_like")
+                continue
+            categories.append("readonly")
+            continue
+        categories.append("readonly")
     allowed = not reasons
-    risk = "low" if allowed else "high"
-    return _CommandPolicyResult(allowed=allowed, risk=risk, reasons=reasons)
+    category = _resolve_risk_category(categories)
+    risk = _risk_from_category(category)
+    return _CommandPolicyResult(
+        allowed=allowed,
+        risk=risk,
+        category=category,
+        reasons=reasons,
+    )
 
 
 def _first_token(segment: str) -> str | None:
@@ -239,6 +268,44 @@ def _is_readonly_git(segment: str) -> bool:
     if len(parts) < 2:
         return False
     return parts[1] in _READONLY_GIT_SUBCOMMANDS
+
+
+def _is_private_network_target(segment: str) -> bool:
+    for match in _NETWORK_TARGET_RE.finditer(segment):
+        host = match.group(1).strip().lower()
+        if ":" in host:
+            host = host.split(":", maxsplit=1)[0]
+        if host in _LOCAL_HOSTS:
+            return True
+        try:
+            addr = ipaddress.ip_address(host)
+        except ValueError:
+            continue
+        if addr.is_private or addr.is_loopback:
+            return True
+    return False
+
+
+def _resolve_risk_category(categories: list[str]) -> str:
+    if not categories:
+        return "unknown"
+    if "destructive" in categories:
+        return "destructive"
+    if "write_like" in categories:
+        return "write_like"
+    if "unknown" in categories:
+        return "unknown"
+    if "network_read" in categories:
+        return "network_read"
+    return "readonly"
+
+
+def _risk_from_category(category: str) -> str:
+    if category == "readonly":
+        return "low"
+    if category in {"network_read", "write_like"}:
+        return "medium"
+    return "high"
 
 
 def _resolve_cwd(raw: Any) -> Path:

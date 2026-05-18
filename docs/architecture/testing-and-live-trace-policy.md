@@ -99,6 +99,14 @@ Minimum evidence expectation in PR/change notes:
 - For high-risk/medium-risk tools under approval thresholds, include live interrupt lanes
   that assert paused status, interrupt reason, approval payload tool identity, and
   denied trace row for the proposed call.
+- For HITL-enabled tools, include live resume lanes (`approve` and at least one
+  non-approve path like `reject` or `cancel`) and assert resulting terminal status
+  plus whether side effects were applied or blocked.
+- When `edit` is supported, include a live `ResumeAction.EDIT` lane asserting that
+  execution uses edited args (observable side effect reflects edited payload, not
+  the original proposed call).
+- When `cancel` is supported, include a live `ResumeAction.CANCEL` lane asserting
+  terminal status `cancelled` and no side effect application.
 
 ### Planning / TODO / state-update tools
 

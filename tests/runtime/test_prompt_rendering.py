@@ -10,13 +10,16 @@ from agent_driver.contracts import (
     PromptTemplate,
     ToolManifest,
 )
-from agent_driver.runtime import (
+from agent_driver.tools import (
     PromptTemplateRegistry,
     render_tool_doc,
     render_tool_docs,
     rendered_tool_docs_hash,
 )
-from agent_driver.runtime.single_agent.llm import build_single_agent_llm_request
+from agent_driver.runtime.single_agent.llm import (
+    LlmRequestBuildContext,
+    build_single_agent_llm_request,
+)
 
 
 def _sample_manifest() -> ToolManifest:
@@ -128,11 +131,11 @@ def test_build_single_agent_llm_request_renders_code_agent_prompt() -> None:
         agent_profile=AgentProfile.CODE_AGENT,
     )
     request, payload = build_single_agent_llm_request(
-        run_input=run_input,
-        clarification=None,
-        tool_docs="def calc(x: object) -> dict[str, object]",
-        authorized_imports=("math",),
-        observations=[],
+        LlmRequestBuildContext(
+            run_input=run_input,
+            tool_docs="def calc(x: object) -> dict[str, object]",
+            authorized_imports=("math",),
+        )
     )
     assert payload["prompt_render"] is not None
     assert "final_answer(...)" in request.messages[-1].content

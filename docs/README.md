@@ -19,6 +19,7 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - [Test plan and coverage matrix](architecture/test-plan-and-matrix.md)
 - [Package layout and shim policy](architecture/package-layout.md)
 - [Implementation roadmap](roadmap.md)
+- [Refactor backlog and quality rules](refactor/README.md) — structure status, pylint policy, package split priorities
 
 ## Development Commands
 
@@ -82,14 +83,12 @@ from agent_driver.contracts.enums import ApprovalMode, SideEffectClass, ToolRisk
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime import (
     FakeSingleStepRunner,
-    GovernedToolExecutor,
-    GuardrailPipeline,
     InMemoryCheckpointStore,
     InMemoryEventLog,
     RunnerConfig,
-    ToolRegistry,
     wrap_governed_executor,
 )
+from agent_driver.tools import GovernedToolExecutor, GuardrailPipeline, ToolRegistry
 
 registry = ToolRegistry()
 
