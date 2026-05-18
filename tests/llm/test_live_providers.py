@@ -8,8 +8,8 @@ import pytest
 
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmRequest
-from agent_driver.llm.ollama import OllamaProvider
-from agent_driver.llm.openai_compatible import OpenAICompatibleProvider
+from agent_driver.llm.providers_impl.ollama import OllamaProvider
+from agent_driver.llm.providers_impl.openai_compatible import OpenAICompatibleProvider
 from tests.live_env import load_local_dotenv_for_live_tests
 
 pytestmark = pytest.mark.live

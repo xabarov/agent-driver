@@ -16,7 +16,7 @@ from agent_driver.contracts import (
     ToolPolicyMode,
     ToolRisk,
 )
-from agent_driver.llm.fake import FakeProvider
+from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime import (
     GovernedToolExecutor,
     ToolRegistry,

@@ -4,6 +4,28 @@ This roadmap updates the initial MVP order after reviewing current agent-runtime
 
 Additional smolagents review: keep the durable-first order, but make agent profiles, prompt templates, model-facing tool contracts, planning steps, and CodeAgent-style execution explicit instead of implicit in one generic ReAct loop. See [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md).
 
+## Repository structure policy
+
+Before adding non-trivial backend code, place it in an existing **package** that matches the phase below. Do not grow new flat `agent_driver/foo_bar.py` files next to an established package for the same concern (for example, extend `agent_driver/runtime/storage/` rather than adding `runtime/storage_extra.py`). Keep package `__init__.py` files as **facades**; implement in named submodules.
+
+**Current project policy:** until this roadmap is completed end-to-end, do not introduce compatibility shims. Refactors must migrate imports/docs/tests to new paths in the same change and remove old module paths directly.
+
+Reserved top-level packages (create when implementation starts; avoid empty directories):
+
+| Phase | Focus | Primary package(s) |
+| ----- | ----- | ------------------ |
+| 2 / 2.5 | Durable runtime, checkpoint/event stores | `agent_driver.runtime`, `agent_driver.runtime.storage` |
+| 3 | Tool registry, policy, governed executor | `agent_driver.tools`, `agent_driver.tools.executor` |
+| 5 | Evaluation harness, deterministic runners | `agent_driver.evals` |
+| 5 | Trace export, telemetry sinks | `agent_driver.observability` |
+| 6 | Sessions, artifacts, planning, trimming (runtime) | `agent_driver.context` |
+| 6 | Future context/session/artifact **contracts** | `agent_driver.contracts.context` |
+| 7 | CodeAgent profile, sandbox | `agent_driver.code_agent` (create on phase start) |
+| 9 | Subagent **orchestration** (not contract enums/models) | `agent_driver.subagents` (create on phase start) |
+| 10 | MCP, HTTP/SSE, CLI | `agent_driver.adapters` (create on phase start) |
+
+Cursor: see `.cursor/rules/repo-structure.mdc` for agent guidance on layout.
+
 ## Phase 0: Repository Bootstrap
 
 Contract reference: [Phase 0 contracts spec](specs/phase-0-contracts.md).

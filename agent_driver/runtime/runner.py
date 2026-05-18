@@ -6,13 +6,13 @@ from agent_driver.contracts.enums import RuntimeEventType, TerminalReason
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.errors import RuntimeExecutionError
-from agent_driver.runtime.single_agent_journal import SingleAgentJournalMixin
-from agent_driver.runtime.single_agent_output import SingleAgentOutputMixin
-from agent_driver.runtime.single_agent_resume import SingleAgentResumeMixin
-from agent_driver.runtime.single_agent_steps import SingleAgentStepMixin
+from agent_driver.runtime.single_agent.journal import SingleAgentJournalMixin
+from agent_driver.runtime.single_agent.output import SingleAgentOutputMixin
+from agent_driver.runtime.single_agent.resume import SingleAgentResumeMixin
+from agent_driver.runtime.single_agent.steps import SingleAgentStepMixin
 
 # isort: off
-from agent_driver.runtime.single_agent_types import (
+from agent_driver.runtime.single_agent.types import (
     EventSpec,
     PendingInterruptState as _PendingInterruptState,
     RunContext as _RunContext,
@@ -20,7 +20,7 @@ from agent_driver.runtime.single_agent_types import (
 )  # noqa: F401
 
 # isort: on
-from agent_driver.runtime.single_agent_types import RunnerDeps
+from agent_driver.runtime.single_agent.types import RunnerDeps
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import fake_noop_tool_executor
 
@@ -31,7 +31,14 @@ class SingleAgentRunner(
     SingleAgentOutputMixin,
     SingleAgentJournalMixin,
 ):
-    """Durable single-agent runner with checkpointed step transitions."""
+    """Durable single-agent runner with checkpointed step transitions.
+
+    Mixin order matters:
+    - `SingleAgentStepMixin` drives the step loop and calls helper hooks.
+    - `SingleAgentResumeMixin` initializes context and applies resume actions.
+    - `SingleAgentOutputMixin` assembles terminal/paused `AgentRunOutput`.
+    - `SingleAgentJournalMixin` provides event emission and checkpoint persistence.
+    """
 
     def __init__(
         self,

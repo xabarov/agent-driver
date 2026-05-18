@@ -11,7 +11,7 @@ from agent_driver.contracts import (
     ToolPolicyMode,
 )
 from agent_driver.contracts.interrupts import ResumeCommand
-from agent_driver.llm.fake import FakeProvider
+from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime import (
     FakeSingleStepRunner,
     GovernedToolExecutor,

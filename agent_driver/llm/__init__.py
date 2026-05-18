@@ -9,10 +9,12 @@ from agent_driver.llm.contracts import (
     ProviderStatus,
     RouterStrategy,
 )
-from agent_driver.llm.fake import FakeProvider
-from agent_driver.llm.ollama import OllamaProvider
-from agent_driver.llm.openai_compatible import OpenAICompatibleProvider
 from agent_driver.llm.providers import LlmProvider
+from agent_driver.llm.providers_impl import (
+    FakeProvider,
+    OllamaProvider,
+    OpenAICompatibleProvider,
+)
 from agent_driver.llm.router import HealthAwareRouter
 
 __all__ = [

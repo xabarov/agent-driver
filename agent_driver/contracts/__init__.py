@@ -43,7 +43,7 @@ from agent_driver.contracts.interrupts import (
     InterruptRequest,
     ResumeCommand,
 )
-from agent_driver.contracts.memory import MemoryProjection, MemoryStep
+from agent_driver.contracts.memory import MemoryProjection
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.profiles import PromptRenderResult, PromptTemplate
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
@@ -78,7 +78,6 @@ __all__ = [
     "InterruptRequest",
     "ExecutorSerializationPolicy",
     "MemoryProjection",
-    "MemoryStep",
     "MergeProvenance",
     "PromptRenderResult",
     "PromptTemplate",

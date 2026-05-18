@@ -8,12 +8,12 @@ import pytest
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.base import HttpClientConfig
 from agent_driver.llm.contracts import LlmFinishReason, LlmRequest
-from agent_driver.llm.ollama import (
+from agent_driver.llm.providers_impl.ollama import (
     OllamaProvider,
     normalize_ollama_completion_payload,
     normalize_ollama_stream_chunk,
 )
-from agent_driver.llm.openai_compatible import (
+from agent_driver.llm.providers_impl.openai_compatible import (
     OpenAICompatibleProvider,
     normalize_openai_completion_payload,
     normalize_openai_stream_chunk,

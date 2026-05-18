@@ -27,7 +27,7 @@ The engine should define a storage-neutral checkpoint interface:
 
 Current implementation status (after Phase 2 first cut):
 
-- protocol exists in `agent_driver/runtime/storage.py` (`CheckpointStore`, `RuntimeEventLog`);
+- protocols exist in `agent_driver/runtime/storage/protocols.py` (`CheckpointStore`, `RuntimeEventLog`; import via `agent_driver.runtime.storage`);
 - in-memory backend exists for tests and fast local runs;
 - SQLite backend exists for local durability and replay tests;
 - runner persists checkpoint after successful steps and can resume from checkpoint id.

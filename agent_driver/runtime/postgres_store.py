@@ -15,6 +15,22 @@ from agent_driver.runtime.checkpoint_factory import (
 from agent_driver.runtime.checkpoints import _prepare_seed_and_previous
 from agent_driver.runtime.state import RuntimeState
 from agent_driver.runtime.storage import CheckpointRecord, StorageCapabilities
+from agent_driver.runtime.storage.payloads import (
+    checkpoint_record_from_payload,
+    runtime_event_from_payload,
+)
+from agent_driver.runtime.storage.postgres_sql import (
+    schema_ddl,
+    select_checkpoint_by_id_sql,
+    select_checkpoints_sql,
+    select_distinct_runs_sql,
+    select_events_sql,
+    select_latest_checkpoint_sql,
+    select_schema_version_sql,
+    upsert_checkpoint_sql,
+    upsert_event_sql,
+    upsert_schema_version_sql,
+)
 
 SCHEMA_VERSION = 1
 POSTGRES_CAPABILITIES = StorageCapabilities(
@@ -61,55 +77,29 @@ class PostgresRuntimeStore:
     def ensure_schema(self) -> None:
         """Create schema objects required for runtime store."""
         connect, _ = _pg_dependencies()
-        ddl = f"""
-        CREATE SCHEMA IF NOT EXISTS {self._config.schema};
-        CREATE TABLE IF NOT EXISTS {self._checkpoints_table} (
-            checkpoint_id TEXT PRIMARY KEY,
-            run_id TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            payload JSONB NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS runtime_checkpoints_run_created_idx
-            ON {self._checkpoints_table} (run_id, created_at DESC);
-
-        CREATE TABLE IF NOT EXISTS {self._events_table} (
-            event_id TEXT PRIMARY KEY,
-            run_id TEXT NOT NULL,
-            seq BIGINT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            payload JSONB NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS runtime_events_run_seq_idx
-            ON {self._events_table} (run_id, seq ASC);
-
-        CREATE TABLE IF NOT EXISTS {self._config.schema}.runtime_schema_meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        """
         with connect(self._config.dsn, autocommit=True) as conn:
             with conn.cursor() as cur:
-                cur.execute(ddl)
                 cur.execute(
-                    f"""
-                    INSERT INTO {self._config.schema}.runtime_schema_meta (key, value)
-                    VALUES (%s, %s)
-                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-                    """,
+                    schema_ddl(
+                        schema=self._config.schema,
+                        checkpoints_table=self._checkpoints_table,
+                        events_table=self._events_table,
+                    )
+                )
+                cur.execute(
+                    upsert_schema_version_sql(schema=self._config.schema),
                     ("runtime_schema_version", str(SCHEMA_VERSION)),
                 )
 
     def schema_version(self) -> int:
         """Return current postgres runtime schema version."""
         connect, _ = _pg_dependencies()
-        sql = f"""
-        SELECT value
-        FROM {self._config.schema}.runtime_schema_meta
-        WHERE key = %s
-        """
         with connect(self._config.dsn, autocommit=True) as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, ("runtime_schema_version",))
+                cur.execute(
+                    select_schema_version_sql(schema=self._config.schema),
+                    ("runtime_schema_version",),
+                )
                 row = cur.fetchone()
         if row is None:
             return 0
@@ -133,16 +123,10 @@ class PostgresRuntimeStore:
         )
         state_with_checkpoint = state.model_copy(update={"checkpoint": checkpoint})
         payload = state_with_checkpoint.model_dump(mode="json")
-        sql = f"""
-        INSERT INTO {self._checkpoints_table} (checkpoint_id, run_id, payload)
-        VALUES (%s, %s, %s::jsonb)
-        ON CONFLICT (checkpoint_id) DO UPDATE
-            SET payload = EXCLUDED.payload
-        """
         with connect(self._config.dsn, autocommit=False) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    sql,
+                    upsert_checkpoint_sql(checkpoints_table=self._checkpoints_table),
                     (
                         checkpoint.checkpoint_id,
                         checkpoint.run_id,
@@ -155,64 +139,48 @@ class PostgresRuntimeStore:
     def latest(self, run_id: str) -> CheckpointRecord | None:
         """Return latest checkpoint row for run."""
         connect, dict_row = _pg_dependencies()
-        sql = f"""
-        SELECT payload
-        FROM {self._checkpoints_table}
-        WHERE run_id = %s
-        ORDER BY created_at DESC
-        LIMIT 1
-        """
         with connect(self._config.dsn, autocommit=True, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (run_id,))
+                cur.execute(
+                    select_latest_checkpoint_sql(
+                        checkpoints_table=self._checkpoints_table
+                    ),
+                    (run_id,),
+                )
                 row = cur.fetchone()
         if row is None:
             return None
-        state = RuntimeState.model_validate(row["payload"])
-        if state.checkpoint is None:
-            return None
-        return CheckpointRecord(ref=state.checkpoint, state=state)
+        return checkpoint_record_from_payload(row["payload"])
 
     def load(self, checkpoint_id: str) -> CheckpointRecord | None:
         """Return checkpoint row by checkpoint identifier."""
         connect, dict_row = _pg_dependencies()
-        sql = f"""
-        SELECT payload
-        FROM {self._checkpoints_table}
-        WHERE checkpoint_id = %s
-        """
         with connect(self._config.dsn, autocommit=True, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (checkpoint_id,))
+                cur.execute(
+                    select_checkpoint_by_id_sql(
+                        checkpoints_table=self._checkpoints_table
+                    ),
+                    (checkpoint_id,),
+                )
                 row = cur.fetchone()
         if row is None:
             return None
-        state = RuntimeState.model_validate(row["payload"])
-        if state.checkpoint is None:
-            return None
-        return CheckpointRecord(ref=state.checkpoint, state=state)
+        return checkpoint_record_from_payload(row["payload"])
 
     def list_checkpoints(
         self, run_id: str, *, limit: int | None = None
     ) -> list[CheckpointRecord]:
         """Return checkpoints for run in newest-first order."""
         connect, dict_row = _pg_dependencies()
+        sql = select_checkpoints_sql(
+            checkpoints_table=self._checkpoints_table,
+            with_limit=limit is not None,
+        )
+        params: tuple[object, ...]
         if limit is None:
-            sql = f"""
-            SELECT payload
-            FROM {self._checkpoints_table}
-            WHERE run_id = %s
-            ORDER BY created_at DESC
-            """
             params = (run_id,)
         else:
-            sql = f"""
-            SELECT payload
-            FROM {self._checkpoints_table}
-            WHERE run_id = %s
-            ORDER BY created_at DESC
-            LIMIT %s
-            """
             params = (run_id, limit)
         with connect(self._config.dsn, autocommit=True, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
@@ -220,20 +188,20 @@ class PostgresRuntimeStore:
                 rows = cur.fetchall()
         result: list[CheckpointRecord] = []
         for row in rows:
-            state = RuntimeState.model_validate(row["payload"])
-            if state.checkpoint is None:
-                continue
-            result.append(CheckpointRecord(ref=state.checkpoint, state=state))
+            record = checkpoint_record_from_payload(row["payload"])
+            if record is not None:
+                result.append(record)
         return result
 
     def snapshot_debug(self) -> dict[str, list[CheckpointRecord]]:
         """Return grouped debug snapshot of checkpoint rows by run id."""
         connect, dict_row = _pg_dependencies()
-        sql = f"SELECT DISTINCT run_id FROM {self._checkpoints_table}"
         grouped: dict[str, list[CheckpointRecord]] = {}
         with connect(self._config.dsn, autocommit=True, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
-                cur.execute(sql)
+                cur.execute(
+                    select_distinct_runs_sql(checkpoints_table=self._checkpoints_table)
+                )
                 rows = cur.fetchall()
         for row in rows:
             grouped[row["run_id"]] = self.list_checkpoints(row["run_id"])
@@ -246,16 +214,13 @@ class PostgresRuntimeStore:
     def append(self, event: RuntimeEvent) -> None:
         """Persist one runtime event row."""
         connect, _ = _pg_dependencies()
-        sql = f"""
-        INSERT INTO {self._events_table} (event_id, run_id, seq, payload)
-        VALUES (%s, %s, %s, %s::jsonb)
-        ON CONFLICT (event_id) DO UPDATE
-            SET payload = EXCLUDED.payload
-        """
         payload = event.model_dump(mode="json")
         with connect(self._config.dsn, autocommit=False) as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (event.event_id, event.run_id, event.seq, payload))
+                cur.execute(
+                    upsert_event_sql(events_table=self._events_table),
+                    (event.event_id, event.run_id, event.seq, payload),
+                )
             conn.commit()
 
     def list_for_run(
@@ -263,24 +228,16 @@ class PostgresRuntimeStore:
     ) -> list[RuntimeEvent]:
         """Return run events ordered by seq, optionally after given sequence."""
         connect, dict_row = _pg_dependencies()
+        sql = select_events_sql(
+            events_table=self._events_table, with_after_seq=after_seq is not None
+        )
+        params: tuple[object, ...]
         if after_seq is None:
-            sql = f"""
-            SELECT payload
-            FROM {self._events_table}
-            WHERE run_id = %s
-            ORDER BY seq ASC
-            """
             params = (run_id,)
         else:
-            sql = f"""
-            SELECT payload
-            FROM {self._events_table}
-            WHERE run_id = %s AND seq > %s
-            ORDER BY seq ASC
-            """
             params = (run_id, after_seq)
         with connect(self._config.dsn, autocommit=True, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
-        return [RuntimeEvent.model_validate(row["payload"]) for row in rows]
+        return [runtime_event_from_payload(row["payload"]) for row in rows]

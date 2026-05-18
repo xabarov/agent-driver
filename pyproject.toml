@@ -36,6 +36,9 @@ markers = [
   "live: optional network/provider checks disabled by default",
 ]
 
+[tool.setuptools]
+script-files = ["scripts/check_package_layout.py"]
+
 [tool.black]
 line-length = 88
 target-version = ["py311"]

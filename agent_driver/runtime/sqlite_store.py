@@ -14,6 +14,11 @@ from agent_driver.runtime.checkpoint_factory import (
 from agent_driver.runtime.checkpoints import _prepare_seed_and_previous
 from agent_driver.runtime.state import RuntimeState
 from agent_driver.runtime.storage import CheckpointRecord, StorageCapabilities
+from agent_driver.runtime.storage.payloads import (
+    checkpoint_record_from_json,
+    checkpoint_record_from_state,
+    runtime_event_from_json,
+)
 
 SQLITE_CAPABILITIES = StorageCapabilities(
     transactional_writes=True,
@@ -90,8 +95,10 @@ class SqliteRuntimeStore:
             chain=CheckpointChain(previous_row=previous),
         )
         state = state.model_copy(update={"checkpoint": checkpoint})
-        row = CheckpointRecord(ref=checkpoint, state=state)
-        payload = row.state.model_dump_json()
+        record = checkpoint_record_from_state(state)
+        if record is None:
+            raise RuntimeError("Checkpoint payload missing checkpoint reference")
+        payload = record.state.model_dump_json()
         self._conn.execute(
             """
             INSERT OR REPLACE INTO checkpoints (checkpoint_id, run_id, payload)
@@ -116,10 +123,7 @@ class SqliteRuntimeStore:
         ).fetchone()
         if row is None:
             return None
-        state = RuntimeState.model_validate_json(row[0])
-        if state.checkpoint is None:
-            return None
-        return CheckpointRecord(ref=state.checkpoint, state=state)
+        return checkpoint_record_from_json(row[0])
 
     def load(self, checkpoint_id: str) -> CheckpointRecord | None:
         """Return checkpoint row by checkpoint identifier."""
@@ -129,10 +133,7 @@ class SqliteRuntimeStore:
         ).fetchone()
         if row is None:
             return None
-        state = RuntimeState.model_validate_json(row[0])
-        if state.checkpoint is None:
-            return None
-        return CheckpointRecord(ref=state.checkpoint, state=state)
+        return checkpoint_record_from_json(row[0])
 
     def list_checkpoints(
         self, run_id: str, *, limit: int | None = None
@@ -161,10 +162,9 @@ class SqliteRuntimeStore:
             ).fetchall()
         result: list[CheckpointRecord] = []
         for (payload,) in rows:
-            state = RuntimeState.model_validate_json(payload)
-            if state.checkpoint is None:
-                continue
-            result.append(CheckpointRecord(ref=state.checkpoint, state=state))
+            record = checkpoint_record_from_json(payload)
+            if record is not None:
+                result.append(record)
         return result
 
     def snapshot_debug(self) -> dict[str, list[CheckpointRecord]]:
@@ -172,12 +172,10 @@ class SqliteRuntimeStore:
         grouped: dict[str, list[CheckpointRecord]] = {}
         rows = self._conn.execute("SELECT payload FROM checkpoints").fetchall()
         for (payload,) in rows:
-            state = RuntimeState.model_validate_json(payload)
-            if state.checkpoint is None:
+            record = checkpoint_record_from_json(payload)
+            if record is None:
                 continue
-            grouped.setdefault(state.checkpoint.run_id, []).append(
-                CheckpointRecord(ref=state.checkpoint, state=state)
-            )
+            grouped.setdefault(record.ref.run_id, []).append(record)
         return grouped
 
     def capabilities(self) -> StorageCapabilities:
@@ -217,4 +215,4 @@ class SqliteRuntimeStore:
                 """,
                 (run_id, after_seq),
             ).fetchall()
-        return [RuntimeEvent.model_validate_json(payload) for (payload,) in rows]
+        return [runtime_event_from_json(payload) for (payload,) in rows]

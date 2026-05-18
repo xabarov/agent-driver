@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from agent_driver.contracts.interrupts import InterruptRequest
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolResultEnvelope, ToolTrace
 from agent_driver.llm.contracts import LlmResponse
-from agent_driver.tools.executor import GovernedToolExecutor
 
 
 @dataclass(slots=True)
@@ -24,6 +24,24 @@ class ToolExecutionResult:
 ToolExecutor = Callable[[AgentRunInput, LlmResponse], Awaitable[ToolExecutionResult]]
 
 
+class GovernedExecutionLike(Protocol):  # pylint: disable=too-few-public-methods
+    """Minimal result shape produced by governed tool execution."""
+
+    traces: list[ToolTrace]
+    envelopes: list[ToolResultEnvelope]
+    interrupt: InterruptRequest | None
+
+
+class GovernedExecutorLike(Protocol):  # pylint: disable=too-few-public-methods
+    """Minimal governed executor protocol expected by runtime adapter."""
+
+    async def execute(
+        self, run_input: AgentRunInput, llm_response: LlmResponse
+    ) -> GovernedExecutionLike:
+        """Execute governed policy/guardrail/tool pipeline for one step."""
+        raise NotImplementedError
+
+
 async def fake_noop_tool_executor(
     run_input: AgentRunInput, llm_response: LlmResponse
 ) -> ToolExecutionResult:
@@ -32,7 +50,7 @@ async def fake_noop_tool_executor(
     return ToolExecutionResult()
 
 
-def wrap_governed_executor(executor: GovernedToolExecutor) -> ToolExecutor:
+def wrap_governed_executor(executor: GovernedExecutorLike) -> ToolExecutor:
     """Adapt governed executor to runtime ToolExecutor protocol."""
 
     async def _run(

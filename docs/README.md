@@ -15,6 +15,7 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - [Context engineering, tools, and MCP integration](architecture/context-tools-and-mcp.md)
 - [Multi-agent orchestration and parallel subagents](architecture/multi-agent-orchestration.md)
 - [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md)
+- [Package layout and shim policy](architecture/package-layout.md)
 - [Implementation roadmap](roadmap.md)
 
 ## Development Commands
@@ -23,7 +24,7 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - `.venv/bin/black agent_driver tests`
 - `.venv/bin/pylint agent_driver tests`
 - `.venv/bin/python -m pytest tests`
-- `.venv/bin/python -m pytest tests/runtime/test_runtime_skeleton.py`
+- `.venv/bin/python -m pytest tests/runtime/test_runtime_runner_core.py tests/runtime/test_runtime_stores.py`
 
 ## Runtime Store Integration
 
@@ -42,6 +43,7 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 Example:
 
 ```python
+from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime import (
     RunnerConfig,
     SingleAgentRunner,
@@ -49,7 +51,6 @@ from agent_driver.runtime import (
     preflight_runtime_store,
     runtime_store_config_from_env,
 )
-from agent_driver.llm.fake import FakeProvider
 
 cfg = runtime_store_config_from_env()
 ready = preflight_runtime_store(cfg)
@@ -76,17 +77,17 @@ Example:
 ```python
 from agent_driver.contracts import AgentRunInput, ToolManifest
 from agent_driver.contracts.enums import ApprovalMode, SideEffectClass, ToolRisk
+from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime import (
     FakeSingleStepRunner,
-    GuardrailPipeline,
     GovernedToolExecutor,
+    GuardrailPipeline,
     InMemoryCheckpointStore,
     InMemoryEventLog,
     RunnerConfig,
     ToolRegistry,
     wrap_governed_executor,
 )
-from agent_driver.llm.fake import FakeProvider
 
 registry = ToolRegistry()
 
