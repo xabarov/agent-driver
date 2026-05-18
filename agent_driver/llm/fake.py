@@ -29,10 +29,12 @@ class FakeProvider(ProviderBase):
         configured: bool = True,
     ) -> None:
         super().__init__(
-            name=name,
-            kind=LlmProviderKind.FAKE,
-            configured=configured,
-            cost_per_1k_tokens=0.0,
+            config=ProviderBase.Config(
+                name=name,
+                kind=LlmProviderKind.FAKE,
+                configured=configured,
+                cost_per_1k_tokens=0.0,
+            )
         )
         self._response_text = response_text
         self.status.latency_ms = 1.0

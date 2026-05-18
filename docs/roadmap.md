@@ -31,6 +31,8 @@ Exit criteria:
 - Add health-aware router based on the `openclaude` idea.
 - Normalize sync and streaming chat responses.
 - Capture usage, provider metadata, and prompt-cache fields when available.
+- Harden streaming behavior and router fallback semantics for stream startup failures.
+- Add optional live/network adapter checks (skipped by default in local suites).
 
 Exit criteria:
 
@@ -38,6 +40,9 @@ Exit criteria:
 - provider health tests;
 - streaming normalization tests;
 - router fallback tests.
+- router supports both `complete` and `stream`.
+- streaming adapters have offline mocked tests validating progressive chunk emission.
+- default test suite stays offline; live checks require explicit opt-in marker/env.
 
 ## Phase 2: Durable Single-Agent Runtime
 

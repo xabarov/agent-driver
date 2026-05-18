@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.usage import UsageSummary
-from agent_driver.llm.base import ProviderBase, StreamRequest
+from agent_driver.llm.base import HttpClientConfig, ProviderBase, StreamRequest
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmProviderKind,
@@ -19,6 +20,37 @@ from agent_driver.llm.contracts import (
     LlmStreamEvent,
     ProviderStatus,
 )
+
+
+def _response_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    """Attach raw provider payload as metadata when available."""
+    return {"provider_usage_raw": payload} if payload else {}
+
+
+@dataclass(slots=True)
+class ProviderResponseData:
+    """Normalized payload for building provider-neutral responses."""
+
+    text: str
+    finish_reason: LlmFinishReason
+    usage: UsageSummary | None
+    provider_name: str
+    model_name: str
+    raw_payload: dict[str, Any]
+
+
+def _build_response(data: ProviderResponseData) -> LlmResponse:
+    """Build normalized LLM response from provider payload."""
+    return LlmResponse(
+        message=ChatMessage(role="assistant", content=data.text),
+        finish_reason=data.finish_reason,
+        usage=data.usage
+        or UsageSummary(model_provider=data.provider_name, model_name=data.model_name),
+        provider=data.provider_name,
+        model=data.model_name,
+        raw_response=data.raw_payload if isinstance(data.raw_payload, dict) else {},
+        metadata=_response_metadata(data.raw_payload),
+    )
 
 
 def _ollama_messages(messages: list[ChatMessage]) -> list[dict[str, Any]]:
@@ -41,13 +73,15 @@ def normalize_ollama_completion_payload(
         model_provider=provider_name,
         model_name=model_name,
     )
-    return LlmResponse(
-        message=ChatMessage(role="assistant", content=text),
-        finish_reason=LlmFinishReason.STOP,
-        usage=usage,
-        provider=provider_name,
-        model=model_name,
-        raw_response=payload if isinstance(payload, dict) else {},
+    return _build_response(
+        ProviderResponseData(
+            text=text,
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+            provider_name=provider_name,
+            model_name=model_name,
+            raw_payload=payload,
+        )
     )
 
 
@@ -69,40 +103,49 @@ def normalize_ollama_stream_chunk(
             model_provider=provider_name,
             model_name=fallback_model,
         )
+    metadata = {"provider_usage_raw": chunk} if chunk else {}
     return LlmStreamEvent(
         event="delta" if not done else "done",
         delta_text=delta,
         finish_reason=finish_reason,
         usage=usage,
+        metadata=metadata,
     )
 
 
 class OllamaProvider(ProviderBase):
     """Provider adapter for Ollama `/api/chat` endpoint."""
 
-    def __init__(
-        self,
-        *,
-        name: str = "ollama",
-        base_url: str = "http://localhost:11434",
-        model: str = "llama3:8b",
-        timeout_s: float = 60.0,
-    ) -> None:
+    @dataclass(slots=True)
+    class Config:
+        """Ollama provider connection and model settings."""
+
+        name: str = "ollama"
+        base_url: str = "http://localhost:11434"
+        model: str = "llama3:8b"
+        timeout_s: float = 60.0
+        http_client_config: HttpClientConfig | None = None
+
+    def __init__(self, *, config: "OllamaProvider.Config" | None = None) -> None:
+        cfg = config or OllamaProvider.Config()
         super().__init__(
-            name=name,
-            kind=LlmProviderKind.OLLAMA,
-            configured=bool(base_url),
-            cost_per_1k_tokens=0.0,
+            config=ProviderBase.Config(
+                name=cfg.name,
+                kind=LlmProviderKind.OLLAMA,
+                configured=bool(cfg.base_url),
+                cost_per_1k_tokens=0.0,
+                http_client_config=cfg.http_client_config,
+            )
         )
-        self._base_url = base_url.rstrip("/")
-        self._model = model
-        self._timeout_s = timeout_s
+        self._base_url = cfg.base_url.rstrip("/")
+        self._model = cfg.model
+        self._timeout_s = cfg.timeout_s
 
     async def healthcheck(self) -> ProviderStatus:
         """Probe Ollama tags endpoint."""
         started = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=self._timeout_s) as client:
+            async with self.build_async_client(timeout_s=self._timeout_s) as client:
                 response = await client.get(f"{self._base_url}/api/tags")
             elapsed_ms = (time.monotonic() - started) * 1000
             self.status.latency_ms = elapsed_ms
@@ -125,7 +168,7 @@ class OllamaProvider(ProviderBase):
         }
 
         async def _op() -> LlmResponse:
-            async with httpx.AsyncClient(timeout=self._timeout_s) as client:
+            async with self.build_async_client(timeout_s=self._timeout_s) as client:
                 response = await client.post(f"{self._base_url}/api/chat", json=payload)
             response.raise_for_status()
             return normalize_ollama_completion_payload(

@@ -11,7 +11,7 @@ import httpx
 
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.usage import UsageSummary
-from agent_driver.llm.base import ProviderBase, StreamRequest
+from agent_driver.llm.base import HttpClientConfig, ProviderBase, StreamRequest
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmProviderKind,
@@ -52,6 +52,31 @@ def _extract_usage(
     )
 
 
+def _extract_usage_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    """Extract provider-specific usage metadata without changing public contract."""
+    usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+    prompt_details = (
+        usage.get("prompt_tokens_details")
+        if isinstance(usage.get("prompt_tokens_details"), dict)
+        else {}
+    )
+    completion_details = (
+        usage.get("completion_tokens_details")
+        if isinstance(usage.get("completion_tokens_details"), dict)
+        else {}
+    )
+    metadata: dict[str, Any] = {}
+    if usage:
+        metadata["provider_usage_raw"] = usage
+    if prompt_details.get("cached_tokens") is not None:
+        metadata["cached_input_tokens"] = int(
+            prompt_details.get("cached_tokens", 0) or 0
+        )
+    if completion_details:
+        metadata["completion_token_details"] = completion_details
+    return metadata
+
+
 def normalize_openai_completion_payload(
     payload: dict[str, Any], *, provider_name: str, fallback_model: str
 ) -> LlmResponse:
@@ -61,6 +86,7 @@ def normalize_openai_completion_payload(
     text = str(message_payload.get("content", "") or "")
     model_name = str(payload.get("model") or fallback_model)
     usage = _extract_usage(payload, provider=provider_name, model=model_name)
+    metadata = _extract_usage_metadata(payload)
     return LlmResponse(
         message=ChatMessage(role="assistant", content=text),
         finish_reason=_map_finish_reason(choice.get("finish_reason")),
@@ -68,6 +94,7 @@ def normalize_openai_completion_payload(
         provider=provider_name,
         model=model_name,
         raw_response=payload if isinstance(payload, dict) else {},
+        metadata=metadata,
     )
 
 
@@ -84,6 +111,7 @@ def normalize_openai_stream_chunk(
         if isinstance(payload, dict) and payload.get("usage")
         else None
     )
+    metadata = _extract_usage_metadata(payload)
     return LlmStreamEvent(
         event="delta",
         delta_text=text,
@@ -91,6 +119,7 @@ def normalize_openai_stream_chunk(
             finish_reason if finish_reason != LlmFinishReason.UNKNOWN else None
         ),
         usage=usage,
+        metadata=metadata,
     )
 
 
@@ -99,10 +128,13 @@ class OpenAICompatibleProvider(ProviderBase):
 
     def __init__(self, *, config: "OpenAICompatibleProvider.Config") -> None:
         super().__init__(
-            name=config.name,
-            kind=LlmProviderKind.OPENAI_COMPATIBLE,
-            configured=bool(config.base_url),
-            cost_per_1k_tokens=config.cost_per_1k_tokens,
+            config=ProviderBase.Config(
+                name=config.name,
+                kind=LlmProviderKind.OPENAI_COMPATIBLE,
+                configured=bool(config.base_url),
+                cost_per_1k_tokens=config.cost_per_1k_tokens,
+                http_client_config=config.http_client_config,
+            )
         )
         self._base_url = config.base_url.rstrip("/")
         self._api_key = config.api_key or ""
@@ -119,6 +151,7 @@ class OpenAICompatibleProvider(ProviderBase):
         model: str
         timeout_s: float = 30.0
         cost_per_1k_tokens: float = 0.0
+        http_client_config: HttpClientConfig | None = None
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -143,7 +176,7 @@ class OpenAICompatibleProvider(ProviderBase):
         started = time.monotonic()
         url = f"{self._base_url}/models"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout_s) as client:
+            async with self.build_async_client(timeout_s=self._timeout_s) as client:
                 response = await client.get(url, headers=self._headers())
             elapsed_ms = (time.monotonic() - started) * 1000
             self.status.latency_ms = elapsed_ms
@@ -158,7 +191,7 @@ class OpenAICompatibleProvider(ProviderBase):
         url = f"{self._base_url}/chat/completions"
 
         async def _op() -> LlmResponse:
-            async with httpx.AsyncClient(timeout=self._timeout_s) as client:
+            async with self.build_async_client(timeout_s=self._timeout_s) as client:
                 response = await client.post(
                     url,
                     headers=self._headers(),

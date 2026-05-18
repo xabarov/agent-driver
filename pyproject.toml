@@ -29,3 +29,6 @@ include = ["agent_driver*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "live: optional network/provider checks disabled by default",
+]

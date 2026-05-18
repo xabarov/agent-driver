@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from time import monotonic
 
 from agent_driver.llm.contracts import (
     LlmRequest,
     LlmResponse,
+    LlmStreamEvent,
     ProviderStatus,
     RouterStrategy,
 )
@@ -110,6 +112,42 @@ class HealthAwareRouter:
                 tried.add(selected.name)
                 if not self._fallback_enabled:
                     raise
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        """Execute streaming request with startup-only fallback semantics."""
+        await self.refresh_health()
+        tried: set[str] = set()
+        last_error: HealthAwareRouter.ProviderExecutionError | None = None
+        while True:
+            candidates = self._ranked_candidates(exclude_names=tried)
+            if not candidates:
+                if last_error is not None:
+                    raise last_error
+                raise RuntimeError("No healthy/configured providers available")
+
+            selected = candidates[0].provider
+            started = monotonic()
+            first_chunk_emitted = False
+            try:
+                async for event in selected.stream(request):
+                    first_chunk_emitted = True
+                    yield event
+                self.record_result(
+                    selected, success=True, elapsed_ms=(monotonic() - started) * 1000
+                )
+                return
+            except (RuntimeError, ValueError) as exc:
+                self.record_result(
+                    selected, success=False, elapsed_ms=(monotonic() - started) * 1000
+                )
+                # Fallback is safe only if stream failed before yielding any chunk.
+                if first_chunk_emitted or not self._fallback_enabled:
+                    raise
+                last_error = self.ProviderExecutionError(
+                    f"Provider '{selected.name}' stream startup failed"
+                )
+                last_error.__cause__ = exc
+                tried.add(selected.name)
 
     def record_result(
         self, provider: LlmProvider, *, success: bool, elapsed_ms: float

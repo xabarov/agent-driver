@@ -20,7 +20,18 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - `.venv/bin/isort agent_driver tests`
 - `.venv/bin/black agent_driver tests`
 - `.venv/bin/pylint agent_driver tests`
-- `.venv/bin/python -m pytest tests/contracts`
+- `.venv/bin/python -m pytest tests`
+
+## Optional Live Checks
+
+- `AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests`
+- `AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests/llm/test_live_providers.py`
+- Optional env vars for live adapters:
+  - `AGENT_DRIVER_OPENAI_BASE_URL`, `AGENT_DRIVER_OPENAI_MODEL`, `AGENT_DRIVER_OPENAI_API_KEY`
+  - `AGENT_DRIVER_OLLAMA_BASE_URL`, `AGENT_DRIVER_OLLAMA_MODEL`
+- Legacy aliases from `.env.template` are also supported:
+  - `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL`, `OPENROUTER_API_KEY`
+  - `OLLAMA_BASE_URL`, `OLLAMA_MODEL`
 
 ## External References
 

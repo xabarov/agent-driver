@@ -27,28 +27,43 @@ class StreamRequest:
     json: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class HttpClientConfig:
+    """Optional HTTP client transport hooks for offline adapter tests."""
+
+    transport: httpx.AsyncBaseTransport | None = None
+
+
 class ProviderBase:
     """Common provider telemetry helpers and status management."""
+
+    @dataclass(frozen=True, slots=True)
+    class Config:
+        """Shared provider constructor config."""
+
+        name: str
+        kind: LlmProviderKind
+        configured: bool
+        cost_per_1k_tokens: float = 0.0
+        http_client_config: HttpClientConfig | None = None
 
     def __init__(
         self,
         *,
-        name: str,
-        kind: LlmProviderKind,
-        configured: bool,
-        cost_per_1k_tokens: float = 0.0,
+        config: Config,
     ) -> None:
-        self._name = name
+        self._name = config.name
+        self._http_client_config = config.http_client_config or HttpClientConfig()
         self._status = ProviderStatus(
-            provider_name=name,
-            provider_kind=kind,
+            provider_name=config.name,
+            provider_kind=config.kind,
             healthy=True,
-            configured=configured,
+            configured=config.configured,
             latency_ms=None,
             avg_latency_ms=None,
             request_count=0,
             error_count=0,
-            cost_per_1k_tokens=cost_per_1k_tokens,
+            cost_per_1k_tokens=config.cost_per_1k_tokens,
         )
 
     @property
@@ -113,7 +128,10 @@ class ProviderBase:
         async with self.stream_with_telemetry(
             handled_exceptions=request.handled_exceptions
         ):
-            async with httpx.AsyncClient(timeout=request.timeout_s) as client:
+            async with httpx.AsyncClient(
+                timeout=request.timeout_s,
+                transport=self._http_client_config.transport,
+            ) as client:
                 async with client.stream(
                     request.method,
                     request.url,
@@ -136,3 +154,10 @@ class ProviderBase:
         except handled_exceptions:
             self._mark_failure()
             raise
+
+    def build_async_client(self, *, timeout_s: float) -> httpx.AsyncClient:
+        """Build async client honoring optional transport override."""
+        return httpx.AsyncClient(
+            timeout=timeout_s,
+            transport=self._http_client_config.transport,
+        )
