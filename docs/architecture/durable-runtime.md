@@ -89,6 +89,12 @@ Current protocol notes (implemented):
 - `snapshot_debug()` is debug/test-oriented and should not be used by app runtime paths;
 - `capabilities()` exposes backend traits (`transactional_writes`, `supports_retention`, etc.) for ops/test decisions.
 
+Integration UX notes (implemented):
+
+- `RuntimeStoreFactoryConfig` + `create_runtime_store_bundle(...)` provide one entrypoint for app integration;
+- `runtime_store_config_from_env()` standardizes env-driven backend selection;
+- `preflight_runtime_store(...)` provides lightweight readiness checks before runner init.
+
 ### PostgreSQL Adapter Notes (Phase 2.5)
 
 `PostgresRuntimeStore` is implemented as an optional extra:
@@ -101,8 +107,20 @@ Current protocol notes (implemented):
 Migration expectations:
 
 - current implementation includes bootstrap DDL and `SCHEMA_VERSION` constant;
+- both SQLite and Postgres stores now persist `runtime_schema_version` metadata in backend schema tables;
 - production apps should run explicit SQL migrations in their deployment pipeline;
 - engine-level adapters should stay lightweight and avoid hard-coupling to a specific migration framework.
+
+Backend selection matrix:
+
+- `memory`: unit tests, ephemeral local runs, no durability.
+- `sqlite`: local/single-node durable runs, simple operational model.
+- `postgres`: multi-worker/shared API deployments, stronger transactional semantics.
+
+Redis note:
+
+- Redis should be treated as queue/lease infrastructure or cache;
+- do not use Redis as primary source of durable checkpoint history unless a separate durability/replay design is introduced.
 
 ### Atomic Step Model
 

@@ -97,3 +97,22 @@ def test_event_log_conformance_order_and_after_seq(tmp_path: Path, backend_name:
     assert [event.seq for event in all_events] == [1, 2, 3]
     filtered = backend.event_log.list_for_run("run_evt_conformance", after_seq=1)
     assert [event.seq for event in filtered] == [2, 3]
+
+
+@pytest.mark.parametrize("backend_name", ["memory", "sqlite"])
+def test_backend_capabilities_conformance(tmp_path: Path, backend_name: str):
+    """Backends should expose consistent capability shapes."""
+    backend = _build_backend_pair(backend_name, tmp_path)
+    checkpoint_caps = backend.checkpoint_store.capabilities()
+    event_caps = backend.event_log.capabilities()
+    assert isinstance(checkpoint_caps.transactional_writes, bool)
+    assert isinstance(checkpoint_caps.supports_retention, bool)
+    assert isinstance(checkpoint_caps.supports_branching, bool)
+    assert checkpoint_caps.transactional_writes == event_caps.transactional_writes
+    assert checkpoint_caps.supports_retention == event_caps.supports_retention
+
+
+def test_sqlite_schema_version_metadata(tmp_path: Path):
+    """SQLite backend should expose non-zero schema version."""
+    sqlite_store = SqliteRuntimeStore(path=str(tmp_path / "schema_check.sqlite3"))
+    assert sqlite_store.schema_version() > 0

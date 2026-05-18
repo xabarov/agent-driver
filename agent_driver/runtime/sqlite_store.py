@@ -21,6 +21,7 @@ SQLITE_CAPABILITIES = StorageCapabilities(
     supports_retention=True,
     supports_snapshot_debug=True,
 )
+SQLITE_SCHEMA_VERSION = 1
 
 
 class SqliteRuntimeStore:
@@ -48,7 +49,30 @@ class SqliteRuntimeStore:
                 payload TEXT NOT NULL
             )
             """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS runtime_schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """)
+        self._conn.execute(
+            """
+            INSERT OR REPLACE INTO runtime_schema_meta (key, value)
+            VALUES (?, ?)
+            """,
+            ("runtime_schema_version", str(SQLITE_SCHEMA_VERSION)),
+        )
         self._conn.commit()
+
+    def schema_version(self) -> int:
+        """Return current sqlite runtime schema version."""
+        row = self._conn.execute(
+            "SELECT value FROM runtime_schema_meta WHERE key = ?",
+            ("runtime_schema_version",),
+        ).fetchone()
+        if row is None:
+            return 0
+        return int(row[0])
 
     def save(
         self, *, graph_id: str, node_id: str | None, state: RuntimeState

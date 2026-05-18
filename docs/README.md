@@ -23,6 +23,45 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - `.venv/bin/python -m pytest tests`
 - `.venv/bin/python -m pytest tests/runtime/test_runtime_skeleton.py`
 
+## Runtime Store Integration
+
+- Preferred integration path for apps:
+  - build store config from env: `runtime_store_config_from_env()`;
+  - run readiness check: `preflight_runtime_store(config)`;
+  - create store pair once: `create_runtime_store_bundle(config)`;
+  - inject into `SingleAgentRunner`.
+- Canonical env keys:
+  - `AGENT_DRIVER_RUNTIME_STORE_KIND=memory|sqlite|postgres`
+  - `AGENT_DRIVER_SQLITE_PATH`
+  - `AGENT_DRIVER_POSTGRES_DSN`
+  - `AGENT_DRIVER_POSTGRES_SCHEMA` (default: `public`)
+  - `AGENT_DRIVER_POSTGRES_AUTO_CREATE_SCHEMA=1|0`
+
+Example:
+
+```python
+from agent_driver.runtime import (
+    RunnerConfig,
+    SingleAgentRunner,
+    create_runtime_store_bundle,
+    preflight_runtime_store,
+    runtime_store_config_from_env,
+)
+from agent_driver.llm.fake import FakeProvider
+
+cfg = runtime_store_config_from_env()
+ready = preflight_runtime_store(cfg)
+if not ready.healthy:
+    raise RuntimeError(f"runtime store not ready: {ready.reason}")
+bundle = create_runtime_store_bundle(cfg)
+runner = SingleAgentRunner(
+    provider=FakeProvider(),
+    checkpoint_store=bundle.checkpoint_store,
+    event_log=bundle.event_log,
+    config=RunnerConfig(),
+)
+```
+
 ## Optional Live Checks
 
 - `AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests`

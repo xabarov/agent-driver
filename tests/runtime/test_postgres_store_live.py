@@ -42,6 +42,7 @@ def test_postgres_runtime_store_round_trip() -> None:
     store = PostgresRuntimeStore(
         config=PostgresRuntimeStoreConfig(dsn=dsn, auto_create_schema=True)
     )
+    assert store.schema_version() > 0
     state = RuntimeState(
         run_input=AgentRunInput(
             input="hello from postgres live",

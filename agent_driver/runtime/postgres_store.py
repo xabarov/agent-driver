@@ -81,10 +81,39 @@ class PostgresRuntimeStore:
         );
         CREATE INDEX IF NOT EXISTS runtime_events_run_seq_idx
             ON {self._events_table} (run_id, seq ASC);
+
+        CREATE TABLE IF NOT EXISTS {self._config.schema}.runtime_schema_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
         """
         with connect(self._config.dsn, autocommit=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(ddl)
+                cur.execute(
+                    f"""
+                    INSERT INTO {self._config.schema}.runtime_schema_meta (key, value)
+                    VALUES (%s, %s)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """,
+                    ("runtime_schema_version", str(SCHEMA_VERSION)),
+                )
+
+    def schema_version(self) -> int:
+        """Return current postgres runtime schema version."""
+        connect, _ = _pg_dependencies()
+        sql = f"""
+        SELECT value
+        FROM {self._config.schema}.runtime_schema_meta
+        WHERE key = %s
+        """
+        with connect(self._config.dsn, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, ("runtime_schema_version",))
+                row = cur.fetchone()
+        if row is None:
+            return 0
+        return int(row[0])
 
     def save(
         self, *, graph_id: str, node_id: str | None, state: RuntimeState

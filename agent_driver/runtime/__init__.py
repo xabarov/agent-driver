@@ -17,6 +17,14 @@ from agent_driver.runtime.storage import (
     RuntimeEventLog,
     StorageCapabilities,
 )
+from agent_driver.runtime.store_factory import (
+    RuntimeStoreBundle,
+    RuntimeStoreFactoryConfig,
+    RuntimeStorePreflightResult,
+    create_runtime_store_bundle,
+    preflight_runtime_store,
+    runtime_store_config_from_env,
+)
 from agent_driver.runtime.tools import (
     ToolExecutionResult,
     ToolExecutor,
@@ -38,6 +46,12 @@ __all__ = [
     "RuntimeEventLog",
     "CheckpointRecord",
     "StorageCapabilities",
+    "RuntimeStoreFactoryConfig",
+    "RuntimeStoreBundle",
+    "RuntimeStorePreflightResult",
+    "create_runtime_store_bundle",
+    "runtime_store_config_from_env",
+    "preflight_runtime_store",
     "ToolExecutor",
     "ToolExecutionResult",
     "fake_noop_tool_executor",

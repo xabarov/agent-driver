@@ -221,5 +221,6 @@ Exit criteria:
 Implementation notes from first cut:
 
 - storage protocols now include `list_checkpoints(...)`, `snapshot_debug()`, and `capabilities()`;
+- runtime now includes store factory + env config + preflight helper for app integration;
 - Postgres support is optional extra dependency (`.[postgres]`), base install remains lightweight;
 - live PostgreSQL checks remain opt-in and skipped by default without env/DSN.
