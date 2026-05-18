@@ -37,7 +37,8 @@ class PromptTemplateRegistry:
         template = self.get(template_id=template_id, profile=profile, version=version)
         if template is None:
             raise ValueError(
-                f"prompt template not found: id={template_id} profile={profile.value} version={version}"
+                "prompt template not found: "
+                f"id={template_id} profile={profile.value} version={version}"
             )
         missing = [
             placeholder
