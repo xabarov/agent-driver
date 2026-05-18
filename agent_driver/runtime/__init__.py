@@ -15,6 +15,7 @@ from agent_driver.runtime.storage import (
     CheckpointRecord,
     CheckpointStore,
     RuntimeEventLog,
+    StorageCapabilities,
 )
 from agent_driver.runtime.tools import (
     ToolExecutionResult,
@@ -36,6 +37,7 @@ __all__ = [
     "CheckpointStore",
     "RuntimeEventLog",
     "CheckpointRecord",
+    "StorageCapabilities",
     "ToolExecutor",
     "ToolExecutionResult",
     "fake_noop_tool_executor",

@@ -13,7 +13,14 @@ from agent_driver.runtime.checkpoint_factory import (
 )
 from agent_driver.runtime.checkpoints import _prepare_seed_and_previous
 from agent_driver.runtime.state import RuntimeState
-from agent_driver.runtime.storage import CheckpointRecord
+from agent_driver.runtime.storage import CheckpointRecord, StorageCapabilities
+
+SQLITE_CAPABILITIES = StorageCapabilities(
+    transactional_writes=True,
+    supports_branching=False,
+    supports_retention=True,
+    supports_snapshot_debug=True,
+)
 
 
 class SqliteRuntimeStore:
@@ -103,8 +110,41 @@ class SqliteRuntimeStore:
             return None
         return CheckpointRecord(ref=state.checkpoint, state=state)
 
-    def snapshot(self) -> dict[str, list[CheckpointRecord]]:
-        """Return grouped checkpoint snapshot by run id."""
+    def list_checkpoints(
+        self, run_id: str, *, limit: int | None = None
+    ) -> list[CheckpointRecord]:
+        """Return checkpoints for run in newest-first order."""
+        if limit is None:
+            rows = self._conn.execute(
+                """
+                SELECT payload
+                FROM checkpoints
+                WHERE run_id = ?
+                ORDER BY json_extract(payload, '$.checkpoint.created_at') DESC
+                """,
+                (run_id,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT payload
+                FROM checkpoints
+                WHERE run_id = ?
+                ORDER BY json_extract(payload, '$.checkpoint.created_at') DESC
+                LIMIT ?
+                """,
+                (run_id, limit),
+            ).fetchall()
+        result: list[CheckpointRecord] = []
+        for (payload,) in rows:
+            state = RuntimeState.model_validate_json(payload)
+            if state.checkpoint is None:
+                continue
+            result.append(CheckpointRecord(ref=state.checkpoint, state=state))
+        return result
+
+    def snapshot_debug(self) -> dict[str, list[CheckpointRecord]]:
+        """Return grouped checkpoint snapshot by run id (debug helper)."""
         grouped: dict[str, list[CheckpointRecord]] = {}
         rows = self._conn.execute("SELECT payload FROM checkpoints").fetchall()
         for (payload,) in rows:
@@ -115,6 +155,10 @@ class SqliteRuntimeStore:
                 CheckpointRecord(ref=state.checkpoint, state=state)
             )
         return grouped
+
+    def capabilities(self) -> StorageCapabilities:
+        """Return capabilities for SQLite backend."""
+        return SQLITE_CAPABILITIES
 
     def append(self, event: RuntimeEvent) -> None:
         """Persist one runtime event row."""

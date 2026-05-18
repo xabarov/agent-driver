@@ -19,6 +19,16 @@ class CheckpointRecord:
     state: RuntimeState
 
 
+@dataclass(frozen=True)
+class StorageCapabilities:
+    """Backend capability flags used by runtime/docs selection logic."""
+
+    transactional_writes: bool
+    supports_branching: bool
+    supports_retention: bool
+    supports_snapshot_debug: bool = False
+
+
 class CheckpointStore(Protocol):
     """Protocol for persisting and loading runtime checkpoints."""
 
@@ -36,8 +46,18 @@ class CheckpointStore(Protocol):
         """Return checkpoint row by checkpoint identifier, if any."""
         raise NotImplementedError
 
-    def snapshot(self) -> Mapping[str, list[CheckpointRecord]]:
-        """Return readonly snapshot of all checkpoint rows."""
+    def list_checkpoints(
+        self, run_id: str, *, limit: int | None = None
+    ) -> list[CheckpointRecord]:
+        """Return checkpoints for one run ordered newest-first."""
+        raise NotImplementedError
+
+    def snapshot_debug(self) -> Mapping[str, list[CheckpointRecord]]:
+        """Return debug-only snapshot of all checkpoint rows."""
+        raise NotImplementedError
+
+    def capabilities(self) -> StorageCapabilities:
+        """Return backend capability flags for operators/tests."""
         raise NotImplementedError
 
 
@@ -52,4 +72,8 @@ class RuntimeEventLog(Protocol):
         self, run_id: str, *, after_seq: int | None = None
     ) -> list[RuntimeEvent]:
         """Return run events, optionally filtering by sequence number."""
+        raise NotImplementedError
+
+    def capabilities(self) -> StorageCapabilities:
+        """Return backend capability flags for operators/tests."""
         raise NotImplementedError

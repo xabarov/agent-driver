@@ -34,8 +34,7 @@ Current implementation status (after Phase 2 first cut):
 
 Gaps to close before production-grade multi-DB support:
 
-- checkpoint listing API in protocol is still minimal (`snapshot` is internal-oriented);
-- no explicit backend capability flags (branching support, transactional guarantees, retention support);
+- branch/fork semantics are still pending in adapters (capability is currently `false`);
 - no migration/versioning contract for persistent stores yet.
 
 Initial backends:
@@ -83,6 +82,27 @@ Minimal backend conformance test matrix:
 - concurrent write safety (at least smoke-level worker contention test);
 - replay consistency for stored events/checkpoints;
 - retention/cleanup behavior does not break resume invariants.
+
+Current protocol notes (implemented):
+
+- `list_checkpoints(run_id, limit)` is the production-facing listing API;
+- `snapshot_debug()` is debug/test-oriented and should not be used by app runtime paths;
+- `capabilities()` exposes backend traits (`transactional_writes`, `supports_retention`, etc.) for ops/test decisions.
+
+### PostgreSQL Adapter Notes (Phase 2.5)
+
+`PostgresRuntimeStore` is implemented as an optional extra:
+
+- install via `pip install -e .[postgres]`;
+- DSN-driven config (`AGENT_DRIVER_POSTGRES_DSN` for live checks);
+- schema bootstrap helper for dev/test (`ensure_schema`);
+- JSONB payload with indexed run/sequence timeline columns.
+
+Migration expectations:
+
+- current implementation includes bootstrap DDL and `SCHEMA_VERSION` constant;
+- production apps should run explicit SQL migrations in their deployment pipeline;
+- engine-level adapters should stay lightweight and avoid hard-coupling to a specific migration framework.
 
 ### Atomic Step Model
 

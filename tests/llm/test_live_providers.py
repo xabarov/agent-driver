@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 
@@ -11,6 +10,7 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmRequest
 from agent_driver.llm.ollama import OllamaProvider
 from agent_driver.llm.openai_compatible import OpenAICompatibleProvider
+from tests.live_env import load_local_dotenv_for_live_tests
 
 pytestmark = pytest.mark.live
 
@@ -19,23 +19,7 @@ def _live_enabled() -> bool:
     return os.getenv("AGENT_DRIVER_RUN_LIVE_TESTS", "").strip() == "1"
 
 
-def _load_local_dotenv() -> None:
-    """Load local .env file for developer live checks if present."""
-    dotenv_path = Path(__file__).resolve().parents[2] / ".env"
-    if not dotenv_path.exists():
-        return
-    for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip("'").strip('"')
-        if key and key not in os.environ:
-            os.environ[key] = value
-
-
-_load_local_dotenv()
+load_local_dotenv_for_live_tests()
 
 
 def _env(name: str, fallback: str | None = None) -> str | None:

@@ -11,7 +11,11 @@ from agent_driver.runtime.checkpoint_factory import (
     build_checkpoint_ref,
 )
 from agent_driver.runtime.state import RuntimeState
-from agent_driver.runtime.storage import CheckpointRecord, CheckpointStore
+from agent_driver.runtime.storage import (
+    CheckpointRecord,
+    CheckpointStore,
+    StorageCapabilities,
+)
 
 
 def _seed_from_runtime_state(
@@ -97,6 +101,24 @@ class InMemoryCheckpointStore(CheckpointStore):
         """Return checkpoint row by checkpoint identifier, if any."""
         return self._by_id.get(checkpoint_id)
 
-    def snapshot(self) -> Mapping[str, list[CheckpointRecord]]:
-        """Return readonly snapshot of internal checkpoint rows."""
+    def list_checkpoints(
+        self, run_id: str, *, limit: int | None = None
+    ) -> list[CheckpointRecord]:
+        """Return checkpoints for run in newest-first order."""
+        rows = list(reversed(self._by_run.get(run_id, [])))
+        if limit is None:
+            return rows
+        return rows[:limit]
+
+    def snapshot_debug(self) -> Mapping[str, list[CheckpointRecord]]:
+        """Return debug snapshot of internal checkpoint rows."""
         return self._by_run
+
+    def capabilities(self) -> StorageCapabilities:
+        """Return capabilities for in-memory backend."""
+        return StorageCapabilities(
+            transactional_writes=False,
+            supports_branching=False,
+            supports_retention=False,
+            supports_snapshot_debug=True,
+        )

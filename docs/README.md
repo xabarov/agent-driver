@@ -27,13 +27,20 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 
 - `AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests`
 - `AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests/llm/test_live_providers.py`
+- `AGENT_DRIVER_RUN_POSTGRES_TESTS=1 AGENT_DRIVER_POSTGRES_DSN=postgresql://... .venv/bin/python -m pytest -m live tests/runtime/test_postgres_store_live.py`
 - If `.env` exists in repository root, live tests auto-load it (without printing secret values).
 - Optional env vars for live adapters:
   - `AGENT_DRIVER_OPENAI_BASE_URL`, `AGENT_DRIVER_OPENAI_MODEL`, `AGENT_DRIVER_OPENAI_API_KEY`
   - `AGENT_DRIVER_OLLAMA_BASE_URL`, `AGENT_DRIVER_OLLAMA_MODEL`
+  - `AGENT_DRIVER_POSTGRES_DSN` (for opt-in PostgreSQL runtime store checks)
 - Legacy aliases from `.env.template` are also supported:
   - `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL`, `OPENROUTER_API_KEY`
   - `OLLAMA_BASE_URL`, `OLLAMA_MODEL`
+
+## Optional Extras
+
+- Install PostgreSQL backend support when needed:
+  - `.venv/bin/pip install -e .[postgres]`
 
 ## External References
 

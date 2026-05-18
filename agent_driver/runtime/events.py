@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agent_driver.contracts.events import RuntimeEvent
-from agent_driver.runtime.storage import RuntimeEventLog
+from agent_driver.runtime.storage import RuntimeEventLog, StorageCapabilities
 
 
 class InMemoryEventLog(RuntimeEventLog):
@@ -24,3 +24,12 @@ class InMemoryEventLog(RuntimeEventLog):
         if after_seq is None:
             return events
         return [event for event in events if event.seq > after_seq]
+
+    def capabilities(self) -> StorageCapabilities:
+        """Return capabilities for in-memory event log backend."""
+        return StorageCapabilities(
+            transactional_writes=False,
+            supports_branching=False,
+            supports_retention=False,
+            supports_snapshot_debug=False,
+        )

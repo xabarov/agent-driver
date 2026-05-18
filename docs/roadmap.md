@@ -207,7 +207,7 @@ Do not include in the first implementation:
 Goal: add first production-grade persistent backend without changing runtime contracts.
 
 - Implement `PostgresRuntimeStore` behind existing `CheckpointStore` / `RuntimeEventLog`.
-- Add schema migration strategy (versioned SQL migrations).
+- Add schema migration strategy (bootstrap DDL + versioned SQL migrations in app pipeline).
 - Add backend conformance tests shared with SQLite/in-memory.
 - Add retention and indexing guidance for long-lived runs.
 - Add operational notes for transaction isolation and connection pooling.
@@ -217,3 +217,9 @@ Exit criteria:
 - PostgreSQL backend passes the same deterministic replay/resume suite as SQLite.
 - no runtime API changes required for switching SQLite -> Postgres.
 - docs include backend selection matrix (local, single-node, multi-worker, managed cloud).
+
+Implementation notes from first cut:
+
+- storage protocols now include `list_checkpoints(...)`, `snapshot_debug()`, and `capabilities()`;
+- Postgres support is optional extra dependency (`.[postgres]`), base install remains lightweight;
+- live PostgreSQL checks remain opt-in and skipped by default without env/DSN.
