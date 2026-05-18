@@ -6,6 +6,7 @@ from agent_driver.contracts import (
     AgentProfile,
     AgentRunInput,
     AgentRunOutput,
+    ApprovalPayload,
     CheckpointRef,
     ExecutorSerializationPolicy,
     InterruptRequest,
@@ -36,6 +37,7 @@ def test_public_contract_schema_generation() -> None:
         "PromptRenderResult": PromptRenderResult.model_json_schema(),
         "MemoryProjection": MemoryProjection.model_json_schema(),
         "ExecutorSerializationPolicy": ExecutorSerializationPolicy.model_json_schema(),
+        "ApprovalPayload": ApprovalPayload.model_json_schema(),
     }
 
     assert "properties" in schema["AgentRunInput"]
@@ -52,4 +54,5 @@ def test_public_contract_schema_generation() -> None:
     assert "rendered_hash" in schema["PromptRenderResult"]["properties"]
     assert "steps" in schema["MemoryProjection"]["properties"]
     assert "mode" in schema["ExecutorSerializationPolicy"]["properties"]
+    assert "allowed_actions" in schema["ApprovalPayload"]["properties"]
     assert AgentProfile.REACT_TEXT.value in str(schema["PromptTemplate"])

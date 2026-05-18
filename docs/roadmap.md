@@ -167,6 +167,21 @@ Exit criteria:
 - edited tool args are applied and traced;
 - rejection produces a terminal or alternate path.
 
+Implementation notes from first cut:
+
+- runner now persists `pending_interrupt` (interrupt + pending call/envelope) in
+  checkpoint metadata and accepts resume by either `interrupt_id` (preferred) or
+  legacy checkpoint id for backward-compatible resume flows;
+- governed tool executor now emits richer `proposed_action` metadata for
+  approval cards (`args_preview`, risk/side-effect/approval mode) and allows
+  resume-cancel in `allowed_actions`;
+- runtime resume handling now supports deterministic `approve|edit|reject|cancel|clarify`
+  transitions with terminal reasons/events for reject/cancel and approved-call
+  execution without duplicate interrupt loops;
+- contracts now include `ApprovalPayload` helper for UI-facing approval cards,
+  and runtime outputs expose this shape in metadata for paused and terminal
+  envelopes.
+
 ## Phase 5: Observability And Evaluation Harness
 
 - Add OpenTelemetry/Phoenix exporter.

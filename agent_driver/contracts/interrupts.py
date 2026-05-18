@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from pydantic import Field, field_validator, model_validator
@@ -85,3 +86,71 @@ class InterruptRequest(ContractModel):
         if not self.allowed_actions:
             raise ValueError("allowed_actions must not be empty")
         return self
+
+
+class ApprovalPayload(ContractModel):
+    """UI-facing approval card payload derived from interrupt state."""
+
+    interrupt_id: str
+    reason: InterruptReason
+    title: str
+    description: str
+    risk: ToolRisk | None = None
+    tool_name: str | None = None
+    tool_call_id: str | None = None
+    args_preview: str | None = None
+    allowed_actions: list[ResumeAction] = Field(default_factory=list)
+    editable_fields: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        """Ensure metadata stays JSON-compatible for transport."""
+        return ensure_json_serializable(value, field_name="metadata")
+
+    @model_validator(mode="after")
+    def validate_allowed_actions(self) -> "ApprovalPayload":
+        """Require at least one allowed action for UI review cards."""
+        if not self.allowed_actions:
+            raise ValueError("allowed_actions must not be empty")
+        return self
+
+    @classmethod
+    def from_interrupt(
+        cls, interrupt: InterruptRequest, *, args_preview_chars: int = 280
+    ) -> "ApprovalPayload":
+        """Create deterministic approval payload from interrupt request."""
+        proposed_action = interrupt.proposed_action
+        tool_name = (
+            proposed_action.get("tool_name")
+            if isinstance(proposed_action.get("tool_name"), str)
+            else None
+        )
+        tool_call_id = (
+            proposed_action.get("tool_call_id")
+            if isinstance(proposed_action.get("tool_call_id"), str)
+            else None
+        )
+        raw_args = proposed_action.get("args")
+        args_preview: str | None = None
+        if raw_args is not None:
+            rendered = json.dumps(raw_args, ensure_ascii=True, sort_keys=True)
+            args_preview = (
+                rendered[:args_preview_chars].rstrip() + "..."
+                if len(rendered) > args_preview_chars
+                else rendered
+            )
+        return cls(
+            interrupt_id=interrupt.interrupt_id,
+            reason=interrupt.reason,
+            title=interrupt.title,
+            description=interrupt.description,
+            risk=interrupt.risk,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            args_preview=args_preview,
+            allowed_actions=list(interrupt.allowed_actions),
+            editable_fields=list(interrupt.editable_fields),
+            metadata=dict(interrupt.metadata),
+        )

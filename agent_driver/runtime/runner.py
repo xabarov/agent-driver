@@ -9,15 +9,26 @@ from typing import Any, cast
 from uuid import uuid4
 
 from agent_driver.contracts.checkpoints import CheckpointRef
-from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
+from agent_driver.contracts.enums import (
+    ResumeAction,
+    RunStatus,
+    RuntimeEventType,
+    TerminalReason,
+    ToolPolicyDecision,
+)
 from agent_driver.contracts.events import (
     RuntimeEvent,
     RuntimeEventContext,
     new_runtime_event,
 )
+from agent_driver.contracts.interrupts import (
+    ApprovalPayload,
+    InterruptRequest,
+    ResumeCommand,
+)
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
-from agent_driver.contracts.tools import ToolTrace
+from agent_driver.contracts.tools import ToolCall, ToolResultEnvelope, ToolTrace
 from agent_driver.llm.contracts import LlmRequest, LlmResponse
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
@@ -120,6 +131,15 @@ class _RunnerDeps:
     tool_executor: ToolExecutor
 
 
+@dataclass(slots=True)
+class _PendingInterruptState:
+    """Serializable pending interrupt state kept in checkpoint metadata."""
+
+    interrupt: InterruptRequest
+    call: ToolCall
+    envelope: ToolResultEnvelope
+
+
 class SingleAgentRunner:
     """Durable single-agent runner with checkpointed step transitions."""
 
@@ -164,15 +184,261 @@ class SingleAgentRunner:
     def _resolve_resume_checkpoint(self, run_input: AgentRunInput):
         if run_input.resume is None:
             return None
+        resume_token = run_input.resume.interrupt_id
         checkpoint_row = cast(
             CheckpointRecord | None,
-            self._deps.checkpoint_store.load(run_input.resume.interrupt_id),
+            self._deps.checkpoint_store.load(resume_token),
         )
+        if checkpoint_row is None and run_input.run_id:
+            latest = cast(
+                CheckpointRecord | None,
+                self._deps.checkpoint_store.latest(run_input.run_id),
+            )
+            if latest is not None:
+                pending = self._pending_interrupt_from_metadata(latest.state.metadata)
+                if (
+                    pending is not None
+                    and pending.interrupt.interrupt_id == resume_token
+                ):
+                    checkpoint_row = latest
         if checkpoint_row is None:
             raise MissingCheckpointError(
                 f"Checkpoint '{run_input.resume.interrupt_id}' not found"
             )
         return checkpoint_row
+
+    @staticmethod
+    def _pending_interrupt_from_metadata(
+        metadata: dict[str, Any],
+    ) -> _PendingInterruptState | None:
+        payload = metadata.get("pending_interrupt")
+        if not isinstance(payload, dict):
+            return None
+        interrupt_raw = payload.get("interrupt")
+        call_raw = payload.get("call")
+        envelope_raw = payload.get("envelope")
+        if not (
+            isinstance(interrupt_raw, dict)
+            and isinstance(call_raw, dict)
+            and isinstance(envelope_raw, dict)
+        ):
+            return None
+        return _PendingInterruptState(
+            interrupt=InterruptRequest.model_validate(interrupt_raw),
+            call=ToolCall.model_validate(call_raw),
+            envelope=ToolResultEnvelope.model_validate(envelope_raw),
+        )
+
+    @staticmethod
+    def _serialize_pending_interrupt(
+        state: _PendingInterruptState,
+    ) -> dict[str, dict[str, Any]]:
+        return {
+            "interrupt": state.interrupt.model_dump(mode="json"),
+            "call": state.call.model_dump(mode="json"),
+            "envelope": state.envelope.model_dump(mode="json"),
+        }
+
+    @staticmethod
+    def _apply_resume_to_call(
+        call: ToolCall,
+        resume_action: ResumeAction,
+        edited_tool_args: dict[str, Any] | None,
+    ) -> ToolCall:
+        if resume_action != ResumeAction.EDIT or edited_tool_args is None:
+            return call
+        return call.model_copy(update={"args": dict(edited_tool_args)})
+
+    def _handle_resume_without_pending(
+        self,
+        *,
+        context: _RunContext,
+        resume_interrupt_id: str,
+        resume_action: ResumeAction,
+    ) -> None:
+        """Keep legacy checkpoint-based resume path backward compatible."""
+        self._emit(
+            _EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType.RUN_RESUMED,
+                payload={
+                    "interrupt_id": resume_interrupt_id,
+                    "action": resume_action.value,
+                    "mode": "checkpoint_resume",
+                },
+            )
+        )
+
+    def _handle_resume_with_pending(
+        self,
+        *,
+        context: _RunContext,
+        checkpoint_row: CheckpointRecord,
+        resume: ResumeCommand,
+        pending: _PendingInterruptState,
+    ) -> None:
+        """Apply resume action for pending HITL interrupt."""
+        if resume.interrupt_id not in {
+            pending.interrupt.interrupt_id,
+            checkpoint_row.ref.checkpoint_id,
+        }:
+            raise MissingCheckpointError(
+                "resume interrupt_id does not match pending interrupt"
+            )
+        if resume.action not in pending.interrupt.allowed_actions:
+            raise RuntimeExecutionError(
+                f"resume action '{resume.action.value}' is not allowed"
+            )
+        self._emit(
+            _EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType.RUN_RESUMED,
+                payload={
+                    "interrupt_id": resume.interrupt_id,
+                    "action": resume.action.value,
+                },
+            )
+        )
+        context.metadata["resume_action"] = resume.action.value
+        context.metadata["pending_interrupt"] = self._serialize_pending_interrupt(
+            pending
+        )
+        if resume.message:
+            context.metadata["resume_message"] = resume.message
+
+        if resume.action == ResumeAction.CANCEL:
+            self._emit(
+                _EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType.RUN_CANCELLED,
+                    payload={"reason": TerminalReason.CANCELLED_BY_USER.value},
+                )
+            )
+            context.metadata["interrupt_payload"] = None
+            context.metadata["next_step"] = "done"
+            terminal = self._build_output(
+                context,
+                _TerminalResult(
+                    status=RunStatus.CANCELLED,
+                    reason=TerminalReason.CANCELLED_BY_USER,
+                ),
+            )
+            context.metadata["terminal_output"] = terminal.model_dump(mode="json")
+            context.metadata["pending_interrupt"] = None
+            return
+
+        if resume.action == ResumeAction.REJECT:
+            self._emit(
+                _EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType.RUN_FAILED,
+                    payload={"reason": TerminalReason.APPROVAL_REJECTED.value},
+                )
+            )
+            context.metadata["interrupt_payload"] = None
+            context.metadata["next_step"] = "done"
+            terminal = self._build_output(
+                context,
+                _TerminalResult(
+                    status=RunStatus.FAILED,
+                    reason=TerminalReason.APPROVAL_REJECTED,
+                ),
+            )
+            context.metadata["terminal_output"] = terminal.model_dump(mode="json")
+            context.metadata["pending_interrupt"] = None
+            return
+
+        if resume.action in {ResumeAction.APPROVE, ResumeAction.EDIT}:
+            call = self._apply_resume_to_call(
+                pending.call, resume.action, resume.edited_tool_args
+            )
+            call = call.model_copy(
+                update={
+                    "metadata": {
+                        **call.metadata,
+                        "approved_interrupt_id": pending.interrupt.interrupt_id,
+                        "resume_action": resume.action.value,
+                    }
+                }
+            )
+            context.metadata["approved_tool_call"] = call.model_dump(mode="json")
+            context.metadata["next_step"] = "tool_stage"
+            context.metadata["pending_interrupt"] = None
+            context.metadata["interrupt_payload"] = None
+            return
+
+        if resume.action == ResumeAction.CLARIFY:
+            context.metadata["next_step"] = "llm_call"
+            context.metadata["pending_interrupt"] = None
+            if resume.message:
+                context.metadata["clarification"] = resume.message
+            context.metadata["interrupt_payload"] = None
+
+    async def _tool_result_with_approved_override(
+        self, context: _RunContext
+    ) -> ToolExecutionResult:
+        """Execute tool stage, honoring approved-call override on resume."""
+        if context.llm_response is None:
+            raise RuntimeExecutionError("Missing LLM response before tool stage")
+        approved_call = context.metadata.get("approved_tool_call")
+        if isinstance(approved_call, dict):
+            request = context.llm_response.model_copy(
+                update={
+                    "metadata": {
+                        **context.llm_response.metadata,
+                        "planned_tool_calls": [approved_call],
+                    }
+                }
+            )
+            return await self._deps.tool_executor(context.run_input, request)
+        return await self._deps.tool_executor(context.run_input, context.llm_response)
+
+    @staticmethod
+    def _pending_interrupt_from_result(result: Any) -> _PendingInterruptState | None:
+        """Extract pending interrupt tuple from envelopes when interrupt is set."""
+        if result.interrupt is None:
+            return None
+        for envelope in result.envelopes:
+            if envelope.decision == ToolPolicyDecision.INTERRUPT:
+                return _PendingInterruptState(
+                    interrupt=result.interrupt,
+                    call=envelope.call,
+                    envelope=envelope,
+                )
+        return None
+
+    def _store_tool_stage_outputs(self, context: _RunContext, result: Any) -> None:
+        """Persist tool stage traces/results into context metadata."""
+        context.tool_calls += len(result.traces)
+        context.metadata["tool_trace"] = [
+            trace.model_dump(mode="json") for trace in result.traces
+        ]
+        context.metadata["tool_results"] = [
+            item.model_dump(mode="json") for item in result.envelopes
+        ]
+
+    def _build_paused_output(self, context: _RunContext, result: Any) -> AgentRunOutput:
+        """Build paused output envelope for pending interrupt."""
+        return AgentRunOutput(
+            run_id=context.run_id,
+            attempt_id=context.attempt_id,
+            thread_id=context.run_input.thread_id,
+            status=RunStatus.PAUSED,
+            events=self._deps.event_log.list_for_run(context.run_id),
+            tool_trace=result.traces,
+            interrupt=result.interrupt,
+            metadata={
+                "graph_id": self.graph_id,
+                "tool_results": context.metadata.get("tool_results", []),
+                "approval_payload": ApprovalPayload.from_interrupt(
+                    result.interrupt
+                ).model_dump(mode="json"),
+            },
+        )
 
     def _init_context(self, run_input: AgentRunInput) -> _RunContext:
         checkpoint_row = self._resolve_resume_checkpoint(run_input)
@@ -205,16 +471,19 @@ class SingleAgentRunner:
         )
         resume = run_input.resume
         if resume is not None:
-            self._emit(
-                _EventSpec(
-                    run_id=context.run_id,
-                    attempt_id=context.attempt_id,
-                    event_type=RuntimeEventType.RUN_RESUMED,
-                    payload={
-                        "interrupt_id": resume.interrupt_id,
-                        "action": resume.action.value,
-                    },
+            pending = self._pending_interrupt_from_metadata(metadata)
+            if pending is None:
+                self._handle_resume_without_pending(
+                    context=context,
+                    resume_interrupt_id=resume.interrupt_id,
+                    resume_action=resume.action,
                 )
+                return context
+            self._handle_resume_with_pending(
+                context=context,
+                checkpoint_row=checkpoint_row,
+                resume=resume,
+                pending=pending,
             )
         return context
 
@@ -282,6 +551,15 @@ class SingleAgentRunner:
             metadata={
                 "graph_id": self.graph_id,
                 "tool_results": context.metadata.get("tool_results", []),
+                "approval_payload": (
+                    ApprovalPayload.from_interrupt(
+                        InterruptRequest.model_validate(
+                            context.metadata["interrupt_payload"]
+                        )
+                    ).model_dump(mode="json")
+                    if isinstance(context.metadata.get("interrupt_payload"), dict)
+                    else None
+                ),
             },
         )
 
@@ -349,6 +627,9 @@ class SingleAgentRunner:
         prompt = context.run_input.input or (
             context.run_input.messages[-1].content if context.run_input.messages else ""
         )
+        clarification = context.metadata.get("clarification")
+        if isinstance(clarification, str) and clarification.strip():
+            prompt = f"{prompt}\n\nClarification: {clarification.strip()}"
         try:
             request_metadata = dict(context.run_input.tool_policy.metadata)
             forced_model = request_metadata.pop("forced_model", None)
@@ -397,22 +678,22 @@ class SingleAgentRunner:
         return RuntimeStepResult(next_step="tool_stage")
 
     async def _execute_tool_stage(self, context: _RunContext) -> RuntimeStepResult:
-        if context.llm_response is None:
-            raise RuntimeExecutionError("Missing LLM response before tool stage")
-        result: ToolExecutionResult = await self._deps.tool_executor(
-            context.run_input, context.llm_response
-        )
-        context.tool_calls += len(result.traces)
-        context.metadata["tool_trace"] = [
-            trace.model_dump(mode="json") for trace in result.traces
-        ]
-        context.metadata["tool_results"] = [
-            item.model_dump(mode="json") for item in result.envelopes
-        ]
+        result = await self._tool_result_with_approved_override(context)
+        self._store_tool_stage_outputs(context, result)
         if result.interrupt is not None:
+            pending = self._pending_interrupt_from_result(result)
+            if pending is None:
+                raise RuntimeExecutionError(
+                    "interrupt result requires pending tool call envelope"
+                )
             context.metadata["interrupt_payload"] = result.interrupt.model_dump(
                 mode="json"
             )
+            context.metadata["pending_interrupt"] = self._serialize_pending_interrupt(
+                pending
+            )
+            context.metadata["resume_target_step"] = "tool_stage"
+            context.metadata.pop("approved_tool_call", None)
             context.metadata.update(
                 {
                     "next_step": "done",
@@ -428,19 +709,7 @@ class SingleAgentRunner:
                     payload={"reason": result.interrupt.reason.value},
                 )
             )
-            paused_output = AgentRunOutput(
-                run_id=context.run_id,
-                attempt_id=context.attempt_id,
-                thread_id=context.run_input.thread_id,
-                status=RunStatus.PAUSED,
-                events=self._deps.event_log.list_for_run(context.run_id),
-                tool_trace=result.traces,
-                interrupt=result.interrupt,
-                metadata={
-                    "graph_id": self.graph_id,
-                    "tool_results": context.metadata.get("tool_results", []),
-                },
-            )
+            paused_output = self._build_paused_output(context, result)
             context.metadata["terminal_output"] = paused_output.model_dump(mode="json")
             self._save_checkpoint(
                 context, latest_output=paused_output, node_id="tool_stage"

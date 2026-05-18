@@ -6,8 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 from agent_driver.contracts import (
+    ApprovalPayload,
     ArtifactKind,
     ArtifactRef,
+    InterruptReason,
+    InterruptRequest,
     MergeProvenance,
     ParentStateWriteMode,
     ResumeAction,
@@ -34,6 +37,55 @@ def test_resume_command_clarify_requires_message() -> None:
     """Reject clarify action without message."""
     with pytest.raises(ValidationError):
         ResumeCommand(interrupt_id="int_1", action=ResumeAction.CLARIFY)
+
+
+def test_approval_payload_from_interrupt_renders_args_preview() -> None:
+    """Approval payload should expose deterministic tool args preview."""
+    payload = ApprovalPayload.from_interrupt(
+        InterruptRequest(
+            interrupt_id="int_1",
+            run_id="run_1",
+            attempt_id="att_1",
+            checkpoint_id="cp_1",
+            reason=InterruptReason.APPROVAL_REQUIRED,
+            title="Approval required",
+            description="Please review tool call",
+            risk="high",
+            proposed_action={
+                "tool_name": "danger",
+                "tool_call_id": "call_1",
+                "args": {"target": "x"},
+            },
+            allowed_actions=[ResumeAction.APPROVE, ResumeAction.REJECT],
+            editable_fields=["args"],
+            metadata={"source": "policy"},
+        )
+    )
+    assert payload.tool_name == "danger"
+    assert payload.tool_call_id == "call_1"
+    assert payload.args_preview == '{"target": "x"}'
+
+
+def test_approval_payload_truncates_large_args_preview() -> None:
+    """Payload helper should truncate oversized args preview deterministically."""
+    payload = ApprovalPayload.from_interrupt(
+        InterruptRequest(
+            interrupt_id="int_2",
+            run_id="run_1",
+            attempt_id="att_1",
+            checkpoint_id="cp_1",
+            reason=InterruptReason.APPROVAL_REQUIRED,
+            title="Approval required",
+            description="Please review tool call",
+            risk="medium",
+            proposed_action={"args": {"text": "a" * 80}},
+            allowed_actions=[ResumeAction.APPROVE],
+            metadata={},
+        ),
+        args_preview_chars=30,
+    )
+    assert payload.args_preview is not None
+    assert payload.args_preview.endswith("...")
 
 
 def test_subagent_terminal_requires_terminal_state() -> None:

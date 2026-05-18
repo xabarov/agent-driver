@@ -1,4 +1,4 @@
-"""Tool governance integration tests for runtime executor seam."""
+"""Tool governance executor tests (policy/guardrails/metadata)."""
 
 from __future__ import annotations
 
@@ -20,16 +20,11 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmRequest
 from agent_driver.llm.fake import FakeProvider
 from agent_driver.runtime import (
-    FakeSingleStepRunner,
     GovernedToolExecutor,
     GuardrailPipeline,
     GuardrailResult,
-    InMemoryCheckpointStore,
-    InMemoryEventLog,
-    RunnerConfig,
     ToolRegistry,
     evaluate_tool_policy,
-    wrap_governed_executor,
 )
 
 
@@ -62,6 +57,15 @@ class _SanitizeGuardrails(GuardrailPipeline):
         )
 
 
+def _request_with_planned_calls(planned: list[ToolCall]) -> LlmRequest:
+    return LlmRequest(
+        messages=[ChatMessage(role="user", content="hello")],
+        metadata={
+            "planned_tool_calls": [call.model_dump(mode="json") for call in planned]
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_governed_executor_completes_tool_and_truncates() -> None:
     """Executor should run registered tool and enforce result budget."""
@@ -89,9 +93,7 @@ async def test_governed_executor_completes_tool_and_truncates() -> None:
         graph_preset="single_react",
         tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
     )
-    provider = FakeProvider(
-        response_text="ok",
-    )
+    provider = FakeProvider(response_text="ok")
     response = await provider.complete(
         _request_with_planned_calls(
             planned=[ToolCall(tool_name="lookup", args={"query": "abcdef"})]
@@ -101,62 +103,6 @@ async def test_governed_executor_completes_tool_and_truncates() -> None:
     assert result.interrupt is None
     assert len(result.traces) == 1
     assert result.traces[0].truncated
-
-
-def _request_with_planned_calls(planned: list[ToolCall]) -> LlmRequest:
-    return LlmRequest(
-        messages=[ChatMessage(role="user", content="hello")],
-        metadata={
-            "planned_tool_calls": [call.model_dump(mode="json") for call in planned]
-        },
-    )
-
-
-@pytest.mark.asyncio
-async def test_runner_interrupts_for_high_risk_policy() -> None:
-    """Runner should return paused output when policy requests interrupt."""
-    registry = ToolRegistry()
-
-    async def _danger(_args):
-        return {"summary": "danger"}
-
-    registry.register(
-        ToolManifest(
-            name="danger",
-            description="Danger",
-            risk=ToolRisk.HIGH,
-            side_effect=SideEffectClass.EXTERNAL_ACTION,
-            approval_mode=ApprovalMode.ALWAYS,
-        ),
-        _danger,
-    )
-    governed = GovernedToolExecutor(registry=registry)
-    runner = FakeSingleStepRunner(
-        provider=FakeProvider(response_text="ok"),
-        checkpoint_store=InMemoryCheckpointStore(),
-        event_log=InMemoryEventLog(),
-        config=RunnerConfig(tool_executor=wrap_governed_executor(governed)),
-    )
-    output = await runner.run(
-        AgentRunInput(
-            input="hello",
-            run_id="run_interrupt_1",
-            agent_id="agent",
-            graph_preset="single_react",
-            tool_policy=ToolPolicyInput(
-                mode=ToolPolicyMode.ALLOW_TOOLS,
-                approval_required_for_risk=ToolRisk.HIGH,
-                metadata={
-                    "planned_tool_calls": [
-                        {"tool_name": "danger", "args": {"target": "x"}}
-                    ]
-                },
-            ),
-        )
-    )
-    assert output.status.value == "paused"
-    assert output.interrupt is not None
-    assert any(event.type.value == "interrupt_requested" for event in output.events)
 
 
 def test_policy_denies_explicit_denied_tool() -> None:

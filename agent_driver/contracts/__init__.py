@@ -38,7 +38,11 @@ from agent_driver.contracts.enums import (
     WarningSource,
 )
 from agent_driver.contracts.events import RuntimeEvent, new_runtime_event
-from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
+from agent_driver.contracts.interrupts import (
+    ApprovalPayload,
+    InterruptRequest,
+    ResumeCommand,
+)
 from agent_driver.contracts.memory import MemoryProjection, MemoryStep
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.profiles import PromptRenderResult, PromptTemplate
@@ -61,6 +65,7 @@ __all__ = [
     "AgentRunOutput",
     "AgentProfile",
     "ApprovalMode",
+    "ApprovalPayload",
     "ArtifactKind",
     "ArtifactRef",
     "ChatMessage",

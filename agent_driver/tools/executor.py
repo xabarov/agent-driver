@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from agent_driver.contracts.enums import (
@@ -239,6 +240,19 @@ class GovernedToolExecutor:
             call=call,
             current_tool_calls=spec.current_tool_calls + len(result.traces),
         )
+        approved_interrupt_id = call.metadata.get("approved_interrupt_id")
+        if (
+            policy.decision == ToolPolicyDecision.INTERRUPT
+            and isinstance(approved_interrupt_id, str)
+            and approved_interrupt_id.strip()
+        ):
+            policy = policy.model_copy(
+                update={
+                    "decision": ToolPolicyDecision.ALLOW,
+                    "reason": "approval previously granted",
+                    "interrupt_reason": None,
+                }
+            )
         if policy.decision == ToolPolicyDecision.DENY:
             await self._append_block(
                 result=result,
@@ -252,6 +266,9 @@ class GovernedToolExecutor:
             )
             return False
         if policy.decision == ToolPolicyDecision.INTERRUPT:
+            args_preview = json.dumps(call.args, ensure_ascii=True, sort_keys=True)
+            if len(args_preview) > 280:
+                args_preview = args_preview[:280].rstrip() + "..."
             interrupt = InterruptRequest(
                 interrupt_id=f"int_{run_input.run_id or 'runtime'}_{index}",
                 run_id=run_input.run_id or "run_pending",
@@ -265,11 +282,16 @@ class GovernedToolExecutor:
                     "tool_name": call.tool_name,
                     "tool_call_id": call.tool_call_id,
                     "args": call.args,
+                    "args_preview": args_preview,
+                    "risk": manifest.risk.value,
+                    "side_effect": manifest.side_effect.value,
+                    "approval_mode": manifest.approval_mode.value,
                 },
                 allowed_actions=[
                     ResumeAction.APPROVE,
                     ResumeAction.REJECT,
                     ResumeAction.EDIT,
+                    ResumeAction.CANCEL,
                 ],
                 editable_fields=["args"],
                 metadata={
