@@ -7,11 +7,21 @@ from uuid import uuid4
 
 from agent_driver.code_agent.profile import run_code_agent_stage
 from agent_driver.context import (
+    COMPACTION_AUDIT_KEY,
+    COMPACTION_DECISION_KEY,
+    COMPACTION_FAILURES_KEY,
+    COMPACTION_RESULT_KEY,
+    CompactionOrchestrator,
     build_observation_memory,
+    build_session_memory_compaction,
+    evaluate_session_memory_freshness,
+    load_session_memory,
     microcompact_observations,
     planning_state_init,
     planning_state_set_step,
     render_planning_step_prompt,
+    run_full_llm_compaction,
+    sanitize_compaction_text,
 )
 from agent_driver.contracts.context import PlanningState, PlanningStep
 from agent_driver.contracts.enums import (
@@ -22,6 +32,7 @@ from agent_driver.contracts.enums import (
     RuntimeEventType,
     TerminalReason,
 )
+from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.single_agent.llm import build_single_agent_llm_request
@@ -46,6 +57,15 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
 
     _deps: RunnerDeps
     _config: RunnerConfig
+    _compaction_orchestrator: CompactionOrchestrator | None = None
+
+    def _get_compaction_orchestrator(self) -> CompactionOrchestrator:
+        """Lazily initialize compaction orchestrator."""
+        if self._compaction_orchestrator is None:
+            self._compaction_orchestrator = CompactionOrchestrator(
+                failure_limit=self._config.compaction_failure_limit
+            )
+        return self._compaction_orchestrator
 
     def _build_observations(self, result: ToolExecutionResult) -> list[dict[str, Any]]:
         """Build bounded observation rows from tool envelopes."""
@@ -253,6 +273,15 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
             context.metadata["trim_metadata"] = trim_payload["trim_metadata"]
             context.metadata["token_pressure"] = trim_payload["token_pressure"]
             context.metadata["prompt_render"] = trim_payload["prompt_render"]
+            token_pressure = context.metadata.get("token_pressure", {})
+            token_state = "ok"
+            if isinstance(token_pressure, dict):
+                token_state = str(token_pressure.get("state", "ok"))
+            await self._apply_compaction_if_eligible(
+                context=context,
+                request=request,
+                token_pressure_state=token_state,
+            )
             context.llm_response = await self._deps.provider.complete(request)
         except (RuntimeError, ValueError) as exc:
             self._emit(
@@ -309,6 +338,135 @@ class SingleAgentStepMixin:  # pylint: disable=too-few-public-methods
         self._save_checkpoint(context, latest_output=None, node_id="llm_call")
         self._maybe_fail_after_step("llm_call")
         return RuntimeStepResult(next_step="tool_stage")
+
+    async def _apply_compaction_if_eligible(
+        self,
+        *,
+        context: RunContext,
+        request: Any,
+        token_pressure_state: str,
+    ) -> None:
+        """Run compaction orchestration before final provider completion."""
+        orchestrator = self._get_compaction_orchestrator()
+        session_memory = load_session_memory(
+            artifact_store=self._deps.artifact_store,
+            session_id=context.run_input.thread_id or context.run_id,
+        )
+        decision = orchestrator.decide(
+            enable_compaction=self._config.enable_compaction,
+            enable_session_memory_compaction=self._config.enable_session_memory_compaction,
+            enable_llm_compaction=self._config.enable_llm_compaction,
+            token_pressure_state=token_pressure_state,
+            session_memory=session_memory,
+        )
+        context.metadata[COMPACTION_DECISION_KEY] = decision.model_dump(mode="json")
+        if not decision.eligible:
+            context.metadata[COMPACTION_AUDIT_KEY] = {"decision": context.metadata[COMPACTION_DECISION_KEY]}
+            return
+        if decision.mode.value == "session_memory" and session_memory is not None:
+            freshness = evaluate_session_memory_freshness(
+                session_memory=session_memory,
+                latest_turn_index=int(context.metadata.get("step_count", 0)),
+                stale_after_turns=self._config.session_memory_stale_after_turns,
+            )
+            if freshness.state == "fresh":
+                compacted = build_session_memory_compaction(
+                    session_memory=session_memory,
+                    recent_tail_messages=[msg.model_dump(mode="json") for msg in request.messages],
+                    planning_state=(
+                        context.metadata.get("planning_state")
+                        if isinstance(context.metadata.get("planning_state"), dict)
+                        else None
+                    ),
+                    retained_digest_ids=[
+                        str(item.get("digest_id"))
+                        for item in context.metadata.get("digest_refs", [])
+                        if isinstance(item, dict) and item.get("digest_id")
+                    ],
+                    retained_artifact_ids=[
+                        str(item.get("artifact_id"))
+                        for item in context.metadata.get("artifact_refs", [])
+                        if isinstance(item, dict) and item.get("artifact_id")
+                    ],
+                )
+                request.messages = [
+                    ChatMessage.model_validate(item) for item in compacted.prompt_messages
+                ]
+                result_payload = {
+                    "compaction_id": "cmp_session_memory",
+                    "mode": "session_memory",
+                    "success": True,
+                    "retained_digest_ids": compacted.retained_digest_ids,
+                    "retained_artifact_ids": compacted.retained_artifact_ids,
+                    "metadata": {"freshness": freshness.state, "reason": freshness.reason},
+                }
+                context.metadata[COMPACTION_RESULT_KEY] = result_payload
+                context.metadata["retained_digest_ids"] = compacted.retained_digest_ids
+                context.metadata["retained_artifact_ids"] = compacted.retained_artifact_ids
+                context.metadata[COMPACTION_AUDIT_KEY] = {
+                    "decision": context.metadata[COMPACTION_DECISION_KEY],
+                    "result": result_payload,
+                }
+                self._emit(
+                    EventSpec(
+                        run_id=context.run_id,
+                        attempt_id=context.attempt_id,
+                        event_type=RuntimeEventType.MEMORY_COMPACTED,
+                        payload={
+                            "mode": "session_memory",
+                            "retained_digest_ids": compacted.retained_digest_ids,
+                            "retained_artifact_ids": compacted.retained_artifact_ids,
+                        },
+                    )
+                )
+                orchestrator.reset_failures()
+                return
+        if decision.mode.value == "llm_full":
+            history_excerpt = "\n".join(message.content for message in request.messages[-8:])
+            sanitized_excerpt = sanitize_compaction_text(history_excerpt)
+            compaction_result, summary = await run_full_llm_compaction(
+                provider=self._deps.provider,
+                model=self._config.compaction_model,
+                history_excerpt=sanitized_excerpt,
+                user_request=context.run_input.input or "",
+            )
+            if compaction_result is not None and compaction_result.success:
+                request.messages = request.messages[-4:]
+                summary_text = str(summary.get("current_work", ""))
+                request.messages.append(
+                    ChatMessage.model_validate(
+                        {"role": "system", "content": f"Compacted summary:\n{summary_text}"}
+                    )
+                )
+                context.metadata[COMPACTION_RESULT_KEY] = compaction_result.model_dump(
+                    mode="json"
+                )
+                context.metadata[COMPACTION_AUDIT_KEY] = {
+                    "decision": context.metadata[COMPACTION_DECISION_KEY],
+                    "result": context.metadata[COMPACTION_RESULT_KEY],
+                }
+                self._emit(
+                    EventSpec(
+                        run_id=context.run_id,
+                        attempt_id=context.attempt_id,
+                        event_type=RuntimeEventType.MEMORY_COMPACTED,
+                        payload={
+                            "mode": "llm_full",
+                            "model": compaction_result.model,
+                            "latency_ms": compaction_result.latency_ms,
+                            "input_tokens_estimate": compaction_result.input_tokens_estimate,
+                            "output_tokens_estimate": compaction_result.output_tokens_estimate,
+                        },
+                    )
+                )
+                orchestrator.reset_failures()
+                return
+        placeholder = orchestrator.execute_placeholder(decision)
+        context.metadata[COMPACTION_AUDIT_KEY] = placeholder.model_dump(mode="json")
+        context.metadata[COMPACTION_RESULT_KEY] = (
+            placeholder.result.model_dump(mode="json") if placeholder.result else None
+        )
+        context.metadata[COMPACTION_FAILURES_KEY] = placeholder.failures
 
     async def _execute_tool_stage(  # pylint: disable=too-many-branches
         self, context: RunContext

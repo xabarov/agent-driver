@@ -1,6 +1,17 @@
 """Deterministic evaluation harness, dataset runners, and baseline reports."""
 
 from agent_driver.evals.baseline import compare_reports
+from agent_driver.evals.context_quality import (
+    ContextQualityFixture,
+    build_synthetic_context_quality_fixture,
+    evaluate_baseline_strategies,
+    score_context_quality,
+)
+from agent_driver.evals.context_compaction_runner import (
+    StrategyComparisonRow,
+    render_context_compaction_report,
+    run_context_compaction_strategy_comparison,
+)
 from agent_driver.evals.contracts import (
     BudgetLimits,
     CaseEvaluation,
@@ -37,6 +48,8 @@ __all__ = [
     "EvaluatorResult",
     "ReportComparison",
     "build_support_bundle",
+    "ContextQualityFixture",
+    "build_synthetic_context_quality_fixture",
     "compare_reports",
     "default_evaluators",
     "evaluate_checkpoint_replay",
@@ -45,9 +58,14 @@ __all__ = [
     "evaluate_terminal_state",
     "evaluate_tool_policy",
     "render_cli_replay",
+    "render_context_compaction_report",
     "render_full_debug_view",
     "render_succinct_view",
     "replay_from_persisted",
     "graph_profile_tool_summary",
+    "evaluate_baseline_strategies",
     "run_dataset",
+    "run_context_compaction_strategy_comparison",
+    "score_context_quality",
+    "StrategyComparisonRow",
 ]

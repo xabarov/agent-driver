@@ -117,3 +117,43 @@ async def test_code_agent_profile_interrupts_side_effect_tool() -> None:
     )
     assert output.status.value == "paused"
     assert output.interrupt is not None
+
+
+@pytest.mark.asyncio
+async def test_code_agent_does_not_interrupt_for_unused_side_effect_tool() -> None:
+    """Side-effect tool in registry should not interrupt unless called by code."""
+    registry = ToolRegistry()
+
+    async def _danger(_args):
+        return {"summary": "danger"}
+
+    registry.register(
+        ToolManifest(
+            name="danger",
+            description="Danger",
+            risk=ToolRisk.HIGH,
+            side_effect=SideEffectClass.EXTERNAL_ACTION,
+            approval_mode=ApprovalMode.ALWAYS,
+        ),
+        _danger,
+    )
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ignored"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            tool_registry=registry, code_executor=FakeRestrictedCodeExecutor()
+        ),
+    )
+    output = await runner.run(
+        AgentRunInput(
+            input="safe action",
+            run_id="run_code_profile_unused_side_effect",
+            agent_id="agent",
+            graph_preset="single_react",
+            agent_profile=AgentProfile.CODE_AGENT,
+            tool_policy={"metadata": {"code_action": "final_answer('ok')"}},
+        )
+    )
+    assert output.status.value == "completed"
+    assert output.interrupt is None

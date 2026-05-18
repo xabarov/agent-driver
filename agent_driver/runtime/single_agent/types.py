@@ -46,6 +46,12 @@ class RunnerConfig:  # pylint: disable=too-many-instance-attributes
     token_blocking_threshold: int = 10500
     output_token_reserve: int = 1500
     include_planning_prompt: bool = False
+    enable_compaction: bool = False
+    enable_session_memory_compaction: bool = False
+    enable_llm_compaction: bool = False
+    compaction_failure_limit: int = 3
+    session_memory_stale_after_turns: int = 4
+    compaction_model: str = "default"
     code_executor: CodeActionExecutor | None = None
     code_limits: CodeAgentLimits = field(default_factory=CodeAgentLimits)
     authorized_imports: tuple[str, ...] = ()

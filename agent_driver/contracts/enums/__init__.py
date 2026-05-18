@@ -1,6 +1,7 @@
 """Shared enum contracts for phase 0 models."""
 
 from agent_driver.contracts.enums.base import StrEnum
+from agent_driver.contracts.enums.compaction import CompactionMode, CompactionSkipReason
 from agent_driver.contracts.enums.context import (
     ObservationSource,
     ObservationTrust,
@@ -79,4 +80,6 @@ __all__ = [
     "ObservationSource",
     "ObservationTrust",
     "TrimAction",
+    "CompactionMode",
+    "CompactionSkipReason",
 ]

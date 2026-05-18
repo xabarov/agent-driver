@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from agent_driver.context import (
+    COMPACTION_AUDIT_KEY,
+    COMPACTION_DECISION_KEY,
+    COMPACTION_FAILURES_KEY,
+    COMPACTION_RESULT_KEY,
     build_memory_projection,
     planning_state_event,
     planning_step_event,
@@ -198,6 +202,10 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
             "trim_audit": context.metadata.get("trim_audit", []),
             "microcompaction_audit": context.metadata.get("microcompaction_audit", []),
             "token_pressure": context.metadata.get("token_pressure", {}),
+            "compaction_decision": context.metadata.get(COMPACTION_DECISION_KEY),
+            "compaction_audit": context.metadata.get(COMPACTION_AUDIT_KEY),
+            "compaction_result": context.metadata.get(COMPACTION_RESULT_KEY),
+            "compaction_failures": context.metadata.get(COMPACTION_FAILURES_KEY, []),
             "retained_digest_ids": context.metadata.get("retained_digest_ids", []),
             "retained_artifact_ids": context.metadata.get("retained_artifact_ids", []),
         }
@@ -230,6 +238,10 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
                 ),
                 "microcompaction": context.metadata.get("microcompaction", {}),
                 "token_pressure": context.metadata.get("token_pressure", {}),
+                COMPACTION_DECISION_KEY: context.metadata.get(COMPACTION_DECISION_KEY),
+                COMPACTION_AUDIT_KEY: context.metadata.get(COMPACTION_AUDIT_KEY),
+                COMPACTION_RESULT_KEY: context.metadata.get(COMPACTION_RESULT_KEY),
+                COMPACTION_FAILURES_KEY: context.metadata.get(COMPACTION_FAILURES_KEY, []),
                 "prompt_render": context.metadata.get("prompt_render"),
                 "approval_payload": (
                     ApprovalPayload.from_interrupt(
@@ -298,6 +310,10 @@ class SingleAgentOutputMixin:  # pylint: disable=too-few-public-methods
                     "microcompaction_audit", []
                 ),
                 "token_pressure": context.metadata.get("token_pressure", {}),
+                "compaction_decision": context.metadata.get(COMPACTION_DECISION_KEY),
+                "compaction_audit": context.metadata.get(COMPACTION_AUDIT_KEY),
+                "compaction_result": context.metadata.get(COMPACTION_RESULT_KEY),
+                "compaction_failures": context.metadata.get(COMPACTION_FAILURES_KEY, []),
             },
             metadata={
                 "graph_id": self.graph_id,

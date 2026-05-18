@@ -110,3 +110,68 @@ async def test_web_search_uses_mock_results_without_network() -> None:
     assert out["source"] == "mock"
     assert len(out["results"]) == 2
     assert out["results"][0]["title"] == "Doc A"
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_rejects_non_http_scheme() -> None:
+    """web_fetch should validate scheme before any network call."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    with pytest.raises(ValueError, match="scheme"):
+        await tool.handler({"url": "ftp://example.com/file.txt"})
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_truncates_when_response_exceeds_max_bytes(monkeypatch) -> None:
+    """web_fetch should mark truncated when response is byte-capped."""
+    response = _DummyResponse(
+        url="https://example.com",
+        content=("abcdefghij" * 10).encode("utf-8"),
+        headers={"content-type": "text/plain"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    out = await tool.handler({"url": "https://example.com", "max_chars": 64})
+    assert len(out["content"]) == 64
+    assert out["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_web_search_parses_duckduckgo_html(monkeypatch) -> None:
+    """web_search should parse at least one result from DDG-like HTML."""
+    html = (
+        '<html><body>'
+        '<a class="result-link" href="https://example.com/page">Example Title</a>'
+        "</body></html>"
+    )
+    response = _DummyResponse(
+        url="https://duckduckgo.com/html/?q=test",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler({"query": "test", "max_results": 1})
+    assert out["source"] == "duckduckgo_html"
+    assert len(out["results"]) == 1
+    assert out["results"][0]["url"] == "https://example.com/page"

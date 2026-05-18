@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent_driver.tools.registry import ToolRegistry
@@ -17,8 +19,12 @@ async def test_register_builtin_tools_contains_first_wave_names() -> None:
     assert registry.get("read_file") is not None
     assert registry.get("glob_search") is not None
     assert registry.get("grep_search") is not None
+    assert registry.get("file_write") is not None
+    assert registry.get("file_edit") is not None
+    assert registry.get("notebook_edit") is not None
     assert registry.get("web_fetch") is not None
     assert registry.get("web_search") is not None
+    assert registry.get("bash") is not None
 
 
 @pytest.mark.asyncio
@@ -57,3 +63,282 @@ async def test_glob_and_grep_tools_find_expected_files(tmp_path) -> None:
     paths = {row["path"] for row in grep_out["matches"]}
     assert "src/app.py" in paths
     assert "README.md" in paths
+
+
+@pytest.mark.asyncio
+async def test_read_file_rejects_relative_path(tmp_path) -> None:
+    """read_file should enforce absolute path contract."""
+    _ = tmp_path
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("read_file")
+    assert tool is not None
+    with pytest.raises(ValueError, match="absolute"):
+        await tool.handler({"path": "relative.txt"})
+
+
+@pytest.mark.asyncio
+async def test_glob_respects_gitignore(tmp_path) -> None:
+    """glob_search should skip paths matched by .gitignore patterns."""
+    (tmp_path / ".gitignore").write_text("ignored.py\n", encoding="utf-8")
+    (tmp_path / "ignored.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "seen.py").write_text("x = 2\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "*.py"})
+    assert "ignored.py" not in out["results"]
+    assert "seen.py" in out["results"]
+
+
+@pytest.mark.asyncio
+async def test_grep_honors_path_glob_filter(tmp_path) -> None:
+    """grep_search should filter candidate files with path_glob."""
+    pkg = tmp_path / "pkg"
+    docs = tmp_path / "docs"
+    pkg.mkdir()
+    docs.mkdir()
+    (pkg / "a.py").write_text("needle\n", encoding="utf-8")
+    (docs / "a.md").write_text("needle\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("grep_search")
+    assert tool is not None
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "needle", "path_glob": "*.py"}
+    )
+    assert out["matches"]
+    assert all(row["path"].endswith(".py") for row in out["matches"])
+
+
+@pytest.mark.asyncio
+async def test_read_file_respects_offset_and_limit(tmp_path) -> None:
+    """read_file should slice content deterministically by offset/limit."""
+    target = tmp_path / "note.txt"
+    target.write_text("l1\nl2\nl3\nl4\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("read_file")
+    assert tool is not None
+    out = await tool.handler({"path": str(target), "offset": 2, "limit": 2})
+    assert out["returned_lines"] == 2
+    assert out["content"].splitlines() == ["2|l2", "3|l3"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_rejects_when_file_exceeds_max_bytes(tmp_path) -> None:
+    """read_file should guard against oversized files."""
+    target = tmp_path / "large.txt"
+    target.write_text("x" * 64, encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("read_file")
+    assert tool is not None
+    with pytest.raises(ValueError, match="max_bytes"):
+        await tool.handler({"path": str(target), "max_bytes": 8})
+
+
+@pytest.mark.asyncio
+async def test_glob_respects_max_depth(tmp_path) -> None:
+    """glob_search should skip deep paths beyond max_depth."""
+    shallow = tmp_path / "a.py"
+    deep_dir = tmp_path / "pkg" / "sub"
+    deep_dir.mkdir(parents=True)
+    deep = deep_dir / "b.py"
+    shallow.write_text("x=1\n", encoding="utf-8")
+    deep.write_text("x=2\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "*.py", "max_depth": 0})
+    assert out["results"] == ["a.py"]
+
+
+@pytest.mark.asyncio
+async def test_grep_respects_max_matches_limit(tmp_path) -> None:
+    """grep_search should cap returned matches by max_matches."""
+    target = tmp_path / "log.txt"
+    target.write_text("hit\nhit\nhit\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("grep_search")
+    assert tool is not None
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "hit", "max_matches": 2}
+    )
+    assert len(out["matches"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_grep_rejects_invalid_regex(tmp_path) -> None:
+    """grep_search should fail fast on invalid regex syntax."""
+    _ = tmp_path
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("grep_search")
+    assert tool is not None
+    with pytest.raises(Exception):
+        await tool.handler({"base_dir": str(tmp_path), "pattern": "("})
+
+
+@pytest.mark.asyncio
+async def test_file_write_overwrite_and_append(tmp_path) -> None:
+    """file_write should support deterministic overwrite/append semantics."""
+    target = tmp_path / "note.txt"
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_write")
+    assert tool is not None
+    first = await tool.handler({"path": str(target), "content": "alpha\n"})
+    assert first["mode"] == "overwrite"
+    assert target.read_text(encoding="utf-8") == "alpha\n"
+    second = await tool.handler(
+        {"path": str(target), "content": "beta\n", "mode": "append"}
+    )
+    assert second["mode"] == "append"
+    assert target.read_text(encoding="utf-8") == "alpha\nbeta\n"
+
+
+@pytest.mark.asyncio
+async def test_file_write_can_create_parent_when_flag_enabled(tmp_path) -> None:
+    """file_write should create missing parent only when explicitly allowed."""
+    nested = tmp_path / "a" / "b" / "note.txt"
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_write")
+    assert tool is not None
+    with pytest.raises(ValueError, match="create_parent=true"):
+        await tool.handler({"path": str(nested), "content": "x"})
+    await tool.handler({"path": str(nested), "content": "x", "create_parent": True})
+    assert nested.read_text(encoding="utf-8") == "x"
+
+
+@pytest.mark.asyncio
+async def test_file_edit_replaces_expected_occurrences(tmp_path) -> None:
+    """file_edit should replace exactly expected old_text occurrences."""
+    target = tmp_path / "cfg.txt"
+    target.write_text("name=old\nname=old\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_edit")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "old_text": "name=old",
+            "new_text": "name=new",
+            "expected_occurrences": 2,
+        }
+    )
+    assert out["replacements"] == 2
+    assert target.read_text(encoding="utf-8") == "name=new\nname=new\n"
+
+
+@pytest.mark.asyncio
+async def test_file_edit_fails_on_occurrence_mismatch(tmp_path) -> None:
+    """file_edit should fail fast when expected occurrence count mismatches."""
+    target = tmp_path / "cfg.txt"
+    target.write_text("name=old\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_edit")
+    assert tool is not None
+    with pytest.raises(ValueError, match="occurrences mismatch"):
+        await tool.handler(
+            {
+                "path": str(target),
+                "old_text": "name=old",
+                "new_text": "name=new",
+                "expected_occurrences": 2,
+            }
+        )
+
+
+def _write_notebook(path, *, code: str = "print('a')\n") -> None:
+    payload = {
+        "cells": [
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [code],
+            }
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    path.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_notebook_edit_replaces_existing_cell_text(tmp_path) -> None:
+    """notebook_edit should replace old_text exactly once in target cell."""
+    target = tmp_path / "nb.ipynb"
+    _write_notebook(target, code="print('old')\n")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("notebook_edit")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "cell_idx": 0,
+            "is_new_cell": False,
+            "old_text": "old",
+            "new_text": "new",
+        }
+    )
+    assert out["operation"] == "replace"
+    rendered = json.loads(target.read_text(encoding="utf-8"))
+    assert rendered["cells"][0]["source"] == ["print('new')\n"]
+
+
+@pytest.mark.asyncio
+async def test_notebook_edit_inserts_new_cell(tmp_path) -> None:
+    """notebook_edit should insert a new cell at requested index."""
+    target = tmp_path / "nb.ipynb"
+    _write_notebook(target, code="print('a')\n")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("notebook_edit")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "cell_idx": 1,
+            "is_new_cell": True,
+            "cell_type": "markdown",
+            "old_text": "",
+            "new_text": "# title\n",
+        }
+    )
+    assert out["operation"] == "insert"
+    rendered = json.loads(target.read_text(encoding="utf-8"))
+    assert len(rendered["cells"]) == 2
+    assert rendered["cells"][1]["cell_type"] == "markdown"
+    assert rendered["cells"][1]["source"] == ["# title\n"]
+
+
+@pytest.mark.asyncio
+async def test_notebook_edit_fails_when_old_text_mismatch(tmp_path) -> None:
+    """notebook_edit should fail when old_text is absent or ambiguous."""
+    target = tmp_path / "nb.ipynb"
+    _write_notebook(target, code="print('same')\nprint('same')\n")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("notebook_edit")
+    assert tool is not None
+    with pytest.raises(ValueError, match="exactly once"):
+        await tool.handler(
+            {
+                "path": str(target),
+                "cell_idx": 0,
+                "is_new_cell": False,
+                "old_text": "same",
+                "new_text": "new",
+            }
+        )

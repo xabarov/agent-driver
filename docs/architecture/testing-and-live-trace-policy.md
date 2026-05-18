@@ -88,6 +88,17 @@ Minimum evidence expectation in PR/change notes:
 - Contract tests: `ToolManifest`, args schema, output envelope shape.
 - Executor tests: registered tool run, truncation budgets, denied/interrupt flows.
 - Live smoke: agent run that executes the tool path (or deterministic mock payload for external search results) with governed executor.
+- For side-effecting/system tools (filesystem write, shell): live lane must also assert
+  tool trace status (`completed|denied|interrupt`) and key structured output fields
+  relevant to safety (`exit_code`, `timed_out`, size/replacement counters).
+- For notebook/filesystem edit tools, live lane must assert observable side-effect
+  correctness (target file content changed as expected), not only envelope presence.
+- For write/edit tools, include both create/overwrite and in-place replacement paths
+  across live lanes, and assert counters (`replacements`, resulting mode/size fields)
+  from structured output alongside on-disk state.
+- For high-risk/medium-risk tools under approval thresholds, include live interrupt lanes
+  that assert paused status, interrupt reason, approval payload tool identity, and
+  denied trace row for the proposed call.
 
 ### Planning / TODO / state-update tools
 

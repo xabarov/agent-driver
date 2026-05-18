@@ -12,5 +12,9 @@ def test_register_builtin_tools_populates_registry() -> None:
     assert "read_file" in names
     assert "glob_search" in names
     assert "grep_search" in names
+    assert "file_write" in names
+    assert "file_edit" in names
+    assert "notebook_edit" in names
     assert "web_fetch" in names
     assert "web_search" in names
+    assert "bash" in names

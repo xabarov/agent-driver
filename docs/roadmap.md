@@ -9,6 +9,7 @@ Additional OpenClaude context review: treat context engineering as a layered run
 Verification policy reference: all tool/runtime/context feature work must follow
 [Testing and live trace policy](architecture/testing-and-live-trace-policy.md)
 before merge (offline + live + trace-review gates).
+Execution reference: [Test plan and coverage matrix](architecture/test-plan-and-matrix.md).
 
 ## Repository structure policy
 
@@ -157,6 +158,24 @@ Implementation notes from first cut:
 - `SingleAgentRunner` now persists governed tool envelopes in run metadata and
   emits paused output with `interrupt_requested` when policy returns interrupt.
 - Real side-effecting shell/filesystem/http tools remain deferred to a follow-up pass.
+- Follow-up landed for filesystem writes:
+  - `file_write` and `file_edit` were added as governed built-ins with
+    `REVERSIBLE_WRITE` side-effect class, `MEDIUM` risk, and
+    `ON_POLICY_MATCH` approval mode;
+  - `file_write` supports `overwrite|append`, optional parent creation flag, and
+    resulting-size byte budget guard;
+  - `file_edit` enforces deterministic replacement with `expected_occurrences`
+    mismatch protection to avoid accidental broad edits;
+  - targeted unit and governed-executor tests now cover positive path, boundary
+    contracts, and interrupt-on-risk policy behavior for write tools.
+- First shell tool baseline landed:
+  - `bash` was added as a governed built-in with policy-first read-only
+    allowlist, destructive keyword blocking, and redirection blocking;
+  - command execution runs with timeout kill-switch and bounded stdout/stderr
+    previews;
+  - runtime policy still treats `bash` as high-risk (`HIGH` + irreversible
+    side-effect class) so medium/high approval thresholds interrupt before
+    execution.
 
 Implementation notes from tail catch-up pass:
 
@@ -296,6 +315,11 @@ Implementation notes from first cut:
   - run replay from persisted events;
   - graph/profile/tool tree summary;
   - redaction-safe support bundle export.
+- Add context-quality evaluation lane for Phase 6/8 context work:
+  - deterministic needle-fact fixtures;
+  - recall/hallucination/provenance/budget-efficiency scoring;
+  - optional OpenRouter-backed live recall smoke.
+  See [Test Plan and Coverage Matrix](architecture/test-plan-and-matrix.md#context-quality-matrix).
 
 Exit criteria:
 
@@ -303,6 +327,8 @@ Exit criteria:
 - trace export works with no-op/local sink;
 - evaluation can compare two runs on cost/latency/trajectory.
 - one run can be rendered as full debug memory, succinct context view, and CLI replay.
+- context-quality baseline can compare trim-only, microcompaction, digest/session
+  memory, and future LLM-compaction strategies.
 
 ## Phase 6: Context Engineering
 
@@ -361,6 +387,10 @@ Implementation notes from integration pass:
   enabling replay/compaction separation from ordinary chat/tool observations;
 - LLM request assembly now applies deterministic context trimming and supports
   bounded observation previews before model completion.
+- context-quality work is tracked in
+  [Test Plan and Coverage Matrix](architecture/test-plan-and-matrix.md#context-quality-matrix);
+  Phase 6 should be treated as deterministic context hygiene until those
+  retention tests measure semantic summarization quality.
 
 ## Phase 7: CodeAgent Profile And Sandboxed Action Execution
 
@@ -458,6 +488,13 @@ Implementation notes from follow-up pass (7.3/7.4):
   - summary sections for request intent, key concepts, files/code, errors/fixes,
     solved/open problems, user messages, pending tasks, current work, and next step;
   - deterministic post-processing that strips draft/analysis text before reuse.
+- Add context-quality eval comparison before enabling new compaction defaults:
+  - trim-only baseline;
+  - trim plus deterministic microcompaction;
+  - trim plus session digest/session memory;
+  - session-memory compaction;
+  - full LLM compaction;
+  - optional OpenRouter live lane for semantic recall.
 - Add partial compaction:
   - summarize prefix while keeping recent suffix intact;
   - summarize recent suffix while keeping older context intact;
@@ -492,6 +529,8 @@ Exit criteria:
   ordering;
 - post-compact context contains active plan/artifact references under budget;
 - autocompact stops retrying after repeated failures and records the circuit-breaker state.
+- compaction changes improve or preserve context-quality baseline scores before
+  they become default behavior.
 
 ## Phase 9: Subagents And Parallel Orchestration
 

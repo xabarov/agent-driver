@@ -9,6 +9,19 @@ from agent_driver.context.artifacts import (
     SqliteContextStore,
     split_preview_and_artifact,
 )
+from agent_driver.context.compaction import (
+    COMPACTION_AUDIT_KEY,
+    COMPACTION_DECISION_KEY,
+    COMPACTION_FAILURES_KEY,
+    COMPACTION_RESULT_KEY,
+    CompactionOrchestrator,
+    build_session_memory_compaction,
+    evaluate_session_memory_freshness,
+    load_session_memory,
+    run_full_llm_compaction,
+    sanitize_compaction_text,
+    save_session_memory,
+)
 from agent_driver.context.microcompaction import microcompact_observations
 from agent_driver.context.observations import build_observation_memory
 from agent_driver.context.planning import (
@@ -35,6 +48,17 @@ __all__ = [
     "SqliteSessionStore",
     "ArtifactStore",
     "ContextStore",
+    "COMPACTION_DECISION_KEY",
+    "COMPACTION_AUDIT_KEY",
+    "COMPACTION_RESULT_KEY",
+    "COMPACTION_FAILURES_KEY",
+    "CompactionOrchestrator",
+    "evaluate_session_memory_freshness",
+    "build_session_memory_compaction",
+    "save_session_memory",
+    "load_session_memory",
+    "run_full_llm_compaction",
+    "sanitize_compaction_text",
     "InMemoryArtifactStore",
     "InMemoryContextStore",
     "SqliteArtifactStore",
