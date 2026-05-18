@@ -10,7 +10,10 @@ def ensure_json_serializable(value: Any, *, field_name: str) -> Any:
     """Validate JSON-serializability and return the original value."""
     try:
         json.dumps(value)
-    except (TypeError, ValueError) as exc:  # pragma: no cover - branch depends on invalid inputs
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:  # pragma: no cover - branch depends on invalid inputs
         raise ValueError(f"{field_name} must be JSON-serializable") from exc
     return value
 

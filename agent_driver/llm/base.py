@@ -2,13 +2,29 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from time import monotonic
-from typing import TypeVar
+from typing import Any, TypeVar
+
+import httpx
 
 from agent_driver.llm.contracts import LlmProviderKind, ProviderStatus
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True, slots=True)
+class StreamRequest:
+    """HTTP stream request parameters used by provider adapters."""
+
+    timeout_s: float
+    method: str
+    url: str
+    handled_exceptions: tuple[type[BaseException], ...]
+    headers: dict[str, str] | None = None
+    json: dict[str, Any] | None = None
 
 
 class ProviderBase:
@@ -84,6 +100,39 @@ class ProviderBase:
             result = await operation()
             self._mark_success(started_at=started)
             return result
+        except handled_exceptions:
+            self._mark_failure()
+            raise
+
+    @asynccontextmanager
+    async def stream_client_with_telemetry(
+        self,
+        request: StreamRequest,
+    ) -> AsyncIterator[AsyncIterator[str]]:
+        """Open HTTP stream with telemetry and yield iterator over text lines."""
+        async with self.stream_with_telemetry(
+            handled_exceptions=request.handled_exceptions
+        ):
+            async with httpx.AsyncClient(timeout=request.timeout_s) as client:
+                async with client.stream(
+                    request.method,
+                    request.url,
+                    headers=request.headers,
+                    json=request.json,
+                ) as response:
+                    response.raise_for_status()
+                    yield response.aiter_lines()
+
+    @asynccontextmanager
+    async def stream_with_telemetry(
+        self, *, handled_exceptions: tuple[type[BaseException], ...]
+    ) -> AsyncIterator[None]:
+        """Track stream request telemetry while yielding chunks progressively."""
+        self._mark_attempt()
+        started = self._started_at()
+        try:
+            yield
+            self._mark_success(started_at=started)
         except handled_exceptions:
             self._mark_failure()
             raise

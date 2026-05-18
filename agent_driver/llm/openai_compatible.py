@@ -11,7 +11,7 @@ import httpx
 
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.usage import UsageSummary
-from agent_driver.llm.base import ProviderBase
+from agent_driver.llm.base import ProviderBase, StreamRequest
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmProviderKind,
@@ -178,35 +178,25 @@ class OpenAICompatibleProvider(ProviderBase):
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         """Execute streaming completion call and normalize deltas."""
         url = f"{self._base_url}/chat/completions"
-
-        async def _collect() -> list[LlmStreamEvent]:
-            chunks: list[LlmStreamEvent] = []
-            async with httpx.AsyncClient(timeout=self._timeout_s) as client:
-                async with client.stream(
-                    "POST",
-                    url,
-                    headers=self._headers(),
-                    json=self._payload(request, stream=True),
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line or not line.startswith("data: "):
-                            continue
-                        raw = line[len("data: ") :]
-                        if raw.strip() == "[DONE]":
-                            break
-                        payload = httpx.Response(200, text=raw).json()
-                        chunks.append(
-                            normalize_openai_stream_chunk(
-                                payload,
-                                provider_name=self.name,
-                                fallback_model=str(request.model or self._model),
-                            )
-                        )
-            return chunks
-
-        events = await self.execute_with_telemetry(
-            _collect, handled_exceptions=(httpx.HTTPError, ValueError)
+        handled_errors = (httpx.HTTPError, ValueError)
+        stream_request = StreamRequest(
+            timeout_s=self._timeout_s,
+            method="POST",
+            url=url,
+            headers=self._headers(),
+            json=self._payload(request, stream=True),
+            handled_exceptions=handled_errors,
         )
-        for event in events:
-            yield event
+        async with self.stream_client_with_telemetry(stream_request) as lines:
+            async for line in lines:
+                if not line or not line.startswith("data: "):
+                    continue
+                raw = line[len("data: ") :]
+                if raw.strip() == "[DONE]":
+                    break
+                payload = httpx.Response(200, text=raw).json()
+                yield normalize_openai_stream_chunk(
+                    payload,
+                    provider_name=self.name,
+                    fallback_model=str(request.model or self._model),
+                )

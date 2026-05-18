@@ -120,7 +120,8 @@ async def test_router_fallback_skips_failed_provider() -> None:
     response = await router.complete(request)
 
     assert response.provider == "backup"
-    assert failing.status.error_count >= 1
+    assert failing.status.error_count == 0
+    assert failing.status.request_count == 0
     assert failing.status.healthy is False
 
 
@@ -133,7 +134,7 @@ async def test_router_record_result_updates_telemetry() -> None:
     router = HealthAwareRouter(providers=[provider], strategy=RouterStrategy.BALANCED)
     router.record_result(provider, success=True, elapsed_ms=100.0)
 
-    assert provider.status.request_count == 1
+    assert provider.status.request_count == 0
     assert provider.status.latency_ms is not None
     assert provider.status.avg_latency_ms is not None
     assert provider.status.avg_latency_ms > 50.0

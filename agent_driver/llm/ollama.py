@@ -10,7 +10,7 @@ import httpx
 
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.usage import UsageSummary
-from agent_driver.llm.base import ProviderBase
+from agent_driver.llm.base import ProviderBase, StreamRequest
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmProviderKind,
@@ -151,32 +151,24 @@ class OllamaProvider(ProviderBase):
                 "temperature": request.temperature,
             },
         }
-
-        async def _collect() -> list[LlmStreamEvent]:
-            events: list[LlmStreamEvent] = []
-            async with httpx.AsyncClient(timeout=self._timeout_s) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self._base_url}/api/chat",
-                    json=payload,
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
-                        chunk = httpx.Response(200, text=line).json()
-                        event = normalize_ollama_stream_chunk(
-                            chunk,
-                            provider_name=self.name,
-                            fallback_model=str(request.model or self._model),
-                        )
-                        events.append(event)
-                        if event.event == "done":
-                            break
-            return events
-
-        chunks = await self.execute_with_telemetry(
-            _collect, handled_exceptions=(httpx.HTTPError, ValueError)
+        handled_errors = (httpx.HTTPError, ValueError)
+        stream_request = StreamRequest(
+            timeout_s=self._timeout_s,
+            method="POST",
+            url=f"{self._base_url}/api/chat",
+            json=payload,
+            handled_exceptions=handled_errors,
         )
-        for event in chunks:
-            yield event
+        async with self.stream_client_with_telemetry(stream_request) as lines:
+            async for line in lines:
+                if not line:
+                    continue
+                chunk = httpx.Response(200, text=line).json()
+                event = normalize_ollama_stream_chunk(
+                    chunk,
+                    provider_name=self.name,
+                    fallback_model=str(request.model or self._model),
+                )
+                yield event
+                if event.event == "done":
+                    break

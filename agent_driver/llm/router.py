@@ -116,9 +116,7 @@ class HealthAwareRouter:
     ) -> None:
         """Update provider status metrics after a request attempt."""
         status = provider.status
-        status.request_count += 1
         if not success:
-            status.error_count += 1
             status.healthy = False
         if status.avg_latency_ms is None:
             status.avg_latency_ms = elapsed_ms

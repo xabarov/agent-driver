@@ -8,8 +8,8 @@ from pydantic import ValidationError
 from agent_driver.contracts import (
     AgentRunInput,
     AgentRunOutput,
-    CheckpointRef,
     ChatMessage,
+    CheckpointRef,
     InterruptReason,
     InterruptRequest,
     ResumeAction,

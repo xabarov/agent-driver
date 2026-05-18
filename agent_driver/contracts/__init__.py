@@ -1,6 +1,11 @@
 """Public phase-0 contracts."""
 
-from agent_driver.contracts.artifacts import ArtifactRef, RedactionInfo, RunWarning, TraceRef
+from agent_driver.contracts.artifacts import (
+    ArtifactRef,
+    RedactionInfo,
+    RunWarning,
+    TraceRef,
+)
 from agent_driver.contracts.base import ContractModel
 from agent_driver.contracts.checkpoints import CheckpointRef
 from agent_driver.contracts.enums import (
