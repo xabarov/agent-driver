@@ -11,6 +11,7 @@ This document is the high-level entry point. Details are split into focused note
 - [Human review, interrupts, and guardrails](architecture/hitl-and-guardrails.md)
 - [Observability, evaluation, and regression harness](architecture/evaluation-and-observability.md)
 - [Context engineering, tools, and MCP integration](architecture/context-tools-and-mcp.md)
+- [Multi-agent orchestration and parallel subagents](architecture/multi-agent-orchestration.md)
 - [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md)
 - [Implementation roadmap](roadmap.md)
 
@@ -43,6 +44,7 @@ The missing runtime foundations are:
 - evaluation datasets, trajectory checks, and regression baselines;
 - planning/task state as a reusable primitive;
 - context engineering beyond LLM compaction: artifact offloading, context isolation, and tool-result budgets;
+- parallel subagent orchestration with durable fan-out/fan-in, join policies, and merge provenance;
 - MCP integration and MCP-specific threat controls;
 - an explicit decision model for deterministic workflows vs agentic loops;
 - first-class agent profiles, including provider-native tool calling, textual ReAct, and opt-in CodeAgent-style execution.
@@ -427,11 +429,22 @@ Required contract:
 
 This mirrors the strongest parts of `science_graphrag.agent.subagents.runtime`, but should be stripped of research-specific result shapes.
 
+For parallel multi-agent work, child runs should also be grouped by `SubagentGroup` records. A group represents one parent fan-out/fan-in step and carries `group_id`, parent checkpoint, join policy, child ids, shared budget, terminal state, and merge provenance. See [Multi-agent orchestration and parallel subagents](architecture/multi-agent-orchestration.md).
+
 Initial execution modes:
 
 - in-process sync child graph;
 - background task interface with a local in-memory executor;
 - later: process, queue, or remote executor adapters.
+
+Initial join policies:
+
+- `wait_all`;
+- `wait_any`;
+- `k_of_n`;
+- `best_effort_until_deadline`;
+- `race`;
+- `manual_review`.
 
 ## Context And Compaction
 

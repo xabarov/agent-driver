@@ -13,6 +13,10 @@ from agent_driver.contracts import (
     ResumeAction,
     ResumeCommand,
     SubagentExecutionMode,
+    SubagentGroup,
+    SubagentGroupStatus,
+    SubagentJoinPolicy,
+    SubagentMergeMode,
     SubagentRun,
     SubagentStatus,
     SubagentTerminalState,
@@ -91,3 +95,22 @@ def test_subagent_round_trip_with_merge_provenance() -> None:
 
     restored = SubagentRun.model_validate(row.model_dump(mode="json"))
     assert restored.status == SubagentStatus.COMPLETED
+
+
+def test_subagent_group_round_trip() -> None:
+    """Round-trip subagent group metadata through JSON payload."""
+    group = SubagentGroup(
+        group_id="grp_1",
+        parent_run_id="run_1",
+        parent_attempt_id="att_1",
+        join_policy=SubagentJoinPolicy.WAIT_ALL,
+        merge_mode=SubagentMergeMode.SYNTHESIZE,
+        max_parallel=3,
+        deadline_seconds=30.0,
+        token_budget=1_000,
+        cost_budget_usd=0.5,
+        child_run_ids=["child_1", "child_2"],
+        status=SubagentGroupStatus.RUNNING,
+    )
+    restored = SubagentGroup.model_validate(group.model_dump(mode="json"))
+    assert restored.join_policy == SubagentJoinPolicy.WAIT_ALL

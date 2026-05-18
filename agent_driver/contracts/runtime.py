@@ -9,11 +9,14 @@ from pydantic import Field, field_validator, model_validator
 from agent_driver.contracts.artifacts import ArtifactRef, RunWarning, TraceRef
 from agent_driver.contracts.base import ContractModel
 from agent_driver.contracts.checkpoints import CheckpointRef
-from agent_driver.contracts.enums import RunStatus, TerminalReason
+from agent_driver.contracts.enums import AgentProfile, RunStatus, TerminalReason
 from agent_driver.contracts.events import RuntimeEvent
 from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
+from agent_driver.contracts.memory import MemoryProjection
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.contracts.subagents import SubagentRun
+from agent_driver.contracts.profiles import PromptRenderResult
+from agent_driver.contracts.serialization import ExecutorSerializationPolicy
+from agent_driver.contracts.subagents import SubagentGroup, SubagentRun
 from agent_driver.contracts.tools import ToolPolicyInput, ToolTrace
 from agent_driver.contracts.usage import UsageSummary
 from agent_driver.contracts.validation import (
@@ -33,7 +36,11 @@ class AgentRunInput(ContractModel):
     resume: ResumeCommand | None = None
     agent_id: str
     graph_preset: str
+    agent_profile: AgentProfile = AgentProfile.REACT_TEXT
     model_role: str = "default"
+    prompt_template_id: str | None = None
+    prompt_template_version: int | None = None
+    serialization_policy: ExecutorSerializationPolicy | None = None
     tool_policy: ToolPolicyInput = Field(default_factory=ToolPolicyInput)
     deadline_seconds: float | None = None
     max_steps: int | None = None
@@ -84,7 +91,10 @@ class AgentRunOutput(ContractModel):
     events: list[RuntimeEvent] = Field(default_factory=list)
     tool_trace: list[ToolTrace] = Field(default_factory=list)
     subagent_runs: list[SubagentRun] = Field(default_factory=list)
+    subagent_groups: list[SubagentGroup] = Field(default_factory=list)
     artifacts: list[ArtifactRef] = Field(default_factory=list)
+    memory_projection: MemoryProjection | None = None
+    prompt_render: PromptRenderResult | None = None
     usage: UsageSummary | None = None
     warnings: list[RunWarning] = Field(default_factory=list)
     trace: TraceRef | None = None

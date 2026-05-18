@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from agent_driver.contracts import (
+    AgentProfile,
     ToolCall,
     ToolError,
     ToolManifest,
@@ -64,3 +65,23 @@ def test_tool_error_metadata_validation() -> None:
     """ToolError validates JSON-compatible metadata."""
     err = ToolError(code="x", message="bad", metadata={"attempt": 1})
     assert err.metadata["attempt"] == 1
+
+
+def test_tool_manifest_code_agent_name_must_be_python_identifier() -> None:
+    """Code-agent compatible tools require python-identifier names."""
+    with pytest.raises(ValidationError):
+        ToolManifest(
+            name="bad-name",
+            description="bad",
+            supported_profiles=[AgentProfile.CODE_AGENT],
+        )
+
+
+def test_tool_manifest_rejects_empty_supported_profiles() -> None:
+    """Manifest must support at least one profile."""
+    with pytest.raises(ValidationError):
+        ToolManifest(
+            name="lookup",
+            description="Lookup",
+            supported_profiles=[],
+        )

@@ -9,6 +9,7 @@ from agent_driver.contracts.artifacts import (
 from agent_driver.contracts.base import ContractModel
 from agent_driver.contracts.checkpoints import CheckpointRef
 from agent_driver.contracts.enums import (
+    AgentProfile,
     ApprovalMode,
     ArtifactKind,
     ChatRole,
@@ -20,8 +21,12 @@ from agent_driver.contracts.enums import (
     RunStatus,
     RuntimeEventType,
     SensitivityLevel,
+    SerializationMode,
     SideEffectClass,
     SubagentExecutionMode,
+    SubagentGroupStatus,
+    SubagentJoinPolicy,
+    SubagentMergeMode,
     SubagentStatus,
     SubagentTerminalState,
     TerminalReason,
@@ -34,9 +39,12 @@ from agent_driver.contracts.enums import (
 )
 from agent_driver.contracts.events import RuntimeEvent, new_runtime_event
 from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
+from agent_driver.contracts.memory import MemoryProjection, MemoryStep
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.profiles import PromptRenderResult, PromptTemplate
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
-from agent_driver.contracts.subagents import MergeProvenance, SubagentRun
+from agent_driver.contracts.serialization import ExecutorSerializationPolicy
+from agent_driver.contracts.subagents import MergeProvenance, SubagentGroup, SubagentRun
 from agent_driver.contracts.tools import (
     ToolCall,
     ToolError,
@@ -51,6 +59,7 @@ from agent_driver.contracts.usage import UsageSummary
 __all__ = [
     "AgentRunInput",
     "AgentRunOutput",
+    "AgentProfile",
     "ApprovalMode",
     "ArtifactKind",
     "ArtifactRef",
@@ -62,7 +71,12 @@ __all__ = [
     "GuardrailDecision",
     "InterruptReason",
     "InterruptRequest",
+    "ExecutorSerializationPolicy",
+    "MemoryProjection",
+    "MemoryStep",
     "MergeProvenance",
+    "PromptRenderResult",
+    "PromptTemplate",
     "ParentStateWriteMode",
     "RedactionInfo",
     "ResumeAction",
@@ -72,8 +86,13 @@ __all__ = [
     "RuntimeEvent",
     "RuntimeEventType",
     "SensitivityLevel",
+    "SerializationMode",
     "SideEffectClass",
+    "SubagentGroup",
+    "SubagentGroupStatus",
+    "SubagentJoinPolicy",
     "SubagentExecutionMode",
+    "SubagentMergeMode",
     "SubagentRun",
     "SubagentStatus",
     "SubagentTerminalState",

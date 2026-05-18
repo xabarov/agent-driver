@@ -1,0 +1,113 @@
+"""Prompt template registry and deterministic tool-doc rendering tests."""
+
+from __future__ import annotations
+
+import pytest
+
+from agent_driver.contracts import AgentProfile, PromptTemplate, ToolManifest
+from agent_driver.runtime import (
+    PromptTemplateRegistry,
+    render_tool_doc,
+    render_tool_docs,
+    rendered_tool_docs_hash,
+)
+
+
+def _sample_manifest() -> ToolManifest:
+    return ToolManifest(
+        name="lookup_tool",
+        description="Lookup facts",
+        args_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        output_type="object",
+        output_schema={"type": "object", "properties": {"summary": {"type": "string"}}},
+        remediation_hints=["retry with shorter query", "ask clarification"],
+    )
+
+
+def test_render_tool_doc_is_deterministic() -> None:
+    """One manifest should render deterministically for profile."""
+    manifest = _sample_manifest()
+    first = render_tool_doc(manifest, AgentProfile.REACT_TEXT)
+    second = render_tool_doc(manifest, AgentProfile.REACT_TEXT)
+    assert first == second
+    assert "name: lookup_tool" in first
+
+
+def test_render_tool_docs_hash_is_stable() -> None:
+    """Rendered docs hash stays stable for same sorted inputs."""
+    one = _sample_manifest()
+    two = ToolManifest(name="browse_tool", description="Browse pages")
+    first = rendered_tool_docs_hash([one, two], AgentProfile.REACT_TEXT)
+    second = rendered_tool_docs_hash([two, one], AgentProfile.REACT_TEXT)
+    assert first == second
+    assert len(first) == 64
+
+
+def test_render_tool_doc_rejects_unsupported_profile() -> None:
+    """Renderer should reject manifests unsupported for requested profile."""
+    manifest = ToolManifest(
+        name="json_tool",
+        description="tool-calling only",
+        supported_profiles=[AgentProfile.TOOL_CALLING],
+    )
+    with pytest.raises(ValueError):
+        render_tool_doc(manifest, AgentProfile.CODE_AGENT)
+
+
+def test_prompt_template_registry_render_and_hash() -> None:
+    """Template registry should render and hash deterministic output."""
+    registry = PromptTemplateRegistry()
+    registry.register(
+        PromptTemplate(
+            template_id="react.default",
+            version=1,
+            profile=AgentProfile.REACT_TEXT,
+            required_placeholders=["tools", "task"],
+            body="TOOLS:\\n{{tools}}\\nTASK:\\n{{task}}",
+        )
+    )
+    rendered = registry.render(
+        template_id="react.default",
+        profile=AgentProfile.REACT_TEXT,
+        version=1,
+        values={"tools": "- lookup_tool", "task": "answer user"},
+    )
+    assert rendered.template_id == "react.default"
+    assert "TOOLS:" in rendered.rendered_text
+    assert len(rendered.rendered_hash) == 64
+
+
+def test_prompt_template_registry_missing_placeholder() -> None:
+    """Registry should reject render calls missing required placeholders."""
+    registry = PromptTemplateRegistry()
+    registry.register(
+        PromptTemplate(
+            template_id="react.default",
+            version=1,
+            profile=AgentProfile.REACT_TEXT,
+            required_placeholders=["tools", "task"],
+            body="x {{tools}} y {{task}}",
+        )
+    )
+    with pytest.raises(ValueError):
+        registry.render(
+            template_id="react.default",
+            profile=AgentProfile.REACT_TEXT,
+            version=1,
+            values={"tools": "- only"},
+        )
+
+
+def test_render_tool_docs_profile_filtering() -> None:
+    """Profile rendering includes only profile-compatible manifests."""
+    manifests = [
+        ToolManifest(name="common_tool", description="all"),
+        ToolManifest(
+            name="call_only_tool",
+            description="tool-calling only",
+            supported_profiles=[AgentProfile.TOOL_CALLING],
+        ),
+    ]
+    text = render_tool_docs(manifests, AgentProfile.REACT_TEXT)
+    assert "common_tool" in text
+    assert "call_only_tool" not in text

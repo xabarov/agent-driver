@@ -35,9 +35,13 @@ from agent_driver.tools import (
     GovernedToolExecutor,
     GuardrailPipeline,
     GuardrailResult,
+    PromptTemplateRegistry,
     RegisteredTool,
     ToolRegistry,
     evaluate_tool_policy,
+    render_tool_doc,
+    render_tool_docs,
+    rendered_tool_docs_hash,
 )
 
 __all__ = [
@@ -70,5 +74,9 @@ __all__ = [
     "GuardrailPipeline",
     "GuardrailResult",
     "GovernedToolExecutor",
+    "PromptTemplateRegistry",
     "evaluate_tool_policy",
+    "render_tool_doc",
+    "render_tool_docs",
+    "rendered_tool_docs_hash",
 ]

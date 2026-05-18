@@ -97,6 +97,7 @@ class _AllowedSpec:
     manifest: ToolManifest
     registered: RegisteredTool | None
     input_guard_decision: GuardrailDecision = GuardrailDecision.ALLOW
+    run_metadata: dict[str, str | int | None] = field(default_factory=dict)
 
 
 def _safe_manifest(name: str) -> ToolManifest:
@@ -221,6 +222,11 @@ class GovernedToolExecutor:
         run_input = spec.run_input
         call = spec.call
         index = spec.index
+        run_metadata = {
+            "agent_profile": run_input.agent_profile.value,
+            "prompt_template_id": run_input.prompt_template_id,
+            "prompt_template_version": run_input.prompt_template_version,
+        }
         registered = self._registry.get(call.tool_name)
         manifest = (
             registered.manifest
@@ -266,14 +272,20 @@ class GovernedToolExecutor:
                     ResumeAction.EDIT,
                 ],
                 editable_fields=["args"],
-                metadata={"policy_reason": policy.reason},
+                metadata={
+                    "policy_reason": policy.reason,
+                    **run_metadata,
+                },
             )
             result.append(
                 envelope=ToolResultEnvelope(
                     call=call,
                     decision=policy.decision,
                     interrupt=interrupt.model_dump(mode="json"),
-                    metadata={"policy_reason": policy.reason},
+                    metadata={
+                        "policy_reason": policy.reason,
+                        **run_metadata,
+                    },
                 ),
                 trace=self._trace(
                     _TraceSpec(
@@ -316,6 +328,7 @@ class GovernedToolExecutor:
                 manifest=manifest,
                 registered=registered,
                 input_guard_decision=input_guard.decision,
+                run_metadata=run_metadata,
             )
         )
 
@@ -381,7 +394,10 @@ class GovernedToolExecutor:
             summary=bounded_summary,
             structured_output=raw,
             truncated=truncated,
-            metadata={"idempotent": spec.manifest.idempotent},
+            metadata={
+                "idempotent": spec.manifest.idempotent,
+                **spec.run_metadata,
+            },
         )
         final_guard = await self._guardrails.on_final_output(
             envelope.model_dump(mode="json")
@@ -395,7 +411,10 @@ class GovernedToolExecutor:
                     code="guardrail_blocked",
                     message=final_guard.reason or "guardrail blocked final output",
                 ),
-                metadata={"guardrail_stage": "final_output"},
+                metadata={
+                    "guardrail_stage": "final_output",
+                    **spec.run_metadata,
+                },
             )
             trace = self._trace(
                 _TraceSpec(

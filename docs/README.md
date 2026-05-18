@@ -13,6 +13,7 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - [Human review, interrupts, and guardrails](architecture/hitl-and-guardrails.md)
 - [Observability, evaluation, and regression harness](architecture/evaluation-and-observability.md)
 - [Context engineering, tools, and MCP integration](architecture/context-tools-and-mcp.md)
+- [Multi-agent orchestration and parallel subagents](architecture/multi-agent-orchestration.md)
 - [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md)
 - [Implementation roadmap](roadmap.md)
 

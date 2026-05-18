@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from agent_driver.contracts import (
+    AgentProfile,
     AgentRunInput,
     ApprovalMode,
     GuardrailDecision,
@@ -263,3 +264,38 @@ async def test_governed_executor_marks_sanitize_decision() -> None:
     )
     result = await executor.execute(run_input, response)
     assert result.envelopes[0].guardrail_decision == GuardrailDecision.SANITIZE
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_includes_profile_and_prompt_metadata() -> None:
+    """Tool envelopes should carry run profile/template metadata."""
+    registry = ToolRegistry()
+
+    async def _lookup(_args):
+        return {"summary": "ok"}
+
+    registry.register(
+        ToolManifest(name="lookup_tool", description="Lookup"),
+        _lookup,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="hello",
+        run_id="run_meta_1",
+        agent_id="agent",
+        graph_preset="single_react",
+        agent_profile=AgentProfile.REACT_TEXT,
+        prompt_template_id="react.default",
+        prompt_template_version=2,
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        _request_with_planned_calls(
+            planned=[ToolCall(tool_name="lookup_tool", args={"q": "x"})]
+        )
+    )
+    result = await executor.execute(run_input, response)
+    meta = result.envelopes[0].metadata
+    assert meta["agent_profile"] == "react_text"
+    assert meta["prompt_template_id"] == "react.default"
+    assert meta["prompt_template_version"] == 2

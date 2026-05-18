@@ -240,3 +240,70 @@ class SensitivityLevel(StrEnum):
     CONFIDENTIAL = "confidential"
     SECRET = "secret"
     UNKNOWN = "unknown"
+
+
+class AgentProfile(StrEnum):
+    """Model action profile selected for one run."""
+
+    CHAT_ONLY = "chat_only"
+    TOOL_CALLING = "tool_calling"
+    REACT_TEXT = "react_text"
+    CODE_AGENT = "code_agent"
+
+
+class MemoryStepKind(StrEnum):
+    """Kind of one projected memory step."""
+
+    TASK = "task"
+    SYSTEM_PROMPT = "system_prompt"
+    ACTION = "action"
+    PLANNING = "planning"
+    FINAL_ANSWER = "final_answer"
+
+
+class MemoryProjectionView(StrEnum):
+    """Projection mode for persisted memory/event views."""
+
+    FULL = "full"
+    SUCCINCT = "succinct"
+    REPLAY = "replay"
+
+
+class SerializationMode(StrEnum):
+    """Safety mode for executor boundary serialization."""
+
+    JSON_SAFE = "json_safe"
+    UNSAFE_PICKLE_OPT_IN = "unsafe_pickle_opt_in"
+
+
+class SubagentJoinPolicy(StrEnum):
+    """Join policy for fan-out child run groups."""
+
+    WAIT_ALL = "wait_all"
+    WAIT_ANY = "wait_any"
+    K_OF_N = "k_of_n"
+    BEST_EFFORT_UNTIL_DEADLINE = "best_effort_until_deadline"
+    RACE = "race"
+    MANUAL_REVIEW = "manual_review"
+
+
+class SubagentMergeMode(StrEnum):
+    """Merge mode for child outputs in one group."""
+
+    APPEND = "append"
+    RANK = "rank"
+    SYNTHESIZE = "synthesize"
+    VOTE = "vote"
+    MANUAL = "manual"
+
+
+class SubagentGroupStatus(StrEnum):
+    """Lifecycle status of one subagent fan-out group."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    JOINED = "joined"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"

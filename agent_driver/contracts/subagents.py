@@ -11,6 +11,9 @@ from agent_driver.contracts.base import ContractModel
 from agent_driver.contracts.enums import (
     ParentStateWriteMode,
     SubagentExecutionMode,
+    SubagentGroupStatus,
+    SubagentJoinPolicy,
+    SubagentMergeMode,
     SubagentStatus,
     SubagentTerminalState,
 )
@@ -105,3 +108,42 @@ class SubagentRun(ContractModel):
                 "completed subagent rows should include output_pointer or merge_provenance"
             )
         return self
+
+
+class SubagentGroup(ContractModel):
+    """Parent fan-out/fan-in group carrying join and merge metadata."""
+
+    group_id: str
+    parent_run_id: str
+    parent_attempt_id: str
+    parent_checkpoint_id: str | None = None
+    parent_step_id: str | None = None
+    purpose: str | None = None
+    join_policy: SubagentJoinPolicy
+    merge_mode: SubagentMergeMode | None = None
+    max_parallel: int | None = None
+    deadline_seconds: float | None = None
+    token_budget: int | None = None
+    cost_budget_usd: float | None = None
+    child_run_ids: list[str] = Field(default_factory=list)
+    status: SubagentGroupStatus = SubagentGroupStatus.PENDING
+    merge_provenance: MergeProvenance | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("max_parallel", "token_budget")
+    @classmethod
+    def validate_positive_ints(cls, value: int | None) -> int | None:
+        """Validate positive optional integer limits."""
+        return ensure_positive_int(value, field_name="subagent group integer limit")
+
+    @field_validator("deadline_seconds", "cost_budget_usd")
+    @classmethod
+    def validate_non_negative_floats(cls, value: float | None) -> float | None:
+        """Validate non-negative optional float limits."""
+        return ensure_non_negative_float(value, field_name="subagent group float limit")
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        """Ensure metadata stays JSON-compatible for transport."""
+        return ensure_json_serializable(value, field_name="metadata")

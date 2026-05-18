@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 from agent_driver.contracts import (
+    AgentProfile,
     AgentRunInput,
     AgentRunOutput,
     CheckpointRef,
+    ExecutorSerializationPolicy,
     InterruptRequest,
+    MemoryProjection,
+    PromptRenderResult,
+    PromptTemplate,
     ResumeCommand,
     RuntimeEvent,
+    SubagentGroup,
     SubagentRun,
     ToolTrace,
 )
@@ -25,6 +31,11 @@ def test_public_contract_schema_generation() -> None:
         "InterruptRequest": InterruptRequest.model_json_schema(),
         "ToolTrace": ToolTrace.model_json_schema(),
         "SubagentRun": SubagentRun.model_json_schema(),
+        "SubagentGroup": SubagentGroup.model_json_schema(),
+        "PromptTemplate": PromptTemplate.model_json_schema(),
+        "PromptRenderResult": PromptRenderResult.model_json_schema(),
+        "MemoryProjection": MemoryProjection.model_json_schema(),
+        "ExecutorSerializationPolicy": ExecutorSerializationPolicy.model_json_schema(),
     }
 
     assert "properties" in schema["AgentRunInput"]
@@ -36,3 +47,9 @@ def test_public_contract_schema_generation() -> None:
     assert "allowed_actions" in schema["InterruptRequest"]["properties"]
     assert "tool_name" in schema["ToolTrace"]["properties"]
     assert "terminal_state" in schema["SubagentRun"]["properties"]
+    assert "join_policy" in schema["SubagentGroup"]["properties"]
+    assert "profile" in schema["PromptTemplate"]["properties"]
+    assert "rendered_hash" in schema["PromptRenderResult"]["properties"]
+    assert "steps" in schema["MemoryProjection"]["properties"]
+    assert "mode" in schema["ExecutorSerializationPolicy"]["properties"]
+    assert AgentProfile.REACT_TEXT.value in str(schema["PromptTemplate"])

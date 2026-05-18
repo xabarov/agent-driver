@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from agent_driver.contracts import (
+    AgentProfile,
     AgentRunInput,
     AgentRunOutput,
     ChatMessage,
@@ -16,12 +17,18 @@ from agent_driver.contracts import (
     ResumeCommand,
     RunStatus,
     RuntimeEventType,
+    SerializationMode,
+    SubagentGroup,
+    SubagentJoinPolicy,
     TerminalReason,
     ToolPolicyInput,
     ToolPolicyMode,
     ToolRisk,
     new_runtime_event,
 )
+from agent_driver.contracts.memory import MemoryProjection, MemoryStep
+from agent_driver.contracts.profiles import PromptRenderResult
+from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 
 
 def test_agent_run_input_accepts_input_only() -> None:
@@ -35,6 +42,7 @@ def test_agent_run_input_accepts_input_only() -> None:
     )
     assert req.input == "hello"
     assert req.messages == []
+    assert req.agent_profile == AgentProfile.REACT_TEXT
 
 
 def test_agent_run_input_accepts_resume_only() -> None:
@@ -140,3 +148,60 @@ def test_agent_run_output_round_trip() -> None:
     restored = AgentRunOutput.model_validate(dumped)
     assert restored.run_id == "run_1"
     assert restored.interrupt is not None
+
+
+def test_agent_run_input_accepts_profile_and_serialization_policy() -> None:
+    """Allow profile and serialization policy in run input."""
+    req = AgentRunInput(
+        input="hello",
+        agent_id="agent.default",
+        graph_preset="single_react",
+        model_role="default",
+        agent_profile=AgentProfile.CODE_AGENT,
+        serialization_policy=ExecutorSerializationPolicy(
+            mode=SerializationMode.JSON_SAFE,
+            schema_version="v2",
+        ),
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    )
+    assert req.agent_profile == AgentProfile.CODE_AGENT
+    assert req.serialization_policy is not None
+    assert req.serialization_policy.schema_version == "v2"
+
+
+def test_agent_run_output_accepts_new_projection_and_group_fields() -> None:
+    """Allow optional memory projection, prompt render, and subagent groups."""
+    output = AgentRunOutput(
+        run_id="run_2",
+        attempt_id="att_2",
+        status=RunStatus.RUNNING,
+        subagent_groups=[
+            SubagentGroup(
+                group_id="grp_1",
+                parent_run_id="run_2",
+                parent_attempt_id="att_2",
+                join_policy=SubagentJoinPolicy.WAIT_ALL,
+            )
+        ],
+        memory_projection=MemoryProjection(
+            run_id="run_2",
+            attempt_id="att_2",
+            view="succinct",
+            steps=[
+                MemoryStep(
+                    step_index=0,
+                    kind="task",
+                    content="Investigate query",
+                )
+            ],
+        ),
+        prompt_render=PromptRenderResult(
+            template_id="react.default",
+            template_version=1,
+            profile=AgentProfile.REACT_TEXT,
+            rendered_text="Prompt",
+            rendered_hash="hash_123",
+        ),
+    )
+    assert output.memory_projection is not None
+    assert output.subagent_groups[0].join_policy == SubagentJoinPolicy.WAIT_ALL

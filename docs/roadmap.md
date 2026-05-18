@@ -34,6 +34,18 @@ Exit criteria:
 - memory-step projection contracts cover full, succinct, and replay views;
 - no external services required.
 
+Implementation notes from tail catch-up pass:
+
+- Phase 0 contract surface now includes dedicated modules for profile contracts
+  (`profiles.py`), memory projections (`memory.py`), and executor-boundary
+  serialization policy (`serialization.py`);
+- runtime contracts now accept `agent_profile`, prompt-template metadata, and
+  optional serialization policy in `AgentRunInput`;
+- `AgentRunOutput` now includes optional `subagent_groups`,
+  `memory_projection`, and `prompt_render` fields;
+- subagent contracts now include `SubagentGroup` plus join/merge/group-status
+  enums for future parallel orchestration phases.
+
 ## Phase 1: LLM Gateway
 
 - Implement OpenAI-compatible provider.
@@ -117,6 +129,19 @@ Implementation notes from first cut:
 - `SingleAgentRunner` now persists governed tool envelopes in run metadata and
   emits paused output with `interrupt_requested` when policy returns interrupt.
 - Real side-effecting shell/filesystem/http tools remain deferred to a follow-up pass.
+
+Implementation notes from tail catch-up pass:
+
+- `ToolManifest` now carries model-facing fields (`args_schema`, `output_type`,
+  `output_schema`, remediation hints, supported profiles) with profile-aware
+  validation (including Python-identifier constraints for `code_agent`);
+- deterministic prompt-facing tool docs were added in
+  `agent_driver/tools/prompt_docs.py` with stable hash support;
+- minimal prompt template registry was added in
+  `agent_driver/tools/prompt_templates.py` with required-placeholder checks and
+  `PromptRenderResult` hashing;
+- governed tool envelopes now carry `agent_profile` and prompt-template
+  metadata while keeping existing executor behavior backward-compatible.
 
 Exit criteria:
 
@@ -232,24 +257,54 @@ Exit criteria:
 - summary preserves required facts in eval cases;
 - compaction trace includes model, latency, token/cost data.
 
-## Phase 9: Subagents
+## Phase 9: Subagents And Parallel Orchestration
 
 - Add subagent contracts and run rows.
+- Add `SubagentGroup` contract for parent fan-out/fan-in steps:
+  - `group_id`;
+  - parent run/checkpoint/step ids;
+  - child run ids;
+  - join policy;
+  - shared deadline/budget;
+  - terminal state;
+  - merge provenance.
 - Implement sync child graph execution.
 - Add `spawn_subagent` tool.
+- Add grouped spawn API for multiple child tasks.
+- Add join policies:
+  - `wait_all`;
+  - `wait_any`;
+  - `k_of_n`;
+  - `best_effort_until_deadline`;
+  - `race`;
+  - `manual_review`.
 - Add managed-agent facade:
   - `task` input;
   - typed `additional_args`/artifact references;
   - bounded child final-answer summary.
 - Add merge provenance.
+- Add merge modes:
+  - append;
+  - rank;
+  - synthesize;
+  - vote;
+  - manual.
+- Add group budget and backpressure controls:
+  - `max_parallel`;
+  - per-child and group deadlines;
+  - token/cost budget;
+  - cancellation propagation.
 - Add terminal-state handling.
 - Add optional background local executor.
 
 Exit criteria:
 
 - parent run records child lifecycle;
+- parent run records subagent group lifecycle and join policy;
 - managed-agent calls create child run rows, not opaque tool traces;
-- child output merges with provenance;
+- child output merges with provenance and partial-failure metadata;
+- retry after parent crash does not duplicate already-spawned children;
+- `race` and cancellation policies stop pending/running children deterministically;
 - failed/timed-out child does not leave stale running rows;
 - subagent traces link to parent trace/run.
 

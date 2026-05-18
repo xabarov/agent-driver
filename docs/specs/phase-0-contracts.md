@@ -578,6 +578,9 @@ Phase 0 contracts are implemented in:
 - `agent_driver/contracts/events.py`
 - `agent_driver/contracts/checkpoints.py`
 - `agent_driver/contracts/interrupts.py`
+- `agent_driver/contracts/profiles.py`
+- `agent_driver/contracts/memory.py`
+- `agent_driver/contracts/serialization.py`
 - `agent_driver/contracts/tools.py`
 - `agent_driver/contracts/subagents.py`
 - `agent_driver/contracts/artifacts.py`
@@ -590,6 +593,7 @@ Tests:
 - `tests/contracts/test_runtime_contracts.py`
 - `tests/contracts/test_event_contracts.py`
 - `tests/contracts/test_interrupt_contracts.py`
+- `tests/contracts/test_tools_contracts.py`
 - `tests/contracts/test_schema_snapshots.py`
 
 Verification command:
