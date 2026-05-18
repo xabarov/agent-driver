@@ -13,6 +13,7 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - [Human review, interrupts, and guardrails](architecture/hitl-and-guardrails.md)
 - [Observability, evaluation, and regression harness](architecture/evaluation-and-observability.md)
 - [Context engineering, tools, and MCP integration](architecture/context-tools-and-mcp.md)
+- [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md)
 - [Implementation roadmap](roadmap.md)
 
 ## Development Commands
@@ -62,6 +63,60 @@ runner = SingleAgentRunner(
 )
 ```
 
+## Tool Governance Integration (Phase 3 first cut)
+
+- Register deterministic tools in `ToolRegistry` with `ToolManifest`.
+- Build governed executor and adapt it for runtime with `wrap_governed_executor(...)`.
+- Pass adapted executor through `RunnerConfig(tool_executor=...)`.
+- Encode planned calls in LLM response metadata key `planned_tool_calls` for tests/local demos.
+
+Example:
+
+```python
+from agent_driver.contracts import AgentRunInput, ToolManifest
+from agent_driver.contracts.enums import ApprovalMode, SideEffectClass, ToolRisk
+from agent_driver.runtime import (
+    FakeSingleStepRunner,
+    GuardrailPipeline,
+    GovernedToolExecutor,
+    InMemoryCheckpointStore,
+    InMemoryEventLog,
+    RunnerConfig,
+    ToolRegistry,
+    wrap_governed_executor,
+)
+from agent_driver.llm.fake import FakeProvider
+
+registry = ToolRegistry()
+
+async def lookup_tool(args: dict[str, object]) -> dict[str, object]:
+    return {"summary": f"result for {args.get('query', '')}"}
+
+registry.register(
+    ToolManifest(
+        name="lookup",
+        description="Read-only lookup tool",
+        risk=ToolRisk.LOW,
+        side_effect=SideEffectClass.READ_ONLY,
+        approval_mode=ApprovalMode.NEVER,
+        output_char_budget=500,
+    ),
+    lookup_tool,
+)
+governed = GovernedToolExecutor(registry=registry, guardrails=GuardrailPipeline())
+runner = FakeSingleStepRunner(
+    provider=FakeProvider(),
+    checkpoint_store=InMemoryCheckpointStore(),
+    event_log=InMemoryEventLog(),
+    config=RunnerConfig(tool_executor=wrap_governed_executor(governed)),
+)
+_ = AgentRunInput(
+    input="find document",
+    agent_id="agent.default",
+    graph_preset="single_react",
+)
+```
+
 ## Optional Live Checks
 
 - `AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests`
@@ -93,6 +148,8 @@ runner = SingleAgentRunner(
 - Anthropic: [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)
 - Anthropic: [Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
 - Anthropic: [Writing effective tools for AI agents](https://www.anthropic.com/engineering/writing-tools-for-agents)
+- Smolagents: [Building good Smolagents](https://smolagents.org/docs/building-good-smolagents/)
+- Hugging Face: [smolagents source tree](https://github.com/huggingface/smolagents/tree/main/src/smolagents)
 - Langfuse: [AI agent observability with Langfuse](https://langfuse.com/blog/2024-07-ai-agent-observability-with-langfuse)
 - Langfuse: [Agent evaluation](https://langfuse.com/guides/cookbook/example_pydantic_ai_mcp_agent_evaluation)
 - CoSAI: [Model Context Protocol security](https://github.com/cosai-oasis/ws4-secure-design-agentic-systems/blob/main/model-context-protocol-security.md)

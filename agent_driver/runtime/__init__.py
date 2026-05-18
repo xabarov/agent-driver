@@ -29,6 +29,15 @@ from agent_driver.runtime.tools import (
     ToolExecutionResult,
     ToolExecutor,
     fake_noop_tool_executor,
+    wrap_governed_executor,
+)
+from agent_driver.tools import (
+    GovernedToolExecutor,
+    GuardrailPipeline,
+    GuardrailResult,
+    RegisteredTool,
+    ToolRegistry,
+    evaluate_tool_policy,
 )
 
 __all__ = [
@@ -55,4 +64,11 @@ __all__ = [
     "ToolExecutor",
     "ToolExecutionResult",
     "fake_noop_tool_executor",
+    "wrap_governed_executor",
+    "ToolRegistry",
+    "RegisteredTool",
+    "GuardrailPipeline",
+    "GuardrailResult",
+    "GovernedToolExecutor",
+    "evaluate_tool_policy",
 ]

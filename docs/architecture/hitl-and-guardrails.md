@@ -133,3 +133,18 @@ Implement this before broad tool support:
 - built-in policies for shell/filesystem/HTTP tools;
 - persisted pending interrupt in checkpoint state;
 - tests for approve/reject/edit/resume flows.
+
+## Current Implementation Snapshot (Phase 3 first cut)
+
+Implemented now:
+
+- `ToolManifest`, `ToolResultEnvelope`, and structured tool policy outcomes are available in contracts;
+- `GuardrailPipeline` exists with no-op defaults and `allow|sanitize|block` decision shape;
+- `GovernedToolExecutor` can produce `deny` and `interrupt` decisions before tool execution;
+- runtime can return paused output and emit `interrupt_requested` event when executor requests interrupt.
+
+Still deferred:
+
+- persisted pending interrupt records as a dedicated runtime subsystem;
+- full resume execution semantics for approve/reject/edit/clarify;
+- built-in side-effecting shell/filesystem/http tool pack.

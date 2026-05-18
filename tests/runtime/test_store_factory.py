@@ -70,6 +70,19 @@ def test_factory_env_postgres_flags(monkeypatch) -> None:
     assert cfg.postgres_auto_create_schema is False
 
 
+def test_factory_env_postgres_flags_case_insensitive(monkeypatch) -> None:
+    """Env parser should treat False/TRUE values case-insensitively."""
+    monkeypatch.setenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "postgres")
+    monkeypatch.setenv("AGENT_DRIVER_POSTGRES_DSN", "postgresql://test")
+    monkeypatch.setenv("AGENT_DRIVER_POSTGRES_AUTO_CREATE_SCHEMA", "False")
+    cfg_false = runtime_store_config_from_env()
+    assert cfg_false.postgres_auto_create_schema is False
+
+    monkeypatch.setenv("AGENT_DRIVER_POSTGRES_AUTO_CREATE_SCHEMA", "TRUE")
+    cfg_true = runtime_store_config_from_env()
+    assert cfg_true.postgres_auto_create_schema is True
+
+
 def test_factory_env_prefix_override(monkeypatch, tmp_path) -> None:
     """Resolver should support custom env prefix for embedded apps."""
     sqlite_path = str(tmp_path / "custom.sqlite3")

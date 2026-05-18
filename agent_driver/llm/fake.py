@@ -58,13 +58,15 @@ class FakeProvider(ProviderBase):
             model_name=request.model or "fake-model",
         )
         self._mark_success(started_at=started)
+        response_metadata = {"provider_kind": LlmProviderKind.FAKE.value}
+        response_metadata.update(request.metadata)
         return LlmResponse(
             message=ChatMessage(role="assistant", content=self._response_text),
             finish_reason=LlmFinishReason.STOP,
             usage=usage,
             provider=self.name,
             model=request.model or "fake-model",
-            metadata={"provider_kind": LlmProviderKind.FAKE.value},
+            metadata=response_metadata,
         )
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:

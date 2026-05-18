@@ -17,6 +17,7 @@ from agent_driver.contracts.events import (
 )
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
+from agent_driver.contracts.tools import ToolTrace
 from agent_driver.llm.contracts import LlmRequest, LlmResponse
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
@@ -258,6 +259,14 @@ class SingleAgentRunner:
         answer = context.llm_response.message.content if context.llm_response else None
         usage = context.llm_response.usage if context.llm_response else None
         messages = [ChatMessage(role="assistant", content=answer)] if answer else []
+        tool_trace_payload = context.metadata.get("tool_trace", [])
+        tool_trace = []
+        if isinstance(tool_trace_payload, list):
+            tool_trace = [
+                ToolTrace.model_validate(item)
+                for item in tool_trace_payload
+                if isinstance(item, dict)
+            ]
         return AgentRunOutput(
             run_id=context.run_id,
             attempt_id=context.attempt_id,
@@ -266,9 +275,14 @@ class SingleAgentRunner:
             answer=answer,
             messages=messages,
             events=self._deps.event_log.list_for_run(context.run_id),
+            tool_trace=tool_trace,
             usage=usage,
+            interrupt=context.metadata.get("interrupt_payload"),
             terminal_reason=terminal.reason,
-            metadata={"graph_id": self.graph_id},
+            metadata={
+                "graph_id": self.graph_id,
+                "tool_results": context.metadata.get("tool_results", []),
+            },
         )
 
     def _maybe_fail_after_step(self, step_name: str) -> None:
@@ -336,12 +350,15 @@ class SingleAgentRunner:
             context.run_input.messages[-1].content if context.run_input.messages else ""
         )
         try:
+            request_metadata = dict(context.run_input.tool_policy.metadata)
+            forced_model = request_metadata.pop("forced_model", None)
             context.llm_response = await self._deps.provider.complete(
                 LlmRequest(
                     messages=[ChatMessage(role="user", content=prompt)],
                     model_role=context.run_input.model_role,
-                    model=context.run_input.tool_policy.metadata.get("forced_model"),
+                    model=forced_model if isinstance(forced_model, str) else None,
                     stream=False,
+                    metadata=request_metadata,
                 )
             )
         except (RuntimeError, ValueError) as exc:
@@ -386,6 +403,49 @@ class SingleAgentRunner:
             context.run_input, context.llm_response
         )
         context.tool_calls += len(result.traces)
+        context.metadata["tool_trace"] = [
+            trace.model_dump(mode="json") for trace in result.traces
+        ]
+        context.metadata["tool_results"] = [
+            item.model_dump(mode="json") for item in result.envelopes
+        ]
+        if result.interrupt is not None:
+            context.metadata["interrupt_payload"] = result.interrupt.model_dump(
+                mode="json"
+            )
+            context.metadata.update(
+                {
+                    "next_step": "done",
+                    "step_count": context.step_count + 1,
+                    "tool_calls": context.tool_calls,
+                }
+            )
+            self._emit(
+                _EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType.INTERRUPT_REQUESTED,
+                    payload={"reason": result.interrupt.reason.value},
+                )
+            )
+            paused_output = AgentRunOutput(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                thread_id=context.run_input.thread_id,
+                status=RunStatus.PAUSED,
+                events=self._deps.event_log.list_for_run(context.run_id),
+                tool_trace=result.traces,
+                interrupt=result.interrupt,
+                metadata={
+                    "graph_id": self.graph_id,
+                    "tool_results": context.metadata.get("tool_results", []),
+                },
+            )
+            context.metadata["terminal_output"] = paused_output.model_dump(mode="json")
+            self._save_checkpoint(
+                context, latest_output=paused_output, node_id="tool_stage"
+            )
+            return RuntimeStepResult(next_step="done")
         context.step_count += 1
         context.metadata.update(
             {
@@ -401,7 +461,10 @@ class SingleAgentRunner:
                     run_id=context.run_id,
                     attempt_id=context.attempt_id,
                     event_type=RuntimeEventType.TOOL_CALL_COMPLETED,
-                    payload={"tool_calls": len(result.traces)},
+                    payload={
+                        "tool_calls": len(result.traces),
+                        "statuses": [trace.status.value for trace in result.traces],
+                    },
                 )
             )
         self._maybe_fail_after_step("tool_stage")

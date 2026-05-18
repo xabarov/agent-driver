@@ -178,6 +178,22 @@ class ToolPolicyMode(StrEnum):
     APPROVAL_REQUIRED = "approval_required"
 
 
+class ToolPolicyDecision(StrEnum):
+    """Structured policy decision for one planned tool call."""
+
+    ALLOW = "allow"
+    DENY = "deny"
+    INTERRUPT = "interrupt"
+
+
+class GuardrailDecision(StrEnum):
+    """Decision emitted by guardrail pipeline hook."""
+
+    ALLOW = "allow"
+    SANITIZE = "sanitize"
+    BLOCK = "block"
+
+
 class SubagentExecutionMode(StrEnum):
     """Execution mode for child agents."""
 

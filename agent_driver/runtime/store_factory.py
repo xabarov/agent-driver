@@ -20,6 +20,16 @@ from agent_driver.runtime.storage import (
 RuntimeStoreKind = Literal["memory", "sqlite", "postgres"]
 
 
+def _parse_store_kind(raw_kind: str, *, prefix: str) -> RuntimeStoreKind:
+    """Normalize and validate runtime store kind string."""
+    kind = raw_kind.strip().lower()
+    if kind not in {"memory", "sqlite", "postgres"}:
+        raise ValueError(
+            f"{prefix}RUNTIME_STORE_KIND must be one of memory|sqlite|postgres"
+        )
+    return kind  # type: ignore[return-value]
+
+
 @dataclass(frozen=True)
 class RuntimeStoreFactoryConfig:
     """Config for selecting and creating runtime storage backend."""
@@ -102,18 +112,19 @@ def runtime_store_config_from_env(
     prefix: str = "AGENT_DRIVER_",
 ) -> RuntimeStoreFactoryConfig:
     """Build factory config from environment variables."""
-    kind = os.getenv(f"{prefix}RUNTIME_STORE_KIND", "memory").strip().lower()
-    if kind not in {"memory", "sqlite", "postgres"}:
-        raise ValueError(
-            f"{prefix}RUNTIME_STORE_KIND must be one of memory|sqlite|postgres"
-        )
+    kind = _parse_store_kind(
+        os.getenv(f"{prefix}RUNTIME_STORE_KIND", "memory"), prefix=prefix
+    )
     sqlite_path = os.getenv(f"{prefix}SQLITE_PATH")
     postgres_dsn = os.getenv(f"{prefix}POSTGRES_DSN")
     postgres_schema = os.getenv(f"{prefix}POSTGRES_SCHEMA", "public")
     postgres_auto_create_raw = os.getenv(f"{prefix}POSTGRES_AUTO_CREATE_SCHEMA", "1")
-    postgres_auto_create_schema = postgres_auto_create_raw.strip() not in {"0", "false"}
+    postgres_auto_create_schema = postgres_auto_create_raw.strip().lower() not in {
+        "0",
+        "false",
+    }
     return RuntimeStoreFactoryConfig(
-        kind=kind,  # type: ignore[arg-type]
+        kind=kind,
         sqlite_path=sqlite_path,
         postgres_dsn=postgres_dsn,
         postgres_schema=postgres_schema,

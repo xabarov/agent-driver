@@ -11,6 +11,7 @@ This document is the high-level entry point. Details are split into focused note
 - [Human review, interrupts, and guardrails](architecture/hitl-and-guardrails.md)
 - [Observability, evaluation, and regression harness](architecture/evaluation-and-observability.md)
 - [Context engineering, tools, and MCP integration](architecture/context-tools-and-mcp.md)
+- [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md)
 - [Implementation roadmap](roadmap.md)
 
 ## Goal
@@ -43,7 +44,8 @@ The missing runtime foundations are:
 - planning/task state as a reusable primitive;
 - context engineering beyond LLM compaction: artifact offloading, context isolation, and tool-result budgets;
 - MCP integration and MCP-specific threat controls;
-- an explicit decision model for deterministic workflows vs agentic loops.
+- an explicit decision model for deterministic workflows vs agentic loops;
+- first-class agent profiles, including provider-native tool calling, textual ReAct, and opt-in CodeAgent-style execution.
 
 This changes the MVP order. Checkpointing, interrupts, guardrails, and evaluation should arrive before complex subagents and LLM compaction. See [Implementation roadmap](roadmap.md).
 
@@ -56,6 +58,8 @@ External references:
 - [Anthropic: Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)
 - [Langfuse: Agent evaluation](https://langfuse.com/guides/cookbook/example_pydantic_ai_mcp_agent_evaluation)
 - [CoSAI: MCP security guidance](https://github.com/cosai-oasis/ws4-secure-design-agentic-systems/blob/main/model-context-protocol-security.md)
+- [Smolagents: Building good Smolagents](https://smolagents.org/docs/building-good-smolagents/)
+- [Hugging Face: smolagents source tree](https://github.com/huggingface/smolagents/tree/main/src/smolagents)
 
 ## Source Systems
 
@@ -86,6 +90,18 @@ This code is small and direct, but it is not yet an agent runtime. It should inf
 - `science_graphrag/observability/` contains Phoenix/OpenTelemetry span helpers.
 
 The valuable asset is not individual domain tools like paper search, graph queries, or bibliography formatting. The valuable asset is the set of runtime seams that survived real agent work: normalized run output, state metadata, tool policy, subagent rows, compaction audit, salvage paths, and trace-review artifacts.
+
+### `smolagents`
+
+The useful part of `smolagents` is not durability or production storage. It is the shape of the model-facing interface:
+
+- explicit Thought/Code/Observation loops;
+- CodeAgent as a distinct profile with a Python executor and authorized imports;
+- strict tool attributes and generated tool documentation;
+- planning prompts that separate known facts, missing facts, derived facts, and next actions;
+- managed agents presented ergonomically as callable tools.
+
+These ideas should influence `agent-driver` profiles, prompt registry, tool manifests, planning state, and subagent ergonomics. See [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md).
 
 ## Proposed Product Boundary
 
@@ -140,6 +156,15 @@ agent_driver/
     builder.py
     supervisor.py
     react_edges.py
+  profiles/
+    chat_only.py
+    tool_calling.py
+    react_text.py
+    code_agent.py
+  prompts/
+    registry.py
+    templates.py
+    render.py
   llm/
     providers.py
     router.py
@@ -361,6 +386,8 @@ The reusable tool execution seam should own:
 - approval policy and interrupt payloads for high-risk calls;
 - idempotency metadata for side-effecting calls.
 
+Tool manifests should also be treated as model-facing contracts. Each reusable tool should declare argument descriptions, output type/schema, generated prompt documentation, and failure remediation hints. The engine should validate rendered tool docs for each supported agent profile, following the smolagents lesson that a tool is only useful when the model can understand and recover from using it.
+
 ### Common Tool Families
 
 Initial reusable tools should be conservative:
@@ -435,6 +462,15 @@ The engine should offer several graph presets rather than one hard-coded supervi
 
 The graph state should be generic and typed. Apps should be able to extend it with their own fields while keeping core runtime metadata stable.
 
+Graph presets should choose an agent profile explicitly:
+
+- provider-native `tool_calling` for models with robust function/tool calling;
+- `react_text` for models that need textual Thought/Action/Observation;
+- opt-in `code_agent` for sandboxed Python action blocks and tool composition;
+- `chat_only` for no-tool conversations.
+
+This keeps durable runtime semantics independent from the model action syntax. The CodeAgent profile must require sandbox, authorized-import, stdout/stderr observation capture, and approval policies before it is enabled outside tests.
+
 The docs and examples should explicitly distinguish deterministic workflows from agentic loops:
 
 - use workflow when the task path is known;
@@ -483,6 +519,7 @@ The updated implementation sequence is maintained in [Implementation roadmap](ro
 - LLM compaction;
 - subagents;
 - MCP and API adapters.
+Smolagents-inspired prompt/profile work should be introduced through the tool-governance and context phases, not as an early replacement for durable execution.
 
 ## Early Design Decisions
 
@@ -496,6 +533,7 @@ The updated implementation sequence is maintained in [Implementation roadmap](ro
 8. Treat checkpointing/resume as a runtime invariant for non-trivial runs.
 9. Treat human review and guardrails as first-class runtime flows.
 10. Treat evaluation as part of the engine, not an external afterthought.
+11. Treat agent profiles and prompt templates as versioned runtime assets, not hard-coded graph internals.
 
 ## Open Questions
 
@@ -509,6 +547,8 @@ The updated implementation sequence is maintained in [Implementation roadmap](ro
 - Which checkpoint backends should be in the first public version: SQLite only, or SQLite plus Postgres protocol?
 - Should MCP support be implemented in v1 or only designed in v1?
 - Should planning/todo state be always available, or only enabled by graph preset?
+- Should CodeAgent execution live in core, or in an optional `agent-driver-code` extra?
+- Which sandbox backend is acceptable for CodeAgent: restricted local Python, subprocess isolation, container, or app-supplied executor?
 - What is the default approval policy for local shell/filesystem tools?
 
 ### Updates After First Phase-2 Implementation

@@ -101,6 +101,12 @@ The runtime should enforce:
 
 This prevents tool calls from poisoning or crowding out the prompt context.
 
+Current first-cut implementation:
+
+- `ToolManifest.output_char_budget` configures per-tool summary truncation budget;
+- runtime tool executor emits `ToolResultEnvelope` with `truncated` metadata;
+- guardrail hooks can block/sanitize tool args/results/final envelope before traces.
+
 ## MCP Integration
 
 MCP should be optional, but the architecture should account for it early. MCP can import external tools, resources, and prompts into the engine.

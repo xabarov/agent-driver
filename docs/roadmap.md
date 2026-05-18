@@ -2,6 +2,8 @@
 
 This roadmap updates the initial MVP order after reviewing current agent-runtime best practices. The main change: durable execution, interrupts, guardrails, and evaluation move earlier. Subagents and LLM compaction remain important, but they should sit on a reliable runtime foundation.
 
+Additional smolagents review: keep the durable-first order, but make agent profiles, prompt templates, model-facing tool contracts, planning steps, and CodeAgent-style execution explicit instead of implicit in one generic ReAct loop. See [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md).
+
 ## Phase 0: Repository Bootstrap
 
 Contract reference: [Phase 0 contracts spec](specs/phase-0-contracts.md).
@@ -12,6 +14,12 @@ Contract reference: [Phase 0 contracts spec](specs/phase-0-contracts.md).
   - run input/output;
   - runtime events;
   - tool trace;
+  - agent profile id;
+  - action step and observation memory;
+  - memory-step projection views;
+  - prompt template id/version/hash;
+  - executor serialization policy;
+  - generated tool documentation;
   - subagent run row;
   - checkpoint id;
   - interrupt request;
@@ -22,6 +30,8 @@ Exit criteria:
 
 - contracts are importable and documented;
 - event schemas have deterministic tests;
+- prompt/profile/tool-doc contracts have snapshot tests;
+- memory-step projection contracts cover full, succinct, and replay views;
 - no external services required.
 
 ## Phase 1: LLM Gateway
@@ -69,6 +79,17 @@ Exit criteria:
 ## Phase 3: Tool Governance And Guardrails
 
 - Add tool registry and manifest.
+- Add model-facing tool contract validation:
+  - stable profile-compatible tool names;
+  - argument descriptions and validation;
+  - output type and optional JSON schema;
+  - generated prompt/tool documentation;
+  - failure remediation hints.
+- Add prompt template registry:
+  - template id/version;
+  - required placeholders;
+  - rendered prompt hash in traces;
+  - profile compatibility metadata.
 - Add tool execution seam with:
   - name normalization;
   - allowlist/denylist;
@@ -84,10 +105,25 @@ Exit criteria:
   - final output.
 - Add approval-aware policies for shell/filesystem/HTTP tools.
 
+Implementation notes from first cut:
+
+- `agent_driver/tools/` now provides initial governance primitives:
+  - `ToolRegistry` backed by `ToolManifest`;
+  - `evaluate_tool_policy(...)` with structured `allow|deny|interrupt` outcomes;
+  - `GuardrailPipeline` with no-op defaults and block/sanitize decisions;
+  - `GovernedToolExecutor` over deterministic `planned_tool_calls` metadata.
+- Runtime keeps backward compatibility via `ToolExecutor` and
+  `wrap_governed_executor(...)`.
+- `SingleAgentRunner` now persists governed tool envelopes in run metadata and
+  emits paused output with `interrupt_requested` when policy returns interrupt.
+- Real side-effecting shell/filesystem/http tools remain deferred to a follow-up pass.
+
 Exit criteria:
 
 - high-risk tools can be blocked or interrupted;
 - tool outputs are truncated/summarized with metadata;
+- tool manifests render deterministic provider-native, ReAct, and CodeAgent-facing docs;
+- profile-incompatible tool names/prompts fail validation;
 - guardrail decisions are traceable;
 - retry of side-effecting tools requires idempotency or explicit policy.
 
@@ -118,12 +154,17 @@ Exit criteria:
   - cost/latency budget.
 - Add dataset runner.
 - Add baseline report format.
+- Add local devtools:
+  - run replay from persisted events;
+  - graph/profile/tool tree summary;
+  - redaction-safe support bundle export.
 
 Exit criteria:
 
 - local eval run works without external services;
 - trace export works with no-op/local sink;
 - evaluation can compare two runs on cost/latency/trajectory.
+- one run can be rendered as full debug memory, succinct context view, and CLI replay.
 
 ## Phase 6: Context Engineering
 
@@ -132,7 +173,15 @@ Exit criteria:
 - Add turn digest.
 - Add artifact/context store protocol.
 - Add planning/todo state tool.
+- Add optional planning step prompt shaped around:
+  - facts given;
+  - facts learned;
+  - facts still to look up;
+  - facts still to derive;
+  - next plan.
+- Persist planning-step events separately from ordinary chat/tool observations.
 - Add tool-result preview/artifact split.
+- Add observation memory for model-facing stdout/stderr/tool-log previews.
 - Add deterministic context trimming.
 
 Exit criteria:
@@ -140,9 +189,35 @@ Exit criteria:
 - long tool output goes to artifact store;
 - prompt receives bounded preview plus pointer;
 - plan state survives turns;
+- planning updates are replayable and compactable separately from chat history;
+- observations include provenance, trust labels, and truncation metadata;
 - digest and artifact references are included in run metadata.
 
-## Phase 7: LLM Compaction
+## Phase 7: CodeAgent Profile And Sandboxed Action Execution
+
+- Add opt-in `code_agent` profile.
+- Add sandboxed Python action executor abstraction.
+- Add authorized import policy.
+- Add safe executor-boundary serialization:
+  - JSON-safe payloads by default;
+  - explicit type markers for common rich values;
+  - pickle/arbitrary object transfer disabled unless explicitly allowed.
+- Add operation, loop, execution-time, and output-length limits.
+- Add forbidden module/function and dunder-access checks.
+- Capture stdout/stderr as bounded Observation memory.
+- Expose tools as callable Python functions with generated signatures/docs.
+- Require approval policies for filesystem, shell, network, and side-effecting calls.
+- Add final-answer extraction contract for code blocks.
+
+Exit criteria:
+
+- fake CodeAgent can complete arithmetic and safe tool-composition eval cases;
+- unsafe imports and side-effecting calls are blocked or interrupted;
+- unsafe serialized payloads and forbidden interpreter operations fail closed;
+- stdout/stderr observations are persisted and budgeted;
+- action, observation, and final-answer events replay deterministically.
+
+## Phase 8: LLM Compaction
 
 - Add LLM full-history compaction.
 - Add compaction eligibility audit.
@@ -157,11 +232,15 @@ Exit criteria:
 - summary preserves required facts in eval cases;
 - compaction trace includes model, latency, token/cost data.
 
-## Phase 8: Subagents
+## Phase 9: Subagents
 
 - Add subagent contracts and run rows.
 - Implement sync child graph execution.
 - Add `spawn_subagent` tool.
+- Add managed-agent facade:
+  - `task` input;
+  - typed `additional_args`/artifact references;
+  - bounded child final-answer summary.
 - Add merge provenance.
 - Add terminal-state handling.
 - Add optional background local executor.
@@ -169,14 +248,16 @@ Exit criteria:
 Exit criteria:
 
 - parent run records child lifecycle;
+- managed-agent calls create child run rows, not opaque tool traces;
 - child output merges with provenance;
 - failed/timed-out child does not leave stale running rows;
 - subagent traces link to parent trace/run.
 
-## Phase 9: MCP And API Adapters
+## Phase 10: MCP And API Adapters
 
 - Add MCP client design/adapter.
 - Import MCP tools into manifest.
+- Map MCP `outputSchema` / structured content into `ToolManifest.output_schema`.
 - Add MCP security policy controls.
 - Add FastAPI/SSE adapter.
 - Add CLI demo.
@@ -188,6 +269,7 @@ Exit criteria:
 Exit criteria:
 
 - MCP tools can be allowlisted and approval-gated;
+- structured MCP tools preserve output schemas and descriptor audit metadata;
 - SSE adapter uses typed runtime events;
 - examples run against fake/local providers.
 
@@ -199,6 +281,7 @@ Do not include in the first implementation:
 - Neo4j/Qdrant assumptions;
 - distributed worker backends;
 - production Postgres checkpoint backend is deferred from first cut, but should be prioritized once multi-worker or shared API deployment is required;
+- CodeAgent as the default loop or as an unsandboxed executor;
 - LangSmith exporter, unless it becomes a target integration;
 - complex LLM-as-judge evaluation before deterministic evals exist.
 

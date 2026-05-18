@@ -13,6 +13,7 @@ from agent_driver.contracts.enums import (
     ArtifactKind,
     ChatRole,
     EventSeverity,
+    GuardrailDecision,
     InterruptReason,
     ParentStateWriteMode,
     ResumeAction,
@@ -24,6 +25,7 @@ from agent_driver.contracts.enums import (
     SubagentStatus,
     SubagentTerminalState,
     TerminalReason,
+    ToolPolicyDecision,
     ToolPolicyMode,
     ToolRisk,
     ToolTraceStatus,
@@ -35,7 +37,15 @@ from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.contracts.subagents import MergeProvenance, SubagentRun
-from agent_driver.contracts.tools import ToolPolicyInput, ToolTrace
+from agent_driver.contracts.tools import (
+    ToolCall,
+    ToolError,
+    ToolManifest,
+    ToolPolicyInput,
+    ToolPolicyOutcome,
+    ToolResultEnvelope,
+    ToolTrace,
+)
 from agent_driver.contracts.usage import UsageSummary
 
 __all__ = [
@@ -49,6 +59,7 @@ __all__ = [
     "CheckpointRef",
     "ContractModel",
     "EventSeverity",
+    "GuardrailDecision",
     "InterruptReason",
     "InterruptRequest",
     "MergeProvenance",
@@ -67,8 +78,14 @@ __all__ = [
     "SubagentStatus",
     "SubagentTerminalState",
     "TerminalReason",
+    "ToolCall",
+    "ToolError",
+    "ToolManifest",
     "ToolPolicyInput",
+    "ToolPolicyDecision",
     "ToolPolicyMode",
+    "ToolPolicyOutcome",
+    "ToolResultEnvelope",
     "ToolRisk",
     "ToolTrace",
     "ToolTraceStatus",
