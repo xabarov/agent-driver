@@ -6,13 +6,9 @@ import pytest
 
 from agent_driver.contracts import (
     AgentRunInput,
-    ApprovalMode,
     ResumeAction,
-    SideEffectClass,
-    ToolManifest,
     ToolPolicyInput,
     ToolPolicyMode,
-    ToolRisk,
 )
 from agent_driver.contracts.interrupts import ResumeCommand
 from agent_driver.llm.fake import FakeProvider
@@ -25,26 +21,7 @@ from agent_driver.runtime import (
     ToolRegistry,
     wrap_governed_executor,
 )
-
-
-def _danger_manifest() -> ToolManifest:
-    return ToolManifest(
-        name="danger",
-        description="Danger",
-        risk=ToolRisk.HIGH,
-        side_effect=SideEffectClass.EXTERNAL_ACTION,
-        approval_mode=ApprovalMode.ALWAYS,
-    )
-
-
-def _planned_danger_policy() -> ToolPolicyInput:
-    return ToolPolicyInput(
-        mode=ToolPolicyMode.ALLOW_TOOLS,
-        approval_required_for_risk=ToolRisk.HIGH,
-        metadata={
-            "planned_tool_calls": [{"tool_name": "danger", "args": {"target": "x"}}]
-        },
-    )
+from tests.runtime.conftest import danger_tool_manifest, planned_danger_tool_policy
 
 
 @pytest.mark.asyncio
@@ -55,7 +32,7 @@ async def test_runner_interrupts_for_high_risk_policy() -> None:
     async def _danger(_args):
         return {"summary": "danger"}
 
-    registry.register(_danger_manifest(), _danger)
+    registry.register(danger_tool_manifest(), _danger)
     governed = GovernedToolExecutor(registry=registry)
     runner = FakeSingleStepRunner(
         provider=FakeProvider(response_text="ok"),
@@ -69,7 +46,7 @@ async def test_runner_interrupts_for_high_risk_policy() -> None:
             run_id="run_interrupt_1",
             agent_id="agent",
             graph_preset="single_react",
-            tool_policy=_planned_danger_policy(),
+            tool_policy=planned_danger_tool_policy(),
         )
     )
     assert output.status.value == "paused"
@@ -87,7 +64,7 @@ async def test_runner_resume_approve_executes_pending_tool_once() -> None:
         calls.append(dict(args))
         return {"summary": f"danger:{args['target']}"}
 
-    registry.register(_danger_manifest(), _danger)
+    registry.register(danger_tool_manifest(), _danger)
     runner = FakeSingleStepRunner(
         provider=FakeProvider(response_text="ok"),
         checkpoint_store=InMemoryCheckpointStore(),
@@ -104,7 +81,7 @@ async def test_runner_resume_approve_executes_pending_tool_once() -> None:
             run_id="run_hitl_approve",
             agent_id="agent",
             graph_preset="single_react",
-            tool_policy=_planned_danger_policy(),
+            tool_policy=planned_danger_tool_policy(),
         )
     )
     assert paused.status.value == "paused"
@@ -136,7 +113,7 @@ async def test_runner_resume_edit_applies_edited_args() -> None:
         calls.append(dict(args))
         return {"summary": f"danger:{args['target']}"}
 
-    registry.register(_danger_manifest(), _danger)
+    registry.register(danger_tool_manifest(), _danger)
     runner = FakeSingleStepRunner(
         provider=FakeProvider(response_text="ok"),
         checkpoint_store=InMemoryCheckpointStore(),
@@ -153,7 +130,7 @@ async def test_runner_resume_edit_applies_edited_args() -> None:
             run_id="run_hitl_edit",
             agent_id="agent",
             graph_preset="single_react",
-            tool_policy=_planned_danger_policy(),
+            tool_policy=planned_danger_tool_policy(),
         )
     )
     resumed = await runner.run(
@@ -183,7 +160,7 @@ async def test_runner_resume_reject_and_cancel_are_terminal() -> None:
     async def _danger(_args):
         return {"summary": "danger"}
 
-    registry.register(_danger_manifest(), _danger)
+    registry.register(danger_tool_manifest(), _danger)
     checkpoint_store = InMemoryCheckpointStore()
     event_log = InMemoryEventLog()
     runner = FakeSingleStepRunner(
@@ -202,7 +179,7 @@ async def test_runner_resume_reject_and_cancel_are_terminal() -> None:
             run_id="run_hitl_terminal",
             agent_id="agent",
             graph_preset="single_react",
-            tool_policy=_planned_danger_policy(),
+            tool_policy=planned_danger_tool_policy(),
         )
     )
     assert paused.interrupt is not None
@@ -226,7 +203,7 @@ async def test_runner_resume_reject_and_cancel_are_terminal() -> None:
             run_id="run_hitl_cancel",
             agent_id="agent",
             graph_preset="single_react",
-            tool_policy=_planned_danger_policy(),
+            tool_policy=planned_danger_tool_policy(),
         )
     )
     cancelled = await runner.run(

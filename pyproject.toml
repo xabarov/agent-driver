@@ -35,3 +35,11 @@ addopts = "-q"
 markers = [
   "live: optional network/provider checks disabled by default",
 ]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+line_length = 88

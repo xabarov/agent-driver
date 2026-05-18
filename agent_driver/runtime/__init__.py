@@ -3,12 +3,8 @@
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
 from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
 from agent_driver.runtime.events import InMemoryEventLog
-from agent_driver.runtime.runner import (
-    FakeSingleStepRunner,
-    RunnerConfig,
-    RuntimeStepResult,
-    SingleAgentRunner,
-)
+from agent_driver.runtime.runner import FakeSingleStepRunner, SingleAgentRunner
+from agent_driver.runtime.single_agent_types import RunnerConfig, RuntimeStepResult
 from agent_driver.runtime.sqlite_store import SqliteRuntimeStore
 from agent_driver.runtime.state import RuntimeState
 from agent_driver.runtime.storage import (

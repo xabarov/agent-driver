@@ -16,54 +16,18 @@ from agent_driver.contracts import (
     ToolPolicyMode,
     ToolRisk,
 )
-from agent_driver.contracts.messages import ChatMessage
-from agent_driver.llm.contracts import LlmRequest
 from agent_driver.llm.fake import FakeProvider
 from agent_driver.runtime import (
     GovernedToolExecutor,
-    GuardrailPipeline,
-    GuardrailResult,
     ToolRegistry,
     evaluate_tool_policy,
 )
-
-
-class _BlockingGuardrails(GuardrailPipeline):
-    async def on_tool_args(self, payload: dict[str, object]) -> GuardrailResult:
-        if payload.get("args", {}).get("blocked"):
-            return GuardrailResult(
-                decision=GuardrailDecision.BLOCK,
-                reason="args blocked by guardrail",
-            )
-        return await super().on_tool_args(payload)
-
-
-class _InputBlockingGuardrails(GuardrailPipeline):
-    async def on_input(self, payload: dict[str, object]) -> GuardrailResult:
-        if payload.get("tool_name") == "lookup":
-            return GuardrailResult(
-                decision=GuardrailDecision.BLOCK,
-                reason="input blocked by guardrail",
-            )
-        return await super().on_input(payload)
-
-
-class _SanitizeGuardrails(GuardrailPipeline):
-    async def on_tool_result(self, payload: dict[str, object]) -> GuardrailResult:
-        _ = payload
-        return GuardrailResult(
-            decision=GuardrailDecision.SANITIZE,
-            reason="sanitize marker",
-        )
-
-
-def _request_with_planned_calls(planned: list[ToolCall]) -> LlmRequest:
-    return LlmRequest(
-        messages=[ChatMessage(role="user", content="hello")],
-        metadata={
-            "planned_tool_calls": [call.model_dump(mode="json") for call in planned]
-        },
-    )
+from tests.runtime.conftest import (
+    BlockingToolArgsGuardrails,
+    BlockingToolInputGuardrails,
+    SanitizeToolResultGuardrails,
+    llm_request_with_planned_calls,
+)
 
 
 @pytest.mark.asyncio
@@ -95,7 +59,7 @@ async def test_governed_executor_completes_tool_and_truncates() -> None:
     )
     provider = FakeProvider(response_text="ok")
     response = await provider.complete(
-        _request_with_planned_calls(
+        llm_request_with_planned_calls(
             planned=[ToolCall(tool_name="lookup", args={"query": "abcdef"})]
         )
     )
@@ -133,7 +97,9 @@ async def test_governed_executor_guardrail_blocks_args() -> None:
         ToolManifest(name="lookup", description="Lookup"),
         _lookup,
     )
-    executor = GovernedToolExecutor(registry=registry, guardrails=_BlockingGuardrails())
+    executor = GovernedToolExecutor(
+        registry=registry, guardrails=BlockingToolArgsGuardrails()
+    )
     run_input = AgentRunInput(
         input="hello",
         run_id="run_guard_block",
@@ -142,7 +108,7 @@ async def test_governed_executor_guardrail_blocks_args() -> None:
     )
     provider = FakeProvider(response_text="ok")
     response = await provider.complete(
-        _request_with_planned_calls(
+        llm_request_with_planned_calls(
             planned=[ToolCall(tool_name="lookup", args={"blocked": True})]
         )
     )
@@ -164,7 +130,7 @@ async def test_governed_executor_guardrail_blocks_input() -> None:
         _lookup,
     )
     executor = GovernedToolExecutor(
-        registry=registry, guardrails=_InputBlockingGuardrails()
+        registry=registry, guardrails=BlockingToolInputGuardrails()
     )
     run_input = AgentRunInput(
         input="hello",
@@ -174,7 +140,7 @@ async def test_governed_executor_guardrail_blocks_input() -> None:
     )
     provider = FakeProvider(response_text="ok")
     response = await provider.complete(
-        _request_with_planned_calls(
+        llm_request_with_planned_calls(
             planned=[ToolCall(tool_name="lookup", args={"q": "x"})]
         )
     )
@@ -195,7 +161,9 @@ async def test_governed_executor_marks_sanitize_decision() -> None:
         ToolManifest(name="lookup", description="Lookup"),
         _lookup,
     )
-    executor = GovernedToolExecutor(registry=registry, guardrails=_SanitizeGuardrails())
+    executor = GovernedToolExecutor(
+        registry=registry, guardrails=SanitizeToolResultGuardrails()
+    )
     run_input = AgentRunInput(
         input="hello",
         run_id="run_guard_sanitize",
@@ -204,7 +172,7 @@ async def test_governed_executor_marks_sanitize_decision() -> None:
     )
     provider = FakeProvider(response_text="ok")
     response = await provider.complete(
-        _request_with_planned_calls(
+        llm_request_with_planned_calls(
             planned=[ToolCall(tool_name="lookup", args={"q": "x"})]
         )
     )
@@ -236,7 +204,7 @@ async def test_governed_executor_includes_profile_and_prompt_metadata() -> None:
     )
     provider = FakeProvider(response_text="ok")
     response = await provider.complete(
-        _request_with_planned_calls(
+        llm_request_with_planned_calls(
             planned=[ToolCall(tool_name="lookup_tool", args={"q": "x"})]
         )
     )
