@@ -114,6 +114,8 @@ def register_planning_tool(registry: ToolRegistry) -> None:
         )
     _register_todo_write_tool(registry)
     _register_ask_user_question_tool(registry)
+    _register_enter_plan_mode_tool(registry)
+    _register_exit_plan_mode_v2_tool(registry)
 
 
 async def _todo_write_tool(args: dict[str, Any]) -> dict[str, Any]:
@@ -133,7 +135,9 @@ async def _todo_write_tool(args: dict[str, Any]) -> dict[str, Any]:
         if not content:
             raise ValueError("todo.content is required")
         if status not in {"pending", "in_progress", "completed", "cancelled"}:
-            raise ValueError("todo.status must be pending/in_progress/completed/cancelled")
+            raise ValueError(
+                "todo.status must be pending/in_progress/completed/cancelled"
+            )
         normalized.append({"id": todo_id, "content": content, "status": status})
     in_progress_count = sum(1 for row in normalized if row["status"] == "in_progress")
     if in_progress_count > 1:
@@ -225,10 +229,78 @@ def _register_ask_user_question_tool(registry: ToolRegistry) -> None:
     )
 
 
+async def _enter_plan_mode_tool(args: dict[str, Any]) -> dict[str, Any]:
+    reason = str(args.get("reason") or "").strip()
+    summary = "entered plan mode"
+    if reason:
+        summary = f"entered plan mode: {reason}"
+    return {
+        "summary": summary,
+        "applied_args": {"planning_mode": "plan"},
+        "planning_state": {"mode": "plan"},
+    }
+
+
+async def _exit_plan_mode_v2_tool(args: dict[str, Any]) -> dict[str, Any]:
+    reason = str(args.get("reason") or "").strip()
+    summary = "exited plan mode"
+    if reason:
+        summary = f"exited plan mode: {reason}"
+    return {
+        "summary": summary,
+        "applied_args": {"planning_mode": "agent"},
+        "planning_state": {"mode": "agent"},
+    }
+
+
+def _register_enter_plan_mode_tool(registry: ToolRegistry) -> None:
+    if registry.get("enter_plan_mode") is not None:
+        return
+    registry.register(
+        ToolManifest(
+            name="enter_plan_mode",
+            description="Switch planning state to plan mode.",
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.NONE,
+            approval_mode=ApprovalMode.NEVER,
+            args_schema={
+                "type": "object",
+                "properties": {"reason": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            output_type="json",
+        ),
+        _enter_plan_mode_tool,
+    )
+
+
+def _register_exit_plan_mode_v2_tool(registry: ToolRegistry) -> None:
+    if registry.get("exit_plan_mode_v2") is not None:
+        return
+    registry.register(
+        ToolManifest(
+            name="exit_plan_mode_v2",
+            description="Switch planning state back to agent mode.",
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.NONE,
+            approval_mode=ApprovalMode.NEVER,
+            args_schema={
+                "type": "object",
+                "properties": {"reason": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            output_type="json",
+        ),
+        _exit_plan_mode_v2_tool,
+    )
+
+
 __all__ = [
     "apply_planning_state_tool_update",
     "planning_state_update_tool",
     "register_planning_tool",
     "_ask_user_question_tool",
+    "_enter_plan_mode_tool",
+    "_exit_plan_mode_v2_tool",
     "_todo_write_tool",
 ]

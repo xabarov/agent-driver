@@ -195,7 +195,44 @@ def evaluate_baseline_strategies() -> dict[str, dict[str, float]]:
     }
 
 
+def compaction_default_gate(
+    baseline: dict[str, dict[str, float]] | None = None,
+) -> tuple[bool, dict[str, object]]:
+    """Gate Phase 8 default enablement against trim+micro baseline quality."""
+    metrics = baseline or evaluate_baseline_strategies()
+    baseline_row = metrics.get("trim_plus_microcompaction", {})
+    baseline_recall = float(baseline_row.get("fact_recall", 0.0))
+    baseline_hallucination = float(baseline_row.get("hallucinated_facts", 1.0))
+    candidate_names = (
+        "session_memory_compaction",
+        "full_llm_compaction",
+        "partial_compaction",
+    )
+    failures: list[str] = []
+    for strategy in candidate_names:
+        row = metrics.get(strategy, {})
+        recall = float(row.get("fact_recall", 0.0))
+        hallucination = float(row.get("hallucinated_facts", 1.0))
+        if recall < baseline_recall:
+            failures.append(
+                f"{strategy}: recall {recall:.4f} below baseline {baseline_recall:.4f}"
+            )
+        if hallucination > baseline_hallucination:
+            failures.append(
+                f"{strategy}: hallucination {hallucination:.4f} above baseline {baseline_hallucination:.4f}"
+            )
+    return (
+        len(failures) == 0,
+        {
+            "baseline_strategy": "trim_plus_microcompaction",
+            "checked_strategies": list(candidate_names),
+            "failures": failures,
+        },
+    )
+
+
 __all__ = [
+    "compaction_default_gate",
     "ContextQualityFixture",
     "build_synthetic_context_quality_fixture",
     "evaluate_baseline_strategies",

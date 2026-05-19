@@ -16,6 +16,7 @@ from agent_driver.tools.prompts import (
     rendered_tool_docs_hash,
 )
 from agent_driver.tools.registry import RegisteredTool, ToolRegistry
+from agent_driver.tools.toolset import ToolSet, builtin_pack_names
 
 __all__ = [
     "apply_planning_state_tool_update",
@@ -32,4 +33,6 @@ __all__ = [
     "render_tool_doc",
     "render_tool_docs",
     "rendered_tool_docs_hash",
+    "ToolSet",
+    "builtin_pack_names",
 ]

@@ -11,6 +11,13 @@ Verification policy reference: all tool/runtime/context feature work must follow
 before merge (offline + live + trace-review gates).
 Execution reference: [Test plan and coverage matrix](architecture/test-plan-and-matrix.md).
 
+Additional SDK/SSE/CLI analysis update: the runtime already has durable typed
+events and provider-level streaming primitives, but external usage is still
+low-level (`SingleAgentRunner` + stores + tool wiring). The next architecture
+increment should add a first-class app-facing SDK facade and a transport-neutral
+runtime stream projection that both FastAPI/SSE and CLI can reuse. SSE remains
+an adapter over durable runtime events rather than the runtime core protocol.
+
 ## Repository structure policy
 
 Before adding non-trivial backend code, place it in an existing **package** that matches the phase below. Do not grow new flat `agent_driver/foo_bar.py` files next to an established package for the same concern (for example, extend `agent_driver/runtime/storage/` rather than adding `runtime/storage_extra.py`). Keep package `__init__.py` files as **facades**; implement in named submodules.
@@ -23,13 +30,14 @@ Reserved top-level packages (create when implementation starts; avoid empty dire
 | ----- | ----- | ------------------ |
 | 2 / 2.5 | Durable runtime, checkpoint/event stores | `agent_driver.runtime`, `agent_driver.runtime.storage` |
 | 3 | Tool registry, policy, governed executor | `agent_driver.tools`, `agent_driver.tools.executor` |
+| 3 | App-facing SDK surface and tool-set ergonomics | `agent_driver.sdk` (create on phase start) |
 | 5 | Evaluation harness, deterministic runners | `agent_driver.evals` |
 | 5 | Trace export, telemetry sinks | `agent_driver.observability` |
 | 6 / 8 | Sessions, artifacts, planning, trimming, compaction (runtime) | `agent_driver.context` |
 | 6 | Future context/session/artifact **contracts** | `agent_driver.contracts.context` |
 | 7 | CodeAgent profile, sandbox | `agent_driver.code_agent` (create on phase start) |
 | 9 | Subagent **orchestration** (not contract enums/models) | `agent_driver.subagents` (create on phase start) |
-| 10 | MCP, HTTP/SSE, CLI | `agent_driver.adapters` (create on phase start) |
+| 10 | Runtime stream adapters, MCP, HTTP/SSE, CLI | `agent_driver.adapters`, `agent_driver.contracts.stream`, `agent_driver.runtime.stream` (create on phase start) |
 
 Cursor: see `.cursor/rules/repo-structure.mdc` for agent guidance on layout.
 
@@ -196,6 +204,16 @@ OpenClaude tool import backlog:
   `/mnt/share/gitlab_projects/openclaude/src/tools/` as the source inventory,
   but port contracts, policies, and algorithms instead of TypeScript/Ink UI
   implementations.
+- Imported in this stage:
+  - `McpAuthTool` as built-in `mcp_auth` with token/oauth payload handling;
+  - `EnterPlanModeTool` / `ExitPlanModeV2Tool` as `enter_plan_mode` and
+    `exit_plan_mode_v2`, mapped to planning state updates;
+  - `SkillTool` as read-only `skill_tool` with SKILL.md discovery, trust
+    classification, and path provenance metadata;
+  - `ToolSearchTool` as built-in `tool_search` for local manifest discovery by
+    name/description plus risk/side-effect filters;
+  - `BriefTool` as built-in `brief_tool` for runtime brief payloads with
+    attachment references (`artifact_ref`) and channel metadata.
 - Codebase and filesystem analysis tools, first wave:
   - `FileReadTool`: bounded text read with line windows, binary/media detection,
     image/PDF handling hooks, and stable truncation metadata;
@@ -252,15 +270,17 @@ OpenClaude tool import backlog:
 - Skills, workflows, and product automation:
   - `SkillTool`: support repository/user skill discovery as prompt/context input,
     with explicit trust and path provenance;
-  - `ToolSearchTool`: defer until the manifest is large enough to require lazy
-    tool discovery;
-  - `BriefTool`: map to runtime messages plus artifact attachments, not a core
-    execution primitive;
+  - `ToolSearchTool`: basic local manifest search is implemented; defer
+    cross-registry lazy/distributed discovery until manifest/provider volume
+    justifies it;
+  - `BriefTool`: implemented as a lightweight runtime message + attachment
+    envelope; defer deeper workflow/notification integrations to product
+    automation adapters;
   - `WorkflowTool`, cron, remote trigger, PR subscription, push notification, and
     file-send tools are product automation adapters and should remain deferred
     until the core registry, context, and adapter layers are stable.
 
-Tool-set ergonomics and user extension backlog:
+SDK ergonomics and user extension backlog (Phase 3 follow-up):
 
 - Add a first-class `ToolSet` / tool-pack concept on top of `ToolRegistry`:
   - create a registry from explicit tools only;
@@ -268,6 +288,12 @@ Tool-set ergonomics and user extension backlog:
     shell, planning, tasking, and MCP;
   - filter a pack by names, risk, side-effect class, supported profile, or
     application tag before tools are rendered to the model.
+- Add app-facing SDK facade contracts in `agent_driver.sdk`:
+  - `create_agent(...)` helper that wires provider, runtime stores, tool registry,
+    and governed executor defaults without manual low-level plumbing;
+  - `Agent` facade methods (`run`, `stream`, `resume`) that preserve direct access
+    to low-level runtime APIs for advanced embedders;
+  - explicit environment/config bootstrap for local development and backend apps.
 - Separate two user-facing concepts clearly in API and docs:
   - tool-set selection controls the model-visible and executable tool surface;
   - per-run `ToolPolicyInput.allowed_tools` / `denied_tools` remains a safety
@@ -288,9 +314,13 @@ Tool-set ergonomics and user extension backlog:
   - agent with one built-in group plus one custom tool;
   - code-agent profile with only Python-identifier-compatible tools;
   - MCP-imported tools narrowed to an explicit allowlisted subset.
+  - backend chat endpoint that streams run events over SSE via the shared runtime
+    stream projection.
 - Acceptance criteria for this backlog:
   - users can build an agent with an arbitrary selected tool surface without
     constructing `GovernedToolExecutor` directly;
+  - users can start with `agent_driver.sdk` defaults while still being able to
+    drop down to `agent_driver.runtime` and `agent_driver.tools` when needed;
   - disallowed tools are absent from prompt/tool docs, not only denied at call
     time;
   - existing low-level `ToolRegistry` and policy APIs remain available for
@@ -631,25 +661,56 @@ Exit criteria:
 - failed/timed-out child does not leave stale running rows;
 - subagent traces link to parent trace/run.
 
-## Phase 10: MCP And API Adapters
+## Phase 10: SDK, Runtime Streaming, MCP, And Product Adapters
 
-- Add MCP client design/adapter.
-- Import MCP tools into manifest.
-- Map MCP `outputSchema` / structured content into `ToolManifest.output_schema`.
-- Add MCP security policy controls.
-- Add FastAPI/SSE adapter.
-- Add CLI demo.
+- Add app-facing SDK facade on top of runtime/tool primitives:
+  - `create_agent(...)`;
+  - `Agent.run(...)`;
+  - `Agent.stream(...)`;
+  - `Agent.resume(...)`;
+  - ergonomic provider/store/tool defaults for backend applications.
+- Add transport-neutral runtime stream contracts and projection:
+  - typed `RunStreamEvent` vocabulary mapped from `RuntimeEvent` and provider
+    stream chunks;
+  - deterministic event ids/sequence for reconnect-safe consumers;
+  - backfill/read-replay path via `RuntimeEventLog.list_for_run(after_seq=...)`;
+  - callback hooks and adapter bridges that do not require HTTP coupling.
+- Extend runner streaming path:
+  - support provider `stream(...)` mode in runtime step flow;
+  - emit `TOKEN_DELTA` and related progress events as durable stream events;
+  - aggregate final streamed result into standard run output without breaking
+    checkpoint/replay semantics.
+- Add MCP client design/adapter:
+  - import MCP tools into manifest;
+  - map MCP `outputSchema` / structured content into `ToolManifest.output_schema`;
+  - add MCP security policy controls and descriptor audit metadata.
+- Add FastAPI/SSE adapter:
+  - async generator/helper API for chat backends;
+  - normalized SSE envelope (`event`, `id`, `data`, optional retry metadata);
+  - reconnect/backfill behavior from persisted runtime events.
+- Add CLI adapter baseline with smolagents-style step visibility:
+  - `console_scripts` entrypoint and optional `[cli]` extras;
+  - commands: `run`, `replay`, `tail`, `tree`;
+  - rich live rendering with deterministic plain-text fallback;
+  - same stream vocabulary as SSE to avoid duplicated semantics.
 - Add example apps:
   - general assistant;
   - codebase assistant;
-  - document-analysis assistant.
+  - document-analysis assistant;
+  - FastAPI chat backend using SSE adapter.
 
 Exit criteria:
 
 - MCP tools can be allowlisted and approval-gated;
 - structured MCP tools preserve output schemas and descriptor audit metadata;
-- SSE adapter uses typed runtime events;
-- examples run against fake/local providers.
+- app-facing SDK can run/stream/resume without manual registry+executor wiring;
+- runtime stream contracts are transport-neutral and replayable from durable events;
+- streamed runs emit durable `TOKEN_DELTA` events and still produce normal terminal
+  `AgentRunOutput` envelopes;
+- SSE adapter uses typed runtime stream events with reconnect/backfill tests;
+- CLI adapter supports replay and live tail with snapshot-style output tests;
+- examples run against fake/local providers;
+- low-level `runtime` and `tools` APIs remain available for advanced embedders.
 
 ## Deferrals
 
@@ -658,10 +719,14 @@ Do not include in the first implementation:
 - scientific paper tools;
 - Neo4j/Qdrant assumptions;
 - distributed worker backends;
+- distributed worker-facing public API adapters for streaming (after SSE baseline);
 - production Postgres checkpoint backend is deferred from first cut, but should be prioritized once multi-worker or shared API deployment is required;
 - CodeAgent as the default loop or as an unsandboxed executor;
 - LangSmith exporter, unless it becomes a target integration;
-- complex LLM-as-judge evaluation before deterministic evals exist.
+- complex LLM-as-judge evaluation before deterministic evals exist;
+- WebSocket-specific transport layer and broker-specific fanout semantics (until
+  HTTP/SSE reconnect baseline is stable);
+- highly interactive full-screen TUI beyond rich/plain-text CLI step rendering.
 
 ## Phase 2.5: Persistent Backend Expansion (Checkpoint/Event Stores)
 

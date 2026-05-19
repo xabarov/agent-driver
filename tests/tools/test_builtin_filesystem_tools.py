@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from agent_driver.tools.registry import ToolRegistry
 from agent_driver.tools import register_builtin_tools, register_planning_tool
 from agent_driver.tools.builtin.filesystem import register_filesystem_tools
+from agent_driver.tools.registry import ToolRegistry
 
 
 @pytest.mark.asyncio
@@ -34,8 +34,14 @@ async def test_register_builtin_tools_contains_first_wave_names() -> None:
     assert registry.get("mcp_tool") is not None
     assert registry.get("mcp_list_resources") is not None
     assert registry.get("mcp_read_resource") is not None
+    assert registry.get("mcp_auth") is not None
+    assert registry.get("skill_tool") is not None
+    assert registry.get("tool_search") is not None
+    assert registry.get("brief_tool") is not None
     assert registry.get("todo_write") is not None
     assert registry.get("ask_user_question") is not None
+    assert registry.get("enter_plan_mode") is not None
+    assert registry.get("exit_plan_mode_v2") is not None
 
 
 @pytest.mark.asyncio
@@ -163,7 +169,9 @@ async def test_glob_respects_max_depth(tmp_path) -> None:
     register_filesystem_tools(registry)
     tool = registry.get("glob_search")
     assert tool is not None
-    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "*.py", "max_depth": 0})
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "*.py", "max_depth": 0}
+    )
     assert out["results"] == ["a.py"]
 
 

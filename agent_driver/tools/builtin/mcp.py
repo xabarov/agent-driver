@@ -16,6 +16,7 @@ from agent_driver.tools.registry import ToolRegistry
 _MCP_TOOL = "mcp_tool"
 _MCP_LIST_RESOURCES_TOOL = "mcp_list_resources"
 _MCP_READ_RESOURCE_TOOL = "mcp_read_resource"
+_MCP_AUTH_TOOL = "mcp_auth"
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,12 +89,15 @@ _MCP_RESOURCE_DESCRIPTORS: dict[tuple[str, str], _McpResourceDescriptor] = {
     ),
 }
 
+_MCP_AUTH_STATE: dict[str, dict[str, Any]] = {}
+
 
 def register_mcp_tools(registry: ToolRegistry) -> None:
     """Register readonly MCP wrappers."""
     registry.register(_mcp_tool_manifest(), _mcp_tool_handler)
     registry.register(_mcp_list_resources_manifest(), _mcp_list_resources_handler)
     registry.register(_mcp_read_resource_manifest(), _mcp_read_resource_handler)
+    registry.register(_mcp_auth_manifest(), _mcp_auth_handler)
 
 
 def _mcp_tool_manifest() -> ToolManifest:
@@ -164,6 +168,32 @@ def _mcp_read_resource_manifest() -> ToolManifest:
     )
 
 
+def _mcp_auth_manifest() -> ToolManifest:
+    return ToolManifest(
+        name=_MCP_AUTH_TOOL,
+        description="Configure MCP server authentication via token or OAuth stub flow.",
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.EXTERNAL_ACTION,
+        approval_mode=ApprovalMode.ON_POLICY_MATCH,
+        timeout_seconds=10.0,
+        output_char_budget=6000,
+        idempotent=False,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "server": {"type": "string"},
+                "mode": {"type": "string", "enum": ["token", "oauth"]},
+                "token": {"type": "string"},
+                "scopes": {"type": "array", "items": {"type": "string"}},
+                "authorize_url": {"type": "string"},
+            },
+            "required": ["server", "mode"],
+            "additionalProperties": False,
+        },
+        output_type="json",
+    )
+
+
 async def _mcp_tool_handler(args: dict[str, Any]) -> dict[str, Any]:
     server = _required_str(args.get("server"), field="server")
     tool_name = _required_str(args.get("tool_name"), field="tool_name")
@@ -216,7 +246,49 @@ async def _mcp_read_resource_handler(args: dict[str, Any]) -> dict[str, Any]:
             "content": content,
             "truncated": len(descriptor.content) > max_chars,
         },
-        "provenance": {"server": server, "resource_uri": resource_uri, "readonly": True},
+        "provenance": {
+            "server": server,
+            "resource_uri": resource_uri,
+            "readonly": True,
+        },
+    }
+
+
+async def _mcp_auth_handler(args: dict[str, Any]) -> dict[str, Any]:
+    server = _required_str(args.get("server"), field="server")
+    mode = _required_str(args.get("mode"), field="mode")
+    if mode not in {"token", "oauth"}:
+        raise ValueError("mode must be one of: token, oauth")
+    if mode == "token":
+        token = _required_str(args.get("token"), field="token")
+        scopes = _normalize_scopes(args.get("scopes"))
+        _MCP_AUTH_STATE[server] = {
+            "server": server,
+            "mode": mode,
+            "status": "configured",
+            "token_hint": _token_hint(token),
+            "scopes": scopes,
+        }
+        return {
+            "summary": f"mcp auth configured for '{server}' via token",
+            "auth": _MCP_AUTH_STATE[server],
+        }
+    scopes = _normalize_scopes(args.get("scopes"))
+    authorize_url_raw = args.get("authorize_url")
+    if authorize_url_raw is None:
+        authorize_url = f"https://auth.example/mcp/{server}"
+    else:
+        authorize_url = _required_str(authorize_url_raw, field="authorize_url")
+    _MCP_AUTH_STATE[server] = {
+        "server": server,
+        "mode": mode,
+        "status": "pending_user_consent",
+        "authorize_url": authorize_url,
+        "scopes": scopes,
+    }
+    return {
+        "summary": f"mcp oauth flow prepared for '{server}'",
+        "auth": _MCP_AUTH_STATE[server],
     }
 
 
@@ -258,6 +330,31 @@ def _as_int(raw: Any, *, default: int, minimum: int) -> int:
     if value < minimum:
         raise ValueError(f"value must be >= {minimum}")
     return value
+
+
+def _token_hint(token: str) -> str:
+    if len(token) <= 4:
+        return "*" * len(token)
+    return f"{token[:2]}***{token[-2:]}"
+
+
+def _normalize_scopes(raw: Any) -> list[str]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("scopes must be an array of strings")
+    normalized: list[str] = []
+    for item in raw:
+        scope = str(item).strip()
+        if not scope:
+            continue
+        normalized.append(scope)
+    return normalized
+
+
+def _reset_mcp_auth_state_for_tests() -> None:
+    """Reset in-memory MCP auth state for deterministic tests."""
+    _MCP_AUTH_STATE.clear()
 
 
 __all__ = ["register_mcp_tools"]

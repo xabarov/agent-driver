@@ -1,0 +1,127 @@
+"""ToolSet helpers for selecting model-visible and executable tool surface."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from agent_driver.contracts.enums import AgentProfile, SideEffectClass, ToolRisk
+from agent_driver.contracts.tools import ToolManifest
+from agent_driver.tools.registry import ToolRegistry
+
+_RISK_RANK = {
+    ToolRisk.LOW: 0,
+    ToolRisk.MEDIUM: 1,
+    ToolRisk.HIGH: 2,
+}
+
+_BUILTIN_PACKS: dict[str, tuple[str, ...]] = {
+    "filesystem_read": ("read_file", "glob_search", "grep_search"),
+    "filesystem_write": ("file_write", "file_edit", "notebook_edit"),
+    "web": ("web_fetch", "web_search"),
+    "shell": ("bash",),
+    "planning": ("planning_state_update", "todo_write", "ask_user_question"),
+    "tasking": ("task_create", "task_get", "task_list", "task_update", "task_output"),
+    "mcp": ("mcp_tool", "mcp_list_resources", "mcp_read_resource"),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ToolSet:
+    """Declarative tool-surface selector over an existing registry."""
+
+    names: tuple[str, ...] | None = None
+    max_risk: ToolRisk | None = None
+    side_effects: tuple[SideEffectClass, ...] | None = None
+    profile: AgentProfile | None = None
+    application_tags: tuple[str, ...] | None = None
+
+    @classmethod
+    def all(cls) -> "ToolSet":
+        """Include all tools from source registry."""
+        return cls()
+
+    @classmethod
+    def only(cls, *names: str) -> "ToolSet":
+        """Include exactly explicit tool names."""
+        return cls(names=tuple(dict.fromkeys(item.strip() for item in names if item.strip())))
+
+    @classmethod
+    def packs(cls, *pack_names: str) -> "ToolSet":
+        """Compose one or more named built-in packs."""
+        selected: list[str] = []
+        for pack_name in pack_names:
+            if pack_name not in _BUILTIN_PACKS:
+                raise ValueError(f"unknown tool pack '{pack_name}'")
+            selected.extend(_BUILTIN_PACKS[pack_name])
+        return cls.only(*selected)
+
+    def with_max_risk(self, max_risk: ToolRisk) -> "ToolSet":
+        """Return copy capped by maximum risk."""
+        return ToolSet(
+            names=self.names,
+            max_risk=max_risk,
+            side_effects=self.side_effects,
+            profile=self.profile,
+            application_tags=self.application_tags,
+        )
+
+    def with_profile(self, profile: AgentProfile) -> "ToolSet":
+        """Return copy constrained by agent profile compatibility."""
+        return ToolSet(
+            names=self.names,
+            max_risk=self.max_risk,
+            side_effects=self.side_effects,
+            profile=profile,
+            application_tags=self.application_tags,
+        )
+
+    def _matches(self, manifest: ToolManifest) -> bool:
+        if self.names is not None and manifest.name not in set(self.names):
+            return False
+        if self.max_risk is not None and (
+            _RISK_RANK[manifest.risk] > _RISK_RANK[self.max_risk]
+        ):
+            return False
+        if self.side_effects is not None and manifest.side_effect not in set(self.side_effects):
+            return False
+        if self.profile is not None and self.profile not in manifest.supported_profiles:
+            return False
+        if self.application_tags is not None:
+            tags = manifest.metadata.get("application_tags")
+            if not isinstance(tags, list):
+                return False
+            normalized = {str(item) for item in tags}
+            if not any(tag in normalized for tag in self.application_tags):
+                return False
+        return True
+
+    def apply(self, source: ToolRegistry) -> ToolRegistry:
+        """Build a filtered registry from source tools."""
+        filtered = ToolRegistry()
+        for name in source.list_names():
+            registered = source.get(name)
+            if registered is None:
+                continue
+            if self._matches(registered.manifest):
+                filtered.register(registered.manifest, registered.handler)
+        return filtered
+
+    def manifests(self, source: ToolRegistry) -> list[ToolManifest]:
+        """Return selected manifests for prompt/doc surface rendering."""
+        return [item.manifest for item in self._iter_selected(source)]
+
+    def _iter_selected(self, source: ToolRegistry):
+        for name in source.list_names():
+            registered = source.get(name)
+            if registered is None:
+                continue
+            if self._matches(registered.manifest):
+                yield registered
+
+
+def builtin_pack_names() -> tuple[str, ...]:
+    """Return stable built-in pack names."""
+    return tuple(sorted(_BUILTIN_PACKS))
+
+
+__all__ = ["ToolSet", "builtin_pack_names"]

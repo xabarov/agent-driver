@@ -4,6 +4,7 @@ from agent_driver.evals.baseline import compare_reports
 from agent_driver.evals.context_quality import (
     ContextQualityFixture,
     build_synthetic_context_quality_fixture,
+    compaction_default_gate,
     evaluate_baseline_strategies,
     score_context_quality,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "build_support_bundle",
     "ContextQualityFixture",
     "build_synthetic_context_quality_fixture",
+    "compaction_default_gate",
     "compare_reports",
     "default_evaluators",
     "evaluate_checkpoint_replay",

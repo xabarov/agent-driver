@@ -170,8 +170,8 @@ filesystem/
 
 | Item | Scope | Notes |
 |------|-------|-------|
-| Restore live scenarios | Small | Missing vs old monolith: `resume_edit`, `todo_write`, `ask_user_question` (confirm against git history / product matrix) |
-| Use `governed_tool_harness.py` | Small | [`tests/support/governed_tool_harness.py`](../../tests/support/governed_tool_harness.py) exists but filesystem governed tests still use inline setup |
+| Restore live scenarios | Done | `resume_edit`, `todo_write`, `ask_user_question` covered in split live smoke suite |
+| Use `governed_tool_harness.py` | Done | filesystem governed integration tests now use shared harness helpers |
 | Parametrize unit/governed filesystem | Medium | Reduce duplication across `tests/tools/` and `tests/runtime/test_tool_governance_filesystem_tools.py` |
 
 **Current live smoke count:** 13 tests collected (2 + 4 + 4 + 3).

@@ -3,6 +3,7 @@
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
 from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
 from agent_driver.runtime.events import InMemoryEventLog
+from agent_driver.runtime.agent_factory import create_agent
 from agent_driver.runtime.runner import FakeSingleStepRunner, SingleAgentRunner
 from agent_driver.runtime.single_agent.types import RunnerConfig, RuntimeStepResult
 from agent_driver.runtime.sqlite_store import SqliteRuntimeStore
@@ -39,6 +40,7 @@ __all__ = [
     "create_runtime_store_bundle",
     "runtime_store_config_from_env",
     "preflight_runtime_store",
+    "create_agent",
     "ToolExecutor",
     "ToolExecutionResult",
     "fake_noop_tool_executor",

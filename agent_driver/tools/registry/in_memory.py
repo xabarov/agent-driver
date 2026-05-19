@@ -34,5 +34,9 @@ class ToolRegistry:
         """Return sorted list of registered tool names."""
         return sorted(self._items)
 
+    def list_registered(self) -> list[RegisteredTool]:
+        """Return registered tool records sorted by manifest name."""
+        return [self._items[name] for name in sorted(self._items)]
+
 
 __all__ = ["RegisteredTool", "ToolRegistry"]

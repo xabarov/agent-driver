@@ -26,7 +26,11 @@ from agent_driver.context.compaction import (
     save_session_memory,
 )
 from agent_driver.context.microcompaction import microcompact_observations
-from agent_driver.context.observations import build_observation_memory
+from agent_driver.context.observations import (
+    ObservationMemoryInput,
+    build_observation_memory,
+    build_observation_memory_from_input,
+)
 from agent_driver.context.planning import (
     planning_state_event,
     planning_state_init,
@@ -78,7 +82,9 @@ __all__ = [
     "planning_step_event",
     "planning_state_event",
     "build_memory_projection",
+    "ObservationMemoryInput",
     "build_observation_memory",
+    "build_observation_memory_from_input",
     "microcompact_observations",
     "TokenPressureInput",
     "estimate_token_pressure",

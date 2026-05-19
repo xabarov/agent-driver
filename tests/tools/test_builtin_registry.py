@@ -28,5 +28,11 @@ def test_register_builtin_tools_populates_registry() -> None:
     assert "mcp_tool" in names
     assert "mcp_list_resources" in names
     assert "mcp_read_resource" in names
+    assert "mcp_auth" in names
+    assert "skill_tool" in names
+    assert "tool_search" in names
+    assert "brief_tool" in names
     assert "todo_write" in names
     assert "ask_user_question" in names
+    assert "enter_plan_mode" in names
+    assert "exit_plan_mode_v2" in names

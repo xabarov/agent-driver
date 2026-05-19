@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent_driver.evals import (
     build_synthetic_context_quality_fixture,
+    compaction_default_gate,
     evaluate_baseline_strategies,
     score_context_quality,
 )
@@ -42,3 +43,36 @@ def test_baseline_has_trim_and_micro_strategies() -> None:
         baseline["trim_plus_microcompaction"]["fact_recall"]
         >= baseline["trim_only"]["fact_recall"]
     )
+
+
+def test_compaction_default_gate_passes_for_current_baseline() -> None:
+    """Phase 8 defaults gate should pass only when compaction is non-regressive."""
+    passes, details = compaction_default_gate(evaluate_baseline_strategies())
+    assert passes is True
+    assert details["failures"] == []
+
+
+def test_compaction_default_gate_detects_regression() -> None:
+    """Gate should fail when compaction strategy degrades recall/hallucination."""
+    passes, details = compaction_default_gate(
+        {
+            "trim_plus_microcompaction": {
+                "fact_recall": 0.9,
+                "hallucinated_facts": 0.0,
+            },
+            "session_memory_compaction": {
+                "fact_recall": 0.8,
+                "hallucinated_facts": 0.1,
+            },
+            "full_llm_compaction": {
+                "fact_recall": 0.9,
+                "hallucinated_facts": 0.0,
+            },
+            "partial_compaction": {
+                "fact_recall": 0.9,
+                "hallucinated_facts": 0.0,
+            },
+        }
+    )
+    assert passes is False
+    assert details["failures"]
