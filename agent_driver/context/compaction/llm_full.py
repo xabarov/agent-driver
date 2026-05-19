@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from time import monotonic
 
+from agent_driver.context.compaction.retry import ptl_retry_drop_oldest_groups
+from agent_driver.context.compaction.sanitizers import sanitize_compaction_text
 from agent_driver.context.compaction.prompts import (
     build_full_compaction_prompt,
     strip_private_draft,
@@ -53,8 +55,15 @@ async def run_full_llm_compaction(
     user_request: str,
 ) -> tuple[CompactionResult, dict[str, object]]:
     """Run full no-tool compaction with structured validation."""
+    sanitized_history = sanitize_compaction_text(history_excerpt)
+    groups = [item for item in sanitized_history.splitlines() if item.strip()]
+    kept_groups, dropped_groups = ptl_retry_drop_oldest_groups(
+        groups=groups,
+        max_chars=5000,
+    )
+    bounded_history = "\n".join(kept_groups)
     prompt = build_full_compaction_prompt(
-        history_excerpt=history_excerpt,
+        history_excerpt=bounded_history,
         user_request=user_request,
     )
     started = monotonic()
@@ -79,7 +88,10 @@ async def run_full_llm_compaction(
                 latency_ms=latency_ms,
                 input_tokens_estimate=response.usage.input_tokens,
                 output_tokens_estimate=response.usage.output_tokens,
-                metadata={"failure": str(exc)},
+                metadata={
+                    "failure": str(exc),
+                    "ptl_dropped_groups": len(dropped_groups),
+                },
             ),
             {},
         )
@@ -93,7 +105,10 @@ async def run_full_llm_compaction(
             latency_ms=latency_ms,
             input_tokens_estimate=response.usage.input_tokens,
             output_tokens_estimate=response.usage.output_tokens,
-            metadata={"draft_removed": draft is not None},
+            metadata={
+                "draft_removed": draft is not None,
+                "ptl_dropped_groups": len(dropped_groups),
+            },
         ),
         summary,
     )

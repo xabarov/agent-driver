@@ -1,10 +1,8 @@
-"""Compaction orchestrator skeleton for Phase 8."""
+"""Compaction orchestrator helpers for Phase 8."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from time import monotonic
-
 from agent_driver.context.compaction.eligibility import decide_compaction
 from agent_driver.contracts import (
     CompactionAudit,
@@ -17,7 +15,7 @@ from agent_driver.contracts import (
 
 @dataclass(slots=True)
 class CompactionOrchestrator:
-    """Coordinates eligibility, lock, and execution placeholder paths."""
+    """Coordinates eligibility state, lock, and failure counters."""
 
     failure_limit: int = 3
     _lock_active: bool = False
@@ -46,30 +44,36 @@ class CompactionOrchestrator:
             session_memory=session_memory,
         )
 
-    def execute_placeholder(self, decision: CompactionDecision) -> CompactionAudit:
-        """Execute skeleton compaction path and return audit envelope."""
-        if not decision.eligible:
-            return CompactionAudit(decision=decision)
+    def start_attempt(self) -> str:
+        """Activate lock and issue deterministic compaction id."""
+        if self._lock_active:
+            raise RuntimeError("compaction lock already active")
         self._lock_active = True
-        started = monotonic()
         self._last_compaction_id += 1
-        result = CompactionResult(
-            compaction_id=f"cmp_{self._last_compaction_id}",
-            mode=decision.mode,
-            success=False,
-            latency_ms=int((monotonic() - started) * 1000),
-            metadata={"status": "not_implemented"},
+        return f"cmp_{self._last_compaction_id}"
+
+    def complete_attempt(
+        self,
+        *,
+        decision: CompactionDecision,
+        result: CompactionResult | None = None,
+        failures: list[dict[str, str]] | None = None,
+    ) -> CompactionAudit:
+        """Finalize one attempt, update counters, and release lock."""
+        normalized_failures = list(failures or [])
+        has_failure = bool(normalized_failures) or (
+            result is not None and result.success is False
         )
-        failures = [
-            {
-                "kind": "not_implemented",
-                "mode": decision.mode.value,
-                "message": "compaction path not implemented yet",
-            }
-        ]
-        self._consecutive_failures += 1
+        if has_failure:
+            self._consecutive_failures += 1
+        elif result is not None and result.success:
+            self._consecutive_failures = 0
         self._lock_active = False
-        return CompactionAudit(decision=decision, result=result, failures=failures)
+        return CompactionAudit(
+            decision=decision,
+            result=result,
+            failures=normalized_failures,
+        )
 
     def reset_failures(self) -> None:
         """Reset consecutive failure counter after successful compaction."""

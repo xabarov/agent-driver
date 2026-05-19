@@ -29,6 +29,7 @@ def decide_compaction(
         "previous_failures": previous_failures,
         "failure_limit": failure_limit,
         "session_memory_available": session_memory is not None,
+        "partial_enabled": bool(enable_compaction),
     }
     if not enable_compaction:
         return CompactionDecision(
@@ -71,9 +72,8 @@ def decide_compaction(
             metadata=metadata,
         )
     return CompactionDecision(
-        eligible=False,
-        mode=CompactionMode.NONE,
-        skip_reason=CompactionSkipReason.PATH_NOT_IMPLEMENTED,
+        eligible=True,
+        mode=CompactionMode.PARTIAL,
         metadata=metadata,
     )
 

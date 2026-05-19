@@ -9,12 +9,24 @@ from agent_driver.context.compaction.orchestrator import (
     build_session_memory_compaction,
     evaluate_session_memory_freshness,
 )
+from agent_driver.context.compaction.partial import (
+    PartialCompactionOutput,
+    build_partial_compaction,
+)
+from agent_driver.context.compaction.post_compact import (
+    PostCompactCleanupResult,
+    apply_post_compact_cleanup,
+)
 from agent_driver.context.compaction.prompts import (
     build_full_compaction_prompt,
     strip_private_draft,
 )
 from agent_driver.context.compaction.retry import ptl_retry_drop_oldest_groups
 from agent_driver.context.compaction.sanitizers import sanitize_compaction_text
+from agent_driver.context.compaction.session_memory_extract import (
+    SessionMemoryExtractionResult,
+    extract_session_memory,
+)
 from agent_driver.context.compaction.session_memory_store import (
     load_session_memory,
     save_session_memory,
@@ -38,11 +50,17 @@ __all__ = [
     "build_session_memory_compaction",
     "decide_compaction",
     "evaluate_session_memory_freshness",
+    "extract_session_memory",
+    "build_partial_compaction",
     "load_session_memory",
     "ptl_retry_drop_oldest_groups",
     "run_full_llm_compaction",
     "sanitize_compaction_text",
+    "SessionMemoryExtractionResult",
+    "PartialCompactionOutput",
+    "PostCompactCleanupResult",
     "save_session_memory",
     "session_memory_artifact_id",
     "strip_private_draft",
+    "apply_post_compact_cleanup",
 ]

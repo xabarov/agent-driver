@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent_driver.context.compaction import CompactionOrchestrator
+from agent_driver.contracts import CompactionMode, CompactionResult
 from agent_driver.contracts import CompactionSkipReason
 
 
@@ -16,7 +17,18 @@ def test_compaction_circuit_breaker_opens_after_failures() -> None:
         token_pressure_state="blocking",
         session_memory=None,
     )
-    audit = orchestrator.execute_placeholder(decision)
+    compaction_id = orchestrator.start_attempt()
+    result = CompactionResult(
+        compaction_id=compaction_id,
+        mode=CompactionMode.LLM_FULL,
+        success=False,
+        metadata={"failure": "forced"},
+    )
+    audit = orchestrator.complete_attempt(
+        decision=decision,
+        result=result,
+        failures=[{"kind": "forced"}],
+    )
     assert audit.failures
     second = orchestrator.decide(
         enable_compaction=True,

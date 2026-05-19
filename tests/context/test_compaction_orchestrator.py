@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from agent_driver.context.compaction import (
     CompactionOrchestrator,
+    build_partial_compaction,
     evaluate_session_memory_freshness,
 )
-from agent_driver.contracts import CompactionMode, CompactionSkipReason, SessionMemory
+from agent_driver.contracts import (
+    CompactionMode,
+    CompactionResult,
+    CompactionSkipReason,
+    SessionMemory,
+)
 
 
 def _session_memory(last_turn: int = 6) -> SessionMemory:
@@ -78,3 +84,53 @@ def test_session_memory_freshness_classification() -> None:
     )
     assert fresh.state == "fresh"
     assert stale.state == "stale"
+
+
+def test_orchestrator_failure_counter_resets_after_success() -> None:
+    """Failure counter should reset after successful completed attempt."""
+    orchestrator = CompactionOrchestrator(failure_limit=3)
+    decision = orchestrator.decide(
+        enable_compaction=True,
+        enable_session_memory_compaction=False,
+        enable_llm_compaction=True,
+        token_pressure_state="blocking",
+        session_memory=None,
+    )
+    compaction_id = orchestrator.start_attempt()
+    orchestrator.complete_attempt(
+        decision=decision,
+        result=CompactionResult(
+            compaction_id=compaction_id,
+            mode=CompactionMode.LLM_FULL,
+            success=False,
+            metadata={"failure": "x"},
+        ),
+        failures=[{"kind": "forced"}],
+    )
+    assert orchestrator._consecutive_failures == 1  # pylint: disable=protected-access
+    compaction_id = orchestrator.start_attempt()
+    orchestrator.complete_attempt(
+        decision=decision,
+        result=CompactionResult(
+            compaction_id=compaction_id,
+            mode=CompactionMode.LLM_FULL,
+            success=True,
+        ),
+    )
+    assert orchestrator._consecutive_failures == 0  # pylint: disable=protected-access
+
+
+def test_partial_compaction_prefix_summary_keeps_recent_tail() -> None:
+    """Partial compaction should summarize prefix and keep recent tail."""
+    messages = [
+        {"role": "user", "content": f"msg-{idx}"}
+        for idx in range(10)
+    ]
+    out = build_partial_compaction(
+        messages=messages,
+        retain_recent_messages=4,
+        prefix_mode=True,
+    )
+    assert out.prompt_messages[0]["role"] == "system"
+    assert "Partial compaction summary" in out.prompt_messages[0]["content"]
+    assert len(out.prompt_messages) == 5

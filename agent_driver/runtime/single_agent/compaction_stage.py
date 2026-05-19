@@ -11,13 +11,16 @@ from agent_driver.context import (
     COMPACTION_RESULT_KEY,
     CompactionOrchestrator,
     build_session_memory_compaction,
+    build_partial_compaction,
     evaluate_session_memory_freshness,
     load_session_memory,
+    apply_post_compact_cleanup,
     run_full_llm_compaction,
     sanitize_compaction_text,
 )
 from agent_driver.contracts.enums import RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts import CompactionDecision
 from agent_driver.runtime.single_agent.types import EventSpec, RunContext, RunnerConfig, RunnerDeps
 
 
@@ -54,26 +57,72 @@ async def apply_compaction_if_eligible(
     )
     context.metadata[COMPACTION_DECISION_KEY] = decision.model_dump(mode="json")
     if not decision.eligible:
+        context.metadata[COMPACTION_FAILURES_KEY] = []
+    if not decision.eligible:
         context.metadata[COMPACTION_AUDIT_KEY] = {
             "decision": context.metadata[COMPACTION_DECISION_KEY]
         }
         return
+    compaction_id = orchestrator.start_attempt()
+    context.metadata["active_compaction_id"] = compaction_id
+    attempted_llm_full = False
     if decision.mode.value == "session_memory" and session_memory is not None:
         if await _apply_session_memory_compaction(
-            host, context=context, request=request, session_memory=session_memory, orchestrator=orchestrator
+            host,
+            context=context,
+            request=request,
+            session_memory=session_memory,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id=compaction_id,
         ):
             return
+        if host._config.enable_llm_compaction:
+            attempted_llm_full = True
+            if await _apply_llm_full_compaction(
+                host,
+                context=context,
+                request=request,
+                orchestrator=orchestrator,
+                decision=decision,
+                compaction_id=compaction_id,
+            ):
+                return
     if decision.mode.value == "llm_full":
+        attempted_llm_full = True
         if await _apply_llm_full_compaction(
-            host, context=context, request=request, orchestrator=orchestrator
+            host,
+            context=context,
+            request=request,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id=compaction_id,
         ):
             return
-    placeholder = orchestrator.execute_placeholder(decision)
-    context.metadata[COMPACTION_AUDIT_KEY] = placeholder.model_dump(mode="json")
-    context.metadata[COMPACTION_RESULT_KEY] = (
-        placeholder.result.model_dump(mode="json") if placeholder.result else None
+    if decision.mode.value == "partial" or (
+        decision.mode.value != "partial" and not attempted_llm_full
+    ):
+        if await _apply_partial_compaction(
+            host,
+            context=context,
+            request=request,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id=compaction_id,
+        ):
+            return
+    failure = {
+        "kind": "path_not_implemented",
+        "mode": decision.mode.value,
+        "message": "compaction path not implemented",
+    }
+    audit = orchestrator.complete_attempt(
+        decision=decision,
+        failures=[failure],
     )
-    context.metadata[COMPACTION_FAILURES_KEY] = placeholder.failures
+    context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+    context.metadata[COMPACTION_RESULT_KEY] = None
+    context.metadata[COMPACTION_FAILURES_KEY] = [failure]
 
 
 async def _apply_session_memory_compaction(
@@ -83,6 +132,8 @@ async def _apply_session_memory_compaction(
     request: Any,
     session_memory: Any,
     orchestrator: CompactionOrchestrator,
+    decision: CompactionDecision,
+    compaction_id: str,
 ) -> bool:
     freshness = evaluate_session_memory_freshness(
         session_memory=session_memory,
@@ -114,7 +165,7 @@ async def _apply_session_memory_compaction(
         ChatMessage.model_validate(item) for item in compacted.prompt_messages
     ]
     result_payload = {
-        "compaction_id": "cmp_session_memory",
+        "compaction_id": compaction_id,
         "mode": "session_memory",
         "success": True,
         "retained_digest_ids": compacted.retained_digest_ids,
@@ -128,6 +179,12 @@ async def _apply_session_memory_compaction(
         "decision": context.metadata[COMPACTION_DECISION_KEY],
         "result": result_payload,
     }
+    cleanup = apply_post_compact_cleanup(metadata=context.metadata)
+    context.metadata["post_compact_cleanup"] = {
+        "cleaned_keys": list(cleanup.cleaned_keys),
+        "reinjected_keys": list(cleanup.reinjected_keys),
+    }
+    context.metadata[COMPACTION_FAILURES_KEY] = []
     host._emit(
         EventSpec(
             run_id=context.run_id,
@@ -140,7 +197,11 @@ async def _apply_session_memory_compaction(
             },
         )
     )
-    orchestrator.reset_failures()
+    audit = orchestrator.complete_attempt(
+        decision=decision,
+        result=_result_from_payload(result_payload),
+    )
+    context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
     return True
 
 
@@ -150,6 +211,8 @@ async def _apply_llm_full_compaction(
     context: RunContext,
     request: Any,
     orchestrator: CompactionOrchestrator,
+    decision: CompactionDecision,
+    compaction_id: str,
 ) -> bool:
     history_excerpt = "\n".join(message.content for message in request.messages[-8:])
     sanitized_excerpt = sanitize_compaction_text(history_excerpt)
@@ -160,7 +223,27 @@ async def _apply_llm_full_compaction(
         user_request=context.run_input.input or "",
     )
     if compaction_result is None or not compaction_result.success:
-        return False
+        failure = {
+            "kind": "llm_compaction_failed",
+            "mode": "llm_full",
+            "message": "provider compaction returned unsuccessful result",
+        }
+        audit = orchestrator.complete_attempt(
+            decision=decision,
+            result=compaction_result,
+            failures=[failure],
+        )
+        context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+        context.metadata[COMPACTION_RESULT_KEY] = (
+            compaction_result.model_dump(mode="json")
+            if compaction_result is not None
+            else None
+        )
+        context.metadata[COMPACTION_FAILURES_KEY] = [failure]
+        return True
+    compaction_result = compaction_result.model_copy(
+        update={"compaction_id": compaction_id}
+    )
     request.messages = request.messages[-4:]
     summary_text = str(summary.get("current_work", ""))
     request.messages.append(
@@ -173,6 +256,12 @@ async def _apply_llm_full_compaction(
         "decision": context.metadata[COMPACTION_DECISION_KEY],
         "result": context.metadata[COMPACTION_RESULT_KEY],
     }
+    cleanup = apply_post_compact_cleanup(metadata=context.metadata)
+    context.metadata["post_compact_cleanup"] = {
+        "cleaned_keys": list(cleanup.cleaned_keys),
+        "reinjected_keys": list(cleanup.reinjected_keys),
+    }
+    context.metadata[COMPACTION_FAILURES_KEY] = []
     host._emit(
         EventSpec(
             run_id=context.run_id,
@@ -187,8 +276,90 @@ async def _apply_llm_full_compaction(
             },
         )
     )
-    orchestrator.reset_failures()
+    audit = orchestrator.complete_attempt(
+        decision=decision,
+        result=compaction_result,
+    )
+    context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
     return True
+
+
+async def _apply_partial_compaction(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    request: Any,
+    orchestrator: CompactionOrchestrator,
+    decision: CompactionDecision,
+    compaction_id: str,
+) -> bool:
+    compacted = build_partial_compaction(
+        messages=[msg.model_dump(mode="json") for msg in request.messages],
+        retain_recent_messages=6,
+        prefix_mode=True,
+    )
+    request.messages = [
+        ChatMessage.model_validate(item) for item in compacted.prompt_messages
+    ]
+    result_payload = {
+        "compaction_id": compaction_id,
+        "mode": "partial",
+        "success": True,
+        "retained_observation_ids": compacted.retained_observation_ids,
+        "metadata": compacted.metadata,
+    }
+    context.metadata[COMPACTION_RESULT_KEY] = result_payload
+    context.metadata[COMPACTION_FAILURES_KEY] = []
+    cleanup = apply_post_compact_cleanup(metadata=context.metadata)
+    context.metadata["post_compact_cleanup"] = {
+        "cleaned_keys": list(cleanup.cleaned_keys),
+        "reinjected_keys": list(cleanup.reinjected_keys),
+    }
+    host._emit(
+        EventSpec(
+            run_id=context.run_id,
+            attempt_id=context.attempt_id,
+            event_type=RuntimeEventType.MEMORY_COMPACTED,
+            payload={
+                "mode": "partial",
+                "summarized_message_count": compacted.metadata.get(
+                    "summarized_message_count"
+                ),
+            },
+        )
+    )
+    audit = orchestrator.complete_attempt(
+        decision=decision,
+        result=_result_from_payload(result_payload),
+    )
+    context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+    return True
+
+
+def _result_from_payload(payload: dict[str, Any]):
+    from agent_driver.contracts import CompactionMode, CompactionResult
+
+    mode_raw = str(payload.get("mode", "none"))
+    try:
+        mode = CompactionMode(mode_raw)
+    except ValueError:
+        mode = CompactionMode.NONE
+    return CompactionResult(
+        compaction_id=str(payload.get("compaction_id", "cmp_unknown")),
+        mode=mode,
+        success=bool(payload.get("success", False)),
+        metadata=(
+            payload.get("metadata")
+            if isinstance(payload.get("metadata"), dict)
+            else {}
+        ),
+        retained_digest_ids=[
+            str(item) for item in payload.get("retained_digest_ids", []) if item
+        ],
+        retained_artifact_ids=[
+            str(item) for item in payload.get("retained_artifact_ids", []) if item
+        ],
+    )
 
 
 __all__ = ["CompactionStageHost", "apply_compaction_if_eligible"]

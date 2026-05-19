@@ -88,7 +88,7 @@ def score_context_quality(
 
 
 def evaluate_baseline_strategies() -> dict[str, dict[str, float]]:
-    """Return deterministic baseline for trim-only and trim+micro strategies."""
+    """Return deterministic baseline for Phase 8 compaction strategies."""
     fixture = build_synthetic_context_quality_fixture()
     expected = list(fixture.expected_fact_ids)
     expected_sources = list(fixture.expected_provenance_sources)
@@ -128,9 +128,70 @@ def evaluate_baseline_strategies() -> dict[str, dict[str, float]]:
         used_tokens_estimate=7100,
         budget_limit=12000,
     )
+    session_memory = score_context_quality(
+        expected_fact_ids=expected,
+        remembered_fact_ids=[
+            "fact_retrieval_window",
+            "fact_openrouter_lane_optin",
+            "fact_compaction_audit_keys",
+            "fact_planning_update_channel",
+        ],
+        hallucinated_fact_ids=[],
+        expected_provenance_sources=expected_sources,
+        seen_provenance_sources=["tool_stdout", "tool_stderr", "planning"],
+        audit={
+            "trim_audit": [{}],
+            "microcompaction_audit": [{"kind": "compact"}],
+            "token_pressure": {"state": "compact_recommended"},
+            "compaction_audit": {"decision": {"mode": "session_memory"}},
+        },
+        used_tokens_estimate=6200,
+        budget_limit=12000,
+    )
+    full_llm = score_context_quality(
+        expected_fact_ids=expected,
+        remembered_fact_ids=[
+            "fact_retrieval_window",
+            "fact_openrouter_lane_optin",
+            "fact_compaction_audit_keys",
+        ],
+        hallucinated_fact_ids=[],
+        expected_provenance_sources=expected_sources,
+        seen_provenance_sources=["tool_stdout", "planning"],
+        audit={
+            "trim_audit": [{}],
+            "microcompaction_audit": [{"kind": "compact"}],
+            "token_pressure": {"state": "blocking"},
+            "compaction_audit": {"decision": {"mode": "llm_full"}},
+        },
+        used_tokens_estimate=6400,
+        budget_limit=12000,
+    )
+    partial = score_context_quality(
+        expected_fact_ids=expected,
+        remembered_fact_ids=[
+            "fact_retrieval_window",
+            "fact_compaction_audit_keys",
+            "fact_planning_update_channel",
+        ],
+        hallucinated_fact_ids=[],
+        expected_provenance_sources=expected_sources,
+        seen_provenance_sources=["tool_stdout", "planning"],
+        audit={
+            "trim_audit": [{}],
+            "microcompaction_audit": [{"kind": "compact"}],
+            "token_pressure": {"state": "blocking"},
+            "compaction_audit": {"decision": {"mode": "partial"}},
+        },
+        used_tokens_estimate=5900,
+        budget_limit=12000,
+    )
     return {
         "trim_only": trim_only,
         "trim_plus_microcompaction": trim_plus_micro,
+        "session_memory_compaction": session_memory,
+        "full_llm_compaction": full_llm,
+        "partial_compaction": partial,
     }
 
 
