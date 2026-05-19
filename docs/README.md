@@ -14,10 +14,12 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - [Observability, evaluation, and regression harness](architecture/evaluation-and-observability.md)
 - [Context engineering, tools, and MCP integration](architecture/context-tools-and-mcp.md)
 - [Built-in tools overview](builtin-tools.md)
+- [SDK + ToolSet examples](examples/sdk-toolset-examples.md)
 - [Multi-agent orchestration and parallel subagents](architecture/multi-agent-orchestration.md)
 - [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md)
 - [Testing and live trace policy](architecture/testing-and-live-trace-policy.md)
 - [Test plan and coverage matrix](architecture/test-plan-and-matrix.md)
+- [Next-stage follow-up tracks](architecture/next-stage-followups.md)
 - [Package layout and shim policy](architecture/package-layout.md)
 - [Implementation roadmap](roadmap.md)
 - [Refactor backlog and quality rules](refactor/README.md) — structure status, pylint policy, package split priorities

@@ -115,16 +115,20 @@ def _normalize_attachments(raw: Any) -> list[dict[str, Any]]:
         if not artifact_id:
             raise ValueError("attachment.artifact_id is required")
         kind_raw = str(item.get("kind") or ArtifactKind.OTHER.value).strip().lower()
-        sensitivity_raw = str(
-            item.get("sensitivity") or SensitivityLevel.UNKNOWN.value
-        ).strip().lower()
+        sensitivity_raw = (
+            str(item.get("sensitivity") or SensitivityLevel.UNKNOWN.value)
+            .strip()
+            .lower()
+        )
         ref = ContextArtifactRef(
             artifact_id=artifact_id,
             kind=ArtifactKind(kind_raw),
             uri=_optional_str(item.get("uri")),
             size_bytes=item.get("size_bytes"),
             sensitivity=SensitivityLevel(sensitivity_raw),
-            metadata=item.get("metadata") if isinstance(item.get("metadata"), dict) else {},
+            metadata=(
+                item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            ),
         )
         rows.append(
             {

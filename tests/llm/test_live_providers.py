@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+import httpx
 import pytest
 
 from agent_driver.contracts.messages import ChatMessage
@@ -123,6 +124,12 @@ async def test_live_ollama_complete_smoke() -> None:
     provider = OllamaProvider(
         config=OllamaProvider.Config(base_url=base_url, model=model)
     )
+    try:
+        status = await provider.healthcheck()
+    except httpx.HTTPError as exc:
+        pytest.skip(f"Ollama endpoint unavailable at {base_url}: {exc}")
+    if not status.healthy:
+        pytest.skip(f"Ollama healthcheck failed at {base_url}")
     response = await provider.complete(
         LlmRequest(
             messages=[ChatMessage(role="user", content="Say hi in one word.")],

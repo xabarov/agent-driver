@@ -30,6 +30,10 @@ def render_full_debug_view(output: AgentRunOutput) -> dict[str, Any]:
 def render_succinct_view(output: AgentRunOutput) -> dict[str, Any]:
     """Render compact summary for operator/debug quick checks."""
     event_types = [event.type.value for event in output.events]
+    token_pressure = output.metadata.get("token_pressure")
+    trim_audit = output.metadata.get("trim_audit")
+    micro_audit = output.metadata.get("microcompaction_audit")
+    planning_state = output.metadata.get("planning_state")
     return {
         "run_id": output.run_id,
         "status": output.status.value,
@@ -47,6 +51,12 @@ def render_succinct_view(output: AgentRunOutput) -> dict[str, Any]:
                 if event.payload.get("channel") == "planning"
             ]
         ),
+        "token_pressure": token_pressure if isinstance(token_pressure, dict) else None,
+        "trim_audit_size": len(trim_audit) if isinstance(trim_audit, list) else 0,
+        "microcompaction_audit_size": (
+            len(micro_audit) if isinstance(micro_audit, list) else 0
+        ),
+        "has_planning_state": isinstance(planning_state, dict),
         "subagent_group_count": len(output.subagent_groups),
         "subagent_run_count": len(output.subagent_runs),
     }
@@ -86,6 +96,15 @@ def render_cli_replay(output: AgentRunOutput) -> str:
         lines.append(f"subagent_runs={len(output.subagent_runs)}")
     for event in sorted(output.events, key=lambda item: item.seq):
         lines.append(f"[{event.seq}] {event.type.value} payload={event.payload}")
+    token_pressure = output.metadata.get("token_pressure")
+    if isinstance(token_pressure, dict):
+        lines.append(f"token_pressure={token_pressure}")
+    trim_audit = output.metadata.get("trim_audit")
+    if isinstance(trim_audit, list):
+        lines.append(f"trim_audit_size={len(trim_audit)}")
+    micro_audit = output.metadata.get("microcompaction_audit")
+    if isinstance(micro_audit, list):
+        lines.append(f"microcompaction_audit_size={len(micro_audit)}")
     return "\n".join(lines)
 
 

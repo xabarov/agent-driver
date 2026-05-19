@@ -10,6 +10,7 @@ from agent_driver.context import (
 )
 from agent_driver.contracts.context import PlanningStep
 from agent_driver.contracts.enums import RuntimeEventType, TerminalReason
+from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.single_agent.compaction_stage import (
     CompactionStageHost,
@@ -19,6 +20,11 @@ from agent_driver.runtime.single_agent.llm import (
     LlmRequestBuildContext,
     build_single_agent_llm_request,
 )
+from agent_driver.runtime.single_agent.streaming import (
+    complete_streaming_request,
+    emit_token_delta_events,
+    is_stream_enabled,
+)
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
     RunContext,
@@ -26,6 +32,7 @@ from agent_driver.runtime.single_agent.types import (
     RunnerDeps,
     RuntimeStepResult,
 )
+from agent_driver.runtime.single_agent.step_events import emit_step_event
 
 
 class LlmStepHost(CompactionStageHost, Protocol):
@@ -41,13 +48,11 @@ class LlmStepHost(CompactionStageHost, Protocol):
 
 async def execute_llm_call_step(host: LlmStepHost, context: RunContext) -> RuntimeStepResult:
     """Run LLM call step with trimming, compaction, and provider completion."""
-    host._emit(
-        EventSpec(
-            run_id=context.run_id,
-            attempt_id=context.attempt_id,
-            event_type=RuntimeEventType.LLM_CALL_STARTED,
-            payload={"provider": host._deps.provider.name},
-        )
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.LLM_CALL_STARTED,
+        payload={"provider": host._deps.provider.name},
     )
     clarification = context.metadata.get("clarification")
     try:
@@ -66,7 +71,7 @@ async def execute_llm_call_step(host: LlmStepHost, context: RunContext) -> Runti
             request=request,
             token_pressure_state=token_state,
         )
-        context.llm_response = await host._deps.provider.complete(request)
+        context.llm_response = await _complete_request(host, context, request)
     except (RuntimeError, ValueError) as exc:
         host._emit(
             EventSpec(
@@ -77,17 +82,24 @@ async def execute_llm_call_step(host: LlmStepHost, context: RunContext) -> Runti
             )
         )
         raise RuntimeExecutionError("LLM completion failed") from exc
-    host._emit(
-        EventSpec(
-            run_id=context.run_id,
-            attempt_id=context.attempt_id,
-            event_type=RuntimeEventType.LLM_CALL_COMPLETED,
-            payload={
-                "provider": context.llm_response.provider,
-                "model": context.llm_response.model,
-                "finish_reason": context.llm_response.finish_reason.value,
-            },
+    token_chunks = context.llm_response.metadata.get("token_chunks")
+    if isinstance(token_chunks, list) and not bool(
+        context.llm_response.metadata.get("token_chunks_emitted")
+    ):
+        emit_token_delta_events(
+            host,
+            context,
+            [chunk for chunk in token_chunks if isinstance(chunk, str)],
         )
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.LLM_CALL_COMPLETED,
+        payload={
+            "provider": context.llm_response.provider,
+            "model": context.llm_response.model,
+            "finish_reason": context.llm_response.finish_reason.value,
+        },
     )
     _emit_token_pressure_warning(host, context)
     context.step_count += 1
@@ -175,8 +187,15 @@ def _build_trimmed_request(
             compact_threshold=host._config.token_compact_threshold,
             blocking_threshold=host._config.token_blocking_threshold,
             output_token_reserve=host._config.output_token_reserve,
+            stream=is_stream_enabled(context.run_input),
         )
     )
+
+
+async def _complete_request(host: LlmStepHost, context: RunContext, request: Any) -> LlmResponse:
+    if not is_stream_enabled(context.run_input):
+        return await host._deps.provider.complete(request)
+    return await complete_streaming_request(host, context, request)
 
 
 def _token_pressure_state(token_pressure: object) -> str:
@@ -192,18 +211,16 @@ def _emit_token_pressure_warning(host: LlmStepHost, context: RunContext) -> None
     state = str(token_pressure.get("state", "ok"))
     if state not in {"warning", "compact_recommended", "blocking"}:
         return
-    host._emit(
-        EventSpec(
-            run_id=context.run_id,
-            attempt_id=context.attempt_id,
-            event_type=RuntimeEventType.WARNING,
-            payload={
-                "kind": "token_pressure",
-                "state": state,
-                "used_tokens_estimate": token_pressure.get("used_tokens_estimate"),
-                "blocking_threshold": token_pressure.get("blocking_threshold"),
-            },
-        )
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.WARNING,
+        payload={
+            "kind": "token_pressure",
+            "state": state,
+            "used_tokens_estimate": token_pressure.get("used_tokens_estimate"),
+            "blocking_threshold": token_pressure.get("blocking_threshold"),
+        },
     )
 
 

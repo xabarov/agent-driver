@@ -213,7 +213,29 @@ OpenClaude tool import backlog:
   - `ToolSearchTool` as built-in `tool_search` for local manifest discovery by
     name/description plus risk/side-effect filters;
   - `BriefTool` as built-in `brief_tool` for runtime brief payloads with
-    attachment references (`artifact_ref`) and channel metadata.
+    attachment references (`artifact_ref`) and channel metadata;
+  - `AgentTool` as built-in `agent_tool` that emits a structured
+    `spawn_subagent` request envelope (task, mode, idempotency, metadata);
+  - `SendMessageTool` as session-local `send_message_tool` queue payload,
+    keeping teammate messaging local until full orchestration sessions land;
+  - `ListPeersTool` as session-local `list_peers_tool` for peer directory
+    discovery (status/capability filters) before full teammate sessions;
+  - `TeamCreateTool` / `TeamDeleteTool` as session-local team registry
+    primitives (`team_create_tool`, `team_delete_tool`) with reversible state;
+  - `TeamGetTool` / `TeamListTool` as read-only team registry accessors
+    (`team_get_tool`, `team_list_tool`) for deterministic lookup/filter flows;
+  - `TaskStopTool` as `task_stop_tool`, `MonitorTool` as `monitor_tool`, and
+    bounded `sleep_tool` runtime helper;
+  - `EnterWorktreeTool` / `ExitWorktreeTool` as request-envelope tools
+    (`enter_worktree_tool`, `exit_worktree_tool`);
+  - `PowerShellTool` baseline as `powershell_tool` with explicit unavailable
+    behavior when `pwsh` is absent;
+  - lightweight `LSPTool` baseline as read-only `lsp_tool`;
+  - `WorkflowTool`, cron adapters, remote trigger, PR subscription, push
+    notification, and file-send adapters as local intent tools.
+  - Explicitly deferred (internal/test/interactive): `TestingPermissionTool`,
+    `OverflowTestTool`, `CtxInspectTool`, `TerminalCaptureTool`, `SnipTool`,
+    `VerifyPlanExecutionTool`, `SuggestBackgroundPRTool`.
 - Codebase and filesystem analysis tools, first wave:
   - `FileReadTool`: bounded text read with line windows, binary/media detection,
     image/PDF handling hooks, and stable truncation metadata;
@@ -231,8 +253,8 @@ OpenClaude tool import backlog:
   - `BashTool`: import command-risk classification, read-only/destructive
     detection, path validation, output budgets, long-running task handoff, and
     git-safety rules before exposing a real shell;
-  - `PowerShellTool`: defer until Windows support is explicit, but keep the
-    same policy shape as shell;
+  - `PowerShellTool`: baseline implemented as policy-compatible sibling shell
+    tool; Windows-native semantics remain deferred;
   - `TaskOutputTool` / `MonitorTool`: model background process output as durable
     task artifacts with bounded previews;
   - `REPLTool`: defer unless CodeAgent needs a persistent interpreter beyond the
@@ -250,8 +272,8 @@ OpenClaude tool import backlog:
   - `ListMcpResourcesTool` / `ReadMcpResourceTool`: resource discovery and read
     operations with the same approval and output-budget path as native tools;
   - `McpAuthTool`: explicit auth flow for servers that need OAuth or token setup;
-  - `assembleToolPool` / `getMergedTools`: deterministic built-in + MCP merge
-    with deny-rules and stable prompt-cache ordering.
+  - `assembleToolPool` / `getMergedTools`: baseline deterministic built-in + MCP
+    merge helper is implemented; deeper runtime integration can evolve further.
 - Planning, task, and human interaction tools:
   - `TodoWriteTool`: session-local structured checklist events;
   - `TaskCreateTool`, `TaskGetTool`, `TaskUpdateTool`, `TaskListTool`: durable
@@ -263,10 +285,12 @@ OpenClaude tool import backlog:
 - Subagent and collaboration tools:
   - `AgentTool`: map to Phase 9 `spawn_subagent` and child-run rows, not an
     opaque tool result;
-  - `SendMessageTool`, `TeamCreateTool`, `TeamDeleteTool`, `ListPeersTool`: defer
-    until the subagent orchestration model supports teammate sessions and swarms;
+  - `SendMessageTool`, `TeamCreateTool`, `TeamDeleteTool`, `ListPeersTool`,
+    `TeamGetTool`, `TeamListTool` are now implemented as session-local
+    transitional tools; full teammate sessions/swarms remain deferred;
   - `EnterWorktreeTool` / `ExitWorktreeTool`: consider after filesystem/shell
-    policy exists, because worktree changes are high-risk filesystem actions.
+    policy exists, because worktree changes are high-risk filesystem actions
+    (current baseline uses request-envelope tools, not direct mutations).
 - Skills, workflows, and product automation:
   - `SkillTool`: support repository/user skill discovery as prompt/context input,
     with explicit trust and path provenance;
@@ -277,8 +301,8 @@ OpenClaude tool import backlog:
     envelope; defer deeper workflow/notification integrations to product
     automation adapters;
   - `WorkflowTool`, cron, remote trigger, PR subscription, push notification, and
-    file-send tools are product automation adapters and should remain deferred
-    until the core registry, context, and adapter layers are stable.
+    file-send baseline tools are implemented as local intent adapters; external
+    service execution remains deferred until adapter layers are production-ready.
 
 SDK ergonomics and user extension backlog (Phase 3 follow-up):
 
@@ -602,6 +626,23 @@ Exit criteria:
 - compaction changes improve or preserve context-quality baseline scores before
   they become default behavior.
 
+Implementation notes from quality-gates pass:
+
+- added deterministic Phase 8 context-quality fixture and retention assertions
+  (`tests/context/test_context_quality_eval.py`) covering fact recall, orphan
+  action/observation pair checks, provenance coverage, and audit completeness;
+- added replay-focused assertions
+  (`tests/evals/test_context_quality_replay.py`) to ensure planning/state,
+  token-pressure, trim audit, and microcompaction audit remain visible in
+  succinct/CLI replay surfaces;
+- added provider-neutral strategy comparison baseline report in
+  `agent_driver/evals/context_compaction_runner.py` with table output for
+  recall/hallucination/provenance/budget and optional latency/cost fields;
+- added opt-in OpenRouter live recall lane
+  (`tests/runtime/test_live_context_quality_openrouter.py`) that requests strict
+  JSON (`remembered`, `missing`, `confidence`) and validates parseability plus
+  missing-fact reason semantics.
+
 ## Phase 9: Subagents And Parallel Orchestration
 
 - Add subagent contracts and run rows.
@@ -711,6 +752,25 @@ Exit criteria:
 - CLI adapter supports replay and live tail with snapshot-style output tests;
 - examples run against fake/local providers;
 - low-level `runtime` and `tools` APIs remain available for advanced embedders.
+
+Implementation notes from hardening pass:
+
+- `AgentRunInput` now has explicit `stream: bool` toggle; legacy
+  `app_metadata["stream"]` is still accepted for compatibility;
+- streaming aggregation moved out of `runtime/single_agent/llm_step.py` into
+  `runtime/single_agent/streaming.py`, and token deltas are emitted before
+  `llm_call_completed` in deterministic order;
+- `RunStreamEvent` now carries explicit stream metadata
+  (`schema_version`, `source`, optional `retry_ms`) and projection/backfill
+  tests cover lifecycle categories plus in-memory/sqlite backends;
+- SDK facade adds typed env config (`SdkConfig`), `Agent.run_text(...)`, and
+  resume shortcuts (`approve`, `reject`, `edit`, `cancel`, `clarify`) while
+  keeping `agent.runner` as the low-level escape hatch;
+- adapters now expose baseline library handlers:
+  - SSE: `sse_event_stream(...)` with `Last-Event-ID` parsing and reconnect
+    backfill;
+  - CLI: deterministic `cli_run_lines`, `cli_replay_lines`, `cli_tail_lines`,
+    `cli_tree_lines` over shared `RunStreamEvent` vocabulary.
 
 ## Deferrals
 

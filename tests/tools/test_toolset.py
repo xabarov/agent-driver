@@ -41,3 +41,11 @@ def test_toolset_pack_and_risk_filter_keep_low_risk_tools() -> None:
     assert "read_file" in names
     assert "web_search" not in names
     assert "file_write" not in names
+
+
+def test_toolset_supports_discovery_pack() -> None:
+    """Discovery pack should include skill/tool/brief/agent helpers."""
+    registry = _registry_with_defaults()
+    filtered = ToolSet.packs("discovery").apply(registry)
+    names = set(filtered.list_names())
+    assert {"skill_tool", "tool_search", "brief_tool", "agent_tool"}.issubset(names)

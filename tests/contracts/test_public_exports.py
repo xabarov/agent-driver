@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent_driver import contracts, runtime, tools
+from agent_driver import sdk
 
 
 def test_contracts_public_exports_are_stable() -> None:
@@ -13,6 +14,7 @@ def test_contracts_public_exports_are_stable() -> None:
         "ToolManifest",
         "ToolTrace",
         "RuntimeEvent",
+        "RunStreamEvent",
         "InterruptRequest",
         "ResumeCommand",
     }
@@ -41,3 +43,9 @@ def test_tools_public_exports_cover_governance_surface() -> None:
     """Tools package should own registry and governed executor exports."""
     required = {"ToolRegistry", "GovernedToolExecutor", "register_planning_tool"}
     assert required.issubset(set(tools.__all__))
+
+
+def test_sdk_public_exports_cover_app_facing_facade() -> None:
+    """SDK package should expose Agent facade and factory helper."""
+    required = {"Agent", "create_agent", "build_default_registry", "sdk_config_from_env"}
+    assert required.issubset(set(sdk.__all__))

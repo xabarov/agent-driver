@@ -9,6 +9,7 @@ from agent_driver.tools.planning import (
     register_planning_tool,
 )
 from agent_driver.tools.policy import evaluate_tool_policy
+from agent_driver.tools.pool import assemble_tool_pool, get_merged_tools
 from agent_driver.tools.prompts import (
     PromptTemplateRegistry,
     render_tool_doc,
@@ -23,6 +24,8 @@ __all__ = [
     "GovernedToolExecutor",
     "GuardrailPipeline",
     "GuardrailResult",
+    "assemble_tool_pool",
+    "get_merged_tools",
     "PromptTemplateRegistry",
     "RegisteredTool",
     "ToolRegistry",

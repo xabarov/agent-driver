@@ -5,6 +5,7 @@ from agent_driver.evals.context_quality import (
     ContextQualityFixture,
     build_synthetic_context_quality_fixture,
     compaction_default_gate,
+    evaluate_fixture_retention,
     evaluate_baseline_strategies,
     score_context_quality,
 )
@@ -65,6 +66,7 @@ __all__ = [
     "render_succinct_view",
     "replay_from_persisted",
     "graph_profile_tool_summary",
+    "evaluate_fixture_retention",
     "evaluate_baseline_strategies",
     "run_dataset",
     "run_context_compaction_strategy_comparison",

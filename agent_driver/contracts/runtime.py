@@ -38,6 +38,7 @@ class AgentRunInput(ContractModel):
     graph_preset: str
     agent_profile: AgentProfile = AgentProfile.REACT_TEXT
     model_role: str = "default"
+    stream: bool = False
     prompt_template_id: str | None = None
     prompt_template_version: int | None = None
     serialization_policy: ExecutorSerializationPolicy | None = None

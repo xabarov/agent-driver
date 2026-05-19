@@ -23,4 +23,5 @@ def test_context_compaction_report_is_markdown_table() -> None:
     """Report renderer should output markdown table header."""
     report = render_context_compaction_report()
     assert "| strategy | recall |" in report
+    assert "provider_cost" in report
     assert "trim_only" in report

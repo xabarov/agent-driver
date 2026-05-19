@@ -16,9 +16,9 @@ Size heuristic: modules **> ~400 LOC** under `agent_driver/` should be split or 
 | `runtime/` facade | Tools/subagents removed from `__init__.py` | Flat `sqlite_store` / `postgres_store` vs `storage/` |
 | `subagents/` | `handoff.py`, slimmer `executor.py` | — |
 | `code_agent/` | `execution_common`, `stage_planning`, public `runner.deps/config` | `policy.py` locals |
-| `context/` | `projection_input`, `token_pressure` input | `trimming/`, `observations/` |
-| `tools/builtin/` | Registry facade only | **`filesystem.py` monolith (~795 LOC)** |
-| Tests | `live_smoke/`, `tests/support/` | 3 live scenarios; harness not used everywhere |
+| `context/` | `projection_input`, `token_pressure`, `ObservationMemoryInput`, split deterministic trimming helpers | optional `tools/planning.py` subpackage |
+| `tools/builtin/` | Registry facade + filesystem split package | watchlist only (`web.py`, `tasking.py`) |
+| Tests | `live_smoke/`, `tests/support/`, restored `resume_edit`/`todo_write`/`ask_user_question` lanes | parametrize unit/governed filesystem matrix |
 
 ---
 
@@ -80,24 +80,24 @@ Size heuristic: modules **> ~400 LOC** under `agent_driver/` should be split or 
 
 ---
 
-## [PARTIAL] `agent_driver.context`
+## [DONE] `agent_driver.context`
 
 | Item | Status |
 |------|--------|
 | `projection_input.py` + `build_memory_projection(inp)` | **[DONE]** |
 | `token_pressure.py` + `TokenPressureInput` | **[DONE]** |
-| `observations/memory.py` `too-many-arguments` | **[OPEN]** — introduce `ObservationMemoryInput` (~30 min) |
-| `trimming/deterministic.py` `too-many-locals` | **[OPEN]** — split trim strategies (~1–2 h) |
+| `observations/memory.py` `too-many-arguments` | **[DONE]** — `ObservationMemoryInput` + wrapper path |
+| `trimming/deterministic.py` `too-many-locals` | **[DONE]** — split into observation/message/max-message stages |
 
 Subpackages already healthy: `compaction/`, `planning/`, `artifacts/`, `sessions/`, `trimming/`, `observations/`.
 
 ---
 
-## [OPEN] `agent_driver.tools.builtin` — filesystem monolith
+## [DONE] `agent_driver.tools.builtin` — filesystem split
 
-**Issue:** [`agent_driver/tools/builtin/filesystem.py`](../../agent_driver/tools/builtin/filesystem.py) **~795 LOC** — six tools + notebook logic in one file.
+**Was:** [`agent_driver/tools/builtin/filesystem.py`](../../agent_driver/tools/builtin/filesystem.py) **~795 LOC** — six tools + notebook logic in one file.
 
-**Proposal:** subpackage `agent_driver/tools/builtin/filesystem/`:
+**Now:** subpackage `agent_driver/tools/builtin/filesystem/`:
 
 ```
 filesystem/
@@ -109,9 +109,9 @@ filesystem/
   _paths.py        # shared path policy helpers (if any)
 ```
 
-**Acceptance:** No file in subtree > ~250 LOC; `tests/tools/test_builtin_filesystem_tools.py` unchanged behavior; optional governed matrix via harness.
+**Acceptance:** `read/write/search/notebook/_paths` modules in place, behavior unchanged in `tests/tools/test_builtin_filesystem_tools.py`, and governed integration uses shared harness setup.
 
-**Scope:** ~1 session (medium). Do **not** split `web` / `shell` / `tasking` in the same PR unless they also cross 400 LOC (`web` ~368, `tasking` ~398 — watchlist only).
+**Follow-up:** keep `web` / `tasking` under watchlist if they cross ~400 LOC.
 
 ---
 
@@ -198,12 +198,12 @@ agent_driver/
     ...
   tools/
     builtin/
-      filesystem/     # [OPEN]
+      filesystem/     # [DONE split]
       registry.py
     executor/
     planning/         # [OPEN optional]
   subagents/          # [DONE handoff]
-  context/            # [PARTIAL input objects]
+  context/            # [DONE input objects + trim split]
   code_agent/         # [DONE common + stage_planning]
   contracts/          # enums + models (stable)
   evals/
@@ -211,7 +211,7 @@ agent_driver/
   llm/
 tests/
   support/            # shared harnesses [DONE]
-  runtime/live_smoke/ # [PARTIAL scenarios]
+  runtime/live_smoke/ # [DONE restored scenarios]
 ```
 
 ---
@@ -228,7 +228,7 @@ tests/
 
 ## Suggested next sessions (priority)
 
-1. **[OPEN]** `tools/builtin/filesystem/` subpackage (highest LOC / pylint risk).
-2. **[OPEN]** Restore 3 live smoke tests + wire `governed_tool_harness` (low risk, high confidence).
-3. **[OPEN]** `ObservationMemoryInput` + trim `trim_context` split (clear pylint wins).
-4. **[OPEN]** `runtime/storage/` consolidation (plan carefully, one backend at a time).
+1. **[OPEN]** Phase 10 kickoff: `agent_driver.sdk`, `contracts/stream`, `runtime/stream`.
+2. **[OPEN]** `runtime/storage/` consolidation (plan carefully, one backend at a time).
+3. **[OPEN]** Optional `tools/planning.py` subpackage split (readability/import direction).
+4. **[OPEN]** Parametrize unit/governed filesystem matrix to reduce test duplication.

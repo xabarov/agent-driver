@@ -74,6 +74,7 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.profiles import PromptRenderResult, PromptTemplate
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.contracts.serialization import ExecutorSerializationPolicy
+from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.contracts.subagents import MergeProvenance, SubagentGroup, SubagentRun
 from agent_driver.contracts.tools import (
     ToolCall,
@@ -133,6 +134,7 @@ __all__ = [
     "ResumeCommand",
     "RunStatus",
     "RunWarning",
+    "RunStreamEvent",
     "RuntimeEvent",
     "RuntimeEventType",
     "SensitivityLevel",

@@ -25,12 +25,17 @@ async def test_register_builtin_tools_contains_first_wave_names() -> None:
     assert registry.get("notebook_edit") is not None
     assert registry.get("web_fetch") is not None
     assert registry.get("web_search") is not None
+    assert registry.get("lsp_tool") is not None
     assert registry.get("bash") is not None
+    assert registry.get("powershell_tool") is not None
     assert registry.get("task_create") is not None
     assert registry.get("task_get") is not None
     assert registry.get("task_list") is not None
     assert registry.get("task_update") is not None
     assert registry.get("task_output") is not None
+    assert registry.get("task_stop_tool") is not None
+    assert registry.get("monitor_tool") is not None
+    assert registry.get("sleep_tool") is not None
     assert registry.get("mcp_tool") is not None
     assert registry.get("mcp_list_resources") is not None
     assert registry.get("mcp_read_resource") is not None
@@ -38,6 +43,23 @@ async def test_register_builtin_tools_contains_first_wave_names() -> None:
     assert registry.get("skill_tool") is not None
     assert registry.get("tool_search") is not None
     assert registry.get("brief_tool") is not None
+    assert registry.get("agent_tool") is not None
+    assert registry.get("send_message_tool") is not None
+    assert registry.get("list_peers_tool") is not None
+    assert registry.get("team_create_tool") is not None
+    assert registry.get("team_delete_tool") is not None
+    assert registry.get("team_get_tool") is not None
+    assert registry.get("team_list_tool") is not None
+    assert registry.get("enter_worktree_tool") is not None
+    assert registry.get("exit_worktree_tool") is not None
+    assert registry.get("workflow_tool") is not None
+    assert registry.get("cron_create_tool") is not None
+    assert registry.get("cron_delete_tool") is not None
+    assert registry.get("cron_list_tool") is not None
+    assert registry.get("remote_trigger_tool") is not None
+    assert registry.get("subscribe_pr_tool") is not None
+    assert registry.get("push_notification_tool") is not None
+    assert registry.get("send_user_file_tool") is not None
     assert registry.get("todo_write") is not None
     assert registry.get("ask_user_question") is not None
     assert registry.get("enter_plan_mode") is not None

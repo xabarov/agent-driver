@@ -10,7 +10,11 @@ from agent_driver.contracts import (
     new_runtime_event,
 )
 from agent_driver.contracts.memory import MemoryProjection, MemoryStep
-from agent_driver.evals import evaluate_baseline_strategies, render_succinct_view
+from agent_driver.evals import (
+    evaluate_baseline_strategies,
+    render_cli_replay,
+    render_succinct_view,
+)
 
 
 def test_context_quality_replay_exposes_decision_channels() -> None:
@@ -50,10 +54,15 @@ def test_context_quality_replay_exposes_decision_channels() -> None:
         ],
     )
     view = render_succinct_view(output)
+    cli = render_cli_replay(output)
     assert view["event_count"] == 2
-    projection_metadata = output.memory_projection.metadata if output.memory_projection else {}
-    assert projection_metadata["planning_channel"] == "present"
-    assert projection_metadata["token_pressure"]["state"] == "warning"
+    assert view["token_pressure"]["state"] == "warning"
+    assert view["trim_audit_size"] == 1
+    assert view["microcompaction_audit_size"] == 1
+    assert view["has_planning_state"] is True
+    assert "token_pressure={'state': 'warning'}" in cli
+    assert "trim_audit_size=1" in cli
+    assert "microcompaction_audit_size=1" in cli
 
 
 def test_context_quality_baseline_keeps_micro_above_trim() -> None:

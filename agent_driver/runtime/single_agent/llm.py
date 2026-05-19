@@ -40,6 +40,7 @@ class LlmRequestBuildContext:
     compact_threshold: int = 9000
     blocking_threshold: int = 10500
     output_token_reserve: int = 1500
+    stream: bool = False
 
 
 def _normalize_trimmed_messages(
@@ -119,7 +120,7 @@ def build_single_agent_llm_request(
         messages=_normalize_trimmed_messages(trimmed.prompt_messages),
         model_role=run_input.model_role,
         model=forced_model if isinstance(forced_model, str) else None,
-        stream=False,
+        stream=ctx.stream,
         metadata=request_metadata,
     )
     trim_metadata = trimmed.model_dump(mode="json").get("metadata", {})

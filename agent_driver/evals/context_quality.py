@@ -14,6 +14,11 @@ class ContextQualityFixture:
     expected_fact_ids: tuple[str, ...]
     expected_user_fact_ids: tuple[str, ...]
     expected_provenance_sources: tuple[str, ...]
+    prompt_messages: tuple[dict[str, str], ...]
+    observation_rows: tuple[dict[str, Any], ...]
+    planning_events: tuple[dict[str, Any], ...]
+    digest_refs: tuple[str, ...]
+    artifact_refs: tuple[str, ...]
 
 
 def build_synthetic_context_quality_fixture() -> ContextQualityFixture:
@@ -28,7 +33,82 @@ def build_synthetic_context_quality_fixture() -> ContextQualityFixture:
         ),
         expected_user_fact_ids=("user_pref_no_plan_edits", "user_pref_complete_all_todos"),
         expected_provenance_sources=("tool_stdout", "tool_stderr", "planning"),
+        prompt_messages=(
+            {
+                "role": "user",
+                "content": (
+                    "Need a stable context gate. Fact user_pref_no_plan_edits: do not edit plan "
+                    "files. Fact user_pref_complete_all_todos: complete all todos in order."
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": "Acknowledged. I will keep all updates deterministic and traceable.",
+            },
+        ),
+        observation_rows=(
+            {
+                "id": "obs_1",
+                "tool_call_id": "call_1",
+                "text_preview": "stdout: retrieval window is 30 minutes.",
+                "provenance": {"source": "tool_stdout"},
+            },
+            {
+                "id": "obs_2",
+                "tool_call_id": "call_2",
+                "text_preview": "stderr: openrouter lane remains opt-in.",
+                "provenance": {"source": "tool_stderr"},
+            },
+        ),
+        planning_events=(
+            {
+                "channel": "planning",
+                "text": "fact_planning_update_channel: planning updates are replay-visible",
+            },
+        ),
+        digest_refs=("digest_1",),
+        artifact_refs=("artifact_1",),
     )
+
+
+def evaluate_fixture_retention(
+    *,
+    fixture: ContextQualityFixture,
+    retained_fact_ids: list[str],
+    retained_observations: list[dict[str, Any]],
+    audit: dict[str, Any],
+) -> dict[str, object]:
+    """Evaluate fixture retention invariants for deterministic offline tests."""
+    expected = set(fixture.expected_fact_ids)
+    retained = {item for item in retained_fact_ids if item}
+    expected_pairs = {
+        str(row.get("tool_call_id"))
+        for row in fixture.observation_rows
+        if row.get("tool_call_id")
+    }
+    retained_pairs = {
+        str(row.get("tool_call_id"))
+        for row in retained_observations
+        if isinstance(row, dict) and row.get("tool_call_id")
+    }
+    orphan_tool_pairs = sorted(expected_pairs - retained_pairs)
+    seen_sources = {
+        str((row.get("provenance") or {}).get("source"))
+        for row in retained_observations
+        if isinstance(row, dict) and isinstance(row.get("provenance"), dict)
+    }
+    required_audit_keys = {
+        "token_pressure",
+        "trim_audit",
+        "microcompaction_audit",
+    }
+    missing_audit_keys = sorted(required_audit_keys - set(audit))
+    return {
+        "fact_recall": len(expected & retained) / len(expected) if expected else 1.0,
+        "orphan_tool_pairs": orphan_tool_pairs,
+        "seen_provenance_sources": sorted(seen_sources),
+        "missing_audit_keys": missing_audit_keys,
+    }
 
 
 def score_context_quality(
@@ -235,6 +315,7 @@ __all__ = [
     "compaction_default_gate",
     "ContextQualityFixture",
     "build_synthetic_context_quality_fixture",
+    "evaluate_fixture_retention",
     "evaluate_baseline_strategies",
     "score_context_quality",
 ]
