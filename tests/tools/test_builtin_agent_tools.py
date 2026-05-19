@@ -32,6 +32,8 @@ async def test_agent_tool_returns_subagent_request_payload() -> None:
     assert request["idempotency_key"] == "same-request"
     assert request["metadata"]["priority"] == "high"
     assert request["subagent_run_id"].startswith("subreq_")
+    assert request["request_id"] == request["subagent_run_id"]
+    assert request["adapter_kind"] == "subagent_orchestration"
 
 
 @pytest.mark.asyncio

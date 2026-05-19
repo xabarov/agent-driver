@@ -24,6 +24,12 @@ dev = [
 postgres = [
   "psycopg[binary]>=3.2.0",
 ]
+cli = [
+  "rich>=13.0.0",
+]
+
+[project.scripts]
+agent-driver = "agent_driver.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -35,12 +35,21 @@ def _powershell_manifest() -> ToolManifest:
             "properties": {
                 "command": {"type": "string"},
                 "timeout_seconds": {"type": "number", "minimum": 0.1, "maximum": 120},
-                "max_output_chars": {"type": "integer", "minimum": 64, "maximum": 100_000},
+                "max_output_chars": {
+                    "type": "integer",
+                    "minimum": 64,
+                    "maximum": 100_000,
+                },
             },
             "required": ["command"],
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "platform_gated_native",
+            "adapter_kind": "shell",
+            "application_tags": ["shell"],
+        },
     )
 
 

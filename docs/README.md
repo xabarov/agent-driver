@@ -21,6 +21,7 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - [Test plan and coverage matrix](architecture/test-plan-and-matrix.md)
 - [Next-stage follow-up tracks](architecture/next-stage-followups.md)
 - [Package layout and shim policy](architecture/package-layout.md)
+- [Custom CLI roadmap (OpenClaude-informed)](architecture/custom-cli-roadmap.md)
 - [Implementation roadmap](roadmap.md)
 - [Refactor backlog and quality rules](refactor/README.md) — structure status, pylint policy, package split priorities
 

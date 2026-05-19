@@ -48,6 +48,7 @@ pip install -e .
 
 ```bash
 pip install -e .[dev]
+pip install -e .[cli]
 pip install -e .[postgres]
 ```
 

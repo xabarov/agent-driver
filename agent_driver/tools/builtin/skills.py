@@ -59,6 +59,11 @@ def _skill_tool_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "native",
+            "adapter_kind": "filesystem_discovery",
+            "application_tags": ["discovery"],
+        },
     )
 
 

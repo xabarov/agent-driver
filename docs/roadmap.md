@@ -200,6 +200,13 @@ Implementation notes from tail catch-up pass:
 
 OpenClaude tool import backlog:
 
+Implementation status policy for imported tools:
+
+- `native`: runtime executes real behavior inside `agent-driver`;
+- `session_local_state`: behavior is intentionally local/in-memory only;
+- `request_envelope`: tool emits intent payload for future adapter execution;
+- `platform_gated_native`: native path exists but depends on host binaries/runtime.
+
 - Treat `/mnt/share/gitlab_projects/openclaude/src/tools.ts` and
   `/mnt/share/gitlab_projects/openclaude/src/tools/` as the source inventory,
   but port contracts, policies, and algorithms instead of TypeScript/Ink UI
@@ -519,6 +526,9 @@ Implementation notes from first cut:
   `authorized_imports`, and `tool_registry` for opt-in `code_agent` runs;
 - `FakeRestrictedCodeExecutor` enforces import/dunder/forbidden-call checks,
   execution/output limits, and bounded stdout/stderr observations;
+- local in-process CodeAgent executor is intentionally sync-only for callable
+  tools: awaitable handlers fail closed and must be mediated via governed
+  runtime tool execution rather than direct in-process calls;
 - safe executor-boundary serialization uses `ExecutorSerializationPolicy` with
   fail-closed behavior unless unsafe mode is explicitly enabled;
 - callable Python tool docs/signatures are generated deterministically from
@@ -771,6 +781,46 @@ Implementation notes from hardening pass:
     backfill;
   - CLI: deterministic `cli_run_lines`, `cli_replay_lines`, `cli_tail_lines`,
     `cli_tree_lines` over shared `RunStreamEvent` vocabulary.
+- CLI UX follow-up now adds optional rich rendering layer:
+  - `agent_driver.adapters.cli_rich` provides readable event vocabulary for
+    lifecycle/LLM/token/tool/interrupt/warning paths with bounded payload
+    previews;
+  - rich dependency is optional (`agent-driver[cli]`) and keeps plain-text
+    fallback behavior when unavailable;
+  - by-eyes smoke script now fails early on missing/invalid credentials and can
+    render rich live logs when extra dependency is installed.
+- Custom CLI implementation track is now explicitly sliced for delivery:
+  - **10.1 installed shell (current MVP):** packaged `agent-driver` command
+    with `run`, `replay`, `tail`, `tree` over shared `RunStreamEvent`
+    adapters;
+  - **10.2 live stream follow-up:** make `Agent.stream(...)` truly incremental
+    and add `tail --follow` over durable backfill semantics;
+  - **10.3 visual system:** move from line-level formatting to a richer
+    terminal UI language with stable plain fallback;
+  - **10.4 interactive controls:** expose approve/reject/edit/cancel/clarify
+    and run inspection from CLI;
+  - **10.5 product parity backlog:** add provider/config/export/doctor
+    workflows inspired by OpenClaude boundaries, without porting its Ink stack.
+- See [`architecture/custom-cli-roadmap.md`](architecture/custom-cli-roadmap.md)
+  for the OpenClaude audit, boundary decisions, and CLI-specific acceptance
+  checkpoints.
+- Phase 10.2 follow-up now starts landing:
+  - `Agent.stream(...)` emits incrementally by polling durable event log while
+    run execution is still in progress, instead of waiting for full output;
+  - CLI `tail` adds `--follow` mode with polling over `after_seq` semantics and
+    terminal-event stop behavior.
+- Phase 10.3 foundation now starts landing with terminal chat baseline:
+  - new `agent-driver chat` interactive loop over shared runtime stream
+    contracts;
+  - local slash commands (`/help`, `/exit`, `/clear`, `/runs`, `/replay`,
+    `/tail`) for no-model operator actions;
+  - chat-oriented rendering that prioritizes assistant token stream with compact
+    runtime event notes.
+- Phase 10.5 foundation now starts landing with provider wiring:
+  - shared provider bootstrap for `run`/`chat` with `fake`,
+    `openai-compatible`, and `ollama`;
+  - env and flag based model/base-url/api-key resolution;
+  - optional pre-run `--provider-healthcheck` for concise diagnostics.
 
 ## Deferrals
 

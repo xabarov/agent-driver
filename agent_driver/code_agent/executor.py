@@ -65,6 +65,9 @@ class FakeRestrictedCodeExecutor:
                 except TypeError:
                     outcome = _handler(**kwargs)
                 if isawaitable(outcome):
+                    close_fn = getattr(outcome, "close", None)
+                    if callable(close_fn):
+                        close_fn()
                     raise CodeExecutionError(
                         "async tool handlers are not supported in local code executor"
                     )

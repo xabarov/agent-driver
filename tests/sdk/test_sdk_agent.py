@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agent_driver.contracts import AgentRunInput, RuntimeEventType, ToolCall, ToolManifest
 from agent_driver.contracts.enums import ApprovalMode, SideEffectClass, ToolRisk
 from agent_driver.llm.providers_impl.fake import FakeProvider
+from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmStreamEvent
 from agent_driver.runtime import RunnerConfig
 from agent_driver.sdk import Agent, build_default_registry, create_agent, sdk_config_from_env
 from agent_driver.tools import ToolRegistry, ToolSet
@@ -75,6 +78,32 @@ async def test_sdk_stream_projects_runtime_events() -> None:
     assert events
     assert any(item.event == RuntimeEventType.RUN_STARTED.value for item in events)
     assert any(item.event == RuntimeEventType.TOKEN_DELTA.value for item in events)
+
+
+class _SlowStreamingProvider(FakeProvider):
+    async def stream(self, request: LlmRequest):
+        await asyncio.sleep(0.2)
+        yield LlmStreamEvent(event="delta", delta_text="slow")
+        yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.STOP)
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_emits_incrementally_before_run_finishes() -> None:
+    """First stream event should be available before full provider stream completes."""
+    agent = create_agent(provider=_SlowStreamingProvider(response_text="ok"), tools=ToolSet.only())
+    stream = agent.stream(
+        AgentRunInput(
+            input="incremental stream",
+            run_id="run_sdk_incremental",
+            agent_id="agent",
+            graph_preset="single_react",
+            stream=True,
+        )
+    )
+    first = await asyncio.wait_for(anext(stream), timeout=0.1)
+    assert first.event == RuntimeEventType.RUN_STARTED.value
+    rest = [item async for item in stream]
+    assert any(item.event == RuntimeEventType.TOKEN_DELTA.value for item in rest)
 
 
 @pytest.mark.asyncio

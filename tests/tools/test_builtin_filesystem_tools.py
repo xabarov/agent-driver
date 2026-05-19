@@ -9,6 +9,7 @@ import pytest
 from agent_driver.tools import register_builtin_tools, register_planning_tool
 from agent_driver.tools.builtin.filesystem import register_filesystem_tools
 from agent_driver.tools.registry import ToolRegistry
+from tests.tools._builtin_expected import EXPECTED_BUILTIN_TOOL_NAMES
 
 
 @pytest.mark.asyncio
@@ -17,53 +18,8 @@ async def test_register_builtin_tools_contains_first_wave_names() -> None:
     registry = ToolRegistry()
     register_builtin_tools(registry)
     register_planning_tool(registry)
-    assert registry.get("read_file") is not None
-    assert registry.get("glob_search") is not None
-    assert registry.get("grep_search") is not None
-    assert registry.get("file_write") is not None
-    assert registry.get("file_edit") is not None
-    assert registry.get("notebook_edit") is not None
-    assert registry.get("web_fetch") is not None
-    assert registry.get("web_search") is not None
-    assert registry.get("lsp_tool") is not None
-    assert registry.get("bash") is not None
-    assert registry.get("powershell_tool") is not None
-    assert registry.get("task_create") is not None
-    assert registry.get("task_get") is not None
-    assert registry.get("task_list") is not None
-    assert registry.get("task_update") is not None
-    assert registry.get("task_output") is not None
-    assert registry.get("task_stop_tool") is not None
-    assert registry.get("monitor_tool") is not None
-    assert registry.get("sleep_tool") is not None
-    assert registry.get("mcp_tool") is not None
-    assert registry.get("mcp_list_resources") is not None
-    assert registry.get("mcp_read_resource") is not None
-    assert registry.get("mcp_auth") is not None
-    assert registry.get("skill_tool") is not None
-    assert registry.get("tool_search") is not None
-    assert registry.get("brief_tool") is not None
-    assert registry.get("agent_tool") is not None
-    assert registry.get("send_message_tool") is not None
-    assert registry.get("list_peers_tool") is not None
-    assert registry.get("team_create_tool") is not None
-    assert registry.get("team_delete_tool") is not None
-    assert registry.get("team_get_tool") is not None
-    assert registry.get("team_list_tool") is not None
-    assert registry.get("enter_worktree_tool") is not None
-    assert registry.get("exit_worktree_tool") is not None
-    assert registry.get("workflow_tool") is not None
-    assert registry.get("cron_create_tool") is not None
-    assert registry.get("cron_delete_tool") is not None
-    assert registry.get("cron_list_tool") is not None
-    assert registry.get("remote_trigger_tool") is not None
-    assert registry.get("subscribe_pr_tool") is not None
-    assert registry.get("push_notification_tool") is not None
-    assert registry.get("send_user_file_tool") is not None
-    assert registry.get("todo_write") is not None
-    assert registry.get("ask_user_question") is not None
-    assert registry.get("enter_plan_mode") is not None
-    assert registry.get("exit_plan_mode_v2") is not None
+    for name in EXPECTED_BUILTIN_TOOL_NAMES:
+        assert registry.get(name) is not None
 
 
 @pytest.mark.asyncio
@@ -257,6 +213,49 @@ async def test_file_write_can_create_parent_when_flag_enabled(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_file_write_dry_run_does_not_change_file(tmp_path) -> None:
+    """file_write dry_run should return preview without persisting changes."""
+    target = tmp_path / "note.txt"
+    target.write_text("alpha\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_write")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "content": "beta\n",
+            "mode": "append",
+            "dry_run": True,
+        }
+    )
+    assert out["dry_run"] is True
+    assert out["operation"] == "write"
+    assert out["preview"]["after"].endswith("beta\n")
+    assert target.read_text(encoding="utf-8") == "alpha\n"
+
+
+@pytest.mark.asyncio
+async def test_file_write_append_respects_max_bytes(tmp_path) -> None:
+    """file_write append should fail when resulting size exceeds max_bytes."""
+    target = tmp_path / "note.txt"
+    target.write_text("abcd", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_write")
+    assert tool is not None
+    with pytest.raises(ValueError, match="max_bytes"):
+        await tool.handler(
+            {
+                "path": str(target),
+                "content": "ef",
+                "mode": "append",
+                "max_bytes": 5,
+            }
+        )
+
+
+@pytest.mark.asyncio
 async def test_file_edit_replaces_expected_occurrences(tmp_path) -> None:
     """file_edit should replace exactly expected old_text occurrences."""
     target = tmp_path / "cfg.txt"
@@ -275,6 +274,30 @@ async def test_file_edit_replaces_expected_occurrences(tmp_path) -> None:
     )
     assert out["replacements"] == 2
     assert target.read_text(encoding="utf-8") == "name=new\nname=new\n"
+
+
+@pytest.mark.asyncio
+async def test_file_edit_dry_run_preserves_existing_newlines(tmp_path) -> None:
+    """file_edit dry_run should preserve file content and expose preview."""
+    target = tmp_path / "cfg.txt"
+    target.write_text("name=old\r\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_edit")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "old_text": "old",
+            "new_text": "new",
+            "dry_run": True,
+        }
+    )
+    assert out["dry_run"] is True
+    assert out["operation"] == "edit"
+    assert target.read_bytes() == b"name=old\r\n"
+    assert out["preview"]["before"] == "name=old\r\n"
+    assert out["preview"]["after"] == "name=new\r\n"
 
 
 @pytest.mark.asyncio
@@ -383,3 +406,26 @@ async def test_notebook_edit_fails_when_old_text_mismatch(tmp_path) -> None:
                 "new_text": "new",
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_notebook_edit_preserves_list_source_roundtrip(tmp_path) -> None:
+    """notebook_edit should keep list source shape for list-backed cells."""
+    target = tmp_path / "nb.ipynb"
+    _write_notebook(target, code="print('old')\nprint('keep')\n")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("notebook_edit")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "cell_idx": 0,
+            "is_new_cell": False,
+            "old_text": "old",
+            "new_text": "new",
+        }
+    )
+    assert out["replacements"] == 1
+    rendered = json.loads(target.read_text(encoding="utf-8"))
+    assert rendered["cells"][0]["source"] == ["print('new')\n", "print('keep')\n"]

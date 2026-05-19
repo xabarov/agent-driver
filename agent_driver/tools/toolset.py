@@ -76,7 +76,9 @@ class ToolSet:
     @classmethod
     def only(cls, *names: str) -> "ToolSet":
         """Include exactly explicit tool names."""
-        return cls(names=tuple(dict.fromkeys(item.strip() for item in names if item.strip())))
+        return cls(
+            names=tuple(dict.fromkeys(item.strip() for item in names if item.strip()))
+        )
 
     @classmethod
     def packs(cls, *pack_names: str) -> "ToolSet":
@@ -109,24 +111,43 @@ class ToolSet:
         )
 
     def _matches(self, manifest: ToolManifest) -> bool:
-        if self.names is not None and manifest.name not in set(self.names):
+        checks = (
+            self._name_matches(manifest),
+            self._risk_matches(manifest),
+            self._side_effect_matches(manifest),
+            self._profile_matches(manifest),
+            self._application_tags_match(manifest),
+        )
+        return all(checks)
+
+    def _name_matches(self, manifest: ToolManifest) -> bool:
+        if self.names is None:
+            return True
+        return manifest.name in set(self.names)
+
+    def _risk_matches(self, manifest: ToolManifest) -> bool:
+        if self.max_risk is None:
+            return True
+        return _RISK_RANK[manifest.risk] <= _RISK_RANK[self.max_risk]
+
+    def _side_effect_matches(self, manifest: ToolManifest) -> bool:
+        if self.side_effects is None:
+            return True
+        return manifest.side_effect in set(self.side_effects)
+
+    def _profile_matches(self, manifest: ToolManifest) -> bool:
+        if self.profile is None:
+            return True
+        return self.profile in manifest.supported_profiles
+
+    def _application_tags_match(self, manifest: ToolManifest) -> bool:
+        if self.application_tags is None:
+            return True
+        tags = manifest.metadata.get("application_tags")
+        if not isinstance(tags, list):
             return False
-        if self.max_risk is not None and (
-            _RISK_RANK[manifest.risk] > _RISK_RANK[self.max_risk]
-        ):
-            return False
-        if self.side_effects is not None and manifest.side_effect not in set(self.side_effects):
-            return False
-        if self.profile is not None and self.profile not in manifest.supported_profiles:
-            return False
-        if self.application_tags is not None:
-            tags = manifest.metadata.get("application_tags")
-            if not isinstance(tags, list):
-                return False
-            normalized = {str(item) for item in tags}
-            if not any(tag in normalized for tag in self.application_tags):
-                return False
-        return True
+        normalized = {str(item) for item in tags}
+        return any(tag in normalized for tag in self.application_tags)
 
     def apply(self, source: ToolRegistry) -> ToolRegistry:
         """Build a filtered registry from source tools."""

@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
-from agent_driver.tools.builtin.filesystem._paths import resolve_base_dir, resolve_file_path
+from agent_driver.tools.builtin.filesystem._paths import (
+    resolve_base_dir,
+    resolve_file_path,
+)
 from agent_driver.tools.registry import ToolRegistry
 
 _LSP_TOOL = "lsp_tool"
@@ -36,7 +39,10 @@ def _lsp_manifest() -> ToolManifest:
                     "type": "string",
                     "enum": ["symbols", "definitions", "references"],
                 },
-                "path": {"type": "string", "description": "Absolute file path for symbols"},
+                "path": {
+                    "type": "string",
+                    "description": "Absolute file path for symbols",
+                },
                 "symbol": {"type": "string", "description": "Symbol name for lookup"},
                 "base_dir": {
                     "type": "string",

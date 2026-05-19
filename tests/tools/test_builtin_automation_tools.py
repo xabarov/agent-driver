@@ -54,11 +54,16 @@ async def test_workflow_remote_and_notification_payloads() -> None:
     assert send_file is not None
     wf = await workflow.handler({"workflow_id": "wf_a", "input": {"k": 1}})
     assert wf["workflow_event"]["workflow_id"] == "wf_a"
+    assert wf["workflow_event"]["adapter_kind"] == "automation"
     rt = await remote.handler({"trigger_id": "deploy", "payload": {"env": "staging"}})
     assert rt["trigger_event"]["trigger_id"] == "deploy"
+    assert rt["trigger_event"]["provenance"]["source_tool"] == "remote_trigger_tool"
     sub = await pr_sub.handler({"repo": "foo/bar", "pr_number": 7})
     assert sub["subscription"]["repo"] == "foo/bar"
+    assert sub["subscription"]["subscription_id"].startswith("prsub_")
     pn = await push.handler({"title": "Done", "body": "completed"})
     assert pn["notification_event"]["title"] == "Done"
+    assert pn["notification_event"]["event_id"].startswith("pn_")
     sf = await send_file.handler({"file_path": "/tmp/report.txt"})
     assert sf["file_event"]["file_path"] == "/tmp/report.txt"
+    assert sf["file_event"]["adapter_kind"] == "automation"

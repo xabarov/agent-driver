@@ -105,6 +105,19 @@ for line in cli_tail_lines(event_log, run_id="run_stream_1", last_n=10):
     print(line)
 ```
 
+## 6.1) Live CLI logs (rich + fallback)
+
+```python
+from agent_driver.adapters import cli_run_live_lines, is_rich_available
+
+prefer_rich = is_rich_available()
+async for line in cli_run_live_lines(
+    agent.stream(run_input),
+    prefer_rich=prefer_rich,
+):
+    print(line)
+```
+
 ## 7) Resume approval via SDK shortcut
 
 ```python
@@ -137,4 +150,89 @@ agent = create_agent(
     checkpoint_store=store,
     event_log=store,
 )
+```
+
+## 9) Product CLI baseline (`run/replay/tail/tree`)
+
+Install optional rich output first:
+
+```bash
+pip install -e .[cli]
+```
+
+Run one prompt with deterministic fake provider and persist events to sqlite:
+
+```bash
+agent-driver run "Summarize this test run" \
+  --store-kind sqlite \
+  --sqlite-path ./.runtime_store.sqlite3 \
+  --run-id run_demo_1 \
+  --plain
+```
+
+Replay and inspect the same run:
+
+```bash
+agent-driver replay --run-id run_demo_1 --store-kind sqlite --sqlite-path ./.runtime_store.sqlite3
+agent-driver tail --run-id run_demo_1 --last-n 10 --store-kind sqlite --sqlite-path ./.runtime_store.sqlite3
+agent-driver tree --run-id run_demo_1 --store-kind sqlite --sqlite-path ./.runtime_store.sqlite3
+```
+
+Follow mode (for in-progress runs) polls durable runtime events and continues
+until terminal event:
+
+```bash
+agent-driver tail --run-id run_demo_1 --follow --poll-interval-ms 200 \
+  --store-kind sqlite --sqlite-path ./.runtime_store.sqlite3
+```
+
+## 10) Terminal chat CLI (`agent-driver chat`)
+
+Start interactive chat loop with deterministic fake provider:
+
+```bash
+agent-driver chat --plain --store-kind sqlite --sqlite-path ./.runtime_store.sqlite3
+```
+
+Inside chat:
+
+```text
+hello
+/runs
+/replay
+/tail
+/help
+/exit
+```
+
+Notes:
+- each user turn gets a new `run_id` under one chat `thread_id`;
+- `/replay` and `/tail` default to the latest run in the session when `run_id`
+  is omitted.
+
+## 11) Real provider wiring for CLI
+
+OpenAI-compatible (OpenRouter-style) via env:
+
+```bash
+AGENT_DRIVER_OPENAI_API_KEY=... \
+AGENT_DRIVER_OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+AGENT_DRIVER_OPENAI_MODEL=openai/gpt-4o-mini \
+agent-driver chat --provider openai-compatible --provider-healthcheck
+```
+
+Explicit API key env variable selection:
+
+```bash
+agent-driver run "Summarize latest changes" \
+  --provider openai-compatible \
+  --base-url https://openrouter.ai/api/v1 \
+  --model openai/gpt-4o-mini \
+  --api-key-env OPENROUTER_API_KEY
+```
+
+Local Ollama:
+
+```bash
+agent-driver chat --provider ollama --base-url http://localhost:11434 --model llama3.2:3b
 ```

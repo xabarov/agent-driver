@@ -67,6 +67,11 @@ def _tool_search_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "native",
+            "adapter_kind": "registry_discovery",
+            "application_tags": ["discovery"],
+        },
     )
 
 

@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
-from uuid import uuid4
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.tools.builtin._intent import build_intent_payload
 from agent_driver.tools.registry import ToolRegistry
 
 _WORKFLOW_TOOL = "workflow_tool"
@@ -52,11 +51,19 @@ def _workflow_manifest() -> ToolManifest:
         approval_mode=ApprovalMode.ON_POLICY_MATCH,
         args_schema={
             "type": "object",
-            "properties": {"workflow_id": {"type": "string"}, "input": {"type": "object"}},
+            "properties": {
+                "workflow_id": {"type": "string"},
+                "input": {"type": "object"},
+            },
             "required": ["workflow_id"],
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "request_envelope",
+            "adapter_kind": "automation",
+            "application_tags": ["automation", "intent"],
+        },
     )
 
 
@@ -78,6 +85,11 @@ def _cron_create_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "session_local_state",
+            "adapter_kind": "automation",
+            "application_tags": ["automation", "intent"],
+        },
     )
 
 
@@ -95,6 +107,11 @@ def _cron_delete_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "session_local_state",
+            "adapter_kind": "automation",
+            "application_tags": ["automation", "intent"],
+        },
     )
 
 
@@ -107,6 +124,11 @@ def _cron_list_manifest() -> ToolManifest:
         approval_mode=ApprovalMode.NEVER,
         args_schema={"type": "object", "additionalProperties": False},
         output_type="json",
+        metadata={
+            "implementation_status": "session_local_state",
+            "adapter_kind": "automation",
+            "application_tags": ["automation"],
+        },
     )
 
 
@@ -119,11 +141,19 @@ def _remote_trigger_manifest() -> ToolManifest:
         approval_mode=ApprovalMode.ON_POLICY_MATCH,
         args_schema={
             "type": "object",
-            "properties": {"trigger_id": {"type": "string"}, "payload": {"type": "object"}},
+            "properties": {
+                "trigger_id": {"type": "string"},
+                "payload": {"type": "object"},
+            },
             "required": ["trigger_id"],
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "request_envelope",
+            "adapter_kind": "automation",
+            "application_tags": ["automation", "intent"],
+        },
     )
 
 
@@ -145,6 +175,11 @@ def _subscribe_pr_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "session_local_state",
+            "adapter_kind": "automation",
+            "application_tags": ["automation", "intent"],
+        },
     )
 
 
@@ -162,6 +197,11 @@ def _push_notification_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "request_envelope",
+            "adapter_kind": "automation",
+            "application_tags": ["automation", "intent"],
+        },
     )
 
 
@@ -183,42 +223,55 @@ def _send_user_file_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "request_envelope",
+            "adapter_kind": "automation",
+            "application_tags": ["automation", "intent"],
+        },
     )
 
 
 async def _workflow_handler(args: dict[str, Any]) -> dict[str, Any]:
-    workflow_id = _required_str(args.get("workflow_id"), field="workflow_id")
+    workflow_id = _required_str(args.get("workflow_id"), field_name="workflow_id")
     return {
         "summary": f"workflow queued: {workflow_id}",
-        "workflow_event": {
-            "event_id": f"wf_{uuid4().hex[:10]}",
-            "workflow_id": workflow_id,
-            "input": args.get("input") if isinstance(args.get("input"), dict) else {},
-            "created_at": _utc_now(),
-            "provenance": "session_local_automation",
-        },
+        "workflow_event": build_intent_payload(
+            source_tool=_WORKFLOW_TOOL,
+            adapter_kind="automation",
+            id_prefix="wf",
+            payload={
+                "workflow_id": workflow_id,
+                "input": (
+                    args.get("input") if isinstance(args.get("input"), dict) else {}
+                ),
+            },
+        ),
     }
 
 
 async def _cron_create_handler(args: dict[str, Any]) -> dict[str, Any]:
-    job_name = _required_str(args.get("job_name"), field="job_name")
-    schedule = _required_str(args.get("schedule"), field="schedule")
-    command = _required_str(args.get("command"), field="command")
+    job_name = _required_str(args.get("job_name"), field_name="job_name")
+    schedule = _required_str(args.get("schedule"), field_name="schedule")
+    command = _required_str(args.get("command"), field_name="command")
     with _AUTOMATION_STORE.lock:
         if job_name in _AUTOMATION_STORE.cron_jobs:
             raise ValueError(f"cron job already exists: {job_name}")
-        row = {
-            "job_name": job_name,
-            "schedule": schedule,
-            "command": command,
-            "created_at": _utc_now(),
-        }
+        row = build_intent_payload(
+            source_tool=_CRON_CREATE_TOOL,
+            adapter_kind="automation",
+            id_prefix="cron",
+            payload={
+                "job_name": job_name,
+                "schedule": schedule,
+                "command": command,
+            },
+        )
         _AUTOMATION_STORE.cron_jobs[job_name] = row
     return {"summary": f"cron created: {job_name}", "cron_job": row}
 
 
 async def _cron_delete_handler(args: dict[str, Any]) -> dict[str, Any]:
-    job_name = _required_str(args.get("job_name"), field="job_name")
+    job_name = _required_str(args.get("job_name"), field_name="job_name")
     with _AUTOMATION_STORE.lock:
         row = _AUTOMATION_STORE.cron_jobs.pop(job_name, None)
     if row is None:
@@ -228,78 +281,84 @@ async def _cron_delete_handler(args: dict[str, Any]) -> dict[str, Any]:
 
 async def _cron_list_handler(_args: dict[str, Any]) -> dict[str, Any]:
     with _AUTOMATION_STORE.lock:
-        rows = [_AUTOMATION_STORE.cron_jobs[name] for name in sorted(_AUTOMATION_STORE.cron_jobs)]
+        rows = [
+            _AUTOMATION_STORE.cron_jobs[name]
+            for name in sorted(_AUTOMATION_STORE.cron_jobs)
+        ]
     return {"summary": f"{len(rows)} cron jobs listed", "cron_jobs": rows}
 
 
 async def _remote_trigger_handler(args: dict[str, Any]) -> dict[str, Any]:
-    trigger_id = _required_str(args.get("trigger_id"), field="trigger_id")
+    trigger_id = _required_str(args.get("trigger_id"), field_name="trigger_id")
     payload = args.get("payload") if isinstance(args.get("payload"), dict) else {}
     return {
         "summary": f"remote trigger queued: {trigger_id}",
-        "trigger_event": {
-            "event_id": f"rt_{uuid4().hex[:10]}",
-            "trigger_id": trigger_id,
-            "payload": payload,
-            "created_at": _utc_now(),
-        },
+        "trigger_event": build_intent_payload(
+            source_tool=_REMOTE_TRIGGER_TOOL,
+            adapter_kind="automation",
+            id_prefix="rt",
+            payload={"trigger_id": trigger_id, "payload": payload},
+        ),
     }
 
 
 async def _subscribe_pr_handler(args: dict[str, Any]) -> dict[str, Any]:
-    repo = _required_str(args.get("repo"), field="repo")
+    repo = _required_str(args.get("repo"), field_name="repo")
     pr_number = int(args.get("pr_number"))
     key = f"{repo}#{pr_number}"
     events = args.get("events") if isinstance(args.get("events"), list) else []
     with _AUTOMATION_STORE.lock:
-        row = {
-            "subscription_id": f"prsub_{uuid4().hex[:10]}",
-            "repo": repo,
-            "pr_number": pr_number,
-            "events": [str(item) for item in events],
-            "created_at": _utc_now(),
-        }
+        row = build_intent_payload(
+            source_tool=_SUBSCRIBE_PR_TOOL,
+            adapter_kind="automation",
+            id_prefix="prsub",
+            id_field="subscription_id",
+            payload={
+                "repo": repo,
+                "pr_number": pr_number,
+                "events": [str(item) for item in events],
+            },
+        )
         _AUTOMATION_STORE.pr_subscriptions[key] = row
     return {"summary": f"pr subscription created: {key}", "subscription": row}
 
 
 async def _push_notification_handler(args: dict[str, Any]) -> dict[str, Any]:
-    title = _required_str(args.get("title"), field="title")
-    body = _required_str(args.get("body"), field="body")
+    title = _required_str(args.get("title"), field_name="title")
+    body = _required_str(args.get("body"), field_name="body")
     return {
         "summary": "push notification queued",
-        "notification_event": {
-            "event_id": f"pn_{uuid4().hex[:10]}",
-            "title": title,
-            "body": body,
-            "created_at": _utc_now(),
-        },
+        "notification_event": build_intent_payload(
+            source_tool=_PUSH_NOTIFICATION_TOOL,
+            adapter_kind="automation",
+            id_prefix="pn",
+            payload={"title": title, "body": body},
+        ),
     }
 
 
 async def _send_user_file_handler(args: dict[str, Any]) -> dict[str, Any]:
-    file_path = _required_str(args.get("file_path"), field="file_path")
+    file_path = _required_str(args.get("file_path"), field_name="file_path")
     return {
         "summary": f"user file send queued: {file_path}",
-        "file_event": {
-            "event_id": f"sf_{uuid4().hex[:10]}",
-            "file_path": file_path,
-            "channel": str(args.get("channel") or "default"),
-            "caption": str(args.get("caption") or ""),
-            "created_at": _utc_now(),
-        },
+        "file_event": build_intent_payload(
+            source_tool=_SEND_USER_FILE_TOOL,
+            adapter_kind="automation",
+            id_prefix="sf",
+            payload={
+                "file_path": file_path,
+                "channel": str(args.get("channel") or "default"),
+                "caption": str(args.get("caption") or ""),
+            },
+        ),
     }
 
 
-def _required_str(raw: Any, *, field: str) -> str:
+def _required_str(raw: Any, *, field_name: str) -> str:
     value = str(raw or "").strip()
     if not value:
-        raise ValueError(f"{field} is required")
+        raise ValueError(f"{field_name} is required")
     return value
-
-
-def _utc_now() -> str:
-    return datetime.now(tz=UTC).isoformat().replace("+00:00", "Z")
 
 
 def _reset_automation_store_for_tests() -> None:

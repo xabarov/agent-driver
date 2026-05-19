@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.tools.builtin._intent import build_intent_payload
 from agent_driver.tools.registry import ToolRegistry
 
 _ENTER_WORKTREE_TOOL = "enter_worktree_tool"
@@ -26,8 +25,8 @@ def _enter_worktree_manifest() -> ToolManifest:
         risk=ToolRisk.HIGH,
         side_effect=SideEffectClass.IRREVERSIBLE_WRITE,
         approval_mode=ApprovalMode.ALWAYS,
-        timeout_seconds=10.0,
-        output_char_budget=4000,
+        timeout_seconds=12.0,
+        output_char_budget=4500,
         idempotent=False,
         args_schema={
             "type": "object",
@@ -41,6 +40,11 @@ def _enter_worktree_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "request_envelope",
+            "adapter_kind": "worktree",
+            "application_tags": ["worktree", "intent"],
+        },
     )
 
 
@@ -51,8 +55,8 @@ def _exit_worktree_manifest() -> ToolManifest:
         risk=ToolRisk.HIGH,
         side_effect=SideEffectClass.IRREVERSIBLE_WRITE,
         approval_mode=ApprovalMode.ALWAYS,
-        timeout_seconds=10.0,
-        output_char_budget=4000,
+        timeout_seconds=12.0,
+        output_char_budget=4500,
         idempotent=False,
         args_schema={
             "type": "object",
@@ -65,6 +69,11 @@ def _exit_worktree_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "request_envelope",
+            "adapter_kind": "worktree",
+            "application_tags": ["worktree", "intent"],
+        },
     )
 
 
@@ -72,15 +81,19 @@ async def _enter_worktree_handler(args: dict[str, Any]) -> dict[str, Any]:
     worktree_name = str(args.get("worktree_name") or "").strip()
     if not worktree_name:
         raise ValueError("worktree_name is required")
-    payload = {
-        "request_id": f"wreq_{uuid4().hex[:10]}",
-        "operation": "enter",
-        "worktree_name": worktree_name,
-        "base_ref": str(args.get("base_ref") or "HEAD").strip() or "HEAD",
-        "target_path": str(args.get("target_path") or "").strip() or None,
-        "create_branch": bool(args.get("create_branch", True)),
-        "created_at": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
-    }
+    payload = build_intent_payload(
+        source_tool=_ENTER_WORKTREE_TOOL,
+        adapter_kind="worktree",
+        id_prefix="wreq",
+        id_field="request_id",
+        payload={
+            "operation": "enter",
+            "worktree_name": worktree_name,
+            "base_ref": str(args.get("base_ref") or "HEAD").strip() or "HEAD",
+            "target_path": str(args.get("target_path") or "").strip() or None,
+            "create_branch": bool(args.get("create_branch", True)),
+        },
+    )
     return {
         "summary": f"worktree enter request prepared: {worktree_name}",
         "worktree_request": payload,
@@ -91,14 +104,18 @@ async def _exit_worktree_handler(args: dict[str, Any]) -> dict[str, Any]:
     worktree_name = str(args.get("worktree_name") or "").strip()
     if not worktree_name:
         raise ValueError("worktree_name is required")
-    payload = {
-        "request_id": f"wreq_{uuid4().hex[:10]}",
-        "operation": "exit",
-        "worktree_name": worktree_name,
-        "target_path": str(args.get("target_path") or "").strip() or None,
-        "remove_branch": bool(args.get("remove_branch", False)),
-        "created_at": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
-    }
+    payload = build_intent_payload(
+        source_tool=_EXIT_WORKTREE_TOOL,
+        adapter_kind="worktree",
+        id_prefix="wreq",
+        id_field="request_id",
+        payload={
+            "operation": "exit",
+            "worktree_name": worktree_name,
+            "target_path": str(args.get("target_path") or "").strip() or None,
+            "remove_branch": bool(args.get("remove_branch", False)),
+        },
+    )
     return {
         "summary": f"worktree exit request prepared: {worktree_name}",
         "worktree_request": payload,

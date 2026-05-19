@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
-from uuid import uuid4
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.tools.builtin._intent import build_intent_payload
 from agent_driver.tools.registry import ToolRegistry
 
 _SEND_MESSAGE_TOOL = "send_message_tool"
@@ -137,6 +136,11 @@ def _send_message_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "session_local_state",
+            "adapter_kind": "collaboration",
+            "application_tags": ["discovery", "collaboration", "intent"],
+        },
     )
 
 
@@ -172,6 +176,11 @@ def _list_peers_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "session_local_state",
+            "adapter_kind": "collaboration",
+            "application_tags": ["discovery", "collaboration"],
+        },
     )
 
 
@@ -207,6 +216,11 @@ def _team_create_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "session_local_state",
+            "adapter_kind": "collaboration",
+            "application_tags": ["discovery", "collaboration", "intent"],
+        },
     )
 
 
@@ -229,6 +243,11 @@ def _team_delete_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "session_local_state",
+            "adapter_kind": "collaboration",
+            "application_tags": ["discovery", "collaboration", "intent"],
+        },
     )
 
 
@@ -251,6 +270,11 @@ def _team_get_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "session_local_state",
+            "adapter_kind": "collaboration",
+            "application_tags": ["discovery", "collaboration"],
+        },
     )
 
 
@@ -275,6 +299,11 @@ def _team_list_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "session_local_state",
+            "adapter_kind": "collaboration",
+            "application_tags": ["discovery", "collaboration"],
+        },
     )
 
 
@@ -296,17 +325,22 @@ async def _send_message_handler(args: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("metadata must be an object")
     event = _MESSAGE_STORE.append(
         thread_id=thread_id,
-        event={
-            "message_event_id": f"msg_{uuid4().hex[:12]}",
-            "recipient": recipient,
-            "thread_id": thread_id,
-            "channel": channel,
-            "message": message,
-            "metadata": metadata,
-            "created_at": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
-            "delivery": "session_local_queue",
-        },
+        event=build_intent_payload(
+            source_tool=_SEND_MESSAGE_TOOL,
+            adapter_kind="collaboration",
+            id_prefix="msg",
+            payload={
+                "message_event_id": "",
+                "recipient": recipient,
+                "thread_id": thread_id,
+                "channel": channel,
+                "message": message,
+                "metadata": metadata,
+                "delivery": "session_local_queue",
+            },
+        ),
     )
+    event["message_event_id"] = event["event_id"]
     return {
         "summary": f"message queued for {recipient} on {thread_id}",
         "message_event": event,
@@ -366,15 +400,18 @@ async def _team_create_handler(args: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         raise ValueError("metadata must be an object")
     created = _TEAM_STORE.create(
-        team={
-            "team_id": team_id,
-            "display_name": display_name,
-            "members": members,
-            "purpose": purpose,
-            "metadata": metadata,
-            "created_at": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
-            "provenance": "session_local_team_store",
-        }
+        team=build_intent_payload(
+            source_tool=_TEAM_CREATE_TOOL,
+            adapter_kind="collaboration",
+            id_prefix="team",
+            payload={
+                "team_id": team_id,
+                "display_name": display_name,
+                "members": members,
+                "purpose": purpose,
+                "metadata": metadata,
+            },
+        )
     )
     return {
         "summary": f"team created: {team_id}",

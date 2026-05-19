@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from dataclasses import dataclass
+import uuid
 
 from agent_driver.contracts.enums import ResumeAction
 from agent_driver.contracts.interrupts import ResumeCommand
@@ -135,10 +138,42 @@ class Agent:
         )
 
     async def stream(self, run_input: AgentRunInput) -> AsyncIterator[RunStreamEvent]:
-        """Yield normalized stream events from one run execution."""
-        output = await self.run(run_input)
-        for event in project_runtime_events(output.events):
-            yield event
+        """Yield normalized stream events incrementally during run execution."""
+        effective_run_id = run_input.run_id or f"run_{uuid.uuid4().hex[:12]}"
+        effective_input = (
+            run_input
+            if run_input.run_id
+            else run_input.model_copy(update={"run_id": effective_run_id})
+        )
+        poll_interval_ms = int(
+            effective_input.app_metadata.get("stream_poll_interval_ms", 20)
+        )
+        poll_seconds = max(0.01, poll_interval_ms / 1000.0)
+        after_seq = 0
+        run_task = asyncio.create_task(self.run(effective_input))
+        try:
+            while True:
+                new_events = self._runner.deps.event_log.list_for_run(
+                    effective_run_id, after_seq=after_seq
+                )
+                if new_events:
+                    for event in project_runtime_events(new_events):
+                        after_seq = event.seq
+                        yield event
+                    continue
+                if run_task.done():
+                    break
+                await asyncio.sleep(poll_seconds)
+            output = await run_task
+            for event in project_runtime_events(output.events):
+                if event.seq > after_seq:
+                    after_seq = event.seq
+                    yield event
+        finally:
+            if not run_task.done():
+                run_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await run_task
 
 
 __all__ = ["Agent", "AgentDefaults"]

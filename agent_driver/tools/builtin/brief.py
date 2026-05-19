@@ -63,6 +63,11 @@ def _brief_tool_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "session_local_state",
+            "adapter_kind": "runtime_brief",
+            "application_tags": ["discovery", "collaboration"],
+        },
     )
 
 

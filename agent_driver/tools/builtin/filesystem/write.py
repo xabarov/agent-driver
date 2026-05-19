@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.tools.builtin.filesystem._edit_result import edit_output_schema
 from agent_driver.tools.builtin.filesystem._paths import (
     MAX_BYTES_DEFAULT,
     as_int,
@@ -16,13 +17,16 @@ from agent_driver.tools.builtin.filesystem._paths import (
 
 FILE_WRITE_TOOL = "file_write"
 FILE_EDIT_TOOL = "file_edit"
+_PREVIEW_CHARS_DEFAULT = 240
 
 
 def file_write_manifest() -> ToolManifest:
     """Build file_write manifest."""
     return ToolManifest(
         name=FILE_WRITE_TOOL,
-        description=("Write UTF-8 text to an absolute file path with overwrite/append mode."),
+        description=(
+            "Write UTF-8 text to an absolute file path with overwrite/append mode."
+        ),
         risk=ToolRisk.MEDIUM,
         side_effect=SideEffectClass.REVERSIBLE_WRITE,
         approval_mode=ApprovalMode.ON_POLICY_MATCH,
@@ -49,11 +53,27 @@ def file_write_manifest() -> ToolManifest:
                     "maximum": 1_000_000,
                     "description": "Maximum allowed resulting file size",
                 },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "Preview change without writing to disk",
+                },
+                "preview_chars": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2000,
+                    "description": "Maximum chars included in before/after preview",
+                },
             },
             "required": ["path", "content"],
             "additionalProperties": False,
         },
         output_type="json",
+        output_schema=edit_output_schema(),
+        metadata={
+            "implementation_status": "native",
+            "adapter_kind": "filesystem_write",
+            "application_tags": ["filesystem", "codegen"],
+        },
     )
 
 
@@ -95,11 +115,27 @@ def file_edit_manifest() -> ToolManifest:
                     "maximum": 1_000_000,
                     "description": "Maximum allowed resulting file size",
                 },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "Preview replacements without writing to disk",
+                },
+                "preview_chars": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2000,
+                    "description": "Maximum chars included in before/after preview",
+                },
             },
             "required": ["path", "old_text", "new_text"],
             "additionalProperties": False,
         },
         output_type="json",
+        output_schema=edit_output_schema(),
+        metadata={
+            "implementation_status": "native",
+            "adapter_kind": "filesystem_write",
+            "application_tags": ["filesystem", "codegen"],
+        },
     )
 
 
@@ -115,16 +151,27 @@ async def file_write_handler(args: dict[str, Any]) -> dict[str, Any]:
     if mode not in {"overwrite", "append"}:
         raise ValueError("mode must be one of: overwrite, append")
     max_bytes = as_int(args.get("max_bytes"), default=MAX_BYTES_DEFAULT, minimum=1)
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    existing = (
+        read_text_with_size_guard(path, max_bytes=max_bytes) if path.exists() else ""
+    )
     new_text = content if mode == "overwrite" else f"{existing}{content}"
     ensure_text_size(new_text, max_bytes=max_bytes)
-    path.write_text(new_text, encoding="utf-8")
+    dry_run = bool(args.get("dry_run", False))
+    preview_chars = as_int(
+        args.get("preview_chars"), default=_PREVIEW_CHARS_DEFAULT, minimum=0
+    )
+    if not dry_run:
+        path.write_text(new_text, encoding="utf-8")
     return {
-        "summary": f"{mode} write completed: {path}",
+        "summary": f"{mode} write {'previewed' if dry_run else 'completed'}: {path}",
         "path": str(path),
+        "operation": "write",
         "mode": mode,
+        "dry_run": dry_run,
         "bytes_written": len(content.encode("utf-8")),
+        "replacements": 0,
         "size_bytes": len(new_text.encode("utf-8")),
+        "preview": _preview(before=existing, after=new_text, max_chars=preview_chars),
     }
 
 
@@ -151,10 +198,26 @@ async def file_edit_handler(args: dict[str, Any]) -> dict[str, Any]:
         )
     updated = source.replace(old_text, new_text, expected)
     ensure_text_size(updated, max_bytes=max_bytes)
-    path.write_text(updated, encoding="utf-8")
+    dry_run = bool(args.get("dry_run", False))
+    preview_chars = as_int(
+        args.get("preview_chars"), default=_PREVIEW_CHARS_DEFAULT, minimum=0
+    )
+    if not dry_run:
+        path.write_text(updated, encoding="utf-8")
     return {
-        "summary": f"edit completed: {path}",
+        "summary": f"edit {'previewed' if dry_run else 'completed'}: {path}",
         "path": str(path),
+        "operation": "edit",
+        "dry_run": dry_run,
         "replacements": expected,
         "size_bytes": len(updated.encode("utf-8")),
+        "preview": _preview(before=source, after=updated, max_chars=preview_chars),
+    }
+
+
+def _preview(*, before: str, after: str, max_chars: int) -> dict[str, Any]:
+    return {
+        "before": before[:max_chars],
+        "after": after[:max_chars],
+        "truncated": len(before) > max_chars or len(after) > max_chars,
     }

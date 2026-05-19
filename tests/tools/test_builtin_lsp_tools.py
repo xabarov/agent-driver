@@ -15,7 +15,9 @@ async def test_lsp_tool_symbols_and_references(tmp_path) -> None:
     src.mkdir()
     file_a = src / "a.py"
     file_b = src / "b.py"
-    file_a.write_text("class Alpha:\n    pass\n\ndef beta():\n    return Alpha\n", encoding="utf-8")
+    file_a.write_text(
+        "class Alpha:\n    pass\n\ndef beta():\n    return Alpha\n", encoding="utf-8"
+    )
     file_b.write_text("from .a import Alpha\nx = Alpha\n", encoding="utf-8")
     registry = ToolRegistry()
     register_lsp_tools(registry)

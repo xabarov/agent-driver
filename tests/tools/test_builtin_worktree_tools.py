@@ -20,5 +20,9 @@ async def test_enter_and_exit_worktree_tools_return_request_payloads() -> None:
     created = await enter.handler({"worktree_name": "feat-x", "base_ref": "main"})
     assert created["worktree_request"]["operation"] == "enter"
     assert created["worktree_request"]["worktree_name"] == "feat-x"
+    assert created["worktree_request"]["adapter_kind"] == "worktree"
+    assert created["worktree_request"]["request_id"].startswith("wreq_")
     removed = await exit_tool.handler({"worktree_name": "feat-x"})
     assert removed["worktree_request"]["operation"] == "exit"
+    assert removed["worktree_request"]["adapter_kind"] == "worktree"
+    assert removed["worktree_request"]["request_id"].startswith("wreq_")

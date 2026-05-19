@@ -67,7 +67,8 @@ def read_text_with_size_guard(path: Path, *, max_bytes: int) -> str:
     size = path.stat().st_size
     if size > max_bytes:
         raise ValueError(f"file exceeds max_bytes ({size}>{max_bytes})")
-    return path.read_text(encoding="utf-8")
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return handle.read()
 
 
 def ensure_text_size(text: str, *, max_bytes: int) -> None:

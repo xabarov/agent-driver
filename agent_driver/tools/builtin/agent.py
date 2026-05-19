@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 from agent_driver.contracts import (
     ApprovalMode,
@@ -13,6 +11,7 @@ from agent_driver.contracts import (
     ToolManifest,
     ToolRisk,
 )
+from agent_driver.tools.builtin._intent import build_intent_payload
 from agent_driver.tools.registry import ToolRegistry
 
 _AGENT_TOOL = "agent_tool"
@@ -63,6 +62,11 @@ def _agent_tool_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        metadata={
+            "implementation_status": "request_envelope",
+            "adapter_kind": "subagent_orchestration",
+            "application_tags": ["discovery", "collaboration", "intent"],
+        },
     )
 
 
@@ -86,23 +90,25 @@ async def _agent_tool_handler(args: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         raise ValueError("metadata must be an object")
     idempotency_key = str(args.get("idempotency_key") or "").strip() or None
-    request = {
-        "subagent_run_id": f"subreq_{uuid4().hex[:12]}",
-        "task": task,
-        "description": description,
-        "task_type": task_type,
-        "execution_mode": execution_mode,
-        "idempotency_key": idempotency_key,
-        "metadata": metadata,
-        "created_at": datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
-    }
+    request = build_intent_payload(
+        source_tool=_AGENT_TOOL,
+        adapter_kind="subagent_orchestration",
+        id_prefix="subreq",
+        id_field="request_id",
+        payload={
+            "subagent_run_id": None,
+            "task": task,
+            "description": description,
+            "task_type": task_type,
+            "execution_mode": execution_mode,
+            "idempotency_key": idempotency_key,
+            "metadata": metadata,
+        },
+    )
+    request["subagent_run_id"] = request["request_id"]
     return {
         "summary": f"subagent request prepared ({execution_mode})",
         "subagent_request": request,
-        "provenance": {
-            "source": "agent_tool",
-            "runtime_action": "spawn_subagent_request",
-        },
     }
 
 

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
 
 from agent_driver.adapters import (
+    cli_follow_lines,
     cli_replay_lines,
     cli_run_lines,
     cli_tail_lines,
@@ -171,3 +173,43 @@ async def test_cli_handlers_run_replay_tail_tree() -> None:
     assert len(tail) == 2
     assert any(item.startswith("run_completed:") for item in tree)
     assert run_lines == ["[0004] warning: {'kind': 'sample'}"]
+
+
+@pytest.mark.asyncio
+async def test_cli_follow_lines_polls_until_terminal_event() -> None:
+    """Follow mode should emit new events and stop on terminal status."""
+    log = InMemoryEventLog()
+    log.append(
+        new_runtime_event(
+            event_type=RuntimeEventType.RUN_STARTED,
+            context={"run_id": "run_follow", "attempt_id": "att_1", "seq": 1},
+        )
+    )
+
+    async def _append_later() -> None:
+        await asyncio.sleep(0.02)
+        log.append(
+            new_runtime_event(
+                event_type=RuntimeEventType.TOKEN_DELTA,
+                context={"run_id": "run_follow", "attempt_id": "att_1", "seq": 2},
+            )
+        )
+        log.append(
+            new_runtime_event(
+                event_type=RuntimeEventType.RUN_COMPLETED,
+                context={"run_id": "run_follow", "attempt_id": "att_1", "seq": 3},
+            )
+        )
+
+    task = asyncio.create_task(_append_later())
+    lines = [
+        line
+        async for line in cli_follow_lines(
+            log, run_id="run_follow", after_seq=1, poll_interval_ms=5
+        )
+    ]
+    await task
+    assert lines == [
+        "[0002] token_delta: {}",
+        "[0003] run_completed: {}",
+    ]

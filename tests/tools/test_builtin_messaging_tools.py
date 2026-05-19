@@ -38,6 +38,9 @@ async def test_send_message_tool_queues_message_event() -> None:
     assert event["channel"] == "direct"
     assert event["metadata"]["priority"] == "high"
     assert event["message_event_id"].startswith("msg_")
+    assert event["event_id"] == event["message_event_id"]
+    assert event["adapter_kind"] == "collaboration"
+    assert event["provenance"]["source_tool"] == "send_message_tool"
 
 
 @pytest.mark.asyncio
@@ -99,6 +102,8 @@ async def test_team_create_and_delete_tools_manage_team_rows() -> None:
     assert team["team_id"] == "team_alpha"
     assert team["display_name"] == "Alpha Team"
     assert "agent.teammate" in team["members"]
+    assert team["adapter_kind"] == "collaboration"
+    assert team["event_id"].startswith("team_")
     removed = await delete.handler({"team_id": "team_alpha"})
     assert removed["deleted_team"]["team_id"] == "team_alpha"
 

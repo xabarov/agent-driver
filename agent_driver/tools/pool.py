@@ -9,7 +9,9 @@ from agent_driver.contracts.tools import ToolManifest
 from agent_driver.tools.registry import ToolRegistry
 
 
-async def _unavailable_external_tool_handler(_args: dict[str, object]) -> dict[str, object]:
+async def _unavailable_external_tool_handler(
+    _args: dict[str, object],
+) -> dict[str, object]:
     raise ValueError("external merged tool has no local handler")
 
 
@@ -20,7 +22,9 @@ def assemble_tool_pool(
     denied_tools: Iterable[str] | None = None,
 ) -> ToolRegistry:
     """Merge built-in and MCP registries with deny-rules and stable ordering."""
-    denied_patterns = tuple(item.strip() for item in (denied_tools or ()) if item.strip())
+    denied_patterns = tuple(
+        item.strip() for item in (denied_tools or ()) if item.strip()
+    )
     merged = ToolRegistry()
     names = set(builtin_registry.list_names())
     if mcp_registry is not None:

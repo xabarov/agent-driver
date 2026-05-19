@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.tools.builtin.filesystem._edit_result import edit_output_schema
 from agent_driver.tools.builtin.filesystem._paths import (
     MAX_BYTES_DEFAULT,
     as_int,
@@ -53,7 +54,10 @@ def notebook_edit_manifest() -> ToolManifest:
                     "type": "string",
                     "description": "Text to replace in existing cell (ignored for inserts)",
                 },
-                "new_text": {"type": "string", "description": "Replacement/new cell content"},
+                "new_text": {
+                    "type": "string",
+                    "description": "Replacement/new cell content",
+                },
                 "max_bytes": {
                     "type": "integer",
                     "minimum": 1,
@@ -65,6 +69,12 @@ def notebook_edit_manifest() -> ToolManifest:
             "additionalProperties": False,
         },
         output_type="json",
+        output_schema=edit_output_schema(),
+        metadata={
+            "implementation_status": "native",
+            "adapter_kind": "filesystem_write",
+            "application_tags": ["filesystem", "codegen"],
+        },
     )
 
 
@@ -72,35 +82,16 @@ async def notebook_edit_handler(args: dict[str, Any]) -> dict[str, Any]:
     """Insert or edit one notebook cell deterministically."""
     path = resolve_file_path(args.get("path"))
     max_bytes = as_int(args.get("max_bytes"), default=MAX_BYTES_DEFAULT, minimum=1)
-    payload = _load_notebook(path=path, max_bytes=max_bytes)
-    cells = payload.get("cells")
+    notebook = _load_notebook(path=path, max_bytes=max_bytes)
+    cells = notebook.get("cells")
     if not isinstance(cells, list):
         raise ValueError("notebook payload missing 'cells' list")
 
-    cell_idx = as_int(args.get("cell_idx"), default=0, minimum=0)
-    is_new_cell = bool(args.get("is_new_cell"))
-    old_text = args.get("old_text")
-    new_text = args.get("new_text")
-    if not isinstance(old_text, str):
-        raise ValueError("old_text must be a string")
-    if not isinstance(new_text, str):
-        raise ValueError("new_text must be a string")
+    cell_idx, operation, replacements, before_preview, after_preview = _apply_cell_edit(
+        cells=cells, args=args
+    )
 
-    if is_new_cell:
-        if cell_idx > len(cells):
-            raise ValueError(f"cell_idx out of range for insert: {cell_idx}>{len(cells)}")
-        cell_type = str(args.get("cell_type") or "code").strip().lower()
-        if cell_type not in ALLOWED_CELL_TYPES:
-            raise ValueError("cell_type must be one of: code, markdown, raw")
-        cells.insert(cell_idx, _new_cell(cell_type=cell_type, source_text=new_text))
-        operation = "insert"
-    else:
-        if cell_idx >= len(cells):
-            raise ValueError(f"cell_idx out of range for replace: {cell_idx}>={len(cells)}")
-        operation = "replace"
-        _replace_in_cell(cells[cell_idx], old_text=old_text, new_text=new_text)
-
-    rendered = json.dumps(payload, indent=1) + "\n"
+    rendered = json.dumps(notebook, indent=1) + "\n"
     size_bytes = len(rendered.encode("utf-8"))
     if size_bytes > max_bytes:
         raise ValueError(f"content exceeds max_bytes ({size_bytes}>{max_bytes})")
@@ -110,7 +101,13 @@ async def notebook_edit_handler(args: dict[str, Any]) -> dict[str, Any]:
         "path": str(path),
         "operation": operation,
         "cell_idx": cell_idx,
+        "replacements": replacements,
         "size_bytes": size_bytes,
+        "preview": {
+            "before": before_preview[:240],
+            "after": after_preview[:240],
+            "truncated": len(before_preview) > 240 or len(after_preview) > 240,
+        },
     }
 
 
@@ -137,10 +134,13 @@ def _new_cell(*, cell_type: str, source_text: str) -> dict[str, Any]:
     return cell
 
 
-def _replace_in_cell(cell: Any, *, old_text: str, new_text: str) -> None:
+def _replace_in_cell(
+    cell: Any, *, old_text: str, new_text: str
+) -> tuple[int, str, str]:
     if not isinstance(cell, dict):
         raise ValueError("target cell must be an object")
     source = cell.get("source")
+    source_was_list = isinstance(source, list)
     if isinstance(source, list):
         source_text = "".join(str(item) for item in source)
     elif isinstance(source, str):
@@ -153,7 +153,40 @@ def _replace_in_cell(cell: Any, *, old_text: str, new_text: str) -> None:
     if occurrences != 1:
         raise ValueError("old_text must appear exactly once in target cell")
     updated = source_text.replace(old_text, new_text, 1)
-    cell["source"] = [updated]
+    if source_was_list:
+        cell["source"] = updated.splitlines(keepends=True) or [updated]
+    else:
+        cell["source"] = updated
+    return 1, source_text, updated
+
+
+def _apply_cell_edit(
+    *, cells: list[Any], args: dict[str, Any]
+) -> tuple[int, str, int, str, str]:
+    cell_idx = as_int(args.get("cell_idx"), default=0, minimum=0)
+    is_new_cell = bool(args.get("is_new_cell"))
+    old_text = args.get("old_text")
+    new_text = args.get("new_text")
+    if not isinstance(old_text, str):
+        raise ValueError("old_text must be a string")
+    if not isinstance(new_text, str):
+        raise ValueError("new_text must be a string")
+    if is_new_cell:
+        if cell_idx > len(cells):
+            raise ValueError(
+                f"cell_idx out of range for insert: {cell_idx}>{len(cells)}"
+            )
+        cell_type = str(args.get("cell_type") or "code").strip().lower()
+        if cell_type not in ALLOWED_CELL_TYPES:
+            raise ValueError("cell_type must be one of: code, markdown, raw")
+        cells.insert(cell_idx, _new_cell(cell_type=cell_type, source_text=new_text))
+        return cell_idx, "insert", 0, "", new_text
+    if cell_idx >= len(cells):
+        raise ValueError(f"cell_idx out of range for replace: {cell_idx}>={len(cells)}")
+    replacements, before_preview, after_preview = _replace_in_cell(
+        cells[cell_idx], old_text=old_text, new_text=new_text
+    )
+    return cell_idx, "replace", replacements, before_preview, after_preview
 
 
 __all__ = ["notebook_edit_handler", "notebook_edit_manifest"]

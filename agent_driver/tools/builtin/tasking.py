@@ -397,7 +397,9 @@ async def _task_get_handler(args: dict[str, Any]) -> dict[str, Any]:
     task = _TASK_STORE.get(task_id)
     return {
         "summary": f"task loaded: {task.task_id}",
-        "task": task.as_dict(include_output=include_output, preview_chars=preview_chars),
+        "task": task.as_dict(
+            include_output=include_output, preview_chars=preview_chars
+        ),
     }
 
 
