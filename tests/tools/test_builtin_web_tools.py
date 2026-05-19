@@ -239,3 +239,59 @@ async def test_web_search_parses_duckduckgo_html(monkeypatch) -> None:
     assert out["source"] == "duckduckgo_html"
     assert len(out["results"]) == 1
     assert out["results"][0]["url"] == "https://example.com/page"
+
+
+@pytest.mark.asyncio
+async def test_web_search_parses_alternate_duckduckgo_anchor_class(monkeypatch) -> None:
+    """web_search should support result__a anchor fallback parsing."""
+    html = (
+        '<html><body>'
+        '<a class="result__a" href="https://example.com/alt">Alt Title</a>'
+        "</body></html>"
+    )
+    response = _DummyResponse(
+        url="https://duckduckgo.com/html/?q=test",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler({"query": "test", "max_results": 1})
+    assert len(out["results"]) == 1
+    assert out["results"][0]["url"] == "https://example.com/alt"
+
+
+@pytest.mark.asyncio
+async def test_web_search_includes_diagnostic_when_no_results_parsed(monkeypatch) -> None:
+    """web_search should provide diagnostic metadata for empty parsed results."""
+    html = "<html><body><div>no links</div></body></html>"
+    response = _DummyResponse(
+        url="https://duckduckgo.com/html/?q=test",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler({"query": "test", "max_results": 2})
+    assert out["results"] == []
+    diagnostic = out.get("diagnostic")
+    assert isinstance(diagnostic, dict)
+    assert diagnostic.get("status") == "no_results_parsed"

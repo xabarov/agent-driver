@@ -67,9 +67,10 @@ Live context-quality tests are opt-in and must stay skipped by default:
 
 ```bash
 AGENT_DRIVER_RUN_LIVE_TESTS=1 \
-AGENT_DRIVER_OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
-AGENT_DRIVER_OPENAI_API_KEY=... \
-AGENT_DRIVER_OPENAI_MODEL=... \
+AGENT_DRIVER_PROVIDER=openrouter \
+AGENT_DRIVER_BASE_URL=https://openrouter.ai/api/v1 \
+AGENT_DRIVER_API_KEY=... \
+AGENT_DRIVER_MODEL=... \
 .venv/bin/python -m pytest -m live tests/runtime/test_live_context_quality_openrouter.py
 ```
 

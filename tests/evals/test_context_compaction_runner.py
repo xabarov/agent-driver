@@ -25,3 +25,11 @@ def test_context_compaction_report_is_markdown_table() -> None:
     assert "| strategy | recall |" in report
     assert "provider_cost" in report
     assert "trim_only" in report
+
+
+def test_context_compaction_runner_is_offline_by_default(monkeypatch) -> None:
+    """Baseline report should work without live-provider env configuration."""
+    monkeypatch.delenv("AGENT_DRIVER_API_KEY", raising=False)
+    monkeypatch.delenv("AGENT_DRIVER_RUN_LIVE_TESTS", raising=False)
+    rows = run_context_compaction_strategy_comparison()
+    assert rows

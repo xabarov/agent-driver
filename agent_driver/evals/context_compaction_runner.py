@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent_driver.evals.context_quality import evaluate_baseline_strategies
+from agent_driver.evals.context_quality_gate import (
+    ContextQualityGatePolicy,
+    ContextQualityGateResult,
+    evaluate_context_quality_regression_gate,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,8 +70,41 @@ def render_context_compaction_report() -> str:
     return header + separator + body
 
 
+def run_context_compaction_regression_gate(
+    *,
+    policy: ContextQualityGatePolicy | None = None,
+) -> ContextQualityGateResult:
+    """Run deterministic gate for compaction default-rollout safety."""
+    metrics = evaluate_baseline_strategies()
+    return evaluate_context_quality_regression_gate(metrics=metrics, policy=policy)
+
+
+def render_context_compaction_gate_report(
+    *,
+    policy: ContextQualityGatePolicy | None = None,
+) -> str:
+    """Render concise gate status for CI/log output."""
+    result = run_context_compaction_regression_gate(policy=policy)
+    status = "PASS" if result.passed else "FAIL"
+    lines = [
+        f"Context compaction regression gate: {status}",
+        f"Baseline: {result.baseline_strategy}",
+        f"Checked: {', '.join(result.checked_strategies)}",
+    ]
+    if result.failures:
+        lines.append("Failures:")
+        lines.extend(f"- {item}" for item in result.failures)
+    else:
+        lines.append("Failures: none")
+    return "\n".join(lines)
+
+
 __all__ = [
+    "ContextQualityGatePolicy",
+    "ContextQualityGateResult",
     "StrategyComparisonRow",
+    "render_context_compaction_gate_report",
     "render_context_compaction_report",
+    "run_context_compaction_regression_gate",
     "run_context_compaction_strategy_comparison",
 ]

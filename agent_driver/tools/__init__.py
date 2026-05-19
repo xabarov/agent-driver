@@ -1,6 +1,13 @@
 """Tool governance package for registry, policy, and guardrails."""
 
-from agent_driver.tools.builtin import register_builtin_tools
+from agent_driver.tools.builtin import register_builtin_tools, register_mcp_tools
+from agent_driver.tools.custom import (
+    CustomToolDefinition,
+    custom_tool,
+    register_custom_function,
+    register_custom_tool,
+    tool_from_function,
+)
 from agent_driver.tools.executor import GovernedToolExecutor
 from agent_driver.tools.guardrails import GuardrailPipeline, GuardrailResult
 from agent_driver.tools.planning import (
@@ -32,6 +39,12 @@ __all__ = [
     "planning_state_update_tool",
     "register_planning_tool",
     "register_builtin_tools",
+    "register_mcp_tools",
+    "CustomToolDefinition",
+    "custom_tool",
+    "register_custom_function",
+    "register_custom_tool",
+    "tool_from_function",
     "evaluate_tool_policy",
     "render_tool_doc",
     "render_tool_docs",

@@ -818,9 +818,30 @@ Implementation notes from hardening pass:
     runtime event notes.
 - Phase 10.5 foundation now starts landing with provider wiring:
   - shared provider bootstrap for `run`/`chat` with `fake`,
-    `openai-compatible`, and `ollama`;
+    `openrouter`, `vllm`, and `ollama`;
   - env and flag based model/base-url/api-key resolution;
   - optional pre-run `--provider-healthcheck` for concise diagnostics.
+- Chat tools UX layer now starts landing:
+  - shared tool-surface flags for `run`/`chat` and safe default packs;
+  - dangerous shell/write packs require explicit opt-in;
+  - chat slash command `/tools` (and `verbose`) exposes selected tool surface;
+  - renderer suppresses low-value runtime internals like `node_completed`.
+- Provider tool-calling bridge now starts landing:
+  - OpenAI-compatible requests include selected function-tool schemas;
+  - provider normalization maps `message.tool_calls` into `planned_tool_calls`;
+  - tool stage can loop back to LLM for follow-up answer after tool execution
+    when model finish reason is `tool_calls`.
+- CLI productization layer now starts landing:
+  - config/profile resolution via `agent-driver config show` and layered defaults;
+  - provider diagnostics via `agent-driver doctor` with optional live check;
+  - persistent session metadata and session list/show workflows;
+  - resume command family (`approve/reject/edit/cancel/clarify`) exposed in CLI and chat slash commands;
+  - inspect/export commands for run event artifacts.
+- CLI live evaluation and trace audit layer now starts landing:
+  - `agent-driver eval run` with opt-in env gate and per-scenario bounded limits;
+  - fixed 10-scenario suite with expected/forbidden tool expectations;
+  - artifact bundles under `.agent-driver/evals/<timestamp>/` with summary/report/triage;
+  - deterministic `agent-driver eval inspect` for summary and compact timeline views.
 
 ## Deferrals
 

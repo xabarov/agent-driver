@@ -126,6 +126,50 @@ async def test_sse_stream_supports_backfill_and_live_skip_duplicates() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sse_stream_without_last_event_id_keeps_full_live_stream() -> None:
+    """Missing reconnect token should not drop first live events."""
+    live = [
+        RunStreamEvent(
+            schema_version="1.0",
+            stream_id="run_no_backfill:1",
+            run_id="run_no_backfill",
+            attempt_id="att_1",
+            seq=1,
+            event="run_started",
+            source="runtime_event",
+            data={},
+        ),
+        RunStreamEvent(
+            schema_version="1.0",
+            stream_id="run_no_backfill:2",
+            run_id="run_no_backfill",
+            attempt_id="att_1",
+            seq=2,
+            event="run_completed",
+            source="runtime_event",
+            data={},
+        ),
+    ]
+    lines = [
+        line
+        async for line in sse_event_stream(
+            agent=_StaticAgent(live),
+            run_input=AgentRunInput(
+                input="hi",
+                run_id="run_no_backfill",
+                agent_id="agent",
+                graph_preset="single_react",
+            ),
+            event_log=InMemoryEventLog(),
+            last_event_id=None,
+        )
+    ]
+    assert len(lines) == 2
+    assert "id: run_no_backfill:1" in lines[0]
+    assert "id: run_no_backfill:2" in lines[1]
+
+
+@pytest.mark.asyncio
 async def test_cli_handlers_run_replay_tail_tree() -> None:
     """CLI handlers should produce deterministic run/replay/tail/tree lines."""
     log = InMemoryEventLog()

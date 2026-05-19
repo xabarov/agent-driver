@@ -25,12 +25,36 @@ def schema_ddl(*, schema: str, checkpoints_table: str, events_table: str) -> str
     );
     CREATE INDEX IF NOT EXISTS runtime_events_run_seq_idx
         ON {events_table} (run_id, seq ASC);
+    CREATE UNIQUE INDEX IF NOT EXISTS runtime_events_run_seq_unique_idx
+        ON {events_table} (run_id, seq);
 
     CREATE TABLE IF NOT EXISTS {schema}.runtime_schema_meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );
     """
+
+
+def schema_migrations(
+    *, schema: str, checkpoints_table: str, events_table: str
+) -> list[tuple[int, str]]:
+    """Return ordered schema migrations for runtime postgres store."""
+    # v1 is the bootstrap schema from Phase 2.5.
+    v1 = schema_ddl(
+        schema=schema,
+        checkpoints_table=checkpoints_table,
+        events_table=events_table,
+    )
+    # v2 adds deterministic uniqueness and retention-friendly timestamp indexes.
+    v2 = f"""
+    CREATE UNIQUE INDEX IF NOT EXISTS runtime_events_run_seq_unique_idx
+        ON {events_table} (run_id, seq);
+    CREATE INDEX IF NOT EXISTS runtime_checkpoints_created_at_idx
+        ON {checkpoints_table} (created_at DESC);
+    CREATE INDEX IF NOT EXISTS runtime_events_created_at_idx
+        ON {events_table} (created_at DESC);
+    """
+    return [(1, v1), (2, v2)]
 
 
 def upsert_schema_version_sql(*, schema: str) -> str:
@@ -131,7 +155,26 @@ def select_events_sql(*, events_table: str, with_after_seq: bool) -> str:
     """
 
 
+def prune_events_before_sql(*, events_table: str) -> str:
+    """Delete old runtime events by created_at timestamp."""
+    return f"""
+    DELETE FROM {events_table}
+    WHERE created_at < %s
+    """
+
+
+def prune_checkpoints_before_sql(*, checkpoints_table: str) -> str:
+    """Delete old runtime checkpoints by created_at timestamp."""
+    return f"""
+    DELETE FROM {checkpoints_table}
+    WHERE created_at < %s
+    """
+
+
 __all__ = [
+    "schema_migrations",
+    "prune_checkpoints_before_sql",
+    "prune_events_before_sql",
     "schema_ddl",
     "select_checkpoint_by_id_sql",
     "select_checkpoints_sql",

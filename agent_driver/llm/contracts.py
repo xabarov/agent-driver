@@ -52,6 +52,8 @@ class LlmRequest(ContractModel):
     max_tokens: int | None = None
     temperature: float | None = None
     stream: bool = False
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    tool_choice: str | dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("max_tokens")
@@ -69,6 +71,33 @@ class LlmRequest(ContractModel):
     def validate_temperature(cls, value: float | None) -> float | None:
         """Validate non-negative temperature value."""
         return ensure_non_negative_float(value, field_name="temperature")
+
+    @field_validator("tools")
+    @classmethod
+    def validate_tools(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Ensure tool payloads stay JSON-compatible for provider transport."""
+        normalized: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                raise ValueError("tools must contain object entries")
+            normalized.append(
+                ensure_json_serializable(item, field_name="tools payload")
+            )
+        return normalized
+
+    @field_validator("tool_choice")
+    @classmethod
+    def validate_tool_choice(
+        cls, value: str | dict[str, Any] | None
+    ) -> str | dict[str, Any] | None:
+        """Validate provider-neutral tool choice payload."""
+        if value is None:
+            return value
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            return ensure_json_serializable(value, field_name="tool_choice payload")
+        raise ValueError("tool_choice must be string, object, or null")
 
     @field_validator("metadata")
     @classmethod

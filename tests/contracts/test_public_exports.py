@@ -41,7 +41,15 @@ def test_runtime_public_exports_remain_runtime_focused() -> None:
 
 def test_tools_public_exports_cover_governance_surface() -> None:
     """Tools package should own registry and governed executor exports."""
-    required = {"ToolRegistry", "GovernedToolExecutor", "register_planning_tool"}
+    required = {
+        "ToolRegistry",
+        "GovernedToolExecutor",
+        "register_planning_tool",
+        "custom_tool",
+        "register_custom_function",
+        "register_custom_tool",
+        "register_mcp_tools",
+    }
     assert required.issubset(set(tools.__all__))
 
 

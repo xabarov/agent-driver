@@ -15,6 +15,7 @@ from agent_driver.context import (
     evaluate_session_memory_freshness,
     load_session_memory,
     apply_post_compact_cleanup,
+    ptl_retry_drop_oldest_groups,
     run_full_llm_compaction,
     sanitize_compaction_text,
 )
@@ -99,8 +100,10 @@ async def apply_compaction_if_eligible(
             compaction_id=compaction_id,
         ):
             return
-    if decision.mode.value == "partial" or (
-        decision.mode.value != "partial" and not attempted_llm_full
+    if host._config.enable_partial_compaction and (
+        decision.mode.value == "partial" or (
+            decision.mode.value != "partial" and not attempted_llm_full
+        )
     ):
         if await _apply_partial_compaction(
             host,
@@ -179,7 +182,10 @@ async def _apply_session_memory_compaction(
         "decision": context.metadata[COMPACTION_DECISION_KEY],
         "result": result_payload,
     }
-    cleanup = apply_post_compact_cleanup(metadata=context.metadata)
+    cleanup = apply_post_compact_cleanup(
+        metadata=context.metadata,
+        max_reinjected_artifact_refs=host._config.post_compact_max_reinjected_artifact_refs,
+    )
     context.metadata["post_compact_cleanup"] = {
         "cleaned_keys": list(cleanup.cleaned_keys),
         "reinjected_keys": list(cleanup.reinjected_keys),
@@ -214,7 +220,15 @@ async def _apply_llm_full_compaction(
     decision: CompactionDecision,
     compaction_id: str,
 ) -> bool:
-    history_excerpt = "\n".join(message.content for message in request.messages[-8:])
+    raw_groups = [str(message.content) for message in request.messages[-8:]]
+    kept_groups = list(raw_groups)
+    dropped_groups: list[str] = []
+    if host._config.enable_ptl_retry:
+        kept_groups, dropped_groups = ptl_retry_drop_oldest_groups(
+            groups=raw_groups,
+            max_chars=host._config.ptl_retry_max_chars,
+        )
+    history_excerpt = "\n".join(kept_groups)
     sanitized_excerpt = sanitize_compaction_text(history_excerpt)
     compaction_result, summary = await run_full_llm_compaction(
         provider=host._deps.provider,
@@ -256,7 +270,20 @@ async def _apply_llm_full_compaction(
         "decision": context.metadata[COMPACTION_DECISION_KEY],
         "result": context.metadata[COMPACTION_RESULT_KEY],
     }
-    cleanup = apply_post_compact_cleanup(metadata=context.metadata)
+    if isinstance(context.metadata[COMPACTION_RESULT_KEY], dict):
+        context.metadata[COMPACTION_RESULT_KEY]["metadata"] = {
+            **context.metadata[COMPACTION_RESULT_KEY].get("metadata", {}),
+            "ptl_retry": {
+                "enabled": host._config.enable_ptl_retry,
+                "dropped_groups": len(dropped_groups),
+                "kept_groups": len(kept_groups),
+                "max_chars": host._config.ptl_retry_max_chars,
+            },
+        }
+    cleanup = apply_post_compact_cleanup(
+        metadata=context.metadata,
+        max_reinjected_artifact_refs=host._config.post_compact_max_reinjected_artifact_refs,
+    )
     context.metadata["post_compact_cleanup"] = {
         "cleaned_keys": list(cleanup.cleaned_keys),
         "reinjected_keys": list(cleanup.reinjected_keys),
@@ -310,7 +337,10 @@ async def _apply_partial_compaction(
     }
     context.metadata[COMPACTION_RESULT_KEY] = result_payload
     context.metadata[COMPACTION_FAILURES_KEY] = []
-    cleanup = apply_post_compact_cleanup(metadata=context.metadata)
+    cleanup = apply_post_compact_cleanup(
+        metadata=context.metadata,
+        max_reinjected_artifact_refs=host._config.post_compact_max_reinjected_artifact_refs,
+    )
     context.metadata["post_compact_cleanup"] = {
         "cleaned_keys": list(cleanup.cleaned_keys),
         "reinjected_keys": list(cleanup.reinjected_keys),

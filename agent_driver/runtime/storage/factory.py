@@ -39,6 +39,8 @@ class RuntimeStoreFactoryConfig:
     postgres_dsn: str | None = None
     postgres_schema: str = "public"
     postgres_auto_create_schema: bool = True
+    postgres_connect_timeout_seconds: int = 5
+    postgres_application_name: str = "agent_driver_runtime"
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,8 @@ def _postgres_bundle(config: RuntimeStoreFactoryConfig) -> RuntimeStoreBundle:
             dsn=config.postgres_dsn,
             auto_create_schema=config.postgres_auto_create_schema,
             schema=config.postgres_schema,
+            connect_timeout_seconds=config.postgres_connect_timeout_seconds,
+            application_name=config.postgres_application_name,
         )
     )
     return RuntimeStoreBundle(
@@ -123,12 +127,20 @@ def runtime_store_config_from_env(
         "0",
         "false",
     }
+    postgres_connect_timeout_raw = os.getenv(
+        f"{prefix}POSTGRES_CONNECT_TIMEOUT_SECONDS", "5"
+    )
+    postgres_application_name = os.getenv(
+        f"{prefix}POSTGRES_APPLICATION_NAME", "agent_driver_runtime"
+    )
     return RuntimeStoreFactoryConfig(
         kind=kind,
         sqlite_path=sqlite_path,
         postgres_dsn=postgres_dsn,
         postgres_schema=postgres_schema,
         postgres_auto_create_schema=postgres_auto_create_schema,
+        postgres_connect_timeout_seconds=max(1, int(postgres_connect_timeout_raw)),
+        postgres_application_name=postgres_application_name,
     )
 
 

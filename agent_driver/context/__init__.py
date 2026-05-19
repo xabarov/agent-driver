@@ -24,6 +24,7 @@ from agent_driver.context.compaction import (
     run_full_llm_compaction,
     sanitize_compaction_text,
     save_session_memory,
+    ptl_retry_drop_oldest_groups,
 )
 from agent_driver.context.microcompaction import microcompact_observations
 from agent_driver.context.observations import (
@@ -68,6 +69,7 @@ __all__ = [
     "save_session_memory",
     "load_session_memory",
     "run_full_llm_compaction",
+    "ptl_retry_drop_oldest_groups",
     "sanitize_compaction_text",
     "InMemoryArtifactStore",
     "InMemoryContextStore",

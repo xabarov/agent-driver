@@ -30,9 +30,13 @@ class CompactionSettings:
     enable_compaction: bool = False
     enable_session_memory_compaction: bool = False
     enable_llm_compaction: bool = False
+    enable_partial_compaction: bool = True
+    enable_ptl_retry: bool = True
     compaction_failure_limit: int = 3
     session_memory_stale_after_turns: int = 4
     compaction_model: str = "default"
+    ptl_retry_max_chars: int = 4000
+    post_compact_max_reinjected_artifact_refs: int = 5
 
 
 @dataclass(frozen=True, slots=True)

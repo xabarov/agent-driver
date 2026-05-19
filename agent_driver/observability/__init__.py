@@ -11,6 +11,10 @@ from agent_driver.observability.optional_exporters import (
     LangfuseTraceExporter,
     OpenTelemetryPhoenixTraceExporter,
 )
+from agent_driver.observability.support_bundle import (
+    build_persisted_support_bundle,
+    build_runtime_support_bundle,
+)
 from agent_driver.observability.trace_builder import build_trace_export
 
 __all__ = [
@@ -18,6 +22,8 @@ __all__ = [
     "NoOpTraceExporter",
     "OpenTelemetryPhoenixTraceExporter",
     "LangfuseTraceExporter",
+    "build_persisted_support_bundle",
+    "build_runtime_support_bundle",
     "TraceExport",
     "TraceExporter",
     "TraceSinkResult",

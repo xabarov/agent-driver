@@ -15,6 +15,7 @@ from agent_driver.context.token_pressure import TokenPressureInput, estimate_tok
 from agent_driver.contracts.context import ContextBudget
 from agent_driver.contracts.enums import AgentProfile
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.tools import ToolManifest
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.llm.contracts import LlmRequest
 
@@ -41,6 +42,9 @@ class LlmRequestBuildContext:
     blocking_threshold: int = 10500
     output_token_reserve: int = 1500
     stream: bool = False
+    system_instruction: str | None = None
+    protocol_messages: tuple[ChatMessage, ...] | None = None
+    tool_choice: str | dict[str, Any] | None = None
 
 
 def _normalize_trimmed_messages(
@@ -51,8 +55,50 @@ def _normalize_trimmed_messages(
     for message in prompt_messages:
         role = str(message.get("role", "user"))
         content = str(message.get("content", ""))
-        normalized.append(ChatMessage(role=role, content=content))
+        name = message.get("name")
+        tool_call_id = message.get("tool_call_id")
+        metadata = message.get("metadata")
+        normalized.append(
+            ChatMessage(
+                role=role,
+                content=content,
+                name=str(name) if isinstance(name, str) and name.strip() else None,
+                tool_call_id=(
+                    str(tool_call_id)
+                    if isinstance(tool_call_id, str) and tool_call_id.strip()
+                    else None
+                ),
+                metadata=metadata if isinstance(metadata, dict) else {},
+            )
+        )
     return normalized
+
+
+def _tool_schema_from_manifest(manifest: ToolManifest) -> dict[str, Any]:
+    parameters = manifest.args_schema
+    if not isinstance(parameters, dict):
+        parameters = {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": True,
+        }
+    return {
+        "type": "function",
+        "function": {
+            "name": manifest.name,
+            "description": manifest.description,
+            "parameters": parameters,
+        },
+    }
+
+
+def _request_tools_from_registry(registry: Any | None) -> list[dict[str, Any]]:
+    if registry is None:
+        return []
+    rows = getattr(registry, "list_registered", None)
+    if not callable(rows):
+        return []
+    return [_tool_schema_from_manifest(item.manifest) for item in rows()]
 
 
 def build_single_agent_llm_request(
@@ -63,15 +109,21 @@ def build_single_agent_llm_request(
     prompt = run_input.input or (
         run_input.messages[-1].content if run_input.messages else ""
     )
-    prompt_messages = (
-        [msg.model_dump(mode="json") for msg in run_input.messages]
-        if run_input.messages
-        else [{"role": "user", "content": prompt}]
-    )
-    if ctx.clarification is not None and ctx.clarification.strip():
-        prompt = f"{prompt}\n\nClarification: {ctx.clarification.strip()}"
-    if ctx.planning_prompt and ctx.planning_prompt.strip():
-        prompt = f"{prompt}\n\n{ctx.planning_prompt.strip()}"
+    if ctx.protocol_messages is not None:
+        prompt_messages = [
+            message.model_dump(mode="json") for message in ctx.protocol_messages
+        ]
+    else:
+        prompt_messages = (
+            [msg.model_dump(mode="json") for msg in run_input.messages]
+            if run_input.messages
+            else [{"role": "user", "content": prompt}]
+        )
+    if ctx.protocol_messages is None:
+        if ctx.clarification is not None and ctx.clarification.strip():
+            prompt = f"{prompt}\n\nClarification: {ctx.clarification.strip()}"
+        if ctx.planning_prompt and ctx.planning_prompt.strip():
+            prompt = f"{prompt}\n\n{ctx.planning_prompt.strip()}"
     code_prompt_render = None
     if run_input.agent_profile == AgentProfile.CODE_AGENT:
         resolved_tool_docs = ctx.tool_docs
@@ -101,7 +153,13 @@ def build_single_agent_llm_request(
             clarification=ctx.clarification,
         )
         prompt = code_prompt_render.rendered_text
-    if prompt_messages:
+    if ctx.system_instruction and ctx.system_instruction.strip():
+        has_system = any(str(item.get("role", "")) == "system" for item in prompt_messages)
+        if not has_system:
+            prompt_messages = [
+                {"role": "system", "content": ctx.system_instruction.strip()}
+            ] + prompt_messages
+    if prompt_messages and ctx.protocol_messages is None:
         prompt_messages[-1]["content"] = prompt
     trimmed = trim_context(
         budget=ContextBudget(
@@ -121,6 +179,8 @@ def build_single_agent_llm_request(
         model_role=run_input.model_role,
         model=forced_model if isinstance(forced_model, str) else None,
         stream=ctx.stream,
+        tools=_request_tools_from_registry(ctx.registry),
+        tool_choice=ctx.tool_choice,
         metadata=request_metadata,
     )
     trim_metadata = trimmed.model_dump(mode="json").get("metadata", {})

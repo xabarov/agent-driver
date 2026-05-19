@@ -91,8 +91,55 @@ and deterministic.
 CLI now has explicit provider bootstrap path for product workflows:
 
 - shared provider flags for `run` and `chat` (`--provider`, `--model`,
-  `--base-url`, `--api-key`, `--api-key-env`, `--timeout-s`);
-- provider factory supports `fake`, `openai-compatible`, and `ollama`;
-- OpenAI-compatible env aliases supported for OpenRouter-style usage;
+  `--base-url`, `--api-key`, `--timeout-s`);
+- provider factory supports `fake`, `openrouter`, `vllm`, and `ollama`;
+- provider/base/model/key env contract is unified under `AGENT_DRIVER_*`;
 - optional `--provider-healthcheck` emits concise status before execution;
 - `fake` remains default to keep offline deterministic tests stable.
+
+## 8) Chat tools UX milestone (next stage)
+
+Chat now targets a useful model-visible tool surface by default:
+
+- shared tool flags for `run` and `chat` (`--tools`, `--tool`, `--tool-pack`,
+  `--max-tool-risk`, `--allow-dangerous-tools`);
+- safe default packs include read/search/web/planning and avoid dangerous
+  shell/write tools unless explicitly enabled;
+- `/tools` and `/tools verbose` in chat show selected tool surface;
+- chat renderer suppresses low-value runtime internals (`node_completed`) and
+  keeps operator-relevant events compact.
+
+## 9) Provider tool-calling bridge milestone
+
+OpenAI-compatible provider now participates in tool-calling runtime flow:
+
+- request payload includes OpenAI-compatible function schemas derived from
+  selected `ToolManifest` entries;
+- completion and stream normalization parse provider `tool_calls` into runtime
+  `planned_tool_calls` metadata;
+- tool stage can route back to LLM for follow-up answer when finish reason is
+  `tool_calls`, enabling practical chat workflows with selected tool packs;
+- chat output adds compact tool/warning prefixes and per-run summary counters.
+
+## 10) CLI productization milestone
+
+CLI now includes first product-grade operator workflows around chat runtime:
+
+- layered config and profile resolution (`config show`) from flags/env/config files;
+- explicit diagnostics command (`doctor`) with safe output and optional live check;
+- persistent chat session metadata with list/show and in-chat resume/history;
+- CLI and slash-command resume actions (`approve/reject/edit/cancel/clarify`);
+- inspect/export commands for run artifacts and event timelines.
+
+## 11) CLI live evaluation milestone
+
+CLI now includes opt-in live evaluation harness for trace-driven quality checks:
+
+- `agent-driver eval run` executes fixed 10-scenario suite with bounded runtime
+  limits and artifact capture under `.agent-driver/evals/<timestamp>/`;
+- `agent-driver eval inspect` supports summary-level and per-scenario timeline
+  inspection with deterministic plain output;
+- artifact bundle includes manifest, per-scenario traces, summary scorecard,
+  markdown report, and triage grouping;
+- live mode is guarded by `AGENT_DRIVER_RUN_LIVE_CLI_EVALS=1`, while
+  `--offline` supports deterministic local baseline.

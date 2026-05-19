@@ -61,27 +61,15 @@ def live_env(name: str, fallback: str | None = None) -> str | None:
     value = os.getenv(name)
     if value:
         return value
-    legacy_map = {
-        "AGENT_DRIVER_OPENAI_BASE_URL": "OPENROUTER_BASE_URL",
-        "AGENT_DRIVER_OPENAI_API_KEY": "OPENROUTER_API_KEY",
-        "AGENT_DRIVER_OPENAI_MODEL": "OPENROUTER_MODEL",
-    }
-    legacy = legacy_map.get(name)
-    if legacy:
-        legacy_value = os.getenv(legacy)
-        if legacy_value:
-            return legacy_value
     return fallback
 
 
 def require_live_openrouter_config() -> tuple[str, str, str | None]:
-    base_url = live_env("AGENT_DRIVER_OPENAI_BASE_URL")
-    model = live_env("AGENT_DRIVER_OPENAI_MODEL")
-    api_key = live_env("AGENT_DRIVER_OPENAI_API_KEY")
+    base_url = live_env("AGENT_DRIVER_BASE_URL")
+    model = live_env("AGENT_DRIVER_MODEL")
+    api_key = live_env("AGENT_DRIVER_API_KEY")
     if not base_url or not model:
-        pytest.skip(
-            "AGENT_DRIVER_OPENAI_BASE_URL and AGENT_DRIVER_OPENAI_MODEL are required"
-        )
+        pytest.skip("AGENT_DRIVER_BASE_URL and AGENT_DRIVER_MODEL are required")
     return base_url, model, api_key
 
 

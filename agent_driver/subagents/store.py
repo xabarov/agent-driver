@@ -1,10 +1,25 @@
-"""Durable in-memory subagent run/group store."""
+"""Subagent run/group stores (in-memory and sqlite durable backends)."""
 
 from __future__ import annotations
 
+import json
+import sqlite3
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Protocol
 
 from agent_driver.contracts.subagents import SubagentGroup, SubagentRun
+
+
+class SubagentStore(Protocol):  # pylint: disable=too-few-public-methods
+    """Storage protocol for subagent run/group lifecycle rows."""
+
+    def upsert_group(self, group: SubagentGroup) -> SubagentGroup: ...
+    def list_groups(self, parent_run_id: str) -> list[SubagentGroup]: ...
+    def upsert_run(
+        self, run: SubagentRun, *, idempotency_key: str | None = None
+    ) -> SubagentRun: ...
+    def list_runs(self, parent_run_id: str) -> list[SubagentRun]: ...
 
 
 @dataclass(slots=True)
@@ -50,4 +65,114 @@ class InMemorySubagentStore:
         return list(self._runs_by_parent.get(parent_run_id, []))
 
 
-__all__ = ["InMemorySubagentStore"]
+class SqliteSubagentStore:
+    """SQLite-backed subagent store for durable parent-child replay."""
+
+    def __init__(self, *, path: str) -> None:
+        self._path = str(Path(path))
+        self._ensure_schema()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _ensure_schema(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS subagent_groups (
+                    group_id TEXT PRIMARY KEY,
+                    parent_run_id TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS subagent_runs (
+                    subagent_run_id TEXT PRIMARY KEY,
+                    parent_run_id TEXT NOT NULL,
+                    idempotency_key TEXT,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS subagent_runs_parent_idempotency_idx
+                ON subagent_runs(parent_run_id, idempotency_key)
+                WHERE idempotency_key IS NOT NULL
+                """
+            )
+
+    def upsert_group(self, group: SubagentGroup) -> SubagentGroup:
+        payload = json.dumps(group.model_dump(mode="json"), ensure_ascii=False)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO subagent_groups (group_id, parent_run_id, payload)
+                VALUES (?, ?, ?)
+                ON CONFLICT(group_id) DO UPDATE SET
+                    parent_run_id=excluded.parent_run_id,
+                    payload=excluded.payload
+                """,
+                (group.group_id, group.parent_run_id, payload),
+            )
+        return group
+
+    def list_groups(self, parent_run_id: str) -> list[SubagentGroup]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT payload FROM subagent_groups
+                WHERE parent_run_id = ?
+                ORDER BY group_id ASC
+                """,
+                (parent_run_id,),
+            ).fetchall()
+        return [SubagentGroup.model_validate_json(row["payload"]) for row in rows]
+
+    def upsert_run(
+        self, run: SubagentRun, *, idempotency_key: str | None = None
+    ) -> SubagentRun:
+        payload = json.dumps(run.model_dump(mode="json"), ensure_ascii=False)
+        with self._connect() as conn:
+            if idempotency_key:
+                existing = conn.execute(
+                    """
+                    SELECT payload FROM subagent_runs
+                    WHERE parent_run_id = ? AND idempotency_key = ?
+                    LIMIT 1
+                    """,
+                    (run.parent_run_id, idempotency_key),
+                ).fetchone()
+                if existing is not None:
+                    return SubagentRun.model_validate_json(existing["payload"])
+            conn.execute(
+                """
+                INSERT INTO subagent_runs (subagent_run_id, parent_run_id, idempotency_key, payload)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(subagent_run_id) DO UPDATE SET
+                    parent_run_id=excluded.parent_run_id,
+                    idempotency_key=excluded.idempotency_key,
+                    payload=excluded.payload
+                """,
+                (run.subagent_run_id, run.parent_run_id, idempotency_key, payload),
+            )
+        return run
+
+    def list_runs(self, parent_run_id: str) -> list[SubagentRun]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT payload FROM subagent_runs
+                WHERE parent_run_id = ?
+                ORDER BY subagent_run_id ASC
+                """,
+                (parent_run_id,),
+            ).fetchall()
+        return [SubagentRun.model_validate_json(row["payload"]) for row in rows]
+
+
+__all__ = ["InMemorySubagentStore", "SqliteSubagentStore", "SubagentStore"]

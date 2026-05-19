@@ -45,6 +45,7 @@ def create_agent(
     config_copy = deepcopy(config) if config is not None else RunnerConfig()
     source_registry = config_copy.tool_registry or build_default_registry()
     selected_tools = tools or ToolSet.all()
+    selected_tools.validate_known_names(source_registry)
     filtered_registry = selected_tools.apply(source_registry)
     config_copy.tool_registry = filtered_registry
     config_copy.tool_executor = wrap_governed_executor(
@@ -67,8 +68,10 @@ def sdk_config_from_env() -> SdkConfig:
     return SdkConfig(
         run_live_tests=os.getenv("AGENT_DRIVER_RUN_LIVE_TESTS", "0").strip() == "1",
         runtime_store_kind=os.getenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "memory"),
-        openai_base_url=os.getenv("AGENT_DRIVER_OPENAI_BASE_URL"),
-        openai_model=os.getenv("AGENT_DRIVER_OPENAI_MODEL"),
+        provider=os.getenv("AGENT_DRIVER_PROVIDER"),
+        base_url=os.getenv("AGENT_DRIVER_BASE_URL"),
+        model=os.getenv("AGENT_DRIVER_MODEL"),
+        api_key=os.getenv("AGENT_DRIVER_API_KEY"),
     )
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pytest
 
 from agent_driver.tools.builtin.mcp import (
@@ -33,8 +34,14 @@ async def test_mcp_tool_returns_descriptor_and_arguments() -> None:
     assert out["tool_name"] == "search_docs"
     assert out["server"] == "demo-docs"
     assert out["provenance"]["readonly"] is True
+    assert out["descriptor_audit"]["source"] == "builtin_mcp_fixture"
     assert out["arguments"]["query"] == "intro"
     assert out["args_schema"]["type"] == "object"
+    assert tool.manifest.output_schema is not None
+    assert (
+        tool.manifest.metadata["descriptor_provenance"]["inventory_source"]
+        == "builtin static fixtures"
+    )
 
 
 @pytest.mark.asyncio
@@ -50,6 +57,7 @@ async def test_mcp_list_resources_filters_by_server() -> None:
     assert all(
         item["resource_uri"].startswith("resource://") for item in out["resources"]
     )
+    assert out["descriptor_audit"]["resource_count"] == len(out["resources"])
 
 
 @pytest.mark.asyncio
@@ -118,3 +126,56 @@ async def test_mcp_auth_prepares_oauth_flow() -> None:
     assert auth["mode"] == "oauth"
     assert auth["status"] == "pending_user_consent"
     assert auth["authorize_url"].startswith("https://auth.example/mcp/demo-ops")
+    assert out["descriptor_audit"]["mode"] == "oauth"
+
+
+@pytest.mark.asyncio
+async def test_mcp_tools_can_load_catalog_from_json(tmp_path) -> None:
+    """mcp_tool should import descriptors from external JSON catalog."""
+    catalog_path = tmp_path / "mcp_catalog.json"
+    catalog_path.write_text(
+        json.dumps(
+            {
+                "tools": [
+                    {
+                        "server": "ext-docs",
+                        "tool_name": "lookup",
+                        "description": "lookup docs",
+                        "args_schema": {"type": "object"},
+                    }
+                ],
+                "resources": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    registry = ToolRegistry()
+    register_mcp_tools(registry)
+    tool = registry.get("mcp_tool")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "server": "ext-docs",
+            "tool_name": "lookup",
+            "catalog_json_path": str(catalog_path),
+        }
+    )
+    assert out["tool_name"] == "lookup"
+    assert out["descriptor_audit"]["source"].startswith("catalog_json:")
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_allowlist_blocks_not_allowed_tool() -> None:
+    """mcp_tool should enforce explicit allowlist when provided."""
+    registry = ToolRegistry()
+    register_mcp_tools(registry)
+    tool = registry.get("mcp_tool")
+    assert tool is not None
+    with pytest.raises(ValueError, match="not in allowlist"):
+        await tool.handler(
+            {
+                "server": "demo-docs",
+                "tool_name": "search_docs",
+                "tool_allowlist": ["list_jobs"],
+            }
+        )

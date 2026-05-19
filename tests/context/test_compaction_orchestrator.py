@@ -120,6 +120,33 @@ def test_orchestrator_failure_counter_resets_after_success() -> None:
     assert orchestrator._consecutive_failures == 0  # pylint: disable=protected-access
 
 
+def test_orchestrator_state_snapshot_reports_circuit_breaker() -> None:
+    """State snapshot should expose lock/failure/circuit fields."""
+    orchestrator = CompactionOrchestrator(failure_limit=1)
+    decision = orchestrator.decide(
+        enable_compaction=True,
+        enable_session_memory_compaction=False,
+        enable_llm_compaction=True,
+        token_pressure_state="blocking",
+        session_memory=None,
+    )
+    compaction_id = orchestrator.start_attempt()
+    orchestrator.complete_attempt(
+        decision=decision,
+        result=CompactionResult(
+            compaction_id=compaction_id,
+            mode=CompactionMode.LLM_FULL,
+            success=False,
+            metadata={"failure": "forced"},
+        ),
+        failures=[{"kind": "forced"}],
+    )
+    snapshot = orchestrator.state_snapshot()
+    assert snapshot["failure_limit"] == 1
+    assert snapshot["consecutive_failures"] == 1
+    assert snapshot["circuit_breaker_open"] is True
+
+
 def test_partial_compaction_prefix_summary_keeps_recent_tail() -> None:
     """Partial compaction should summarize prefix and keep recent tail."""
     messages = [

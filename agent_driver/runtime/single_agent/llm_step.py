@@ -9,7 +9,8 @@ from agent_driver.context import (
     render_planning_step_prompt,
 )
 from agent_driver.contracts.context import PlanningStep
-from agent_driver.contracts.enums import RuntimeEventType, TerminalReason
+from agent_driver.contracts.enums import AgentProfile, ChatRole, RuntimeEventType, TerminalReason
+from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.single_agent.compaction_stage import (
@@ -33,6 +34,13 @@ from agent_driver.runtime.single_agent.types import (
     RuntimeStepResult,
 )
 from agent_driver.runtime.single_agent.step_events import emit_step_event
+
+_REACT_CHAT_TOOL_POLICY = (
+    "You are a terminal chat assistant. Reply in the user's language. "
+    "Use tools only when needed. After receiving tool results, provide a final answer. "
+    "If web search results are empty, state that clearly and ask for clarification rather than "
+    "repeating many similar searches."
+)
 
 
 class LlmStepHost(CompactionStageHost, Protocol):
@@ -60,6 +68,7 @@ async def execute_llm_call_step(host: LlmStepHost, context: RunContext) -> Runti
         request, trim_payload = _build_trimmed_request(
             host, context, observations, clarification
         )
+        _emit_protocol_debug(host, context, request)
         context.metadata["trim_audit"] = trim_payload["trim_audit"]
         context.metadata["trim_metadata"] = trim_payload["trim_metadata"]
         context.metadata["token_pressure"] = trim_payload["token_pressure"]
@@ -154,6 +163,28 @@ def _build_trimmed_request(
         planning_prompt = render_planning_step_prompt(
             PlanningStep.model_validate(planning_step_payload)
         )
+    protocol_messages = _protocol_messages_from_metadata(context)
+    tool_choice = context.metadata.get("tool_choice_override")
+    system_instruction = None
+    if (
+        context.run_input.agent_profile == AgentProfile.REACT_TEXT
+        and context.run_input.app_metadata.get("chat_mode") is True
+    ):
+        system_instruction = _REACT_CHAT_TOOL_POLICY
+    if (
+        context.metadata.get("force_final_answer") is True
+        and protocol_messages is not None
+        and protocol_messages
+    ):
+        protocol_messages = protocol_messages + (
+            ChatMessage(
+                role=ChatRole.USER,
+                content=(
+                    "Use provided tool results and answer the user now. "
+                    "Do not call more tools in this turn."
+                ),
+            ),
+        )
     return build_single_agent_llm_request(
         LlmRequestBuildContext(
             run_input=context.run_input,
@@ -165,8 +196,10 @@ def _build_trimmed_request(
             ),
             authorized_imports=host._config.authorized_imports,
             registry=host._deps.tool_registry,
-            observations=tuple(
-                item for item in observations if isinstance(item, dict)
+            observations=(
+                tuple()
+                if protocol_messages is not None
+                else tuple(item for item in observations if isinstance(item, dict))
             ),
             planning_prompt=planning_prompt,
             digest_ids=tuple(
@@ -188,6 +221,13 @@ def _build_trimmed_request(
             blocking_threshold=host._config.token_blocking_threshold,
             output_token_reserve=host._config.output_token_reserve,
             stream=is_stream_enabled(context.run_input),
+            system_instruction=system_instruction,
+            protocol_messages=protocol_messages,
+            tool_choice=(
+                str(tool_choice)
+                if isinstance(tool_choice, str)
+                else (tool_choice if isinstance(tool_choice, dict) else None)
+            ),
         )
     )
 
@@ -220,6 +260,43 @@ def _emit_token_pressure_warning(host: LlmStepHost, context: RunContext) -> None
             "state": state,
             "used_tokens_estimate": token_pressure.get("used_tokens_estimate"),
             "blocking_threshold": token_pressure.get("blocking_threshold"),
+        },
+    )
+
+
+def _protocol_messages_from_metadata(context: RunContext) -> tuple[ChatMessage, ...] | None:
+    payload = context.metadata.get("protocol_messages")
+    if not isinstance(payload, list):
+        return None
+    rows: list[ChatMessage] = []
+    for item in payload:
+        if isinstance(item, dict):
+            rows.append(ChatMessage.model_validate(item))
+    return tuple(rows) if rows else None
+
+
+def _emit_protocol_debug(host: LlmStepHost, context: RunContext, request: Any) -> None:
+    if context.run_input.app_metadata.get("debug_tool_protocol") is not True:
+        return
+    messages = request.messages if isinstance(request.messages, list) else []
+    roles = [message.role.value for message in messages]
+    tool_names: list[str] = []
+    for tool in request.tools:
+        function_payload = tool.get("function")
+        if isinstance(function_payload, dict):
+            name = function_payload.get("name")
+            if isinstance(name, str) and name.strip():
+                tool_names.append(name)
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.WARNING,
+        payload={
+            "kind": "tool_protocol_debug",
+            "message_count": len(messages),
+            "roles": roles,
+            "tool_names": tool_names,
+            "tool_choice": request.tool_choice,
         },
     )
 

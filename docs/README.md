@@ -166,6 +166,8 @@ stored = local_exporter.get(trace_payload.trace_id)
   - `render_succinct_view(...)`
   - `render_cli_replay(...)`
   - `build_support_bundle(...)`
+  - `build_runtime_support_bundle(...)`
+  - `build_persisted_support_bundle(...)`
 
 Example:
 
@@ -246,12 +248,9 @@ output = await runner.run(
 - `AGENT_DRIVER_RUN_POSTGRES_TESTS=1 AGENT_DRIVER_POSTGRES_DSN=postgresql://... .venv/bin/python -m pytest -m live tests/runtime/test_postgres_store_live.py`
 - If `.env` exists in repository root, live tests auto-load it (without printing secret values).
 - Optional env vars for live adapters:
-  - `AGENT_DRIVER_OPENAI_BASE_URL`, `AGENT_DRIVER_OPENAI_MODEL`, `AGENT_DRIVER_OPENAI_API_KEY`
-  - `AGENT_DRIVER_OLLAMA_BASE_URL`, `AGENT_DRIVER_OLLAMA_MODEL`
+  - `AGENT_DRIVER_PROVIDER` (`openrouter` | `vllm` | `ollama`)
+  - `AGENT_DRIVER_BASE_URL`, `AGENT_DRIVER_MODEL`, `AGENT_DRIVER_API_KEY`
   - `AGENT_DRIVER_POSTGRES_DSN` (for opt-in PostgreSQL runtime store checks)
-- Legacy aliases from `.env.template` are also supported:
-  - `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL`, `OPENROUTER_API_KEY`
-  - `OLLAMA_BASE_URL`, `OLLAMA_MODEL`
 
 ## Optional Extras
 

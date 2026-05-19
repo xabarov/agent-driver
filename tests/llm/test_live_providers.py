@@ -24,22 +24,10 @@ load_local_dotenv_for_live_tests()
 
 
 def _env(name: str, fallback: str | None = None) -> str | None:
-    """Resolve env var from AGENT_DRIVER_* or legacy .env names."""
+    """Resolve env var from AGENT_DRIVER_* names."""
     value = os.getenv(name)
     if value:
         return value
-    legacy_map = {
-        "AGENT_DRIVER_OPENAI_BASE_URL": "OPENROUTER_BASE_URL",
-        "AGENT_DRIVER_OPENAI_API_KEY": "OPENROUTER_API_KEY",
-        "AGENT_DRIVER_OPENAI_MODEL": "OPENROUTER_MODEL",
-        "AGENT_DRIVER_OLLAMA_BASE_URL": "OLLAMA_BASE_URL",
-        "AGENT_DRIVER_OLLAMA_MODEL": "OLLAMA_MODEL",
-    }
-    legacy = legacy_map.get(name)
-    if legacy:
-        legacy_value = os.getenv(legacy)
-        if legacy_value:
-            return legacy_value
     return fallback
 
 
@@ -49,17 +37,15 @@ def _env(name: str, fallback: str | None = None) -> str | None:
 )
 async def test_live_openai_compatible_healthcheck() -> None:
     """Run optional live OpenAI-compatible healthcheck."""
-    base_url = _env("AGENT_DRIVER_OPENAI_BASE_URL")
-    model = _env("AGENT_DRIVER_OPENAI_MODEL")
+    base_url = _env("AGENT_DRIVER_BASE_URL")
+    model = _env("AGENT_DRIVER_MODEL")
     if not base_url or not model:
-        pytest.skip(
-            "AGENT_DRIVER_OPENAI_BASE_URL and AGENT_DRIVER_OPENAI_MODEL are required"
-        )
+        pytest.skip("AGENT_DRIVER_BASE_URL and AGENT_DRIVER_MODEL are required")
     provider = OpenAICompatibleProvider(
         config=OpenAICompatibleProvider.Config(
             name="openai-live",
             base_url=base_url,
-            api_key=_env("AGENT_DRIVER_OPENAI_API_KEY"),
+            api_key=_env("AGENT_DRIVER_API_KEY"),
             model=model,
         )
     )
@@ -74,13 +60,11 @@ async def test_live_openai_compatible_healthcheck() -> None:
 )
 async def test_live_openai_compatible_complete_smoke() -> None:
     """Run optional live OpenRouter/OpenAI-compatible completion smoke test."""
-    base_url = _env("AGENT_DRIVER_OPENAI_BASE_URL")
-    model = _env("AGENT_DRIVER_OPENAI_MODEL")
-    api_key = _env("AGENT_DRIVER_OPENAI_API_KEY")
+    base_url = _env("AGENT_DRIVER_BASE_URL")
+    model = _env("AGENT_DRIVER_MODEL")
+    api_key = _env("AGENT_DRIVER_API_KEY")
     if not base_url or not model:
-        pytest.skip(
-            "AGENT_DRIVER_OPENAI_BASE_URL and AGENT_DRIVER_OPENAI_MODEL are required"
-        )
+        pytest.skip("AGENT_DRIVER_BASE_URL and AGENT_DRIVER_MODEL are required")
     provider = OpenAICompatibleProvider(
         config=OpenAICompatibleProvider.Config(
             name="openai-live",
@@ -107,7 +91,7 @@ async def test_live_openai_compatible_complete_smoke() -> None:
 )
 async def test_live_ollama_healthcheck() -> None:
     """Run optional live Ollama healthcheck."""
-    base_url = _env("AGENT_DRIVER_OLLAMA_BASE_URL", "http://localhost:11434")
+    base_url = _env("AGENT_DRIVER_BASE_URL", "http://localhost:11434")
     provider = OllamaProvider(config=OllamaProvider.Config(base_url=base_url))
     status = await provider.healthcheck()
     assert status.configured is True
@@ -119,8 +103,8 @@ async def test_live_ollama_healthcheck() -> None:
 )
 async def test_live_ollama_complete_smoke() -> None:
     """Run optional live Ollama completion smoke test."""
-    base_url = _env("AGENT_DRIVER_OLLAMA_BASE_URL", "http://localhost:11434")
-    model = _env("AGENT_DRIVER_OLLAMA_MODEL", "llama3:8b")
+    base_url = _env("AGENT_DRIVER_BASE_URL", "http://localhost:11434")
+    model = _env("AGENT_DRIVER_MODEL", "llama3:8b")
     provider = OllamaProvider(
         config=OllamaProvider.Config(base_url=base_url, model=model)
     )

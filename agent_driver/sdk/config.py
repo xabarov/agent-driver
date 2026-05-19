@@ -11,8 +11,10 @@ class SdkConfig:
 
     run_live_tests: bool = False
     runtime_store_kind: str = "memory"
-    openai_base_url: str | None = None
-    openai_model: str | None = None
+    provider: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
 
 
 __all__ = ["SdkConfig"]

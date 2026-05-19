@@ -25,9 +25,9 @@ async def test_live_subagent_openrouter_lane() -> None:
     """Live subagent lane should execute and expose group lifecycle."""
     if not _live_enabled():
         pytest.skip("live tests disabled")
-    base_url = os.getenv("AGENT_DRIVER_OPENAI_BASE_URL") or os.getenv("OPENROUTER_BASE_URL")
-    model = os.getenv("AGENT_DRIVER_OPENAI_MODEL") or os.getenv("OPENROUTER_MODEL")
-    api_key = os.getenv("AGENT_DRIVER_OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+    base_url = os.getenv("AGENT_DRIVER_BASE_URL")
+    model = os.getenv("AGENT_DRIVER_MODEL")
+    api_key = os.getenv("AGENT_DRIVER_API_KEY")
     if not base_url or not model:
         pytest.skip("OpenRouter live env is not configured")
     provider = OpenAICompatibleProvider(

@@ -50,6 +50,7 @@ async def complete_streaming_request(
     finish_reason = LlmFinishReason.UNKNOWN
     provider_name = host._deps.provider.name
     model_name = request.model or "stream-model"
+    stream_metadata: dict[str, Any] = {}
     async for item in host._deps.provider.stream(request):
         chunk = item.delta_text or ""
         if chunk:
@@ -57,6 +58,13 @@ async def complete_streaming_request(
             emit_token_delta_events(
                 host, context, [chunk], start_index=len(delta_chunks) - 1
             )
+        if isinstance(item.metadata, dict):
+            if "planned_tool_calls" in item.metadata:
+                stream_metadata["planned_tool_calls"] = item.metadata["planned_tool_calls"]
+            if "tool_call_parse_errors" in item.metadata:
+                stream_metadata["tool_call_parse_errors"] = item.metadata[
+                    "tool_call_parse_errors"
+                ]
         if item.finish_reason is not None:
             finish_reason = item.finish_reason
         if item.usage is not None:
@@ -73,6 +81,7 @@ async def complete_streaming_request(
             **request.metadata,
             "token_chunks": delta_chunks,
             "token_chunks_emitted": True,
+            **stream_metadata,
         },
     )
 

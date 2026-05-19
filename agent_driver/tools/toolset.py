@@ -63,6 +63,7 @@ class ToolSet:
     """Declarative tool-surface selector over an existing registry."""
 
     names: tuple[str, ...] | None = None
+    excluded_names: tuple[str, ...] | None = None
     max_risk: ToolRisk | None = None
     side_effects: tuple[SideEffectClass, ...] | None = None
     profile: AgentProfile | None = None
@@ -94,6 +95,7 @@ class ToolSet:
         """Return copy capped by maximum risk."""
         return ToolSet(
             names=self.names,
+            excluded_names=self.excluded_names,
             max_risk=max_risk,
             side_effects=self.side_effects,
             profile=self.profile,
@@ -104,9 +106,51 @@ class ToolSet:
         """Return copy constrained by agent profile compatibility."""
         return ToolSet(
             names=self.names,
+            excluded_names=self.excluded_names,
             max_risk=self.max_risk,
             side_effects=self.side_effects,
             profile=profile,
+            application_tags=self.application_tags,
+        )
+
+    def with_side_effects(self, *side_effects: SideEffectClass) -> "ToolSet":
+        """Return copy constrained to selected side-effect classes."""
+        unique = tuple(dict.fromkeys(side_effects))
+        next_side_effects: tuple[SideEffectClass, ...] | None = (
+            unique if unique else None
+        )
+        return ToolSet(
+            names=self.names,
+            excluded_names=self.excluded_names,
+            max_risk=self.max_risk,
+            side_effects=next_side_effects,
+            profile=self.profile,
+            application_tags=self.application_tags,
+        )
+
+    def with_application_tags(self, *tags: str) -> "ToolSet":
+        """Return copy constrained by manifest application tags."""
+        normalized = tuple(dict.fromkeys(item.strip() for item in tags if item.strip()))
+        next_tags: tuple[str, ...] | None = normalized if normalized else None
+        return ToolSet(
+            names=self.names,
+            excluded_names=self.excluded_names,
+            max_risk=self.max_risk,
+            side_effects=self.side_effects,
+            profile=self.profile,
+            application_tags=next_tags,
+        )
+
+    def without(self, *names: str) -> "ToolSet":
+        """Return copy excluding explicit tool names."""
+        existing = set(self.excluded_names or ())
+        existing.update(item.strip() for item in names if item.strip())
+        return ToolSet(
+            names=self.names,
+            excluded_names=tuple(sorted(existing)),
+            max_risk=self.max_risk,
+            side_effects=self.side_effects,
+            profile=self.profile,
             application_tags=self.application_tags,
         )
 
@@ -122,8 +166,10 @@ class ToolSet:
 
     def _name_matches(self, manifest: ToolManifest) -> bool:
         if self.names is None:
-            return True
-        return manifest.name in set(self.names)
+            return manifest.name not in set(self.excluded_names or ())
+        return manifest.name in set(self.names) and manifest.name not in set(
+            self.excluded_names or ()
+        )
 
     def _risk_matches(self, manifest: ToolManifest) -> bool:
         if self.max_risk is None:
@@ -159,6 +205,21 @@ class ToolSet:
             if self._matches(registered.manifest):
                 filtered.register(registered.manifest, registered.handler)
         return filtered
+
+    def unknown_names(self, source: ToolRegistry) -> tuple[str, ...]:
+        """Return explicit names requested but absent in source registry."""
+        if self.names is None:
+            return ()
+        known = set(source.list_names())
+        missing = sorted(name for name in self.names if name not in known)
+        return tuple(missing)
+
+    def validate_known_names(self, source: ToolRegistry) -> None:
+        """Fail fast when ToolSet.only contains unknown names."""
+        missing = self.unknown_names(source)
+        if not missing:
+            return
+        raise ValueError(f"unknown tool names in ToolSet: {', '.join(missing)}")
 
     def manifests(self, source: ToolRegistry) -> list[ToolManifest]:
         """Return selected manifests for prompt/doc surface rendering."""

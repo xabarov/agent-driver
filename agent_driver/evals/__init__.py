@@ -10,8 +10,12 @@ from agent_driver.evals.context_quality import (
     score_context_quality,
 )
 from agent_driver.evals.context_compaction_runner import (
+    ContextQualityGatePolicy,
+    ContextQualityGateResult,
     StrategyComparisonRow,
+    render_context_compaction_gate_report,
     render_context_compaction_report,
+    run_context_compaction_regression_gate,
     run_context_compaction_strategy_comparison,
 )
 from agent_driver.evals.contracts import (
@@ -61,6 +65,7 @@ __all__ = [
     "evaluate_terminal_state",
     "evaluate_tool_policy",
     "render_cli_replay",
+    "render_context_compaction_gate_report",
     "render_context_compaction_report",
     "render_full_debug_view",
     "render_succinct_view",
@@ -70,6 +75,9 @@ __all__ = [
     "evaluate_baseline_strategies",
     "run_dataset",
     "run_context_compaction_strategy_comparison",
+    "run_context_compaction_regression_gate",
     "score_context_quality",
     "StrategyComparisonRow",
+    "ContextQualityGatePolicy",
+    "ContextQualityGateResult",
 ]

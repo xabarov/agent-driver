@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from agent_driver.contracts.tools import ToolCall
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.usage import UsageSummary
 from agent_driver.llm.base import HttpClientConfig, ProviderBase, StreamRequest
@@ -77,6 +79,68 @@ def _extract_usage_metadata(payload: dict[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def _planned_tool_calls_from_openai(
+    tool_calls_payload: object,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    planned: list[dict[str, Any]] = []
+    parse_errors: list[dict[str, Any]] = []
+    if not isinstance(tool_calls_payload, list):
+        return planned, parse_errors
+    for index, item in enumerate(tool_calls_payload):
+        if not isinstance(item, dict):
+            continue
+        function = item.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = str(function.get("name") or "").strip()
+        if not name:
+            continue
+        raw_args = function.get("arguments", "{}")
+        args: dict[str, Any] = {}
+        if isinstance(raw_args, str):
+            stripped = raw_args.strip()
+            if stripped:
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, dict):
+                        args = parsed
+                    else:
+                        parse_errors.append(
+                            {
+                                "index": index,
+                                "tool_name": name,
+                                "error": "arguments_json_must_be_object",
+                                "raw_arguments": stripped,
+                            }
+                        )
+                except json.JSONDecodeError:
+                    parse_errors.append(
+                        {
+                            "index": index,
+                            "tool_name": name,
+                            "error": "arguments_json_parse_failed",
+                            "raw_arguments": stripped,
+                        }
+                    )
+        elif isinstance(raw_args, dict):
+            args = raw_args
+        try:
+            planned_call = ToolCall(
+                tool_name=name,
+                args=args,
+                tool_call_id=(
+                    str(item.get("id"))
+                    if isinstance(item.get("id"), str) and str(item.get("id")).strip()
+                    else None
+                ),
+                metadata={"provider_tool_call_index": index},
+            )
+        except (TypeError, ValueError):
+            continue
+        planned.append(planned_call.model_dump(mode="json"))
+    return planned, parse_errors
+
+
 def normalize_openai_completion_payload(
     payload: dict[str, Any], *, provider_name: str, fallback_model: str
 ) -> LlmResponse:
@@ -87,6 +151,13 @@ def normalize_openai_completion_payload(
     model_name = str(payload.get("model") or fallback_model)
     usage = _extract_usage(payload, provider=provider_name, model=model_name)
     metadata = _extract_usage_metadata(payload)
+    planned_tool_calls, parse_errors = _planned_tool_calls_from_openai(
+        message_payload.get("tool_calls")
+    )
+    if planned_tool_calls:
+        metadata["planned_tool_calls"] = planned_tool_calls
+    if parse_errors:
+        metadata["tool_call_parse_errors"] = parse_errors
     return LlmResponse(
         message=ChatMessage(role="assistant", content=text),
         finish_reason=_map_finish_reason(choice.get("finish_reason")),
@@ -112,6 +183,14 @@ def normalize_openai_stream_chunk(
         else None
     )
     metadata = _extract_usage_metadata(payload)
+    choice_payload = choice if isinstance(choice, dict) else {}
+    planned_tool_calls, parse_errors = _planned_tool_calls_from_openai(
+        choice_payload.get("tool_calls")
+    )
+    if planned_tool_calls:
+        metadata["planned_tool_calls"] = planned_tool_calls
+    if parse_errors:
+        metadata["tool_call_parse_errors"] = parse_errors
     return LlmStreamEvent(
         event="delta",
         delta_text=text,
@@ -160,16 +239,39 @@ class OpenAICompatibleProvider(ProviderBase):
         return headers
 
     def _payload(self, request: LlmRequest, *, stream: bool) -> dict[str, Any]:
-        return {
+        messages_payload: list[dict[str, Any]] = []
+        for message in request.messages:
+            row: dict[str, Any] = {
+                "role": message.role.value,
+                "content": message.content,
+            }
+            if message.name:
+                row["name"] = message.name
+            if message.tool_call_id:
+                row["tool_call_id"] = message.tool_call_id
+            tool_calls = message.metadata.get("tool_calls")
+            if (
+                message.role.value == "assistant"
+                and isinstance(tool_calls, list)
+                and tool_calls
+            ):
+                row["tool_calls"] = tool_calls
+            messages_payload.append(row)
+        payload = {
             "model": request.model or self._model,
-            "messages": [
-                {"role": message.role.value, "content": message.content}
-                for message in request.messages
-            ],
+            "messages": messages_payload,
             "max_tokens": request.max_tokens,
             "temperature": request.temperature,
             "stream": stream,
         }
+        if request.tools:
+            payload["tools"] = request.tools
+            payload["tool_choice"] = (
+                request.tool_choice if request.tool_choice is not None else "auto"
+            )
+        elif request.tool_choice is not None:
+            payload["tool_choice"] = request.tool_choice
+        return payload
 
     async def healthcheck(self) -> ProviderStatus:
         """Probe provider endpoint availability."""
@@ -221,6 +323,7 @@ class OpenAICompatibleProvider(ProviderBase):
             handled_exceptions=handled_errors,
         )
         async with self.stream_client_with_telemetry(stream_request) as lines:
+            pending_tool_calls: dict[int, dict[str, Any]] = {}
             async for line in lines:
                 if not line or not line.startswith("data: "):
                     continue
@@ -228,11 +331,49 @@ class OpenAICompatibleProvider(ProviderBase):
                 if raw.strip() == "[DONE]":
                     break
                 payload = httpx.Response(200, text=raw).json()
+                choice = payload.get("choices", [{}])[0]
+                if isinstance(choice, dict):
+                    delta = choice.get("delta")
+                    if isinstance(delta, dict):
+                        for entry in delta.get("tool_calls", []) or []:
+                            if not isinstance(entry, dict):
+                                continue
+                            try:
+                                index = int(entry.get("index", 0) or 0)
+                            except (TypeError, ValueError):
+                                index = 0
+                            function = entry.get("function")
+                            state = pending_tool_calls.setdefault(
+                                index,
+                                {"id": entry.get("id"), "function": {"name": "", "arguments": ""}},
+                            )
+                            if isinstance(entry.get("id"), str) and entry.get("id"):
+                                state["id"] = entry["id"]
+                            if isinstance(function, dict):
+                                state_fn = state.setdefault(
+                                    "function", {"name": "", "arguments": ""}
+                                )
+                                if isinstance(function.get("name"), str):
+                                    state_fn["name"] = f"{state_fn.get('name', '')}{function['name']}"
+                                if isinstance(function.get("arguments"), str):
+                                    state_fn["arguments"] = (
+                                        f"{state_fn.get('arguments', '')}{function['arguments']}"
+                                    )
                 yield normalize_openai_stream_chunk(
                     payload,
                     provider_name=self.name,
                     fallback_model=str(request.model or self._model),
                 )
+            if pending_tool_calls:
+                flattened = [pending_tool_calls[idx] for idx in sorted(pending_tool_calls)]
+                planned_tool_calls, parse_errors = _planned_tool_calls_from_openai(flattened)
+                if planned_tool_calls or parse_errors:
+                    metadata: dict[str, Any] = {}
+                    if planned_tool_calls:
+                        metadata["planned_tool_calls"] = planned_tool_calls
+                    if parse_errors:
+                        metadata["tool_call_parse_errors"] = parse_errors
+                    yield LlmStreamEvent(event="tool_calls", metadata=metadata)
 
 
 __all__ = [

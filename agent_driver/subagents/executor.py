@@ -20,7 +20,7 @@ from agent_driver.subagents.join import evaluate_join_policy
 from agent_driver.subagents.merge import merge_subagent_outputs
 from agent_driver.subagents.planner import build_child_context_handoff
 from agent_driver.subagents.specs import SubagentGroupSpec, SubagentTaskSpec
-from agent_driver.subagents.store import InMemorySubagentStore
+from agent_driver.subagents.store import SubagentStore
 
 ChildRunner = Callable[[AgentRunInput], "object"]
 
@@ -53,7 +53,7 @@ async def _run_single_child_task(
     group: SubagentGroup,
     task: SubagentTaskSpec,
     idx: int,
-    store: InMemorySubagentStore,
+    store: SubagentStore,
     child_runner: ChildRunner,
     child_app_metadata: dict | None,
 ) -> SubagentRun:
@@ -142,7 +142,7 @@ async def execute_subagent_group_sync(
     *,
     parent: SubagentParentHandoff,
     group_spec: SubagentGroupSpec,
-    store: InMemorySubagentStore,
+    store: SubagentStore,
     child_runner: ChildRunner,
     max_child_runs: int,
     child_app_metadata: dict | None = None,

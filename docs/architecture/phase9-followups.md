@@ -9,9 +9,10 @@ remain highest risk for production orchestration:
 
 ## Scope
 
-The current in-memory implementation already supports idempotent spawn keys and
-basic group/run persistence, but it does not yet have an explicit reconciliation
-pass for stale rows or a recovery API that can be called on parent restart.
+The current implementation already supports idempotent spawn keys and basic
+group/run persistence (`InMemorySubagentStore` and `SqliteSubagentStore`), but
+it does not yet have an explicit reconciliation pass for stale rows or a
+recovery API that can be called on parent restart.
 
 ## PR 1: Recovery Snapshot and Reconcile API
 

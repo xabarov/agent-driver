@@ -25,7 +25,7 @@ from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import ToolExecutor
-from agent_driver.subagents.store import InMemorySubagentStore
+from agent_driver.subagents.store import SubagentStore
 from agent_driver.tools.registry import ToolRegistry
 
 
@@ -48,7 +48,7 @@ class RunnerConfig:
     context_store: ContextStore | None
     observation_max_chars: int
     include_planning_prompt: bool
-    subagent_store: InMemorySubagentStore | None
+    subagent_store: SubagentStore | None
     code_executor: CodeActionExecutor | None
     tool_registry: ToolRegistry | None
     trimming: TrimmingSettings
@@ -141,6 +141,14 @@ class RunnerConfig:
         return self.compaction.enable_llm_compaction
 
     @property
+    def enable_partial_compaction(self) -> bool:
+        return self.compaction.enable_partial_compaction
+
+    @property
+    def enable_ptl_retry(self) -> bool:
+        return self.compaction.enable_ptl_retry
+
+    @property
     def compaction_failure_limit(self) -> int:
         return self.compaction.compaction_failure_limit
 
@@ -151,6 +159,14 @@ class RunnerConfig:
     @property
     def compaction_model(self) -> str:
         return self.compaction.compaction_model
+
+    @property
+    def ptl_retry_max_chars(self) -> int:
+        return self.compaction.ptl_retry_max_chars
+
+    @property
+    def post_compact_max_reinjected_artifact_refs(self) -> int:
+        return self.compaction.post_compact_max_reinjected_artifact_refs
 
     @property
     def enable_subagents(self) -> bool:
@@ -258,7 +274,7 @@ class RunnerDeps:
     session_store: SessionStore
     artifact_store: ArtifactStore
     context_store: ContextStore
-    subagent_store: InMemorySubagentStore
+    subagent_store: SubagentStore
     code_executor: CodeActionExecutor
     tool_registry: ToolRegistry
 

@@ -73,11 +73,21 @@ class CompactionOrchestrator:
             decision=decision,
             result=result,
             failures=normalized_failures,
+            metadata=self.state_snapshot(),
         )
 
     def reset_failures(self) -> None:
         """Reset consecutive failure counter after successful compaction."""
         self._consecutive_failures = 0
+
+    def state_snapshot(self) -> dict[str, int | bool]:
+        """Expose lock/circuit state for durable replay and audits."""
+        return {
+            "lock_active": self._lock_active,
+            "consecutive_failures": self._consecutive_failures,
+            "failure_limit": self.failure_limit,
+            "circuit_breaker_open": self._consecutive_failures >= self.failure_limit,
+        }
 
 
 @dataclass(slots=True)

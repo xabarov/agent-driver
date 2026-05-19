@@ -38,6 +38,10 @@ _RESULT_LINK_RE = re.compile(
     r'<a[^>]+class="[^"]*result-link[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
     re.IGNORECASE | re.DOTALL,
 )
+_RESULT_LINK_ALT_RE = re.compile(
+    r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
@@ -220,7 +224,14 @@ async def _web_search_handler(args: dict[str, Any]) -> dict[str, Any]:
     except (httpx.HTTPError, ValueError) as exc:
         raise ValueError(f"web_search failed: {exc}") from exc
     rows = _parse_duckduckgo_html(payload.text, max_results=max_results)
-    return _search_payload(query=query, source="duckduckgo_html", rows=rows)
+    result = _search_payload(query=query, source="duckduckgo_html", rows=rows)
+    if not rows:
+        result["diagnostic"] = {
+            "status": "no_results_parsed",
+            "html_chars": len(payload.text),
+            "content_type": payload.content_type,
+        }
+    return result
 
 
 def _search_payload(
@@ -255,6 +266,17 @@ def _normalize_mock_results(
 def _parse_duckduckgo_html(html: str, *, max_results: int) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for match in _RESULT_LINK_RE.finditer(html):
+        href = unescape(match.group(1)).strip()
+        title_html = match.group(2)
+        title = _clean_html_text(title_html)
+        if not href:
+            continue
+        rows.append({"title": title, "url": href, "snippet": ""})
+        if len(rows) >= max_results:
+            break
+    if rows:
+        return rows
+    for match in _RESULT_LINK_ALT_RE.finditer(html):
         href = unescape(match.group(1)).strip()
         title_html = match.group(2)
         title = _clean_html_text(title_html)

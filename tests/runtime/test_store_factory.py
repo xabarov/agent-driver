@@ -63,11 +63,15 @@ def test_factory_env_postgres_flags(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_DRIVER_POSTGRES_DSN", "postgresql://test")
     monkeypatch.setenv("AGENT_DRIVER_POSTGRES_SCHEMA", "agent_driver")
     monkeypatch.setenv("AGENT_DRIVER_POSTGRES_AUTO_CREATE_SCHEMA", "0")
+    monkeypatch.setenv("AGENT_DRIVER_POSTGRES_CONNECT_TIMEOUT_SECONDS", "9")
+    monkeypatch.setenv("AGENT_DRIVER_POSTGRES_APPLICATION_NAME", "agent-driver-tests")
     cfg = runtime_store_config_from_env()
     assert cfg.kind == "postgres"
     assert cfg.postgres_dsn == "postgresql://test"
     assert cfg.postgres_schema == "agent_driver"
     assert cfg.postgres_auto_create_schema is False
+    assert cfg.postgres_connect_timeout_seconds == 9
+    assert cfg.postgres_application_name == "agent-driver-tests"
 
 
 def test_factory_env_postgres_flags_case_insensitive(monkeypatch) -> None:

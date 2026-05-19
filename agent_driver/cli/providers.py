@@ -24,7 +24,6 @@ class CliProviderConfig:
     model: str | None = None
     base_url: str | None = None
     api_key: str | None = None
-    api_key_env: str | None = None
     timeout_s: float = 30.0
     fake_response: str = "ok"
 
@@ -40,45 +39,32 @@ def _first_present(environ: Mapping[str, str], *keys: str) -> str | None:
 def _resolve_api_key(config: CliProviderConfig, environ: Mapping[str, str]) -> str | None:
     if config.api_key:
         return config.api_key
-    if config.api_key_env:
-        return environ.get(config.api_key_env)
-    return _first_present(
-        environ,
-        "AGENT_DRIVER_OPENAI_API_KEY",
-        "OPENROUTER_API_KEY",
-    )
+    return environ.get("AGENT_DRIVER_API_KEY")
 
 
 def _build_openai_compatible(
-    config: CliProviderConfig, environ: Mapping[str, str]
+    config: CliProviderConfig, environ: Mapping[str, str], *, provider_name: str
 ) -> LlmProvider:
-    base_url = config.base_url or _first_present(
-        environ,
-        "AGENT_DRIVER_OPENAI_BASE_URL",
-        "OPENROUTER_BASE_URL",
-    )
-    model = config.model or _first_present(
-        environ,
-        "AGENT_DRIVER_OPENAI_MODEL",
-        "OPENROUTER_MODEL",
-    )
+    base_url = config.base_url or environ.get("AGENT_DRIVER_BASE_URL")
+    model = config.model or environ.get("AGENT_DRIVER_MODEL")
     api_key = _resolve_api_key(config, environ)
     missing: list[str] = []
     if not base_url:
         missing.append("base_url")
     if not model:
         missing.append("model")
-    if not api_key:
+    if provider_name == "openrouter" and not api_key:
         missing.append("api_key")
     if missing:
         raise CliProviderConfigError(
-            "openai-compatible provider missing required settings: "
+            f"{provider_name} provider missing required settings: "
             + ", ".join(missing)
-            + ". Use flags or env vars AGENT_DRIVER_OPENAI_* / OPENROUTER_*."
+            + ". Use flags or env vars AGENT_DRIVER_API_KEY, "
+            "AGENT_DRIVER_BASE_URL, AGENT_DRIVER_MODEL."
         )
     return OpenAICompatibleProvider(
         config=OpenAICompatibleProvider.Config(
-            name="openai-compatible",
+            name=provider_name,
             base_url=base_url,
             api_key=api_key,
             model=model,
@@ -88,8 +74,8 @@ def _build_openai_compatible(
 
 
 def _build_ollama(config: CliProviderConfig, environ: Mapping[str, str]) -> LlmProvider:
-    base_url = config.base_url or environ.get("AGENT_DRIVER_OLLAMA_BASE_URL") or "http://localhost:11434"
-    model = config.model or environ.get("AGENT_DRIVER_OLLAMA_MODEL") or "llama3:8b"
+    base_url = config.base_url or environ.get("AGENT_DRIVER_BASE_URL") or "http://localhost:11434"
+    model = config.model or environ.get("AGENT_DRIVER_MODEL") or "llama3:8b"
     return OllamaProvider(
         config=OllamaProvider.Config(
             name="ollama",
@@ -107,12 +93,12 @@ def build_cli_provider(
     env = dict(os.environ if environ is None else environ)
     if config.provider == "fake":
         return FakeProvider(response_text=config.fake_response)
-    if config.provider == "openai-compatible":
-        return _build_openai_compatible(config, env)
+    if config.provider in {"openrouter", "vllm"}:
+        return _build_openai_compatible(config, env, provider_name=config.provider)
     if config.provider == "ollama":
         return _build_ollama(config, env)
     raise CliProviderConfigError(
-        f"Unsupported provider '{config.provider}'. Use fake|openai-compatible|ollama."
+        f"Unsupported provider '{config.provider}'. Use fake|openrouter|vllm|ollama."
     )
 
 

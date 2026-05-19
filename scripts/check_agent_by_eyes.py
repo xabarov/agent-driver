@@ -33,14 +33,11 @@ def _load_local_dotenv() -> None:
 
 async def main() -> int:
     _load_local_dotenv()
-    api_key = os.getenv("AGENT_DRIVER_OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
-    base_url = os.getenv("AGENT_DRIVER_OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
-    model = os.getenv("AGENT_DRIVER_OPENAI_MODEL", "openai/gpt-4o-mini")
+    api_key = os.getenv("AGENT_DRIVER_API_KEY")
+    base_url = os.getenv("AGENT_DRIVER_BASE_URL", "https://openrouter.ai/api/v1")
+    model = os.getenv("AGENT_DRIVER_MODEL", "openai/gpt-4o-mini")
     if not api_key:
-        print(
-            "Missing API key. Set AGENT_DRIVER_OPENAI_API_KEY "
-            "or OPENROUTER_API_KEY in environment/.env."
-        )
+        print("Missing API key. Set AGENT_DRIVER_API_KEY in environment/.env.")
         return 2
     provider = OpenAICompatibleProvider(
         config=OpenAICompatibleProvider.Config(
@@ -76,7 +73,7 @@ async def main() -> int:
         status = exc.response.status_code if exc.response is not None else "unknown"
         print(f"Provider request failed (status={status}).")
         if status == 401:
-            print("Unauthorized: check AGENT_DRIVER_OPENAI_API_KEY / OPENROUTER_API_KEY.")
+            print("Unauthorized: check AGENT_DRIVER_API_KEY.")
         else:
             print(str(exc))
         return 1

@@ -79,12 +79,16 @@ class SingleAgentStepMixin:
     ) -> None:
         """Persist tool stage traces/results into context metadata."""
         context.tool_calls += len(result.traces)
-        context.metadata["tool_trace"] = [
-            trace.model_dump(mode="json") for trace in result.traces
-        ]
-        context.metadata["tool_results"] = [
-            item.model_dump(mode="json") for item in result.envelopes
-        ]
+        existing_trace = context.metadata.get("tool_trace")
+        if not isinstance(existing_trace, list):
+            existing_trace = []
+        existing_results = context.metadata.get("tool_results")
+        if not isinstance(existing_results, list):
+            existing_results = []
+        existing_trace.extend(trace.model_dump(mode="json") for trace in result.traces)
+        existing_results.extend(item.model_dump(mode="json") for item in result.envelopes)
+        context.metadata["tool_trace"] = existing_trace
+        context.metadata["tool_results"] = existing_results
 
     async def _execute_run_started(self, context: RunContext) -> RuntimeStepResult:
         self._emit(
