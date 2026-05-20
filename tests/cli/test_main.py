@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import importlib
+from types import SimpleNamespace
 
 from agent_driver.cli.sessions import SessionStore
 
@@ -176,6 +178,55 @@ def test_cli_chat_keyboard_interrupt_returns_130(monkeypatch, capsys) -> None:
     assert code == 130
     output = capsys.readouterr().out
     assert "chat> interrupted" in output
+
+
+def test_chat_command_enables_compaction_flags(monkeypatch) -> None:
+    """Chat command should create agent with compaction toggles enabled."""
+    captured: dict[str, object] = {}
+
+    def _fake_store_bundle(_config):
+        return SimpleNamespace(checkpoint_store=object(), event_log=object())
+
+    async def _fake_provider_healthcheck():
+        return SimpleNamespace(
+            provider_name="fake",
+            healthy=True,
+            configured=True,
+            latency_ms=1.0,
+        )
+
+    fake_provider = SimpleNamespace(name="fake", healthcheck=_fake_provider_healthcheck)
+
+    def _fake_create_agent(**kwargs):
+        captured["config"] = kwargs.get("config")
+
+        class _Registry:
+            @staticmethod
+            def list_registered():
+                return []
+
+        fake_runner = SimpleNamespace(deps=SimpleNamespace(tool_registry=_Registry()))
+        return SimpleNamespace(runner=fake_runner)
+
+    async def _fake_run_chat_session(**_kwargs):
+        return 0
+
+    monkeypatch.setattr(cli_main, "create_runtime_store_bundle", _fake_store_bundle)
+    monkeypatch.setattr(cli_main, "build_cli_provider", lambda _cfg: fake_provider)
+    monkeypatch.setattr(cli_main, "build_cli_toolset", lambda _cfg: object())
+    monkeypatch.setattr(cli_main, "create_agent", _fake_create_agent)
+    monkeypatch.setattr(cli_main, "run_chat_session", _fake_run_chat_session)
+
+    args = cli_main._build_parser().parse_args(["chat", "--provider", "fake", "--plain"])  # pylint: disable=protected-access
+    resolved = cli_main._resolve_args_with_config_and_explicit(  # pylint: disable=protected-access
+        args, explicit_options={"--provider", "--plain"}
+    )
+    code = asyncio.run(cli_main._chat_command(resolved))  # pylint: disable=protected-access
+    assert code == 0
+    cfg = captured["config"]
+    assert cfg is not None
+    assert cfg.enable_compaction is True
+    assert cfg.enable_session_memory_compaction is True
 
 
 def test_cli_config_show_outputs_json(tmp_path, monkeypatch, capsys) -> None:

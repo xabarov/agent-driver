@@ -266,6 +266,8 @@ class SingleAgentOutputMixin:
             ),
             "prompt_render": context.metadata.get("prompt_render"),
             "approval_payload": self._approval_payload_from_context(context),
+            "step_count": context.step_count,
+            "tool_calls": context.tool_calls,
         }
 
     def _approval_payload_from_context(
@@ -330,6 +332,8 @@ class SingleAgentOutputMixin:
                 "approval_payload": ApprovalPayload.from_interrupt(
                     result.interrupt
                 ).model_dump(mode="json"),
+                "step_count": context.step_count,
+                "tool_calls": context.tool_calls,
             },
         )
 

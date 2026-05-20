@@ -36,7 +36,10 @@ def _skill_tool_manifest() -> ToolManifest:
             "properties": {
                 "base_dir": {
                     "type": "string",
-                    "description": "Absolute directory to scan; defaults to cwd",
+                    "description": (
+                        "Directory to scan; absolute or relative to workspace cwd; "
+                        "defaults to cwd"
+                    ),
                 },
                 "max_results": {
                     "type": "integer",
@@ -73,8 +76,10 @@ async def _skill_tool_handler(args: dict[str, Any]) -> dict[str, Any]:
     include_hidden = bool(args.get("include_hidden", False))
     trusted_roots = _normalize_trusted_roots(args.get("trusted_roots"))
     skills: list[dict[str, Any]] = []
+    truncated = False
     for path in sorted(base.rglob("SKILL.md")):
         if len(skills) >= max_results:
+            truncated = True
             break
         rel = path.relative_to(base).as_posix()
         if not include_hidden and _is_hidden_path(path=path, base=base):
@@ -96,6 +101,10 @@ async def _skill_tool_handler(args: dict[str, Any]) -> dict[str, Any]:
         "summary": f"{len(skills)} skills discovered",
         "base_dir": str(base),
         "skills": skills,
+        "returned_count": len(skills),
+        "truncated": truncated,
+        "max_results": max_results,
+        "more_available": truncated,
     }
 
 

@@ -19,6 +19,7 @@ _BUILTIN_PACKS: dict[str, tuple[str, ...]] = {
     "filesystem_write": ("file_write", "file_edit", "notebook_edit"),
     "web": ("web_fetch", "web_search"),
     "shell": ("bash", "powershell_tool"),
+    "python_exec": ("python",),
     "code_intelligence": ("lsp_tool",),
     "planning": ("planning_state_update", "todo_write", "ask_user_question"),
     "tasking": (

@@ -317,6 +317,32 @@ async def test_sdk_stream_tool_completed_event_contains_named_tools() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sdk_stream_tool_started_event_contains_args() -> None:
+    """Projected tool start events should include serialized args payload."""
+    provider = _ToolLoopProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only("web_search"))
+    events = [
+        item
+        async for item in agent.stream(
+            AgentRunInput(
+                input="stream tools with args",
+                run_id="run_sdk_tool_started_payload",
+                agent_id="agent",
+                graph_preset="single_react",
+                stream=False,
+                max_tool_calls=4,
+                max_steps=10,
+            )
+        )
+    ]
+    started = [item for item in events if item.event == RuntimeEventType.TOOL_CALL_STARTED.value]
+    assert started
+    tools_payload = started[0].data.get("tools")
+    assert isinstance(tools_payload, list) and tools_payload
+    assert isinstance(tools_payload[0].get("args"), dict)
+
+
+@pytest.mark.asyncio
 async def test_sdk_followup_request_uses_tool_messages_and_none_choice() -> None:
     """Second LLM request should carry assistant tool call + tool message transcript."""
     provider = _ProtocolCaptureProvider()
@@ -334,7 +360,7 @@ async def test_sdk_followup_request_uses_tool_messages_and_none_choice() -> None
     assert output.answer == "protocol final answer"
     assert len(provider.requests) >= 2
     followup = provider.requests[1]
-    assert followup.tool_choice == "none"
+    assert followup.tool_choice in (None, "auto")
     assistant_rows = [item for item in followup.messages if item.role.value == "assistant"]
     tool_rows = [item for item in followup.messages if item.role.value == "tool"]
     assert assistant_rows

@@ -16,6 +16,7 @@ from agent_driver.contracts import (
     ToolManifest,
     ToolRisk,
 )
+from agent_driver.tools.context import get_workspace_cwd
 from agent_driver.tools.registry import ToolRegistry
 
 _BASH_TOOL = "bash"
@@ -93,7 +94,9 @@ def _bash_manifest() -> ToolManifest:
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Optional absolute working directory",
+                    "description": (
+                        "Optional working directory; omit to use workspace cwd"
+                    ),
                 },
                 "timeout_seconds": {
                     "type": "number",
@@ -310,7 +313,7 @@ def _risk_from_category(category: str) -> str:
 
 def _resolve_cwd(raw: Any) -> Path:
     if raw is None:
-        cwd = Path.cwd()
+        cwd = get_workspace_cwd()
     elif isinstance(raw, str) and raw.strip():
         cwd = Path(raw).expanduser()
     else:

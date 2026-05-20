@@ -29,6 +29,9 @@ class CliConfig:
     store_kind: str | None = None
     sqlite_path: str | None = None
     postgres_dsn: str | None = None
+    enable_python: bool | None = None
+    python_backend: str | None = None
+    python_allow_imports: str | None = None
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
@@ -56,6 +59,9 @@ def _from_section(payload: dict[str, Any]) -> CliConfig:
         store_kind=_as_str(cli.get("store_kind")),
         sqlite_path=_as_str(cli.get("sqlite_path")),
         postgres_dsn=_as_str(cli.get("postgres_dsn")),
+        enable_python=_as_bool(cli.get("enable_python")),
+        python_backend=_as_str(cli.get("python_backend")),
+        python_allow_imports=_as_str(cli.get("python_allow_imports")),
     )
 
 
@@ -93,6 +99,9 @@ def config_to_dict(config: CliConfig) -> dict[str, Any]:
         "store_kind": config.store_kind,
         "sqlite_path": config.sqlite_path,
         "postgres_dsn": bool(config.postgres_dsn),
+        "enable_python": config.enable_python,
+        "python_backend": config.python_backend,
+        "python_allow_imports": config.python_allow_imports,
     }
 
 
@@ -130,6 +139,11 @@ def resolve_with_env(config: CliConfig, *, cwd: Path | None = None) -> CliConfig
             timeout_s=_as_float(os.environ.get("AGENT_DRIVER_PROVIDER_TIMEOUT_S")),
             sqlite_path=_as_str(os.environ.get("AGENT_DRIVER_SQLITE_PATH")),
             postgres_dsn=_as_str(os.environ.get("AGENT_DRIVER_POSTGRES_DSN")),
+            enable_python=_as_bool(os.environ.get("AGENT_DRIVER_ENABLE_PYTHON")),
+            python_backend=_as_str(os.environ.get("AGENT_DRIVER_PYTHON_BACKEND")),
+            python_allow_imports=_as_str(
+                os.environ.get("AGENT_DRIVER_PYTHON_ALLOW_IMPORTS")
+            ),
         ),
     )
 
@@ -157,6 +171,19 @@ def _as_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _as_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return None
 
 
 __all__ = [

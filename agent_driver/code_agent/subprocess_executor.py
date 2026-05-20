@@ -18,7 +18,7 @@ from agent_driver.code_agent.contracts import (
     CodeAgentObservation,
 )
 from agent_driver.code_agent.execution_common import (
-    SAFE_BUILTINS,
+    build_safe_builtins,
     CodeExecutionError,
     CodeExecutionRequest,
     validate_or_raise,
@@ -28,6 +28,14 @@ from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 
 
 def _worker(payload: dict[str, Any], queue: Any) -> None:
+    authorized_imports_raw = payload.get("authorized_imports")
+    authorized_imports: set[str] = set()
+    if isinstance(authorized_imports_raw, list):
+        authorized_imports = {
+            str(item).strip()
+            for item in authorized_imports_raw
+            if isinstance(item, str) and item.strip()
+        }
     """Run restricted python action in child process and push result payload."""
     action_code = str(payload.get("code", ""))
     max_output_chars = int(payload.get("max_output_chars", 400))
@@ -38,14 +46,16 @@ def _worker(payload: dict[str, Any], queue: Any) -> None:
         final_answer_holder["text"] = text
         return text
 
-    locals_env: dict[str, object] = {"final_answer": _final_answer}
-    globals_env: dict[str, object] = {"__builtins__": SAFE_BUILTINS}
+    namespace: dict[str, object] = {
+        "__builtins__": build_safe_builtins(authorized_imports),
+        "final_answer": _final_answer,
+    }
     stdout = io.StringIO()
     stderr = io.StringIO()
     started = monotonic()
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            exec(action_code, globals_env, locals_env)  # noqa: S102
+            exec(action_code, namespace)  # noqa: S102
     except Exception as exc:
         queue.put({"error": str(exc)})
         return
@@ -119,6 +129,7 @@ class SubprocessRestrictedCodeExecutor:
                 {
                     "code": action.code,
                     "max_output_chars": limits.max_output_chars,
+                    "authorized_imports": sorted(authorized_imports),
                 },
                 queue,
             ),

@@ -35,3 +35,27 @@ async def test_tool_search_can_include_schema_fields() -> None:
     row = rows[0]
     assert row["name"] == "read_file"
     assert isinstance(row["args_schema"], dict)
+
+
+@pytest.mark.asyncio
+async def test_tool_search_requires_non_empty_query() -> None:
+    """tool_search should fail fast on empty query."""
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    tool = registry.get("tool_search")
+    assert tool is not None
+    with pytest.raises(ValueError, match="query is required"):
+        await tool.handler({"query": ""})
+
+
+@pytest.mark.asyncio
+async def test_tool_search_reports_truncated_metadata() -> None:
+    """tool_search should expose cap metadata when max_results is reached."""
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    tool = registry.get("tool_search")
+    assert tool is not None
+    out = await tool.handler({"query": "tool", "max_results": 1})
+    assert out["returned_count"] == 1
+    assert out["truncated"] is True
+    assert out["more_available"] is True

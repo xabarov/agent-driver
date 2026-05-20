@@ -12,6 +12,12 @@ from agent_driver.contracts.context import PlanningStep
 from agent_driver.contracts.enums import AgentProfile, ChatRole, RuntimeEventType, TerminalReason
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmResponse
+from agent_driver.prompts import (
+    force_final_answer_user_message,
+    python_tool_system_addendum,
+    react_base_policy,
+    react_chat_tool_policy,
+)
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.single_agent.compaction_stage import (
     CompactionStageHost,
@@ -34,14 +40,6 @@ from agent_driver.runtime.single_agent.types import (
     RuntimeStepResult,
 )
 from agent_driver.runtime.single_agent.step_events import emit_step_event
-
-_REACT_CHAT_TOOL_POLICY = (
-    "You are a terminal chat assistant. Reply in the user's language. "
-    "Use tools only when needed. After receiving tool results, provide a final answer. "
-    "If web search results are empty, state that clearly and ask for clarification rather than "
-    "repeating many similar searches."
-)
-
 
 class LlmStepHost(CompactionStageHost, Protocol):
     """Host surface for LLM step execution."""
@@ -165,12 +163,7 @@ def _build_trimmed_request(
         )
     protocol_messages = _protocol_messages_from_metadata(context)
     tool_choice = context.metadata.get("tool_choice_override")
-    system_instruction = None
-    if (
-        context.run_input.agent_profile == AgentProfile.REACT_TEXT
-        and context.run_input.app_metadata.get("chat_mode") is True
-    ):
-        system_instruction = _REACT_CHAT_TOOL_POLICY
+    system_instruction = _react_system_instruction(host, context)
     if (
         context.metadata.get("force_final_answer") is True
         and protocol_messages is not None
@@ -179,10 +172,7 @@ def _build_trimmed_request(
         protocol_messages = protocol_messages + (
             ChatMessage(
                 role=ChatRole.USER,
-                content=(
-                    "Use provided tool results and answer the user now. "
-                    "Do not call more tools in this turn."
-                ),
+                content=force_final_answer_user_message(),
             ),
         )
     return build_single_agent_llm_request(
@@ -194,7 +184,7 @@ def _build_trimmed_request(
                 if isinstance(context.metadata.get("code_tool_docs"), str)
                 else None
             ),
-            authorized_imports=host._config.authorized_imports,
+            authorized_imports=_effective_code_agent_imports(host),
             registry=host._deps.tool_registry,
             observations=(
                 tuple()
@@ -299,6 +289,42 @@ def _emit_protocol_debug(host: LlmStepHost, context: RunContext, request: Any) -
             "tool_choice": request.tool_choice,
         },
     )
+
+
+def _effective_code_agent_imports(host: LlmStepHost) -> tuple[str, ...]:
+    imports = host._config.authorized_imports
+    if imports:
+        return imports
+    if host._config.python_tool.enabled:
+        return host._config.python_tool.default_imports
+    return tuple()
+
+
+def _python_tool_addendum_if_present(host: LlmStepHost) -> str | None:
+    if not host._config.python_tool.enabled:
+        return None
+    has_python_tool = any(
+        row.manifest.name == "python"
+        for row in host._deps.tool_registry.list_registered()
+    )
+    if not has_python_tool:
+        return None
+    return python_tool_system_addendum(host._config.python_tool)
+
+
+def _react_system_instruction(host: LlmStepHost, context: RunContext) -> str | None:
+    if context.run_input.agent_profile != AgentProfile.REACT_TEXT:
+        return None
+    lines = [react_base_policy()]
+    if context.run_input.app_metadata.get("chat_mode") is True:
+        lines.append(react_chat_tool_policy())
+    python_addendum = _python_tool_addendum_if_present(host)
+    if python_addendum:
+        lines.append(python_addendum)
+    workspace_cwd = context.run_input.app_metadata.get("workspace_cwd")
+    if isinstance(workspace_cwd, str) and workspace_cwd.strip():
+        lines.append(f"Workspace cwd: {workspace_cwd.strip()}")
+    return "\n".join(lines)
 
 
 __all__ = ["LlmStepHost", "execute_llm_call_step"]

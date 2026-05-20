@@ -6,6 +6,8 @@ import fnmatch
 from pathlib import Path
 from typing import Any
 
+from agent_driver.tools.context import get_workspace_cwd
+
 MAX_BYTES_DEFAULT = 64_000
 MAX_OFFSET_DEFAULT = 1_000_000
 
@@ -16,7 +18,7 @@ def resolve_file_path(raw: Any) -> Path:
         raise ValueError("path must be a non-empty string")
     path = Path(raw).expanduser()
     if not path.is_absolute():
-        raise ValueError("path must be absolute")
+        path = (get_workspace_cwd() / path).resolve()
     if not path.exists():
         raise ValueError(f"path does not exist: {path}")
     if not path.is_file():
@@ -27,9 +29,11 @@ def resolve_file_path(raw: Any) -> Path:
 def resolve_base_dir(raw: Any) -> Path:
     """Resolve an absolute existing directory path."""
     if raw is None:
-        base = Path.cwd()
+        base = get_workspace_cwd()
     elif isinstance(raw, str) and raw.strip():
         base = Path(raw).expanduser()
+        if not base.is_absolute():
+            base = (get_workspace_cwd() / base).resolve()
     else:
         raise ValueError("base_dir must be a non-empty string when provided")
     if not base.is_absolute():
@@ -47,7 +51,7 @@ def resolve_writable_path(raw: Any, *, create_parent: bool) -> Path:
         raise ValueError("path must be a non-empty string")
     path = Path(raw).expanduser()
     if not path.is_absolute():
-        raise ValueError("path must be absolute")
+        path = (get_workspace_cwd() / path).resolve()
     if path.exists() and path.is_dir():
         raise ValueError(f"path is not a file: {path}")
     parent = path.parent

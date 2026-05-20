@@ -103,6 +103,26 @@ def _trim_messages_to_budget(
     kept: list[dict[str, object]] = []
     audit: list[TrimAuditRecord] = []
     running_chars = 0
+    last_tool_index = -1
+    for idx, row in enumerate(working_messages):
+        if str(row.get("role", "")).strip().lower() == "tool":
+            last_tool_index = idx
+
+    def _tool_stub(message: dict[str, object]) -> dict[str, object]:
+        name = str(message.get("name") or "tool")
+        tool_call_id = str(message.get("tool_call_id") or "")
+        suffix = f" id={tool_call_id}" if tool_call_id else ""
+        return {
+            "role": "tool",
+            "name": name,
+            "tool_call_id": tool_call_id or None,
+            "content": (
+                f"[trimmed] Prior tool result for {name}{suffix} was dropped due to context "
+                "budget. Re-run the tool if exact values are needed."
+            ),
+            "metadata": {"tool_trim_stub": True},
+        }
+
     for index, message in enumerate(working_messages):
         content = str(message.get("content", ""))
         prospective = running_chars + len(content)
@@ -139,6 +159,34 @@ def _trim_messages_to_budget(
                     action=TrimAction.REPLACED_WITH_ARTIFACT,
                     reason="budget_overflow",
                     metadata={"artifact_id": artifact_id, "length": len(content)},
+                )
+            )
+            continue
+        if index == last_tool_index:
+            stub = _tool_stub(message)
+            stub_content = str(stub.get("content", ""))
+            while kept and running_chars + len(stub_content) > max_chars:
+                removed = kept.pop(0)
+                removed_content = str(removed.get("content", ""))
+                running_chars = max(0, running_chars - len(removed_content))
+                audit.append(
+                    TrimAuditRecord(
+                        record_id=f"trim_rebalance_{index}_{len(kept)}",
+                        kind="message",
+                        action=TrimAction.DROPPED,
+                        reason="budget_rebalanced_for_tool_stub",
+                        metadata={"length": len(removed_content)},
+                    )
+                )
+            kept.append(stub)
+            running_chars += len(stub_content)
+            audit.append(
+                TrimAuditRecord(
+                    record_id=f"trim_{index}",
+                    kind="message",
+                    action=TrimAction.REPLACED_WITH_ARTIFACT,
+                    reason="budget_overflow_tool_stub",
+                    metadata={"length": len(content), "tool_stub": True},
                 )
             )
             continue

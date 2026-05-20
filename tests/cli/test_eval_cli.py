@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib
+from datetime import UTC, datetime
+from pathlib import Path
 import json
 
 import pytest
@@ -12,11 +14,15 @@ from agent_driver.cli.evals import (
     EvalScenario,
     LiveEvalSkipped,
     can_run_provider,
+    live_scenarios_for_suite,
     default_live_scenarios,
     render_eval_inspect,
     run_live_evaluation,
 )
 from agent_driver.cli.providers import CliProviderConfig
+from agent_driver.contracts import AgentRunOutput
+from agent_driver.contracts.events import RuntimeEvent
+from agent_driver.contracts.tools import ToolTrace
 from agent_driver.cli.tools import CliToolConfig
 from agent_driver.runtime import RuntimeStoreFactoryConfig
 
@@ -176,6 +182,21 @@ def test_eval_run_command_dispatch_monkeypatched(monkeypatch) -> None:
     assert cli_main.main(["eval", "run", "--provider", "fake", "--offline"]) == 0
 
 
+def test_eval_run_command_dispatch_supports_regression_suite(monkeypatch) -> None:
+    """Main should accept regression suite selector for eval run."""
+
+    async def _fake_eval_run(_args):
+        return 0
+
+    monkeypatch.setattr(cli_main, "_eval_run_command", _fake_eval_run)
+    assert (
+        cli_main.main(
+            ["eval", "run", "--provider", "fake", "--offline", "--suite", "regression"]
+        )
+        == 0
+    )
+
+
 def test_can_run_provider_reports_missing_openrouter_config(monkeypatch) -> None:
     """Live eval readiness check should explain missing OpenRouter config."""
     monkeypatch.delenv("AGENT_DRIVER_BASE_URL", raising=False)
@@ -208,3 +229,105 @@ def test_eval_run_command_clean_skip_without_opt_in(monkeypatch, capsys) -> None
     assert code == 0
     output = capsys.readouterr().out
     assert "eval skip:" in output
+
+
+@pytest.mark.asyncio
+async def test_run_live_evaluation_writes_absolute_sandbox_dir(tmp_path) -> None:
+    """Sandbox scenario artifact should persist absolute sandbox path."""
+    bundle_dir, _ = await run_live_evaluation(
+        provider_config=CliProviderConfig(provider="fake"),
+        tool_config=CliToolConfig(tools_mode="default"),
+        store_config=RuntimeStoreFactoryConfig(kind="memory"),
+        output_dir=tmp_path,
+        scenarios=[
+            EvalScenario(
+                scenario_id="sandbox_case",
+                prompt="x",
+                prompt_template="work in {sandbox}",
+                sandbox_required=True,
+                max_steps=4,
+                max_tool_calls=2,
+                deadline_seconds=10.0,
+            )
+        ],
+        offline=True,
+    )
+    artifact = json.loads((bundle_dir / "sandbox_case.json").read_text(encoding="utf-8"))
+    sandbox_raw = artifact["scenario"]["sandbox_dir"]
+    assert isinstance(sandbox_raw, str)
+    assert Path(sandbox_raw).is_absolute()
+
+
+def test_summarize_run_uses_tool_results_args_for_repeated_arguments() -> None:
+    """repeated_tool_arguments should use call.args when available."""
+    from agent_driver.cli.evals import summarize_run
+
+    scenario = EvalScenario(scenario_id="s", prompt="p", expected_tools=("file_write",))
+    event = RuntimeEvent(
+        event_id="evt_1",
+        type="run_completed",
+        run_id="run_s",
+        attempt_id="attempt_1",
+        seq=1,
+        created_at=datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
+        payload={},
+    )
+    trace_1 = ToolTrace(
+        step=1,
+        tool_name="file_write",
+        status="completed",
+        risk="medium",
+        side_effect="reversible_write",
+        approval_mode="on_policy_match",
+    )
+    trace_2 = ToolTrace(
+        step=2,
+        tool_name="file_write",
+        status="completed",
+        risk="medium",
+        side_effect="reversible_write",
+        approval_mode="on_policy_match",
+    )
+    output = AgentRunOutput(
+        run_id="run_s",
+        attempt_id="attempt_1",
+        status="completed",
+        terminal_reason="final_answer",
+        answer="ok",
+        events=[event],
+        tool_trace=[trace_1, trace_2],
+        metadata={
+            "tool_results": [
+                {"call": {"tool_name": "file_write", "args": {"path": "/tmp/a.txt"}}},
+                {"call": {"tool_name": "file_write", "args": {"path": "/tmp/b.txt"}}},
+            ],
+            "step_count": 5,
+        },
+    )
+    summary = summarize_run(scenario=scenario, output=output, elapsed_ms=10)
+    assert summary.repeated_tools == ["file_write"]
+    assert summary.repeated_tool_arguments == []
+    assert summary.runtime_step_count == 5
+
+
+@pytest.mark.asyncio
+async def test_run_live_evaluation_offline_smoke_file_edit_minimal_patch(tmp_path) -> None:
+    """Deep file_edit scenario should render sandbox artifact in offline mode."""
+    scenario = next(
+        row
+        for row in live_scenarios_for_suite("deep")
+        if row.scenario_id == "file_edit_minimal_patch"
+    )
+    bundle_dir, _ = await run_live_evaluation(
+        provider_config=CliProviderConfig(provider="fake"),
+        tool_config=CliToolConfig(tools_mode="default"),
+        store_config=RuntimeStoreFactoryConfig(kind="memory"),
+        output_dir=tmp_path,
+        scenarios=[scenario],
+        offline=True,
+    )
+    artifact = json.loads(
+        (bundle_dir / "file_edit_minimal_patch.json").read_text(encoding="utf-8")
+    )
+    assert artifact["scenario"]["sandbox_required"] is True
+    assert artifact["scenario"]["scenario_id"] == "file_edit_minimal_patch"

@@ -2,23 +2,37 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import shlex
+import subprocess
+import sys
+import time
 import uuid
 
 from agent_driver.adapters import cli_replay_lines, cli_tail_lines
 from agent_driver.contracts import ToolManifest
-from agent_driver.contracts import AgentRunInput, RunStreamEvent
-from agent_driver.cli.prompt_icon import PromptSpinner
+from agent_driver.contracts import AgentRunInput
+from agent_driver.contracts.enums import ChatRole
+from agent_driver.contracts.messages import ChatMessage
+from agent_driver.cli.chat_stream import render_chat_stream
+from agent_driver.cli.tui.prompt import ChatPromptSession
+from agent_driver.cli.tui.renderer import build_renderer
 from agent_driver.runtime.storage import RuntimeEventLog
 from agent_driver.sdk import Agent
 from agent_driver.cli.sessions import SessionStore
 
+try:  # pragma: no cover - optional dependency
+    from prompt_toolkit.patch_stdout import patch_stdout
+except Exception:  # pragma: no cover - optional dependency
+    patch_stdout = None  # type: ignore[assignment]
+
 _EXIT_COMMANDS = {"exit", "quit"}
-_TERMINAL_EVENTS = {"run_completed", "run_failed", "run_cancelled"}
+_CTRL_C_WINDOW_SECONDS = 2.0
 
 
 @dataclass(slots=True)
@@ -56,129 +70,22 @@ def parse_chat_command(raw: str) -> tuple[str, list[str]] | None:
     return (parts[0].lower(), parts[1:])
 
 
-def _format_compact_event(event: RunStreamEvent) -> str | None:
-    name = event.event
-    if name in {
-        "run_started",
-        "llm_call_started",
-        "llm_call_completed",
-        "checkpoint_saved",
-        "node_started",
-        "node_completed",
-        "guardrail_decision",
-    }:
-        return None
-    if name in _TERMINAL_EVENTS:
-        reason = event.data.get("reason")
-        return f"run {name}" if reason is None else f"run {name} reason={reason}"
-    if name in {"tool_call_started", "tool_call_completed"}:
-        tools = event.data.get("tools")
-        if isinstance(tools, list) and tools:
-            rendered: list[str] = []
-            for tool in tools:
-                if not isinstance(tool, dict):
-                    continue
-                tool_name = str(tool.get("tool_name") or "?")
-                status = tool.get("status")
-                summary = tool.get("result_summary")
-                suffix = f" status={status}" if isinstance(status, str) and status else ""
-                if isinstance(summary, str) and summary.strip():
-                    suffix = f"{suffix} summary={summary.strip()[:80]}"
-                rendered.append(f"{tool_name}{suffix}")
-            if rendered:
-                phase = "start" if name == "tool_call_started" else "done"
-                return f"tool {phase} " + " | ".join(rendered)
-        tool_name = event.data.get("tool_name", "?")
-        status = event.data.get("status")
-        suffix = f" status={status}" if status else ""
-        return f"tool {name} tool={tool_name}{suffix}"
-    if name == "warning":
-        kind = str(event.data.get("kind", "warning"))
-        if kind == "tool_protocol_debug":
-            return (
-                "warning kind=tool_protocol_debug "
-                f"messages={event.data.get('message_count')} "
-                f"roles={event.data.get('roles')} "
-                f"tool_choice={event.data.get('tool_choice')} "
-                f"tool_names={event.data.get('tool_names')}"
-            )
-        return f"warning kind={kind}"
-    if name in {"interrupt_requested", "run_paused"}:
-        reason = event.data.get("reason", "unknown")
-        return f"interrupt reason={reason}"
-    return f"event {name}"
-
-
-async def render_chat_stream(
-    *,
-    stream,
-    output: Callable[[str], None],
-    run_id: str,
-    animate: bool = False,
-) -> str:
-    """Render stream to chat-oriented output and return assistant text."""
-    assistant_parts: list[str] = []
-    token_line_open = False
-    saw_terminal = False
-    tools_used = 0
-    warnings_seen = 0
-    spinner = PromptSpinner(output=output, enabled=animate)
-    spinner.start()
-    try:
-        async for event in stream:
-            if event.event == "token_delta":
-                await spinner.stop()
-                if not token_line_open:
-                    output("assistant> ")
-                    token_line_open = True
-                delta = str(event.data.get("delta_text") or "")
-                if delta:
-                    assistant_parts.append(delta)
-                    output(delta)
-                continue
-            compact = _format_compact_event(event)
-            if compact is None:
-                continue
-            await spinner.stop()
-            if token_line_open:
-                output("\n")
-                token_line_open = False
-            if compact.startswith("tool "):
-                tools_used += 1
-                output(f"tool> {compact}\n")
-            elif compact.startswith("warning "):
-                warnings_seen += 1
-                output(f"warn> {compact}\n")
-            else:
-                output(f"event> {compact}\n")
-                if event.event == "run_failed":
-                    reason = str(event.data.get("reason") or "")
-                    if reason == "max_steps_exceeded":
-                        output(
-                            "hint> run failed by max steps limit; increase --max-steps if needed\n"
-                        )
-                    elif reason == "tool_policy_denied":
-                        output(
-                            "hint> run stopped by tool-call budget/policy; check --max-tool-calls and tool policy\n"
-                        )
-            if event.event in _TERMINAL_EVENTS:
-                saw_terminal = True
-            elif not token_line_open:
-                spinner.start()
-    finally:
-        await spinner.stop(clear=not token_line_open)
-    if token_line_open:
-        output("\n")
-    assistant_text = "".join(assistant_parts)
-    if not assistant_text and not saw_terminal:
-        output("assistant> [no textual response]\n")
-    output(f"run> {run_id} tools_used={tools_used} warnings={warnings_seen}\n")
-    return assistant_text
+def _transcript_to_messages(transcript: list[tuple[str, str]]) -> list[ChatMessage]:
+    messages: list[ChatMessage] = []
+    for role, text in transcript:
+        content = text.strip()
+        if not content:
+            continue
+        if role == "user":
+            messages.append(ChatMessage(role=ChatRole.USER, content=content))
+        elif role == "assistant":
+            messages.append(ChatMessage(role=ChatRole.ASSISTANT, content=content))
+    return messages
 
 
 def _print_help(output: Callable[[str], None]) -> None:
     output(
-        "Commands: /help /exit /quit /clear /runs /sessions /history "
+        "Commands: /help /exit /quit /clear /reset /runs /sessions /history "
         "/resume <session_id> /tools [verbose] /model /provider /limits "
         "/debug on|off /save [path] /export [path] /doctor "
         "/approve <run_id> <interrupt_id> /reject <run_id> <interrupt_id> [message] "
@@ -208,6 +115,8 @@ async def _handle_local_command(
     deadline_seconds: float | None,
     selected_manifests: list[ToolManifest],
     output: Callable[[str], None],
+    clear_screen: Callable[[], None] | None = None,
+    welcome: Callable[[], None] | None = None,
 ) -> bool:
     if command == "help":
         _print_help(output)
@@ -218,7 +127,18 @@ async def _handle_local_command(
     if command == "clear":
         state.transcript.clear()
         state.run_ids.clear()
+        if clear_screen is not None:
+            clear_screen()
         output("chat> cleared\n")
+        if welcome is not None:
+            welcome()
+        return True
+    if command == "reset":
+        state.transcript.clear()
+        state.run_ids.clear()
+        state.thread_id = f"thread_{uuid.uuid4().hex[:8]}"
+        state.turn_index = 0
+        output(f"chat> memory reset thread={state.thread_id}\n")
         return True
     if command == "runs":
         if not state.run_ids:
@@ -240,7 +160,10 @@ async def _handle_local_command(
             output("history> empty\n")
             return True
         for role, text in state.transcript[-30:]:
-            output(f"{role}> {text}\n")
+            compact = text.replace("\n", " ")
+            if len(compact) > 80:
+                compact = f"{compact[:80].rstrip()}..."
+            output(f"{role}> {compact}\n")
         return True
     if command == "resume":
         if not args:
@@ -397,6 +320,22 @@ async def _handle_local_command(
     return True
 
 
+async def _run_shell_bang(command_text: str, output: Callable[[str], None]) -> None:
+    output(f"● Bash(!{command_text})\n")
+    process = await asyncio.create_subprocess_shell(
+        command_text,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    if stdout:
+        output(f"  ⎿ {stdout.decode(errors='replace').rstrip()}\n")
+    if stderr:
+        output(f"  ⎿ stderr: {stderr.decode(errors='replace').rstrip()}\n")
+    if process.returncode not in {0, None}:
+        output(f"  ⎿ exit_code={process.returncode}\n")
+
+
 async def run_chat_session(
     *,
     agent: Agent,
@@ -413,13 +352,22 @@ async def run_chat_session(
     provider_name: str = "provider",
     model_name: str | None = None,
     selected_manifests: list[ToolManifest] | None = None,
+    ui_mode: str | None = None,
     animate: bool = False,
     input_reader: Callable[[str], str] | None = None,
     output: Callable[[str], None] | None = None,
 ) -> int:
     """Run interactive chat loop until explicit exit or EOF."""
-    read = input_reader or input
     write = output or (lambda text: print(text, end="", flush=True))
+    requested_mode = ui_mode or ("rich" if animate else "plain")
+    effective_mode = (
+        "plain"
+        if input_reader is not None or output is not None
+        else requested_mode
+    )
+    if effective_mode == "rich" and not sys.stdout.isatty():
+        effective_mode = "plain"
+    renderer = build_renderer(output=write, ui_mode=effective_mode)
     store = session_store or SessionStore()
     manifests = list(selected_manifests or [])
     state = ChatSessionState(debug_tool_protocol=debug_tool_protocol)
@@ -434,76 +382,174 @@ async def run_chat_session(
                 turn_index=len(record.run_ids),
                 debug_tool_protocol=debug_tool_protocol,
             )
-    write(f"chat> session={state.session_id} thread={state.thread_id}\n")
-    write("chat> type /help for commands\n")
-    while True:
+
+    session_input_tokens = 0
+    session_output_tokens = 0
+    trim_max_chars = int(getattr(agent.runner.config, "trim_max_chars", 6000))
+    trim_max_messages = getattr(agent.runner.config, "trim_max_messages", 24)
+
+    def _stream_context():
+        if prompt_session is not None and patch_stdout is not None:
+            return patch_stdout(raw=True)
+        return nullcontext()
+
+    def _detect_git_branch() -> str | None:
         try:
-            raw = read("you> ")
-        except EOFError:
-            write("chat> eof\n")
-            return 0
-        except KeyboardInterrupt:
-            write("\nchat> interrupted\n")
-            return 0
-        text = raw.strip()
-        if not text:
-            continue
-        parsed = parse_chat_command(text)
-        if parsed is not None:
-            command, args = parsed
-            keep_running = await _handle_local_command(
-                agent=agent,
-                command=command,
-                args=args,
-                state=state,
-                event_log=event_log,
-                session_store=store,
-                provider_name=provider_name,
-                model_name=model_name,
-                max_steps=max_steps,
-                max_tool_calls=max_tool_calls,
-                deadline_seconds=deadline_seconds,
-                selected_manifests=manifests,
-                output=write,
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=0.5,
             )
-            if not keep_running:
-                return 0
-            continue
-        run_id = state.next_run_id()
-        state.run_ids.append(run_id)
-        state.transcript.append(("user", text))
-        stream = agent.stream(
-            AgentRunInput(
-                input=text,
-                run_id=run_id,
-                thread_id=state.thread_id,
-                agent_id=agent_id,
-                graph_preset=graph_preset,
-                stream=True,
-                max_steps=max_steps,
-                max_tool_calls=max_tool_calls,
-                deadline_seconds=deadline_seconds,
-                app_metadata={
-                    "stream_poll_interval_ms": stream_poll_interval_ms,
-                    "chat_mode": True,
-                    "debug_tool_protocol": state.debug_tool_protocol,
-                },
-            )
-        )
-        assistant_text = await render_chat_stream(
-            stream=stream,
-            output=write,
-            run_id=run_id,
-            animate=animate,
-        )
-        if assistant_text:
-            state.transcript.append(("assistant", assistant_text))
-        store.upsert(
+        except Exception:
+            return None
+        branch = result.stdout.strip()
+        if result.returncode != 0 or not branch:
+            return None
+        return branch
+
+    def _emit_welcome() -> None:
+        python_backend = None
+        if any(manifest.name == "python" for manifest in manifests):
+            raw_backend = getattr(getattr(agent.runner.config, "python_tool", None), "backend", None)
+            if isinstance(raw_backend, str) and raw_backend.strip():
+                python_backend = raw_backend
+        renderer.welcome(
+            provider_name=provider_name,
+            model_name=model_name,
             session_id=state.session_id,
             thread_id=state.thread_id,
-            run_ids=state.run_ids,
-            transcript=state.transcript,
+            tools_count=len(manifests),
+            python_backend=python_backend,
+            cwd=str(Path.cwd()),
+            git_branch=_detect_git_branch(),
+            mode_label="chat+debug" if state.debug_tool_protocol else "chat",
         )
+
+    def _clear_screen() -> None:
+        renderer.emit_raw("\x1b[H\x1b[2J")
+    _emit_welcome()
+    prompt_session: ChatPromptSession | None = None
+    if effective_mode == "rich" and input_reader is None and sys.stdin.isatty():
+        try:
+            prompt_session = ChatPromptSession(
+                provider_name=provider_name,
+                model_name=model_name,
+                session_id=state.session_id,
+            )
+        except RuntimeError:
+            renderer.emit_raw("chat> rich prompt disabled: prompt_toolkit is unavailable\n")
+            effective_mode = "plain"
+    last_keyboard_interrupt = 0.0
+    while True:
+        with _stream_context():
+            try:
+                if input_reader is not None:
+                    raw = input_reader("you> ")
+                elif prompt_session is not None:
+                    raw = await prompt_session.prompt_async()
+                else:
+                    raw = input("you> ")
+            except EOFError:
+                renderer.emit_raw("chat> eof\n")
+                return 0
+            except KeyboardInterrupt:
+                now = time.monotonic()
+                if now - last_keyboard_interrupt <= _CTRL_C_WINDOW_SECONDS:
+                    renderer.emit_raw("\nchat> interrupted\n")
+                    return 0
+                last_keyboard_interrupt = now
+                renderer.emit_raw("\nchat> press Ctrl+C again within 2s to exit\n")
+                continue
+            text = raw.strip()
+            if not text:
+                continue
+            if prompt_session is not None and renderer.rich_enabled:
+                renderer.emit_raw(prompt_session.prompt_closing_frame())
+            if text.startswith("!") and len(text) > 1:
+                await _run_shell_bang(text[1:].strip(), renderer.emit_raw)
+                continue
+            parsed = parse_chat_command(text)
+            if parsed is not None:
+                command, args = parsed
+                keep_running = await _handle_local_command(
+                    agent=agent,
+                    command=command,
+                    args=args,
+                    state=state,
+                    event_log=event_log,
+                    session_store=store,
+                    provider_name=provider_name,
+                    model_name=model_name,
+                    max_steps=max_steps,
+                    max_tool_calls=max_tool_calls,
+                    deadline_seconds=deadline_seconds,
+                    selected_manifests=manifests,
+                    output=renderer.emit_raw,
+                    clear_screen=_clear_screen,
+                    welcome=_emit_welcome,
+                )
+                if not keep_running:
+                    return 0
+                if prompt_session is not None and command in {"clear", "reset"}:
+                    prompt_session.set_pressure(None)
+                    prompt_session.set_budget_warning(None)
+                continue
+            run_id = state.next_run_id()
+            state.run_ids.append(run_id)
+            state.transcript.append(("user", text))
+            messages = _transcript_to_messages(state.transcript)
+            budget_parts: list[str] = []
+            if isinstance(trim_max_messages, int) and trim_max_messages > 0 and len(messages) > trim_max_messages:
+                budget_parts.append(f"messages {len(messages)}/{trim_max_messages}")
+            message_chars = sum(len(item.content) for item in messages)
+            if trim_max_chars > 0 and message_chars > trim_max_chars:
+                budget_parts.append(f"chars {message_chars}/{trim_max_chars}")
+            if prompt_session is not None:
+                prompt_session.set_budget_warning(" | ".join(budget_parts) if budget_parts else None)
+            stream = agent.stream(
+                AgentRunInput(
+                    input=text,
+                    messages=messages,
+                    run_id=run_id,
+                    thread_id=state.thread_id,
+                    agent_id=agent_id,
+                    graph_preset=graph_preset,
+                    stream=True,
+                    max_steps=max_steps,
+                    max_tool_calls=max_tool_calls,
+                    deadline_seconds=deadline_seconds,
+                    app_metadata={
+                        "stream_poll_interval_ms": stream_poll_interval_ms,
+                        "chat_mode": True,
+                        "debug_tool_protocol": state.debug_tool_protocol,
+                    },
+                )
+            )
+            assistant_text, input_tokens, output_tokens, pressure_state = await render_chat_stream(
+                stream=stream,
+                output=renderer.emit_raw,
+                run_id=run_id,
+                renderer=renderer,
+                animate=effective_mode == "rich",
+            )
+            session_input_tokens += input_tokens
+            session_output_tokens += output_tokens
+            if prompt_session is not None:
+                prompt_session.set_usage(
+                    input_tokens=session_input_tokens,
+                    output_tokens=session_output_tokens,
+                )
+                prompt_session.set_pressure(pressure_state)
+            if assistant_text:
+                state.transcript.append(("assistant", assistant_text))
+            store.upsert(
+                session_id=state.session_id,
+                thread_id=state.thread_id,
+                run_ids=state.run_ids,
+                transcript=state.transcript,
+            )
 
 
 __all__ = [

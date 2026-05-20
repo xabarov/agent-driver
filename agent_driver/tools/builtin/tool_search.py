@@ -35,7 +35,7 @@ def _tool_search_manifest() -> ToolManifest:
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Optional case-insensitive search query",
+                    "description": "Required case-insensitive search query",
                 },
                 "risk": {
                     "type": "string",
@@ -78,6 +78,8 @@ def _tool_search_manifest() -> ToolManifest:
 def _build_tool_search_handler(registry: ToolRegistry):
     async def _tool_search_handler(args: dict[str, Any]) -> dict[str, Any]:
         query = str(args.get("query") or "").strip().lower()
+        if not query:
+            raise ValueError("query is required")
         risk_filter = _optional_str(args.get("risk"))
         side_effect_filter = _optional_str(args.get("side_effect"))
         max_results = as_int(
@@ -87,6 +89,7 @@ def _build_tool_search_handler(registry: ToolRegistry):
         )
         include_schemas = bool(args.get("include_schemas", False))
         rows: list[dict[str, Any]] = []
+        truncated = False
         for row in registry.list_registered():
             manifest = row.manifest
             if manifest.name == _TOOL_SEARCH_TOOL:
@@ -111,6 +114,7 @@ def _build_tool_search_handler(registry: ToolRegistry):
                 payload["output_schema"] = manifest.output_schema
             rows.append(payload)
             if len(rows) >= max_results:
+                truncated = True
                 break
         return {
             "summary": f"{len(rows)} tools matched",
@@ -118,6 +122,10 @@ def _build_tool_search_handler(registry: ToolRegistry):
             "risk_filter": risk_filter,
             "side_effect_filter": side_effect_filter,
             "tools": rows,
+            "returned_count": len(rows),
+            "truncated": truncated,
+            "max_results": max_results,
+            "more_available": truncated,
         }
 
     return _tool_search_handler

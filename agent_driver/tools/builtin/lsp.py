@@ -8,6 +8,7 @@ from typing import Any
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
 from agent_driver.tools.builtin.filesystem._paths import (
+    as_int,
     resolve_base_dir,
     resolve_file_path,
 )
@@ -41,12 +42,15 @@ def _lsp_manifest() -> ToolManifest:
                 },
                 "path": {
                     "type": "string",
-                    "description": "Absolute file path for symbols",
+                    "description": "File path for symbols (absolute or relative to workspace cwd)",
                 },
                 "symbol": {"type": "string", "description": "Symbol name for lookup"},
                 "base_dir": {
                     "type": "string",
-                    "description": "Absolute base dir for references/definitions scan",
+                    "description": (
+                        "Base dir for references/definitions scan "
+                        "(absolute or relative to workspace cwd)"
+                    ),
                 },
                 "max_results": {"type": "integer", "minimum": 1, "maximum": 500},
             },
@@ -59,17 +63,24 @@ def _lsp_manifest() -> ToolManifest:
 
 async def _lsp_handler(args: dict[str, Any]) -> dict[str, Any]:
     operation = str(args.get("operation") or "").strip().lower()
-    max_results = int(args.get("max_results") or 50)
+    max_results = as_int(args.get("max_results"), default=50, minimum=1)
     if operation == "symbols":
         target = resolve_file_path(args.get("path"))
-        rows = _symbols_for_file(target=target, max_results=max_results)
-        return {"summary": f"{len(rows)} symbols in {target.name}", "symbols": rows}
+        rows, truncated = _symbols_for_file(target=target, max_results=max_results)
+        return {
+            "summary": f"{len(rows)} symbols in {target.name}",
+            "symbols": rows,
+            "returned_count": len(rows),
+            "truncated": truncated,
+            "max_results": max_results,
+            "more_available": truncated,
+        }
     if operation in {"definitions", "references"}:
         symbol = str(args.get("symbol") or "").strip()
         if not symbol:
             raise ValueError("symbol is required for definitions/references")
         base = resolve_base_dir(args.get("base_dir"))
-        rows = _search_symbol_rows(
+        rows, truncated = _search_symbol_rows(
             base=base,
             symbol=symbol,
             max_results=max_results,
@@ -79,12 +90,17 @@ async def _lsp_handler(args: dict[str, Any]) -> dict[str, Any]:
             "summary": f"{len(rows)} {operation} for '{symbol}'",
             "symbol": symbol,
             "results": rows,
+            "returned_count": len(rows),
+            "truncated": truncated,
+            "max_results": max_results,
+            "more_available": truncated,
         }
     raise ValueError("operation must be one of: symbols, definitions, references")
 
 
-def _symbols_for_file(*, target: Path, max_results: int) -> list[dict[str, Any]]:
+def _symbols_for_file(*, target: Path, max_results: int) -> tuple[list[dict[str, Any]], bool]:
     rows: list[dict[str, Any]] = []
+    truncated = False
     lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
     for idx, line in enumerate(lines, start=1):
         match = _SYMBOL_RE.match(line)
@@ -92,13 +108,14 @@ def _symbols_for_file(*, target: Path, max_results: int) -> list[dict[str, Any]]
             continue
         rows.append({"name": match.group(1), "line": idx, "kind": _kind_for_line(line)})
         if len(rows) >= max_results:
+            truncated = True
             break
-    return rows
+    return rows, truncated
 
 
 def _search_symbol_rows(
     *, base: Path, symbol: str, max_results: int, definitions_only: bool
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], bool]:
     rows: list[dict[str, Any]] = []
     def_pattern = re.compile(rf"^\s*(?:def|class)\s+{re.escape(symbol)}\b")
     ref_pattern = re.compile(rf"\b{re.escape(symbol)}\b")
@@ -119,8 +136,8 @@ def _search_symbol_rows(
                     continue
             rows.append({"path": rel, "line": idx, "text": line[:300]})
             if len(rows) >= max_results:
-                return rows
-    return rows
+                return rows, True
+    return rows, False
 
 
 def _kind_for_line(line: str) -> str:

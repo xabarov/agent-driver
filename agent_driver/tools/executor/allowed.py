@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from agent_driver.contracts.enums import (
@@ -24,6 +25,42 @@ from agent_driver.tools.executor.trace import (
     trace_spec_denied,
 )
 from agent_driver.tools.guardrails import GuardrailPipeline, enforce_output_budget
+from agent_driver.tools.context import tool_call_context_scope
+
+
+def _bounded_structured_output(
+    raw: Any,
+    *,
+    max_chars: int | None,
+) -> tuple[dict[str, Any] | Any, bool]:
+    """Best-effort bound for large structured outputs."""
+    if not isinstance(raw, dict) or max_chars is None or max_chars <= 0:
+        return raw, False
+    encoded = json.dumps(raw, ensure_ascii=True)
+    if len(encoded) <= max_chars:
+        return raw, False
+    payload = dict(raw)
+    omitted_count = 0
+    for key in ("results", "matches", "tools", "skills", "symbols"):
+        value = payload.get(key)
+        if isinstance(value, list) and len(value) > 20:
+            omitted_count = max(0, len(value) - 20)
+            payload[key] = value[:20]
+            payload["truncated"] = True
+            payload["limit"] = "output_char_budget"
+            payload["limit_value"] = max_chars
+            payload["omitted_count"] = omitted_count
+            return payload, True
+    content = payload.get("content")
+    if isinstance(content, str) and len(content) > max_chars:
+        omitted_count = len(content) - max_chars
+        payload["content"] = content[:max_chars]
+        payload["truncated"] = True
+        payload["limit"] = "output_char_budget"
+        payload["limit_value"] = max_chars
+        payload["omitted_count"] = omitted_count
+        return payload, True
+    return payload, False
 
 
 def _planning_update_payload(raw: dict[str, Any]) -> dict[str, Any]:
@@ -43,6 +80,27 @@ def _interrupt_identifiers(spec: AllowedSpec) -> tuple[str, str]:
     run_id = str(spec.run_metadata.get("run_id") or "run_pending")
     attempt_id = str(spec.run_metadata.get("attempt_id") or f"attempt_{spec.index}")
     return run_id, attempt_id
+
+
+def _append_tool_handler_exception(*, spec: AllowedSpec, error: Exception) -> None:
+    message = str(error).strip() or f"{type(error).__name__}"
+    envelope = ToolResultEnvelope(
+        call=spec.call,
+        decision=ToolPolicyDecision.DENY,
+        guardrail_decision=GuardrailDecision.ALLOW,
+        error=ToolError(code="tool_handler_error", message=message),
+        metadata={"error_type": type(error).__name__, **spec.run_metadata},
+    )
+    trace = build_tool_trace(
+        trace_spec_denied(
+            index=spec.index,
+            call=spec.call,
+            manifest=spec.manifest,
+            summary=message,
+            error_code="tool_handler_error",
+        )
+    )
+    spec.result.append(envelope=envelope, trace=trace)
 
 
 async def execute_allowed_path(
@@ -79,92 +137,103 @@ async def execute_allowed_path(
             ),
         )
         return False
-    raw = await spec.registered.handler(spec.call.args)
-    raw_guard = await guardrails.on_tool_result(
-        {"tool_name": spec.call.tool_name, "result": raw}
-    )
-    if raw_guard.decision == GuardrailDecision.BLOCK:
-        append_blocked_call(
-            result=spec.result,
-            spec=BlockSpec(
-                index=spec.index,
-                call=spec.call,
-                manifest=spec.manifest,
-                reason=raw_guard.reason or "guardrail blocked tool result",
-                code="guardrail_blocked",
-                stage="tool_result",
-            ),
+    try:
+        with tool_call_context_scope(
+            run_id=str(spec.run_metadata.get("run_id") or ""),
+            thread_id=str(spec.run_metadata.get("thread_id") or ""),
+        ):
+            raw = await spec.registered.handler(spec.call.args)
+        raw_guard = await guardrails.on_tool_result(
+            {"tool_name": spec.call.tool_name, "result": raw}
         )
-        return False
-    if spec.call.tool_name == "planning_state_update":
-        raw = _planning_update_payload(raw if isinstance(raw, dict) else {})
-    if spec.call.tool_name == "ask_user_question":
-        return _append_clarification_interrupt(spec=spec, raw=raw)
-    summary = raw.get("summary") if isinstance(raw.get("summary"), str) else None
-    bounded_summary, truncated = enforce_output_budget(
-        summary, spec.manifest.output_char_budget
-    )
-    envelope = ToolResultEnvelope(
-        call=spec.call,
-        decision=ToolPolicyDecision.ALLOW,
-        guardrail_decision=merge_guardrail_decisions(
-            spec.input_guard_decision,
-            args_guard.decision,
-            raw_guard.decision,
-        ),
-        summary=bounded_summary,
-        structured_output=raw,
-        truncated=truncated,
-        metadata={
-            "idempotent": spec.manifest.idempotent,
-            **spec.run_metadata,
-        },
-    )
-    final_guard = await guardrails.on_final_output(envelope.model_dump(mode="json"))
-    if final_guard.decision == GuardrailDecision.BLOCK:
+        if raw_guard.decision == GuardrailDecision.BLOCK:
+            append_blocked_call(
+                result=spec.result,
+                spec=BlockSpec(
+                    index=spec.index,
+                    call=spec.call,
+                    manifest=spec.manifest,
+                    reason=raw_guard.reason or "guardrail blocked tool result",
+                    code="guardrail_blocked",
+                    stage="tool_result",
+                ),
+            )
+            return False
+        if spec.call.tool_name == "planning_state_update":
+            raw = _planning_update_payload(raw if isinstance(raw, dict) else {})
+        if spec.call.tool_name == "ask_user_question":
+            return _append_clarification_interrupt(spec=spec, raw=raw)
+        raw, structured_truncated = _bounded_structured_output(
+            raw,
+            max_chars=spec.manifest.output_char_budget,
+        )
+        summary = raw.get("summary") if isinstance(raw.get("summary"), str) else None
+        bounded_summary, truncated = enforce_output_budget(
+            summary, spec.manifest.output_char_budget
+        )
         envelope = ToolResultEnvelope(
             call=spec.call,
-            decision=ToolPolicyDecision.DENY,
-            guardrail_decision=final_guard.decision,
-            error=ToolError(
-                code="guardrail_blocked",
-                message=final_guard.reason or "guardrail blocked final output",
+            decision=ToolPolicyDecision.ALLOW,
+            guardrail_decision=merge_guardrail_decisions(
+                spec.input_guard_decision,
+                args_guard.decision,
+                raw_guard.decision,
             ),
+            summary=bounded_summary,
+            structured_output=raw,
+            truncated=truncated or structured_truncated,
             metadata={
-                "guardrail_stage": "final_output",
+                "idempotent": spec.manifest.idempotent,
                 **spec.run_metadata,
             },
         )
-        trace = build_tool_trace(
-            trace_spec_denied(
-                index=spec.index,
+        final_guard = await guardrails.on_final_output(envelope.model_dump(mode="json"))
+        if final_guard.decision == GuardrailDecision.BLOCK:
+            envelope = ToolResultEnvelope(
                 call=spec.call,
-                manifest=spec.manifest,
-                error_code="guardrail_blocked",
+                decision=ToolPolicyDecision.DENY,
+                guardrail_decision=final_guard.decision,
+                error=ToolError(
+                    code="guardrail_blocked",
+                    message=final_guard.reason or "guardrail blocked final output",
+                ),
+                metadata={
+                    "guardrail_stage": "final_output",
+                    **spec.run_metadata,
+                },
             )
-        )
-    else:
-        envelope = envelope.model_copy(
-            update={
-                "guardrail_decision": merge_guardrail_decisions(
-                    envelope.guardrail_decision,
-                    final_guard.decision,
+            trace = build_tool_trace(
+                trace_spec_denied(
+                    index=spec.index,
+                    call=spec.call,
+                    manifest=spec.manifest,
+                    error_code="guardrail_blocked",
                 )
-            }
-        )
-        trace = build_tool_trace(
-            trace_spec_completed(
-                index=spec.index,
-                call=spec.call,
-                manifest=spec.manifest,
-                summary=envelope.summary,
-                truncated=envelope.truncated,
             )
+        else:
+            envelope = envelope.model_copy(
+                update={
+                    "guardrail_decision": merge_guardrail_decisions(
+                        envelope.guardrail_decision,
+                        final_guard.decision,
+                    )
+                }
+            )
+            trace = build_tool_trace(
+                trace_spec_completed(
+                    index=spec.index,
+                    call=spec.call,
+                    manifest=spec.manifest,
+                    summary=envelope.summary,
+                    truncated=envelope.truncated,
+                )
+            )
+        spec.result.append(
+            envelope=envelope,
+            trace=trace,
         )
-    spec.result.append(
-        envelope=envelope,
-        trace=trace,
-    )
+    except Exception as exc:  # noqa: BLE001 - tool handlers are untrusted.
+        _append_tool_handler_exception(spec=spec, error=exc)
     return False
 
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from agent_driver.code_agent.backends import create_python_backend
 from agent_driver.code_agent.executor import FakeRestrictedCodeExecutor
 from agent_driver.context import (
     InMemoryArtifactStore,
@@ -31,6 +34,7 @@ from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import fake_noop_tool_executor
 from agent_driver.subagents.store import InMemorySubagentStore
 from agent_driver.tools import register_builtin_tools, register_planning_tool
+from agent_driver.tools.context import workspace_cwd_scope
 from agent_driver.tools.registry import ToolRegistry
 
 
@@ -50,10 +54,16 @@ class SingleAgentRunner(
     """
 
     @staticmethod
-    def _build_default_tool_registry() -> ToolRegistry:
+    def _build_default_tool_registry(
+        *, config: RunnerConfig, python_backend: object | None = None
+    ) -> ToolRegistry:
         """Build default tool registry with built-in read/search tools."""
         registry = ToolRegistry()
-        register_builtin_tools(registry)
+        register_builtin_tools(
+            registry,
+            python_backend=python_backend,
+            python_settings=config.python_tool,
+        )
         register_planning_tool(registry)
         return registry
 
@@ -66,6 +76,12 @@ class SingleAgentRunner(
         config: RunnerConfig | None = None,
     ) -> None:
         self._config = config or RunnerConfig()
+        python_backend = None
+        if self._config.python_tool.enabled:
+            python_backend = create_python_backend(
+                self._config.python_tool.backend,
+                session_idle_seconds=self._config.python_tool.session_idle_seconds,
+            )
         self._deps = RunnerDeps(
             provider=provider,
             checkpoint_store=checkpoint_store,
@@ -77,7 +93,11 @@ class SingleAgentRunner(
             subagent_store=self._config.subagent_store or InMemorySubagentStore(),
             code_executor=self._config.code_executor or FakeRestrictedCodeExecutor(),
             tool_registry=self._config.tool_registry
-            or self._build_default_tool_registry(),
+            or self._build_default_tool_registry(
+                config=self._config,
+                python_backend=python_backend,
+            ),
+            python_backend=python_backend,
         )
 
     @property
@@ -93,29 +113,43 @@ class SingleAgentRunner(
     async def run(self, run_input: AgentRunInput) -> AgentRunOutput:
         """Execute deterministic step loop with per-step checkpointing."""
         context = self._init_context(run_input)
-        while context.step_name != "done":
-            terminal = self._terminal_from_limits(context)
-            if terminal is not None:
-                event_type = (
-                    RuntimeEventType.RUN_CANCELLED
-                    if terminal.reason == TerminalReason.CANCELLED_BY_USER
-                    else RuntimeEventType.RUN_FAILED
-                )
-                self._emit(
-                    EventSpec(
-                        run_id=context.run_id,
-                        attempt_id=context.attempt_id,
-                        event_type=event_type,
-                        payload={"reason": terminal.reason.value},
+        with workspace_cwd_scope(_pick_workspace_cwd(context)):
+            while context.step_name != "done":
+                terminal = self._terminal_from_limits(context)
+                if terminal is not None:
+                    event_type = (
+                        RuntimeEventType.RUN_CANCELLED
+                        if terminal.reason == TerminalReason.CANCELLED_BY_USER
+                        else RuntimeEventType.RUN_FAILED
                     )
-                )
-                return self._build_output(context, terminal)
-            result = await self._execute_step(context)
-            context.step_name = result.next_step
-        payload = context.metadata.get("terminal_output")
-        if not isinstance(payload, dict):
-            raise RuntimeExecutionError("Missing terminal output metadata")
-        return AgentRunOutput.model_validate(payload)
+                    self._emit(
+                        EventSpec(
+                            run_id=context.run_id,
+                            attempt_id=context.attempt_id,
+                            event_type=event_type,
+                            payload={"reason": terminal.reason.value},
+                        )
+                    )
+                    return self._build_output(context, terminal)
+                result = await self._execute_step(context)
+                context.step_name = result.next_step
+            payload = context.metadata.get("terminal_output")
+            if not isinstance(payload, dict):
+                raise RuntimeExecutionError("Missing terminal output metadata")
+            return AgentRunOutput.model_validate(payload)
+
+
+def _pick_workspace_cwd(context: _RunContext):
+    """Resolve run-scoped workspace cwd from metadata hints."""
+    workspace_raw = context.metadata.get("workspace_cwd")
+    if isinstance(workspace_raw, str) and workspace_raw.strip():
+        return Path(workspace_raw).expanduser().resolve()
+    sandbox_raw = context.metadata.get("eval_sandbox_dir")
+    if isinstance(sandbox_raw, str) and sandbox_raw.strip():
+        return Path(sandbox_raw).expanduser().resolve()
+    return None
+
+
 
 
 class FakeSingleStepRunner(SingleAgentRunner):

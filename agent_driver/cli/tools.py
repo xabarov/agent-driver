@@ -8,7 +8,7 @@ from agent_driver.contracts.enums import ToolRisk
 from agent_driver.tools import ToolSet
 
 _DEFAULT_PACKS = ("filesystem_read", "web", "planning")
-_DANGEROUS_PACKS = ("shell", "filesystem_write")
+_DANGEROUS_PACKS = ("shell", "filesystem_write", "python_exec")
 _DANGEROUS_TOOL_NAMES = set(ToolSet.packs(*_DANGEROUS_PACKS).names or ())
 
 
@@ -25,6 +25,7 @@ class CliToolConfig:
     tool_packs: tuple[str, ...] = ()
     max_tool_risk: str | None = None
     allow_dangerous_tools: bool = False
+    enable_python: bool = False
 
 
 def _normalize_names(items: tuple[str, ...]) -> tuple[str, ...]:
@@ -61,13 +62,22 @@ def _build_from_mode(mode: str) -> ToolSet:
 
 def _toolset_from_explicit(config: CliToolConfig) -> ToolSet:
     names: list[str] = []
-    for pack in _normalize_names(config.tool_packs):
+    raw_packs = list(_normalize_names(config.tool_packs))
+    for pack in raw_packs:
         try:
             names.extend(ToolSet.packs(pack).names or ())
         except ValueError as exc:
             raise CliToolConfigError(str(exc)) from exc
     names.extend(_normalize_names(config.tools))
     return ToolSet.only(*names)
+
+
+def _append_python_pack(toolset: ToolSet) -> ToolSet:
+    python_names = tuple(ToolSet.packs("python_exec").names or ())
+    if toolset.names is None:
+        return toolset
+    merged = tuple(dict.fromkeys((*toolset.names, *python_names)))
+    return ToolSet.only(*merged)
 
 
 def _assert_dangerous_gate(config: CliToolConfig, toolset: ToolSet) -> None:
@@ -94,7 +104,21 @@ def build_cli_toolset(config: CliToolConfig) -> ToolSet:
     """Build ToolSet for CLI run/chat from normalized configuration."""
     has_explicit = bool(config.tools) or bool(config.tool_packs)
     toolset = _toolset_from_explicit(config) if has_explicit else _build_from_mode(config.tools_mode)
-    _assert_dangerous_gate(config, toolset)
+    if config.enable_python:
+        toolset = _append_python_pack(toolset)
+    gate_config = (
+        config
+        if not config.enable_python
+        else CliToolConfig(
+            tools_mode=config.tools_mode,
+            tools=config.tools,
+            tool_packs=config.tool_packs,
+            max_tool_risk=config.max_tool_risk,
+            allow_dangerous_tools=True,
+            enable_python=config.enable_python,
+        )
+    )
+    _assert_dangerous_gate(gate_config, toolset)
     risk = _parse_risk(config.max_tool_risk)
     if risk is not None:
         toolset = toolset.with_max_risk(risk)

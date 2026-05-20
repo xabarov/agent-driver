@@ -1,0 +1,1 @@
+Answer the user using tool results. Do not call additional tools unless absolutely required. Exception: if the last tool result is `truncated=true` for a counting/listing task, you may make one refined tool call before answering.

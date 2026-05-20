@@ -48,3 +48,20 @@ async def test_skill_tool_marks_trusted_roots(tmp_path) -> None:
     )
     assert out["skills"]
     assert out["skills"][0]["trusted"] is True
+
+
+@pytest.mark.asyncio
+async def test_skill_tool_reports_truncated_metadata(tmp_path) -> None:
+    """skill_tool should expose cap metadata when max_results is reached."""
+    for idx in range(3):
+        skill_file = tmp_path / f"team{idx}" / "SKILL.md"
+        skill_file.parent.mkdir(parents=True, exist_ok=True)
+        skill_file.write_text("# Skill\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_skill_tools(registry)
+    tool = registry.get("skill_tool")
+    assert tool is not None
+    out = await tool.handler({"base_dir": str(tmp_path), "max_results": 2})
+    assert out["returned_count"] == 2
+    assert out["truncated"] is True
+    assert out["more_available"] is True

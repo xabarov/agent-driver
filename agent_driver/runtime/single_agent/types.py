@@ -11,6 +11,7 @@ from agent_driver.code_agent.executor import CodeActionExecutor
 from agent_driver.runtime.single_agent.config_sections import (
     CodeAgentSettings,
     CompactionSettings,
+    PythonToolSettings,
     SubagentSettings,
     TrimmingSettings,
 )
@@ -33,6 +34,7 @@ _TRIMMING_FIELDS = {item.name for item in fields(TrimmingSettings)}
 _COMPACTION_FIELDS = {item.name for item in fields(CompactionSettings)}
 _SUBAGENT_FIELDS = {item.name for item in fields(SubagentSettings)}
 _CODE_AGENT_FIELDS = {item.name for item in fields(CodeAgentSettings)}
+_PYTHON_TOOL_FIELDS = {item.name for item in fields(PythonToolSettings)}
 
 
 @dataclass(init=False, slots=True)
@@ -55,6 +57,7 @@ class RunnerConfig:
     compaction: CompactionSettings
     subagents: SubagentSettings
     code_agent: CodeAgentSettings
+    python_tool: PythonToolSettings
 
     def __init__(self, **kwargs: Any) -> None:
         trimming = kwargs.pop("trimming", None) or TrimmingSettings(
@@ -68,6 +71,9 @@ class RunnerConfig:
         )
         code_agent = kwargs.pop("code_agent", None) or CodeAgentSettings(
             **{key: kwargs.pop(key) for key in list(kwargs) if key in _CODE_AGENT_FIELDS}
+        )
+        python_tool = kwargs.pop("python_tool", None) or PythonToolSettings(
+            **{key: kwargs.pop(key) for key in list(kwargs) if key in _PYTHON_TOOL_FIELDS}
         )
         self.graph_id = kwargs.pop("graph_id", "single_agent_runtime")
         self.cancellation_probe = kwargs.pop("cancellation_probe", None)
@@ -85,6 +91,7 @@ class RunnerConfig:
         self.compaction = compaction
         self.subagents = subagents
         self.code_agent = code_agent
+        self.python_tool = python_tool
         if kwargs:
             raise TypeError(f"Unexpected RunnerConfig arguments: {sorted(kwargs)}")
 
@@ -277,6 +284,7 @@ class RunnerDeps:
     subagent_store: SubagentStore
     code_executor: CodeActionExecutor
     tool_registry: ToolRegistry
+    python_backend: Any | None = None
 
 
 @dataclass(slots=True)

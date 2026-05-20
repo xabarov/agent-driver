@@ -213,7 +213,13 @@ async def _web_search_handler(args: dict[str, Any]) -> dict[str, Any]:
     mock_rows = args.get("mock_results")
     if isinstance(mock_rows, list):
         normalized = _normalize_mock_results(mock_rows, max_results=max_results)
-        return _search_payload(query=query, source="mock", rows=normalized)
+        return _search_payload(
+            query=query,
+            source="mock",
+            rows=normalized,
+            max_results=max_results,
+            parse_status="ok",
+        )
     search_url = f"https://duckduckgo.com/html/?q={quote_plus(query)}"
     try:
         payload = await _fetch_url_text(
@@ -224,7 +230,14 @@ async def _web_search_handler(args: dict[str, Any]) -> dict[str, Any]:
     except (httpx.HTTPError, ValueError) as exc:
         raise ValueError(f"web_search failed: {exc}") from exc
     rows = _parse_duckduckgo_html(payload.text, max_results=max_results)
-    result = _search_payload(query=query, source="duckduckgo_html", rows=rows)
+    parse_status = "ok" if rows else "parse_failed"
+    result = _search_payload(
+        query=query,
+        source="duckduckgo_html",
+        rows=rows,
+        max_results=max_results,
+        parse_status=parse_status,
+    )
     if not rows:
         result["diagnostic"] = {
             "status": "no_results_parsed",
@@ -235,13 +248,23 @@ async def _web_search_handler(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _search_payload(
-    *, query: str, source: str, rows: list[dict[str, str]]
+    *,
+    query: str,
+    source: str,
+    rows: list[dict[str, str]],
+    max_results: int,
+    parse_status: str,
 ) -> dict[str, Any]:
+    truncated = len(rows) >= max_results
     return {
         "summary": f"{len(rows)} results for '{query}' via {source}",
         "query": query,
         "source": source,
         "results": rows,
+        "returned_count": len(rows),
+        "max_results": max_results,
+        "truncated": truncated,
+        "parse_status": parse_status,
     }
 
 

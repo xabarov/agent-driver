@@ -96,3 +96,21 @@ def test_trim_context_limits_observations_deterministically() -> None:
         if item.kind == "observation" and item.action == TrimAction.KEPT
     ]
     assert len(kept) == 2
+
+
+def test_trim_context_keeps_stub_for_latest_tool_message() -> None:
+    """Latest tool message should not disappear without a stub under budget pressure."""
+    messages = [
+        {"role": "user", "content": "x" * 40},
+        {"role": "assistant", "content": "y" * 40},
+        {"role": "tool", "name": "glob_search", "content": "z" * 120},
+    ]
+    trimmed = trim_context(
+        budget=ContextBudget(max_chars=60, max_messages=5),
+        prompt_messages=messages,
+        digest_ids=[],
+        artifact_ids=[],
+    )
+    tool_rows = [row for row in trimmed.prompt_messages if str(row.get("role")) == "tool"]
+    assert tool_rows
+    assert "trimmed" in str(tool_rows[-1].get("content", "")).lower()

@@ -25,6 +25,7 @@ postgres = [
   "psycopg[binary]>=3.2.0",
 ]
 cli = [
+  "prompt_toolkit>=3.0.43",
   "rich>=13.0.0",
 ]
 
@@ -34,6 +35,9 @@ agent-driver = "agent_driver.cli.main:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["agent_driver*"]
+
+[tool.setuptools.package-data]
+"agent_driver.prompts.templates" = ["*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

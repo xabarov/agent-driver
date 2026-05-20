@@ -344,6 +344,22 @@ agent-driver chat --provider openrouter --tool-pack shell --allow-dangerous-tool
 
 Inside chat use `/tools` and `/tools verbose` to inspect selected tool surface.
 
+Enable Python execution tool (dangerous pack, explicit opt-in shortcut):
+
+```bash
+agent-driver chat \
+  --provider openrouter \
+  --tools default \
+  --enable-python \
+  --python-backend local \
+  --python-allow-imports numpy,pandas
+```
+
+Notes:
+- Python tool manifest and prompt addendum are rendered dynamically from runtime settings,
+  so changing `--python-allow-imports` updates model-visible import guidance automatically.
+- Sandbox policy still applies: unsafe imports (for example `os` / `subprocess`) stay blocked.
+
 ## 13) Provider tool-calling bridge (OpenRouter / vLLM)
 
 When `--provider openrouter` or `--provider vllm` is used with non-empty tool surface, CLI now
@@ -454,7 +470,47 @@ Inspect one scenario artifact timeline:
 agent-driver eval inspect --artifact-json .agent-driver/evals/<timestamp>/news_web_search.json
 ```
 
-## 17) Backend-only recipes
+## 17) New chat TUI mode
+
+Default interactive chat now prefers rich TUI when running in a TTY:
+
+```bash
+uv run agent-driver chat
+```
+
+Force deterministic plain output (CI/log pipelines):
+
+```bash
+uv run agent-driver chat --plain
+```
+
+Features in rich TUI mode:
+
+- prompt-toolkit input where `Enter` submits, `Esc+Enter` or `Ctrl+J` inserts newline,
+  and trailing `\` continues multiline input;
+- prompt-toolkit output patching (`patch_stdout(raw=True)`) prevents user keystrokes
+  from leaking into streamed assistant text;
+- slash command completion plus `@path` file completion from current working directory;
+- welcome panel with provider/model/session plus `cwd`, `git branch`, and mode;
+- tips row: `! for bash · / for commands · @ for files · esc to interrupt`;
+- status spinner row while the assistant is thinking and during tool phases;
+- styled assistant/tool/event lines with markdown-capable assistant output;
+- one compact tool card per tool call (`● Tool(args)` + `⎿ summary`) including
+  denied/error reasons in-place;
+- compact run summary line (`run #N · Xs · tools · warn`) only for tool/warn/error turns;
+- prompt footer includes provider/model/session plus token usage counters;
+- multi-turn memory is preserved by sending accumulated chat transcript as
+  `AgentRunInput.messages` on each turn;
+- `/reset` clears local memory (`transcript` + fresh `thread_id`) without
+  restarting the process;
+- context pressure warnings (`warning`/`compact`/`blocking`) and budget hints
+  are surfaced in prompt footer (`ctx=...`, `budget=...`);
+- chat CLI enables runtime compaction + session memory compaction by default;
+- `!<command>` local shell execution shortcut from chat;
+- `/clear` clears terminal and redraws welcome context;
+- safer interruption flow: first `Ctrl+C` warns, second within 2 seconds exits.
+
+## 18) Backend-only recipes
 
 For non-CLI backend embedding (FastAPI/SSE, runtime store factory, MCP catalog,
 persisted replay support bundle), see:

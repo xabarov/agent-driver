@@ -184,7 +184,11 @@ def _register_todo_write_tool(registry: ToolRegistry) -> None:
     registry.register(
         ToolManifest(
             name="todo_write",
-            description="Apply structured todo list update into planning state.",
+            description=(
+                "Apply structured todo list update into planning state. "
+                "Statuses: pending, in_progress, completed, cancelled. "
+                "At most one todo may be in_progress."
+            ),
             risk=ToolRisk.LOW,
             side_effect=SideEffectClass.NONE,
             approval_mode=ApprovalMode.NEVER,
@@ -192,7 +196,28 @@ def _register_todo_write_tool(registry: ToolRegistry) -> None:
                 "type": "object",
                 "properties": {
                     "merge": {"type": "boolean"},
-                    "todos": {"type": "array", "minItems": 1},
+                    "todos": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "content": {"type": "string"},
+                                "status": {
+                                    "type": "string",
+                                    "enum": [
+                                        "pending",
+                                        "in_progress",
+                                        "completed",
+                                        "cancelled",
+                                    ],
+                                },
+                            },
+                            "required": ["id", "content", "status"],
+                            "additionalProperties": False,
+                        },
+                    },
                 },
                 "required": ["todos"],
                 "additionalProperties": False,

@@ -7,6 +7,14 @@ from agent_driver.code_agent.contracts import (
     CodeAgentLimits,
     CodeAgentObservation,
 )
+from agent_driver.code_agent.backends import (
+    create_python_backend,
+    DockerPythonBackend,
+    E2BPythonBackend,
+    LocalPythonBackend,
+    PythonExecutorBackend,
+    WasmPythonBackend,
+)
 from agent_driver.code_agent.executor import (
     CodeActionExecutor,
     CodeExecutionError,
@@ -44,4 +52,10 @@ __all__ = [
     "build_callable_tool_surface",
     "callable_signature_map",
     "render_callable_tool_docs",
+    "PythonExecutorBackend",
+    "LocalPythonBackend",
+    "DockerPythonBackend",
+    "E2BPythonBackend",
+    "WasmPythonBackend",
+    "create_python_backend",
 ]

@@ -22,6 +22,7 @@ from agent_driver.runtime.single_agent.step_planning import (
     apply_planning_updates_from_envelopes,
     update_planning_state_from_tool_results,
 )
+from agent_driver.prompts import force_final_answer_tool_message
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
     RunContext,
@@ -79,6 +80,7 @@ def _post_process_tool_result(
         context.metadata["observations"] = observations
     _update_tool_protocol_messages(context, result)
     _update_zero_result_policy(context, result)
+    _refresh_force_final_controls(context)
     if not planning_updated:
         update_planning_state_from_tool_results(context)
 
@@ -150,8 +152,7 @@ async def _finalize_tool_stage_transition(
     if continue_with_llm:
         loop_iterations += 1
     if continue_with_llm and context.run_input.agent_profile != AgentProfile.CODE_AGENT:
-        context.metadata["tool_choice_override"] = "none"
-        context.metadata["force_final_answer"] = True
+        _maybe_force_final_answer(context)
     context.metadata.update(
         {
             "next_step": "llm_call" if continue_with_llm else "finalize",
@@ -172,16 +173,26 @@ def _emit_tool_completed_if_needed(
 ) -> None:
     if not result.traces:
         return
+    planned_calls = extract_planned_tool_calls(context.llm_response) if context.llm_response else []
+    args_by_call_id = {
+        call.tool_call_id: call.args
+        for call in planned_calls
+        if isinstance(call.tool_call_id, str) and call.tool_call_id
+    }
+    fallback_args = [call.args for call in planned_calls]
     tools = [
         {
             "tool_name": trace.tool_name,
             "tool_call_id": trace.tool_call_id,
+            "args": args_by_call_id.get(trace.tool_call_id)
+            if isinstance(trace.tool_call_id, str) and trace.tool_call_id
+            else (fallback_args[index] if index < len(fallback_args) else {}),
             "status": trace.status.value,
             "result_summary": trace.result_summary,
             "error_code": trace.error_code,
             "truncated": trace.truncated,
         }
-        for trace in result.traces
+        for index, trace in enumerate(result.traces)
     ]
     emit_step_event(
         host,
@@ -212,6 +223,7 @@ def _emit_tool_started_if_needed(host: ToolStageHost, context: RunContext) -> No
                 {
                     "tool_name": call.tool_name,
                     "tool_call_id": call.tool_call_id,
+                    "args": call.args,
                 }
                 for call in calls
             ],
@@ -249,10 +261,14 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
         tool_payload: dict[str, Any] = {}
         if isinstance(envelope.structured_output, dict):
             tool_payload.update(envelope.structured_output)
+        tool_payload["truncated"] = bool(envelope.truncated)
         if envelope.summary and "summary" not in tool_payload:
             tool_payload["summary"] = envelope.summary
         if envelope.error is not None:
             tool_payload["error"] = envelope.error.model_dump(mode="json")
+            tool_payload["error_code"] = envelope.error.code
+        else:
+            tool_payload["error_code"] = None
         content = (
             json.dumps(tool_payload, ensure_ascii=True)
             if tool_payload
@@ -266,19 +282,49 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
                 content=content,
             )
         )
+    _append_denial_recovery_message(context, result, messages)
     if context.metadata.get("force_final_answer"):
         messages.append(
             ChatMessage(
                 role=ChatRole.USER,
-                content=(
-                    "Answer the user using tool results. "
-                    "Do not call additional tools unless absolutely required."
-                ),
+                content=force_final_answer_tool_message(),
             )
         )
     context.metadata["protocol_messages"] = [
         item.model_dump(mode="json") for item in messages
     ]
+
+
+def _append_denial_recovery_message(
+    context: RunContext, result: ToolExecutionResult, messages: list[ChatMessage]
+) -> None:
+    """Append one-shot corrective hint after tool_handler_error denials."""
+    denied_signature: str | None = None
+    denied_tool_name: str | None = None
+    denied_message: str | None = None
+    for envelope in result.envelopes:
+        error = envelope.error
+        if error is None or error.code != "tool_handler_error":
+            continue
+        denied_tool_name = envelope.call.tool_name
+        denied_message = (error.message or "").strip()
+        denied_signature = f"{denied_tool_name}:{error.code}:{denied_message}"
+        break
+    if denied_signature is None:
+        return
+    if context.metadata.get("last_denied_signature") == denied_signature:
+        return
+    reason = denied_message or "tool handler policy denied this call"
+    messages.append(
+        ChatMessage(
+            role=ChatRole.USER,
+            content=(
+                f"Tool '{denied_tool_name}' was denied: {reason}. "
+                "Retry with corrected arguments; do not repeat the same denied call."
+            ),
+        )
+    )
+    context.metadata["last_denied_signature"] = denied_signature
 
 
 def _load_protocol_messages(context: RunContext) -> list[ChatMessage]:
@@ -314,10 +360,79 @@ def _update_zero_result_policy(context: RunContext, result: ToolExecutionResult)
     if not saw_web_search:
         return
     context.metadata["web_search_zero_streak"] = zero_streak
-    if zero_streak >= 2:
+    if zero_streak >= 1:
         context.metadata["force_final_answer"] = True
         context.metadata["tool_choice_override"] = "none"
         context.metadata["force_final_answer_reason"] = "web_search_zero_results"
+
+
+def _refresh_force_final_controls(context: RunContext) -> None:
+    """Clear forced-final flags unless current run state still requires them."""
+    if _should_force_final_answer(context):
+        context.metadata["force_final_answer"] = True
+        context.metadata["tool_choice_override"] = "none"
+        return
+    context.metadata.pop("force_final_answer", None)
+    context.metadata.pop("tool_choice_override", None)
+    context.metadata.pop("force_final_answer_reason", None)
+
+
+def _maybe_force_final_answer(context: RunContext) -> None:
+    """Enable forced final-answer mode only when guard heuristics trigger."""
+    if _should_force_final_answer(context):
+        context.metadata["force_final_answer"] = True
+        context.metadata["tool_choice_override"] = "none"
+        if "force_final_answer_reason" not in context.metadata:
+            context.metadata["force_final_answer_reason"] = "runtime_guardrail"
+        return
+    context.metadata.pop("force_final_answer", None)
+    context.metadata.pop("tool_choice_override", None)
+    context.metadata.pop("force_final_answer_reason", None)
+
+
+def _should_force_final_answer(context: RunContext) -> bool:
+    """Return whether loop should force final answer on next LLM request."""
+    max_tool_calls_raw = context.run_input.max_tool_calls
+    max_steps_raw = context.run_input.max_steps
+    max_tool_calls = (
+        max(1, int(max_tool_calls_raw))
+        if isinstance(max_tool_calls_raw, int)
+        else max(1, int(context.metadata.get("max_tool_calls", 1)))
+    )
+    max_steps = (
+        max(1, int(max_steps_raw))
+        if isinstance(max_steps_raw, int)
+        else max(1, int(context.metadata.get("max_steps", 1)))
+    )
+    near_tool_budget = context.tool_calls >= max(1, max_tool_calls - 1)
+    near_step_budget = context.step_count >= max(2, max_steps - 2)
+    loop_detected = _has_repeated_recent_tool_call(context)
+    zero_streak = int(context.metadata.get("web_search_zero_streak", 0))
+    zero_results_triggered = zero_streak >= 1
+    return near_tool_budget or near_step_budget or loop_detected or zero_results_triggered
+
+
+def _has_repeated_recent_tool_call(context: RunContext) -> bool:
+    """Detect two latest tool calls with identical tool name and args."""
+    tool_results = context.metadata.get("tool_results")
+    if not isinstance(tool_results, list):
+        return False
+    recent: list[tuple[str, str]] = []
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        tool_name = str(call.get("tool_name") or "").strip()
+        if not tool_name:
+            continue
+        args = call.get("args")
+        args_key = json.dumps(args, ensure_ascii=True, sort_keys=True)
+        recent.append((tool_name, args_key))
+    if len(recent) < 2:
+        return False
+    return recent[-1] == recent[-2]
 
 
 __all__ = ["ToolStageHost", "execute_tool_stage_step"]

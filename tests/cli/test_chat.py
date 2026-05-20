@@ -7,7 +7,6 @@ import asyncio
 import pytest
 
 from agent_driver.cli.chat import parse_chat_command, render_chat_stream, run_chat_session
-from agent_driver.cli.prompt_icon import prompt_spinner_frame
 from agent_driver.cli.sessions import SessionStore
 from agent_driver.cli.main import main
 from agent_driver.contracts import RunStreamEvent, ToolCall
@@ -39,6 +38,18 @@ class _IoHarness:
 
     def write(self, text: str) -> None:
         self.output.append(text)
+
+
+class _InterruptIoHarness(_IoHarness):
+    def __init__(self, events: list[str | BaseException]) -> None:
+        self._inputs = iter(events)
+        self.output: list[str] = []
+
+    def read(self, _prompt: str) -> str:
+        item = next(self._inputs)
+        if isinstance(item, BaseException):
+            raise item
+        return item
 
 
 class _LoopingChatProvider(FakeProvider):
@@ -119,6 +130,21 @@ class _ZeroResultFinalProvider(FakeProvider):
         )
 
 
+class _HistoryEchoProvider(FakeProvider):
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.message_counts: list[int] = []
+
+    async def stream(self, request: LlmRequest):
+        self.message_counts.append(len(request.messages))
+        yield LlmStreamEvent(event="delta", delta_text=f"seen={len(request.messages)}")
+        yield LlmStreamEvent(
+            event="done",
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="history-echo", model_name="fake-model"),
+        )
+
+
 def test_parse_chat_command() -> None:
     """Slash parser should split command and args."""
     assert parse_chat_command("hello") is None
@@ -152,7 +178,7 @@ async def test_chat_session_basic_turn_and_runs_listing() -> None:
     text = "".join(io.output)
     assert "assistant> chat ok" in text
     assert "run> run_chat_" in text
-    assert "tools_used=" in text
+    assert "tools_used=" not in text
     assert "chat> bye" in text
     assert "node_completed" not in text
 
@@ -224,54 +250,109 @@ async def test_chat_stream_formats_tool_events_compactly() -> None:
             yield item
 
     output: list[str] = []
-    _ = await render_chat_stream(stream=_stream(), output=output.append, run_id="run_x")
+    _assistant, _in_tokens, _out_tokens, _pressure = await render_chat_stream(
+        stream=_stream(), output=output.append, run_id="run_x"
+    )
     text = "".join(output)
-    assert "tool> tool tool_call_started tool=web_search" in text
+    assert "tool>" not in text
     assert "warn> warning kind=sample" in text
 
 
-def test_prompt_spinner_frame_is_blue_agent_icon() -> None:
-    """Prompt spinner frame should render the branded blue prompt icon."""
-    frame = prompt_spinner_frame(0)
+@pytest.mark.asyncio
+async def test_chat_stream_tool_card_shows_args() -> None:
+    events = [
+        RunStreamEvent(
+            stream_id="run_args:1",
+            run_id="run_args",
+            attempt_id="a1",
+            seq=1,
+            event="tool_call_started",
+            data={
+                "tools": [
+                    {
+                        "tool_name": "glob_search",
+                        "tool_call_id": "call_1",
+                        "args": {"pattern": "**/*", "max_results": 200},
+                    }
+                ]
+            },
+        ),
+        RunStreamEvent(
+            stream_id="run_args:2",
+            run_id="run_args",
+            attempt_id="a1",
+            seq=2,
+            event="tool_call_completed",
+            data={
+                "tools": [
+                    {
+                        "tool_name": "glob_search",
+                        "tool_call_id": "call_1",
+                        "status": "completed",
+                        "result_summary": "200 paths matched",
+                    }
+                ]
+            },
+        ),
+    ]
 
-    assert frame.startswith("\r\033[38;2;")
-    assert "agent> thinking..." in frame
-    assert frame.endswith("thinking...")
+    async def _stream():
+        for item in events:
+            yield item
+
+    output: list[str] = []
+    await render_chat_stream(stream=_stream(), output=output.append, run_id="run_args")
+    text = "".join(output)
+    assert "tool> glob_search(pattern=**/*, max_results=200)" in text
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_animation_clears_before_answer() -> None:
-    """Animated chat stream should clear spinner before assistant text."""
-
-    async def _stream():
-        await asyncio.sleep(0.02)
-        yield RunStreamEvent(
-            stream_id="run_x:1",
-            run_id="run_x",
+async def test_chat_stream_tool_card_shows_truncated_flag() -> None:
+    events = [
+        RunStreamEvent(
+            stream_id="run_trunc:1",
+            run_id="run_trunc",
             attempt_id="a1",
             seq=1,
-            event="token_delta",
-            data={"delta_text": "hi"},
-        )
-        yield RunStreamEvent(
-            stream_id="run_x:2",
-            run_id="run_x",
+            event="tool_call_started",
+            data={
+                "tools": [
+                    {
+                        "tool_name": "glob_search",
+                        "tool_call_id": "call_1",
+                        "args": {"pattern": "**/*", "max_results": 200},
+                    }
+                ]
+            },
+        ),
+        RunStreamEvent(
+            stream_id="run_trunc:2",
+            run_id="run_trunc",
             attempt_id="a1",
             seq=2,
-            event="run_completed",
-            data={},
-        )
+            event="tool_call_completed",
+            data={
+                "tools": [
+                    {
+                        "tool_name": "glob_search",
+                        "tool_call_id": "call_1",
+                        "status": "completed",
+                        "result_summary": "200 paths matched",
+                        "truncated": True,
+                    }
+                ]
+            },
+        ),
+    ]
+
+    async def _stream():
+        for item in events:
+            yield item
 
     output: list[str] = []
-    _ = await render_chat_stream(
-        stream=_stream(),
-        output=output.append,
-        run_id="run_x",
-        animate=True,
-    )
+    await render_chat_stream(stream=_stream(), output=output.append, run_id="run_trunc")
     text = "".join(output)
-    assert "agent> thinking..." in text
-    assert "\033[2Kassistant> hi" in text
+    assert "truncated=true" in text
 
 
 @pytest.mark.asyncio
@@ -302,10 +383,10 @@ async def test_chat_session_looping_tool_calls_fail_by_budget_with_named_tools()
     )
     assert exit_code == 0
     text = "".join(io.output)
-    assert "tool> tool start web_search" in text
-    assert "tool> tool done web_search status=completed" in text
+    assert "tool> web_search(" in text
+    assert "summary=" in text
     assert "event> run run_failed reason=tool_policy_denied" in text
-    assert "hint> run stopped by tool-call budget/policy" in text
+    assert "hint> Check --max-tool-calls and tool policy." in text
 
 
 @pytest.mark.asyncio
@@ -391,6 +472,59 @@ async def test_chat_session_supports_sessions_history_and_debug_commands(tmp_pat
     assert sessions
 
 
+@pytest.mark.asyncio
+async def test_chat_passes_transcript_as_messages() -> None:
+    event_log = InMemoryEventLog()
+    provider = _HistoryEchoProvider()
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=event_log,
+    )
+    io = _IoHarness(["hello", "again", "/exit"])
+    selected_manifests = [row.manifest for row in agent.runner.deps.tool_registry.list_registered()]
+    code = await run_chat_session(
+        agent=agent,
+        event_log=event_log,
+        agent_id="agent.cli",
+        graph_preset="single_react",
+        stream_poll_interval_ms=10,
+        selected_manifests=selected_manifests,
+        input_reader=io.read,
+        output=io.write,
+    )
+    assert code == 0
+    assert provider.message_counts[:2] == [2, 4]
+
+
+@pytest.mark.asyncio
+async def test_chat_reset_clears_memory() -> None:
+    event_log = InMemoryEventLog()
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=event_log,
+    )
+    io = _IoHarness(["hello", "/reset", "/history", "/exit"])
+    selected_manifests = [row.manifest for row in agent.runner.deps.tool_registry.list_registered()]
+    code = await run_chat_session(
+        agent=agent,
+        event_log=event_log,
+        agent_id="agent.cli",
+        graph_preset="single_react",
+        stream_poll_interval_ms=10,
+        selected_manifests=selected_manifests,
+        input_reader=io.read,
+        output=io.write,
+    )
+    assert code == 0
+    text = "".join(io.output)
+    assert "chat> memory reset thread=thread_" in text
+    assert "history> empty" in text
+
+
 def test_main_chat_command_with_monkeypatched_input(monkeypatch, capsys) -> None:
     """Main chat command should run interactive loop and exit cleanly."""
     lines = iter(["hello", "/exit"])
@@ -400,3 +534,55 @@ def test_main_chat_command_with_monkeypatched_input(monkeypatch, capsys) -> None
     output = capsys.readouterr().out
     assert "chat> session=" in output
     assert "assistant>" in output
+
+
+@pytest.mark.asyncio
+async def test_chat_session_supports_bang_shell_command() -> None:
+    event_log = InMemoryEventLog()
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=event_log,
+    )
+    io = _IoHarness(["!printf hello", "/exit"])
+    code = await run_chat_session(
+        agent=agent,
+        event_log=event_log,
+        agent_id="agent.cli",
+        graph_preset="single_react",
+        stream_poll_interval_ms=10,
+        selected_manifests=[],
+        input_reader=io.read,
+        output=io.write,
+    )
+    assert code == 0
+    text = "".join(io.output)
+    assert "● Bash(!printf hello)" in text
+    assert "⎿ hello" in text
+
+
+@pytest.mark.asyncio
+async def test_chat_session_double_ctrl_c_exits() -> None:
+    event_log = InMemoryEventLog()
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=event_log,
+    )
+    io = _InterruptIoHarness([KeyboardInterrupt(), KeyboardInterrupt()])
+    code = await run_chat_session(
+        agent=agent,
+        event_log=event_log,
+        agent_id="agent.cli",
+        graph_preset="single_react",
+        stream_poll_interval_ms=10,
+        selected_manifests=[],
+        input_reader=io.read,
+        output=io.write,
+    )
+    assert code == 0
+    text = "".join(io.output)
+    assert "press Ctrl+C again within 2s to exit" in text
+    assert "chat> interrupted" in text

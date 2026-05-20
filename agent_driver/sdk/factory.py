@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 import os
 
+from agent_driver.code_agent.backends import create_python_backend
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
 from agent_driver.runtime.events import InMemoryEventLog
@@ -23,10 +24,21 @@ from agent_driver.tools import (
 )
 
 
-def build_default_registry() -> ToolRegistry:
+def build_default_registry(config: RunnerConfig | None = None) -> ToolRegistry:
     """Build default built-in registry for SDK agents."""
+    settings = (config or RunnerConfig()).python_tool
+    python_backend = None
+    if settings.enabled:
+        python_backend = create_python_backend(
+            settings.backend,
+            session_idle_seconds=settings.session_idle_seconds,
+        )
     registry = ToolRegistry()
-    register_builtin_tools(registry)
+    register_builtin_tools(
+        registry,
+        python_backend=python_backend,
+        python_settings=settings,
+    )
     register_planning_tool(registry)
     return registry
 
@@ -43,7 +55,7 @@ def create_agent(
 ) -> Agent:
     """Create SDK Agent facade with filtered tool registry."""
     config_copy = deepcopy(config) if config is not None else RunnerConfig()
-    source_registry = config_copy.tool_registry or build_default_registry()
+    source_registry = config_copy.tool_registry or build_default_registry(config_copy)
     selected_tools = tools or ToolSet.all()
     selected_tools.validate_known_names(source_registry)
     filtered_registry = selected_tools.apply(source_registry)

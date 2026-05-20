@@ -25,7 +25,8 @@ def file_write_manifest() -> ToolManifest:
     return ToolManifest(
         name=FILE_WRITE_TOOL,
         description=(
-            "Write UTF-8 text to an absolute file path with overwrite/append mode."
+            "Write UTF-8 text to a file path with overwrite/append mode. "
+            "Relative paths resolve against workspace cwd."
         ),
         risk=ToolRisk.MEDIUM,
         side_effect=SideEffectClass.REVERSIBLE_WRITE,
@@ -36,7 +37,12 @@ def file_write_manifest() -> ToolManifest:
         args_schema={
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Absolute file path"},
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "File path; absolute or relative to workspace cwd"
+                    ),
+                },
                 "content": {"type": "string", "description": "Text payload to write"},
                 "mode": {
                     "type": "string",
@@ -83,7 +89,7 @@ def file_edit_manifest() -> ToolManifest:
         name=FILE_EDIT_TOOL,
         description=(
             "Edit UTF-8 text file by replacing expected old_text occurrences with "
-            "new_text."
+            "new_text. Relative paths resolve against workspace cwd."
         ),
         risk=ToolRisk.MEDIUM,
         side_effect=SideEffectClass.REVERSIBLE_WRITE,
@@ -94,7 +100,12 @@ def file_edit_manifest() -> ToolManifest:
         args_schema={
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Absolute file path"},
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "File path; absolute or relative to workspace cwd"
+                    ),
+                },
                 "old_text": {
                     "type": "string",
                     "description": "Text snippet expected in file",

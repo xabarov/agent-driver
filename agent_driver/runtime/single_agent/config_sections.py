@@ -56,9 +56,46 @@ class CodeAgentSettings:
     authorized_imports: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class PythonToolSettings:
+    """Python tool execution settings."""
+
+    enabled: bool = False
+    backend: str = "local"
+    default_imports: tuple[str, ...] = (
+        "array",
+        "bisect",
+        "collections",
+        "dataclasses",
+        "decimal",
+        "datetime",
+        "fractions",
+        "functools",
+        "heapq",
+        "json",
+        "itertools",
+        "math",
+        "operator",
+        "queue",
+        "random",
+        "re",
+        "statistics",
+        "string",
+        "time",
+        "types",
+        "typing",
+        "unicodedata",
+        "uuid",
+    )
+    allow_overlay: bool = False
+    limits: CodeAgentLimits = field(default_factory=CodeAgentLimits)
+    session_idle_seconds: float = 300.0
+
+
 __all__ = [
     "CodeAgentSettings",
     "CompactionSettings",
+    "PythonToolSettings",
     "SubagentSettings",
     "TrimmingSettings",
 ]

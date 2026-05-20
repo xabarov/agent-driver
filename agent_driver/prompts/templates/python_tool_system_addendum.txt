@@ -1,0 +1,5 @@
+Python tool sandbox policy:
+- Allowed imports: {imports}
+- Policy: {policy_summary}
+- Limits: exec <= {max_exec_ms} ms, output <= {max_output_chars} chars
+- Sessions are persistent per session_id; idle >= {session_idle_seconds}s drops state

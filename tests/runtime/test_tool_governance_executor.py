@@ -69,6 +69,48 @@ async def test_governed_executor_completes_tool_and_truncates() -> None:
     assert result.traces[0].truncated
 
 
+@pytest.mark.asyncio
+async def test_governed_executor_bounds_structured_output_lists() -> None:
+    """Executor should cap oversized structured outputs and expose omitted_count."""
+    registry = ToolRegistry()
+
+    async def _lookup(_args):
+        return {
+            "summary": "ok",
+            "results": [f"item_{idx}" for idx in range(100)],
+        }
+
+    registry.register(
+        ToolManifest(
+            name="lookup",
+            description="Lookup",
+            output_char_budget=200,
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.READ_ONLY,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _lookup,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="hello",
+        run_id="run_tools_bound",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(planned=[ToolCall(tool_name="lookup", args={})])
+    )
+    result = await executor.execute(run_input, response)
+    payload = result.envelopes[0].structured_output
+    assert isinstance(payload, dict)
+    assert payload["truncated"] is True
+    assert payload["limit"] == "output_char_budget"
+    assert payload["omitted_count"] > 0
+
+
 def test_policy_denies_explicit_denied_tool() -> None:
     """Policy engine should deny tool present in denied list."""
     call = ToolCall(tool_name="danger")
@@ -213,3 +255,35 @@ async def test_governed_executor_includes_profile_and_prompt_metadata() -> None:
     assert meta["agent_profile"] == "react_text"
     assert meta["prompt_template_id"] == "react.default"
     assert meta["prompt_template_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_converts_handler_exception_to_denied_trace() -> None:
+    """Tool handler exceptions should not crash run; return denied envelope."""
+    registry = ToolRegistry()
+
+    async def _explode(_args):
+        raise ValueError("boom")
+
+    registry.register(
+        ToolManifest(name="explode", description="Explode"),
+        _explode,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="hello",
+        run_id="run_handler_error",
+        agent_id="agent",
+        graph_preset="single_react",
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[ToolCall(tool_name="explode", args={"x": 1})]
+        )
+    )
+    result = await executor.execute(run_input, response)
+    assert result.traces[0].status.value == "denied"
+    assert result.traces[0].error_code == "tool_handler_error"
+    assert result.envelopes[0].error is not None
+    assert result.envelopes[0].error.code == "tool_handler_error"

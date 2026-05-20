@@ -8,6 +8,7 @@ import pytest
 
 from agent_driver.tools import register_builtin_tools, register_planning_tool
 from agent_driver.tools.builtin.filesystem import register_filesystem_tools
+from agent_driver.tools.context import workspace_cwd_scope
 from agent_driver.tools.registry import ToolRegistry
 from tests.tools._builtin_expected import EXPECTED_BUILTIN_TOOL_NAMES
 
@@ -61,15 +62,17 @@ async def test_glob_and_grep_tools_find_expected_files(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_file_rejects_relative_path(tmp_path) -> None:
-    """read_file should enforce absolute path contract."""
-    _ = tmp_path
+async def test_read_file_resolves_relative_path_with_workspace_scope(tmp_path) -> None:
+    """read_file should resolve relative path when workspace scope is set."""
+    target = tmp_path / "relative.txt"
+    target.write_text("ok\n", encoding="utf-8")
     registry = ToolRegistry()
     register_filesystem_tools(registry)
     tool = registry.get("read_file")
     assert tool is not None
-    with pytest.raises(ValueError, match="absolute"):
-        await tool.handler({"path": "relative.txt"})
+    with workspace_cwd_scope(tmp_path):
+        out = await tool.handler({"path": "relative.txt"})
+    assert out["returned_lines"] == 1
 
 
 @pytest.mark.asyncio
@@ -135,6 +138,45 @@ async def test_read_file_rejects_when_file_exceeds_max_bytes(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_file_rejects_offset_zero(tmp_path) -> None:
+    """read_file should reject offset=0 to avoid silent empty slices."""
+    target = tmp_path / "note.txt"
+    target.write_text("l1\nl2\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("read_file")
+    assert tool is not None
+    with pytest.raises(ValueError, match="offset"):
+        await tool.handler({"path": str(target), "offset": 0})
+
+
+@pytest.mark.asyncio
+async def test_read_file_rejects_limit_zero(tmp_path) -> None:
+    """read_file should reject limit=0 to avoid silent empty slices."""
+    target = tmp_path / "note.txt"
+    target.write_text("l1\nl2\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("read_file")
+    assert tool is not None
+    with pytest.raises(ValueError, match="limit"):
+        await tool.handler({"path": str(target), "limit": 0})
+
+
+@pytest.mark.asyncio
+async def test_read_file_rejects_offset_beyond_eof(tmp_path) -> None:
+    """read_file should fail loudly when offset is beyond available lines."""
+    target = tmp_path / "note.txt"
+    target.write_text("l1\nl2\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("read_file")
+    assert tool is not None
+    with pytest.raises(ValueError, match="line count"):
+        await tool.handler({"path": str(target), "offset": 10})
+
+
+@pytest.mark.asyncio
 async def test_glob_respects_max_depth(tmp_path) -> None:
     """glob_search should skip deep paths beyond max_depth."""
     shallow = tmp_path / "a.py"
@@ -151,6 +193,44 @@ async def test_glob_respects_max_depth(tmp_path) -> None:
         {"base_dir": str(tmp_path), "pattern": "*.py", "max_depth": 0}
     )
     assert out["results"] == ["a.py"]
+    assert out["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_glob_directory_pattern_returns_directories_only(tmp_path) -> None:
+    """glob_search with trailing slash should return directories, not files."""
+    src = tmp_path / "src"
+    nested = src / "nested"
+    src.mkdir()
+    nested.mkdir()
+    (src / "app.py").write_text("x=1\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "**/"})
+    assert "src/" in out["results"]
+    assert "src/nested/" in out["results"]
+    assert "src/app.py" not in out["results"]
+
+
+@pytest.mark.asyncio
+async def test_glob_sets_truncated_metadata_on_cap(tmp_path) -> None:
+    """glob_search should expose cap metadata when max_results is reached."""
+    for idx in range(3):
+        (tmp_path / f"f{idx}.py").write_text("x=1\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "*.py", "max_results": 2}
+    )
+    assert out["returned_count"] == 2
+    assert out["truncated"] is True
+    assert out["limit"] == "max_results"
+    assert out["limit_value"] == 2
+    assert out["more_available"] is True
 
 
 @pytest.mark.asyncio
@@ -166,6 +246,52 @@ async def test_grep_respects_max_matches_limit(tmp_path) -> None:
         {"base_dir": str(tmp_path), "pattern": "hit", "max_matches": 2}
     )
     assert len(out["matches"]) == 2
+    assert out["truncated"] is True
+    assert out["limit"] == "max_matches"
+    assert out["limit_value"] == 2
+
+
+@pytest.mark.asyncio
+async def test_grep_auto_prefixes_simple_path_glob(tmp_path) -> None:
+    """grep_search should treat '*.py' path_glob as recursive by default."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.py").write_text("needle\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("grep_search")
+    assert tool is not None
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "needle", "path_glob": "*.py"}
+    )
+    assert out["matches"]
+    assert out["matches"][0]["path"] == "src/a.py"
+
+
+@pytest.mark.asyncio
+async def test_grep_reports_skipped_files_count(tmp_path) -> None:
+    """grep_search should expose number of unreadable/skipped files."""
+    (tmp_path / "a.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "bin.dat").write_bytes(b"\xff\xfe\x00\x00")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("grep_search")
+    assert tool is not None
+    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "needle"})
+    assert out["skipped_files_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_grep_marks_more_lines_in_file_when_capped(tmp_path) -> None:
+    """grep_search should flag that one file has additional matching lines."""
+    target = tmp_path / "log.txt"
+    target.write_text("hit\nhit\nhit\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("grep_search")
+    assert tool is not None
+    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "hit", "max_matches": 1})
+    assert out["matches"][0]["more_lines_in_file"] is True
 
 
 @pytest.mark.asyncio

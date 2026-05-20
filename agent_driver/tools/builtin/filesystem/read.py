@@ -33,7 +33,10 @@ def read_file_manifest() -> ToolManifest:
         args_schema={
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Absolute file path"},
+                "path": {
+                    "type": "string",
+                    "description": "File path; absolute or relative to workspace cwd",
+                },
                 "offset": {
                     "type": "integer",
                     "description": "1-based line offset; negative counts from end",
@@ -70,7 +73,10 @@ async def read_file_handler(args: dict[str, Any]) -> dict[str, Any]:
         limit=as_optional_int(args.get("limit")),
     )
     numbered = [f"{idx + 1}|{value}" for idx, value in enumerate(sliced, start=start_index)]
-    summary = f"{path} ({len(sliced)} lines)"
+    line_range = (
+        f"{start_index + 1}-{start_index + len(sliced)}" if sliced else "empty-range"
+    )
+    summary = f"{path} ({len(sliced)} lines, file_lines={len(lines)}, range={line_range})"
     return {
         "summary": summary,
         "path": str(path),
@@ -87,13 +93,19 @@ def slice_lines(
     limit: int | None,
 ) -> tuple[list[str], int]:
     """Apply deterministic line slicing by offset and limit."""
+    if offset == 0:
+        raise ValueError("offset must be >= 1 or negative")
+    if limit is not None and limit <= 0:
+        raise ValueError("limit must be >= 1")
     if not lines:
         return [], 0
     line_count = len(lines)
     if offset is None:
         start_index = 0
     elif offset > 0:
-        start_index = min(offset - 1, line_count)
+        if offset > line_count:
+            raise ValueError(f"offset exceeds line count ({line_count})")
+        start_index = offset - 1
     else:
         start_index = max(line_count + offset, 0)
     if limit is None:

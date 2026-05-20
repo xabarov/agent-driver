@@ -131,7 +131,46 @@ CLI now includes first product-grade operator workflows around chat runtime:
 - CLI and slash-command resume actions (`approve/reject/edit/cancel/clarify`);
 - inspect/export commands for run artifacts and event timelines.
 
-## 11) CLI live evaluation milestone
+## 11.5) Openclaude-style chat TUI milestone
+
+Chat UX now transitions from basic line prefixes to a richer operator terminal
+surface:
+
+- `prompt_toolkit` prompt session with slash-command completion, `@path`
+  completion, history, and Enter-submit flow (`Esc+Enter`/`Ctrl+J` for newline);
+- `patch_stdout(raw=True)` around interactive loop to keep typed input from
+  leaking into streamed assistant output;
+- rich welcome panel with provider/model/session metadata, cwd, branch, and mode;
+- tips line (`!`, `/`, `@`, interrupt hints) after welcome panel;
+- status spinner row during active turns with phase labels
+  (`Pondering...` / `Calling <tool>...`);
+- markdown-capable assistant rendering with `●` marker on its own row and
+  compact tool cards (`● Tool(args)` + `⎿ summary`);
+- terminal run-completed event rows suppressed; per-run summary shown only for
+  non-trivial turns (tools/warnings/failures);
+- local `!command` shell shortcut and double-`Ctrl+C` exit confirmation;
+- deterministic plain fallback remains available via `--plain` and in non-TTY
+  test harnesses.
+
+## 11.6) Openclaude memory + tool clarity milestone
+
+Follow-up hardening for production-like chat ergonomics:
+
+- chat turns now pass accumulated transcript as `AgentRunInput.messages`, so the
+  assistant retains prior context across turns;
+- new `/reset` command clears chat memory and rotates `thread_id` in-place;
+- tool lifecycle payloads include structured `args` for both
+  `tool_call_started` and `tool_call_completed`, enabling accurate tool cards;
+- denied/error tool cards render explicit inline reason instead of only generic
+  terminal failure context;
+- rich status spinner is moved to `Console.status(...)` lifecycle to avoid
+  trailing whitespace artifacts under `patch_stdout`;
+- chat command constructs runner config with compaction toggles enabled
+  (`enable_compaction`, `enable_session_memory_compaction`) for long sessions;
+- prompt footer now surfaces context pressure/budget hints (`ctx=...`,
+  `budget=...`) to make token pressure visible before hard failures.
+
+## 12) CLI live evaluation milestone
 
 CLI now includes opt-in live evaluation harness for trace-driven quality checks:
 

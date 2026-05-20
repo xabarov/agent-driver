@@ -112,6 +112,30 @@ async def test_web_search_uses_mock_results_without_network() -> None:
     assert out["source"] == "mock"
     assert len(out["results"]) == 2
     assert out["results"][0]["title"] == "Doc A"
+    assert out["truncated"] is False
+    assert out["parse_status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_web_search_sets_truncated_when_mock_results_hit_cap() -> None:
+    """web_search should mark truncated when max_results cap is reached."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "query": "agent runtime",
+            "max_results": 1,
+            "mock_results": [
+                {"title": "Doc A", "url": "https://a.test", "snippet": "A"},
+                {"title": "Doc B", "url": "https://b.test", "snippet": "B"},
+            ],
+        }
+    )
+    assert out["returned_count"] == 1
+    assert out["truncated"] is True
+    assert out["max_results"] == 1
 
 
 @pytest.mark.asyncio
@@ -239,6 +263,8 @@ async def test_web_search_parses_duckduckgo_html(monkeypatch) -> None:
     assert out["source"] == "duckduckgo_html"
     assert len(out["results"]) == 1
     assert out["results"][0]["url"] == "https://example.com/page"
+    assert out["truncated"] is True
+    assert out["max_results"] == 1
 
 
 @pytest.mark.asyncio
@@ -295,3 +321,4 @@ async def test_web_search_includes_diagnostic_when_no_results_parsed(monkeypatch
     diagnostic = out.get("diagnostic")
     assert isinstance(diagnostic, dict)
     assert diagnostic.get("status") == "no_results_parsed"
+    assert out["parse_status"] == "parse_failed"

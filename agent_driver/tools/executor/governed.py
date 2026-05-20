@@ -80,6 +80,7 @@ class GovernedToolExecutor:
         index = spec.index
         run_metadata = {
             "run_id": run_input.run_id,
+            "thread_id": run_input.thread_id,
             "attempt_id": f"attempt_{index}",
             "agent_profile": run_input.agent_profile.value,
             "prompt_template_id": run_input.prompt_template_id,

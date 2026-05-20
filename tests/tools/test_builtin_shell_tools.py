@@ -115,3 +115,38 @@ async def test_bash_blocks_pipe_with_unknown_prefix() -> None:
     assert tool is not None
     with pytest.raises(ValueError, match="allowlist"):
         await tool.handler({"command": "echo hello | cat"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("command", "expected_error"),
+    [
+        ("echo hi; python -c \"print(1)\"", "statement separator ';' is not allowed"),
+        ("python -c \"print(1)\" && cd /tmp", "command prefix 'cd' is not in read-only allowlist"),
+        ("echo hi | tee /tmp/out.txt", "shell redirection/tee is not allowed"),
+        ("python -c \"print(1)\" > /tmp/out.txt", "shell redirection/tee is not allowed"),
+        ("mkdir /tmp/demo", "command prefix 'mkdir' is not in read-only allowlist"),
+        ("rm -rf /tmp/demo", "destructive command keyword is blocked"),
+    ],
+)
+async def test_bash_policy_denial_reasons(command: str, expected_error: str) -> None:
+    """bash tool should expose deterministic denial reason text."""
+    registry = ToolRegistry()
+    register_shell_tools(registry)
+    tool = registry.get("bash")
+    assert tool is not None
+    with pytest.raises(ValueError, match=expected_error):
+        await tool.handler({"command": command})
+
+
+@pytest.mark.asyncio
+async def test_bash_allows_python_inline_command() -> None:
+    """bash tool should allow single-command python execution."""
+    registry = ToolRegistry()
+    register_shell_tools(registry)
+    tool = registry.get("bash")
+    assert tool is not None
+    out = await tool.handler({"command": "python -c \"print(1)\""})
+    assert out["exit_code"] == 0
+    assert out["risk_category"] == "readonly"
+    assert "1" in out["stdout"]
