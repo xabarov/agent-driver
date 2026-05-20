@@ -212,6 +212,53 @@ async def test_web_fetch_extract_mode_text_for_html(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_web_fetch_extracts_og_metadata_and_strips_script_style(monkeypatch) -> None:
+    """web_fetch should preserve OG metadata and remove embedded script/style content."""
+    html = (
+        "<html><head>"
+        '<meta property="og:title" content="Segment Anything 3" />'
+        '<meta name="og:description" content="Latest release notes" />'
+        '<meta property="og:url" content="https://example.com/sam3" />'
+        '<meta property="article:published_time" content="2025-04-10" />'
+        "<style>.hidden {display:none;}</style>"
+        "</head><body>"
+        "<script>console.log('noise');</script>"
+        "<p>Model details</p>"
+        "</body></html>"
+    )
+    response = _DummyResponse(
+        url="https://example.com",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    out = await tool.handler(
+        {"url": "https://example.com", "extract_mode": "markdown", "max_chars": 500}
+    )
+    assert out["metadata"] == {
+        "title": "Segment Anything 3",
+        "description": "Latest release notes",
+        "url": "https://example.com/sam3",
+        "published_time": "2025-04-10",
+    }
+    assert "Title: Segment Anything 3" in out["content"]
+    assert "Description: Latest release notes" in out["content"]
+    assert "Model details" in out["content"]
+    assert "console.log('noise')" not in out["content"]
+    assert ".hidden {display:none;}" not in out["content"]
+
+
+@pytest.mark.asyncio
 async def test_web_fetch_wraps_http_errors(monkeypatch) -> None:
     """web_fetch should wrap HTTP exceptions with stable error prefix."""
     response = _DummyResponse(
@@ -263,6 +310,7 @@ async def test_web_search_parses_duckduckgo_html(monkeypatch) -> None:
     assert out["source"] == "duckduckgo_html"
     assert len(out["results"]) == 1
     assert out["results"][0]["url"] == "https://example.com/page"
+    assert out["result_preview_urls"] == ["https://example.com/page"]
     assert out["truncated"] is True
     assert out["max_results"] == 1
 
@@ -297,6 +345,35 @@ async def test_web_search_parses_alternate_duckduckgo_anchor_class(monkeypatch) 
 
 
 @pytest.mark.asyncio
+async def test_web_search_unwraps_duckduckgo_redirect_url(monkeypatch) -> None:
+    """web_search should normalize DDG redirect href into target URL."""
+    html = (
+        '<html><body>'
+        '<a class="result-link" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Ftarget">Target</a>'
+        "</body></html>"
+    )
+    response = _DummyResponse(
+        url="https://duckduckgo.com/html/?q=test",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler({"query": "test", "max_results": 1})
+    assert out["results"][0]["url"] == "https://example.com/target"
+    assert out["result_preview_urls"] == ["https://example.com/target"]
+
+
+@pytest.mark.asyncio
 async def test_web_search_includes_diagnostic_when_no_results_parsed(monkeypatch) -> None:
     """web_search should provide diagnostic metadata for empty parsed results."""
     html = "<html><body><div>no links</div></body></html>"
@@ -322,3 +399,29 @@ async def test_web_search_includes_diagnostic_when_no_results_parsed(monkeypatch
     assert isinstance(diagnostic, dict)
     assert diagnostic.get("status") == "no_results_parsed"
     assert out["parse_status"] == "parse_failed"
+
+
+@pytest.mark.asyncio
+async def test_web_search_returns_upstream_error_payload_on_provider_failure(monkeypatch) -> None:
+    """web_search should return graceful empty payload when upstream fails."""
+    response = _DummyResponse(
+        url="https://duckduckgo.com/html/?q=test",
+        status_code=503,
+        content=b"unavailable",
+        headers={"content-type": "text/html"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler({"query": "test", "max_results": 2})
+    assert out["results"] == []
+    assert out["parse_status"] == "upstream_error"
+    assert "web_search unavailable" in out["summary"]

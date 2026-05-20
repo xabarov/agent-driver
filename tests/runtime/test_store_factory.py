@@ -32,6 +32,14 @@ def test_factory_sqlite_bundle(tmp_path) -> None:
     assert bundle.capabilities.supports_retention
 
 
+def test_factory_sqlite_default_path_under_agent_driver(tmp_path, monkeypatch) -> None:
+    """Default sqlite path should live under .agent-driver directory."""
+    monkeypatch.chdir(tmp_path)
+    bundle = create_runtime_store_bundle(RuntimeStoreFactoryConfig(kind="sqlite"))
+    assert bundle.capabilities.transactional_writes
+    assert (tmp_path / ".agent-driver" / "runtime_store.sqlite3").exists()
+
+
 def test_factory_postgres_missing_dsn_preflight() -> None:
     """Preflight should fail when postgres selected without DSN."""
     result = preflight_runtime_store(RuntimeStoreFactoryConfig(kind="postgres"))

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
 from agent_driver.context import planning_state_init, planning_state_set_step
@@ -30,6 +31,23 @@ def apply_planning_updates_from_envelopes(
         structured = envelope.structured_output
         if not isinstance(structured, dict):
             continue
+        if envelope.call.tool_name == "todo_write":
+            applied_args = structured.get("applied_args")
+            if isinstance(applied_args, dict):
+                signature = json.dumps(applied_args, ensure_ascii=True, sort_keys=True)
+                if context.metadata.get("last_todo_write_signature") == signature:
+                    structured["summary"] = (
+                        "todo_write duplicate payload ignored; "
+                        "use merge=true or change row statuses/content"
+                    )
+                    structured["applied_args"] = {
+                        "todo_items": [],
+                        "todo_merge": True,
+                    }
+                    envelope.summary = str(structured["summary"])
+                    context.metadata["todo_write_deduped"] = True
+                    continue
+                context.metadata["last_todo_write_signature"] = signature
         planning_updated_by_tool = True
         planning_state = apply_planning_state_tool_update(
             planning_state, structured.get("applied_args", {})

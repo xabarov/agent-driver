@@ -141,9 +141,13 @@ def _extract_tool_states(event: RunStreamEvent) -> dict[str, ToolState]:
                     tool.get("args"), tool_name=str(tool.get("tool_name") or "")
                 ),
                 status=str(tool.get("status")) if tool.get("status") is not None else None,
-                result_summary=str(tool.get("result_summary")).strip()
-                if isinstance(tool.get("result_summary"), str)
-                else None,
+                result_summary=_merge_result_preview_paths(
+                    tool_name=str(tool.get("tool_name") or ""),
+                    result_summary=str(tool.get("result_summary")).strip()
+                    if isinstance(tool.get("result_summary"), str)
+                    else None,
+                    preview_paths=tool.get("result_preview_paths"),
+                ),
                 truncated=(
                     bool(tool.get("truncated"))
                     if isinstance(tool.get("truncated"), bool)
@@ -164,6 +168,7 @@ def _extract_tool_states(event: RunStreamEvent) -> dict[str, ToolState]:
         "truncated": event.data.get("truncated"),
         "error_code": event.data.get("error_code"),
         "tool_call_id": event.data.get("tool_call_id"),
+        "result_preview_paths": event.data.get("result_preview_paths"),
     }
     states[_tool_state_key(data_tool)] = ToolState(
         name=str(event.data.get("tool_name") or "?"),
@@ -171,9 +176,13 @@ def _extract_tool_states(event: RunStreamEvent) -> dict[str, ToolState]:
             event.data.get("args"), tool_name=str(event.data.get("tool_name") or "")
         ),
         status=str(event.data.get("status")) if event.data.get("status") is not None else None,
-        result_summary=str(event.data.get("result_summary")).strip()
-        if isinstance(event.data.get("result_summary"), str)
-        else None,
+        result_summary=_merge_result_preview_paths(
+            tool_name=str(event.data.get("tool_name") or ""),
+            result_summary=str(event.data.get("result_summary")).strip()
+            if isinstance(event.data.get("result_summary"), str)
+            else None,
+            preview_paths=event.data.get("result_preview_paths"),
+        ),
         truncated=(
             bool(event.data.get("truncated"))
             if isinstance(event.data.get("truncated"), bool)
@@ -186,6 +195,23 @@ def _extract_tool_states(event: RunStreamEvent) -> dict[str, ToolState]:
         ),
     )
     return states
+
+
+def _merge_result_preview_paths(
+    *, tool_name: str, result_summary: str | None, preview_paths: object
+) -> str | None:
+    if tool_name not in {"glob_search", "web_search"}:
+        return result_summary
+    if not isinstance(preview_paths, list) or not preview_paths:
+        return result_summary
+    normalized = [str(item) for item in preview_paths if isinstance(item, str)]
+    if not normalized:
+        return result_summary
+    preview_text = ", ".join(normalized[:5])
+    sample_label = "sample" if tool_name == "glob_search" else "sample_urls"
+    if result_summary:
+        return f"{result_summary}; {sample_label}={preview_text}"
+    return f"{sample_label}={preview_text}"
 
 
 def _extract_planned_tool_args(event: RunStreamEvent) -> dict[str, str]:

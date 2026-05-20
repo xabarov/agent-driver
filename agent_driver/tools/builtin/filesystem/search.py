@@ -74,6 +74,10 @@ def glob_search_manifest() -> ToolManifest:
                     "maximum": 64,
                     "description": "Maximum traversal depth from base_dir",
                 },
+                "recursive": {
+                    "type": "boolean",
+                    "description": "When true, match recursively under base_dir.",
+                },
             },
             "required": ["pattern"],
             "additionalProperties": False,
@@ -139,14 +143,22 @@ async def glob_search_handler(args: dict[str, Any]) -> dict[str, Any]:
     pattern = str(args.get("pattern") or "").strip()
     if not pattern:
         raise ValueError("pattern is required")
+    if pattern.startswith("/") or any(segment == ".." for segment in pattern.split("/")):
+        raise ValueError(
+            "pattern must be workspace-relative; use base_dir='..' to traverse up"
+        )
     base = resolve_base_dir(args.get("base_dir"))
     max_results = as_int(args.get("max_results"), MAX_RESULTS_DEFAULT, minimum=1)
     max_depth = as_int(args.get("max_depth"), MAX_DEPTH_DEFAULT, minimum=0)
+    recursive = bool(args.get("recursive", False))
     ignored = load_ignore_patterns(base)
     rows: list[str] = []
     truncated = False
     directory_only = pattern.endswith("/")
-    normalized_pattern = pattern if pattern.startswith("**/") else f"**/{pattern}"
+    raw_pattern = pattern[:-1] if directory_only else pattern
+    if not raw_pattern:
+        raw_pattern = "*"
+    recursive_pattern = recursive or pattern.startswith("**/") or "/" in raw_pattern
     for path in sorted(base.rglob("*")):
         if len(rows) >= max_results:
             truncated = True
@@ -158,14 +170,21 @@ async def glob_search_handler(args: dict[str, Any]) -> dict[str, Any]:
         rel = path.relative_to(base).as_posix()
         if depth_from_relative(rel) > max_depth:
             continue
+        if not recursive_pattern and depth_from_relative(rel) > 0:
+            continue
         if is_ignored(rel, ignored):
             continue
-        if path.match(pattern) or path.match(normalized_pattern):
+        if _glob_match(rel=rel, path=path, pattern=raw_pattern, recursive=recursive_pattern):
             rows.append(f"{rel}/" if directory_only else rel)
+    preview = ", ".join(rows[:10])
     payload = {
-        "summary": f"{len(rows)} paths matched '{pattern}'",
+        "summary": (
+            f"{len(rows)} paths matched '{pattern}'"
+            + (f": {preview}" if preview else "")
+        ),
         "base_dir": str(base),
         "pattern": pattern,
+        "recursive": recursive,
         "results": rows,
         "returned_count": len(rows),
         "truncated": truncated,
@@ -175,6 +194,12 @@ async def glob_search_handler(args: dict[str, Any]) -> dict[str, Any]:
         payload["limit_value"] = max_results
         payload["more_available"] = True
     return payload
+
+
+def _glob_match(*, rel: str, path: Path, pattern: str, recursive: bool) -> bool:
+    if recursive:
+        return fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(rel, f"**/{pattern}")
+    return fnmatch.fnmatch(path.name, pattern)
 
 
 async def grep_search_handler(args: dict[str, Any]) -> dict[str, Any]:

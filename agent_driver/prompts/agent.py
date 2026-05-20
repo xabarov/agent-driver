@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from functools import lru_cache
 from importlib import resources
 from typing import Protocol
@@ -22,7 +23,10 @@ def react_base_policy() -> str:
 
 
 def react_chat_tool_policy() -> str:
-    return _read_prompt("react_chat_tool_policy.txt")
+    template = _read_prompt("react_chat_tool_policy.txt")
+    if "{current_date}" not in template:
+        return template
+    return template.format(current_date=datetime.now(UTC).date().isoformat())
 
 
 def force_final_answer_user_message() -> str:

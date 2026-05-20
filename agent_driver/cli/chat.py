@@ -22,9 +22,11 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.cli.chat_stream import render_chat_stream
 from agent_driver.cli.tui.prompt import ChatPromptSession
 from agent_driver.cli.tui.renderer import build_renderer
+from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.runtime.storage import RuntimeEventLog
 from agent_driver.sdk import Agent
 from agent_driver.cli.sessions import SessionStore
+from agent_driver.tools.builtin.python import python_tool_runtime_facts
 
 try:  # pragma: no cover - optional dependency
     from prompt_toolkit.patch_stdout import patch_stdout
@@ -226,11 +228,41 @@ async def _handle_local_command(
         return True
     if command == "doctor":
         status = await agent.runner.deps.provider.healthcheck()
+        python_settings = getattr(agent.runner.config, "python_tool", None)
+        python_imports = (
+            python_tool_runtime_facts(python_settings).imports_short
+            if python_settings is not None and getattr(python_settings, "enabled", False)
+            else "disabled"
+        )
+        tools = ", ".join(manifest.name for manifest in selected_manifests) or "none"
+        last_signal = "none"
+        run_id = state.last_run_id
+        if run_id is not None:
+            for event in reversed(list(event_log.list_for_run(run_id))):
+                event_type = (
+                    event.type.value
+                    if hasattr(event.type, "value")
+                    else str(event.type)
+                )
+                payload = event.payload if isinstance(event.payload, dict) else {}
+                if event_type == "run_failed":
+                    last_signal = f"run_failed:{payload.get('reason', 'unknown')}"
+                    break
+                if event_type == "interrupt_requested":
+                    last_signal = f"interrupt_requested:{payload.get('reason', 'unknown')}"
+                    break
+                if event_type == "run_completed":
+                    last_signal = "final_answered"
+                    break
         output(
             "doctor> "
             f"name={status.provider_name} healthy={status.healthy} "
             f"configured={status.configured} latency_ms={status.latency_ms}\n"
         )
+        output(f"doctor> limits max_steps={max_steps} max_tool_calls={max_tool_calls} deadline_seconds={deadline_seconds}\n")
+        output(f"doctor> tools {tools}\n")
+        output(f"doctor> python_imports {python_imports}\n")
+        output(f"doctor> last_signal {last_signal}\n")
         return True
     if command == "save":
         record = session_store.upsert(
@@ -411,10 +443,15 @@ async def run_chat_session(
 
     def _emit_welcome() -> None:
         python_backend = None
+        python_allowed_imports = None
         if any(manifest.name == "python" for manifest in manifests):
-            raw_backend = getattr(getattr(agent.runner.config, "python_tool", None), "backend", None)
+            python_settings = getattr(agent.runner.config, "python_tool", None)
+            raw_backend = getattr(python_settings, "backend", None)
             if isinstance(raw_backend, str) and raw_backend.strip():
                 python_backend = raw_backend
+            if python_settings is not None:
+                facts = python_tool_runtime_facts(python_settings)
+                python_allowed_imports = facts.imports_short
         renderer.welcome(
             provider_name=provider_name,
             model_name=model_name,
@@ -422,6 +459,13 @@ async def run_chat_session(
             thread_id=state.thread_id,
             tools_count=len(manifests),
             python_backend=python_backend,
+            python_allowed_imports=python_allowed_imports,
+            limits_summary=(
+                f"steps={max_steps} tools={max_tool_calls} "
+                f"deadline={deadline_seconds}s"
+                if deadline_seconds is not None
+                else f"steps={max_steps} tools={max_tool_calls} deadline=none"
+            ),
             cwd=str(Path.cwd()),
             git_branch=_detect_git_branch(),
             mode_label="chat+debug" if state.debug_tool_protocol else "chat",
@@ -543,7 +587,9 @@ async def run_chat_session(
                 )
                 prompt_session.set_pressure(pressure_state)
             if assistant_text:
-                state.transcript.append(("assistant", assistant_text))
+                state.transcript.append(
+                    ("assistant", strip_text_form_tool_calls(assistant_text))
+                )
             store.upsert(
                 session_id=state.session_id,
                 thread_id=state.thread_id,

@@ -195,6 +195,7 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                 metadata={
                     "next_step": "run_started",
                     "step_count": 0,
+                    "llm_step_count": 0,
                     "tool_calls": 0,
                     **(
                         run_input.app_metadata

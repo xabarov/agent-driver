@@ -105,9 +105,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_runtime_bounds_options(
         chat_parser,
-        default_max_steps=8,
-        default_max_tool_calls=4,
-        default_deadline_seconds=60.0,
+        default_max_steps=24,
+        default_max_tool_calls=12,
+        default_deadline_seconds=180.0,
     )
     add_provider_options(chat_parser)
     add_tool_options(chat_parser)

@@ -76,6 +76,32 @@ def test_openai_completion_normalizes_tool_calls_into_planned_metadata() -> None
     assert planned[0]["tool_name"] == "web_search"
 
 
+def test_openai_completion_fallback_parses_text_form_tool_call() -> None:
+    """Fallback parser should extract text-form tool calls from assistant content."""
+    payload = {
+        "model": "gpt-test",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        "<tool_call>{\"name\":\"glob_search\",\"arguments\":"
+                        "{\"pattern\":\"README.md\"}}</tool_call>"
+                    ),
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    }
+    response = normalize_openai_completion_payload(
+        payload, provider_name="openai-compat", fallback_model="fallback"
+    )
+    planned = response.metadata.get("planned_tool_calls")
+    assert isinstance(planned, list) and planned
+    assert planned[0]["tool_name"] == "glob_search"
+    assert response.metadata.get("text_form_tool_calls_parsed") is True
+
+
 def test_openai_stream_chunk_normalization_from_fixture() -> None:
     """Normalize OpenAI-compatible stream chunk into neutral stream event."""
     chunk = {
@@ -90,6 +116,30 @@ def test_openai_stream_chunk_normalization_from_fixture() -> None:
     assert event.delta_text == "hel"
     assert event.finish_reason is None
     assert "provider_usage_raw" in event.metadata
+
+
+def test_openai_stream_chunk_fallback_parses_text_form_tool_call() -> None:
+    """Stream chunk parser should detect text-form tool calls in delta content."""
+    chunk = {
+        "choices": [
+            {
+                "delta": {
+                    "content": (
+                        "<|python_tag|>{\"name\":\"web_search\",\"parameters\":"
+                        "{\"query\":\"agent-driver\"}}<|eom_id|>"
+                    )
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    }
+    event = normalize_openai_stream_chunk(
+        chunk, provider_name="openai-compat", fallback_model="fallback"
+    )
+    planned = event.metadata.get("planned_tool_calls")
+    assert isinstance(planned, list) and planned
+    assert planned[0]["tool_name"] == "web_search"
+    assert event.metadata.get("text_form_tool_calls_parsed") is True
 
 
 def test_openai_usage_metadata_includes_cached_tokens_when_present() -> None:

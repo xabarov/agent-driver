@@ -153,3 +153,40 @@ Observed deltas:
 - Targeted offline verification:
   - `uv run pytest tests/tools/test_builtin_shell_tools.py tests/prompts/test_react_base_policy_shell_rules.py tests/runtime/test_denial_recovery_hint.py tests/cli/test_eval_suite_membership.py tests/cli/test_eval_cli.py`
   - result: all green
+
+## Functional scenarios (this iteration)
+
+- `bash_denial_recovery` — проверка recovery после `tool_handler_error` в `bash`.
+- `loop_detection_force_final` — проверка остановки без лупа после пустого `grep_search`.
+- `workspace_cwd_relative_paths` — запись/чтение файлов только по относительным путям в sandbox.
+- `web_zero_results_honest_finalize` — честное завершение при пустом `web_search`.
+- `todo_status_lifecycle` — корректный lifecycle статусов `todo_write`.
+- `multi_file_rename` — координированный `file_edit` по двум файлам.
+- `python_sandbox_arithmetic` — безопасный вызов `python` tool в `python_exec`.
+- `forbidden_bash_governance` — соблюдение `forbidden_tools=(bash,)` под провоцирующим запросом.
+- `multi_file_summary_digest` — многофайловое чтение и структурный digest.
+
+## Coverage matrix
+
+- `bash_denial_recovery` -> `tool_stage` denial-recovery path + shell policy adaptation.
+- `loop_detection_force_final` -> bounded search behavior and non-loop finalize.
+- `workspace_cwd_relative_paths` -> `workspace_cwd` relative-path resolution for fs tools.
+- `web_zero_results_honest_finalize` -> web zero-result terminal behavior.
+- `todo_status_lifecycle` -> strict `todo_write` schema/status transition rules.
+- `multi_file_rename` -> multi-file `file_write` + `file_edit` consistency.
+- `python_sandbox_arithmetic` -> python tool execution path (`python_exec` pack).
+- `forbidden_bash_governance` -> forbidden tool governance under temptation.
+- `multi_file_summary_digest` -> long-context multi-read synthesis quality.
+
+## Functional pass validation
+
+- Offline smoke bundle: `.agent-driver/evals/20260520-071357`
+  - suite: `deep`
+  - scenarios: 11
+  - terminal failures: 0
+- Live bundle: `.agent-driver/evals/20260520-071401`
+  - suite: `deep`
+  - scenarios: 11
+  - terminal failures: 0
+  - `tool_use_correctness`: 11 pass, 0 partial, 0 fail
+  - `sandbox_build_verify`: no denied `bash` calls

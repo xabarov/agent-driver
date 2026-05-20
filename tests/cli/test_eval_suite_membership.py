@@ -8,13 +8,25 @@ from agent_driver.cli.evals import live_scenarios_for_suite
 def test_deep_suite_contains_only_problematic_and_new_scenarios() -> None:
     """Deep suite should stay slim and focused."""
     ids = {row.scenario_id for row in live_scenarios_for_suite("deep")}
-    assert ids == {"sandbox_build_verify", "file_edit_minimal_patch"}
+    assert ids == {
+        "sandbox_build_verify",
+        "file_edit_minimal_patch",
+        "bash_denial_recovery",
+        "loop_detection_force_final",
+        "workspace_cwd_relative_paths",
+        "web_zero_results_honest_finalize",
+        "todo_status_lifecycle",
+        "multi_file_rename",
+        "python_sandbox_arithmetic",
+        "forbidden_bash_governance",
+        "multi_file_summary_digest",
+    }
 
 
 def test_regression_suite_contains_stable_regression_targets() -> None:
     """Regression suite should keep known stable multi-step scenarios."""
     ids = {row.scenario_id for row in live_scenarios_for_suite("regression")}
-    assert ids == {"repo_audit_report", "web_to_repo_migration_plan"}
+    assert {"repo_audit_report", "web_to_repo_migration_plan"} <= ids
 
 
 def test_eval_scenarios_have_consistent_tool_contracts() -> None:

@@ -103,7 +103,7 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
                 reason=TerminalReason.DEADLINE_EXCEEDED,
             )
         max_steps = context.run_input.max_steps
-        if max_steps is not None and context.step_count >= max_steps:
+        if max_steps is not None and context.llm_step_count >= max_steps:
             return TerminalResult(
                 status=RunStatus.FAILED,
                 reason=TerminalReason.MAX_STEPS_EXCEEDED,

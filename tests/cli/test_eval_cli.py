@@ -197,6 +197,19 @@ def test_eval_run_command_dispatch_supports_regression_suite(monkeypatch) -> Non
     )
 
 
+def test_regression_suite_contains_new_guard_scenarios() -> None:
+    """Regression suite should include parser/glob/web resilience checks."""
+    ids = {item.scenario_id for item in live_scenarios_for_suite("regression")}
+    assert "qwen_text_form_tool_call" in ids
+    assert "glob_root_listing" in ids
+    assert "web_search_upstream_error" in ids
+    assert "stale_knowledge_sam" in ids
+    assert "stale_knowledge_sam_offline" in ids
+    assert "repo_topfiles_no_recursion" in ids
+    assert "denial_no_retry" in ids
+    assert "denial_no_retry_offline" in ids
+
+
 def test_can_run_provider_reports_missing_openrouter_config(monkeypatch) -> None:
     """Live eval readiness check should explain missing OpenRouter config."""
     monkeypatch.delenv("AGENT_DRIVER_BASE_URL", raising=False)

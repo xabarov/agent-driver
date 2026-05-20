@@ -53,7 +53,9 @@ async def test_glob_and_grep_tools_find_expected_files(tmp_path) -> None:
     grep_tool = registry.get("grep_search")
     assert glob_tool is not None
     assert grep_tool is not None
-    glob_out = await glob_tool.handler({"base_dir": str(tmp_path), "pattern": "*.py"})
+    glob_out = await glob_tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "*.py", "recursive": True}
+    )
     assert glob_out["results"] == ["src/app.py"]
     grep_out = await grep_tool.handler({"base_dir": str(tmp_path), "pattern": "main"})
     paths = {row["path"] for row in grep_out["matches"]}
@@ -88,6 +90,51 @@ async def test_glob_respects_gitignore(tmp_path) -> None:
     out = await tool.handler({"base_dir": str(tmp_path), "pattern": "*.py"})
     assert "ignored.py" not in out["results"]
     assert "seen.py" in out["results"]
+
+
+@pytest.mark.asyncio
+async def test_glob_respects_gitignore_directory_pattern(tmp_path) -> None:
+    """Directory ignore entries should hide nested files under that prefix."""
+    (tmp_path / ".gitignore").write_text(".agent-driver/\n", encoding="utf-8")
+    hidden = tmp_path / ".agent-driver" / "evals"
+    hidden.mkdir(parents=True)
+    (hidden / "report.md").write_text("hidden\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("visible\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "*.md", "recursive": True}
+    )
+    assert "README.md" in out["results"]
+    assert not any(path.startswith(".agent-driver/") for path in out["results"])
+
+
+@pytest.mark.asyncio
+async def test_glob_pattern_star_is_non_recursive_by_default(tmp_path) -> None:
+    """Simple star pattern should match only top-level entries."""
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "deep.txt").write_text("x\n", encoding="utf-8")
+    (tmp_path / "top.txt").write_text("x\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "*.txt"})
+    assert out["results"] == ["top.txt"]
+
+
+@pytest.mark.asyncio
+async def test_glob_rejects_parent_path_pattern(tmp_path) -> None:
+    """Parent directory traversal in pattern should be rejected."""
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    with pytest.raises(ValueError, match="workspace-relative"):
+        await tool.handler({"base_dir": str(tmp_path), "pattern": "../*"})
 
 
 @pytest.mark.asyncio

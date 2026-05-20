@@ -1,0 +1,3 @@
+mode: chat
+What is the latest Segment Anything release from Meta? Include at least one URL source.
+/exit

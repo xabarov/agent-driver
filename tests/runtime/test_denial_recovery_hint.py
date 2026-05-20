@@ -45,3 +45,14 @@ def test_denial_recovery_hint_is_deduplicated_for_repeated_denial() -> None:
     _append_denial_recovery_message(context, result, messages)
     _append_denial_recovery_message(context, result, messages)
     assert len(messages) == 2
+
+
+def test_denial_recovery_forces_final_after_second_handler_error() -> None:
+    """Second handler denial for same tool should force final answer mode."""
+    context = SimpleNamespace(metadata={})
+    messages = [ChatMessage(role="user", content="start")]
+    _append_denial_recovery_message(context, _denied_result("denied_once"), messages)
+    _append_denial_recovery_message(context, _denied_result("denied_twice"), messages)
+    assert context.metadata.get("force_final_answer") is True
+    assert context.metadata.get("tool_choice_override") == "none"
+    assert "failed twice" in (messages[-1].content or "")

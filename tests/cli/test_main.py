@@ -162,9 +162,9 @@ def test_cli_chat_applies_default_runtime_bounds(monkeypatch) -> None:
 
     monkeypatch.setattr(cli_main, "_chat_command", _fake_chat_command)
     assert cli_main.main(["chat", "--plain", "--provider", "fake"]) == 0
-    assert captured["max_steps"] == 8
-    assert captured["max_tool_calls"] == 4
-    assert captured["deadline_seconds"] == 60.0
+    assert captured["max_steps"] == 24
+    assert captured["max_tool_calls"] == 12
+    assert captured["deadline_seconds"] == 180.0
 
 
 def test_cli_chat_keyboard_interrupt_returns_130(monkeypatch, capsys) -> None:

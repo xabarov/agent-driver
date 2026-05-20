@@ -332,19 +332,19 @@ def _default_sentinel_for_option(args: argparse.Namespace, key: str) -> object |
         return "memory"
     if key == "max_steps":
         if command in {"chat", "doctor"}:
-            return 8
+            return 24 if command == "chat" else 8
         if command == "run":
             return 12
         return None
     if key == "max_tool_calls":
         if command in {"chat", "doctor"}:
-            return 4
+            return 12 if command == "chat" else 4
         if command == "run":
             return 6
         return None
     if key == "deadline_seconds":
         if command in {"chat", "doctor"}:
-            return 60.0 if command == "chat" else 30.0
+            return 180.0 if command == "chat" else 30.0
         if command == "run":
             return 90.0
         return None

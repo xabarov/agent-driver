@@ -9,6 +9,7 @@ from agent_driver.code_agent.profile import run_code_agent_stage
 from agent_driver.contracts.enums import AgentProfile, ChatRole, RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmFinishReason
+from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.single_agent.pending import (
     pending_interrupt_from_execution_result,
@@ -180,6 +181,37 @@ def _emit_tool_completed_if_needed(
         if isinstance(call.tool_call_id, str) and call.tool_call_id
     }
     fallback_args = [call.args for call in planned_calls]
+    preview_paths_by_call_id: dict[str, list[str]] = {}
+    fallback_preview_paths: list[list[str]] = []
+    for envelope in result.envelopes:
+        preview_paths: list[str] = []
+        structured = envelope.structured_output
+        if isinstance(structured, dict):
+            if (
+                envelope.call.tool_name == "glob_search"
+                and isinstance(structured.get("results"), list)
+            ):
+                preview_paths = [
+                    str(item)
+                    for item in structured["results"]
+                    if isinstance(item, str)
+                ][:5]
+            elif (
+                envelope.call.tool_name == "web_search"
+                and isinstance(structured.get("result_preview_urls"), list)
+            ):
+                preview_paths = [
+                    str(item)
+                    for item in structured["result_preview_urls"]
+                    if isinstance(item, str)
+                ][:5]
+        fallback_preview_paths.append(preview_paths)
+        if (
+            isinstance(envelope.call.tool_call_id, str)
+            and envelope.call.tool_call_id
+            and preview_paths
+        ):
+            preview_paths_by_call_id[envelope.call.tool_call_id] = preview_paths
     tools = [
         {
             "tool_name": trace.tool_name,
@@ -191,6 +223,15 @@ def _emit_tool_completed_if_needed(
             "result_summary": trace.result_summary,
             "error_code": trace.error_code,
             "truncated": trace.truncated,
+            "result_preview_paths": (
+                preview_paths_by_call_id.get(trace.tool_call_id, [])
+                if isinstance(trace.tool_call_id, str) and trace.tool_call_id
+                else (
+                    fallback_preview_paths[index]
+                    if index < len(fallback_preview_paths)
+                    else []
+                )
+            ),
         }
         for index, trace in enumerate(result.traces)
     ]
@@ -253,7 +294,7 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
     messages.append(
         ChatMessage(
             role=ChatRole.ASSISTANT,
-            content=response.message.content or "",
+            content=strip_text_form_tool_calls(response.message.content or ""),
             metadata={"tool_calls": assistant_tool_calls},
         )
     )
@@ -283,6 +324,7 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
             )
         )
     _append_denial_recovery_message(context, result, messages)
+    _append_web_fetch_verification_hint(context, result, messages)
     if context.metadata.get("force_final_answer"):
         messages.append(
             ChatMessage(
@@ -290,9 +332,39 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
                 content=force_final_answer_tool_message(),
             )
         )
+    _normalize_protocol_messages(messages)
     context.metadata["protocol_messages"] = [
         item.model_dump(mode="json") for item in messages
     ]
+
+
+def _append_web_fetch_verification_hint(
+    context: RunContext, result: ToolExecutionResult, messages: list[ChatMessage]
+) -> None:
+    """Nudge model to verify web searches with at least one fetch."""
+    web_search_total = int(context.metadata.get("web_search_calls_total", 0))
+    web_fetch_total = int(context.metadata.get("web_fetch_calls_total", 0))
+    for envelope in result.envelopes:
+        if envelope.call.tool_name == "web_search":
+            web_search_total += 1
+        elif envelope.call.tool_name == "web_fetch":
+            web_fetch_total += 1
+    context.metadata["web_search_calls_total"] = web_search_total
+    context.metadata["web_fetch_calls_total"] = web_fetch_total
+    if web_search_total < 1 or web_fetch_total > 0:
+        return
+    if context.metadata.get("web_fetch_verification_hint_sent") is True:
+        return
+    messages.append(
+        ChatMessage(
+            role=ChatRole.USER,
+            content=(
+                "You already used web_search. Before concluding on external-world facts, "
+                "open at least one returned URL with web_fetch and cite that URL."
+            ),
+        )
+    )
+    context.metadata["web_fetch_verification_hint_sent"] = True
 
 
 def _append_denial_recovery_message(
@@ -302,11 +374,13 @@ def _append_denial_recovery_message(
     denied_signature: str | None = None
     denied_tool_name: str | None = None
     denied_message: str | None = None
+    denied_code: str | None = None
     for envelope in result.envelopes:
         error = envelope.error
         if error is None or error.code != "tool_handler_error":
             continue
         denied_tool_name = envelope.call.tool_name
+        denied_code = error.code
         denied_message = (error.message or "").strip()
         denied_signature = f"{denied_tool_name}:{error.code}:{denied_message}"
         break
@@ -315,6 +389,28 @@ def _append_denial_recovery_message(
     if context.metadata.get("last_denied_signature") == denied_signature:
         return
     reason = denied_message or "tool handler policy denied this call"
+    denied_counts = context.metadata.get("denied_tool_counts")
+    if not isinstance(denied_counts, dict):
+        denied_counts = {}
+    tool_key = denied_tool_name or "unknown"
+    prior_count = int(denied_counts.get(tool_key, 0))
+    denied_counts[tool_key] = prior_count + 1
+    context.metadata["denied_tool_counts"] = denied_counts
+    if denied_counts[tool_key] >= 2:
+        context.metadata["force_final_answer"] = True
+        context.metadata["tool_choice_override"] = "none"
+        context.metadata["force_final_answer_reason"] = "repeated_tool_handler_error"
+        messages.append(
+            ChatMessage(
+                role=ChatRole.USER,
+                content=(
+                    f"Tool '{denied_tool_name}' failed twice with '{denied_code}'. "
+                    "Stop calling this tool and answer with what you have, or ask one clarification."
+                ),
+            )
+        )
+        context.metadata["last_denied_signature"] = denied_signature
+        return
     messages.append(
         ChatMessage(
             role=ChatRole.USER,
@@ -325,6 +421,47 @@ def _append_denial_recovery_message(
         )
     )
     context.metadata["last_denied_signature"] = denied_signature
+
+
+def _normalize_protocol_messages(messages: list[ChatMessage]) -> None:
+    normalized: list[ChatMessage] = []
+    total = len(messages)
+    for index, message in enumerate(messages):
+        if _is_drop_candidate_assistant_message(
+            message,
+            next_message=messages[index + 1] if index + 1 < total else None,
+        ):
+            continue
+        if (
+            normalized
+            and normalized[-1].role == ChatRole.USER
+            and message.role == ChatRole.USER
+        ):
+            merged = "\n\n".join(
+                part
+                for part in [
+                    (normalized[-1].content or "").strip(),
+                    (message.content or "").strip(),
+                ]
+                if part
+            )
+            normalized[-1] = ChatMessage(role=ChatRole.USER, content=merged)
+            continue
+        normalized.append(message)
+    messages[:] = normalized
+
+
+def _is_drop_candidate_assistant_message(
+    message: ChatMessage, *, next_message: ChatMessage | None
+) -> bool:
+    if message.role != ChatRole.ASSISTANT:
+        return False
+    if (message.content or "").strip():
+        return False
+    metadata = message.metadata if isinstance(message.metadata, dict) else {}
+    if metadata.get("tool_calls"):
+        return False
+    return next_message is not None and next_message.role == ChatRole.USER
 
 
 def _load_protocol_messages(context: RunContext) -> list[ChatMessage]:
@@ -405,7 +542,7 @@ def _should_force_final_answer(context: RunContext) -> bool:
         else max(1, int(context.metadata.get("max_steps", 1)))
     )
     near_tool_budget = context.tool_calls >= max(1, max_tool_calls - 1)
-    near_step_budget = context.step_count >= max(2, max_steps - 2)
+    near_step_budget = context.llm_step_count >= max(1, max_steps - 1)
     loop_detected = _has_repeated_recent_tool_call(context)
     zero_streak = int(context.metadata.get("web_search_zero_streak", 0))
     zero_results_triggered = zero_streak >= 1

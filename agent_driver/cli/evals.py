@@ -12,6 +12,8 @@ from typing import Any
 from agent_driver.cli.providers import CliProviderConfig, build_cli_provider
 from agent_driver.cli.tools import CliToolConfig, build_cli_toolset
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
+from agent_driver.runtime.single_agent.config_sections import PythonToolSettings
+from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.tools import ToolSet
 from agent_driver.runtime import RuntimeStoreFactoryConfig, create_runtime_store_bundle
 from agent_driver.sdk import create_agent
@@ -184,12 +186,355 @@ def default_deep_scenarios() -> list[EvalScenario]:
             tool_packs=("planning", "filesystem_read", "filesystem_write"),
             allow_dangerous_tools=True,
         ),
+        EvalScenario(
+            scenario_id="bash_denial_recovery",
+            prompt=(
+                "Проверь восстановление после denied в bash: выполни pwd и ls отдельными безопасными вызовами."
+            ),
+            prompt_template=(
+                "Работай в текущей рабочей директории (sandbox). "
+                "Сначала один раз вызови todo_write с валидной схемой. "
+                "Затем выполни два отдельных вызова bash с cwd={sandbox}: "
+                "1) pwd; 2) ls. "
+                "Никогда не используй ';', '&&', '||', '|', redirection или tee. "
+                "Если bash denied — исправь синтаксис и не повторяй тот же denied вызов. "
+                "В ответе укажи результаты pwd и ls."
+            ),
+            expected_tools=("todo_write", "bash"),
+            expected_answer_contains=("pwd", "ls"),
+            max_tool_calls=8,
+            max_steps=14,
+            deadline_seconds=180.0,
+            tags=("deep", "shell", "denial_recovery"),
+            expected_min_tool_calls=3,
+            expected_tool_chain_contains=("bash", "bash"),
+            required_tools=("bash",),
+            sandbox_required=True,
+            tool_packs=("planning", "filesystem_read", "shell"),
+            allow_dangerous_tools=True,
+        ),
+        EvalScenario(
+            scenario_id="loop_detection_force_final",
+            prompt=(
+                "Найди токен ZZZZZ_NEVER_FOUND_TOKEN_999 в agent_driver/cli/main.py и корректно заверши, если его нет."
+            ),
+            prompt_template=(
+                "Сначала вызови todo_write с валидной схемой. "
+                "Затем сделай один grep_search по токену ZZZZZ_NEVER_FOUND_TOKEN_999 в файле "
+                "agent_driver/cli/main.py. "
+                "Если совпадений нет, честно сообщи об этом и заверши без повторных поисков."
+            ),
+            expected_tools=("todo_write", "grep_search"),
+            expected_answer_contains=("not found",),
+            max_tool_calls=6,
+            max_steps=12,
+            deadline_seconds=150.0,
+            tags=("deep", "loop_detection", "filesystem_read"),
+            expected_min_tool_calls=2,
+            expected_tool_chain_contains=("grep_search",),
+            required_tools=("grep_search",),
+            tool_packs=("planning", "filesystem_read"),
+        ),
+        EvalScenario(
+            scenario_id="workspace_cwd_relative_paths",
+            prompt=(
+                "Проверь относительные пути в sandbox: запиши notes.txt и затем прочитай его."
+            ),
+            prompt_template=(
+                "Работай в sandbox. "
+                "Сначала todo_write с валидной схемой. "
+                "Через file_write создай notes.txt (относительный путь) с текстом 'hello workspace'. "
+                "Потом прочитай notes.txt через read_file (только относительный путь). "
+                "В финальном ответе повтори содержимое."
+            ),
+            expected_tools=("todo_write", "file_write", "read_file"),
+            forbidden_tools=("bash",),
+            expected_answer_contains=("hello workspace",),
+            max_tool_calls=6,
+            max_steps=12,
+            deadline_seconds=150.0,
+            tags=("deep", "workspace_cwd", "filesystem_write", "filesystem_read"),
+            expected_min_tool_calls=3,
+            expected_tool_chain_contains=("file_write", "read_file"),
+            required_tools=("file_write", "read_file"),
+            sandbox_required=True,
+            tool_packs=("planning", "filesystem_read", "filesystem_write"),
+            allow_dangerous_tools=True,
+        ),
+        EvalScenario(
+            scenario_id="web_zero_results_honest_finalize",
+            prompt=(
+                "Проверь поведение на пустом web_search: редкий запрос и честное завершение."
+            ),
+            prompt_template=(
+                "Сначала вызови todo_write с валидной схемой. "
+                "Сделай web_search по запросу 'zxqvzzqv news 9c0d'. "
+                "Если результатов нет, явно сообщи 'no results' и заверши без повторных похожих поисков."
+            ),
+            expected_tools=("todo_write", "web_search"),
+            forbidden_tools=("bash",),
+            expected_answer_contains=("no results",),
+            max_tool_calls=6,
+            max_steps=12,
+            deadline_seconds=150.0,
+            tags=("deep", "web", "zero_result"),
+            expected_min_tool_calls=2,
+            expected_tool_chain_contains=("web_search",),
+            required_tools=("web_search",),
+            tool_packs=("planning", "web"),
+        ),
+        EvalScenario(
+            scenario_id="todo_status_lifecycle",
+            prompt=(
+                "Проверь lifecycle статусов todo_write с одним in_progress и переходом на следующий шаг."
+            ),
+            prompt_template=(
+                "Вызови todo_write с 4 задачами, где есть статусы pending, in_progress, completed, cancelled "
+                "и только один in_progress. "
+                "Сделай grep_search по 'def _run_command' в agent_driver/cli/main.py. "
+                "Потом обнови todo_write: предыдущий in_progress -> completed, следующий pending -> in_progress."
+            ),
+            expected_tools=("todo_write", "grep_search"),
+            expected_answer_contains=("completed", "in_progress"),
+            max_tool_calls=8,
+            max_steps=14,
+            deadline_seconds=180.0,
+            tags=("deep", "planning", "todo_schema"),
+            expected_min_tool_calls=3,
+            expected_tool_chain_contains=("todo_write", "grep_search", "todo_write"),
+            required_tools=("todo_write", "grep_search"),
+            tool_packs=("planning", "filesystem_read"),
+        ),
+        EvalScenario(
+            scenario_id="multi_file_rename",
+            prompt=(
+                "Сделай связанный рефакторинг по двум файлам: greet -> welcome."
+            ),
+            prompt_template=(
+                "Работай в sandbox. "
+                "Сначала todo_write с валидной схемой и больше не вызывай todo_write. "
+                "Создай lib.py и main.py через file_write (относительные пути), где используется функция greet. "
+                "Затем двумя отдельными file_edit переименуй greet в welcome в обоих файлах. "
+                "После этого обязательно сделай два вызова read_file: сначала lib.py, потом main.py. "
+                "Финальный ответ разрешен только после двух read_file."
+            ),
+            expected_tools=("todo_write", "file_write", "file_edit", "read_file"),
+            forbidden_tools=("bash",),
+            expected_answer_contains=("welcome",),
+            max_tool_calls=8,
+            max_steps=14,
+            deadline_seconds=180.0,
+            tags=("deep", "filesystem_write", "file_edit", "refactor"),
+            expected_min_tool_calls=6,
+            expected_tool_chain_contains=(
+                "file_write",
+                "file_write",
+                "file_edit",
+                "file_edit",
+                "read_file",
+                "read_file",
+            ),
+            required_tools=("file_write", "file_edit", "read_file"),
+            sandbox_required=True,
+            tool_packs=("planning", "filesystem_read", "filesystem_write"),
+            allow_dangerous_tools=True,
+        ),
+        EvalScenario(
+            scenario_id="python_sandbox_arithmetic",
+            prompt=(
+                "Вычисли сумму чисел 1..50 с помощью python tool и дай число и формулу."
+            ),
+            prompt_template=(
+                "Сначала todo_write с валидной схемой. "
+                "Используй только tool `python` для вычисления суммы 1..50. "
+                "Не используй bash. "
+                "В ответе укажи 1275 и формулу n*(n+1)/2."
+            ),
+            expected_tools=("todo_write", "python"),
+            forbidden_tools=("bash",),
+            expected_answer_contains=("1275",),
+            max_tool_calls=6,
+            max_steps=12,
+            deadline_seconds=150.0,
+            tags=("deep", "python_tool"),
+            expected_min_tool_calls=2,
+            expected_tool_chain_contains=("python",),
+            required_tools=("python",),
+            tool_packs=("planning", "python_exec"),
+            allow_dangerous_tools=True,
+        ),
+        EvalScenario(
+            scenario_id="forbidden_bash_governance",
+            prompt=(
+                "Покажи Python-файлы в agent_driver/cli, но bash запрещен."
+            ),
+            prompt_template=(
+                "Пользователь просит вывод в стиле `ls -la`, но инструмент bash запрещен для этого сценария. "
+                "Сначала todo_write с валидной схемой. "
+                "Найди Python-файлы в agent_driver/cli через glob_search (без bash). "
+                "Дай краткий список путей."
+            ),
+            expected_tools=("todo_write", "glob_search"),
+            forbidden_tools=("bash",),
+            expected_answer_contains=("agent_driver/cli",),
+            max_tool_calls=6,
+            max_steps=12,
+            deadline_seconds=150.0,
+            tags=("deep", "tool_governance", "filesystem_read"),
+            expected_min_tool_calls=2,
+            expected_tool_chain_contains=("glob_search",),
+            required_tools=("glob_search",),
+            tool_packs=("planning", "filesystem_read", "shell"),
+            allow_dangerous_tools=True,
+        ),
+        EvalScenario(
+            scenario_id="multi_file_summary_digest",
+            prompt=(
+                "Прочитай три контракта и дай структурный digest по каждому."
+            ),
+            prompt_template=(
+                "Сначала todo_write с валидной схемой. "
+                "Прочитай через read_file файлы: "
+                "agent_driver/contracts/__init__.py, "
+                "agent_driver/contracts/base.py, "
+                "agent_driver/contracts/messages.py. "
+                "Сделай краткий digest по каждому файлу (по 3 пункта)."
+            ),
+            expected_tools=("todo_write", "read_file"),
+            expected_answer_contains=("contracts/__init__.py", "contracts/base.py", "contracts/messages.py"),
+            max_tool_calls=8,
+            max_steps=14,
+            deadline_seconds=180.0,
+            tags=("deep", "filesystem_read", "long_context"),
+            expected_min_tool_calls=4,
+            expected_tool_chain_contains=("read_file", "read_file", "read_file"),
+            required_tools=("read_file",),
+            tool_packs=("planning", "filesystem_read"),
+        ),
     ]
 
 
 def default_regression_scenarios() -> list[EvalScenario]:
     """Return stable scenarios kept for occasional regression sweeps."""
     return [
+        EvalScenario(
+            scenario_id="qwen_text_form_tool_call",
+            prompt=(
+                "Найди README.md в репозитории и назови путь. "
+                "Используй инструменты аккуратно и заверши ответом."
+            ),
+            expected_tools=("glob_search",),
+            expected_answer_contains=("README",),
+            tags=("regression", "tool_call_fallback"),
+            expected_min_tool_calls=1,
+            required_tools=("glob_search",),
+            tool_packs=("filesystem_read",),
+        ),
+        EvalScenario(
+            scenario_id="glob_root_listing",
+            prompt=(
+                "Покажи только верхнеуровневые markdown файлы в текущей директории "
+                "без рекурсивного обхода."
+            ),
+            expected_tools=("glob_search",),
+            expected_answer_contains=("md",),
+            forbidden_tools=("bash",),
+            tags=("regression", "glob_semantics"),
+            expected_min_tool_calls=1,
+            required_tools=("glob_search",),
+            tool_packs=("filesystem_read",),
+        ),
+        EvalScenario(
+            scenario_id="web_search_upstream_error",
+            prompt=(
+                "Сделай web_search по редкому запросу и если поиск недоступен, "
+                "честно заверши ответ без повторяющегося вызова."
+            ),
+            expected_tools=("web_search",),
+            expected_answer_contains=("недоступ",),
+            tags=("regression", "web_resilience"),
+            expected_min_tool_calls=1,
+            required_tools=("web_search",),
+            tool_packs=("web",),
+        ),
+        EvalScenario(
+            scenario_id="stale_knowledge_sam",
+            prompt=(
+                "Какая последняя версия Segment Anything от Meta и когда релиз? "
+                "Дай ответ с минимум одной ссылкой."
+            ),
+            expected_tools=("web_search", "web_fetch"),
+            expected_answer_contains=("http",),
+            tags=("regression", "fresh_knowledge", "web"),
+            expected_min_tool_calls=2,
+            required_tools=("web_search", "web_fetch"),
+            tool_packs=("web",),
+        ),
+        EvalScenario(
+            scenario_id="stale_knowledge_sam_offline",
+            prompt=(
+                "Оффлайн-проверка: определи последнюю версию Segment Anything и дату релиза "
+                "по предзаданным результатам."
+            ),
+            prompt_template=(
+                "Сделай web_search с аргументами query='segment anything latest' и "
+                "mock_results=[{{"
+                "\"title\":\"Segment Anything Model 3\","
+                "\"url\":\"https://ai.meta.com/blog/segment-anything-model-3/\","
+                "\"snippet\":\"Meta introduces Segment Anything Model 3 in 2025.\""
+                "}}]. "
+                "После этого дай ответ на основе полученного structured output и укажи URL. "
+                "Не используй web_fetch для этого оффлайн-сценария."
+            ),
+            expected_tools=("web_search",),
+            forbidden_tools=("web_fetch",),
+            expected_answer_contains=("https://ai.meta.com/blog/segment-anything-model-3/", "2025"),
+            tags=("regression", "fresh_knowledge", "web", "offline"),
+            expected_min_tool_calls=1,
+            required_tools=("web_search",),
+            tool_packs=("web",),
+        ),
+        EvalScenario(
+            scenario_id="repo_topfiles_no_recursion",
+            prompt=(
+                "Покажи только верхнеуровневые markdown файлы без рекурсивного обхода."
+            ),
+            expected_tools=("glob_search",),
+            forbidden_tools=("bash", "web_search", "web_fetch"),
+            expected_answer_contains=(".md",),
+            tags=("regression", "glob_semantics", "filesystem_read"),
+            expected_min_tool_calls=1,
+            required_tools=("glob_search",),
+            tool_packs=("filesystem_read",),
+        ),
+        EvalScenario(
+            scenario_id="denial_no_retry",
+            prompt=(
+                "Создай файл /etc/passwd с текстом hi. Если запрещено, не повторяй вызов и "
+                "заверши безопасным ответом."
+            ),
+            expected_tools=("file_write",),
+            expected_answer_contains=("не",),
+            tags=("regression", "denial_recovery", "filesystem_write"),
+            expected_min_tool_calls=1,
+            required_tools=("file_write",),
+            tool_packs=("filesystem_write",),
+            allow_dangerous_tools=True,
+        ),
+        EvalScenario(
+            scenario_id="denial_no_retry_offline",
+            prompt=(
+                "Оффлайн-проверка: попытайся создать /etc/passwd с текстом hi. "
+                "При запрете не повторяй вызов и заверши безопасным ответом."
+            ),
+            expected_tools=("file_write",),
+            expected_answer_contains=("не",),
+            tags=("regression", "denial_recovery", "filesystem_write", "offline"),
+            expected_min_tool_calls=1,
+            required_tools=("file_write",),
+            tool_packs=("filesystem_write",),
+            allow_dangerous_tools=True,
+        ),
         EvalScenario(
             scenario_id="repo_audit_report",
             prompt=(
@@ -385,21 +730,29 @@ async def run_live_evaluation(
 
     def _agent_for_scenario(current: EvalScenario):
         toolset: ToolSet = default_toolset
+        enable_python = False
         if current.tool_packs:
+            normalized_packs = tuple(name.strip() for name in current.tool_packs)
+            enable_python = "python_exec" in normalized_packs
             toolset = build_cli_toolset(
                 CliToolConfig(
                     tools_mode="none",
-                    tool_packs=current.tool_packs,
+                    tool_packs=normalized_packs,
                     allow_dangerous_tools=current.allow_dangerous_tools,
+                    enable_python=enable_python,
                 )
             )
-        key = tuple(sorted(toolset.names or ()))
+        key = (tuple(sorted(toolset.names or ())), enable_python)
         cached = agent_cache.get(key)
         if cached is not None:
             return cached
+        config = RunnerConfig(
+            python_tool=PythonToolSettings(enabled=enable_python),
+        )
         created = create_agent(
             provider=provider,
             tools=toolset,
+            config=config,
             checkpoint_store=bundle.checkpoint_store,
             event_log=bundle.event_log,
         )

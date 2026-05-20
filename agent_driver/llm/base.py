@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ import httpx
 from agent_driver.llm.contracts import LlmProviderKind, ProviderStatus
 
 T = TypeVar("T")
+_STREAM_OPEN_RETRIES = 1
+_STREAM_OPEN_RETRY_BACKOFF_SECONDS = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,14 +135,28 @@ class ProviderBase:
                 timeout=request.timeout_s,
                 transport=self._http_client_config.transport,
             ) as client:
-                async with client.stream(
-                    request.method,
-                    request.url,
-                    headers=request.headers,
-                    json=request.json,
-                ) as response:
-                    response.raise_for_status()
-                    yield response.aiter_lines()
+                for attempt in range(_STREAM_OPEN_RETRIES + 1):
+                    stream_context = client.stream(
+                        request.method,
+                        request.url,
+                        headers=request.headers,
+                        json=request.json,
+                    )
+                    try:
+                        response = await stream_context.__aenter__()
+                    except (httpx.RemoteProtocolError, httpx.ReadError):
+                        if attempt >= _STREAM_OPEN_RETRIES:
+                            raise
+                        await asyncio.sleep(
+                            _STREAM_OPEN_RETRY_BACKOFF_SECONDS * (attempt + 1)
+                        )
+                        continue
+                    try:
+                        response.raise_for_status()
+                        yield response.aiter_lines()
+                        return
+                    finally:
+                        await stream_context.__aexit__(None, None, None)
 
     @asynccontextmanager
     async def stream_with_telemetry(

@@ -22,6 +22,7 @@ from agent_driver.llm.contracts import (
     LlmStreamEvent,
     ProviderStatus,
 )
+from agent_driver.llm.tool_call_parser import extract_text_form_tool_calls
 
 
 def _map_finish_reason(reason: str | None) -> LlmFinishReason:
@@ -154,6 +155,13 @@ def normalize_openai_completion_payload(
     planned_tool_calls, parse_errors = _planned_tool_calls_from_openai(
         message_payload.get("tool_calls")
     )
+    if not planned_tool_calls and text:
+        text_planned, text_errors = extract_text_form_tool_calls(text)
+        if text_planned:
+            planned_tool_calls = text_planned
+            metadata["text_form_tool_calls_parsed"] = True
+        if text_errors:
+            parse_errors.extend(text_errors)
     if planned_tool_calls:
         metadata["planned_tool_calls"] = planned_tool_calls
     if parse_errors:
@@ -187,6 +195,13 @@ def normalize_openai_stream_chunk(
     planned_tool_calls, parse_errors = _planned_tool_calls_from_openai(
         choice_payload.get("tool_calls")
     )
+    if not planned_tool_calls and text:
+        text_planned, text_errors = extract_text_form_tool_calls(text)
+        if text_planned:
+            planned_tool_calls = text_planned
+            metadata["text_form_tool_calls_parsed"] = True
+        if text_errors:
+            parse_errors.extend(text_errors)
     if planned_tool_calls:
         metadata["planned_tool_calls"] = planned_tool_calls
     if parse_errors:

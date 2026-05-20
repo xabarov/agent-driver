@@ -10,6 +10,12 @@ from agent_driver.tools.context import get_workspace_cwd
 
 MAX_BYTES_DEFAULT = 64_000
 MAX_OFFSET_DEFAULT = 1_000_000
+_ALWAYS_IGNORED_PREFIXES = (
+    ".git/",
+    ".venv/",
+    "__pycache__/",
+    "node_modules/",
+)
 
 
 def resolve_file_path(raw: Any) -> Path:
@@ -117,9 +123,40 @@ def load_ignore_patterns(base: Path) -> list[str]:
 
 def is_ignored(relative_path: str, patterns: list[str]) -> bool:
     """Check if relative path matches one of ignore patterns."""
-    if not patterns:
+    rel = relative_path.strip("/")
+    if not rel:
         return False
-    return any(fnmatch.fnmatch(relative_path, pattern) for pattern in patterns)
+    rel_with_slash = f"{rel}/"
+    for prefix in _ALWAYS_IGNORED_PREFIXES:
+        if rel_with_slash.startswith(prefix):
+            return True
+    ignored = False
+    for raw_pattern in patterns:
+        pattern = raw_pattern.strip()
+        if not pattern:
+            continue
+        negate = pattern.startswith("!")
+        if negate:
+            pattern = pattern[1:].strip()
+            if not pattern:
+                continue
+        if _pattern_matches(rel, pattern):
+            ignored = not negate
+    return ignored
+
+
+def _pattern_matches(relative_path: str, pattern: str) -> bool:
+    normalized = pattern.lstrip("/")
+    if not normalized:
+        return False
+    rel = relative_path.strip("/")
+    rel_with_slash = f"{rel}/"
+    if normalized.endswith("/"):
+        prefix = normalized
+        return rel_with_slash.startswith(prefix) or f"/{prefix}" in f"/{rel_with_slash}"
+    if "/" not in normalized:
+        return fnmatch.fnmatch(Path(rel).name, normalized)
+    return fnmatch.fnmatch(rel, normalized)
 
 
 def depth_from_relative(relative_path: str) -> int:

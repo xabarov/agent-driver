@@ -44,6 +44,8 @@ class ChatRenderer(Protocol):
         thread_id: str,
         tools_count: int,
         python_backend: str | None = None,
+        python_allowed_imports: str | None = None,
+        limits_summary: str | None = None,
         cwd: str | None = None,
         git_branch: str | None = None,
         mode_label: str | None = None,
@@ -106,6 +108,8 @@ class PlainRenderer:
         thread_id: str,
         tools_count: int,
         python_backend: str | None = None,
+        python_allowed_imports: str | None = None,
+        limits_summary: str | None = None,
         cwd: str | None = None,
         git_branch: str | None = None,
         mode_label: str | None = None,
@@ -115,6 +119,8 @@ class PlainRenderer:
             model_name,
             tools_count,
             python_backend,
+            python_allowed_imports,
+            limits_summary,
             cwd,
             git_branch,
             mode_label,
@@ -212,6 +218,8 @@ class RichRenderer:
         thread_id: str,
         tools_count: int,
         python_backend: str | None = None,
+        python_allowed_imports: str | None = None,
+        limits_summary: str | None = None,
         cwd: str | None = None,
         git_branch: str | None = None,
         mode_label: str | None = None,
@@ -224,6 +232,8 @@ class RichRenderer:
                 thread_id=thread_id,
                 tools_count=tools_count,
                 python_backend=python_backend,
+                python_allowed_imports=python_allowed_imports,
+                limits_summary=limits_summary,
                 cwd=cwd,
                 git_branch=git_branch,
                 mode_label=mode_label,
@@ -246,6 +256,16 @@ class RichRenderer:
             + (
                 f"  [{self.theme.subtle}]python:[/] {python_backend}"
                 if isinstance(python_backend, str) and python_backend.strip()
+                else ""
+            )
+            + (
+                f"\n[{self.theme.subtle}]python_imports:[/] {python_allowed_imports}"
+                if isinstance(python_allowed_imports, str) and python_allowed_imports.strip()
+                else ""
+            )
+            + (
+                f"\n[{self.theme.subtle}]limits:[/] {limits_summary}"
+                if isinstance(limits_summary, str) and limits_summary.strip()
                 else ""
             )
             + "\n"

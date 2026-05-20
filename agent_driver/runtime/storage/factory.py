@@ -100,7 +100,8 @@ def create_runtime_store_bundle(
             capabilities=checkpoint_store.capabilities(),
         )
     if config.kind == "sqlite":
-        sqlite_path = config.sqlite_path or str(Path.cwd() / ".runtime_store.sqlite3")
+        sqlite_path = config.sqlite_path or str(Path.cwd() / ".agent-driver" / "runtime_store.sqlite3")
+        Path(sqlite_path).parent.mkdir(parents=True, exist_ok=True)
         store = SqliteRuntimeStore(path=sqlite_path)
         return RuntimeStoreBundle(
             checkpoint_store=store,

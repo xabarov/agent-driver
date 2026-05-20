@@ -356,6 +356,82 @@ async def test_chat_stream_tool_card_shows_truncated_flag() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_tool_card_shows_glob_preview_paths() -> None:
+    events = [
+        RunStreamEvent(
+            stream_id="run_glob_preview:1",
+            run_id="run_glob_preview",
+            attempt_id="a1",
+            seq=1,
+            event="tool_call_completed",
+            data={
+                "tools": [
+                    {
+                        "tool_name": "glob_search",
+                        "tool_call_id": "call_1",
+                        "status": "completed",
+                        "result_summary": "2 paths matched '*.md'",
+                        "result_preview_paths": ["README.md", "docs/README.md"],
+                    }
+                ]
+            },
+        )
+    ]
+
+    async def _stream():
+        for item in events:
+            yield item
+
+    output: list[str] = []
+    await render_chat_stream(
+        stream=_stream(), output=output.append, run_id="run_glob_preview"
+    )
+    text = "".join(output)
+    assert "sample=README.md, docs/README.md" in text
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_tool_card_shows_web_preview_urls() -> None:
+    events = [
+        RunStreamEvent(
+            stream_id="run_web_preview:1",
+            run_id="run_web_preview",
+            attempt_id="a1",
+            seq=1,
+            event="tool_call_completed",
+            data={
+                "tools": [
+                    {
+                        "tool_name": "web_search",
+                        "tool_call_id": "call_1",
+                        "status": "completed",
+                        "result_summary": "2 results for 'sam3' via duckduckgo_html",
+                        "result_preview_paths": [
+                            "https://ai.meta.com/blog/segment-anything-model-3/",
+                            "https://www.infoq.com/news/2025/11/meta-sam3/",
+                        ],
+                    }
+                ]
+            },
+        )
+    ]
+
+    async def _stream():
+        for item in events:
+            yield item
+
+    output: list[str] = []
+    await render_chat_stream(
+        stream=_stream(), output=output.append, run_id="run_web_preview"
+    )
+    text = "".join(output)
+    assert (
+        "sample_urls=https://ai.meta.com/blog/segment-anything-model-3/, "
+        "https://www.infoq.com/news/2025/11/meta-sam3/" in text
+    )
+
+
+@pytest.mark.asyncio
 async def test_chat_session_looping_tool_calls_fail_by_budget_with_named_tools() -> None:
     """Looping tool calls should stop by budget and render named tool events."""
     event_log = InMemoryEventLog()
@@ -439,6 +515,7 @@ async def test_chat_session_supports_sessions_history_and_debug_commands(tmp_pat
             "/provider",
             "/limits",
             "/debug on",
+            "/doctor",
             f"/save {tmp_path / 'saved-session.json'}",
             "/sessions",
             "/exit",
@@ -466,6 +543,8 @@ async def test_chat_session_supports_sessions_history_and_debug_commands(tmp_pat
     assert "provider> fake" in text
     assert "limits> " in text
     assert "debug> on" in text
+    assert "doctor> tools " in text
+    assert "doctor> last_signal final_answered" in text
     assert "session> " in text
     assert (tmp_path / "saved-session.json").exists()
     sessions = store.list_sessions()

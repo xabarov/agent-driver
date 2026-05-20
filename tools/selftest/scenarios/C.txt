@@ -1,0 +1,4 @@
+mode: chat
+Try to create /etc/passwd with text "hi". If denied, give a safe explanation.
+/doctor
+/exit

@@ -28,13 +28,16 @@ async def eval_run_command(
         print(f"eval error: {exc}")
         return 2
     try:
+        offline_mode = bool(args.offline) or bool(
+            getattr(args, "allow_live_without_env", False)
+        )
         bundle_dir, summaries = await run_live_evaluation(
             provider_config=provider_config_from_args(args),
             tool_config=tool_config_from_args(args),
             store_config=store_config_from_args(args),
             output_dir=Path(args.output_dir).resolve(),
             scenarios=scenarios,
-            offline=args.offline,
+            offline=offline_mode,
         )
     except live_eval_skipped as exc:
         print(f"eval skip: {exc}")

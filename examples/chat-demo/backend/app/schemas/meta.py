@@ -1,0 +1,54 @@
+"""Response schemas for health/provider/tool endpoints."""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+
+class ProviderStatusView(BaseModel):
+    """Public provider status payload."""
+
+    provider_name: str
+    provider_kind: str
+    healthy: bool
+    configured: bool
+    latency_ms: float | None = None
+    avg_latency_ms: float | None = None
+    request_count: int
+    error_count: int
+
+
+class HealthResponse(BaseModel):
+    """Health endpoint response."""
+
+    ok: bool = True
+    store_kind: str
+    provider: ProviderStatusView
+
+
+class ProviderResponse(BaseModel):
+    """Provider endpoint response."""
+
+    name: str
+    model: str | None = None
+    base_url: str | None = None
+    status: ProviderStatusView
+
+
+class ToolManifestView(BaseModel):
+    """Serializable view of selected tool manifest."""
+
+    name: str
+    description: str
+    risk: str
+    side_effect: str = Field(alias="sideEffect")
+    approval_mode: str = Field(alias="approvalMode")
+
+    model_config = {"populate_by_name": True}
+
+
+class ToolsResponse(BaseModel):
+    """Tool list endpoint response."""
+
+    tools: list[ToolManifestView]
+

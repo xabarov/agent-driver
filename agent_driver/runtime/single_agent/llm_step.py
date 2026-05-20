@@ -110,10 +110,12 @@ async def execute_llm_call_step(host: LlmStepHost, context: RunContext) -> Runti
     )
     _emit_token_pressure_warning(host, context)
     context.step_count += 1
+    context.llm_step_count += 1
     context.metadata.update(
         {
             "next_step": "tool_stage",
             "step_count": context.step_count,
+            "llm_step_count": context.llm_step_count,
             "tool_calls": context.tool_calls,
             "last_llm_response": context.llm_response.model_dump(mode="json"),
         }

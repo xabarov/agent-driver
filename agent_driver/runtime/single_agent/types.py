@@ -251,6 +251,15 @@ class RunContext:
     def tool_calls(self, value: int) -> None:
         self.metadata["tool_calls"] = value
 
+    @property
+    def llm_step_count(self) -> int:
+        """Count of completed LLM-call iterations (used for max_steps budget)."""
+        return int(self.metadata.get("llm_step_count", 0))
+
+    @llm_step_count.setter
+    def llm_step_count(self, value: int) -> None:
+        self.metadata["llm_step_count"] = value
+
 
 @dataclass(frozen=True, slots=True)
 class EventSpec:
