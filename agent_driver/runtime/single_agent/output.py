@@ -29,6 +29,7 @@ from agent_driver.contracts.context import (
 from agent_driver.contracts.enums import RunStatus
 from agent_driver.contracts.interrupts import ApprovalPayload, InterruptRequest
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.contracts.runtime import AgentRunOutput
 from agent_driver.runtime.single_agent.output_builders import (
     build_memory_audit,
@@ -186,12 +187,24 @@ class SingleAgentOutputMixin:
             normalized_results.append(payload)
         return normalized_results, artifact_refs
 
+    def _sanitize_terminal_answer(self, context: RunContext) -> str | None:
+        """Strip text-form tool call markup from the final assistant answer."""
+        if context.llm_response is None:
+            return None
+        raw = context.llm_response.message.content
+        if not isinstance(raw, str) or not raw.strip():
+            return raw
+        cleaned = strip_text_form_tool_calls(raw)
+        if cleaned != raw:
+            context.metadata["raw_assistant_content"] = raw
+        return cleaned or None
+
     def _build_output(
         self,
         context: RunContext,
         terminal: TerminalResult,
     ) -> AgentRunOutput:
-        answer = context.llm_response.message.content if context.llm_response else None
+        answer = self._sanitize_terminal_answer(context)
         usage = context.llm_response.usage if context.llm_response else None
         messages = [ChatMessage(role="assistant", content=answer)] if answer else []
         tool_trace = collect_tool_trace(context)
@@ -268,6 +281,7 @@ class SingleAgentOutputMixin:
             "approval_payload": self._approval_payload_from_context(context),
             "step_count": context.step_count,
             "tool_calls": context.tool_calls,
+            "raw_assistant_content": context.metadata.get("raw_assistant_content"),
         }
 
     def _approval_payload_from_context(

@@ -413,6 +413,8 @@ async def render_chat_stream(
                 hint = (
                     "Increase --max-steps if needed."
                     if reason == "max_steps_exceeded"
+                    else "Provider rejected the request payload; retry with fewer tool calls."
+                    if reason == "provider_protocol"
                     else "Check --max-tool-calls and tool policy."
                     if reason == "tool_policy_denied"
                     else None

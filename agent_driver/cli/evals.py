@@ -11,6 +11,7 @@ from typing import Any
 
 from agent_driver.cli.providers import CliProviderConfig, build_cli_provider
 from agent_driver.cli.tools import CliToolConfig, build_cli_toolset
+from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.runtime.single_agent.config_sections import PythonToolSettings
 from agent_driver.runtime.single_agent.types import RunnerConfig
@@ -35,6 +36,8 @@ class EvalScenario:
     expected_tools: tuple[str, ...] = ()
     forbidden_tools: tuple[str, ...] = ()
     expected_answer_contains: tuple[str, ...] = ()
+    expected_answer_any_of: tuple[tuple[str, ...], ...] = ()
+    follow_up_prompts: tuple[str, ...] = ()
     max_steps: int = 12
     max_tool_calls: int = 6
     deadline_seconds: float = 120.0
@@ -225,7 +228,9 @@ def default_deep_scenarios() -> list[EvalScenario]:
                 "Если совпадений нет, честно сообщи об этом и заверши без повторных поисков."
             ),
             expected_tools=("todo_write", "grep_search"),
-            expected_answer_contains=("not found",),
+            expected_answer_any_of=(
+                ("not found", "не найден", "не найдено", "no match"),
+            ),
             max_tool_calls=6,
             max_steps=12,
             deadline_seconds=150.0,
@@ -273,7 +278,9 @@ def default_deep_scenarios() -> list[EvalScenario]:
             ),
             expected_tools=("todo_write", "web_search"),
             forbidden_tools=("bash",),
-            expected_answer_contains=("no results",),
+            expected_answer_any_of=(
+                ("no results", "нет результат", "ничего не найден"),
+            ),
             max_tool_calls=6,
             max_steps=12,
             deadline_seconds=150.0,
@@ -410,6 +417,87 @@ def default_deep_scenarios() -> list[EvalScenario]:
             expected_tool_chain_contains=("read_file", "read_file", "read_file"),
             required_tools=("read_file",),
             tool_packs=("planning", "filesystem_read"),
+        ),
+        EvalScenario(
+            scenario_id="chat_multi_turn_followup",
+            prompt=(
+                "Найди в репозитории файл agent_driver/cli/main.py и назови его путь."
+            ),
+            prompt_template=(
+                "Сначала todo_write с валидной схемой. "
+                "Найди agent_driver/cli/main.py через glob_search или grep_search. "
+                "В ответе укажи путь agent_driver/cli/main.py."
+            ),
+            follow_up_prompts=(
+                "Теперь опиши содержимое этого файла в 2-3 предложениях. "
+                "Не повторяй полный путь в начале ответа.",
+            ),
+            expected_tools=("todo_write", "glob_search"),
+            expected_answer_any_of=(
+                ("main.py", "agent_driver/cli/main.py"),
+                ("def", "command", "cli"),
+            ),
+            max_tool_calls=8,
+            max_steps=16,
+            deadline_seconds=240.0,
+            tags=("deep", "real", "multi_turn"),
+            expected_min_tool_calls=2,
+            required_tools=("glob_search",),
+            tool_packs=("planning", "filesystem_read"),
+        ),
+        EvalScenario(
+            scenario_id="ambiguous_request_clarify_then_act",
+            prompt="Сделай как надо, но аккуратно и без ошибок.",
+            prompt_template=(
+                "Запрос неоднозначен. Сначала задай один уточняющий вопрос пользователю "
+                "(какой файл или задачу имеешь в виду). "
+                "После уточнения найди agent_driver/cli/main.py через glob_search "
+                "и кратко опиши, что в файле."
+            ),
+            follow_up_prompts=(
+                "Имел в виду agent_driver/cli/main.py — найди и кратко опиши.",
+            ),
+            expected_tools=("glob_search",),
+            expected_answer_any_of=(
+                ("уточн", "clarif", "какой", "which"),
+                ("main.py", "agent_driver/cli/main.py", "def", "cli"),
+            ),
+            max_tool_calls=8,
+            max_steps=16,
+            deadline_seconds=240.0,
+            tags=("deep", "real", "ambiguous"),
+            expected_min_tool_calls=1,
+            required_tools=("glob_search",),
+            tool_packs=("filesystem_read",),
+        ),
+        EvalScenario(
+            scenario_id="real_refactor_small_module",
+            prompt=(
+                "В sandbox добавь docstring к функции extract_text_form_tool_calls "
+                "в файле tool_call_parser.py."
+            ),
+            prompt_template=(
+                "Работай в sandbox (текущая рабочая директория). "
+                "Сначала todo_write с валидной схемой. "
+                "Скопируй или создай tool_call_parser.py с функцией extract_text_form_tool_calls "
+                "(можно упростить тело до pass). "
+                "Через read_file прочитай файл, затем file_edit добавь docstring "
+                "'Parse fallback tool-call blocks from plain assistant text.' перед функцией. "
+                "Снова read_file и в финальном ответе подтверди наличие docstring (тройные кавычки)."
+            ),
+            expected_tools=("todo_write", "file_write", "read_file", "file_edit"),
+            forbidden_tools=("bash",),
+            expected_answer_contains=('"""',),
+            max_tool_calls=8,
+            max_steps=14,
+            deadline_seconds=180.0,
+            tags=("deep", "real", "refactor", "filesystem_write", "file_edit"),
+            expected_min_tool_calls=5,
+            expected_tool_chain_contains=("read_file", "file_edit", "read_file"),
+            required_tools=("read_file", "file_edit"),
+            sandbox_required=True,
+            tool_packs=("planning", "filesystem_read", "filesystem_write"),
+            allow_dangerous_tools=True,
         ),
     ]
 
@@ -732,7 +820,10 @@ async def run_live_evaluation(
         toolset: ToolSet = default_toolset
         enable_python = False
         if current.tool_packs:
-            normalized_packs = tuple(name.strip() for name in current.tool_packs)
+            raw_packs = current.tool_packs
+            if isinstance(raw_packs, str):
+                raw_packs = (raw_packs,)
+            normalized_packs = tuple(name.strip() for name in raw_packs if name.strip())
             enable_python = "python_exec" in normalized_packs
             toolset = build_cli_toolset(
                 CliToolConfig(
@@ -761,36 +852,53 @@ async def run_live_evaluation(
 
     for scenario in selected:
         started = time.monotonic()
-        run_id = f"run_eval_{scenario.scenario_id}_{datetime.now(UTC).strftime('%H%M%S')}"
+        base_run_id = f"run_eval_{scenario.scenario_id}_{datetime.now(UTC).strftime('%H%M%S')}"
         sandbox_dir: Path | None = None
         if scenario.sandbox_required:
             sandbox_dir = (sandbox_root / scenario.scenario_id).resolve()
             sandbox_dir.mkdir(parents=True, exist_ok=True)
-        prompt = scenario.prompt
+        prompts = [scenario.prompt]
         if scenario.prompt_template:
-            prompt = scenario.prompt_template.format(
+            prompts[0] = scenario.prompt_template.format(
                 sandbox=(str(sandbox_dir) if sandbox_dir is not None else ""),
                 repo_root=str(Path.cwd().resolve()),
             )
+        prompts.extend(scenario.follow_up_prompts)
         agent = _agent_for_scenario(scenario)
-        output = await agent.run(
-            AgentRunInput(
-                input=prompt,
-                run_id=run_id,
-                agent_id="agent.cli.eval",
-                graph_preset="single_react",
-                stream=False,
-                max_steps=scenario.max_steps,
-                max_tool_calls=scenario.max_tool_calls,
-                deadline_seconds=scenario.deadline_seconds,
-                app_metadata={
-                    "eval_scenario_id": scenario.scenario_id,
-                    "eval_sandbox_dir": (str(sandbox_dir) if sandbox_dir is not None else None),
-                    "eval_expected_min_tool_calls": scenario.expected_min_tool_calls,
-                    "workspace_cwd": str(sandbox_dir if sandbox_dir is not None else Path.cwd().resolve()),
-                },
+        thread_id = f"thread_eval_{scenario.scenario_id}"
+        protocol_messages: list[ChatMessage] = []
+        outputs: list[AgentRunOutput] = []
+        for turn_index, prompt in enumerate(prompts):
+            protocol_messages.append(ChatMessage(role="user", content=prompt))
+            output = await agent.run(
+                AgentRunInput(
+                    input=prompt,
+                    run_id=f"{base_run_id}_t{turn_index}",
+                    thread_id=thread_id,
+                    messages=tuple(protocol_messages[:-1]) if len(protocol_messages) > 1 else (),
+                    agent_id="agent.cli.eval",
+                    graph_preset="single_react",
+                    stream=False,
+                    max_steps=scenario.max_steps,
+                    max_tool_calls=scenario.max_tool_calls,
+                    deadline_seconds=scenario.deadline_seconds,
+                    app_metadata={
+                        "eval_scenario_id": scenario.scenario_id,
+                        "eval_sandbox_dir": (str(sandbox_dir) if sandbox_dir is not None else None),
+                        "eval_expected_min_tool_calls": scenario.expected_min_tool_calls,
+                        "workspace_cwd": str(
+                            sandbox_dir if sandbox_dir is not None else Path.cwd().resolve()
+                        ),
+                        "eval_turn_index": turn_index,
+                    },
+                )
             )
-        )
+            outputs.append(output)
+            if output.answer:
+                protocol_messages.append(
+                    ChatMessage(role="assistant", content=output.answer)
+                )
+        output = _merge_eval_outputs(outputs, base_run_id=base_run_id)
         elapsed_ms = int((time.monotonic() - started) * 1000)
         summary = summarize_run(
             scenario=scenario,
@@ -803,12 +911,61 @@ async def run_live_evaluation(
             output=output,
             summary=summary,
             scenario=scenario,
-            rendered_prompt=prompt,
+            rendered_prompt="\n---\n".join(prompts),
             sandbox_dir=sandbox_dir,
         )
     _write_scorecard(target_dir=target_dir, summaries=summaries, scenarios=selected)
     _write_triage(target_dir=target_dir, summaries=summaries)
     return target_dir, summaries
+
+
+def _answer_matches_expectations(*, answer: str, scenario: EvalScenario) -> bool:
+    """Return whether answer satisfies contains and any_of assertion groups."""
+    answer_lower = answer.lower()
+    if scenario.expected_answer_contains:
+        required = [item.lower() for item in scenario.expected_answer_contains]
+        if not all(item in answer_lower for item in required):
+            return False
+    for group in scenario.expected_answer_any_of:
+        options = [item.lower() for item in group if item]
+        if options and not any(item in answer_lower for item in options):
+            return False
+    return True
+
+
+def _merge_eval_outputs(
+    outputs: list[AgentRunOutput], *, base_run_id: str
+) -> AgentRunOutput:
+    """Merge multi-turn eval outputs into one summary envelope."""
+    if not outputs:
+        raise ValueError("outputs must not be empty")
+    if len(outputs) == 1:
+        return outputs[0]
+    last = outputs[-1]
+    merged_trace = [row for output in outputs for row in output.tool_trace]
+    merged_events = [event for output in outputs for event in output.events]
+    merged_metadata: dict[str, Any] = {}
+    if isinstance(last.metadata, dict):
+        merged_metadata = dict(last.metadata)
+    tool_results: list[Any] = []
+    for output in outputs:
+        metadata = output.metadata if isinstance(output.metadata, dict) else {}
+        rows = metadata.get("tool_results", [])
+        if isinstance(rows, list):
+            tool_results.extend(rows)
+    merged_metadata["tool_results"] = tool_results
+    merged_metadata["eval_turn_count"] = len(outputs)
+    answers = [item.answer for item in outputs if item.answer]
+    merged_answer = answers[-1] if answers else last.answer
+    return last.model_copy(
+        update={
+            "run_id": base_run_id,
+            "answer": merged_answer,
+            "tool_trace": merged_trace,
+            "events": merged_events,
+            "metadata": merged_metadata,
+        }
+    )
 
 
 def summarize_run(*, scenario: EvalScenario, output: AgentRunOutput, elapsed_ms: int) -> EvalSummary:
@@ -885,11 +1042,14 @@ def summarize_run(*, scenario: EvalScenario, output: AgentRunOutput, elapsed_ms:
     forbidden_used = sorted(name for name in scenario.forbidden_tools if name in used_tools)
 
     answer = output.answer or ""
-    answer_relevance = "pass" if answer.strip() else "fail"
-    if scenario.expected_answer_contains:
-        answer_lower = answer.lower()
-        required = [item.lower() for item in scenario.expected_answer_contains]
-        if not all(item in answer_lower for item in required):
+    has_assertions = bool(
+        scenario.expected_answer_contains or scenario.expected_answer_any_of
+    )
+    answer_relevance = "pass" if answer.strip() and not has_assertions else "fail"
+    if has_assertions:
+        if _answer_matches_expectations(answer=answer, scenario=scenario):
+            answer_relevance = "pass" if answer.strip() else "fail"
+        else:
             answer_relevance = "partial" if answer.strip() else "fail"
 
     if forbidden_used or required_missing:
@@ -1051,6 +1211,10 @@ def _write_run_artifact(
             "expected_tools": list(scenario.expected_tools),
             "forbidden_tools": list(scenario.forbidden_tools),
             "expected_answer_contains": list(scenario.expected_answer_contains),
+            "expected_answer_any_of": [
+                list(group) for group in scenario.expected_answer_any_of
+            ],
+            "follow_up_prompts": list(scenario.follow_up_prompts),
             "max_steps": scenario.max_steps,
             "max_tool_calls": scenario.max_tool_calls,
             "deadline_seconds": scenario.deadline_seconds,

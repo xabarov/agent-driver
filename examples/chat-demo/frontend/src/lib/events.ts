@@ -1,3 +1,5 @@
+import type { ChatMessage, ToolCallStatus } from "../store/chatStore";
+
 export type StreamEventName =
   | "run_started"
   | "run_resumed"
@@ -38,16 +40,205 @@ export interface RunTerminalData {
   finish_reason?: string;
 }
 
-export function isTokenDelta(
-  event: RunStreamEvent<any>,
-): event is RunStreamEvent<TokenDeltaData> {
+export interface ParsedToolState {
+  toolCallId: string;
+  name: string;
+  status: ToolCallStatus;
+  argsSummary?: string;
+  args?: Record<string, unknown>;
+  resultPreview?: string;
+  risk?: string;
+  durationMs?: number;
+}
+
+export function isTokenDelta(event: RunStreamEvent<Record<string, unknown>>): boolean {
   return event.event === "token_delta";
 }
 
-export function isTerminalEvent(event: RunStreamEvent<any>): boolean {
+export function getTokenDeltaText(event: RunStreamEvent<Record<string, unknown>>): string {
+  const delta = event.data.delta_text;
+  return typeof delta === "string" ? delta : "";
+}
+
+export function isTerminalEvent(event: RunStreamEvent<Record<string, unknown>>): boolean {
   return (
     event.event === "run_completed" ||
     event.event === "run_failed" ||
     event.event === "run_cancelled"
   );
+}
+
+export function isToolCallStarted(event: RunStreamEvent<Record<string, unknown>>): boolean {
+  return event.event === "tool_call_started";
+}
+
+export function isToolCallCompleted(event: RunStreamEvent<Record<string, unknown>>): boolean {
+  return event.event === "tool_call_completed";
+}
+
+export function isInterruptEvent(event: RunStreamEvent<Record<string, unknown>>): boolean {
+  return event.event === "interrupt_requested" || event.event === "run_paused";
+}
+
+function summarizeArgs(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") {
+    return undefined;
+  }
+  try {
+    const text = JSON.stringify(args);
+    return text.length > 120 ? `${text.slice(0, 120)}...` : text;
+  } catch {
+    return undefined;
+  }
+}
+
+function toolStateKey(tool: Record<string, unknown>, index: number): string {
+  const toolCallId = tool.tool_call_id;
+  if (typeof toolCallId === "string" && toolCallId) {
+    return toolCallId;
+  }
+  const name = String(tool.tool_name ?? "?");
+  return `${name}:${index}`;
+}
+
+export function parseToolStatesFromEvent(
+  event: RunStreamEvent<Record<string, unknown>>,
+): ParsedToolState[] {
+  const tools = event.data.tools;
+  if (!Array.isArray(tools)) {
+    const singleName = event.data.tool_name;
+    if (typeof singleName === "string") {
+      return [
+        {
+          toolCallId: String(event.data.tool_call_id ?? singleName),
+          name: singleName,
+          status: event.event === "tool_call_completed" ? "done" : "running",
+          args: typeof event.data.args === "object" ? (event.data.args as Record<string, unknown>) : undefined,
+          argsSummary: summarizeArgs(event.data.args),
+          resultPreview:
+            typeof event.data.result_summary === "string"
+              ? event.data.result_summary
+              : undefined,
+        },
+      ];
+    }
+    return [];
+  }
+  return tools
+    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .map((tool, index) => {
+      const rawStatus = tool.status;
+      let status: ToolCallStatus = event.event === "tool_call_completed" ? "done" : "running";
+      if (rawStatus === "failed" || rawStatus === "error") {
+        status = "failed";
+      }
+      return {
+        toolCallId: toolStateKey(tool, index),
+        name: String(tool.tool_name ?? "?"),
+        status,
+        args: typeof tool.args === "object" ? (tool.args as Record<string, unknown>) : undefined,
+        argsSummary: summarizeArgs(tool.args),
+        resultPreview:
+          typeof tool.result_summary === "string" ? tool.result_summary : undefined,
+        risk: typeof tool.risk === "string" ? tool.risk : undefined,
+        durationMs:
+          typeof tool.duration_ms === "number" ? tool.duration_ms : undefined,
+      };
+    });
+}
+
+export function buildLastEventId(runId: string | undefined, seq: number): string | undefined {
+  if (!runId || seq <= 0) {
+    return undefined;
+  }
+  return `${runId}:${seq}`;
+}
+
+export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>[]): ChatMessage[] {
+  const messages: ChatMessage[] = [];
+  let assistantId: string | null = null;
+  let assistantContent = "";
+  let seq = 0;
+
+  const flushAssistant = () => {
+    if (assistantId && assistantContent.trim()) {
+      messages.push({
+        id: assistantId,
+        role: "assistant",
+        content: assistantContent,
+        pending: false,
+      });
+    }
+    assistantId = null;
+    assistantContent = "";
+  };
+
+  for (const event of events) {
+    if (event.event === "run_started" && !assistantId) {
+      assistantId = `assistant_replay_${seq}`;
+      assistantContent = "";
+    }
+    if (isTokenDelta(event)) {
+      if (!assistantId) {
+        assistantId = `assistant_replay_${seq}`;
+      }
+      assistantContent += getTokenDeltaText(event);
+    }
+    if (isToolCallStarted(event)) {
+      if (!assistantId) {
+        assistantId = `assistant_replay_${seq}`;
+      }
+      if (assistantContent.trim()) {
+        messages.push({
+          id: assistantId,
+          role: "assistant",
+          content: assistantContent,
+          pending: false,
+        });
+        assistantContent = "";
+      }
+      for (const tool of parseToolStatesFromEvent(event)) {
+        messages.push({
+          id: `tool_replay_${tool.toolCallId}`,
+          role: "tool",
+          toolCallId: tool.toolCallId,
+          name: tool.name,
+          status: tool.status,
+          argsSummary: tool.argsSummary,
+          args: tool.args,
+          resultPreview: tool.resultPreview,
+          risk: tool.risk,
+        });
+      }
+    }
+    if (isToolCallCompleted(event)) {
+      for (const tool of parseToolStatesFromEvent(event)) {
+        const index = messages.findIndex(
+          (item) => item.role === "tool" && item.toolCallId === tool.toolCallId,
+        );
+        if (index >= 0 && messages[index].role === "tool") {
+          messages[index] = { ...messages[index], ...tool, status: tool.status };
+        } else {
+          messages.push({
+            id: `tool_replay_${tool.toolCallId}`,
+            role: "tool",
+            toolCallId: tool.toolCallId,
+            name: tool.name,
+            status: tool.status,
+            argsSummary: tool.argsSummary,
+            args: tool.args,
+            resultPreview: tool.resultPreview,
+            risk: tool.risk,
+            durationMs: tool.durationMs,
+          });
+        }
+      }
+    }
+    if (isTerminalEvent(event)) {
+      flushAssistant();
+    }
+    seq = event.seq;
+  }
+  flushAssistant();
+  return messages;
 }

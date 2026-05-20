@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-async def test_tools(client) -> None:
+async def test_tools_default_preset(client) -> None:
     response = await client.get("/api/tools")
     assert response.status_code == 200
     payload = response.json()
@@ -10,3 +10,9 @@ async def test_tools(client) -> None:
     assert "read_file" in names
     assert "bash" not in names
 
+
+async def test_tools_off_preset_query(client) -> None:
+    response = await client.get("/api/tools", params={"preset": "off"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["tools"] == []

@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+from agent_driver.llm.payload_debug import (
+    debug_llm_payload_enabled,
+    format_payload_debug_line,
+)
 
 from agent_driver.contracts.tools import ToolCall
 from agent_driver.contracts.messages import ChatMessage
@@ -23,6 +29,19 @@ from agent_driver.llm.contracts import (
     ProviderStatus,
 )
 from agent_driver.llm.tool_call_parser import extract_text_form_tool_calls
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _log_rejected_request(*, request: LlmRequest, status_code: int, body: str) -> None:
+    if not debug_llm_payload_enabled():
+        return
+    _LOGGER.warning(
+        "llm request rejected status=%s payload=%s body=%s",
+        status_code,
+        format_payload_debug_line(request),
+        body[:500],
+    )
 
 
 def _map_finish_reason(reason: str | None) -> LlmFinishReason:
@@ -313,6 +332,12 @@ class OpenAICompatibleProvider(ProviderBase):
                     url,
                     headers=self._headers(),
                     json=self._payload(request, stream=False),
+                )
+            if response.status_code >= 400:
+                _log_rejected_request(
+                    request=request,
+                    status_code=response.status_code,
+                    body=response.text,
                 )
             response.raise_for_status()
             return normalize_openai_completion_payload(

@@ -251,11 +251,38 @@ async def test_web_fetch_extracts_og_metadata_and_strips_script_style(monkeypatc
         "url": "https://example.com/sam3",
         "published_time": "2025-04-10",
     }
+    assert out["excerpt"] == out["content"]
     assert "Title: Segment Anything 3" in out["content"]
     assert "Description: Latest release notes" in out["content"]
     assert "Model details" in out["content"]
     assert "console.log('noise')" not in out["content"]
     assert ".hidden {display:none;}" not in out["content"]
+    assert isinstance(out.get("excerpt"), str)
+    assert out["max_chars_applied"] == 500
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_caps_requested_max_chars(monkeypatch) -> None:
+    """web_fetch should cap oversized max_chars requests server-side."""
+    response = _DummyResponse(
+        url="https://example.com",
+        content=b"abcdefghij",
+        headers={"content-type": "text/plain"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    out = await tool.handler({"url": "https://example.com", "max_chars": 50000})
+    assert out["max_chars_applied"] == 8000
+    assert len(out["content"]) == 10
 
 
 @pytest.mark.asyncio
@@ -371,6 +398,53 @@ async def test_web_search_unwraps_duckduckgo_redirect_url(monkeypatch) -> None:
     out = await tool.handler({"query": "test", "max_results": 1})
     assert out["results"][0]["url"] == "https://example.com/target"
     assert out["result_preview_urls"] == ["https://example.com/target"]
+
+
+@pytest.mark.asyncio
+async def test_web_search_relaxes_site_operator_when_ddg_returns_no_links(monkeypatch) -> None:
+    """site: queries often yield empty DDG html; server should retry without site:."""
+    empty_html = "<html><body><div>no links</div></body></html>"
+    results_html = (
+        '<a class="result-link" href="https://ai.meta.com/sam3/">SAM 3</a>'
+    )
+    calls: list[str] = []
+
+    def _client_factory(*_args, **_kwargs):
+        class _Client:
+            async def get(self, url, headers=None):
+                calls.append(url)
+                body = results_html if len(calls) > 1 else empty_html
+                return _DummyResponse(
+                    url=url,
+                    content=body.encode("utf-8"),
+                    headers={"content-type": "text/html"},
+                )
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        return _Client()
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "query": "latest Segment Anything release site:meta.ai",
+            "max_results": 3,
+        }
+    )
+    assert out["returned_count"] == 1
+    assert out["query_relaxation"] == "stripped_site_operator"
+    assert "meta.ai" in out["query"]
+    assert out["results"][0]["url"] == "https://ai.meta.com/sam3/"
 
 
 @pytest.mark.asyncio

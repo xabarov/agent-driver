@@ -1,0 +1,3 @@
+mode: chat
+Which AGENT_DRIVER_* environment variables control web search backend? Use grep_search in the repo before answering.
+/exit

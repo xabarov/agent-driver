@@ -18,6 +18,9 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.tools import ToolManifest
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.llm.contracts import LlmRequest
+from agent_driver.runtime.single_agent.protocol_validate import (
+    validate_and_repair_protocol_messages,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,8 +113,12 @@ def build_single_agent_llm_request(
         run_input.messages[-1].content if run_input.messages else ""
     )
     if ctx.protocol_messages is not None:
+        repaired = validate_and_repair_protocol_messages(
+            ctx.protocol_messages,
+            max_total_content_chars=max(ctx.max_chars * 3, ctx.max_chars),
+        )
         prompt_messages = [
-            message.model_dump(mode="json") for message in ctx.protocol_messages
+            message.model_dump(mode="json") for message in repaired.messages
         ]
     else:
         prompt_messages = (

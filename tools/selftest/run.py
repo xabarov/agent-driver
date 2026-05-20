@@ -12,9 +12,21 @@ import sys
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from rubric import CheckResult, detect_provider_error, score_log, summarize_score  # type: ignore
+    from rubric import (  # type: ignore
+        CheckResult,
+        detect_provider_error,
+        score_log,
+        split_product_infra_checks,
+        summarize_score,
+    )
 else:
-    from .rubric import CheckResult, detect_provider_error, score_log, summarize_score
+    from .rubric import (
+        CheckResult,
+        detect_provider_error,
+        score_log,
+        split_product_infra_checks,
+        summarize_score,
+    )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCENARIO_DIR = Path(__file__).resolve().parent / "scenarios"
@@ -36,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--scenarios",
-        default="A,B,C",
+        default="A,B,C,D",
         help="Comma-separated scenario IDs to run.",
     )
     parser.add_argument(
@@ -52,6 +64,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=24)
     parser.add_argument("--max-tool-calls", type=int, default=12)
     parser.add_argument("--deadline-seconds", type=float, default=180.0)
+    parser.add_argument(
+        "--allow-provider-errors",
+        action="store_true",
+        help="Do not fail harness exit code when provider_error is detected.",
+    )
+    parser.add_argument(
+        "--smoke-only",
+        action="store_true",
+        help="Only require infra checks (exit_code, no traceback); skip product checks.",
+    )
     return parser.parse_args()
 
 
@@ -62,7 +84,8 @@ def main() -> int:
     scenarios = [load_scenario(scenario_id) for scenario_id in scenario_ids]
     out_dir = build_output_dir(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    rows: list[dict[str, str | int]] = []
+    rows: list[dict[str, str | int | bool]] = []
+    failed = False
     for label, model in matrix.items():
         for scenario in scenarios:
             log_name = f"{scenario.scenario_id}_{label}.log"
@@ -79,19 +102,38 @@ def main() -> int:
             text = log_path.read_text(encoding="utf-8", errors="replace")
             checks = score_log(scenario_id=scenario.scenario_id, text=text)
             checks.append(CheckResult("exit_code_zero", exit_code == 0))
-            passed, total = summarize_score(checks=checks)
+            if args.smoke_only:
+                checks = [
+                    item
+                    for item in checks
+                    if item.name in {"exit_code_zero", "no_traceback"}
+                ]
+            product_checks, infra_checks = split_product_infra_checks(checks)
+            product_passed, product_total = summarize_score(checks=product_checks)
+            infra_passed, infra_total = summarize_score(checks=infra_checks)
             provider_error = detect_provider_error(text)
+            row_failed = (
+                exit_code != 0
+                or product_passed != product_total
+                or infra_passed != infra_total
+                or (
+                    provider_error is not None and not args.allow_provider_errors
+                )
+            )
+            failed = failed or row_failed
             rows.append(
                 {
                     "scenario": scenario.scenario_id,
                     "model_label": label,
                     "model": model,
                     "exit_code": exit_code,
-                    "score": f"{passed}/{total}",
+                    "product_score": f"{product_passed}/{product_total}",
+                    "infra_score": f"{infra_passed}/{infra_total}",
+                    "provider_error": provider_error or "-",
+                    "failed": row_failed,
                     "checks": ", ".join(
                         f"{item.name}={'ok' if item.passed else 'fail'}" for item in checks
                     ),
-                    "provider_error": provider_error or "-",
                     "log": str(log_path),
                 }
             )
@@ -99,7 +141,7 @@ def main() -> int:
     scorecard_path.write_text(render_scorecard(rows), encoding="utf-8")
     print(f"Self-test logs: {out_dir}")
     print(f"Scorecard: {scorecard_path}")
-    return 0
+    return 1 if failed else 0
 
 
 def parse_matrix(raw: str) -> dict[str, str]:
@@ -211,18 +253,17 @@ def run_scenario(
     return completed.returncode
 
 
-def render_scorecard(rows: list[dict[str, str | int]]) -> str:
+def render_scorecard(rows: list[dict[str, str | int | bool]]) -> str:
     lines = [
         "# Self-test scorecard",
         "",
-        "| scenario | model_label | exit_code | score | provider_error | checks | log |",
-        "| --- | --- | ---: | --- | --- | --- | --- |",
+        "| scenario | model_label | exit_code | product | infra | provider_error | failed | checks | log |",
+        "| --- | --- | ---: | --- | --- | --- | :---: | --- | --- |",
     ]
     for row in rows:
         lines.append(
-            "| {scenario} | {model_label} | {exit_code} | {score} | {provider_error} | {checks} | `{log}` |".format(
-                **row
-            )
+            "| {scenario} | {model_label} | {exit_code} | {product_score} | {infra_score} | "
+            "{provider_error} | {failed} | {checks} | `{log}` |".format(**row)
         )
     lines.append("")
     return "\n".join(lines)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+import httpx
+
 from agent_driver.context import (
     microcompact_observations,
     render_planning_step_prompt,
@@ -12,6 +14,10 @@ from agent_driver.contracts.context import PlanningStep
 from agent_driver.contracts.enums import AgentProfile, ChatRole, RuntimeEventType, TerminalReason
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmResponse
+from agent_driver.llm.payload_debug import (
+    debug_llm_payload_enabled,
+    summarize_llm_request_payload,
+)
 from agent_driver.prompts import (
     force_final_answer_user_message,
     python_tool_system_addendum,
@@ -79,6 +85,47 @@ async def execute_llm_call_step(host: LlmStepHost, context: RunContext) -> Runti
             token_pressure_state=token_state,
         )
         context.llm_response = await _complete_request(host, context, request)
+    except httpx.HTTPStatusError as exc:
+        reason = (
+            TerminalReason.PROVIDER_PROTOCOL.value
+            if exc.response.status_code == 400
+            else TerminalReason.MODEL_ERROR.value
+        )
+        rejected_payload: dict[str, Any] = {
+            "reason": reason,
+            "status_code": exc.response.status_code,
+        }
+        if debug_llm_payload_enabled():
+            rejected_payload["request_stats"] = summarize_llm_request_payload(request)
+        host._emit(
+            EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType.LLM_REQUEST_REJECTED,
+                payload=rejected_payload,
+            )
+        )
+        host._emit(
+            EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType.RUN_FAILED,
+                payload={"reason": reason},
+            )
+        )
+        context.metadata["last_provider_error"] = reason
+        raise RuntimeExecutionError("LLM completion failed") from exc
+    except httpx.HTTPError as exc:
+        host._emit(
+            EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType.RUN_FAILED,
+                payload={"reason": TerminalReason.MODEL_ERROR.value},
+            )
+        )
+        context.metadata["last_provider_error"] = TerminalReason.MODEL_ERROR.value
+        raise RuntimeExecutionError("LLM completion failed") from exc
     except (RuntimeError, ValueError) as exc:
         host._emit(
             EventSpec(

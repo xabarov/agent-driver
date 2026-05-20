@@ -1,7 +1,18 @@
-import type { HealthResponse, ProviderResponse, ToolsResponse } from "../types/api";
+import type {
+  CreateSessionRequest,
+  DeleteSessionResponse,
+  HealthResponse,
+  InterruptView,
+  ProviderResponse,
+  ReplayResponse,
+  SessionDetailView,
+  SessionsListResponse,
+  ToolsResponse,
+} from "../types/api";
+import type { ToolPreset } from "../store/settingsStore";
 
-async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
   if (!response.ok) {
     throw new Error(`request failed: ${response.status}`);
   }
@@ -9,13 +20,46 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 export function fetchHealth(): Promise<HealthResponse> {
-  return getJson<HealthResponse>("/api/health");
+  return request<HealthResponse>("/api/health");
 }
 
 export function fetchProviders(): Promise<ProviderResponse> {
-  return getJson<ProviderResponse>("/api/providers");
+  return request<ProviderResponse>("/api/providers");
 }
 
-export function fetchTools(): Promise<ToolsResponse> {
-  return getJson<ToolsResponse>("/api/tools");
+export function fetchTools(preset?: ToolPreset): Promise<ToolsResponse> {
+  const query = preset ? `?preset=${preset}` : "";
+  return request<ToolsResponse>(`/api/tools${query}`);
+}
+
+export function fetchInterrupt(runId: string): Promise<InterruptView> {
+  return request<InterruptView>(`/api/chat/runs/${runId}/interrupt`);
+}
+
+export function fetchReplay(sessionId: string, runId: string): Promise<ReplayResponse> {
+  return request<ReplayResponse>(
+    `/api/sessions/${sessionId}/replay?run_id=${encodeURIComponent(runId)}`,
+  );
+}
+
+export function listSessions(): Promise<SessionsListResponse> {
+  return request<SessionsListResponse>("/api/sessions");
+}
+
+export function getSession(sessionId: string): Promise<SessionDetailView> {
+  return request<SessionDetailView>(`/api/sessions/${sessionId}`);
+}
+
+export function createSession(body: CreateSessionRequest): Promise<SessionDetailView> {
+  return request<SessionDetailView>("/api/sessions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function deleteSession(sessionId: string): Promise<DeleteSessionResponse> {
+  return request<DeleteSessionResponse>(`/api/sessions/${sessionId}`, {
+    method: "DELETE",
+  });
 }

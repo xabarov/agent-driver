@@ -33,3 +33,61 @@ export interface ToolManifestView {
 export interface ToolsResponse {
   tools: ToolManifestView[];
 }
+
+export interface SessionMessageView {
+  role: string;
+  content: string;
+}
+
+export interface SessionSummaryView {
+  session_id: string;
+  thread_id: string;
+  title: string;
+  updated_at: string;
+  runs_count: number;
+}
+
+export interface SessionDetailView {
+  session_id: string;
+  thread_id: string;
+  title: string;
+  run_ids: string[];
+  transcript: SessionMessageView[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SessionsListResponse {
+  sessions: SessionSummaryView[];
+}
+
+export interface CreateSessionRequest {
+  title?: string;
+}
+
+export interface DeleteSessionResponse {
+  ok: boolean;
+}
+
+export interface InterruptView {
+  run_id: string;
+  interrupt_id: string;
+  reason: string;
+  title?: string | null;
+  description?: string | null;
+  proposed_action: Record<string, unknown>;
+  allowed_actions: string[];
+}
+
+export interface ResumeRequest {
+  interrupt_id: string;
+  action: string;
+  tool_preset?: string;
+  edited_tool_args?: Record<string, unknown>;
+  message?: string;
+}
+
+export interface ReplayResponse {
+  run_id: string;
+  events: Array<Record<string, unknown>>;
+}

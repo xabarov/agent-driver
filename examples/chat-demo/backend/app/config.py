@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     )
 
     app_host: str = Field(default="127.0.0.1", validation_alias=AliasChoices("APP_HOST"))
-    app_port: int = Field(default=8000, validation_alias=AliasChoices("APP_PORT"))
+    app_port: int = Field(default=8010, validation_alias=AliasChoices("APP_PORT"))
     app_cors_origins: str = Field(
         default="http://localhost:5173",
         validation_alias=AliasChoices("APP_CORS_ORIGINS"),

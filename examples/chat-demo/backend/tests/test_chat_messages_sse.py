@@ -18,3 +18,19 @@ async def test_chat_messages_sse(client) -> None:
     assert "run_started" in events
     assert "run_completed" in events
 
+
+async def test_chat_messages_sse_tool_preset_off(client) -> None:
+    events: list[str] = []
+    async with client.stream(
+        "POST",
+        "/api/chat/messages",
+        json={"message": "hello", "tool_preset": "off"},
+    ) as response:
+        assert response.status_code == 200
+        async for line in response.aiter_lines():
+            if line.startswith("event: "):
+                events.append(line.removeprefix("event: ").strip())
+            if line == "event: run_completed":
+                break
+    assert "run_completed" in events
+

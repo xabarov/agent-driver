@@ -1,5 +1,6 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 
+import type { ToolPreset } from "../store/settingsStore";
 import type { RunStreamEvent } from "./events";
 
 interface StreamMeta {
@@ -10,24 +11,34 @@ interface StreamMeta {
 export interface StartChatStreamOptions {
   message: string;
   sessionId?: string;
+  toolPreset?: ToolPreset;
   signal?: AbortSignal;
   lastEventId?: string;
   onEvent: (event: RunStreamEvent) => void;
   onMeta?: (meta: StreamMeta) => void;
 }
 
-export async function startChatStream(opts: StartChatStreamOptions): Promise<void> {
-  await fetchEventSource("/api/chat/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      ...(opts.lastEventId ? { "Last-Event-ID": opts.lastEventId } : {}),
-    },
-    body: JSON.stringify({
-      message: opts.message,
-      session_id: opts.sessionId,
-    }),
-    signal: opts.signal,
+export interface ResumeRunStreamOptions {
+  runId: string;
+  interruptId: string;
+  action: string;
+  toolPreset?: ToolPreset;
+  editedToolArgs?: Record<string, unknown>;
+  message?: string;
+  signal?: AbortSignal;
+  lastEventId?: string;
+  onEvent: (event: RunStreamEvent) => void;
+}
+
+async function consumeSse(
+  url: string,
+  init: RequestInit,
+  onEvent: (event: RunStreamEvent) => void,
+  onMeta?: (meta: StreamMeta) => void,
+): Promise<void> {
+  await fetchEventSource(url, {
+    ...init,
+    headers: init.headers as Record<string, string> | undefined,
     openWhenHidden: true,
     async onopen(response) {
       if (
@@ -36,7 +47,7 @@ export async function startChatStream(opts: StartChatStreamOptions): Promise<voi
       ) {
         throw new Error(`bad sse response: ${response.status}`);
       }
-      opts.onMeta?.({
+      onMeta?.({
         sessionId: response.headers.get("x-session-id") ?? undefined,
         runId: response.headers.get("x-run-id") ?? undefined,
       });
@@ -46,7 +57,52 @@ export async function startChatStream(opts: StartChatStreamOptions): Promise<voi
         return;
       }
       const payload = JSON.parse(message.data) as RunStreamEvent;
-      opts.onEvent(payload);
+      onEvent(payload);
     },
   });
+}
+
+export async function startChatStream(opts: StartChatStreamOptions): Promise<void> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (opts.lastEventId) {
+    headers["Last-Event-ID"] = opts.lastEventId;
+  }
+  await consumeSse(
+    "/api/chat/messages",
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        message: opts.message,
+        session_id: opts.sessionId,
+        tool_preset: opts.toolPreset,
+      }),
+      signal: opts.signal,
+    },
+    opts.onEvent,
+    opts.onMeta,
+  );
+}
+
+export async function resumeRunStream(opts: ResumeRunStreamOptions): Promise<void> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (opts.lastEventId) {
+    headers["Last-Event-ID"] = opts.lastEventId;
+  }
+  await consumeSse(
+    `/api/chat/runs/${opts.runId}/resume`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        interrupt_id: opts.interruptId,
+        action: opts.action,
+        tool_preset: opts.toolPreset,
+        edited_tool_args: opts.editedToolArgs,
+        message: opts.message,
+      }),
+      signal: opts.signal,
+    },
+    opts.onEvent,
+  );
 }

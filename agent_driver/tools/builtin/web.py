@@ -27,6 +27,8 @@ _DEFAULT_TIMEOUT_SECONDS = 10.0
 _DEFAULT_MAX_BYTES = 150_000
 _DEFAULT_MAX_RESULTS = 5
 _DEFAULT_PREVIEW_CHARS = 1_500
+_WEB_FETCH_MAX_CHARS_CAP = 8_000
+_WEB_FETCH_EXCERPT_CHARS = 2_000
 _DEFAULT_USER_AGENT = "agent-driver/0.1"
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _TEXT_CONTENT_TYPES = (
@@ -43,6 +45,7 @@ _RESULT_LINK_ALT_RE = re.compile(
     r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
     re.IGNORECASE | re.DOTALL,
 )
+_SITE_OPERATOR_RE = re.compile(r"\bsite:\S+\b", re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
 _SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
 _META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
@@ -171,7 +174,8 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
         args.get("timeout_seconds"), default=_DEFAULT_TIMEOUT_SECONDS, minimum=0.1
     )
     max_bytes = _as_int(args.get("max_bytes"), default=_DEFAULT_MAX_BYTES, minimum=256)
-    max_chars = _as_int(args.get("max_chars"), default=5_000, minimum=64)
+    requested_max_chars = _as_int(args.get("max_chars"), default=5_000, minimum=64)
+    max_chars = min(requested_max_chars, _WEB_FETCH_MAX_CHARS_CAP)
     extract_mode = _extract_mode(args.get("extract_mode"))
     try:
         payload = await _fetch_url_text(
@@ -192,12 +196,20 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
         _extract_og_metadata(payload.text) if "html" in payload.content_type else {}
     )
     content = extracted[:max_chars]
+    excerpt = content[:_WEB_FETCH_EXCERPT_CHARS]
     truncated = len(extracted) > max_chars
+    summary_parts = [
+        f"fetched {payload.url} (status={payload.status_code}, chars={len(content)})"
+    ]
+    if isinstance(metadata, dict):
+        title = metadata.get("title")
+        if isinstance(title, str) and title.strip():
+            summary_parts.append(f"title={title.strip()}")
+        published = metadata.get("published_time")
+        if isinstance(published, str) and published.strip():
+            summary_parts.append(f"published={published.strip()}")
     return {
-        "summary": (
-            f"fetched {payload.url} "
-            f"(status={payload.status_code}, chars={len(content)})"
-        ),
+        "summary": "; ".join(summary_parts),
         "url": payload.url,
         "status_code": payload.status_code,
         "content_type": payload.content_type,
@@ -206,8 +218,10 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
         "bytes_loaded": payload.bytes_loaded,
         "bytes_truncated": payload.bytes_loaded < payload.bytes_total,
         "metadata": metadata,
+        "excerpt": excerpt,
         "content": content,
         "truncated": truncated,
+        "max_chars_applied": max_chars,
     }
 
 
@@ -254,6 +268,36 @@ async def _web_search_handler(args: dict[str, Any]) -> dict[str, Any]:
             )
             if brave is not None:
                 return brave
+    return await _duckduckgo_html_search(
+        query=query,
+        max_results=max_results,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _relax_web_search_query(query: str) -> str | None:
+    """Drop site: operator and keep domain as plain keywords for DDG html backend."""
+    if not _SITE_OPERATOR_RE.search(query):
+        return None
+    site_match = re.search(r"\bsite:(\S+)\b", query, flags=re.IGNORECASE)
+    site_token = site_match.group(1).strip() if site_match else ""
+    relaxed = _SITE_OPERATOR_RE.sub("", query).strip()
+    relaxed = re.sub(r"\s+", " ", relaxed)
+    if site_token and site_token.lower() not in relaxed.lower():
+        relaxed = f"{relaxed} {site_token}".strip()
+    if not relaxed or relaxed == query:
+        return None
+    return relaxed
+
+
+async def _duckduckgo_html_search(
+    *,
+    query: str,
+    max_results: int,
+    timeout_seconds: float,
+    original_query: str | None = None,
+) -> dict[str, Any]:
+    """Run DuckDuckGo html search; retry without site: when DDG returns no parseable hits."""
     search_url = f"https://duckduckgo.com/html/?q={quote_plus(query)}"
     try:
         payload = await _fetch_ddg_with_retry(
@@ -271,19 +315,40 @@ async def _web_search_handler(args: dict[str, Any]) -> dict[str, Any]:
             summary=f"web_search unavailable: {_error_message(exc)}",
         )
     rows = _parse_duckduckgo_html(payload.text, max_results=max_results)
+    if not rows:
+        relaxed = _relax_web_search_query(query)
+        if relaxed is not None:
+            return await _duckduckgo_html_search(
+                query=relaxed,
+                max_results=max_results,
+                timeout_seconds=timeout_seconds,
+                original_query=original_query or query,
+            )
     parse_status = "ok" if rows else "parse_failed"
+    source_query = original_query or query
+    summary = None
+    if rows and original_query and original_query != query:
+        summary = (
+            f"{len(rows)} results for '{query}' via duckduckgo_html "
+            f"(relaxed from '{original_query}')"
+        )
     result = _search_payload(
         query=query,
         source="duckduckgo_html",
         rows=rows,
         max_results=max_results,
         parse_status=parse_status,
+        summary=summary,
     )
+    if original_query and original_query != query:
+        result["query_original"] = original_query
+        result["query_relaxation"] = "stripped_site_operator"
     if not rows:
         result["diagnostic"] = {
             "status": "no_results_parsed",
             "html_chars": len(payload.text),
             "content_type": payload.content_type,
+            "source_query": source_query,
         }
     return result
 

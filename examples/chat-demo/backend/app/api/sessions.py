@@ -7,9 +7,11 @@ import json
 from pathlib import Path
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.api.chat import replay_events_for_run
 from app.deps import get_agent_bundle
+from app.schemas.chat import ReplayResponse
 from app.schemas.sessions import (
     CreateSessionRequest,
     DeleteSessionResponse,
@@ -116,6 +118,24 @@ def get_session(
     if record is None:
         raise HTTPException(status_code=404, detail="session not found")
     return _detail_from_record(record)
+
+
+@router.get("/sessions/{session_id}/replay", response_model=ReplayResponse)
+def replay_session_run(
+    session_id: str,
+    run_id: str = Query(..., alias="run_id"),
+    bundle: AgentBundle = Depends(get_agent_bundle),
+) -> ReplayResponse:
+    """Return persisted stream events for one run in a session."""
+    record = bundle.session_store.get(session_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    if run_id not in record.run_ids:
+        raise HTTPException(status_code=404, detail="run not found in session")
+    return ReplayResponse(
+        run_id=run_id,
+        events=replay_events_for_run(bundle, run_id),
+    )
 
 
 @router.delete("/sessions/{session_id}", response_model=DeleteSessionResponse)

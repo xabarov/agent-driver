@@ -1,0 +1,58 @@
+import { useState } from "react";
+import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
+
+import { cn } from "../../lib/cn";
+import type { ToolChatMessage } from "../../store/chatStore";
+import { Badge } from "../ui/badge";
+
+interface ToolCallCardProps {
+  message: ToolChatMessage;
+}
+
+export function ToolCallCard({ message }: ToolCallCardProps) {
+  const [open, setOpen] = useState(message.status === "running");
+
+  return (
+    <div className="rounded-lg border border-border bg-card/60 p-3 text-sm">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 text-left"
+        onClick={() => setOpen((value) => !value)}
+      >
+        {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        <Wrench className="h-4 w-4 text-muted-foreground" />
+        <span className="font-medium">{message.name}</span>
+        <Badge
+          variant="secondary"
+          className={cn(
+            message.status === "running" && "animate-pulse",
+            message.status === "failed" && "bg-destructive/20 text-destructive",
+          )}
+        >
+          {message.status}
+        </Badge>
+        {message.risk ? <Badge variant="outline">{message.risk}</Badge> : null}
+        {message.durationMs != null ? (
+          <span className="ml-auto text-xs text-muted-foreground">{message.durationMs}ms</span>
+        ) : null}
+      </button>
+      {message.argsSummary ? (
+        <p className="mt-2 truncate text-xs text-muted-foreground">{message.argsSummary}</p>
+      ) : null}
+      {open ? (
+        <div className="mt-3 space-y-2">
+          {message.args ? (
+            <pre className="overflow-x-auto rounded-md border bg-background/80 p-2 text-xs">
+              {JSON.stringify(message.args, null, 2)}
+            </pre>
+          ) : null}
+          {message.resultPreview ? (
+            <pre className="overflow-x-auto rounded-md border bg-background/80 p-2 text-xs">
+              {message.resultPreview}
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}

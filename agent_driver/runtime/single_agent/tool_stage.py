@@ -145,9 +145,19 @@ async def _finalize_tool_stage_transition(
     host: ToolStageHost, context: RunContext, result: ToolExecutionResult
 ) -> RuntimeStepResult:
     context.step_count += 1
+    text_form_planned = False
+    if context.llm_response is not None:
+        for call in extract_planned_tool_calls(context.llm_response):
+            metadata = call.metadata if isinstance(call.metadata, dict) else {}
+            if metadata.get("text_form_source"):
+                text_form_planned = True
+                break
     continue_with_llm = bool(result.envelopes) and (
         context.llm_response is not None
-        and context.llm_response.finish_reason == LlmFinishReason.TOOL_CALLS
+        and (
+            context.llm_response.finish_reason == LlmFinishReason.TOOL_CALLS
+            or text_form_planned
+        )
     )
     loop_iterations = int(context.metadata.get("tool_loop_iterations", 0))
     if continue_with_llm:
@@ -301,7 +311,11 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
     for envelope in result.envelopes:
         tool_payload: dict[str, Any] = {}
         if isinstance(envelope.structured_output, dict):
-            tool_payload.update(envelope.structured_output)
+            tool_payload.update(
+                _compact_tool_payload_for_protocol(
+                    envelope.call.tool_name, envelope.structured_output
+                )
+            )
         tool_payload["truncated"] = bool(envelope.truncated)
         if envelope.summary and "summary" not in tool_payload:
             tool_payload["summary"] = envelope.summary
@@ -325,6 +339,7 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
         )
     _append_denial_recovery_message(context, result, messages)
     _append_web_fetch_verification_hint(context, result, messages)
+    _append_web_fetch_duplicate_guard(context, result, messages)
     if context.metadata.get("force_final_answer"):
         messages.append(
             ChatMessage(
@@ -336,6 +351,54 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
     context.metadata["protocol_messages"] = [
         item.model_dump(mode="json") for item in messages
     ]
+
+
+def _compact_tool_payload_for_protocol(
+    tool_name: str, structured: dict[str, Any]
+) -> dict[str, Any]:
+    """Shrink heavy tool payloads before they enter protocol_messages."""
+    if tool_name != "web_fetch":
+        return structured
+    metadata = structured.get("metadata")
+    compact: dict[str, Any] = {
+        "summary": structured.get("summary"),
+        "url": structured.get("url"),
+        "status_code": structured.get("status_code"),
+        "extract_mode": structured.get("extract_mode"),
+        "metadata": metadata if isinstance(metadata, dict) else {},
+        "excerpt": structured.get("excerpt") or structured.get("content"),
+        "truncated": structured.get("truncated"),
+        "error_code": structured.get("error_code"),
+    }
+    if structured.get("error") is not None:
+        compact["error"] = structured.get("error")
+    excerpt = compact.get("excerpt")
+    if isinstance(excerpt, str) and len(excerpt) > 2500:
+        compact["excerpt"] = excerpt[:2500]
+    return compact
+
+
+def _append_web_fetch_duplicate_guard(
+    context: RunContext, result: ToolExecutionResult, messages: list[ChatMessage]
+) -> None:
+    """Discourage repeated web_fetch when prior fetch already returned usable text."""
+    saw_fetch = any(envelope.call.tool_name == "web_fetch" for envelope in result.envelopes)
+    if not saw_fetch:
+        return
+    prior_fetch_total = int(context.metadata.get("web_fetch_calls_total", 0))
+    if prior_fetch_total > 1:
+        if context.metadata.get("web_fetch_duplicate_guard_sent") is True:
+            return
+        messages.append(
+            ChatMessage(
+                role=ChatRole.USER,
+                content=(
+                    "You already fetched at least one URL. Do not call web_fetch again "
+                    "unless the previous excerpt/metadata was clearly insufficient."
+                ),
+            )
+        )
+        context.metadata["web_fetch_duplicate_guard_sent"] = True
 
 
 def _append_web_fetch_verification_hint(

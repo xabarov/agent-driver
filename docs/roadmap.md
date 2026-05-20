@@ -748,7 +748,7 @@ Exit criteria:
   - general assistant;
   - codebase assistant;
   - document-analysis assistant;
-  - FastAPI chat backend using SSE adapter.
+  - FastAPI chat backend using SSE adapter — see [`examples/chat-demo/`](../examples/chat-demo/README.md).
 
 Exit criteria:
 

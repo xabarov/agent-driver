@@ -23,6 +23,7 @@ from agent_driver.cli.chat_stream import render_chat_stream
 from agent_driver.cli.tui.prompt import ChatPromptSession
 from agent_driver.cli.tui.renderer import build_renderer
 from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
+from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.storage import RuntimeEventLog
 from agent_driver.sdk import Agent
 from agent_driver.cli.sessions import SessionStore
@@ -83,6 +84,35 @@ def _transcript_to_messages(transcript: list[tuple[str, str]]) -> list[ChatMessa
         elif role == "assistant":
             messages.append(ChatMessage(role=ChatRole.ASSISTANT, content=content))
     return messages
+
+
+def _provider_check_error_label(exc: Exception) -> str:
+    name = type(exc).__name__
+    if name == "SSLError":
+        return "ssl_error"
+    if name == "HTTPStatusError":
+        return "http_status_error"
+    if name == "ConnectTimeout":
+        return "connect_timeout"
+    if name == "ReadTimeout":
+        return "read_timeout"
+    return name.lower()
+
+
+def _doctor_last_signal(state: ChatSessionState, event_log: RuntimeEventLog) -> str:
+    run_id = state.last_run_id
+    if run_id is None:
+        return "none"
+    for event in reversed(list(event_log.list_for_run(run_id))):
+        event_type = event.type.value if hasattr(event.type, "value") else str(event.type)
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if event_type == "run_failed":
+            return f"run_failed:{payload.get('reason', 'unknown')}"
+        if event_type == "interrupt_requested":
+            return f"interrupt_requested:{payload.get('reason', 'unknown')}"
+        if event_type == "run_completed":
+            return "final_answered"
+    return "none"
 
 
 def _print_help(output: Callable[[str], None]) -> None:
@@ -227,7 +257,6 @@ async def _handle_local_command(
             output("chat> /debug expects on|off\n")
         return True
     if command == "doctor":
-        status = await agent.runner.deps.provider.healthcheck()
         python_settings = getattr(agent.runner.config, "python_tool", None)
         python_imports = (
             python_tool_runtime_facts(python_settings).imports_short
@@ -235,31 +264,25 @@ async def _handle_local_command(
             else "disabled"
         )
         tools = ", ".join(manifest.name for manifest in selected_manifests) or "none"
-        last_signal = "none"
-        run_id = state.last_run_id
-        if run_id is not None:
-            for event in reversed(list(event_log.list_for_run(run_id))):
-                event_type = (
-                    event.type.value
-                    if hasattr(event.type, "value")
-                    else str(event.type)
-                )
-                payload = event.payload if isinstance(event.payload, dict) else {}
-                if event_type == "run_failed":
-                    last_signal = f"run_failed:{payload.get('reason', 'unknown')}"
-                    break
-                if event_type == "interrupt_requested":
-                    last_signal = f"interrupt_requested:{payload.get('reason', 'unknown')}"
-                    break
-                if event_type == "run_completed":
-                    last_signal = "final_answered"
-                    break
+        last_signal = _doctor_last_signal(state, event_log)
+        try:
+            status = await agent.runner.deps.provider.healthcheck()
+        except Exception as exc:  # noqa: BLE001 - doctor must not crash chat loop
+            output(
+                "doctor> "
+                f"name={agent.runner.deps.provider.name} healthy=False configured=True "
+                f"latency_ms=0 provider_check_error={_provider_check_error_label(exc)}\n"
+            )
+        else:
+            output(
+                "doctor> "
+                f"name={status.provider_name} healthy={status.healthy} "
+                f"configured={status.configured} latency_ms={status.latency_ms}\n"
+            )
         output(
-            "doctor> "
-            f"name={status.provider_name} healthy={status.healthy} "
-            f"configured={status.configured} latency_ms={status.latency_ms}\n"
+            f"doctor> limits max_steps={max_steps} max_tool_calls={max_tool_calls} "
+            f"deadline_seconds={deadline_seconds}\n"
         )
-        output(f"doctor> limits max_steps={max_steps} max_tool_calls={max_tool_calls} deadline_seconds={deadline_seconds}\n")
         output(f"doctor> tools {tools}\n")
         output(f"doctor> python_imports {python_imports}\n")
         output(f"doctor> last_signal {last_signal}\n")
@@ -571,13 +594,23 @@ async def run_chat_session(
                     },
                 )
             )
-            assistant_text, input_tokens, output_tokens, pressure_state = await render_chat_stream(
-                stream=stream,
-                output=renderer.emit_raw,
-                run_id=run_id,
-                renderer=renderer,
-                animate=effective_mode == "rich",
-            )
+            try:
+                assistant_text, input_tokens, output_tokens, pressure_state = (
+                    await render_chat_stream(
+                        stream=stream,
+                        output=renderer.emit_raw,
+                        run_id=run_id,
+                        renderer=renderer,
+                        animate=effective_mode == "rich",
+                    )
+                )
+            except RuntimeExecutionError as exc:
+                renderer.emit_error_card(
+                    title="Run failed",
+                    reason=str(exc),
+                    hint="Retry the prompt or reduce tool-heavy requests.",
+                )
+                continue
             session_input_tokens += input_tokens
             session_output_tokens += output_tokens
             if prompt_session is not None:

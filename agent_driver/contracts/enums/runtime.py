@@ -29,6 +29,7 @@ class TerminalReason(StrEnum):
     APPROVAL_REJECTED = "approval_rejected"
     RUNTIME_ERROR = "runtime_error"
     MODEL_ERROR = "model_error"
+    PROVIDER_PROTOCOL = "provider_protocol"
     CHECKPOINT_ERROR = "checkpoint_error"
 
 
@@ -42,6 +43,7 @@ class RuntimeEventType(StrEnum):
     NODE_COMPLETED = "node_completed"
     LLM_CALL_STARTED = "llm_call_started"
     LLM_CALL_COMPLETED = "llm_call_completed"
+    LLM_REQUEST_REJECTED = "llm_request_rejected"
     TOKEN_DELTA = "token_delta"
     TOOL_CALL_STARTED = "tool_call_started"
     TOOL_CALL_COMPLETED = "tool_call_completed"

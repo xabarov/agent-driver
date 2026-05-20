@@ -54,6 +54,55 @@ def test_update_tool_protocol_messages_includes_truncated_and_error_code() -> No
     assert payload["error_code"] == "tool_policy_denied"
 
 
+def test_update_tool_protocol_messages_compacts_web_fetch_payload() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="web_fetch",
+                    tool_call_id="call_f1",
+                    args={"url": "https://example.com"},
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    envelope = ToolResultEnvelope(
+        call=ToolCall(
+            tool_name="web_fetch",
+            tool_call_id="call_f1",
+            args={"url": "https://example.com"},
+        ),
+        decision=ToolPolicyDecision.ALLOW,
+        structured_output={
+            "summary": "fetched https://example.com",
+            "url": "https://example.com",
+            "content": "z" * 10_000,
+            "excerpt": "z" * 2_500,
+            "metadata": {"title": "Example", "published_time": "2025-01-01"},
+        },
+        truncated=False,
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        run_input=SimpleNamespace(messages=(), input="hello"),
+        metadata={},
+    )
+    _update_tool_protocol_messages(
+        context=context, result=ToolExecutionResult(envelopes=[envelope], traces=[])
+    )
+    rows = context.metadata["protocol_messages"]
+    tool_rows = [row for row in rows if row.get("role") == ChatRole.TOOL.value]
+    payload = json.loads(tool_rows[-1]["content"])
+    assert "content" not in payload
+    assert payload["metadata"]["title"] == "Example"
+    assert len(payload["excerpt"]) <= 2500
+
+
 def test_update_tool_protocol_messages_adds_web_fetch_verification_hint() -> None:
     llm_response = LlmResponse(
         message=ChatMessage(role=ChatRole.ASSISTANT, content=""),

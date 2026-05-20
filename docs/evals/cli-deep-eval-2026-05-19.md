@@ -135,6 +135,10 @@ Observed deltas:
   - `tests/tools/test_builtin_shell_tools.py`
   - `tests/prompts/test_react_base_policy_shell_rules.py`
   - `tests/runtime/test_denial_recovery_hint.py`
+  - `tests/runtime/test_final_answer_strips_text_form_tool_calls.py`
+  - `tests/runtime/test_text_form_calls_continue_loop.py`
+  - `tests/runtime/test_real_scenarios.py`
+  - `tests/cli/test_eval_answer_scoring.py`
   - `tests/cli/test_eval_suite_membership.py`
   - `tests/cli/test_eval_cli.py`
 - Run live only when offline checks are green:
@@ -177,6 +181,47 @@ Observed deltas:
 - `python_sandbox_arithmetic` -> python tool execution path (`python_exec` pack).
 - `forbidden_bash_governance` -> forbidden tool governance under temptation.
 - `multi_file_summary_digest` -> long-context multi-read synthesis quality.
+- `chat_multi_turn_followup` -> multi-turn session continuity (`follow_up_prompts`).
+- `ambiguous_request_clarify_then_act` -> clarification then execution.
+- `real_refactor_small_module` -> dogfood refactor in sandbox.
+
+## Engine fixes (2026-05-20)
+
+### Bug: text-form `<tool_call>` leaked into final answer
+
+- Symptom: models without native tool_calls (Qwen/Llama style) emit
+  `<tool_call>{...}</tool_call>` in assistant text; this markup appeared in
+  `AgentRunOutput.answer` (e.g. `multi_file_rename` live run).
+- Fix: `SingleAgentOutputMixin._sanitize_terminal_answer()` applies
+  `strip_text_form_tool_calls()` before persisting terminal answer; raw content
+  kept in `metadata.raw_assistant_content`.
+- Regression: `tests/runtime/test_final_answer_strips_text_form_tool_calls.py`
+
+### Bug: text-form tool calls did not continue ReAct loop
+
+- Symptom: when `finish_reason=STOP` but content contains text-form tool calls,
+  runner finalized instead of executing tools and calling LLM again.
+- Fix: `_finalize_tool_stage_transition` treats planned calls with
+  `metadata.text_form_source` like native `TOOL_CALLS` for loop continuation.
+- Regression: `tests/runtime/test_text_form_calls_continue_loop.py`,
+  `tests/runtime/test_real_scenarios.py::test_text_form_tool_call_recovery_*`
+
+### Scoring: language-agnostic answer assertions
+
+- Added `EvalScenario.expected_answer_any_of` (AND of OR-groups).
+- Applied to `loop_detection_force_final`, `web_zero_results_honest_finalize`.
+- Tests: `tests/cli/test_eval_answer_scoring.py`
+
+## Real scenarios (deep suite extension)
+
+- `chat_multi_turn_followup` — two turns with shared `thread_id` and follow-up prompt.
+- `ambiguous_request_clarify_then_act` — clarify-then-act with `expected_answer_any_of`.
+- `real_refactor_small_module` — sandbox docstring refactor (`read_file` / `file_edit`).
+
+Offline-only regressions (not in live suite):
+
+- `tests/runtime/test_real_scenarios.py` — text-form recovery, interrupt resume approve,
+  session digest persistence across runs.
 
 ## Functional pass validation
 

@@ -1,15 +1,9 @@
+import type { ChatMessage } from "../../store/chatStore";
 import { ScrollArea } from "../ui/scroll-area";
 import { MessageBubble } from "./MessageBubble";
 
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  pending?: boolean;
-}
-
 interface MessageListProps {
-  messages: Message[];
+  messages: ChatMessage[];
 }
 
 export function MessageList({ messages }: MessageListProps) {
@@ -17,12 +11,7 @@ export function MessageList({ messages }: MessageListProps) {
     <ScrollArea className="h-[65vh] w-full rounded-lg border p-4">
       <div className="space-y-4">
         {messages.map((message) => (
-          <MessageBubble
-            key={message.id}
-            role={message.role}
-            content={message.content}
-            pending={message.pending}
-          />
+          <MessageBubble key={message.id} message={message} />
         ))}
       </div>
     </ScrollArea>

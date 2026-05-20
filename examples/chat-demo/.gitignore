@@ -4,3 +4,4 @@ __pycache__/
 .agent-driver/
 node_modules/
 dist/
+backend/app/static/

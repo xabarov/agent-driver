@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from agent_driver.cli.providers import CliProviderConfig, build_cli_provider
@@ -10,10 +11,22 @@ from agent_driver.cli.sessions import SessionStore
 from agent_driver.cli.tools import CliToolConfig, build_cli_toolset
 from agent_driver.contracts.tools import ToolManifest
 from agent_driver.runtime import create_runtime_store_bundle, runtime_store_config_from_env
-from agent_driver.runtime.storage import RuntimeEventLog
+from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.sdk import Agent, create_agent
 
 from app.config import Settings, ToolPreset
+
+
+@lru_cache(maxsize=1)
+def get_shared_runtime_store_bundle():
+    """Return one runtime store bundle shared across tool presets."""
+    return create_runtime_store_bundle(runtime_store_config_from_env())
+
+
+@lru_cache(maxsize=1)
+def get_shared_session_store(sessions_path: str) -> SessionStore:
+    """Return one session store shared across tool presets."""
+    return SessionStore(path=Path(sessions_path))
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +35,7 @@ class AgentBundle:
 
     agent: Agent
     event_log: RuntimeEventLog
+    checkpoint_store: CheckpointStore
     session_store: SessionStore
     manifests: tuple[ToolManifest, ...]
     store_kind: str
@@ -44,8 +58,11 @@ def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
     )
 
 
-def create_agent_bundle(settings: Settings) -> AgentBundle:
+def create_agent_bundle(
+    settings: Settings, *, tool_preset: ToolPreset | None = None
+) -> AgentBundle:
     """Build provider, stores, filtered toolset, and SDK facade."""
+    effective_preset = tool_preset or settings.tool_preset
     provider = build_cli_provider(
         CliProviderConfig(
             provider=settings.provider,
@@ -55,9 +72,9 @@ def create_agent_bundle(settings: Settings) -> AgentBundle:
             timeout_s=settings.provider_timeout_seconds,
         )
     )
-    toolset = build_cli_toolset(_tool_config_from_preset(settings.tool_preset))
+    toolset = build_cli_toolset(_tool_config_from_preset(effective_preset))
     runtime_store_config = runtime_store_config_from_env()
-    runtime_store_bundle = create_runtime_store_bundle(runtime_store_config)
+    runtime_store_bundle = get_shared_runtime_store_bundle()
     agent = create_agent(
         provider=provider,
         tools=toolset,
@@ -68,10 +85,11 @@ def create_agent_bundle(settings: Settings) -> AgentBundle:
     manifests: tuple[ToolManifest, ...] = ()
     if registry is not None:
         manifests = tuple(item.manifest for item in registry.list_registered())
-    session_store = SessionStore(path=Path(settings.sessions_path))
+    session_store = get_shared_session_store(str(settings.sessions_path))
     return AgentBundle(
         agent=agent,
         event_log=runtime_store_bundle.event_log,
+        checkpoint_store=runtime_store_bundle.checkpoint_store,
         session_store=session_store,
         manifests=manifests,
         store_kind=runtime_store_config.kind,

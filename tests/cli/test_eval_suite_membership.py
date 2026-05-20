@@ -20,6 +20,9 @@ def test_deep_suite_contains_only_problematic_and_new_scenarios() -> None:
         "python_sandbox_arithmetic",
         "forbidden_bash_governance",
         "multi_file_summary_digest",
+        "chat_multi_turn_followup",
+        "ambiguous_request_clarify_then_act",
+        "real_refactor_small_module",
     }
 
 
