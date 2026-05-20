@@ -118,12 +118,48 @@ def register_planning_tool(registry: ToolRegistry) -> None:
     _register_exit_plan_mode_v2_tool(registry)
 
 
+def build_todo_write_summary_and_next_action(
+    todos: list[dict[str, str]],
+) -> tuple[str, str]:
+    """Build model-facing summary and next_action from normalized todo rows."""
+    total = len(todos)
+    completed = sum(1 for row in todos if row["status"] == "completed")
+    in_progress = [row for row in todos if row["status"] == "in_progress"]
+    if total == 0:
+        return "todo_write: empty list", "Add todos with id, content, and status."
+    if completed == total:
+        return (
+            f"todo_write: {completed}/{total} completed. All steps done.",
+            "All plan steps are completed.",
+        )
+    if len(in_progress) == 1:
+        active = in_progress[0]
+        short = active["content"]
+        if len(short) > 48:
+            short = f"{short[:45]}..."
+        summary = (
+            f"todo_write: {completed}/{total} done, in_progress={active['id']}. "
+            "Plan panel updated; do not repeat the checklist in chat."
+        )
+        next_action = (
+            f"When step '{active['id']}' ({active['content']}) is finished, call "
+            "todo_write with merge=true: mark it completed and set the next "
+            "step in_progress before more tools."
+        )
+        return summary, next_action
+    summary = (
+        f"todo_write: {completed}/{total} done. "
+        "Set exactly one todo in_progress. Plan panel updated."
+    )
+    return summary, "Set exactly one todo to in_progress before starting work."
+
+
 async def _todo_write_tool(args: dict[str, Any]) -> dict[str, Any]:
     todos_raw = args.get("todos")
     if not isinstance(todos_raw, list) or not todos_raw:
         raise ValueError("todos must be a non-empty list")
     merge = bool(args.get("merge", False))
-    normalized: list[dict[str, Any]] = []
+    normalized: list[dict[str, str]] = []
     for row in todos_raw:
         if not isinstance(row, dict):
             raise ValueError("todos rows must be objects")
@@ -142,11 +178,20 @@ async def _todo_write_tool(args: dict[str, Any]) -> dict[str, Any]:
     in_progress_count = sum(1 for row in normalized if row["status"] == "in_progress")
     if in_progress_count > 1:
         raise ValueError("at most one todo can be in_progress")
+    summary, next_action = build_todo_write_summary_and_next_action(normalized)
     return {
-        "summary": f"todo_write applied {len(normalized)} rows",
+        "summary": summary,
+        "next_action": next_action,
+        "current_todos": normalized,
+        "merge": merge,
         "applied_args": {
             "todo_items": normalized,
             "todo_merge": merge,
+        },
+        "structured": {
+            "current_todos": normalized,
+            "merge": merge,
+            "next_action": next_action,
         },
     }
 
@@ -185,13 +230,21 @@ def _register_todo_write_tool(registry: ToolRegistry) -> None:
         ToolManifest(
             name="todo_write",
             description=(
-                "Apply structured todo list update into planning state. "
-                "Statuses: pending, in_progress, completed, cancelled. "
-                "At most one todo may be in_progress."
+                "Maintain a visible multi-step plan in the chat plan panel. "
+                "Use for plan/roadmap requests: create 3–7 steps, one in_progress. "
+                "Mark in_progress before starting a step; mark completed immediately "
+                "when done; use merge=true to update statuses. "
+                "Do not repeat the full checklist in assistant messages. "
+                "Statuses: pending, in_progress, completed, cancelled."
             ),
             risk=ToolRisk.LOW,
             side_effect=SideEffectClass.NONE,
             approval_mode=ApprovalMode.NEVER,
+            remediation_hints=[
+                "Plan checklist is visible in the UI plan panel.",
+                "Mark completed immediately after each step; use merge=true.",
+                "Do not copy the full todo list into chat prose.",
+            ],
             args_schema={
                 "type": "object",
                 "properties": {

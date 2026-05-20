@@ -56,19 +56,45 @@ def _map_finish_reason(reason: str | None) -> LlmFinishReason:
     return LlmFinishReason.UNKNOWN
 
 
+def _parse_cost_usd_from_usage(usage: dict[str, Any]) -> float | None:
+    """Read provider-reported cost (OpenRouter and similar APIs)."""
+    for key in ("total_cost", "cost", "generation_cost"):
+        value = usage.get(key)
+        if isinstance(value, (int, float)):
+            return max(0.0, float(value))
+    return None
+
+
+def _estimate_cost_usd(total_tokens: int, cost_per_1k_tokens: float) -> float | None:
+    if cost_per_1k_tokens <= 0 or total_tokens <= 0:
+        return None
+    return (total_tokens / 1000.0) * cost_per_1k_tokens
+
+
 def _extract_usage(
-    payload: dict[str, Any], *, provider: str, model: str
+    payload: dict[str, Any],
+    *,
+    provider: str,
+    model: str,
+    cost_per_1k_tokens: float = 0.0,
 ) -> UsageSummary:
     usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
-    prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
-    completion_tokens = int(usage.get("completion_tokens", 0) or 0)
+    prompt_tokens = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+    completion_tokens = int(
+        usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0
+    )
     total_tokens = int(
         usage.get("total_tokens", prompt_tokens + completion_tokens) or 0
     )
+    total_tokens = max(0, total_tokens)
+    cost_usd = _parse_cost_usd_from_usage(usage)
+    if cost_usd is None:
+        cost_usd = _estimate_cost_usd(total_tokens, cost_per_1k_tokens)
     return UsageSummary(
         input_tokens=max(0, prompt_tokens),
         output_tokens=max(0, completion_tokens),
-        total_tokens=max(0, total_tokens),
+        total_tokens=total_tokens,
+        cost_usd_estimate=cost_usd,
         model_provider=provider,
         model_name=model,
     )
@@ -162,14 +188,23 @@ def _planned_tool_calls_from_openai(
 
 
 def normalize_openai_completion_payload(
-    payload: dict[str, Any], *, provider_name: str, fallback_model: str
+    payload: dict[str, Any],
+    *,
+    provider_name: str,
+    fallback_model: str,
+    cost_per_1k_tokens: float = 0.0,
 ) -> LlmResponse:
     """Normalize OpenAI-compatible completion payload to provider-neutral response."""
     choice = payload.get("choices", [{}])[0]
     message_payload = choice.get("message", {}) if isinstance(choice, dict) else {}
     text = str(message_payload.get("content", "") or "")
     model_name = str(payload.get("model") or fallback_model)
-    usage = _extract_usage(payload, provider=provider_name, model=model_name)
+    usage = _extract_usage(
+        payload,
+        provider=provider_name,
+        model=model_name,
+        cost_per_1k_tokens=cost_per_1k_tokens,
+    )
     metadata = _extract_usage_metadata(payload)
     planned_tool_calls, parse_errors = _planned_tool_calls_from_openai(
         message_payload.get("tool_calls")
@@ -197,7 +232,11 @@ def normalize_openai_completion_payload(
 
 
 def normalize_openai_stream_chunk(
-    payload: dict[str, Any], *, provider_name: str, fallback_model: str
+    payload: dict[str, Any],
+    *,
+    provider_name: str,
+    fallback_model: str,
+    cost_per_1k_tokens: float = 0.0,
 ) -> LlmStreamEvent:
     """Normalize one OpenAI-compatible stream chunk."""
     choice = payload.get("choices", [{}])[0]
@@ -205,7 +244,12 @@ def normalize_openai_stream_chunk(
     text = str(delta.get("content", "") or "")
     finish_reason = _map_finish_reason(choice.get("finish_reason"))
     usage = (
-        _extract_usage(payload, provider=provider_name, model=fallback_model)
+        _extract_usage(
+            payload,
+            provider=provider_name,
+            model=fallback_model,
+            cost_per_1k_tokens=cost_per_1k_tokens,
+        )
         if isinstance(payload, dict) and payload.get("usage")
         else None
     )
@@ -344,6 +388,7 @@ class OpenAICompatibleProvider(ProviderBase):
                 response.json(),
                 provider_name=self.name,
                 fallback_model=str(request.model or self._model),
+                cost_per_1k_tokens=float(self.status.cost_per_1k_tokens or 0.0),
             )
 
         return await self.execute_with_telemetry(
@@ -403,6 +448,7 @@ class OpenAICompatibleProvider(ProviderBase):
                     payload,
                     provider_name=self.name,
                     fallback_model=str(request.model or self._model),
+                    cost_per_1k_tokens=float(self.status.cost_per_1k_tokens or 0.0),
                 )
             if pending_tool_calls:
                 flattened = [pending_tool_calls[idx] for idx in sorted(pending_tool_calls)]

@@ -12,6 +12,7 @@ export interface StartChatStreamOptions {
   message: string;
   sessionId?: string;
   toolPreset?: ToolPreset;
+  model?: string;
   signal?: AbortSignal;
   lastEventId?: string;
   onEvent: (event: RunStreamEvent) => void;
@@ -23,6 +24,7 @@ export interface ResumeRunStreamOptions {
   interruptId: string;
   action: string;
   toolPreset?: ToolPreset;
+  model?: string;
   editedToolArgs?: Record<string, unknown>;
   message?: string;
   signal?: AbortSignal;
@@ -76,6 +78,7 @@ export async function startChatStream(opts: StartChatStreamOptions): Promise<voi
         message: opts.message,
         session_id: opts.sessionId,
         tool_preset: opts.toolPreset,
+        model: opts.model,
       }),
       signal: opts.signal,
     },
@@ -98,6 +101,7 @@ export async function resumeRunStream(opts: ResumeRunStreamOptions): Promise<voi
         interrupt_id: opts.interruptId,
         action: opts.action,
         tool_preset: opts.toolPreset,
+        model: opts.model,
         edited_tool_args: opts.editedToolArgs,
         message: opts.message,
       }),

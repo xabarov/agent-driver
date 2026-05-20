@@ -1,7 +1,16 @@
 import { beforeEach, describe, expect, test } from "vitest";
 
 import { parseToolStatesFromEvent, type RunStreamEvent } from "../src/lib/events";
+import type { PlanningSnapshot } from "../src/lib/planning";
 import { useChatStore } from "../src/store/chatStore";
+
+const sampleSnapshot: PlanningSnapshot = {
+  todos: [{ id: "s1", content: "Do work", status: "in_progress" }],
+  inProgressId: "s1",
+  completed: 0,
+  total: 1,
+  planTitle: "Do work",
+};
 
 describe("chatStore", () => {
   beforeEach(() => {
@@ -70,12 +79,93 @@ describe("chatStore", () => {
     expect(loaded.streaming).toBe(false);
     expect(loaded.lastSeq).toBe(0);
     expect(loaded.messages).toHaveLength(2);
-    expect(loaded.messages[0]).toMatchObject({ role: "user", content: "hello", pending: false });
+    expect(loaded.messages[0]).toMatchObject({ role: "user", content: "hello" });
     expect(loaded.messages[1]).toMatchObject({
       role: "assistant",
       content: "world",
       pending: false,
     });
+  });
+
+  test("deleteMessage removes assistant turn including tools", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("hi");
+    useChatStore.getState().appendToolStarted(assistantId, {
+      toolCallId: "call_1",
+      name: "web_search",
+      status: "running",
+    });
+    useChatStore.getState().finishTurn(assistantId);
+    const assistant = useChatStore.getState().messages[1];
+    expect(assistant?.role).toBe("assistant");
+    if (assistant?.role === "assistant") {
+      useChatStore.getState().deleteMessage(assistant.id);
+    }
+    expect(useChatStore.getState().messages).toHaveLength(1);
+    expect(useChatStore.getState().messages[0]).toMatchObject({ role: "user", content: "hi" });
+  });
+
+  test("appendAssistantMetadata merges usage across LLM steps", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("meta");
+    useChatStore.getState().appendAssistantMetadata(assistantId, {
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 30,
+      durationMs: 1000,
+      costUsd: 0.01,
+    });
+    useChatStore.getState().appendAssistantMetadata(assistantId, {
+      promptTokens: 5,
+      completionTokens: 15,
+      totalTokens: 20,
+      durationMs: 500,
+      costUsd: 0.002,
+    });
+    const assistant = useChatStore.getState().messages.find((item) => item.id === assistantId);
+    expect(assistant?.role).toBe("assistant");
+    if (assistant?.role === "assistant") {
+      expect(assistant.metadata?.promptTokens).toBe(15);
+      expect(assistant.metadata?.completionTokens).toBe(35);
+      expect(assistant.metadata?.durationMs).toBe(1500);
+      expect(assistant.metadata?.costUsd).toBeCloseTo(0.012);
+    }
+  });
+
+  test("prepareRetry replaces assistant and returns user text", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("retry me");
+    useChatStore.getState().appendDelta(assistantId, "old answer");
+    useChatStore.getState().finishTurn(assistantId);
+    const prepared = useChatStore.getState().prepareRetry(assistantId);
+    expect(prepared).toEqual({ userText: "retry me", newAssistantId: expect.any(String) });
+    const messages = useChatStore.getState().messages;
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({ role: "assistant", content: "", pending: true });
+  });
+
+  test("setPlanningSnapshot updates assistant in place", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("plan");
+    useChatStore.getState().setPlanningSnapshot(assistantId, sampleSnapshot);
+    const assistant = useChatStore.getState().messages.find((item) => item.id === assistantId);
+    expect(assistant?.role).toBe("assistant");
+    if (assistant?.role === "assistant") {
+      expect(assistant.planningSnapshot?.total).toBe(1);
+    }
+  });
+
+  test("appendToolStarted skips todo_write", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("plan");
+    useChatStore.getState().appendToolStarted(assistantId, {
+      toolCallId: "tw1",
+      name: "todo_write",
+      status: "running",
+    });
+    useChatStore.getState().appendToolStarted(assistantId, {
+      toolCallId: "fw1",
+      name: "file_write",
+      status: "running",
+    });
+    const tools = useChatStore.getState().messages.filter((item) => item.role === "tool");
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({ name: "file_write" });
   });
 
   test("appendToolStarted inserts tool card after assistant", () => {

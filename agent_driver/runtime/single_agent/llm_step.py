@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Protocol
 
 import httpx
@@ -23,6 +24,7 @@ from agent_driver.prompts import (
     python_tool_system_addendum,
     react_base_policy,
     react_chat_tool_policy,
+    todo_write_guidance,
 )
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.single_agent.compaction_stage import (
@@ -32,6 +34,9 @@ from agent_driver.runtime.single_agent.compaction_stage import (
 from agent_driver.runtime.single_agent.llm import (
     LlmRequestBuildContext,
     build_single_agent_llm_request,
+)
+from agent_driver.runtime.single_agent.todo_reminders import (
+    maybe_append_todo_reminder_to_protocol,
 )
 from agent_driver.runtime.single_agent.streaming import (
     complete_streaming_request,
@@ -66,6 +71,7 @@ async def execute_llm_call_step(host: LlmStepHost, context: RunContext) -> Runti
         event_type=RuntimeEventType.LLM_CALL_STARTED,
         payload={"provider": host._deps.provider.name},
     )
+    context.metadata["llm_call_started_monotonic"] = time.monotonic()
     clarification = context.metadata.get("clarification")
     try:
         observations = _microcompact_context_observations(host, context)
@@ -145,15 +151,27 @@ async def execute_llm_call_step(host: LlmStepHost, context: RunContext) -> Runti
             context,
             [chunk for chunk in token_chunks if isinstance(chunk, str)],
         )
+    completed_payload: dict[str, Any] = {
+        "provider": context.llm_response.provider,
+        "model": context.llm_response.model,
+        "finish_reason": context.llm_response.finish_reason.value,
+    }
+    started_at = context.metadata.get("llm_call_started_monotonic")
+    if isinstance(started_at, (int, float)):
+        completed_payload["duration_ms"] = round(
+            max(0.0, (time.monotonic() - float(started_at)) * 1000.0),
+            2,
+        )
+    if context.llm_response.usage is not None:
+        completed_payload["usage"] = context.llm_response.usage.model_dump(mode="json")
+    planned_tool_calls = context.llm_response.metadata.get("planned_tool_calls")
+    if isinstance(planned_tool_calls, list):
+        completed_payload["planned_tool_calls"] = planned_tool_calls
     emit_step_event(
         host,
         context,
         event_type=RuntimeEventType.LLM_CALL_COMPLETED,
-        payload={
-            "provider": context.llm_response.provider,
-            "model": context.llm_response.model,
-            "finish_reason": context.llm_response.finish_reason.value,
-        },
+        payload=completed_payload,
     )
     _emit_token_pressure_warning(host, context)
     context.step_count += 1
@@ -211,6 +229,9 @@ def _build_trimmed_request(
             PlanningStep.model_validate(planning_step_payload)
         )
     protocol_messages = _protocol_messages_from_metadata(context)
+    protocol_messages = maybe_append_todo_reminder_to_protocol(
+        context, protocol_messages
+    )
     tool_choice = context.metadata.get("tool_choice_override")
     system_instruction = _react_system_instruction(host, context)
     if (
@@ -272,9 +293,20 @@ def _build_trimmed_request(
 
 
 async def _complete_request(host: LlmStepHost, context: RunContext, request: Any) -> LlmResponse:
-    if not is_stream_enabled(context.run_input):
-        return await host._deps.provider.complete(request)
-    return await complete_streaming_request(host, context, request)
+    last_timeout: httpx.TimeoutException | None = None
+    for attempt in range(2):
+        try:
+            if not is_stream_enabled(context.run_input):
+                return await host._deps.provider.complete(request)
+            return await complete_streaming_request(host, context, request)
+        except httpx.TimeoutException as exc:
+            last_timeout = exc
+            if attempt == 0:
+                continue
+            raise
+    if last_timeout is not None:
+        raise last_timeout
+    raise RuntimeError("unreachable")
 
 
 def _token_pressure_state(token_pressure: object) -> str:
@@ -345,7 +377,9 @@ def _effective_code_agent_imports(host: LlmStepHost) -> tuple[str, ...]:
     if imports:
         return imports
     if host._config.python_tool.enabled:
-        return host._config.python_tool.default_imports
+        from agent_driver.tools.builtin.python_imports import effective_python_imports
+
+        return effective_python_imports(host._config.python_tool)
     return tuple()
 
 
@@ -361,18 +395,47 @@ def _python_tool_addendum_if_present(host: LlmStepHost) -> str | None:
     return python_tool_system_addendum(host._config.python_tool)
 
 
+def _todo_write_guidance_if_present(host: LlmStepHost) -> str | None:
+    has_todo = any(
+        row.manifest.name == "todo_write"
+        for row in host._deps.tool_registry.list_registered()
+    )
+    if not has_todo:
+        return None
+    return todo_write_guidance()
+
+
 def _react_system_instruction(host: LlmStepHost, context: RunContext) -> str | None:
     if context.run_input.agent_profile != AgentProfile.REACT_TEXT:
         return None
     lines = [react_base_policy()]
     if context.run_input.app_metadata.get("chat_mode") is True:
-        lines.append(react_chat_tool_policy())
+        from agent_driver.tools.builtin.python_imports import scientific_imports_enabled
+
+        lines.append(
+            react_chat_tool_policy(
+                include_scientific_python=scientific_imports_enabled(host._config.python_tool)
+            )
+        )
     python_addendum = _python_tool_addendum_if_present(host)
     if python_addendum:
         lines.append(python_addendum)
+    todo_guidance = _todo_write_guidance_if_present(host)
+    if todo_guidance:
+        lines.append(todo_guidance)
     workspace_cwd = context.run_input.app_metadata.get("workspace_cwd")
     if isinstance(workspace_cwd, str) and workspace_cwd.strip():
         lines.append(f"Workspace cwd: {workspace_cwd.strip()}")
+    if context.run_input.app_metadata.get("chat_mode") is True:
+        planning_payload = context.metadata.get("planning_state")
+        if isinstance(planning_payload, dict):
+            todos = planning_payload.get("todos")
+            if isinstance(todos, list) and todos:
+                lines.append(
+                    "Session plan is active: follow existing todos, update statuses "
+                    "with todo_write (merge=true) as each step completes, and do "
+                    "not restate the full plan checklist in chat."
+                )
     return "\n".join(lines)
 
 

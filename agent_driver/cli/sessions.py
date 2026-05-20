@@ -19,6 +19,7 @@ class SessionRecord:
     transcript: tuple[tuple[str, str], ...]
     created_at: str
     updated_at: str
+    metadata_by_run: tuple[tuple[str, dict[str, Any]], ...] = ()
 
 
 class SessionStore:
@@ -56,6 +57,7 @@ class SessionStore:
         thread_id: str,
         run_ids: list[str],
         transcript: list[tuple[str, str]],
+        metadata_by_run: dict[str, dict[str, Any]] | None = None,
     ) -> SessionRecord:
         now = datetime.now(UTC).isoformat()
         payload = self._read()
@@ -63,14 +65,25 @@ class SessionStore:
         if not isinstance(rows, list):
             rows = []
         existing_created_at = now
+        existing_metadata: dict[str, dict[str, Any]] = {}
         updated_rows: list[dict[str, Any]] = []
         for row in rows:
             if not isinstance(row, dict):
                 continue
             if row.get("session_id") == session_id:
                 existing_created_at = str(row.get("created_at") or now)
+                prior = row.get("metadata_by_run")
+                if isinstance(prior, dict):
+                    existing_metadata = {
+                        str(key): dict(value)
+                        for key, value in prior.items()
+                        if isinstance(value, dict)
+                    }
                 continue
             updated_rows.append(row)
+        merged_metadata = dict(existing_metadata)
+        if metadata_by_run:
+            merged_metadata.update(metadata_by_run)
         record = SessionRecord(
             session_id=session_id,
             thread_id=thread_id,
@@ -78,6 +91,7 @@ class SessionStore:
             transcript=tuple((str(role), str(text)) for role, text in transcript),
             created_at=existing_created_at,
             updated_at=now,
+            metadata_by_run=tuple(sorted(merged_metadata.items())),
         )
         updated_rows.append(_record_to_dict(record))
         payload["sessions"] = updated_rows
@@ -110,6 +124,14 @@ def _record_from_dict(row: dict[str, Any]) -> SessionRecord:
     run_list: tuple[str, ...] = ()
     if isinstance(run_ids, list):
         run_list = tuple(str(item) for item in run_ids)
+    metadata_rows = row.get("metadata_by_run")
+    metadata_by_run: tuple[tuple[str, dict[str, Any]], ...] = ()
+    if isinstance(metadata_rows, dict):
+        metadata_by_run = tuple(
+            (str(key), dict(value))
+            for key, value in metadata_rows.items()
+            if isinstance(value, dict)
+        )
     return SessionRecord(
         session_id=str(row.get("session_id", "")),
         thread_id=str(row.get("thread_id", "")),
@@ -117,11 +139,12 @@ def _record_from_dict(row: dict[str, Any]) -> SessionRecord:
         transcript=transcript,
         created_at=str(row.get("created_at", "")),
         updated_at=str(row.get("updated_at", "")),
+        metadata_by_run=metadata_by_run,
     )
 
 
 def _record_to_dict(record: SessionRecord) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "session_id": record.session_id,
         "thread_id": record.thread_id,
         "run_ids": list(record.run_ids),
@@ -129,6 +152,9 @@ def _record_to_dict(record: SessionRecord) -> dict[str, Any]:
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     }
+    if record.metadata_by_run:
+        payload["metadata_by_run"] = {key: value for key, value in record.metadata_by_run}
+    return payload
 
 
 __all__ = ["SessionRecord", "SessionStore"]

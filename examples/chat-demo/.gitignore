@@ -2,6 +2,7 @@
 __pycache__/
 .pytest_cache/
 .agent-driver/
+workspace/
 node_modules/
 dist/
 backend/app/static/

@@ -6,10 +6,23 @@ import fnmatch
 from pathlib import Path
 from typing import Any
 
-from agent_driver.tools.context import get_workspace_cwd
+from agent_driver.tools.context import get_workspace_cwd, get_workspace_jail_root
 
 MAX_BYTES_DEFAULT = 64_000
 MAX_OFFSET_DEFAULT = 1_000_000
+def _ensure_within_workspace_jail(path: Path) -> None:
+    """Reject paths outside run-scoped workspace when jail root is set."""
+    root = get_workspace_jail_root()
+    if root is None:
+        return
+    resolved = path.resolve()
+    jail_root = root.resolve()
+    try:
+        resolved.relative_to(jail_root)
+    except ValueError as exc:
+        raise ValueError(f"path outside workspace ({jail_root}): {resolved}") from exc
+
+
 _ALWAYS_IGNORED_PREFIXES = (
     ".git/",
     ".venv/",
@@ -29,6 +42,7 @@ def resolve_file_path(raw: Any) -> Path:
         raise ValueError(f"path does not exist: {path}")
     if not path.is_file():
         raise ValueError(f"path is not a file: {path}")
+    _ensure_within_workspace_jail(path)
     return path
 
 
@@ -48,6 +62,7 @@ def resolve_base_dir(raw: Any) -> Path:
         raise ValueError(f"base_dir does not exist: {base}")
     if not base.is_dir():
         raise ValueError(f"base_dir is not a directory: {base}")
+    _ensure_within_workspace_jail(base)
     return base
 
 
@@ -69,6 +84,7 @@ def resolve_writable_path(raw: Any, *, create_parent: bool) -> Path:
         parent.mkdir(parents=True, exist_ok=True)
     if not parent.is_dir():
         raise ValueError(f"parent path is not a directory: {parent}")
+    _ensure_within_workspace_jail(path)
     return path
 
 

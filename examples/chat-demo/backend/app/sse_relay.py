@@ -10,6 +10,8 @@ from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.runtime.storage import RuntimeEventLog
 from agent_driver.sdk import Agent
 
+from app.run_cancel import clear_cancel, reset_active_run, set_active_run
+
 TerminalEvent = str | None
 OnFinish = Callable[[str, TerminalEvent], None]
 _TERMINAL_EVENTS = {"run_completed", "run_failed", "run_cancelled"}
@@ -40,23 +42,33 @@ async def relay_and_capture(
     """Relay SSE frames and capture assistant text from token deltas."""
     parts: list[str] = []
     terminal_event: TerminalEvent = None
-    async for frame in sse_event_stream(
-        agent=agent,
-        run_input=run_input,
-        event_log=event_log,
-        last_event_id=last_event_id,
-    ):
-        payload = _parse_sse_payload(frame)
-        if payload is not None:
-            event_name = str(payload.get("event", ""))
-            data = payload.get("data")
-            if event_name == "token_delta" and isinstance(data, dict):
-                delta = data.get("delta_text")
-                if isinstance(delta, str) and delta:
-                    parts.append(delta)
-            if event_name in _TERMINAL_EVENTS:
-                terminal_event = event_name
-        yield frame
-    if on_finish is not None:
+    persisted = False
+    run_id = run_input.run_id or ""
+    token = set_active_run(run_id or None)
+    try:
+        async for frame in sse_event_stream(
+            agent=agent,
+            run_input=run_input,
+            event_log=event_log,
+            last_event_id=last_event_id,
+        ):
+            payload = _parse_sse_payload(frame)
+            if payload is not None:
+                event_name = str(payload.get("event", ""))
+                data = payload.get("data")
+                if event_name == "token_delta" and isinstance(data, dict):
+                    delta = data.get("delta_text")
+                    if isinstance(delta, str) and delta:
+                        parts.append(delta)
+                if event_name in _TERMINAL_EVENTS:
+                    terminal_event = event_name
+                    if on_finish is not None and not persisted:
+                        on_finish("".join(parts), terminal_event)
+                        persisted = True
+            yield frame
+    finally:
+        reset_active_run(token)
+        if run_id:
+            clear_cancel(run_id)
+    if on_finish is not None and not persisted:
         on_finish("".join(parts), terminal_event)
-

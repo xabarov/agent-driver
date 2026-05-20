@@ -10,6 +10,7 @@ class SessionMessageView(BaseModel):
 
     role: str
     content: str
+    metadata: dict[str, object] | None = None
 
 
 class SessionSummaryView(BaseModel):
@@ -30,6 +31,7 @@ class SessionDetailView(BaseModel):
     title: str
     run_ids: list[str]
     transcript: list[SessionMessageView]
+    metadata_by_run: dict[str, dict[str, object]] = {}
     created_at: str
     updated_at: str
 

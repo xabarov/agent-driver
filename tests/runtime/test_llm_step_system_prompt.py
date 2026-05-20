@@ -66,6 +66,7 @@ def test_react_system_prompt_includes_python_addendum_when_tool_enabled() -> Non
         _config=SimpleNamespace(
             python_tool=PythonToolSettings(
                 enabled=True,
+                include_scientific_stack=False,
                 default_imports=("math", "re"),
             )
         ),
@@ -83,6 +84,9 @@ def test_react_system_prompt_includes_python_addendum_when_tool_enabled() -> Non
     assert "Allowed imports: math, re" in instruction
     assert "Limits: exec <=" in instruction
     assert "Sessions are persistent per session_id" in instruction
+    assert "scipy" in instruction
+    assert "numpy" in instruction
+    assert "do not assume numpy" in instruction.lower() or "NOT available" in instruction
 
 
 def test_react_system_prompt_omits_python_addendum_when_disabled() -> None:

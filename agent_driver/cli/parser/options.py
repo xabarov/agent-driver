@@ -91,6 +91,11 @@ def add_tool_options(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Comma-separated extra imports allowed for python tool.",
     )
+    parser.add_argument(
+        "--no-python-scientific",
+        action="store_true",
+        help="Disable numpy/scipy/pandas in python sandbox (stdlib-only).",
+    )
 
 
 def add_store_options(parser: argparse.ArgumentParser) -> None:

@@ -13,6 +13,7 @@ class ChatMessageRequest(BaseModel):
     session_id: str | None = None
     message: str = Field(min_length=1)
     tool_preset: ToolPreset | None = None
+    model: str | None = None
 
 
 class ResumeRequest(BaseModel):
@@ -21,6 +22,7 @@ class ResumeRequest(BaseModel):
     interrupt_id: str
     action: str
     tool_preset: ToolPreset | None = None
+    model: str | None = None
     edited_tool_args: dict[str, object] | None = None
     message: str | None = None
 
@@ -42,4 +44,12 @@ class ReplayResponse(BaseModel):
 
     run_id: str
     events: list[dict[str, object]]
+
+
+class CancelRunResponse(BaseModel):
+    """Response for cooperative run cancellation."""
+
+    ok: bool = True
+    run_id: str
+    cancelled: bool
 

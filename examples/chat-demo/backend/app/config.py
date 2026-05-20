@@ -11,11 +11,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ToolPreset = Literal["off", "safe", "dev", "all"]
 
 
+def _discover_env_files() -> tuple[str, ...]:
+    """Load demo env from repo root / chat-demo / backend (first found, later overrides)."""
+    chat_demo_root = Path(__file__).resolve().parents[2]
+    repo_root = chat_demo_root.parents[1]
+    candidates = (
+        repo_root / ".env",
+        chat_demo_root / ".env",
+        chat_demo_root / "backend" / ".env",
+        Path(".env"),
+    )
+    return tuple(str(path) for path in candidates if path.is_file())
+
+
 class Settings(BaseSettings):
     """Environment-backed settings for backend runtime."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_discover_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -50,6 +63,10 @@ class Settings(BaseSettings):
     sessions_path: Path = Field(
         default=Path("./.agent-driver/sessions.json"),
         validation_alias=AliasChoices("CHAT_DEMO_SESSIONS_PATH"),
+    )
+    workspace_root: Path = Field(
+        default=Path("workspace"),
+        validation_alias=AliasChoices("CHAT_DEMO_WORKSPACE_ROOT"),
     )
 
     provider: str = Field(

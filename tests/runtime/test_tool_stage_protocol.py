@@ -54,6 +54,47 @@ def test_update_tool_protocol_messages_includes_truncated_and_error_code() -> No
     assert payload["error_code"] == "tool_policy_denied"
 
 
+def test_update_tool_protocol_messages_adds_python_policy_hint() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="python",
+                    tool_call_id="call_py",
+                    args={"code": "import scipy"},
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    envelope = ToolResultEnvelope(
+        call=ToolCall(tool_name="python", tool_call_id="call_py", args={"code": "import scipy"}),
+        decision=ToolPolicyDecision.ALLOW,
+        structured_output={
+            "error_kind": "policy",
+            "allowed_imports": ["math", "statistics"],
+            "remediation": "Use allowed imports only: math, statistics",
+        },
+        summary="python policy: imports blocked by sandbox (scipy)",
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        run_input=SimpleNamespace(messages=(), input="hello"),
+        metadata={},
+    )
+    _update_tool_protocol_messages(
+        context=context, result=ToolExecutionResult(envelopes=[envelope], traces=[])
+    )
+    user_rows = [row for row in context.metadata["protocol_messages"] if row.get("role") == "user"]
+    assert any("sandbox policy" in (row.get("content") or "").lower() for row in user_rows)
+    assert any("math" in (row.get("content") or "") for row in user_rows)
+    assert context.metadata.get("python_policy_hint_sent") is True
+
+
 def test_update_tool_protocol_messages_compacts_web_fetch_payload() -> None:
     llm_response = LlmResponse(
         message=ChatMessage(role=ChatRole.ASSISTANT, content=""),

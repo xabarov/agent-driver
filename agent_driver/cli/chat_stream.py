@@ -82,6 +82,7 @@ def _format_compact_event(event: RunStreamEvent) -> str | None:
 
 
 _FULL_ARG_TOOLS = {"glob_search", "grep_search", "web_search", "read_file"}
+_PLANNING_ARG_TOOLS = {"todo_write", "planning_state_update"}
 _PRIORITY_ARG_KEYS = ("pattern", "base_dir", "max_results", "path", "query", "path_glob")
 
 
@@ -93,9 +94,39 @@ def _truncate_value(value: object, *, limit: int = 40) -> str:
     return f"{text[:limit].rstrip()}..."
 
 
+def _summarize_todo_write_args(args: dict[str, object]) -> str:
+    todos = args.get("todos")
+    if not isinstance(todos, list) or not todos:
+        return "todos=0"
+    parts: list[str] = []
+    for row in todos[:4]:
+        if not isinstance(row, dict):
+            continue
+        todo_id = str(row.get("id") or "?")
+        status = str(row.get("status") or "pending")
+        content = str(row.get("content") or "").strip().replace("\n", " ")
+        if len(content) > 28:
+            content = f"{content[:25]}..."
+        parts.append(f"{todo_id}[{status}] {content}")
+    if len(todos) > 4:
+        parts.append(f"+{len(todos) - 4} more")
+    merge = "merge=true" if args.get("merge") else "merge=false"
+    return f"{merge}, " + "; ".join(parts)
+
+
 def _summarize_tool_args(args: object, *, tool_name: str | None = None) -> str:
     if not isinstance(args, dict) or not args:
         return ""
+    if tool_name == "todo_write":
+        return _summarize_todo_write_args(args)
+    if tool_name == "planning_state_update":
+        step = args.get("step")
+        if isinstance(step, dict):
+            next_plan = str(step.get("next_plan") or "").strip()
+            if next_plan:
+                text = next_plan if len(next_plan) <= 60 else f"{next_plan[:57]}..."
+                return f"step={text}"
+        return "planning update"
     if tool_name in _FULL_ARG_TOOLS:
         parts: list[str] = []
         seen: set[str] = set()
@@ -135,17 +166,25 @@ def _extract_tool_states(event: RunStreamEvent) -> dict[str, ToolState]:
             if not isinstance(tool, dict):
                 continue
             key = _tool_state_key(tool, fallback_index=idx)
+            tool_name = str(tool.get("tool_name") or "?")
+            raw_summary = (
+                str(tool.get("result_summary")).strip()
+                if isinstance(tool.get("result_summary"), str)
+                else None
+            )
             states[key] = ToolState(
-                name=str(tool.get("tool_name") or "?"),
+                name=tool_name,
                 args_summary=_summarize_tool_args(
-                    tool.get("args"), tool_name=str(tool.get("tool_name") or "")
+                    tool.get("args"), tool_name=tool_name
                 ),
                 status=str(tool.get("status")) if tool.get("status") is not None else None,
                 result_summary=_merge_result_preview_paths(
-                    tool_name=str(tool.get("tool_name") or ""),
-                    result_summary=str(tool.get("result_summary")).strip()
-                    if isinstance(tool.get("result_summary"), str)
-                    else None,
+                    tool_name=tool_name,
+                    result_summary=_merge_python_policy_remediation(
+                        tool_name=tool_name,
+                        result_summary=raw_summary,
+                        tool_row=tool,
+                    ),
                     preview_paths=tool.get("result_preview_paths"),
                 ),
                 truncated=(
@@ -169,18 +208,27 @@ def _extract_tool_states(event: RunStreamEvent) -> dict[str, ToolState]:
         "error_code": event.data.get("error_code"),
         "tool_call_id": event.data.get("tool_call_id"),
         "result_preview_paths": event.data.get("result_preview_paths"),
+        "remediation": event.data.get("remediation"),
     }
+    tool_name = str(event.data.get("tool_name") or "?")
+    raw_summary = (
+        str(event.data.get("result_summary")).strip()
+        if isinstance(event.data.get("result_summary"), str)
+        else None
+    )
     states[_tool_state_key(data_tool)] = ToolState(
-        name=str(event.data.get("tool_name") or "?"),
+        name=tool_name,
         args_summary=_summarize_tool_args(
-            event.data.get("args"), tool_name=str(event.data.get("tool_name") or "")
+            event.data.get("args"), tool_name=tool_name
         ),
         status=str(event.data.get("status")) if event.data.get("status") is not None else None,
         result_summary=_merge_result_preview_paths(
-            tool_name=str(event.data.get("tool_name") or ""),
-            result_summary=str(event.data.get("result_summary")).strip()
-            if isinstance(event.data.get("result_summary"), str)
-            else None,
+            tool_name=tool_name,
+            result_summary=_merge_python_policy_remediation(
+                tool_name=tool_name,
+                result_summary=raw_summary,
+                tool_row=data_tool,
+            ),
             preview_paths=event.data.get("result_preview_paths"),
         ),
         truncated=(
@@ -195,6 +243,19 @@ def _extract_tool_states(event: RunStreamEvent) -> dict[str, ToolState]:
         ),
     )
     return states
+
+
+def _merge_python_policy_remediation(
+    *, tool_name: str, result_summary: str | None, tool_row: dict[str, object]
+) -> str | None:
+    if tool_name != "python" or not result_summary:
+        return result_summary
+    if "python policy:" not in result_summary:
+        return result_summary
+    remediation = tool_row.get("remediation")
+    if isinstance(remediation, str) and remediation.strip():
+        return f"{result_summary}; {remediation.strip()}"
+    return result_summary
 
 
 def _merge_result_preview_paths(
@@ -279,6 +340,15 @@ def _extract_usage_totals(event: RunStreamEvent) -> tuple[int | None, int | None
     return in_total, out_total
 
 
+def _extract_planning_snapshot(event: RunStreamEvent) -> dict[str, object] | None:
+    if event.event != "tool_call_completed":
+        return None
+    snapshot = event.data.get("planning_snapshot")
+    if isinstance(snapshot, dict) and snapshot.get("todos"):
+        return snapshot
+    return None
+
+
 async def render_chat_stream(
     *,
     stream,
@@ -286,8 +356,8 @@ async def render_chat_stream(
     run_id: str,
     renderer: ChatRenderer | None = None,
     animate: bool = False,
-) -> tuple[str, int, int, str | None]:
-    """Render stream to chat-oriented output and return assistant text."""
+) -> tuple[str, int, int, str | None, dict[str, object] | None]:
+    """Render stream to chat-oriented output and return assistant text + plan snapshot."""
     active_renderer = renderer or build_renderer(
         output=output, ui_mode="rich" if animate else "plain"
     )
@@ -312,6 +382,7 @@ async def render_chat_stream(
     pending_tools: dict[str, ToolState] = {}
     planned_args: dict[str, str] = {}
     saw_denied_tool = False
+    last_planning_snapshot: dict[str, object] | None = None
     try:
         async for event in stream:
             for key, args_summary in _extract_planned_tool_args(event).items():
@@ -340,6 +411,10 @@ async def render_chat_stream(
             if usage_out is not None:
                 output_tokens = usage_out
                 saw_usage = True
+            snapshot = _extract_planning_snapshot(event)
+            if snapshot is not None:
+                last_planning_snapshot = snapshot
+                active_renderer.refresh_plan_panel(snapshot)
             tool_states = _extract_tool_states(event)
             cards_to_emit: list[ToolCardEvent] = []
             if event.event == "tool_call_started":
@@ -450,7 +525,7 @@ async def render_chat_stream(
         )
     if not saw_usage:
         output_tokens = len(assistant_text)
-    return assistant_text, input_tokens, output_tokens, latest_pressure
+    return assistant_text, input_tokens, output_tokens, latest_pressure, last_planning_snapshot
 
 
-__all__ = ["render_chat_stream"]
+__all__ = ["render_chat_stream", "_extract_planning_snapshot"]

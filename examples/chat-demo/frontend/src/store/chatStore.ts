@@ -1,6 +1,19 @@
 import { create } from "zustand";
-import type { SessionDetailView } from "../types/api";
+import {
+  hasMetadataContent,
+  mergeAssistantMetadata,
+  normalizeMetadataFromApi,
+  pickMetadata,
+  type AssistantMessageMetadata,
+  type LlmCompletedPatch,
+} from "../lib/messageMetadata";
 import type { ParsedToolState } from "../lib/events";
+import type { PlanningSnapshot } from "../lib/planning";
+import type { SessionDetailView } from "../types/api";
+
+const PLANNING_TOOL_NAMES = new Set(["todo_write", "planning_state_update"]);
+
+export type { AssistantMessageMetadata };
 
 export type ToolCallStatus = "running" | "done" | "failed";
 
@@ -19,7 +32,15 @@ export interface ToolChatMessage {
 
 export type ChatMessage =
   | { id: string; role: "user"; content: string }
-  | { id: string; role: "assistant"; content: string; pending?: boolean }
+  | {
+      id: string;
+      role: "assistant";
+      content: string;
+      pending?: boolean;
+      runId?: string;
+      metadata?: AssistantMessageMetadata;
+      planningSnapshot?: PlanningSnapshot;
+    }
   | ToolChatMessage;
 
 export interface PendingInterrupt {
@@ -59,7 +80,7 @@ interface ChatState {
   sessionId?: string;
   runId?: string;
   pendingInterrupt?: PendingInterrupt;
-  tokenUsage?: { prompt?: number; completion?: number };
+  lastError?: string;
   beginUserTurn: (text: string) => string;
   appendDelta: (assistantId: string, text: string) => void;
   appendToolStarted: (assistantId: string, tool: ParsedToolState) => void;
@@ -70,26 +91,32 @@ interface ChatState {
   setSessionId: (sessionId?: string) => void;
   setRunId: (runId?: string) => void;
   setPendingInterrupt: (interrupt?: PendingInterrupt) => void;
-  setTokenUsage: (usage?: { prompt?: number; completion?: number }) => void;
+  appendAssistantMetadata: (assistantId: string, patch: LlmCompletedPatch) => void;
+  setPlanningSnapshot: (assistantId: string, snapshot: PlanningSnapshot) => void;
+  setAssistantRunId: (assistantId: string, runId: string) => void;
+  setLastError: (message?: string) => void;
   setMessages: (messages: ChatMessage[]) => void;
+  deleteMessage: (messageId: string) => void;
+  prepareRetry: (assistantId: string) => { userText: string; newAssistantId: string } | null;
   loadSession: (detail: SessionDetailView) => void;
   reset: () => void;
 }
 
-export const useChatStore = create<ChatState>((set) => ({
+export const useChatStore = create<ChatState>((set, get) => ({
   messages: [],
   streaming: false,
   lastSeq: 0,
   sessionId: undefined,
   runId: undefined,
   pendingInterrupt: undefined,
-  tokenUsage: undefined,
+  lastError: undefined,
   beginUserTurn: (text) => {
     const userId = createId("user");
     const assistantId = createId("assistant");
     set((state) => ({
       streaming: true,
       pendingInterrupt: undefined,
+      lastError: undefined,
       messages: [
         ...state.messages,
         { id: userId, role: "user", content: text },
@@ -112,6 +139,9 @@ export const useChatStore = create<ChatState>((set) => ({
   },
   appendToolStarted: (assistantId, tool) =>
     set((state) => {
+      if (PLANNING_TOOL_NAMES.has(tool.name)) {
+        return state;
+      }
       if (state.messages.some((item) => item.role === "tool" && item.toolCallId === tool.toolCallId)) {
         return state;
       }
@@ -157,27 +187,145 @@ export const useChatStore = create<ChatState>((set) => ({
   setSessionId: (sessionId) => set({ sessionId }),
   setRunId: (runId) => set({ runId }),
   setPendingInterrupt: (pendingInterrupt) => set({ pendingInterrupt }),
-  setTokenUsage: (tokenUsage) => set({ tokenUsage }),
+  appendAssistantMetadata: (assistantId, patch) =>
+    set((state) => ({
+      messages: state.messages.map((message) => {
+        if (message.id !== assistantId || message.role !== "assistant") {
+          return message;
+        }
+        return {
+          ...message,
+          metadata: mergeAssistantMetadata(message.metadata, patch),
+        };
+      }),
+    })),
+  setPlanningSnapshot: (assistantId, snapshot) =>
+    set((state) => ({
+      messages: state.messages.map((message) =>
+        message.id === assistantId && message.role === "assistant"
+          ? { ...message, planningSnapshot: snapshot }
+          : message,
+      ),
+    })),
+  setAssistantRunId: (assistantId, runId) =>
+    set((state) => ({
+      messages: state.messages.map((message) =>
+        message.id === assistantId && message.role === "assistant"
+          ? { ...message, runId }
+          : message,
+      ),
+    })),
+  setLastError: (lastError) => set({ lastError }),
   setMessages: (messages) => set({ messages }),
-  loadSession: (detail) =>
+  deleteMessage: (messageId) =>
+    set((state) => {
+      const index = state.messages.findIndex((message) => message.id === messageId);
+      if (index < 0) {
+        return state;
+      }
+      const target = state.messages[index];
+      if (!target) {
+        return state;
+      }
+      if (target.role === "user") {
+        let end = index + 1;
+        while (end < state.messages.length && state.messages[end]?.role !== "user") {
+          end += 1;
+        }
+        return { messages: [...state.messages.slice(0, index), ...state.messages.slice(end)] };
+      }
+      if (target.role === "assistant") {
+        let end = index + 1;
+        while (end < state.messages.length && state.messages[end]?.role === "tool") {
+          end += 1;
+        }
+        return { messages: [...state.messages.slice(0, index), ...state.messages.slice(end)] };
+      }
+      return { messages: state.messages.filter((message) => message.id !== messageId) };
+    }),
+  prepareRetry: (assistantId) => {
+    const state = get();
+    const index = state.messages.findIndex((message) => message.id === assistantId);
+    if (index < 0) {
+      return null;
+    }
+    const assistant = state.messages[index];
+    if (!assistant || assistant.role !== "assistant" || assistant.pending) {
+      return null;
+    }
+    let userIndex = index - 1;
+    while (userIndex >= 0 && state.messages[userIndex]?.role !== "user") {
+      userIndex -= 1;
+    }
+    const userMessage = userIndex >= 0 ? state.messages[userIndex] : undefined;
+    if (!userMessage || userMessage.role !== "user") {
+      return null;
+    }
+    const newAssistantId = createId("assistant");
+    set({
+      streaming: true,
+      pendingInterrupt: undefined,
+      lastError: undefined,
+      messages: [
+        ...state.messages.slice(0, index),
+        { id: newAssistantId, role: "assistant", content: "", pending: true },
+      ],
+    });
+    return { userText: userMessage.content, newAssistantId };
+  },
+  loadSession: (detail) => {
+    const prior = get().messages;
+    const priorAssistants = prior.filter(
+      (message): message is Extract<ChatMessage, { role: "assistant" }> =>
+        message.role === "assistant",
+    );
+    const priorByRunId = new Map<string, AssistantMessageMetadata>();
+    for (const message of priorAssistants) {
+      if (message.runId && message.metadata && hasMetadataContent(message.metadata)) {
+        priorByRunId.set(message.runId, message.metadata);
+      }
+    }
+    let assistantRunIndex = 0;
+    const messages: ChatMessage[] = detail.transcript
+      .filter((item): item is SessionDetailView["transcript"][number] => isChatRole(item.role))
+      .map((item) => {
+        if (item.role === "assistant") {
+          const runId = detail.run_ids[assistantRunIndex];
+          assistantRunIndex += 1;
+          const fromRun =
+            runId && detail.metadata_by_run
+              ? normalizeMetadataFromApi(detail.metadata_by_run[runId])
+              : undefined;
+          const fromTranscript = normalizeMetadataFromApi(item.metadata ?? undefined);
+          const serverMetadata = fromTranscript ?? fromRun;
+          const localMetadata =
+            (runId ? priorByRunId.get(runId) : undefined) ??
+            priorAssistants[assistantRunIndex - 1]?.metadata;
+          return {
+            id: createId(item.role),
+            role: "assistant" as const,
+            content: item.content,
+            pending: false,
+            runId,
+            metadata: pickMetadata(serverMetadata, localMetadata),
+          };
+        }
+        return {
+          id: createId(item.role),
+          role: "user" as const,
+          content: item.content,
+        };
+      });
     set({
       streaming: false,
       lastSeq: 0,
       sessionId: detail.session_id,
       runId: detail.run_ids.at(-1),
       pendingInterrupt: undefined,
-      tokenUsage: undefined,
-      messages: detail.transcript
-        .filter((item): item is { role: "user" | "assistant"; content: string } =>
-          isChatRole(item.role),
-        )
-        .map((item) => ({
-          id: createId(item.role),
-          role: item.role,
-          content: item.content,
-          pending: false,
-        })),
-    }),
+      lastError: undefined,
+      messages,
+    });
+  },
   reset: () =>
     set({
       messages: [],
@@ -186,6 +334,6 @@ export const useChatStore = create<ChatState>((set) => ({
       sessionId: undefined,
       runId: undefined,
       pendingInterrupt: undefined,
-      tokenUsage: undefined,
+      lastError: undefined,
     }),
 }));

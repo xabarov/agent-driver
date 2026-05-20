@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from agent_driver.cli.evals import EvalSummary
+from agent_driver.cli.providers import provider_config_for_eval
 
 
 async def eval_run_command(
@@ -32,12 +33,13 @@ async def eval_run_command(
             getattr(args, "allow_live_without_env", False)
         )
         bundle_dir, summaries = await run_live_evaluation(
-            provider_config=provider_config_from_args(args),
+            provider_config=provider_config_for_eval(provider_config_from_args(args)),
             tool_config=tool_config_from_args(args),
             store_config=store_config_from_args(args),
             output_dir=Path(args.output_dir).resolve(),
             scenarios=scenarios,
             offline=offline_mode,
+            continue_on_error=bool(getattr(args, "continue_on_error", False)),
         )
     except live_eval_skipped as exc:
         print(f"eval skip: {exc}")
@@ -45,16 +47,24 @@ async def eval_run_command(
     except (provider_error, tool_error, RuntimeError) as exc:
         print(f"eval error: {exc}")
         return 2
-    print(
-        json.dumps(
-            {
-                "bundle_dir": str(bundle_dir),
-                "scenarios": len(summaries),
-                "failed": sum(1 for item in summaries if item.status != "completed"),
-            },
-            ensure_ascii=True,
-        )
-    )
+    failures_path = bundle_dir / "failures.json"
+    failure_rows: list[dict[str, str]] = []
+    if failures_path.exists():
+        try:
+            loaded = json.loads(failures_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                failure_rows = [row for row in loaded if isinstance(row, dict)]
+        except json.JSONDecodeError:
+            failure_rows = []
+    payload = {
+        "bundle_dir": str(bundle_dir),
+        "scenarios": len(summaries),
+        "failed": sum(1 for item in summaries if item.status != "completed"),
+        "scenario_errors": len(failure_rows),
+    }
+    print(json.dumps(payload, ensure_ascii=True))
+    if failure_rows:
+        return 2
     return 0
 
 

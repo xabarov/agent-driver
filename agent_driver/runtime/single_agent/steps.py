@@ -91,6 +91,11 @@ class SingleAgentStepMixin:
         context.metadata["tool_results"] = existing_results
 
     async def _execute_run_started(self, context: RunContext) -> RuntimeStepResult:
+        from agent_driver.runtime.single_agent.step_planning import (
+            apply_planning_state_seed_from_metadata,
+        )
+
+        apply_planning_state_seed_from_metadata(context)
         self._emit(
             EventSpec(
                 run_id=context.run_id,
@@ -132,12 +137,15 @@ class SingleAgentStepMixin:
             if context.llm_response
             else "unknown"
         )
+        completed_payload: dict[str, object] = {"finish_reason": finish_reason}
+        if context.llm_response is not None and context.llm_response.usage is not None:
+            completed_payload["usage"] = context.llm_response.usage.model_dump(mode="json")
         self._emit(
             EventSpec(
                 run_id=context.run_id,
                 attempt_id=context.attempt_id,
                 event_type=RuntimeEventType.RUN_COMPLETED,
-                payload={"finish_reason": finish_reason},
+                payload=completed_payload,
             )
         )
         output = self._build_output(

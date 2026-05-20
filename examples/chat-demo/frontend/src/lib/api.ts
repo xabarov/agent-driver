@@ -4,6 +4,7 @@ import type {
   HealthResponse,
   InterruptView,
   ProviderResponse,
+  ModelsResponse,
   ReplayResponse,
   SessionDetailView,
   SessionsListResponse,
@@ -27,9 +28,17 @@ export function fetchProviders(): Promise<ProviderResponse> {
   return request<ProviderResponse>("/api/providers");
 }
 
+export function fetchModels(): Promise<ModelsResponse> {
+  return request<ModelsResponse>("/api/models");
+}
+
 export function fetchTools(preset?: ToolPreset): Promise<ToolsResponse> {
   const query = preset ? `?preset=${preset}` : "";
   return request<ToolsResponse>(`/api/tools${query}`);
+}
+
+export function cancelRun(runId: string): Promise<{ ok: boolean; run_id: string; cancelled: boolean }> {
+  return request(`/api/chat/runs/${runId}/cancel`, { method: "POST" });
 }
 
 export function fetchInterrupt(runId: string): Promise<InterruptView> {

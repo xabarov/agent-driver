@@ -30,6 +30,26 @@ def _extract_usage(payload: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _consecutive_repeats(chain: list[str]) -> list[tuple[str, int]]:
+    """Return tools repeated back-to-back with repeat count (e.g. read_file x3)."""
+    if not chain:
+        return []
+    repeats: list[tuple[str, int]] = []
+    current = chain[0]
+    streak = 1
+    for item in chain[1:]:
+        if item == current:
+            streak += 1
+            continue
+        if streak > 1:
+            repeats.append((current, streak))
+        current = item
+        streak = 1
+    if streak > 1:
+        repeats.append((current, streak))
+    return repeats
+
+
 def _is_subsequence(expected: list[str], actual: list[str]) -> bool:
     if not expected:
         return True
@@ -160,6 +180,9 @@ def main() -> int:
     for line in lines:
         print(line)
     print(f"actual_chain> {actual_chain}")
+    repeats = _consecutive_repeats(actual_chain)
+    if repeats:
+        print(f"consecutive_repeats> {repeats}")
     print(f"expected_chain> {expected_chain}")
     print(f"expected_chain_satisfied> {_is_subsequence(expected_chain, actual_chain)}")
     print(f"expected_tools_missing> {summary.get('expected_tools_missing')}")

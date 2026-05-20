@@ -11,6 +11,7 @@ import sys
 from typing import Protocol
 
 from agent_driver.cli.tui.glyphs import BLACK_CIRCLE, BRANCH, DOT
+from agent_driver.cli.tui.plan_panel import format_plan_panel
 from agent_driver.cli.tui.theme import DEFAULT_THEME, ChatTheme
 
 try:  # pragma: no cover - optional dependency
@@ -83,6 +84,10 @@ class ChatRenderer(Protocol):
     def emit_error_card(self, *, title: str, reason: str, hint: str | None = None) -> None: ...
 
     def emit_raw(self, text: str) -> None: ...
+
+    def refresh_plan_panel(self, snapshot: dict[str, object] | None) -> None: ...
+
+    def clear_plan_panel(self) -> None: ...
 
 
 @dataclass(slots=True)
@@ -181,6 +186,17 @@ class PlainRenderer:
     def emit_raw(self, text: str) -> None:
         self.output(text)
 
+    def refresh_plan_panel(self, snapshot: dict[str, object] | None) -> None:
+        if not isinstance(snapshot, dict):
+            return
+        body = format_plan_panel(snapshot)
+        if not body:
+            return
+        self.output(f"plan>\n{body}\n")
+
+    def clear_plan_panel(self) -> None:
+        return
+
 
 @dataclass(slots=True)
 class RichRenderer:
@@ -190,6 +206,7 @@ class RichRenderer:
     theme: ChatTheme = DEFAULT_THEME
     _fallback: PlainRenderer = field(init=False)
     _live_console: Console | None = field(default=None, init=False)
+    _last_plan_panel_text: str | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self._fallback = PlainRenderer(self.output)
@@ -404,6 +421,31 @@ class RichRenderer:
 
     def emit_raw(self, text: str) -> None:
         self.output(text)
+
+    def refresh_plan_panel(self, snapshot: dict[str, object] | None) -> None:
+        if not isinstance(snapshot, dict):
+            return
+        body = format_plan_panel(snapshot)
+        if not body:
+            return
+        if body == self._last_plan_panel_text:
+            return
+        self._last_plan_panel_text = body
+        if not _RICH_AVAILABLE:
+            self._fallback.refresh_plan_panel(snapshot)
+            return
+        self._capture_print(
+            Panel(
+                body,
+                title="plan",
+                title_align="left",
+                border_style=self.theme.prompt_border,
+            )
+        )
+
+    def clear_plan_panel(self) -> None:
+        self._last_plan_panel_text = None
+        self._fallback.clear_plan_panel()
 
     def _capture_print(self, *renderables: object) -> None:
         buffer = StringIO()

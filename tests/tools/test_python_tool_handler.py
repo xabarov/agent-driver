@@ -65,6 +65,29 @@ async def test_python_handler_supports_safe_imports() -> None:
 
 
 @pytest.mark.asyncio
+async def test_python_handler_scipy_policy_summary_mentions_sandbox_block() -> None:
+    backend = LocalPythonBackend(session_idle_seconds=30.0)
+    settings = PythonToolSettings(
+        enabled=True,
+        backend="local",
+        include_scientific_stack=False,
+        default_imports=(),
+    )
+    result = await python_tool_handler(
+        args={"code": "import scipy\nimport numpy", "session_id": "s_scipy"},
+        backend=backend,
+        settings=settings,
+    )
+    await backend.aclose()
+    summary = str(result["summary"])
+    assert result.get("error_kind") == "policy"
+    assert "blocked by sandbox" in summary
+    assert "not missing" in summary.lower()
+    assert "scipy" in summary or "numpy" in summary
+    assert "not installed" not in summary.lower()
+
+
+@pytest.mark.asyncio
 async def test_python_handler_error_contains_allowlist_remediation() -> None:
     backend = LocalPythonBackend(session_idle_seconds=30.0)
     settings = PythonToolSettings(enabled=True, backend="local")

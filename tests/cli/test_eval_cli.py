@@ -324,6 +324,27 @@ def test_summarize_run_uses_tool_results_args_for_repeated_arguments() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_live_evaluation_offline_interrupt_resume(tmp_path) -> None:
+    scenario = next(
+        row
+        for row in live_scenarios_for_suite("regression")
+        if row.scenario_id == "interrupt_resume_file_write"
+    )
+    bundle_dir, summaries = await run_live_evaluation(
+        provider_config=CliProviderConfig(provider="fake"),
+        tool_config=CliToolConfig(tools_mode="none"),
+        store_config=RuntimeStoreFactoryConfig(kind="memory"),
+        output_dir=tmp_path,
+        scenarios=[scenario],
+        offline=True,
+    )
+    assert summaries
+    assert summaries[0].scenario_id == "interrupt_resume_file_write"
+    assert summaries[0].tool_use_correctness == "pass"
+    assert (bundle_dir / "interrupt_resume_file_write.json").exists()
+
+
+@pytest.mark.asyncio
 async def test_run_live_evaluation_offline_smoke_file_edit_minimal_patch(tmp_path) -> None:
     """Deep file_edit scenario should render sandbox artifact in offline mode."""
     scenario = next(

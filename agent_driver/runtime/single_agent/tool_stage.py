@@ -21,7 +21,12 @@ from agent_driver.runtime.single_agent.step_observations import (
 from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.step_planning import (
     apply_planning_updates_from_envelopes,
+    build_planning_snapshot,
     update_planning_state_from_tool_results,
+)
+from agent_driver.runtime.single_agent.todo_reminders import (
+    append_todo_progress_hint_after_substantive_tool,
+    increment_tool_loops_since_todo_write,
 )
 from agent_driver.prompts import force_final_answer_tool_message
 from agent_driver.runtime.single_agent.types import (
@@ -162,6 +167,7 @@ async def _finalize_tool_stage_transition(
     loop_iterations = int(context.metadata.get("tool_loop_iterations", 0))
     if continue_with_llm:
         loop_iterations += 1
+        increment_tool_loops_since_todo_write(context)
     if continue_with_llm and context.run_input.agent_profile != AgentProfile.CODE_AGENT:
         _maybe_force_final_answer(context)
     context.metadata.update(
@@ -222,8 +228,9 @@ def _emit_tool_completed_if_needed(
             and preview_paths
         ):
             preview_paths_by_call_id[envelope.call.tool_call_id] = preview_paths
-    tools = [
-        {
+    tools = []
+    for index, trace in enumerate(result.traces):
+        row: dict[str, object] = {
             "tool_name": trace.tool_name,
             "tool_call_id": trace.tool_call_id,
             "args": args_by_call_id.get(trace.tool_call_id)
@@ -243,17 +250,26 @@ def _emit_tool_completed_if_needed(
                 )
             ),
         }
-        for index, trace in enumerate(result.traces)
-    ]
+        if index < len(result.envelopes):
+            structured = result.envelopes[index].structured_output
+            if isinstance(structured, dict):
+                remediation = structured.get("remediation")
+                if isinstance(remediation, str) and remediation.strip():
+                    row["remediation"] = remediation.strip()
+        tools.append(row)
+    payload: dict[str, object] = {
+        "tool_calls": len(result.traces),
+        "statuses": [trace.status.value for trace in result.traces],
+        "tools": tools,
+    }
+    snapshot = build_planning_snapshot(context)
+    if snapshot is not None:
+        payload["planning_snapshot"] = snapshot
     emit_step_event(
         host,
         context,
         event_type=RuntimeEventType.TOOL_CALL_COMPLETED,
-        payload={
-            "tool_calls": len(result.traces),
-            "statuses": [trace.status.value for trace in result.traces],
-            "tools": tools,
-        },
+        payload=payload,
     )
 
 
@@ -338,6 +354,8 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
             )
         )
     _append_denial_recovery_message(context, result, messages)
+    _append_python_policy_recovery_hint(context, result, messages)
+    append_todo_progress_hint_after_substantive_tool(context, result, messages)
     _append_web_fetch_verification_hint(context, result, messages)
     _append_web_fetch_duplicate_guard(context, result, messages)
     if context.metadata.get("force_final_answer"):
@@ -376,6 +394,50 @@ def _compact_tool_payload_for_protocol(
     if isinstance(excerpt, str) and len(excerpt) > 2500:
         compact["excerpt"] = excerpt[:2500]
     return compact
+
+
+def _append_python_policy_recovery_hint(
+    context: RunContext, result: ToolExecutionResult, messages: list[ChatMessage]
+) -> None:
+    """Nudge model after python import policy rejection (stdlib-only sandbox)."""
+    if context.metadata.get("python_policy_hint_sent") is True:
+        return
+    for envelope in result.envelopes:
+        if envelope.call.tool_name != "python":
+            continue
+        structured = envelope.structured_output
+        if not isinstance(structured, dict):
+            continue
+        if structured.get("error_kind") != "policy":
+            continue
+        allowed = structured.get("allowed_imports")
+        if isinstance(allowed, list) and any(
+            name in allowed for name in ("numpy", "scipy", "pandas")
+        ):
+            return
+        allowed_text = (
+            ", ".join(str(item) for item in allowed[:12])
+            if isinstance(allowed, list) and allowed
+            else "see Allowed imports in system policy"
+        )
+        remediation = structured.get("remediation")
+        remediation_text = (
+            str(remediation).strip()
+            if isinstance(remediation, str) and remediation.strip()
+            else f"Use allowed imports only: {allowed_text}"
+        )
+        messages.append(
+            ChatMessage(
+                role=ChatRole.USER,
+                content=(
+                    "Python import was blocked by sandbox policy (not because scipy/numpy "
+                    "are missing). Do not import numpy, scipy, pandas, or sklearn. "
+                    f"{remediation_text}. For gamma/statistics use math and statistics."
+                ),
+            )
+        )
+        context.metadata["python_policy_hint_sent"] = True
+        return
 
 
 def _append_web_fetch_duplicate_guard(

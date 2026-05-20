@@ -123,6 +123,18 @@ planning state между turn-ами. Полезен runtime-интеграци
 многошаговых задач, где агент должен явно вести прогресс. Handler валидирует
 id/content/status и не допускает больше одного `in_progress` пункта.
 
+### Chat TUI plan panel
+
+В интерактивном `agent-driver chat` (rich mode):
+
+- после `todo_write` / `planning_state_update` показывается панель **plan** с чеклистом (✓ / ■ / □);
+- прогресс дублируется в footer (`plan 2/5 · current step`);
+- план сохраняется в session между turn'ами и передаётся в следующий run как `planning_state_seed`;
+- команда `/plan` печатает текущий чеклист без нового LLM-хода;
+- `/clear` и `/reset` сбрасывают план и панель.
+
+Промпт chat-mode просит модель при запросе «составь план» сначала вызвать `todo_write`; чеклист виден только в панели plan — в prose не дублировать полный список. Статусы обновлять через `merge=true` сразу после каждого шага (`completed` → следующий `in_progress`). Runtime периодически напоминает модели о незакрытых шагах после содержательных tools (`web_fetch`, поиск, чтение файлов).
+
 `ask_user_question` формирует structured clarification interrupt с prompt,
 choices и `allow_multiple`. Полезен, когда выполнение заблокировано выбором
 пользователя. Инструмент не вызывает внешний side effect сам по себе, а возвращает

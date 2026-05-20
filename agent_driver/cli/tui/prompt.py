@@ -33,6 +33,7 @@ SLASH_COMMANDS = (
     "/quit",
     "/clear",
     "/reset",
+    "/plan",
     "/runs",
     "/sessions",
     "/history",
@@ -115,6 +116,8 @@ class ChatPromptSession:
         self._output_tokens = 0
         self._pressure_state = "ok"
         self._budget_warning: str | None = None
+        self._plan_progress: str | None = None
+        self._plan_current: str | None = None
         self._continuation_lines: list[str] = []
 
         bindings = KeyBindings()
@@ -183,10 +186,15 @@ class ChatPromptSession:
         token_summary = f"{self._format_tokens(self._input_tokens)}↑/{self._format_tokens(self._output_tokens)}↓"
         pressure = f" · ctx={self._pressure_state}" if self._pressure_state != "ok" else ""
         budget = f" · budget={self._budget_warning}" if self._budget_warning else ""
+        plan = ""
+        if self._plan_progress:
+            plan = f" · {self._plan_progress}"
+            if self._plan_current:
+                plan += f" · {self._plan_current}"
         return (
             f" esc to interrupt · ? for shortcuts · provider={self._provider_name}"
             f" · model={self._model_name} · tokens={token_summary}"
-            f"{pressure}{budget} · session={self._session_id}"
+            f"{pressure}{budget}{plan} · session={self._session_id}"
         )
 
     def set_usage(self, *, input_tokens: int, output_tokens: int) -> None:
@@ -202,6 +210,12 @@ class ChatPromptSession:
     def set_budget_warning(self, warning: str | None) -> None:
         self._budget_warning = warning.strip() if isinstance(warning, str) and warning.strip() else None
 
+    def set_plan_progress(
+        self, progress: str | None, *, current: str | None = None
+    ) -> None:
+        self._plan_progress = progress.strip() if isinstance(progress, str) and progress.strip() else None
+        self._plan_current = current.strip() if isinstance(current, str) and current.strip() else None
+
     @staticmethod
     def _format_tokens(value: int) -> str:
         if value >= 1000:
@@ -212,6 +226,12 @@ class ChatPromptSession:
     def _frame_inner_width() -> int:
         columns = shutil.get_terminal_size((100, 24)).columns
         return max(40, columns - 2)
+
+    def close(self) -> None:
+        """Release prompt-toolkit terminal state before process exit."""
+        app = getattr(self._session, "app", None)
+        if app is not None and app.is_running:
+            app.exit()
 
 
 __all__ = ["ChatPromptSession", "SLASH_COMMANDS"]

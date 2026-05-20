@@ -1,14 +1,16 @@
 import { useEffect } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 
 import { useSession } from "../../lib/sessions";
 import { useRunStream } from "../../hooks/useRunStream";
 import { useChatStore } from "../../store/chatStore";
-import { Card, CardContent } from "../ui/card";
+import { ChatComposer } from "./ChatComposer";
 import { EmptyState } from "./EmptyState";
-import { ComposerInput } from "./ComposerInput";
+import { FakeProviderBanner } from "./FakeProviderBanner";
 import { InterruptCard } from "./InterruptCard";
 import { MessageList } from "./MessageList";
+import { SessionRunsMenu } from "./SessionRunsMenu";
+import { StreamErrorBanner } from "./StreamErrorBanner";
 
 interface ChatPageProps {
   mode: "new" | "existing";
@@ -23,7 +25,7 @@ export function ChatPage({ mode }: ChatPageProps) {
   const loadSession = useChatStore((state) => state.loadSession);
   const messages = useChatStore((state) => state.messages);
   const streaming = useChatStore((state) => state.streaming);
-  const { sendMessage, resumeInterrupt, stopStreaming } = useRunStream();
+  const { sendMessage, retryAssistant, resumeInterrupt, stopStreaming } = useRunStream();
   const selectedSessionId = mode === "existing" ? params.id ?? "" : "";
   const sessionQuery = useSession(selectedSessionId);
 
@@ -41,64 +43,85 @@ export function ChatPage({ mode }: ChatPageProps) {
   }, [mode, navigate, sessionId]);
 
   useEffect(() => {
-    if (mode === "existing" && sessionQuery.data) {
-      stopStreaming();
-      loadSession(sessionQuery.data);
+    if (mode !== "existing" || !sessionQuery.data) {
+      return;
     }
+    const detail = sessionQuery.data;
+    const store = useChatStore.getState();
+    // After first SSE meta we navigate here; reloading would stopStreaming + wipe pending assistant.
+    if (store.streaming && store.sessionId === detail.session_id) {
+      return;
+    }
+    if (store.streaming) {
+      stopStreaming();
+    }
+    loadSession(detail);
   }, [loadSession, mode, sessionQuery.data, stopStreaming]);
 
   if (mode === "existing" && sessionQuery.isLoading) {
     return (
-      <Card className="h-full">
-        <CardContent className="p-4 text-sm text-muted-foreground">Loading session...</CardContent>
-      </Card>
+      <div className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
+        Loading session…
+      </div>
     );
   }
 
   if (mode === "existing" && sessionQuery.isError) {
     return (
-      <Card className="h-full">
-        <CardContent className="p-4 text-sm text-destructive">Failed to load session.</CardContent>
-      </Card>
+      <div className="flex flex-1 items-center justify-center p-4 text-sm text-destructive">
+        Failed to load session.
+      </div>
     );
   }
 
   const blocked = Boolean(pendingInterrupt);
 
   return (
-    <Card className="h-full">
-      <CardContent className="space-y-4 p-4">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col px-4 pt-3 lg:max-w-4xl xl:max-w-5xl">
         {mode === "existing" && sessionQuery.data && sessionQuery.data.run_ids.length > 0 ? (
-          <div className="flex flex-wrap gap-2 text-xs">
-            {sessionQuery.data.run_ids.map((runId) => (
-              <Link
-                key={runId}
-                to={`/sessions/${selectedSessionId}/replay/${runId}`}
-                className="rounded-md border px-2 py-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
-              >
-                replay {runId.slice(-8)}
-              </Link>
-            ))}
+          <div className="mb-2 flex justify-end">
+            <SessionRunsMenu
+              sessionId={selectedSessionId}
+              runIds={sessionQuery.data.run_ids}
+            />
           </div>
         ) : null}
-        {messages.length === 0 ? <EmptyState /> : <MessageList messages={messages} />}
+        <div className="mb-2 space-y-2">
+          <FakeProviderBanner />
+          <StreamErrorBanner />
+        </div>
+        <div className="min-h-0 flex-1">
+          {messages.length === 0 ? (
+            <EmptyState />
+          ) : (
+            <MessageList
+              messages={messages}
+              onRetryAssistant={(assistantId) => {
+                void retryAssistant(assistantId);
+              }}
+            />
+          )}
+        </div>
         {pendingInterrupt ? (
-          <InterruptCard
-            interrupt={pendingInterrupt}
-            onAction={(payload) => {
-              void resumeInterrupt(payload);
-            }}
-          />
+          <div className="mb-3 shrink-0">
+            <InterruptCard
+              interrupt={pendingInterrupt}
+              onAction={(payload) => {
+                void resumeInterrupt(payload);
+              }}
+            />
+          </div>
         ) : null}
-        <ComposerInput
-          streaming={streaming}
-          disabled={blocked}
-          onSend={(text) => {
-            void sendMessage(text);
-          }}
-          onStop={stopStreaming}
-        />
-      </CardContent>
-    </Card>
+      </div>
+      <ChatComposer
+        streaming={streaming}
+        disabled={blocked}
+        onSend={(text) => {
+          void sendMessage(text);
+        }}
+        onStop={stopStreaming}
+      />
+    </div>
   );
 }

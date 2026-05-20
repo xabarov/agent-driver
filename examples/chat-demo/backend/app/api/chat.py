@@ -14,10 +14,19 @@ from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
 from agent_driver.runtime.stream import project_runtime_events
 
 from app.config import Settings, ToolPreset
-from app.deps import get_agent_bundle, get_agent_bundle_for_preset, get_settings, resolve_tool_preset
-from app.schemas.chat import ChatMessageRequest, InterruptView, ResumeRequest
+from app.deps import (
+    get_agent_bundle,
+    get_agent_bundle_for_preset,
+    get_agent_bundle_for_request,
+    get_settings,
+    resolve_tool_preset,
+)
+from app.run_cancel import is_cancelled, request_cancel
+from app.schemas.chat import CancelRunResponse, ChatMessageRequest, InterruptView, ResumeRequest
 from app.services.agent_factory import AgentBundle
+from app.services.message_metadata import aggregate_metadata_from_events
 from app.sse_relay import relay_and_capture
+from app.workspace import build_chat_app_metadata, merge_resume_app_metadata
 
 router = APIRouter(tags=["chat"])
 
@@ -36,13 +45,16 @@ def _transcript_to_messages(transcript: Iterable[tuple[str, str]]) -> list[ChatM
     return messages
 
 
-def _bundle_for_preset(preset: ToolPreset) -> AgentBundle:
-    return get_agent_bundle_for_preset(preset)
+def _bundle_for_request(preset: ToolPreset, model: str | None = None) -> AgentBundle:
+    return get_agent_bundle_for_request(preset, model)
 
 
 def get_resume_bundle(body: ResumeRequest) -> AgentBundle:
     """Resolve agent bundle for resume (injectable in tests)."""
-    return get_agent_bundle_for_preset(resolve_tool_preset(body.tool_preset))
+    return get_agent_bundle_for_request(
+        resolve_tool_preset(body.tool_preset),
+        body.model,
+    )
 
 
 def _parse_interrupt_payload(payload: object) -> InterruptRequest | None:
@@ -80,7 +92,7 @@ async def chat_messages(
 ) -> StreamingResponse:
     """Start one run and stream normalized runtime events as SSE."""
     preset = resolve_tool_preset(body.tool_preset)
-    bundle = _bundle_for_preset(preset)
+    bundle = _bundle_for_request(preset, body.model)
     session_id = body.session_id or f"session_{uuid.uuid4().hex[:8]}"
     record = bundle.session_store.get(session_id)
     if record is None:
@@ -112,18 +124,23 @@ async def chat_messages(
         max_steps=settings.max_steps,
         max_tool_calls=settings.max_tool_calls,
         deadline_seconds=settings.deadline_seconds,
-        app_metadata={"stream_poll_interval_ms": settings.stream_poll_interval_ms},
+        app_metadata=build_chat_app_metadata(settings, session_id),
     )
 
     def _persist_assistant(assistant_text: str, _terminal_event: str | None) -> None:
         next_transcript = list(transcript)
         if assistant_text.strip():
             next_transcript.append(("assistant", assistant_text))
+        run_metadata = aggregate_metadata_from_events(
+            replay_events_for_run(bundle, run_id),
+        )
+        metadata_patch = {run_id: run_metadata} if run_metadata else None
         bundle.session_store.upsert(
             session_id=session_id,
             thread_id=thread_id,
             run_ids=run_ids,
             transcript=next_transcript,
+            metadata_by_run=metadata_patch,
         )
 
     stream = relay_and_capture(
@@ -163,6 +180,13 @@ def get_run_interrupt(
     )
 
 
+@router.post("/chat/runs/{run_id}/cancel", response_model=CancelRunResponse)
+def cancel_run(run_id: str) -> CancelRunResponse:
+    """Request cooperative cancellation for an in-flight run."""
+    request_cancel(run_id)
+    return CancelRunResponse(run_id=run_id, cancelled=is_cancelled(run_id))
+
+
 @router.post("/chat/runs/{run_id}/resume")
 async def resume_run(
     run_id: str,
@@ -190,10 +214,16 @@ async def resume_run(
                 edited_tool_args=body.edited_tool_args,
                 message=body.message,
             ),
-            "app_metadata": {
-                **dict(base_input.app_metadata),
-                "stream_poll_interval_ms": settings.stream_poll_interval_ms,
-            },
+            "app_metadata": merge_resume_app_metadata(
+                settings,
+                base_metadata=(
+                    dict(base_input.app_metadata)
+                    if isinstance(base_input.app_metadata, dict)
+                    else None
+                ),
+                run_id=run_id,
+                session_store=bundle.session_store,
+            ),
         }
     )
 

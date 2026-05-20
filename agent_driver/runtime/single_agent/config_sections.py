@@ -62,31 +62,8 @@ class PythonToolSettings:
 
     enabled: bool = False
     backend: str = "local"
-    default_imports: tuple[str, ...] = (
-        "array",
-        "bisect",
-        "collections",
-        "dataclasses",
-        "decimal",
-        "datetime",
-        "fractions",
-        "functools",
-        "heapq",
-        "json",
-        "itertools",
-        "math",
-        "operator",
-        "queue",
-        "random",
-        "re",
-        "statistics",
-        "string",
-        "time",
-        "types",
-        "typing",
-        "unicodedata",
-        "uuid",
-    )
+    include_scientific_stack: bool = True
+    default_imports: tuple[str, ...] = ()
     allow_overlay: bool = False
     limits: CodeAgentLimits = field(default_factory=CodeAgentLimits)
     session_idle_seconds: float = 300.0

@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { MessageSquarePlus } from "lucide-react";
 import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -16,7 +16,7 @@ export function NewSessionButton() {
 
   return (
     <Button type="button" className="w-full justify-start gap-2" onClick={handleClick}>
-      <Plus className="h-4 w-4" />
+      <MessageSquarePlus className="h-4 w-4" />
       New session
     </Button>
   );

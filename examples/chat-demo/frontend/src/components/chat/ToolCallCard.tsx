@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Globe,
+  Terminal,
+  Wrench,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import { cn } from "../../lib/cn";
 import type { ToolChatMessage } from "../../store/chatStore";
@@ -9,18 +17,32 @@ interface ToolCallCardProps {
   message: ToolChatMessage;
 }
 
+function toolIcon(name: string): LucideIcon {
+  if (name.includes("web") || name.includes("search") || name.includes("fetch")) {
+    return Globe;
+  }
+  if (name.includes("shell") || name.includes("bash")) {
+    return Terminal;
+  }
+  if (name.includes("file") || name.includes("read") || name.includes("write")) {
+    return FileText;
+  }
+  return Wrench;
+}
+
 export function ToolCallCard({ message }: ToolCallCardProps) {
   const [open, setOpen] = useState(message.status === "running");
+  const Icon = toolIcon(message.name);
 
   return (
-    <div className="rounded-lg border border-border bg-card/60 p-3 text-sm">
+    <div className="ml-11 rounded-lg border border-border/80 bg-muted/20 p-3 text-sm">
       <button
         type="button"
         className="flex w-full items-center gap-2 text-left"
         onClick={() => setOpen((value) => !value)}
       >
         {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-        <Wrench className="h-4 w-4 text-muted-foreground" />
+        <Icon className="h-4 w-4 text-muted-foreground" />
         <span className="font-medium">{message.name}</span>
         <Badge
           variant="secondary"

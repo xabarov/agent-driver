@@ -16,6 +16,36 @@ class CliProviderConfigError(ValueError):
     """Raised when CLI provider settings are invalid."""
 
 
+DEFAULT_LIVE_EVAL_TIMEOUT_S = 300.0
+_DEFAULT_CLI_TIMEOUT_S = 30.0
+
+
+def provider_config_for_eval(config: CliProviderConfig) -> CliProviderConfig:
+    """Apply live-eval-friendly defaults (longer HTTP timeout for real providers)."""
+    if config.provider == "fake":
+        return config
+    import os
+
+    if config.timeout_s > _DEFAULT_CLI_TIMEOUT_S:
+        return config
+    env_raw = os.environ.get("AGENT_DRIVER_PROVIDER_TIMEOUT_S")
+    if env_raw:
+        try:
+            timeout_s = float(env_raw)
+        except ValueError:
+            timeout_s = DEFAULT_LIVE_EVAL_TIMEOUT_S
+    else:
+        timeout_s = DEFAULT_LIVE_EVAL_TIMEOUT_S
+    return CliProviderConfig(
+        provider=config.provider,
+        model=config.model,
+        base_url=config.base_url,
+        api_key=config.api_key,
+        timeout_s=timeout_s,
+        fake_response=config.fake_response,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CliProviderConfig:
     """Provider configuration gathered from CLI flags and environment."""
@@ -102,4 +132,6 @@ def build_cli_provider(
     )
 
 
-__all__ = ["CliProviderConfig", "CliProviderConfigError", "build_cli_provider"]
+__all__ = [
+    "DEFAULT_LIVE_EVAL_TIMEOUT_S",
+    "provider_config_for_eval","CliProviderConfig", "CliProviderConfigError", "build_cli_provider"]

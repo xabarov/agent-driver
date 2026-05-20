@@ -43,6 +43,10 @@ uv run python tools/selftest/run.py --provider fake --matrix m1=fake --scenarios
 
 Use `--allow-provider-errors` for exploratory runs when OpenRouter is flaky. Treat `provider_error` column as infra signal, not product regression.
 
+## Python sandbox (gamma / stdlib-only)
+
+See [python-sandbox-experiment.md](../python-sandbox-experiment.md) for the manual gamma acceptance script with `--enable-python`.
+
 ## Debug LLM 400 payloads
 
 ```bash

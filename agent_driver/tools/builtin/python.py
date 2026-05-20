@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -11,12 +12,17 @@ from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, 
 from agent_driver.tools.context import get_tool_call_context
 from agent_driver.tools.registry import ToolRegistry
 from agent_driver.code_agent.backends.base import PythonExecutorBackend
+from agent_driver.tools.builtin.python_imports import (
+    effective_python_imports,
+    scientific_imports_enabled,
+)
 
 _PYTHON_TOOL = "python"
 
 
 class PythonToolSettingsLike(Protocol):
     enabled: bool
+    include_scientific_stack: bool
     default_imports: tuple[str, ...]
     allow_overlay: bool
     limits: CodeAgentLimits
@@ -39,16 +45,21 @@ class PythonToolRuntimeFacts:
 
 def python_tool_runtime_facts(settings: PythonToolSettingsLike) -> PythonToolRuntimeFacts:
     """Build stable, reusable runtime facts for python tool."""
-    imports_sorted = tuple(
-        sorted(
-            {
-                item.strip()
-                for item in settings.default_imports
-                if isinstance(item, str) and item.strip()
-            }
-        )
-    )
+    imports_sorted = effective_python_imports(settings)
     imports_inline, imports_short = _format_import_previews(imports_sorted)
+    if scientific_imports_enabled(settings):
+        policy_summary = (
+            "no network/fs access; subprocess sandbox; "
+            "numpy/scipy/pandas allowed when listed; "
+            "other third-party packages blocked unless listed; "
+            "persistent session by session_id"
+        )
+    else:
+        policy_summary = (
+            "no network/fs access; subprocess sandbox; "
+            "third-party packages blocked unless listed; "
+            "persistent session by session_id"
+        )
     return PythonToolRuntimeFacts(
         imports_sorted=imports_sorted,
         imports_inline=imports_inline,
@@ -57,10 +68,25 @@ def python_tool_runtime_facts(settings: PythonToolSettingsLike) -> PythonToolRun
         max_exec_ms=settings.limits.max_exec_ms,
         max_output_chars=settings.limits.max_output_chars,
         session_idle_seconds=float(settings.session_idle_seconds),
-        policy_summary=(
-            "no network/fs access; subprocess sandbox; "
-            "persistent session by session_id"
-        ),
+        policy_summary=policy_summary,
+    )
+
+
+def _format_policy_error_summary(
+    exc: CodePolicyError, *, allowed_imports_short: str
+) -> str:
+    """Build a model-facing summary that distinguishes policy block from missing packages."""
+    message = str(exc).strip()
+    blocked = re.findall(r"unauthorized import '([^']+)'", message)
+    if blocked:
+        names = ", ".join(blocked)
+        return (
+            f"python policy: imports blocked by sandbox ({names}) — "
+            f"not missing packages. Allowed: {allowed_imports_short}"
+        )
+    return (
+        f"python policy: {message} (sandbox block, not missing package). "
+        f"Allowed: {allowed_imports_short}"
     )
 
 
@@ -76,13 +102,48 @@ def _format_import_previews(imports_sorted: tuple[str, ...]) -> tuple[str, str]:
 def build_python_tool_manifest(settings: PythonToolSettingsLike) -> ToolManifest:
     """Build python tool manifest with dynamic runtime facts."""
     facts = python_tool_runtime_facts(settings)
+    scientific = scientific_imports_enabled(settings)
+    if scientific:
+        import_note = (
+            f"Allowed imports include numpy/scipy/pandas when listed: {facts.imports_short}. "
+            "Policy errors mean imports are blocked by sandbox, not missing packages."
+        )
+        tool_description = (
+            "Execute restricted Python code in a sandboxed backend. "
+            "numpy/scipy/pandas are allowed when listed in the allowlist. "
+            "Supports session_id for persistent interpreter state. "
+            f"Allowed imports: {facts.imports_inline}. {facts.policy_summary}."
+        )
+        remediation_hints = [
+            f"Use only allowed imports: {facts.imports_inline}.",
+            "For gamma/statistics prefer scipy.stats when scipy is allowed.",
+            "For tabular/matrix work prefer pandas/numpy when allowed.",
+            "Avoid os/subprocess/socket/shutil; sandbox blocks them.",
+            "Reuse the same session_id for multi-call workflows.",
+        ]
+    else:
+        import_note = (
+            f"Python code to execute; only these modules are importable: {facts.imports_short}. "
+            "Do not import numpy/scipy/pandas unless listed. "
+            "Policy errors mean imports are blocked by sandbox, not missing packages."
+        )
+        tool_description = (
+            "Execute restricted Python code in a sandboxed backend. "
+            "Third-party imports (numpy/scipy/pandas/etc.) are blocked unless listed. "
+            "Supports session_id for persistent interpreter state. "
+            f"Allowed imports: {facts.imports_inline}. {facts.policy_summary}."
+        )
+        remediation_hints = [
+            f"Use only allowed imports: {facts.imports_inline}.",
+            "Third-party packages blocked by policy; not an install issue.",
+            "Avoid os/subprocess/socket/shutil; sandbox blocks them.",
+            "For stats use math/statistics from the allowlist.",
+            "Reuse the same session_id for multi-call workflows.",
+        ]
     properties: dict[str, Any] = {
         "code": {
             "type": "string",
-            "description": (
-                "Python code to execute; only these stdlib modules are importable: "
-                f"{facts.imports_short}"
-            ),
+            "description": import_note,
         },
         "session_id": {
             "type": "string",
@@ -103,11 +164,7 @@ def build_python_tool_manifest(settings: PythonToolSettingsLike) -> ToolManifest
         }
     return ToolManifest(
         name=_PYTHON_TOOL,
-        description=(
-            "Execute restricted Python code in a sandboxed backend. "
-            "Supports session_id for persistent interpreter state. "
-            f"Allowed imports: {facts.imports_inline}. {facts.policy_summary}."
-        ),
+        description=tool_description,
         risk=ToolRisk.MEDIUM,
         side_effect=SideEffectClass.READ_ONLY,
         approval_mode=ApprovalMode.ON_POLICY_MATCH,
@@ -121,11 +178,7 @@ def build_python_tool_manifest(settings: PythonToolSettingsLike) -> ToolManifest
             "additionalProperties": False,
         },
         output_type="json",
-        remediation_hints=[
-            f"Use only allowed imports: {facts.imports_inline}.",
-            "Avoid os/subprocess/socket/shutil; sandbox blocks them.",
-            "Reuse the same session_id for multi-call workflows.",
-        ],
+        remediation_hints=remediation_hints,
     )
 
 
@@ -190,7 +243,9 @@ async def python_tool_handler(
         )
     except CodePolicyError as exc:
         return {
-            "summary": f"python policy: {exc}",
+            "summary": _format_policy_error_summary(
+                exc, allowed_imports_short=effective_imports_short
+            ),
             "error_kind": "policy",
             "session_id": session_id,
             "executor_mode": getattr(backend, "mode", "unknown"),

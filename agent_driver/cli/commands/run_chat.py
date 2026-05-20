@@ -14,7 +14,13 @@ from agent_driver.cli.commands.common import (
     print_provider_health,
 )
 from agent_driver.runtime import RunnerConfig
+import os
+
 from agent_driver.runtime.single_agent.config_sections import PythonToolSettings
+from agent_driver.tools.builtin.python_imports import (
+    parse_python_scientific_enabled,
+    resolve_python_default_imports,
+)
 
 
 def _python_settings_from_args(args: argparse.Namespace) -> PythonToolSettings:
@@ -23,13 +29,18 @@ def _python_settings_from_args(args: argparse.Namespace) -> PythonToolSettings:
     extra_imports = tuple(
         item.strip() for item in raw_imports.split(",") if item.strip()
     )
-    defaults = PythonToolSettings().default_imports
+    include_scientific = parse_python_scientific_enabled(
+        no_python_scientific=bool(getattr(args, "no_python_scientific", False)),
+        env_value=os.environ.get("AGENT_DRIVER_PYTHON_SCIENTIFIC"),
+    )
+    defaults = resolve_python_default_imports(include_scientific=include_scientific)
     merged_defaults = defaults + tuple(
         item for item in extra_imports if item not in set(defaults)
     )
     return PythonToolSettings(
         enabled=bool(getattr(args, "enable_python", False)),
         backend=raw_backend or "local",
+        include_scientific_stack=include_scientific,
         default_imports=merged_defaults,
         allow_overlay=bool(extra_imports),
     )
@@ -128,6 +139,7 @@ async def chat_command(
     if args.provider_healthcheck:
         status = await provider.healthcheck()
         print_provider_health(status)
+    tool_names = set(toolset.names or ())
     agent = create_agent(
         provider=provider,
         tools=toolset,
@@ -137,6 +149,7 @@ async def chat_command(
             enable_compaction=True,
             enable_session_memory_compaction=True,
             python_tool=_python_settings_from_args(args),
+            include_planning_prompt="todo_write" in tool_names,
         ),
     )
     ui_mode = "rich" if (not args.plain and (args.rich or sys.stdout.isatty())) else "plain"

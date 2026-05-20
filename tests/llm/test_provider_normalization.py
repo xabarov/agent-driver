@@ -43,6 +43,43 @@ def test_openai_completion_normalization_from_fixture() -> None:
     assert "provider_usage_raw" in response_payload["metadata"]
 
 
+def test_openai_completion_reads_openrouter_cost_from_usage() -> None:
+    """OpenRouter-style total_cost should map to cost_usd_estimate."""
+    payload = {
+        "model": "qwen/test",
+        "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+            "total_cost": 0.0225145,
+        },
+    }
+    response = normalize_openai_completion_payload(
+        payload,
+        provider_name="openrouter",
+        fallback_model="fallback",
+    )
+    assert response.usage is not None
+    assert response.usage.cost_usd_estimate == pytest.approx(0.0225145)
+
+
+def test_openai_completion_estimates_cost_from_per_1k_rate() -> None:
+    payload = {
+        "model": "gpt-test",
+        "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1000, "completion_tokens": 0, "total_tokens": 1000},
+    }
+    response = normalize_openai_completion_payload(
+        payload,
+        provider_name="openai-compat",
+        fallback_model="fallback",
+        cost_per_1k_tokens=0.5,
+    )
+    assert response.usage is not None
+    assert response.usage.cost_usd_estimate == pytest.approx(0.5)
+
+
 def test_openai_completion_normalizes_tool_calls_into_planned_metadata() -> None:
     """OpenAI tool_calls payload should map to planned_tool_calls metadata."""
     payload = {

@@ -19,8 +19,12 @@ from agent_driver.llm.contracts import (
     LlmStreamEvent,
     UsageSummary,
 )
+from agent_driver.code_agent.backends.local import LocalPythonBackend
+from agent_driver.code_agent.contracts import CodeAgentLimits
 from agent_driver.runtime.events import InMemoryEventLog
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
+from agent_driver.runtime.single_agent.config_sections import PythonToolSettings
+from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.sdk import create_agent
 from agent_driver.tools import ToolSet
 
@@ -250,7 +254,7 @@ async def test_chat_stream_formats_tool_events_compactly() -> None:
             yield item
 
     output: list[str] = []
-    _assistant, _in_tokens, _out_tokens, _pressure = await render_chat_stream(
+    _assistant, _in_tokens, _out_tokens, _pressure, _plan = await render_chat_stream(
         stream=_stream(), output=output.append, run_id="run_x"
     )
     text = "".join(output)
@@ -665,3 +669,47 @@ async def test_chat_session_double_ctrl_c_exits() -> None:
     text = "".join(io.output)
     assert "press Ctrl+C again within 2s to exit" in text
     assert "chat> interrupted" in text
+
+
+@pytest.mark.asyncio
+async def test_chat_session_exit_shuts_down_python_workers() -> None:
+    """Exiting chat must terminate local python-tool workers to avoid process hang."""
+    event_log = InMemoryEventLog()
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.all(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=event_log,
+        config=RunnerConfig(
+            python_tool=PythonToolSettings(
+                enabled=True,
+                backend="local",
+                session_idle_seconds=300.0,
+            )
+        ),
+    )
+    backend = agent.runner.deps.python_backend
+    assert isinstance(backend, LocalPythonBackend)
+    await backend.execute(
+        code="value = 1",
+        session_id="chat_exit_test",
+        authorized_imports=set(),
+        limits=CodeAgentLimits(max_exec_ms=300),
+        serialization_policy=None,
+    )
+    assert backend._sessions
+    io = _IoHarness(["/exit"])
+    code = await run_chat_session(
+        agent=agent,
+        event_log=event_log,
+        agent_id="agent.cli",
+        graph_preset="single_react",
+        stream_poll_interval_ms=10,
+        selected_manifests=[],
+        input_reader=io.read,
+        output=io.write,
+        ui_mode="plain",
+    )
+    assert code == 0
+    assert not backend._sessions
+    assert "chat> bye" in "".join(io.output)

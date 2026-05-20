@@ -1,55 +1,69 @@
 import { useQuery } from "@tanstack/react-query";
-import { Circle, Moon, Sun } from "lucide-react";
+import { Circle, MessageSquare, Moon, Sun } from "lucide-react";
 
-import { fetchHealth, fetchProviders } from "../../lib/api";
+import { fetchHealth } from "../../lib/api";
 import { useChatStore } from "../../store/chatStore";
+import { ModelPicker } from "./ModelPicker";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import { Card } from "../ui/card";
 import { useThemeMode } from "./ThemeProvider";
 
 export function Header() {
   const { theme, toggleTheme } = useThemeMode();
-  const tokenUsage = useChatStore((state) => state.tokenUsage);
+  const lastAssistantMetadata = useChatStore((state) => {
+    for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+      const message = state.messages[index];
+      if (message?.role === "assistant" && message.metadata) {
+        return message.metadata;
+      }
+    }
+    return undefined;
+  });
   const health = useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,
     refetchInterval: 5000,
   });
-  const providers = useQuery({
-    queryKey: ["providers"],
-    queryFn: fetchProviders,
-    refetchInterval: 10000,
-  });
 
   const providerName = health.data?.provider.provider_name ?? "unknown";
   const isHealthy = health.data?.provider.healthy ?? false;
-  const model = providers.data?.model ?? "default";
 
   return (
-    <Card className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-      <div>
-        <h1 className="text-lg font-semibold">Chat Demo</h1>
-        <p className="text-sm text-muted-foreground">Stages 4–7 · tools, HITL, replay</p>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-2">
+        <MessageSquare className="h-5 w-5 text-primary" />
+        <div>
+          <h1 className="text-base font-semibold leading-tight">Chat</h1>
+          <p className="text-xs text-muted-foreground">agent-driver demo</p>
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {tokenUsage?.prompt != null || tokenUsage?.completion != null ? (
-          <Badge variant="outline" className="text-xs">
-            ↑ {tokenUsage.prompt ?? 0} ↓ {tokenUsage.completion ?? 0}
+        {lastAssistantMetadata?.promptTokens != null ||
+        lastAssistantMetadata?.completionTokens != null ? (
+          <Badge variant="outline" className="gap-1.5 text-xs font-mono">
+            <span className="text-muted-foreground">↑ prompt</span>
+            {lastAssistantMetadata.promptTokens ?? 0}
+            <span className="text-muted-foreground">· ↓ completion</span>
+            {lastAssistantMetadata.completionTokens ?? 0}
           </Badge>
         ) : null}
-        <Badge variant="secondary" className="gap-2">
+        <Badge variant="secondary" className="gap-1.5 text-xs">
           <Circle
-            className={`h-2.5 w-2.5 ${
+            className={`h-2 w-2 ${
               isHealthy ? "fill-emerald-500 text-emerald-500" : "fill-red-500 text-red-500"
             }`}
           />
-          {providerName} · {model}
+          {providerName}
         </Badge>
-        <Button type="button" size="icon" variant="ghost" onClick={toggleTheme}>
+        <ModelPicker />
+        <button
+          type="button"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-secondary"
+          onClick={toggleTheme}
+          aria-label="Toggle theme"
+        >
           {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </Button>
+        </button>
       </div>
-    </Card>
+    </div>
   );
 }

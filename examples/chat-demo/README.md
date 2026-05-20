@@ -19,6 +19,54 @@ Open `http://localhost:5173`.
 
 If port 8010 is busy: `make dev-full APP_PORT=8020`
 
+## Real LLM + web search (not just "ok")
+
+By default the backend uses the **Fake** provider (`AGENT_DRIVER_PROVIDER=fake`), which always replies **`ok`** — no reasoning, no tools.
+
+1. Put credentials in the **repo root** `.env` (or `examples/chat-demo/.env`):
+
+```bash
+AGENT_DRIVER_PROVIDER=openrouter
+AGENT_DRIVER_API_KEY=sk-or-...
+AGENT_DRIVER_BASE_URL=https://openrouter.ai/api/v1
+AGENT_DRIVER_MODEL=your/model
+```
+
+2. Restart `make dev-full` (backend reloads env from repo `.env` automatically).
+
+3. In the UI set **Tools → Safe** (includes `web_search`) or **All**. **Off** disables all tools.
+
+Header should show `openrouter · <model>` instead of `fake · default`.
+
+## Agent workspace (file writes)
+
+When **Tools** include filesystem write (`dev` / `all`), the agent writes under a **per-session sandbox**, not under `backend/`:
+
+- Default root: `examples/chat-demo/workspace/<session_id>/`
+- Override: `CHAT_DEMO_WORKSPACE_ROOT=/path/to/root` (absolute or relative to chat-demo root)
+- Relative paths in `file_write` / `bash` resolve against that session folder
+- `workspace/` is gitignored; reload the session page does not move files between chats
+
+Remove old artifacts manually if they were created in `backend/` before this isolation (e.g. `snake_game/`).
+
+## UI/UX (OpenRouter-like)
+
+- Full-height layout: sidebar + sticky composer
+- **Model picker** in header (`GET /api/models`, OpenRouter catalog when configured)
+- **Tools** popover: preset toggle + live tool list from `GET /api/tools?preset=`
+- Message avatars, copy assistant reply, tool cards with type icons
+- **Runs** menu (replay) instead of chip row above chat
+- Stream errors shown inline (SSL/network/API)
+- Tools popover opens upward with opaque panel; tool list scroll + cap
+- Assistant messages in subtle bubble; auto-scroll; session search by date groups
+- `POST /api/chat/runs/{id}/cancel` for Stop (cooperative cancel + client abort)
+- **Sessions sidebar:** `···` menu on each session → **Delete** → confirm dialog; active session redirects to new chat
+- **Assistant markdown:** GFM links (styled, external open in new tab), lists/tables via Tailwind Typography
+- **Code blocks:** fenced `python` / `json` / `bash` / `typescript` with highlight.js (github-dark theme)
+- **Header tokens:** last assistant message shows `↑ prompt · ↓ completion` counts
+- **Plan checklist:** live todo list inside the assistant bubble (`planning_snapshot` from SSE); progress bar, current step, completed items stay visible; raw `todo_write` cards hidden
+- **Replay:** run replay shows the final plan state; reloading the session page does not restore plans (transcript is text-only)
+
 ## Single-port demo build
 
 ```bash
@@ -61,7 +109,8 @@ See [`.env.example`](.env.example). Key variables:
 ## Smoke checks
 
 ```bash
-curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:8010/api/health
+curl http://127.0.0.1:8010/api/models
 curl "http://127.0.0.1:8000/api/tools?preset=safe"
 curl -N -X POST "http://127.0.0.1:8000/api/chat/messages" \
   -H "content-type: application/json" \

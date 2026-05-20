@@ -30,6 +30,21 @@ def test_regression_suite_contains_stable_regression_targets() -> None:
     """Regression suite should keep known stable multi-step scenarios."""
     ids = {row.scenario_id for row in live_scenarios_for_suite("regression")}
     assert {"repo_audit_report", "web_to_repo_migration_plan"} <= ids
+    assert "interrupt_resume_file_write" in ids
+    assert "python_gamma_stdlib_only" in ids
+    assert "python_gamma_scipy" in ids
+    assert "python_pandas_linalg" in ids
+
+
+def test_default_smoke_suite_is_small_risk_subset() -> None:
+    ids = {row.scenario_id for row in live_scenarios_for_suite("default_smoke")}
+    assert ids == {
+        "news_web_search",
+        "url_summary",
+        "repo_lookup",
+        "multi_step_research",
+        "dangerous_tool_request",
+    }
 
 
 def test_eval_scenarios_have_consistent_tool_contracts() -> None:

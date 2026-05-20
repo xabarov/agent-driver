@@ -33,15 +33,28 @@ def _title_for_transcript(session_id: str, transcript: tuple[tuple[str, str], ..
 
 
 def _detail_from_record(record) -> SessionDetailView:
-    transcript = [
-        SessionMessageView(role=role, content=text) for role, text in record.transcript
-    ]
+    metadata_by_run = {key: dict(value) for key, value in record.metadata_by_run}
+    assistant_run_index = 0
+    transcript: list[SessionMessageView] = []
+    for role, text in record.transcript:
+        metadata = None
+        if role == "assistant":
+            run_id = (
+                record.run_ids[assistant_run_index]
+                if assistant_run_index < len(record.run_ids)
+                else None
+            )
+            assistant_run_index += 1
+            if run_id and run_id in metadata_by_run:
+                metadata = metadata_by_run[run_id]
+        transcript.append(SessionMessageView(role=role, content=text, metadata=metadata))
     return SessionDetailView(
         session_id=record.session_id,
         thread_id=record.thread_id,
         title=_title_for_transcript(record.session_id, record.transcript),
         run_ids=list(record.run_ids),
         transcript=transcript,
+        metadata_by_run=metadata_by_run,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )

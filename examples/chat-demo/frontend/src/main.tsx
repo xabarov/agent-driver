@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 
 import App from "./App";
 import { ThemeProvider } from "./components/layout/ThemeProvider";
+import { TooltipProvider } from "./components/ui/tooltip";
 import "./index.css";
 
 const queryClient = new QueryClient();
@@ -14,7 +15,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <ThemeProvider>
-          <App />
+          <TooltipProvider delayDuration={200}>
+            <App />
+          </TooltipProvider>
         </ThemeProvider>
       </BrowserRouter>
     </QueryClientProvider>

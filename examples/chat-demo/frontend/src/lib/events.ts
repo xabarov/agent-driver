@@ -1,4 +1,13 @@
+import {
+  mergeAssistantMetadata,
+  parseLlmCompletedData,
+  type AssistantMessageMetadata,
+} from "./messageMetadata";
+import { parsePlanningSnapshot } from "./planning";
 import type { ChatMessage, ToolCallStatus } from "../store/chatStore";
+import type { PlanningSnapshot } from "./planning";
+
+const PLANNING_TOOL_NAMES = new Set(["todo_write", "planning_state_update"]);
 
 export type StreamEventName =
   | "run_started"
@@ -154,29 +163,61 @@ export function buildLastEventId(runId: string | undefined, seq: number): string
   return `${runId}:${seq}`;
 }
 
+function applyPlanningToAssistantMessage(
+  messages: ChatMessage[],
+  assistantId: string,
+  snapshot: PlanningSnapshot,
+  content: string,
+  metadata?: AssistantMessageMetadata,
+): void {
+  const index = messages.findIndex((item) => item.id === assistantId && item.role === "assistant");
+  if (index >= 0 && messages[index].role === "assistant") {
+    messages[index] = { ...messages[index], planningSnapshot: snapshot };
+    return;
+  }
+  messages.push({
+    id: assistantId,
+    role: "assistant",
+    content,
+    pending: false,
+    metadata,
+    planningSnapshot: snapshot,
+  });
+}
+
 export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>[]): ChatMessage[] {
   const messages: ChatMessage[] = [];
   let assistantId: string | null = null;
   let assistantContent = "";
+  let assistantMetadata: AssistantMessageMetadata | undefined = undefined;
+  let assistantPlanningSnapshot: PlanningSnapshot | undefined = undefined;
   let seq = 0;
 
   const flushAssistant = () => {
-    if (assistantId && assistantContent.trim()) {
+    if (assistantId && (assistantContent.trim() || assistantPlanningSnapshot)) {
       messages.push({
         id: assistantId,
         role: "assistant",
         content: assistantContent,
         pending: false,
+        metadata: assistantMetadata,
+        planningSnapshot: assistantPlanningSnapshot,
       });
     }
     assistantId = null;
     assistantContent = "";
+    assistantMetadata = undefined;
+    assistantPlanningSnapshot = undefined;
   };
 
   for (const event of events) {
     if (event.event === "run_started" && !assistantId) {
       assistantId = `assistant_replay_${seq}`;
       assistantContent = "";
+    }
+    if (event.event === "llm_call_completed") {
+      const patch = parseLlmCompletedData(event.data);
+      assistantMetadata = mergeAssistantMetadata(assistantMetadata, patch);
     }
     if (isTokenDelta(event)) {
       if (!assistantId) {
@@ -188,16 +229,23 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
       if (!assistantId) {
         assistantId = `assistant_replay_${seq}`;
       }
-      if (assistantContent.trim()) {
+      if (assistantContent.trim() || assistantPlanningSnapshot) {
         messages.push({
           id: assistantId,
           role: "assistant",
           content: assistantContent,
           pending: false,
+          metadata: assistantMetadata,
+          planningSnapshot: assistantPlanningSnapshot,
         });
         assistantContent = "";
+        assistantMetadata = undefined;
+        assistantPlanningSnapshot = undefined;
       }
       for (const tool of parseToolStatesFromEvent(event)) {
+        if (PLANNING_TOOL_NAMES.has(tool.name)) {
+          continue;
+        }
         messages.push({
           id: `tool_replay_${tool.toolCallId}`,
           role: "tool",
@@ -212,7 +260,23 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
       }
     }
     if (isToolCallCompleted(event)) {
+      const snapshot = parsePlanningSnapshot(event.data.planning_snapshot);
+      if (snapshot) {
+        assistantPlanningSnapshot = snapshot;
+        if (assistantId) {
+          applyPlanningToAssistantMessage(
+            messages,
+            assistantId,
+            snapshot,
+            assistantContent,
+            assistantMetadata,
+          );
+        }
+      }
       for (const tool of parseToolStatesFromEvent(event)) {
+        if (PLANNING_TOOL_NAMES.has(tool.name)) {
+          continue;
+        }
         const index = messages.findIndex(
           (item) => item.role === "tool" && item.toolCallId === tool.toolCallId,
         );

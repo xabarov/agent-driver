@@ -52,3 +52,19 @@ class ToolsResponse(BaseModel):
 
     tools: list[ToolManifestView]
 
+
+class ModelView(BaseModel):
+    """OpenRouter-compatible model entry."""
+
+    id: str
+    name: str | None = None
+    description: str | None = None
+    context_length: int | None = None
+
+
+class ModelsResponse(BaseModel):
+    """Models list endpoint response."""
+
+    provider: str
+    models: list[ModelView]
+

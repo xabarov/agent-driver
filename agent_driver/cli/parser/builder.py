@@ -224,8 +224,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Allow running eval harness without AGENT_DRIVER_RUN_LIVE_CLI_EVALS=1.",
     )
     eval_run.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Continue suite after a scenario failure; write failures.json in bundle.",
+    )
+    eval_run.add_argument(
         "--suite",
-        choices=("default", "deep", "regression", "all"),
+        choices=("default", "default_smoke", "deep", "regression", "all"),
         default="default",
         help="Evaluation scenario suite.",
     )

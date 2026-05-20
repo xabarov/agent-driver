@@ -197,6 +197,61 @@ def test_answer_matches_expectations_any_of_groups() -> None:
     assert not _answer_matches_expectations(answer="ok", scenario=scenario)
 
 
+@pytest.mark.asyncio
+async def test_second_run_receives_prior_user_message_in_llm_request() -> None:
+    """Same thread_id: second run should include prior user turn in protocol messages."""
+    session_store = InMemorySessionStore()
+
+    class _CapturingProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__(response_text="done")
+            self.requests: list[LlmRequest] = []
+
+        async def complete(self, request: LlmRequest) -> LlmResponse:
+            self.requests.append(request)
+            return await super().complete(request)
+
+    provider = _CapturingProvider()
+    thread_id = "thread_prompt_memory"
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.only("glob_search"),
+        config=RunnerConfig(session_store=session_store),
+    )
+    await agent.run(
+        AgentRunInput(
+            input="first turn marker ALPHA",
+            run_id="run_mem_1",
+            thread_id=thread_id,
+            agent_id="agent",
+            graph_preset="single_react",
+            max_steps=4,
+            max_tool_calls=2,
+        )
+    )
+    await agent.run(
+        AgentRunInput(
+            input="second turn",
+            run_id="run_mem_2",
+            thread_id=thread_id,
+            messages=(ChatMessage(role="user", content="first turn marker ALPHA"),),
+            agent_id="agent",
+            graph_preset="single_react",
+            max_steps=4,
+            max_tool_calls=2,
+        )
+    )
+    assert len(provider.requests) >= 2
+    first_contents = [
+        msg.content for msg in provider.requests[0].messages if msg.content
+    ]
+    assert any("ALPHA" in (content or "") for content in first_contents)
+    second_contents = [
+        msg.content for msg in provider.requests[-1].messages if msg.content
+    ]
+    assert any("second turn" in (content or "") for content in second_contents)
+
+
 def test_strip_text_form_does_not_remove_valid_answer_text() -> None:
     """Stripping should only remove tool-call blocks, not normal prose."""
     raw = "Result: welcome\n<tool_call>{\"name\":\"read_file\"}</tool_call>"

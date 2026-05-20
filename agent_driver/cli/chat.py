@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
@@ -27,6 +27,7 @@ from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.storage import RuntimeEventLog
 from agent_driver.sdk import Agent
 from agent_driver.cli.sessions import SessionStore
+from agent_driver.cli.tui.plan_panel import format_plan_panel, plan_progress_footer
 from agent_driver.tools.builtin.python import python_tool_runtime_facts
 
 try:  # pragma: no cover - optional dependency
@@ -48,6 +49,7 @@ class ChatSessionState:
     transcript: list[tuple[str, str]] = field(default_factory=list)
     turn_index: int = 0
     debug_tool_protocol: bool = False
+    planning_state: dict[str, object] | None = None
 
     def next_run_id(self) -> str:
         """Generate deterministic run id prefix for one chat turn."""
@@ -99,6 +101,24 @@ def _provider_check_error_label(exc: Exception) -> str:
     return name.lower()
 
 
+async def _shutdown_chat_resources(
+    agent: Agent,
+    *,
+    prompt_session: ChatPromptSession | None = None,
+) -> None:
+    """Release TUI and python-tool worker processes before process exit."""
+    if prompt_session is not None:
+        with suppress(Exception):
+            prompt_session.close()
+    backend = agent.runner.deps.python_backend
+    if backend is None:
+        return
+    aclose = getattr(backend, "aclose", None)
+    if callable(aclose):
+        with suppress(Exception):
+            await aclose()
+
+
 def _doctor_last_signal(state: ChatSessionState, event_log: RuntimeEventLog) -> str:
     run_id = state.last_run_id
     if run_id is None:
@@ -117,7 +137,7 @@ def _doctor_last_signal(state: ChatSessionState, event_log: RuntimeEventLog) -> 
 
 def _print_help(output: Callable[[str], None]) -> None:
     output(
-        "Commands: /help /exit /quit /clear /reset /runs /sessions /history "
+        "Commands: /help /exit /quit /clear /reset /plan /runs /sessions /history "
         "/resume <session_id> /tools [verbose] /model /provider /limits "
         "/debug on|off /save [path] /export [path] /doctor "
         "/approve <run_id> <interrupt_id> /reject <run_id> <interrupt_id> [message] "
@@ -149,6 +169,7 @@ async def _handle_local_command(
     output: Callable[[str], None],
     clear_screen: Callable[[], None] | None = None,
     welcome: Callable[[], None] | None = None,
+    renderer: object | None = None,
 ) -> bool:
     if command == "help":
         _print_help(output)
@@ -159,6 +180,9 @@ async def _handle_local_command(
     if command == "clear":
         state.transcript.clear()
         state.run_ids.clear()
+        state.planning_state = None
+        if renderer is not None and hasattr(renderer, "clear_plan_panel"):
+            renderer.clear_plan_panel()
         if clear_screen is not None:
             clear_screen()
         output("chat> cleared\n")
@@ -168,9 +192,18 @@ async def _handle_local_command(
     if command == "reset":
         state.transcript.clear()
         state.run_ids.clear()
+        state.planning_state = None
+        if renderer is not None and hasattr(renderer, "clear_plan_panel"):
+            renderer.clear_plan_panel()
         state.thread_id = f"thread_{uuid.uuid4().hex[:8]}"
         state.turn_index = 0
         output(f"chat> memory reset thread={state.thread_id}\n")
+        return True
+    if command == "plan":
+        if isinstance(state.planning_state, dict) and state.planning_state.get("todos"):
+            output(f"{format_plan_panel(state.planning_state)}\n")
+        else:
+            output("plan> empty (no todos in this session)\n")
         return True
     if command == "runs":
         if not state.run_ids:
@@ -497,6 +530,8 @@ async def run_chat_session(
     def _clear_screen() -> None:
         renderer.emit_raw("\x1b[H\x1b[2J")
     _emit_welcome()
+    if isinstance(state.planning_state, dict) and state.planning_state.get("todos"):
+        renderer.refresh_plan_panel(state.planning_state)
     prompt_session: ChatPromptSession | None = None
     if effective_mode == "rich" and input_reader is None and sys.stdin.isatty():
         try:
@@ -509,26 +544,28 @@ async def run_chat_session(
             renderer.emit_raw("chat> rich prompt disabled: prompt_toolkit is unavailable\n")
             effective_mode = "plain"
     last_keyboard_interrupt = 0.0
-    while True:
-        with _stream_context():
-            try:
-                if input_reader is not None:
-                    raw = input_reader("you> ")
-                elif prompt_session is not None:
-                    raw = await prompt_session.prompt_async()
-                else:
-                    raw = input("you> ")
-            except EOFError:
-                renderer.emit_raw("chat> eof\n")
-                return 0
-            except KeyboardInterrupt:
-                now = time.monotonic()
-                if now - last_keyboard_interrupt <= _CTRL_C_WINDOW_SECONDS:
-                    renderer.emit_raw("\nchat> interrupted\n")
-                    return 0
-                last_keyboard_interrupt = now
-                renderer.emit_raw("\nchat> press Ctrl+C again within 2s to exit\n")
-                continue
+    exit_code = 0
+    try:
+        while True:
+            with _stream_context():
+                try:
+                    if input_reader is not None:
+                        raw = input_reader("you> ")
+                    elif prompt_session is not None:
+                        raw = await prompt_session.prompt_async()
+                    else:
+                        raw = input("you> ")
+                except EOFError:
+                    renderer.emit_raw("chat> eof\n")
+                    break
+                except KeyboardInterrupt:
+                    now = time.monotonic()
+                    if now - last_keyboard_interrupt <= _CTRL_C_WINDOW_SECONDS:
+                        renderer.emit_raw("\nchat> interrupted\n")
+                        break
+                    last_keyboard_interrupt = now
+                    renderer.emit_raw("\nchat> press Ctrl+C again within 2s to exit\n")
+                    continue
             text = raw.strip()
             if not text:
                 continue
@@ -556,12 +593,14 @@ async def run_chat_session(
                     output=renderer.emit_raw,
                     clear_screen=_clear_screen,
                     welcome=_emit_welcome,
+                    renderer=renderer,
                 )
                 if not keep_running:
-                    return 0
+                    break
                 if prompt_session is not None and command in {"clear", "reset"}:
                     prompt_session.set_pressure(None)
                     prompt_session.set_budget_warning(None)
+                    prompt_session.set_plan_progress(None, current=None)
                 continue
             run_id = state.next_run_id()
             state.run_ids.append(run_id)
@@ -575,6 +614,13 @@ async def run_chat_session(
                 budget_parts.append(f"chars {message_chars}/{trim_max_chars}")
             if prompt_session is not None:
                 prompt_session.set_budget_warning(" | ".join(budget_parts) if budget_parts else None)
+            app_metadata: dict[str, object] = {
+                "stream_poll_interval_ms": stream_poll_interval_ms,
+                "chat_mode": True,
+                "debug_tool_protocol": state.debug_tool_protocol,
+            }
+            if isinstance(state.planning_state, dict) and state.planning_state.get("todos"):
+                app_metadata["planning_state_seed"] = state.planning_state
             stream = agent.stream(
                 AgentRunInput(
                     input=text,
@@ -587,22 +633,22 @@ async def run_chat_session(
                     max_steps=max_steps,
                     max_tool_calls=max_tool_calls,
                     deadline_seconds=deadline_seconds,
-                    app_metadata={
-                        "stream_poll_interval_ms": stream_poll_interval_ms,
-                        "chat_mode": True,
-                        "debug_tool_protocol": state.debug_tool_protocol,
-                    },
+                    app_metadata=app_metadata,
                 )
             )
             try:
-                assistant_text, input_tokens, output_tokens, pressure_state = (
-                    await render_chat_stream(
-                        stream=stream,
-                        output=renderer.emit_raw,
-                        run_id=run_id,
-                        renderer=renderer,
-                        animate=effective_mode == "rich",
-                    )
+                (
+                    assistant_text,
+                    input_tokens,
+                    output_tokens,
+                    pressure_state,
+                    planning_snapshot,
+                ) = await render_chat_stream(
+                    stream=stream,
+                    output=renderer.emit_raw,
+                    run_id=run_id,
+                    renderer=renderer,
+                    animate=effective_mode == "rich",
                 )
             except RuntimeExecutionError as exc:
                 renderer.emit_error_card(
@@ -619,6 +665,14 @@ async def run_chat_session(
                     output_tokens=session_output_tokens,
                 )
                 prompt_session.set_pressure(pressure_state)
+            if isinstance(planning_snapshot, dict) and planning_snapshot.get("todos"):
+                state.planning_state = planning_snapshot
+            if prompt_session is not None and isinstance(state.planning_state, dict):
+                progress, current = plan_progress_footer(state.planning_state)
+                prompt_session.set_plan_progress(
+                    progress or None,
+                    current=current,
+                )
             if assistant_text:
                 state.transcript.append(
                     ("assistant", strip_text_form_tool_calls(assistant_text))
@@ -629,6 +683,9 @@ async def run_chat_session(
                 run_ids=state.run_ids,
                 transcript=state.transcript,
             )
+    finally:
+        await _shutdown_chat_resources(agent, prompt_session=prompt_session)
+    return exit_code
 
 
 __all__ = [

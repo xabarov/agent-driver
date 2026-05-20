@@ -14,10 +14,18 @@ def get_settings() -> Settings:
     return Settings()
 
 
-@lru_cache(maxsize=8)
-def get_agent_bundle_for_preset(tool_preset: ToolPreset) -> AgentBundle:
-    """Return cached runtime bundle for one tool preset."""
-    return create_agent_bundle(get_settings(), tool_preset=tool_preset)
+@lru_cache(maxsize=32)
+def get_agent_bundle_for_preset(tool_preset: ToolPreset, model: str | None = None) -> AgentBundle:
+    """Return cached runtime bundle for one tool preset and optional model."""
+    return create_agent_bundle(get_settings(), tool_preset=tool_preset, model=model)
+
+
+def get_agent_bundle_for_request(
+    tool_preset: ToolPreset,
+    model: str | None = None,
+) -> AgentBundle:
+    """Resolve bundle for API request overrides."""
+    return get_agent_bundle_for_preset(tool_preset, model)
 
 
 def get_agent_bundle() -> AgentBundle:
@@ -41,3 +49,6 @@ def reset_dependency_caches() -> None:
     get_settings.cache_clear()
     get_shared_runtime_store_bundle.cache_clear()
     get_shared_session_store.cache_clear()
+    from app.run_cancel import reset_caches_for_tests
+
+    reset_caches_for_tests()

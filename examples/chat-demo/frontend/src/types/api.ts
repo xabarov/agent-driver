@@ -34,9 +34,22 @@ export interface ToolsResponse {
   tools: ToolManifestView[];
 }
 
+export interface AssistantMessageMetadataView {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  durationMs?: number;
+  tokensPerSecond?: number;
+  costUsd?: number;
+  model?: string;
+  provider?: string;
+  estimated?: boolean;
+}
+
 export interface SessionMessageView {
   role: string;
   content: string;
+  metadata?: AssistantMessageMetadataView | null;
 }
 
 export interface SessionSummaryView {
@@ -53,6 +66,7 @@ export interface SessionDetailView {
   title: string;
   run_ids: string[];
   transcript: SessionMessageView[];
+  metadata_by_run?: Record<string, AssistantMessageMetadataView>;
   created_at: string;
   updated_at: string;
 }
@@ -90,4 +104,16 @@ export interface ResumeRequest {
 export interface ReplayResponse {
   run_id: string;
   events: Array<Record<string, unknown>>;
+}
+
+export interface ModelView {
+  id: string;
+  name: string | null;
+  description: string | null;
+  context_length: number | null;
+}
+
+export interface ModelsResponse {
+  provider: string;
+  models: ModelView[];
 }

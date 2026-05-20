@@ -21,6 +21,11 @@ def get_workspace_cwd() -> Path:
     return current
 
 
+def get_workspace_jail_root() -> Path | None:
+    """Return run-scoped workspace root when explicitly set, else None."""
+    return _workspace_cwd.get()
+
+
 def get_tool_call_context() -> dict[str, str]:
     """Return run-scoped tool call metadata."""
     payload = _tool_call_context.get()
@@ -74,6 +79,7 @@ def tool_call_context_scope(
 
 __all__ = [
     "get_workspace_cwd",
+    "get_workspace_jail_root",
     "get_tool_call_context",
     "set_tool_call_context",
     "set_workspace_cwd",
