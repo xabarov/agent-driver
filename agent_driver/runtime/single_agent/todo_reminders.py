@@ -8,7 +8,7 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.runtime.single_agent.types import RunContext
 from agent_driver.runtime.tools import ToolExecutionResult
 
-TODO_REMINDER_TOOL_LOOPS = 4
+TODO_REMINDER_TOOL_LOOPS = 2
 
 SUBSTANTIVE_TODO_HINT_TOOLS = frozenset(
     {"web_search", "web_fetch", "read_file", "grep_search", "glob_search"}
@@ -26,7 +26,9 @@ def reset_todo_write_loop_counters(
 ) -> None:
     """Reset loop and hint counters after a successful todo_write."""
     context.metadata["tool_loops_since_todo_write"] = 0
-    context.metadata.pop("todo_hint_for_id", None)
+    for key in list(context.metadata):
+        if isinstance(key, str) and key.startswith("todo_hint_count_"):
+            context.metadata.pop(key, None)
     if in_progress_id:
         context.metadata["last_in_progress_id"] = in_progress_id
 
@@ -106,7 +108,9 @@ def append_todo_progress_hint_after_substantive_tool(
     if active is None:
         return
     todo_id, content = active
-    if context.metadata.get("todo_hint_for_id") == todo_id:
+    hint_count_key = f"todo_hint_count_{todo_id}"
+    hint_count = int(context.metadata.get(hint_count_key, 0))
+    if hint_count >= 2:
         return
     substantive_ok = False
     for envelope in result.envelopes:
@@ -129,7 +133,7 @@ def append_todo_progress_hint_after_substantive_tool(
             metadata={"kind": "todo_progress_hint"},
         )
     )
-    context.metadata["todo_hint_for_id"] = todo_id
+    context.metadata[hint_count_key] = hint_count + 1
 
 
 __all__ = [

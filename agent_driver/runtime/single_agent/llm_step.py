@@ -38,6 +38,7 @@ from agent_driver.runtime.single_agent.llm import (
 from agent_driver.runtime.single_agent.todo_reminders import (
     maybe_append_todo_reminder_to_protocol,
 )
+from agent_driver.runtime.single_agent.step_planning import build_planning_snapshot
 from agent_driver.runtime.single_agent.streaming import (
     complete_streaming_request,
     emit_token_delta_events,
@@ -167,6 +168,9 @@ async def execute_llm_call_step(host: LlmStepHost, context: RunContext) -> Runti
     planned_tool_calls = context.llm_response.metadata.get("planned_tool_calls")
     if isinstance(planned_tool_calls, list):
         completed_payload["planned_tool_calls"] = planned_tool_calls
+    snapshot = build_planning_snapshot(context)
+    if snapshot is not None:
+        completed_payload["planning_snapshot"] = snapshot
     emit_step_event(
         host,
         context,

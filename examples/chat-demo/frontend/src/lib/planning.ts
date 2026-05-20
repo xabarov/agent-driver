@@ -9,6 +9,7 @@ export interface PlanningTodo {
 export interface PlanningSnapshot {
   todos: PlanningTodo[];
   inProgressId: string | null;
+  inProgressIndex: number | null;
   completed: number;
   total: number;
   planTitle: string | null;
@@ -62,13 +63,30 @@ export function parsePlanningSnapshot(raw: unknown): PlanningSnapshot | undefine
   const total = Number(record.total);
   const inProgressRaw = record.in_progress_id;
   const planTitleRaw = record.plan_title;
+  const inProgressIndexRaw = record.in_progress_index;
+  const inProgressIndex = Number(inProgressIndexRaw);
   return {
     todos,
     inProgressId: typeof inProgressRaw === "string" && inProgressRaw ? inProgressRaw : null,
+    inProgressIndex:
+      Number.isFinite(inProgressIndex) && inProgressIndex > 0 ? inProgressIndex : null,
     completed: Number.isFinite(completed) ? completed : todos.filter((t) => t.status === "completed").length,
     total: Number.isFinite(total) && total > 0 ? total : todos.length,
     planTitle: typeof planTitleRaw === "string" && planTitleRaw.trim() ? planTitleRaw.trim() : null,
   };
+}
+
+/** Visual progress while a step is in progress (does not change completed count). */
+export function planningProgressPercent(
+  snapshot: PlanningSnapshot,
+  streaming?: boolean,
+): number {
+  if (snapshot.total <= 0) {
+    return 0;
+  }
+  const hasInProgress = snapshot.todos.some((todo) => todo.status === "in_progress");
+  const partial = streaming && hasInProgress ? 0.5 : 0;
+  return Math.round(((snapshot.completed + partial) / snapshot.total) * 100);
 }
 
 export function currentPlanStepTitle(snapshot: PlanningSnapshot): string | null {

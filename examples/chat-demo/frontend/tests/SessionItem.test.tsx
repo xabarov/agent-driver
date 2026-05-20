@@ -73,11 +73,7 @@ describe("SessionItem", () => {
       </QueryClientProvider>,
     );
 
-    const menuButton = screen.getByLabelText("Session options for My chat");
-    fireEvent.pointerDown(menuButton, { button: 0, pointerId: 1, pointerType: "mouse" });
-    fireEvent.click(menuButton);
-    const deleteItem = await screen.findByRole("menuitem", { name: /delete/i });
-    fireEvent.click(deleteItem);
+    fireEvent.click(screen.getByLabelText("Delete session My chat"));
 
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();

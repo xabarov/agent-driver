@@ -42,8 +42,8 @@ export function SessionList() {
           className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
         />
       </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-3 p-1">
+      <ScrollArea className="min-h-0 flex-1 overflow-x-hidden">
+        <div className="w-full min-w-0 space-y-3 p-1">
           {grouped.length === 0 ? (
             <p className="text-xs text-muted-foreground">No matching sessions.</p>
           ) : null}

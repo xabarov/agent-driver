@@ -11,6 +11,7 @@ const snapshot: PlanningSnapshot = {
     { id: "3", content: "Test run", status: "pending" },
   ],
   inProgressId: "2",
+  inProgressIndex: 2,
   completed: 1,
   total: 3,
   planTitle: "Add controls",
@@ -24,6 +25,7 @@ describe("PlanningCard", () => {
     expect(screen.getByText("Add controls")).toBeInTheDocument();
     expect(screen.getByText("Test run")).toBeInTheDocument();
     expect(screen.getByText(/Current: Add controls/)).toBeInTheDocument();
+    expect(screen.getByText(/Step 2 of 3/)).toBeInTheDocument();
     const completed = screen.getByText("Write game file");
     expect(completed.className).toContain("line-through");
   });

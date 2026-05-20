@@ -9,6 +9,7 @@ import {
 } from "../lib/messageMetadata";
 import type { ParsedToolState } from "../lib/events";
 import type { PlanningSnapshot } from "../lib/planning";
+import { stripTextFormToolCalls } from "../lib/stripToolCalls";
 import type { SessionDetailView } from "../types/api";
 
 const PLANNING_TOOL_NAMES = new Set(["todo_write", "planning_state_update"]);
@@ -130,11 +131,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
     set((state) => ({
-      messages: state.messages.map((message) =>
-        message.id === assistantId && message.role === "assistant"
-          ? { ...message, content: `${message.content}${text}` }
-          : message,
-      ),
+      messages: state.messages.map((message) => {
+        if (message.id !== assistantId || message.role !== "assistant") {
+          return message;
+        }
+        const merged = `${message.content}${text}`;
+        return { ...message, content: stripTextFormToolCalls(merged) };
+      }),
     }));
   },
   appendToolStarted: (assistantId, tool) =>
@@ -175,11 +178,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   finishTurn: (assistantId) => {
     set((state) => ({
       streaming: false,
-      messages: state.messages.map((message) =>
-        message.id === assistantId && message.role === "assistant"
-          ? { ...message, pending: false }
-          : message,
-      ),
+      messages: state.messages.map((message) => {
+        if (message.id !== assistantId || message.role !== "assistant") {
+          return message;
+        }
+        const content = message.content ? stripTextFormToolCalls(message.content) : message.content;
+        return { ...message, pending: false, content };
+      }),
     }));
   },
   setStreaming: (value) => set({ streaming: value }),

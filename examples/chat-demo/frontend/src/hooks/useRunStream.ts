@@ -61,6 +61,12 @@ function applyStreamEvent(
       store.updateToolCompleted(tool.toolCallId, tool);
     }
   }
+  if (event.event === "llm_call_completed" || event.event === "run_completed") {
+    const snapshot = parsePlanningSnapshot(event.data.planning_snapshot);
+    if (snapshot) {
+      store.setPlanningSnapshot(assistantId, snapshot);
+    }
+  }
   if (event.event === "llm_call_completed") {
     const patch = parseLlmCompletedData(event.data);
     if (Object.keys(patch).length > 0) {

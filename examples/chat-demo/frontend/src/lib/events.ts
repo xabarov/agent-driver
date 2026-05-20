@@ -4,6 +4,7 @@ import {
   type AssistantMessageMetadata,
 } from "./messageMetadata";
 import { parsePlanningSnapshot } from "./planning";
+import { stripTextFormToolCalls } from "./stripToolCalls";
 import type { ChatMessage, ToolCallStatus } from "../store/chatStore";
 import type { PlanningSnapshot } from "./planning";
 
@@ -215,6 +216,21 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
       assistantId = `assistant_replay_${seq}`;
       assistantContent = "";
     }
+    if (event.event === "llm_call_completed" || event.event === "run_completed") {
+      const snapshot = parsePlanningSnapshot(event.data.planning_snapshot);
+      if (snapshot) {
+        assistantPlanningSnapshot = snapshot;
+        if (assistantId) {
+          applyPlanningToAssistantMessage(
+            messages,
+            assistantId,
+            snapshot,
+            assistantContent,
+            assistantMetadata,
+          );
+        }
+      }
+    }
     if (event.event === "llm_call_completed") {
       const patch = parseLlmCompletedData(event.data);
       assistantMetadata = mergeAssistantMetadata(assistantMetadata, patch);
@@ -223,7 +239,7 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
       if (!assistantId) {
         assistantId = `assistant_replay_${seq}`;
       }
-      assistantContent += getTokenDeltaText(event);
+      assistantContent = stripTextFormToolCalls(assistantContent + getTokenDeltaText(event));
     }
     if (isToolCallStarted(event)) {
       if (!assistantId) {

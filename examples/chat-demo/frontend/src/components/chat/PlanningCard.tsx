@@ -2,7 +2,12 @@ import { useState } from "react";
 import { Ban, Check, ChevronDown, ChevronRight, Circle, Loader2 } from "lucide-react";
 
 import { cn } from "../../lib/cn";
-import { currentPlanStepTitle, type PlanningSnapshot, type PlanningTodo } from "../../lib/planning";
+import {
+  currentPlanStepTitle,
+  planningProgressPercent,
+  type PlanningSnapshot,
+  type PlanningTodo,
+} from "../../lib/planning";
 
 interface PlanningCardProps {
   snapshot: PlanningSnapshot;
@@ -42,9 +47,12 @@ function todoRowClass(todo: PlanningTodo): string {
 
 export function PlanningCard({ snapshot, streaming }: PlanningCardProps) {
   const [open, setOpen] = useState(true);
-  const progressPct =
-    snapshot.total > 0 ? Math.round((snapshot.completed / snapshot.total) * 100) : 0;
+  const progressPct = planningProgressPercent(snapshot, streaming);
   const stepTitle = currentPlanStepTitle(snapshot);
+  const activeStepLabel =
+    snapshot.inProgressIndex != null
+      ? `Step ${snapshot.inProgressIndex} of ${snapshot.total}`
+      : null;
   const collapsible = snapshot.todos.length > 6;
 
   return (
@@ -72,6 +80,9 @@ export function PlanningCard({ snapshot, streaming }: PlanningCardProps) {
             <span className="text-xs font-mono text-foreground">
               {snapshot.completed}/{snapshot.total} done
             </span>
+            {activeStepLabel ? (
+              <span className="text-xs text-muted-foreground">· {activeStepLabel}</span>
+            ) : null}
           </div>
           <div
             className="h-1 overflow-hidden rounded-full bg-muted"

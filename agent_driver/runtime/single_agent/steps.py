@@ -9,6 +9,7 @@ from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.single_agent.compaction_stage import apply_compaction_if_eligible
 from agent_driver.runtime.single_agent.llm_step import execute_llm_call_step
+from agent_driver.runtime.single_agent.step_planning import build_planning_snapshot
 from agent_driver.runtime.single_agent.subagent_stage import maybe_execute_subagent_group
 from agent_driver.runtime.single_agent.tool_stage import execute_tool_stage_step
 from agent_driver.runtime.single_agent.types import (
@@ -140,6 +141,9 @@ class SingleAgentStepMixin:
         completed_payload: dict[str, object] = {"finish_reason": finish_reason}
         if context.llm_response is not None and context.llm_response.usage is not None:
             completed_payload["usage"] = context.llm_response.usage.model_dump(mode="json")
+        snapshot = build_planning_snapshot(context)
+        if snapshot is not None:
+            completed_payload["planning_snapshot"] = snapshot
         self._emit(
             EventSpec(
                 run_id=context.run_id,

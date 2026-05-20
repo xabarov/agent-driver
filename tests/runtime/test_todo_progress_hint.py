@@ -54,7 +54,7 @@ def test_hint_after_web_fetch_with_active_in_progress() -> None:
     assert messages[0].role == ChatRole.USER
     assert "todo_write" in messages[0].content
     assert "step1" in messages[0].content
-    assert context.metadata.get("todo_hint_for_id") == "step1"
+    assert context.metadata.get("todo_hint_count_step1") == 1
 
 
 def test_no_hint_after_todo_write() -> None:
@@ -73,9 +73,9 @@ def test_no_hint_after_todo_write() -> None:
     assert messages == []
 
 
-def test_hint_not_repeated_for_same_in_progress_id() -> None:
+def test_hint_limited_to_two_per_in_progress_step() -> None:
     context = _context_with_active_plan()
-    context.metadata["todo_hint_for_id"] = "step1"
+    context.metadata["todo_hint_count_step1"] = 2
     result = ToolExecutionResult(
         envelopes=[
             ToolResultEnvelope(

@@ -362,7 +362,7 @@ class OpenAICompatibleProvider(ProviderBase):
             self.status.latency_ms = elapsed_ms
             self.status.avg_latency_ms = elapsed_ms
             self.status.healthy = response.status_code in {200, 400, 401, 403}
-        except httpx.HTTPError:
+        except (httpx.HTTPError, OSError):
             self.status.healthy = False
         return self.status
 
