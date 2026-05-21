@@ -12,7 +12,12 @@ from agent_driver.context import (
     render_planning_step_prompt,
 )
 from agent_driver.contracts.context import PlanningStep
-from agent_driver.contracts.enums import AgentProfile, ChatRole, RuntimeEventType, TerminalReason
+from agent_driver.contracts.enums import (
+    AgentProfile,
+    ChatRole,
+    RuntimeEventType,
+    TerminalReason,
+)
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.payload_debug import (
@@ -35,14 +40,15 @@ from agent_driver.runtime.single_agent.llm import (
     LlmRequestBuildContext,
     build_single_agent_llm_request,
 )
-from agent_driver.runtime.single_agent.todo_reminders import (
-    maybe_append_todo_reminder_to_protocol,
-)
+from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.step_planning import build_planning_snapshot
 from agent_driver.runtime.single_agent.streaming import (
     complete_streaming_request,
     emit_token_delta_events,
     is_stream_enabled,
+)
+from agent_driver.runtime.single_agent.todo_reminders import (
+    maybe_append_todo_reminder_to_protocol,
 )
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
@@ -51,7 +57,7 @@ from agent_driver.runtime.single_agent.types import (
     RunnerDeps,
     RuntimeStepResult,
 )
-from agent_driver.runtime.single_agent.step_events import emit_step_event
+
 
 class LlmStepHost(CompactionStageHost, Protocol):
     """Host surface for LLM step execution."""
@@ -60,11 +66,15 @@ class LlmStepHost(CompactionStageHost, Protocol):
     _config: RunnerConfig
 
     def _emit(self, event: EventSpec) -> None: ...
-    def _save_checkpoint(self, context: RunContext, *, latest_output: Any, node_id: str) -> Any: ...
+    def _save_checkpoint(
+        self, context: RunContext, *, latest_output: Any, node_id: str
+    ) -> Any: ...
     def _maybe_fail_after_step(self, step_name: str) -> None: ...
 
 
-async def execute_llm_call_step(host: LlmStepHost, context: RunContext) -> RuntimeStepResult:
+async def execute_llm_call_step(
+    host: LlmStepHost, context: RunContext
+) -> RuntimeStepResult:
     """Run LLM call step with trimming, compaction, and provider completion."""
     emit_step_event(
         host,
@@ -296,7 +306,9 @@ def _build_trimmed_request(
     )
 
 
-async def _complete_request(host: LlmStepHost, context: RunContext, request: Any) -> LlmResponse:
+async def _complete_request(
+    host: LlmStepHost, context: RunContext, request: Any
+) -> LlmResponse:
     last_timeout: httpx.TimeoutException | None = None
     for attempt in range(2):
         try:
@@ -319,27 +331,60 @@ def _token_pressure_state(token_pressure: object) -> str:
     return str(token_pressure.get("state", "ok"))
 
 
+_TOKEN_PRESSURE_SIGNAL_IDS: dict[str, str] = {
+    "warning": "context_above_soft_threshold",
+    "compact_recommended": "context_compact_recommended",
+    "blocking": "context_blocking_threshold",
+}
+
+_TOKEN_PRESSURE_SEVERITIES: dict[str, str] = {
+    "warning": "warning",
+    "compact_recommended": "warning",
+    "blocking": "critical",
+}
+
+
 def _emit_token_pressure_warning(host: LlmStepHost, context: RunContext) -> None:
     token_pressure = context.metadata.get("token_pressure", {})
     if not isinstance(token_pressure, dict):
         return
     state = str(token_pressure.get("state", "ok"))
-    if state not in {"warning", "compact_recommended", "blocking"}:
+    if state not in _TOKEN_PRESSURE_SIGNAL_IDS:
         return
+    used_tokens_raw = token_pressure.get("used_tokens_estimate")
+    window_raw = token_pressure.get("context_window_estimate")
+    used_tokens = (
+        int(used_tokens_raw) if isinstance(used_tokens_raw, (int, float)) else 0
+    )
+    window = (
+        int(window_raw) if isinstance(window_raw, (int, float)) and window_raw else 0
+    )
+    usage_ratio = round(used_tokens / window, 4) if window > 0 else None
+    payload: dict[str, Any] = {
+        "kind": "token_pressure",
+        "signal_id": _TOKEN_PRESSURE_SIGNAL_IDS[state],
+        "severity": _TOKEN_PRESSURE_SEVERITIES[state],
+        "state": state,
+        "used_tokens_estimate": token_pressure.get("used_tokens_estimate"),
+        "remaining_tokens_estimate": token_pressure.get("remaining_tokens_estimate"),
+        "context_window_estimate": token_pressure.get("context_window_estimate"),
+        "output_token_reserve": token_pressure.get("output_token_reserve"),
+        "warning_threshold": token_pressure.get("warning_threshold"),
+        "compact_threshold": token_pressure.get("compact_threshold"),
+        "blocking_threshold": token_pressure.get("blocking_threshold"),
+        "usage_ratio": usage_ratio,
+    }
     emit_step_event(
         host,
         context,
         event_type=RuntimeEventType.WARNING,
-        payload={
-            "kind": "token_pressure",
-            "state": state,
-            "used_tokens_estimate": token_pressure.get("used_tokens_estimate"),
-            "blocking_threshold": token_pressure.get("blocking_threshold"),
-        },
+        payload=payload,
     )
 
 
-def _protocol_messages_from_metadata(context: RunContext) -> tuple[ChatMessage, ...] | None:
+def _protocol_messages_from_metadata(
+    context: RunContext,
+) -> tuple[ChatMessage, ...] | None:
     payload = context.metadata.get("protocol_messages")
     if not isinstance(payload, list):
         return None
@@ -418,7 +463,9 @@ def _react_system_instruction(host: LlmStepHost, context: RunContext) -> str | N
 
         lines.append(
             react_chat_tool_policy(
-                include_scientific_python=scientific_imports_enabled(host._config.python_tool)
+                include_scientific_python=scientific_imports_enabled(
+                    host._config.python_tool
+                )
             )
         )
     python_addendum = _python_tool_addendum_if_present(host)

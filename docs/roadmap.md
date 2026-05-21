@@ -753,6 +753,16 @@ Exit criteria:
   - async generator/helper API for chat backends;
   - normalized SSE envelope (`event`, `id`, `data`, optional retry metadata);
   - reconnect/backfill behavior from persisted runtime events.
+- Add structured warning-event projection for host UIs:
+  - emit `RuntimeEventType.WARNING` with a stable `signal_id`, pre-computed
+    `severity`, all relevant thresholds, and a derived ratio (currently
+    `kind="token_pressure"` covers context-pressure signals);
+  - expose `agent_driver.adapters.project_warning_event(stream_event)` as a
+    domain-neutral helper that returns a `{kind, signal_id, severity, data}`
+    projection or `None` for non-warning / unknown-kind events;
+  - keep the human-facing vocabulary (warning ids, copy, suggestions) in the
+    host application, not in the runtime;
+  - documented in `docs/architecture/warning-events.md`.
 - Add CLI adapter baseline with smolagents-style step visibility:
   - `console_scripts` entrypoint and optional `[cli]` extras;
   - commands: `run`, `replay`, `tail`, `tree`;

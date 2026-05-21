@@ -22,6 +22,7 @@ from agent_driver.adapters.sse import (
     sse_event_stream,
     to_sse_envelope,
 )
+from agent_driver.adapters.warnings import project_warning_event
 
 __all__ = [
     "cli_follow_lines",
@@ -32,6 +33,7 @@ __all__ = [
     "cli_tree_lines",
     "is_rich_available",
     "parse_after_seq",
+    "project_warning_event",
     "render_cli_live_line",
     "render_cli_line",
     "render_rich_event",

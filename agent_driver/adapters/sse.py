@@ -1,9 +1,15 @@
-"""SSE adapter helpers over normalized stream events."""
+"""SSE adapter helpers over normalized stream events.
+
+For projecting structured ``RuntimeEventType.WARNING`` events into a stable
+shape that host applications can map to their own UI vocabulary (warning ids,
+copy, suggestions), see :func:`agent_driver.adapters.project_warning_event`
+and ``docs/architecture/warning-events.md``.
+"""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 import json
+from collections.abc import AsyncIterator
 from typing import Protocol
 
 from agent_driver.contracts.runtime import AgentRunInput
