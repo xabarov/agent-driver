@@ -418,6 +418,14 @@ Implementation notes from first cut:
 
 - Add OpenTelemetry/Phoenix exporter.
 - Add Langfuse exporter.
+- Add `span_attribute_resolver` hook on optional exporters so host
+  applications can attach domain-specific attributes (tenant ids, scan
+  profile ids, budget markers, etc.) to each span without subclassing the
+  exporter. The resolver receives `(TraceSpan, TraceExport)` and returns a
+  `dict[str, str | int | float | bool]`; non-primitive values and
+  non-string keys are silently dropped, raising/non-dict returns are
+  isolated and reported via `TraceSinkResult.metadata`. Documented in
+  `docs/architecture/observability-attribute-hooks.md`.
 - Add deterministic evaluators:
   - event schema;
   - terminal state;
