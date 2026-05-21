@@ -391,6 +391,16 @@ Exit criteria:
 - Implement `ResumeCommand`.
 - Support approve/reject/edit/cancel/clarify flows.
 - Add UI-facing approval payload shape.
+- Add host HTTP-payload normalizers for HITL endpoints:
+  - `agent_driver.sdk.resume_command_from_payload(payload, ...)` accepts
+    explicit action strings, legacy integer choices (1/2/3), and opaque
+    `resume` / `answer` / `value` fields with a customizable
+    `value_to_action` resolver; type and invariant errors surface as
+    `ValueError` / `TypeError` so the host returns 400 deterministically;
+  - `agent_driver.sdk.interrupt_to_stream_event(interrupt, ...)` projects
+    an `InterruptRequest` into a transport-neutral dict that hosts wrap
+    in their own SSE/WebSocket envelope (e.g. `plan.proposed`);
+  - documented in `docs/architecture/hitl-host-mapping.md`.
 
 Exit criteria:
 
