@@ -146,6 +146,23 @@ Exit criteria:
   - per-tool timeout;
   - structured errors;
   - output budgets.
+- Add policy-aware tool-choice scoring and antipattern detection in
+  `agent_driver.tools.policy.scoring`:
+  - `ToolChoicePolicyRegistry` composes plain-callable preference rules
+    (return `(score_delta, reason)`) and antipattern rules (return
+    `AntipatternMatch | None`) with isolated failure handling
+    (`rule_error:<id>:<Exc>` and `rule_invalid_delta:<id>` synthetic
+    reasons; synthetic `rule_error:<id>` / `rule_invalid_return:<id>`
+    antipattern matches);
+  - reference built-ins ship one rule per direction
+    (`prefer_specialized_over_generic` via `manifest.metadata["capabilities"]`
+    and `generic_after_specialized_search` with configurable name sets);
+  - `antipattern_to_warning_payload(match)` projects into the same
+    `RuntimeEventType.WARNING` contract used by `kind="token_pressure"`,
+    and `agent_driver.adapters.project_warning_event` recognizes the
+    new `kind="tool_choice_antipattern"` so SSE consumers get one
+    stable warning vocabulary;
+  - documented in `docs/architecture/tool-choice-policy.md`.
 - Add guardrail pipeline:
   - input;
   - prompt/context;

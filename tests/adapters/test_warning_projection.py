@@ -133,6 +133,31 @@ def test_token_pressure_compact_recommended_severity_warning() -> None:
     assert projection["data"]["state"] == "compact_recommended"
 
 
+def test_tool_choice_antipattern_projection() -> None:
+    """Projector recognizes kind=tool_choice_antipattern and copies known fields."""
+    event = _make_event(
+        event="warning",
+        data={
+            "kind": "tool_choice_antipattern",
+            "signal_id": "generic_after_specialized_search",
+            "severity": "warning",
+            "description": "shell after specialized search",
+            "matched_recent_tool": "tool_search",
+            "matched_current_tool": "bash",
+            "rule_metadata": {"trace": "operator"},
+        },
+    )
+    projection = project_warning_event(event)
+    assert projection is not None
+    assert projection["kind"] == "tool_choice_antipattern"
+    assert projection["signal_id"] == "generic_after_specialized_search"
+    assert projection["severity"] == "warning"
+    data = projection["data"]
+    assert data["matched_recent_tool"] == "tool_search"
+    assert data["matched_current_tool"] == "bash"
+    assert data["rule_metadata"] == {"trace": "operator"}
+
+
 def test_projection_omits_missing_fields() -> None:
     """Optional fields not in payload should not appear in projection.data."""
     event = _make_event(

@@ -18,6 +18,13 @@ For ``kind="token_pressure"``:
 - ``context_blocking_threshold`` — context usage approached the blocking
   threshold; the runtime may refuse further LLM calls until compaction runs.
 
+For ``kind="tool_choice_antipattern"``:
+
+- ``signal_id`` comes from the ``AntipatternMatch.pattern_id`` registered
+  by the host. The shipped reference rule emits
+  ``generic_after_specialized_search`` when a generic-shell tool is chosen
+  immediately after a specialized search call.
+
 Each signal carries a precomputed ``severity`` (``info|warning|critical``) and
 the raw thresholds (``warning_threshold``, ``compact_threshold``,
 ``blocking_threshold``, ``context_window_estimate``, ``output_token_reserve``)
@@ -70,6 +77,20 @@ _TOKEN_PRESSURE_FIELDS: tuple[str, ...] = (
     "usage_ratio",
 )
 
+_TOOL_CHOICE_ANTIPATTERN_FIELDS: tuple[str, ...] = (
+    "signal_id",
+    "severity",
+    "description",
+    "matched_recent_tool",
+    "matched_current_tool",
+    "rule_metadata",
+)
+
+_KNOWN_KIND_FIELDS: dict[str, tuple[str, ...]] = {
+    "token_pressure": _TOKEN_PRESSURE_FIELDS,
+    "tool_choice_antipattern": _TOOL_CHOICE_ANTIPATTERN_FIELDS,
+}
+
 
 def project_warning_event(event: RunStreamEvent) -> dict[str, Any] | None:
     """Return a stable warning projection or ``None`` for non-warning events.
@@ -95,16 +116,17 @@ def project_warning_event(event: RunStreamEvent) -> dict[str, Any] | None:
     if not isinstance(payload, dict):
         return None
     kind = payload.get("kind")
-    if kind != "token_pressure":
+    if not isinstance(kind, str) or kind not in _KNOWN_KIND_FIELDS:
         return None
     signal_id = payload.get("signal_id")
     severity = payload.get("severity")
     if not isinstance(signal_id, str) or not isinstance(severity, str):
         return None
+    fields = _KNOWN_KIND_FIELDS[kind]
     data: dict[str, Any] = {}
-    for field in _TOKEN_PRESSURE_FIELDS:
-        if field in payload:
-            data[field] = payload[field]
+    for field_name in fields:
+        if field_name in payload:
+            data[field_name] = payload[field_name]
     return {
         "kind": kind,
         "signal_id": signal_id,
