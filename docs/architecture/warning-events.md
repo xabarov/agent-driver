@@ -5,6 +5,11 @@ by the runtime and the domain-neutral projection helper that host applications
 can use to bridge them into their own user-facing channels (SSE, WebSocket,
 CLI, etc.).
 
+The same family also carries the compaction-related signals
+(`compaction_circuit_breaker`) — every WARNING kind the runtime emits goes
+through `project_warning_event` so SSE consumers handle one stable
+projection shape across all kinds.
+
 ## Status
 
 - Implemented: token-pressure warnings emitted from the LLM step (see
@@ -138,6 +143,33 @@ yield {
 ```
 
 The vocabulary table belongs to the host, not the runtime.
+
+## Compaction outcome events
+
+`RuntimeEventType.MEMORY_COMPACTED` events carry a stable
+`outcome: "skipped" | "successful" | "failed"` field plus a
+`compaction_state` snapshot (`consecutive_failures`, `failure_limit`,
+`circuit_breaker_open`, `lock_active`). Host applications increment
+runtime metrics on every emission without parsing the variant-specific
+fields:
+
+```python
+def on_memory_compacted(event):
+    payload = event.data
+    outcome = payload["outcome"]           # skipped|successful|failed
+    mode = payload["mode"]                 # session_memory|llm_full|partial|...
+    metrics.compaction_outcome(outcome=outcome, mode=mode)
+    state = payload["compaction_state"]
+    if state["circuit_breaker_open"]:
+        # circuit-breaker is open after this attempt
+        metrics.compaction_circuit_breaker(state="open")
+```
+
+When the circuit breaker transitions from closed to open within a
+compaction attempt, the runtime additionally emits a
+`RuntimeEventType.WARNING` event with `kind="compaction_circuit_breaker"`
+so hosts can fire a single alert per transition (instead of polling
+`compaction_state` after every attempt).
 
 ## Adding new warning kinds
 

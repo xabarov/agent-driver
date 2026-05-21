@@ -25,6 +25,13 @@ For ``kind="tool_choice_antipattern"``:
   ``generic_after_specialized_search`` when a generic-shell tool is chosen
   immediately after a specialized search call.
 
+For ``kind="compaction_circuit_breaker"``:
+
+- ``compaction_circuit_breaker_open`` — emitted on the transition step
+  when consecutive compaction failures reached the configured failure
+  limit; the payload carries the failure counter snapshot
+  (``consecutive_failures`` and ``failure_limit``).
+
 Each signal carries a precomputed ``severity`` (``info|warning|critical``) and
 the raw thresholds (``warning_threshold``, ``compact_threshold``,
 ``blocking_threshold``, ``context_window_estimate``, ``output_token_reserve``)
@@ -86,9 +93,18 @@ _TOOL_CHOICE_ANTIPATTERN_FIELDS: tuple[str, ...] = (
     "rule_metadata",
 )
 
+_COMPACTION_CIRCUIT_BREAKER_FIELDS: tuple[str, ...] = (
+    "signal_id",
+    "severity",
+    "description",
+    "consecutive_failures",
+    "failure_limit",
+)
+
 _KNOWN_KIND_FIELDS: dict[str, tuple[str, ...]] = {
     "token_pressure": _TOKEN_PRESSURE_FIELDS,
     "tool_choice_antipattern": _TOOL_CHOICE_ANTIPATTERN_FIELDS,
+    "compaction_circuit_breaker": _COMPACTION_CIRCUIT_BREAKER_FIELDS,
 }
 
 

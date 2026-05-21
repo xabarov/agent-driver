@@ -10,19 +10,24 @@ from agent_driver.context import (
     COMPACTION_FAILURES_KEY,
     COMPACTION_RESULT_KEY,
     CompactionOrchestrator,
-    build_session_memory_compaction,
+    apply_post_compact_cleanup,
     build_partial_compaction,
+    build_session_memory_compaction,
     evaluate_session_memory_freshness,
     load_session_memory,
-    apply_post_compact_cleanup,
     ptl_retry_drop_oldest_groups,
     run_full_llm_compaction,
     sanitize_compaction_text,
 )
+from agent_driver.contracts import CompactionDecision
 from agent_driver.contracts.enums import RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.contracts import CompactionDecision
-from agent_driver.runtime.single_agent.types import EventSpec, RunContext, RunnerConfig, RunnerDeps
+from agent_driver.runtime.single_agent.types import (
+    EventSpec,
+    RunContext,
+    RunnerConfig,
+    RunnerDeps,
+)
 
 
 class CompactionStageHost(Protocol):
@@ -34,6 +39,74 @@ class CompactionStageHost(Protocol):
 
     def _get_compaction_orchestrator(self) -> CompactionOrchestrator: ...
     def _emit(self, event: EventSpec) -> None: ...
+
+
+def _emit_compaction_outcome(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    outcome: str,
+    payload_extras: dict[str, Any],
+    orchestrator: CompactionOrchestrator,
+) -> None:
+    """Emit MEMORY_COMPACTED with a stable outcome tag and orchestrator state.
+
+    `outcome` is one of: ``"skipped"``, ``"successful"``, ``"failed"``. Hosts
+    use this field to bucket runtime metrics (skipped/successful/failed
+    counters) without parsing the union of historical payload shapes. The
+    orchestrator state is forwarded so a host can detect circuit-breaker
+    transitions without keeping its own copy of the counters.
+    """
+    payload: dict[str, Any] = {"outcome": outcome}
+    payload.update(payload_extras)
+    payload["compaction_state"] = orchestrator.state_snapshot()
+    host._emit(
+        EventSpec(
+            run_id=context.run_id,
+            attempt_id=context.attempt_id,
+            event_type=RuntimeEventType.MEMORY_COMPACTED,
+            payload=payload,
+        )
+    )
+
+
+def _maybe_emit_circuit_breaker_warning(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    before_open: bool,
+    orchestrator: CompactionOrchestrator,
+) -> None:
+    """Emit a WARNING when consecutive_failures crossed failure_limit on this attempt.
+
+    The event uses ``kind="compaction_circuit_breaker"`` so it projects
+    through the existing :func:`agent_driver.adapters.project_warning_event`
+    helper alongside ``token_pressure`` and ``tool_choice_antipattern``
+    warnings, keeping one stable warning vocabulary for SSE consumers.
+    """
+    state = orchestrator.state_snapshot()
+    after_open = bool(state.get("circuit_breaker_open"))
+    if after_open and not before_open:
+        host._emit(
+            EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType.WARNING,
+                payload={
+                    "kind": "compaction_circuit_breaker",
+                    "signal_id": "compaction_circuit_breaker_open",
+                    "severity": "critical",
+                    "description": (
+                        "compaction circuit breaker opened: "
+                        f"{state.get('consecutive_failures')} consecutive failures "
+                        f"reached the configured limit of "
+                        f"{state.get('failure_limit')}"
+                    ),
+                    "consecutive_failures": state.get("consecutive_failures"),
+                    "failure_limit": state.get("failure_limit"),
+                },
+            )
+        )
 
 
 async def apply_compaction_if_eligible(
@@ -59,11 +132,25 @@ async def apply_compaction_if_eligible(
     context.metadata[COMPACTION_DECISION_KEY] = decision.model_dump(mode="json")
     if not decision.eligible:
         context.metadata[COMPACTION_FAILURES_KEY] = []
-    if not decision.eligible:
         context.metadata[COMPACTION_AUDIT_KEY] = {
             "decision": context.metadata[COMPACTION_DECISION_KEY]
         }
+        skip_payload: dict[str, Any] = {
+            "mode": decision.mode.value,
+        }
+        if decision.skip_reason is not None:
+            skip_payload["skip_reason"] = decision.skip_reason.value
+        _emit_compaction_outcome(
+            host,
+            context=context,
+            outcome="skipped",
+            payload_extras=skip_payload,
+            orchestrator=orchestrator,
+        )
         return
+    circuit_breaker_open_before = bool(
+        orchestrator.state_snapshot().get("circuit_breaker_open")
+    )
     compaction_id = orchestrator.start_attempt()
     context.metadata["active_compaction_id"] = compaction_id
     attempted_llm_full = False
@@ -76,6 +163,7 @@ async def apply_compaction_if_eligible(
             orchestrator=orchestrator,
             decision=decision,
             compaction_id=compaction_id,
+            circuit_breaker_open_before=circuit_breaker_open_before,
         ):
             return
         if host._config.enable_llm_compaction:
@@ -87,6 +175,7 @@ async def apply_compaction_if_eligible(
                 orchestrator=orchestrator,
                 decision=decision,
                 compaction_id=compaction_id,
+                circuit_breaker_open_before=circuit_breaker_open_before,
             ):
                 return
     if decision.mode.value == "llm_full":
@@ -98,12 +187,12 @@ async def apply_compaction_if_eligible(
             orchestrator=orchestrator,
             decision=decision,
             compaction_id=compaction_id,
+            circuit_breaker_open_before=circuit_breaker_open_before,
         ):
             return
     if host._config.enable_partial_compaction and (
-        decision.mode.value == "partial" or (
-            decision.mode.value != "partial" and not attempted_llm_full
-        )
+        decision.mode.value == "partial"
+        or (decision.mode.value != "partial" and not attempted_llm_full)
     ):
         if await _apply_partial_compaction(
             host,
@@ -112,6 +201,7 @@ async def apply_compaction_if_eligible(
             orchestrator=orchestrator,
             decision=decision,
             compaction_id=compaction_id,
+            circuit_breaker_open_before=circuit_breaker_open_before,
         ):
             return
     failure = {
@@ -126,6 +216,24 @@ async def apply_compaction_if_eligible(
     context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
     context.metadata[COMPACTION_RESULT_KEY] = None
     context.metadata[COMPACTION_FAILURES_KEY] = [failure]
+    _emit_compaction_outcome(
+        host,
+        context=context,
+        outcome="failed",
+        payload_extras={
+            "mode": decision.mode.value,
+            "compaction_id": compaction_id,
+            "failure_kind": failure["kind"],
+            "failure_message": failure["message"],
+        },
+        orchestrator=orchestrator,
+    )
+    _maybe_emit_circuit_breaker_warning(
+        host,
+        context=context,
+        before_open=circuit_breaker_open_before,
+        orchestrator=orchestrator,
+    )
 
 
 async def _apply_session_memory_compaction(
@@ -137,6 +245,7 @@ async def _apply_session_memory_compaction(
     orchestrator: CompactionOrchestrator,
     decision: CompactionDecision,
     compaction_id: str,
+    circuit_breaker_open_before: bool,
 ) -> bool:
     freshness = evaluate_session_memory_freshness(
         session_memory=session_memory,
@@ -191,23 +300,29 @@ async def _apply_session_memory_compaction(
         "reinjected_keys": list(cleanup.reinjected_keys),
     }
     context.metadata[COMPACTION_FAILURES_KEY] = []
-    host._emit(
-        EventSpec(
-            run_id=context.run_id,
-            attempt_id=context.attempt_id,
-            event_type=RuntimeEventType.MEMORY_COMPACTED,
-            payload={
-                "mode": "session_memory",
-                "retained_digest_ids": compacted.retained_digest_ids,
-                "retained_artifact_ids": compacted.retained_artifact_ids,
-            },
-        )
-    )
     audit = orchestrator.complete_attempt(
         decision=decision,
         result=_result_from_payload(result_payload),
     )
     context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+    _emit_compaction_outcome(
+        host,
+        context=context,
+        outcome="successful",
+        payload_extras={
+            "mode": "session_memory",
+            "compaction_id": compaction_id,
+            "retained_digest_ids": compacted.retained_digest_ids,
+            "retained_artifact_ids": compacted.retained_artifact_ids,
+        },
+        orchestrator=orchestrator,
+    )
+    _maybe_emit_circuit_breaker_warning(
+        host,
+        context=context,
+        before_open=circuit_breaker_open_before,
+        orchestrator=orchestrator,
+    )
     return True
 
 
@@ -219,6 +334,7 @@ async def _apply_llm_full_compaction(
     orchestrator: CompactionOrchestrator,
     decision: CompactionDecision,
     compaction_id: str,
+    circuit_breaker_open_before: bool,
 ) -> bool:
     raw_groups = [str(message.content) for message in request.messages[-8:]]
     kept_groups = list(raw_groups)
@@ -254,6 +370,24 @@ async def _apply_llm_full_compaction(
             else None
         )
         context.metadata[COMPACTION_FAILURES_KEY] = [failure]
+        _emit_compaction_outcome(
+            host,
+            context=context,
+            outcome="failed",
+            payload_extras={
+                "mode": "llm_full",
+                "compaction_id": compaction_id,
+                "failure_kind": failure["kind"],
+                "failure_message": failure["message"],
+            },
+            orchestrator=orchestrator,
+        )
+        _maybe_emit_circuit_breaker_warning(
+            host,
+            context=context,
+            before_open=circuit_breaker_open_before,
+            orchestrator=orchestrator,
+        )
         return True
     compaction_result = compaction_result.model_copy(
         update={"compaction_id": compaction_id}
@@ -289,25 +423,31 @@ async def _apply_llm_full_compaction(
         "reinjected_keys": list(cleanup.reinjected_keys),
     }
     context.metadata[COMPACTION_FAILURES_KEY] = []
-    host._emit(
-        EventSpec(
-            run_id=context.run_id,
-            attempt_id=context.attempt_id,
-            event_type=RuntimeEventType.MEMORY_COMPACTED,
-            payload={
-                "mode": "llm_full",
-                "model": compaction_result.model,
-                "latency_ms": compaction_result.latency_ms,
-                "input_tokens_estimate": compaction_result.input_tokens_estimate,
-                "output_tokens_estimate": compaction_result.output_tokens_estimate,
-            },
-        )
-    )
     audit = orchestrator.complete_attempt(
         decision=decision,
         result=compaction_result,
     )
     context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+    _emit_compaction_outcome(
+        host,
+        context=context,
+        outcome="successful",
+        payload_extras={
+            "mode": "llm_full",
+            "compaction_id": compaction_id,
+            "model": compaction_result.model,
+            "latency_ms": compaction_result.latency_ms,
+            "input_tokens_estimate": compaction_result.input_tokens_estimate,
+            "output_tokens_estimate": compaction_result.output_tokens_estimate,
+        },
+        orchestrator=orchestrator,
+    )
+    _maybe_emit_circuit_breaker_warning(
+        host,
+        context=context,
+        before_open=circuit_breaker_open_before,
+        orchestrator=orchestrator,
+    )
     return True
 
 
@@ -319,6 +459,7 @@ async def _apply_partial_compaction(
     orchestrator: CompactionOrchestrator,
     decision: CompactionDecision,
     compaction_id: str,
+    circuit_breaker_open_before: bool,
 ) -> bool:
     compacted = build_partial_compaction(
         messages=[msg.model_dump(mode="json") for msg in request.messages],
@@ -345,24 +486,30 @@ async def _apply_partial_compaction(
         "cleaned_keys": list(cleanup.cleaned_keys),
         "reinjected_keys": list(cleanup.reinjected_keys),
     }
-    host._emit(
-        EventSpec(
-            run_id=context.run_id,
-            attempt_id=context.attempt_id,
-            event_type=RuntimeEventType.MEMORY_COMPACTED,
-            payload={
-                "mode": "partial",
-                "summarized_message_count": compacted.metadata.get(
-                    "summarized_message_count"
-                ),
-            },
-        )
-    )
     audit = orchestrator.complete_attempt(
         decision=decision,
         result=_result_from_payload(result_payload),
     )
     context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+    _emit_compaction_outcome(
+        host,
+        context=context,
+        outcome="successful",
+        payload_extras={
+            "mode": "partial",
+            "compaction_id": compaction_id,
+            "summarized_message_count": compacted.metadata.get(
+                "summarized_message_count"
+            ),
+        },
+        orchestrator=orchestrator,
+    )
+    _maybe_emit_circuit_breaker_warning(
+        host,
+        context=context,
+        before_open=circuit_breaker_open_before,
+        orchestrator=orchestrator,
+    )
     return True
 
 
@@ -379,9 +526,7 @@ def _result_from_payload(payload: dict[str, Any]):
         mode=mode,
         success=bool(payload.get("success", False)),
         metadata=(
-            payload.get("metadata")
-            if isinstance(payload.get("metadata"), dict)
-            else {}
+            payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
         ),
         retained_digest_ids=[
             str(item) for item in payload.get("retained_digest_ids", []) if item

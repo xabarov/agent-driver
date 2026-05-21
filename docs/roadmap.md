@@ -668,7 +668,17 @@ Implementation notes from follow-up pass (7.3/7.4):
   - warning/error/compact thresholds;
   - output-token reserve per model/profile;
   - circuit breaker after repeated compaction failures;
-  - trace events for skipped, successful, and failed compactions.
+  - trace events for skipped, successful, and failed compactions
+    (emit `RuntimeEventType.MEMORY_COMPACTED` with a stable
+    `outcome="skipped"|"successful"|"failed"` plus a
+    `compaction_state` snapshot from the orchestrator so hosts can
+    bucket Prometheus counters without parsing per-mode payload fields,
+    and emit `RuntimeEventType.WARNING` with
+    `kind="compaction_circuit_breaker"` /
+    `signal_id="compaction_circuit_breaker_open"` on the closed→open
+    transition; both projections recognized by
+    `agent_driver.adapters.project_warning_event`; documented in
+    `docs/architecture/warning-events.md`).
 
 Exit criteria:
 
