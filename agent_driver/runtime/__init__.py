@@ -3,6 +3,16 @@
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
 from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
 from agent_driver.runtime.events import InMemoryEventLog
+from agent_driver.runtime.postgres_store import (
+    POSTGRES_CAPABILITIES,
+)
+from agent_driver.runtime.postgres_store import (
+    SCHEMA_VERSION as POSTGRES_SCHEMA_VERSION,
+)
+from agent_driver.runtime.postgres_store import (
+    PostgresRuntimeStore,
+    PostgresRuntimeStoreConfig,
+)
 from agent_driver.runtime.runner import FakeSingleStepRunner, SingleAgentRunner
 from agent_driver.runtime.single_agent.types import RunnerConfig, RuntimeStepResult
 from agent_driver.runtime.sqlite_store import SqliteRuntimeStore
@@ -29,6 +39,10 @@ __all__ = [
     "RuntimeStepResult",
     "InMemoryCheckpointStore",
     "InMemoryEventLog",
+    "POSTGRES_CAPABILITIES",
+    "POSTGRES_SCHEMA_VERSION",
+    "PostgresRuntimeStore",
+    "PostgresRuntimeStoreConfig",
     "SqliteRuntimeStore",
     "MissingCheckpointError",
     "RuntimeExecutionError",
