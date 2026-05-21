@@ -339,6 +339,20 @@ SDK ergonomics and user extension backlog (Phase 3 follow-up):
     mode, timeouts, output budgets, and supported profiles;
   - validation that generated model-facing docs include argument descriptions and
     failure remediation hints.
+- Add a declarative external-contract registration path (for hosts whose tool
+  catalogue is already a structured spec, not Python functions):
+  - `manifest_from_contract(contract: Mapping) -> ToolManifest` accepts a
+    flexible mapping (name, description, risk/intrusiveness aliases,
+    side-effect, approval hints, timeouts, schemas, supported profiles,
+    metadata) and normalizes it into a validated manifest;
+  - `register_contract_tool(registry, contract, async_handler)` wires the
+    manifest with a caller-supplied async handler;
+  - host-specific extras (`queue_category`, `intrusiveness`, `cost`,
+    `requires_trigger`, `capabilities`, `stage_tags`, etc.) pass through
+    `metadata` verbatim without becoming first-class fields;
+  - tool ids with characters incompatible with Python identifiers (hyphens,
+    dots) auto-drop the `code_agent` profile from `supported_profiles`;
+  - unknown top-level keys raise to catch contract drift early.
 - Add external-user examples that demonstrate:
   - agent with no tools;
   - agent with exactly one custom tool;
