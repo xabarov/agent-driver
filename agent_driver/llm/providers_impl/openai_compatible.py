@@ -297,6 +297,7 @@ class OpenAICompatibleProvider(ProviderBase):
         self._api_key = config.api_key or ""
         self._model = config.model
         self._timeout_s = config.timeout_s
+        self._extra_body: dict[str, Any] = dict(config.extra_body or {})
 
     @dataclass(slots=True)
     class Config:
@@ -309,6 +310,14 @@ class OpenAICompatibleProvider(ProviderBase):
         timeout_s: float = 30.0
         cost_per_1k_tokens: float = 0.0
         http_client_config: HttpClientConfig | None = None
+        # Vendor-specific extra fields merged into every chat/completions
+        # request body (e.g. vLLM ``chat_template_kwargs`` for Qwen3
+        # ``enable_thinking``, OpenRouter ``provider`` routing hints,
+        # Anthropic ``system`` overrides). Shallow-merged into the
+        # payload after the standard fields are built, so vendor keys
+        # take precedence on collision — keep this dict to vendor-only
+        # keys to avoid clobbering ``messages`` / ``model`` / ``stream``.
+        extra_body: dict[str, Any] | None = None
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -349,6 +358,12 @@ class OpenAICompatibleProvider(ProviderBase):
             )
         elif request.tool_choice is not None:
             payload["tool_choice"] = request.tool_choice
+        # Vendor-specific extras (e.g. vLLM ``chat_template_kwargs``,
+        # OpenRouter ``provider`` hints) — merged last so they win on
+        # collision with the standard openai-compat keys.
+        if self._extra_body:
+            for key, value in self._extra_body.items():
+                payload[key] = value
         return payload
 
     async def healthcheck(self) -> ProviderStatus:
