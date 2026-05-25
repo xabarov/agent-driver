@@ -41,11 +41,33 @@ def emit_token_delta_events(
         )
 
 
+def emit_reasoning_delta_events(
+    host: StreamingHost, context: RunContext, chunks: list[str], *, start_index: int = 0
+) -> None:
+    """Emit reasoning-channel delta events (vLLM/Qwen3 chain-of-thought).
+
+    Parallel to ``emit_token_delta_events`` — chunks come from
+    ``LlmStreamEvent.delta_reasoning`` (i.e. ``delta.reasoning_content``
+    when the provider supports it). Consumers route these into a
+    separate reasoning surface (ZION ``ChatReasoning``).
+    """
+    for index, chunk in enumerate(chunks, start=start_index):
+        if not chunk:
+            continue
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.REASONING_DELTA,
+            payload={"index": index, "delta_reasoning": chunk},
+        )
+
+
 async def complete_streaming_request(
     host: StreamingHost, context: RunContext, request: Any
 ) -> LlmResponse:
     """Collect streaming provider deltas into one normalized LlmResponse."""
     delta_chunks: list[str] = []
+    reasoning_chunks: list[str] = []
     usage = UsageSummary()
     finish_reason = LlmFinishReason.UNKNOWN
     provider_name = host._deps.provider.name
@@ -57,6 +79,15 @@ async def complete_streaming_request(
             delta_chunks.append(chunk)
             emit_token_delta_events(
                 host, context, [chunk], start_index=len(delta_chunks) - 1
+            )
+        reasoning_chunk = item.delta_reasoning or ""
+        if reasoning_chunk:
+            reasoning_chunks.append(reasoning_chunk)
+            emit_reasoning_delta_events(
+                host,
+                context,
+                [reasoning_chunk],
+                start_index=len(reasoning_chunks) - 1,
             )
         if isinstance(item.metadata, dict):
             if "planned_tool_calls" in item.metadata:
@@ -88,6 +119,7 @@ async def complete_streaming_request(
 
 __all__ = [
     "complete_streaming_request",
+    "emit_reasoning_delta_events",
     "emit_token_delta_events",
     "is_stream_enabled",
 ]

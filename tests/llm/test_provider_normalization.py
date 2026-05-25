@@ -155,6 +155,40 @@ def test_openai_stream_chunk_normalization_from_fixture() -> None:
     assert "provider_usage_raw" in event.metadata
 
 
+def test_openai_stream_chunk_extracts_reasoning_content() -> None:
+    """vLLM/Qwen3 + DeepSeek-R1 surface chain-of-thought in
+    ``delta.reasoning_content`` parallel to ``delta.content``. The
+    normalizer must expose it on ``LlmStreamEvent.delta_reasoning``."""
+    chunk = {
+        "model": "qwen3-think",
+        "choices": [
+            {
+                "delta": {
+                    "content": "answer fragment",
+                    "reasoning_content": "thinking step…",
+                },
+                "finish_reason": None,
+            }
+        ],
+    }
+    event = normalize_openai_stream_chunk(
+        chunk, provider_name="openai-compat", fallback_model="fallback"
+    )
+    assert event.delta_text == "answer fragment"
+    assert event.delta_reasoning == "thinking step…"
+
+
+def test_openai_stream_chunk_reasoning_absent_when_no_field() -> None:
+    chunk = {
+        "model": "no-think",
+        "choices": [{"delta": {"content": "x"}, "finish_reason": None}],
+    }
+    event = normalize_openai_stream_chunk(
+        chunk, provider_name="openai-compat", fallback_model="fallback"
+    )
+    assert event.delta_reasoning == ""
+
+
 def test_openai_stream_chunk_fallback_parses_text_form_tool_call() -> None:
     """Stream chunk parser should detect text-form tool calls in delta content."""
     chunk = {

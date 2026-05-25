@@ -45,6 +45,7 @@ class RuntimeEventType(StrEnum):
     LLM_CALL_COMPLETED = "llm_call_completed"
     LLM_REQUEST_REJECTED = "llm_request_rejected"
     TOKEN_DELTA = "token_delta"
+    REASONING_DELTA = "reasoning_delta"
     TOOL_CALL_STARTED = "tool_call_started"
     TOOL_CALL_COMPLETED = "tool_call_completed"
     GUARDRAIL_DECISION = "guardrail_decision"

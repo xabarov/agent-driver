@@ -242,6 +242,10 @@ def normalize_openai_stream_chunk(
     choice = payload.get("choices", [{}])[0]
     delta = choice.get("delta", {}) if isinstance(choice, dict) else {}
     text = str(delta.get("content", "") or "")
+    # vLLM-served Qwen3 + DeepSeek-R1 surface chain-of-thought in a
+    # separate ``reasoning_content`` field (parallel to ``content``);
+    # capture it so consumers can render a separate reasoning channel.
+    reasoning = str(delta.get("reasoning_content", "") or "")
     finish_reason = _map_finish_reason(choice.get("finish_reason"))
     usage = (
         _extract_usage(
@@ -272,6 +276,7 @@ def normalize_openai_stream_chunk(
     return LlmStreamEvent(
         event="delta",
         delta_text=text,
+        delta_reasoning=reasoning,
         finish_reason=(
             finish_reason if finish_reason != LlmFinishReason.UNKNOWN else None
         ),

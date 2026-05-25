@@ -129,6 +129,10 @@ class LlmStreamEvent(ContractModel):
 
     event: str
     delta_text: str = ""
+    # Vendor-specific "thinking" channel (vLLM ``delta.reasoning_content``
+    # for Qwen3 enable_thinking, DeepSeek-R1, …). Streamed in parallel
+    # with ``delta_text`` — empty for providers that don't emit reasoning.
+    delta_reasoning: str = ""
     finish_reason: LlmFinishReason | None = None
     usage: UsageSummary | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
