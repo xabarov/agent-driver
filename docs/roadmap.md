@@ -989,7 +989,7 @@ Implementation notes from first cut:
 - Postgres support is optional extra dependency (`.[postgres]`), base install remains lightweight;
 - live PostgreSQL checks remain opt-in and skipped by default without env/DSN.
 
-## Phase 11: OpenClaude-derived improvements (Added 2026-05-26)
+## Phase 11: OpenClaude-derived improvements (Landed 2026-05-26)
 
 Context: OpenClaude (https://github.com/Gitlawb/openclaude, MIT) is the
 upstream reference for context-engineering and chat-CLI ergonomics that
@@ -1006,6 +1006,23 @@ P5o Priority №4 chat track (and the recon_v3 / Chat v2 timelines)
 benefit directly from the items below; see
 `docs/design/similar_system_design/unified-plan.md` §3 P3a wave 2 in
 that repo for the ZION-side rationale.
+
+**Status (2026-05-26):** All six items landed end-to-end. Test
+coverage: 135 cases across H12–H17 + regression on existing executor
+suite. Commits (on `main`): `20adfdc` H12, `0cf602c` H16, `2795d6c`
+H15, `af94155` H17 (contract), `575fdb4` H13, `66a5e27` H14
+(detector + accounting). H14 retry-loop wiring in ``llm_step``
+deferred to H14b follow-up — the detector/accounting layer is the
+prerequisite and is now in place.
+
+| # | Status | Surface |
+|---|--------|---------|
+| H12 | **landed** | `ToolManifest.concurrency_safe` + `is_concurrency_safe()` + `agent_driver.tools.executor.partition`; `GovernedToolExecutor` batches via `asyncio.gather` capped by `AGENT_DRIVER_TOOL_CONCURRENCY` (default 8). |
+| H13 | **landed** | `AllowedPrompt` + matcher; `InterruptRequest.proposed_prompts`; `ResumeCommand.approved_prompts`; executor consults `AgentRunInput.app_metadata["approved_prompts"]` and collapses INTERRUPT → ALLOW on category match. |
+| H14 | **landed** (detector + accounting; retry-loop wiring → H14b follow-up) | `agent_driver.runtime.single_agent.context_window_recovery` with `is_context_window_error()`, `record_reactive_compaction()`, `should_escalate()`, `REACTIVE_COMPACTION_MAX_ATTEMPTS=2`. |
+| H15 | **landed** | `agent_driver.contracts.hooks.ToolHook` Protocol + `BaseToolHook`; `GovernedToolExecutor(tool_hooks=[...])`. Pre-hook runs before partition, post-hook after each envelope; chain with per-hook error isolation. |
+| H16 | **landed** | `agent_driver.tools.context.ToolProgress` + `report_tool_progress()` + `tool_progress_scope()`; `RuntimeEventType.TOOL_PROGRESS`; `GovernedExecutionResult.progress_events`. |
+| H17 | **landed** (contract + resolver; runtime cancel/block wiring → H17b follow-up) | `ToolManifest.interrupt_behavior` + `resolved_interrupt_behavior()`. |
 
 ### H12 — Concurrent tool execution partitioning
 
