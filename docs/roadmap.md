@@ -988,3 +988,205 @@ Implementation notes from first cut:
 - runtime now includes store factory + env config + preflight helper for app integration;
 - Postgres support is optional extra dependency (`.[postgres]`), base install remains lightweight;
 - live PostgreSQL checks remain opt-in and skipped by default without env/DSN.
+
+## Phase 11: OpenClaude-derived improvements (Added 2026-05-26)
+
+Context: OpenClaude (https://github.com/Gitlawb/openclaude, MIT) is the
+upstream reference for context-engineering and chat-CLI ergonomics that
+shaped Phases 6 and 8. After a re-review of openclaude 0.15.0 (the
+TypeScript CLI, not the Python SDK), the items below were identified
+as additional improvements worth absorbing into agent-driver. None of
+them are blockers for downstream consumers; all are backwards
+compatible and opt-in.
+
+Downstream context: ZION
+(https://gitlab.c.com/batman/red_team_tools) is the primary user of
+agent-driver — it pins us by commit ref in `requirements.txt`. ZION's
+P5o Priority №4 chat track (and the recon_v3 / Chat v2 timelines)
+benefit directly from the items below; see
+`docs/design/similar_system_design/unified-plan.md` §3 P3a wave 2 in
+that repo for the ZION-side rationale.
+
+### H12 — Concurrent tool execution partitioning
+
+Reference: `src/services/tools/toolOrchestration.ts:19-82` in openclaude
+(`Tool.isConcurrencySafe(input) -> bool` predicate +
+`partitionConcurrentTools()` helper).
+
+Today: `GovernedExecutor` calls each tool sequentially. `ToolManifest`
+already has `idempotent: bool`; that's a property of the tool, not of
+a specific call shape.
+
+Proposal:
+
+- Add `is_concurrency_safe(input) -> bool` callable optional field to
+  `ToolManifest` (default: `manifest.idempotent and manifest.side_effect == NONE`).
+- Add `agent_driver.tools.executor.partition_concurrent_calls()` that
+  splits a batch of tool calls into a sequence of `[parallel_batch, serial_call, parallel_batch, ...]`.
+- Executor honors `CONCURRENCY_LIMIT` (default 8) when running parallel
+  batches via `asyncio.gather(..., return_exceptions=False)`.
+- All errors propagate normally; serial slot resumes after parallel
+  batch completes.
+
+Acceptance:
+
+- offline harness benchmark: 10 read-only `file_read` calls finish in
+  parallel time, not sum time.
+- govern policy guardrail still runs per-call (no batched bypass).
+
+Value/effort: HIGH value (3-5x speedup for read-heavy nodes) / LOW
+effort.
+
+### H13 — Prompt-based permissions (allowedPrompts)
+
+Reference: `src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts:64-72` in
+openclaude (`AllowedPrompt` schema + matcher).
+
+Today: HITL approves each tool call individually after policy match.
+Operator fatigue on repetitive auto-approvable categories.
+
+Proposal:
+
+- Extend `InterruptRequest` schema with optional `allowed_prompts: list[AllowedPrompt]`
+  field. Operator's `ResumeCommand.action=APPROVE` may include an
+  `approved_prompt_ids` list, which the runtime stores in run metadata.
+- Add `PromptCategoryMatcher` to `agent_driver.tools.policy`: for
+  subsequent tool calls during the same run, matcher evaluates the call
+  shape (tool_name + input pattern) against approved categories; on
+  match, runtime skips the approval interrupt.
+- Plan mode `exit_plan_mode_v2` tool already produces the structured
+  approval object — extend it to emit categories in the standardized
+  shape.
+
+Acceptance:
+
+- offline test: operator approves `{category: "run tests", patterns: [shell.command: ^npm test]}`;
+  three subsequent `shell.command(npm test ...)` calls run without
+  interrupt.
+- non-matching call (`shell.command(rm -rf /)`) still hits approval.
+
+Value/effort: MEDIUM / MEDIUM.
+
+### H14 — Reactive compaction on max_tokens API errors
+
+Reference: `src/services/compact/compact.ts` in openclaude (reactive
+compact path when API returns `max_tokens` / context-window error).
+
+Today: Phase 8 compaction triggers on proactive token-pressure
+thresholds. Edge case: tool output spike between two LLM calls can
+exceed the window before the next pressure check.
+
+Proposal:
+
+- In `agent_driver.runtime.single_agent.llm_step`, catch
+  `MaxTokensExceeded` / `context_length_exceeded` provider errors;
+- emit `RuntimeEventType.MEMORY_COMPACTED(reactive=True)`;
+- invoke the same layered compaction stack with a stricter target
+  (e.g., 50% of window vs. 75% proactive target);
+- retry the LLM call once; if still over, escalate to
+  `RuntimeEventType.RUN_FAILED(reason="context_window_exhausted")`.
+
+Acceptance:
+
+- offline test: artificial provider error injection triggers reactive
+  compaction + successful retry.
+- circuit breaker for repeat reactive compactions (max 2 per run).
+
+Value/effort: MEDIUM / MEDIUM.
+
+### H15 — PreToolUse / PostToolUse hooks
+
+Reference: `src/types/hooks.ts` in openclaude (PreToolUse / PostToolUse
+/ PermissionRequest hook events).
+
+Today: `GovernedExecutor` runs policy + guardrails (decide-only:
+block/sanitize). Cannot modify input or augment output.
+
+Proposal:
+
+- Add `agent_driver.contracts.hooks.ToolHook` Protocol with two
+  callables: `pre_tool_use(call) -> ToolCallInvocation | None` and
+  `post_tool_use(result) -> ToolCallResult | None`. Return value
+  replaces the input/output when not None.
+- Hook registration via `Agent` constructor: `tool_hooks=[hook_a, hook_b]`.
+- Hooks run in registration order; each hook sees the previous hook's
+  output. Errors are isolated per hook (deduplicated `hook_error:<Hook>`
+  warning, original input/output preserved).
+- Hooks live alongside guardrails but logically distinct: guardrails
+  are global policy, hooks are app-specific data transforms.
+
+Acceptance:
+
+- secret-redaction hook test: `pre_tool_use` strips known token
+  patterns from `shell.command` input; tool sees redacted input.
+- trace-id hook test: `post_tool_use` adds `app_trace_id` to result
+  metadata for downstream observability.
+
+Value/effort: MEDIUM / MEDIUM.
+
+### H16 — Tool progress streaming (on_progress callback)
+
+Reference: `src/services/tools/StreamingToolExecutor.ts` in openclaude
+(`onProgress` callback yields partial progress messages mid-execution).
+
+Today: Tool.execute is a single async call; output materializes only
+on return. Long-running tools (e.g., recon nmap, 15+ min) leave the
+operator without feedback.
+
+Proposal:
+
+- Optional `on_progress: ProgressCallback` parameter on
+  `Tool.execute(...)`. Tool implementations may invoke it with
+  `ToolProgress(kind: str, message: str, completion_ratio: float|None)`.
+- Runtime forwards each call as `RuntimeEventType.TOOL_PROGRESS`
+  (new) with stable `tool_call_id` correlation.
+- `RunStreamEvent` projector emits `tool_progress` envelope alongside
+  `token_delta` etc.
+
+Acceptance:
+
+- example/chat-demo: long-running tool renders periodic progress lines
+  in the CLI without buffering.
+- regression: existing tools without `on_progress` semantics are
+  unchanged.
+
+Value/effort: LOW value (UX only) / LOW effort.
+
+### H17 — Tool interrupt_behavior (cancel | block)
+
+Reference: `Tool.interruptBehavior?(): 'cancel' | 'block'` in openclaude.
+
+Today: when a new user message arrives mid-tool-execution, the runtime
+queues the message until the tool completes. No per-tool semantic.
+
+Proposal:
+
+- Add optional `interrupt_behavior: Literal["cancel", "block"]` to
+  `ToolManifest`. Default for `IRREVERSIBLE` side effects: `"block"`.
+  Default for `NONE` / `REVERSIBLE_WRITE`: `"cancel"`.
+- Runtime: on incoming user message during tool execution, if
+  `interrupt_behavior == "cancel"`, emit
+  `RuntimeEventType.TOOL_CALL_COMPLETED(status="cancelled")` and route
+  the new message immediately. If `"block"`, queue as today.
+- LLM prompt does not need awareness: cancellation surfaces as a
+  normal tool result with cancellation status.
+
+Acceptance:
+
+- offline test: read-only tool gets cancelled when a new user message
+  arrives; destructive tool blocks.
+
+Value/effort: LOW value (rare path) / LOW effort.
+
+### Phase 11 exit criteria
+
+- H12 + H16 land first (lowest risk, immediate operator UX win).
+- H13 + H15 next (semantic features, need ergonomics review).
+- H14 + H17 last (edge cases; H14 needs provider error-class survey).
+- Each item ships with offline tests + at least one example demonstrating
+  the feature in `examples/chat-demo/`.
+- No breaking changes to existing public API surface (`Agent.run`,
+  `Agent.stream`, `Agent.resume`, `ToolManifest`, `RuntimeEventType`).
+- ZION pin bump documents the new opt-in flags in
+  `docs/design/similar_system_design/unified-plan.md` §9 history when
+  consumed.
