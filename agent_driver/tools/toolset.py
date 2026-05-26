@@ -92,6 +92,57 @@ class ToolSet:
             selected.extend(_BUILTIN_PACKS[pack_name])
         return cls.only(*selected)
 
+    @classmethod
+    def from_preset(cls, name: str) -> "ToolSet":
+        """Return a ToolSet matching one of the standard governance presets.
+
+        Presets are coarse-grained tool surfaces intended for UI / config
+        layers that do not want to compose risk + side-effect + pack filters
+        from scratch. Custom selections should still use the builder API
+        (``only()`` / ``packs()`` / ``with_*()``) for finer control.
+
+        Supported names:
+
+        * ``"off"``  — no tools at all. Useful for chat-only or planning-only
+          contexts where the model must answer without invoking anything.
+        * ``"safe"`` — LOW-risk read-only / inspection tools. Tools must
+          have ``risk=LOW`` **and** ``side_effect`` in ``{NONE, READ_ONLY}``.
+          Suitable for untrusted operators or restricted demo modes.
+        * ``"dev"``  — LOW + MEDIUM risk; excludes EXTERNAL_ACTION /
+          IRREVERSIBLE_WRITE side effects (no production-mutating tools).
+          Suitable for dev consoles where mistakes should be reversible.
+        * ``"all"``  — no filter (same as ``ToolSet.all()``). Suitable for
+          trusted operators in production engagements.
+
+        Raises ``ValueError`` for unknown preset names so misconfigured UIs
+        fail loudly rather than silently selecting an empty surface.
+        """
+        key = (name or "").strip().lower()
+        if key == "off":
+            # Filter that matches nothing: empty explicit names tuple. ``names=()``
+            # is treated by ``_name_matches`` as "no name passes the filter",
+            # so the resulting registry is empty regardless of source contents.
+            return cls(names=())
+        if key == "safe":
+            return cls(
+                max_risk=ToolRisk.LOW,
+                side_effects=(SideEffectClass.NONE, SideEffectClass.READ_ONLY),
+            )
+        if key == "dev":
+            return cls(
+                max_risk=ToolRisk.MEDIUM,
+                side_effects=(
+                    SideEffectClass.NONE,
+                    SideEffectClass.READ_ONLY,
+                    SideEffectClass.REVERSIBLE_WRITE,
+                ),
+            )
+        if key == "all":
+            return cls.all()
+        raise ValueError(
+            f"unknown ToolSet preset '{name}'; expected one of off, safe, dev, all"
+        )
+
     def with_max_risk(self, max_risk: ToolRisk) -> "ToolSet":
         """Return copy capped by maximum risk."""
         return ToolSet(

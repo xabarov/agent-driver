@@ -112,3 +112,68 @@ def test_toolset_reports_unknown_names_for_validation() -> None:
     toolset = ToolSet.only("web_fetch", "missing_tool")
     missing = toolset.unknown_names(registry)
     assert missing == ("missing_tool",)
+
+
+# ---------------------------------------------------------------------------
+# from_preset — coarse-grained governance presets for UI/config layers.
+# ---------------------------------------------------------------------------
+
+
+def test_from_preset_off_selects_no_tools() -> None:
+    registry = _registry_with_defaults()
+    filtered = ToolSet.from_preset("off").apply(registry)
+    assert filtered.list_names() == []
+
+
+def test_from_preset_safe_keeps_low_risk_read_only_only() -> None:
+    registry = _registry_with_defaults()
+    filtered = ToolSet.from_preset("safe").apply(registry)
+    for registered in filtered.list_registered():
+        manifest = registered.manifest
+        assert manifest.risk == ToolRisk.LOW, manifest.name
+        assert manifest.side_effect in (
+            SideEffectClass.NONE,
+            SideEffectClass.READ_ONLY,
+        ), f"{manifest.name}: side_effect={manifest.side_effect}"
+
+
+def test_from_preset_dev_excludes_irreversible_and_external() -> None:
+    registry = _registry_with_defaults()
+    filtered = ToolSet.from_preset("dev").apply(registry)
+    for registered in filtered.list_registered():
+        manifest = registered.manifest
+        # No HIGH-risk tools in dev preset.
+        assert manifest.risk != ToolRisk.HIGH, manifest.name
+        # No irreversible / external-action side-effects.
+        assert manifest.side_effect not in (
+            SideEffectClass.IRREVERSIBLE_WRITE,
+            SideEffectClass.EXTERNAL_ACTION,
+        ), f"{manifest.name}: {manifest.side_effect}"
+
+
+def test_from_preset_all_matches_all_factory() -> None:
+    registry = _registry_with_defaults()
+    a = ToolSet.from_preset("all").apply(registry).list_names()
+    b = ToolSet.all().apply(registry).list_names()
+    assert sorted(a) == sorted(b)
+
+
+def test_from_preset_normalizes_whitespace_and_case() -> None:
+    registry = _registry_with_defaults()
+    a = ToolSet.from_preset("  SAFE  ").apply(registry).list_names()
+    b = ToolSet.from_preset("safe").apply(registry).list_names()
+    assert sorted(a) == sorted(b)
+
+
+def test_from_preset_rejects_unknown_name_with_value_error() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="unknown ToolSet preset 'wat'"):
+        ToolSet.from_preset("wat")
+
+
+def test_from_preset_safe_preserves_zero_disclosure_when_no_low_read_only() -> None:
+    """Empty source registry → empty preset surface (no exception)."""
+    empty = ToolRegistry()
+    filtered = ToolSet.from_preset("safe").apply(empty)
+    assert filtered.list_names() == []
