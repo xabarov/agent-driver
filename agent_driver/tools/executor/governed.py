@@ -7,8 +7,9 @@ import logging
 import os
 
 from agent_driver.contracts.enums import GuardrailDecision, ToolPolicyDecision
+from agent_driver.contracts.hooks import ToolHook
 from agent_driver.contracts.runtime import AgentRunInput
-from agent_driver.contracts.tools import ToolCall
+from agent_driver.contracts.tools import ToolCall, ToolResultEnvelope
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.tools.executor.allowed import execute_allowed_path
 from agent_driver.tools.executor.blocks import append_blocked_call
@@ -83,6 +84,7 @@ class GovernedToolExecutor:
         registry: ToolRegistry,
         guardrails: GuardrailPipeline | None = None,
         concurrency_limit: int | None = None,
+        tool_hooks: "list[ToolHook] | tuple[ToolHook, ...] | None" = None,
     ) -> None:
         self._registry = registry
         self._guardrails = guardrails or GuardrailPipeline()
@@ -91,6 +93,15 @@ class GovernedToolExecutor:
             if concurrency_limit is not None
             else _read_concurrency_limit_env()
         )
+        # Phase 11 H15 — chain of optional pre/post hooks. Hooks run in
+        # registration order. Failures are isolated per-hook
+        # (deduplicated WARNING log; original value preserved before
+        # entering the chain).
+        self._tool_hooks: tuple[ToolHook, ...] = tuple(tool_hooks or ())
+        self._tool_hooks_make_context = lambda call: {
+            "tool_name": call.tool_name,
+            "args": call.args,
+        }
 
     @staticmethod
     def planned_calls(llm_response: LlmResponse) -> list[ToolCall]:
@@ -123,6 +134,15 @@ class GovernedToolExecutor:
         """
         result = GovernedExecutionResult()
         planned_calls = extract_planned_tool_calls(llm_response)
+        # Phase 11 H15 — apply pre_tool_use hook chain BEFORE partition
+        # so concurrency-safety decisions see the transformed call.
+        # Hook errors are isolated; on any exception the original call
+        # for THAT hook is preserved (see ``_apply_pre_hooks``).
+        if self._tool_hooks:
+            transformed: list[ToolCall] = []
+            for call in planned_calls:
+                transformed.append(await self._apply_pre_hooks(call))
+            planned_calls = transformed
         units = partition_concurrent_calls(
             planned_calls,
             is_safe=lambda c: is_call_concurrency_safe(
@@ -162,6 +182,74 @@ class GovernedToolExecutor:
     def _lookup_manifest(self, tool_name: str):
         registered = self._registry.get(tool_name)
         return registered.manifest if registered is not None else None
+
+    async def _apply_pre_hooks(self, call: ToolCall) -> ToolCall:
+        """Phase 11 H15 — run the pre_tool_use chain.
+
+        Hooks run in registration order; each sees the previous hook's
+        output. On any hook exception the chain falls back to the
+        pre-hook value for THAT hook and continues with the next hook
+        (errors are isolated). Returns the final transformed call.
+        """
+        current = call
+        for hook in self._tool_hooks:
+            context = self._tool_hooks_make_context(current)
+            try:
+                replacement = await hook.pre_tool_use(current, context)
+            except Exception:
+                logger.warning(
+                    "tool_hook %r raised in pre_tool_use; preserving "
+                    "previous call",
+                    getattr(hook, "name", type(hook).__name__),
+                    exc_info=True,
+                )
+                continue
+            if replacement is None:
+                continue
+            if not isinstance(replacement, ToolCall):
+                logger.warning(
+                    "tool_hook %r pre_tool_use returned %r (expected "
+                    "ToolCall | None); ignoring",
+                    getattr(hook, "name", type(hook).__name__),
+                    type(replacement).__name__,
+                )
+                continue
+            current = replacement
+        return current
+
+    async def _apply_post_hooks(
+        self, envelope: ToolResultEnvelope
+    ) -> ToolResultEnvelope:
+        """Phase 11 H15 — run the post_tool_use chain (mirror of pre)."""
+        current = envelope
+        for hook in self._tool_hooks:
+            context = {
+                "tool_name": current.call.tool_name,
+                "decision": current.decision.value,
+                "guardrail_decision": current.guardrail_decision.value,
+            }
+            try:
+                replacement = await hook.post_tool_use(current, context)
+            except Exception:
+                logger.warning(
+                    "tool_hook %r raised in post_tool_use; preserving "
+                    "previous envelope",
+                    getattr(hook, "name", type(hook).__name__),
+                    exc_info=True,
+                )
+                continue
+            if replacement is None:
+                continue
+            if not isinstance(replacement, ToolResultEnvelope):
+                logger.warning(
+                    "tool_hook %r post_tool_use returned %r (expected "
+                    "ToolResultEnvelope | None); ignoring",
+                    getattr(hook, "name", type(hook).__name__),
+                    type(replacement).__name__,
+                )
+                continue
+            current = replacement
+        return current
 
     async def _execute_parallel_batch(
         self,
@@ -326,7 +414,8 @@ class GovernedToolExecutor:
                 ),
             )
             return False
-        return await execute_allowed_path(
+        envelopes_before = len(result.envelopes)
+        outcome = await execute_allowed_path(
             guardrails=self._guardrails,
             spec=AllowedSpec(
                 result=result,
@@ -338,3 +427,15 @@ class GovernedToolExecutor:
                 run_metadata=run_metadata,
             ),
         )
+        # Phase 11 H15 — apply post_tool_use hook chain to any envelope
+        # appended by ``execute_allowed_path``. We replace in place so
+        # the trace pair remains aligned. Note that block-paths
+        # (guardrail BLOCK, unregistered, etc.) also append an envelope
+        # — hooks see those too; the typical pattern is to enrich
+        # ``metadata`` regardless of decision.
+        if self._tool_hooks and len(result.envelopes) > envelopes_before:
+            for slot in range(envelopes_before, len(result.envelopes)):
+                envelope = result.envelopes[slot]
+                transformed = await self._apply_post_hooks(envelope)
+                result.envelopes[slot] = transformed
+        return outcome
