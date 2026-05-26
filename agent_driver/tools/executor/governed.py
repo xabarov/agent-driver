@@ -8,6 +8,10 @@ import os
 
 from agent_driver.contracts.enums import GuardrailDecision, ToolPolicyDecision
 from agent_driver.contracts.hooks import ToolHook
+from agent_driver.contracts.interrupts import (
+    AllowedPrompt,
+    find_matching_prompt,
+)
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolCall, ToolResultEnvelope
 from agent_driver.llm.contracts import LlmResponse
@@ -41,6 +45,41 @@ logger = logging.getLogger(__name__)
 # read-only fan-out (e.g. 30 file_reads). Mirrors openclaude
 # ``CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY``.
 DEFAULT_CONCURRENCY_LIMIT = 8
+
+
+def _match_run_approved_prompts(
+    *, run_input: AgentRunInput, call: ToolCall
+) -> AllowedPrompt | None:
+    """Phase 11 H13 — look up approved AllowedPrompt categories on the
+    run and return the first match for this call.
+
+    The host stores approved categories in
+    ``AgentRunInput.app_metadata["approved_prompts"]`` (list of
+    AllowedPrompt model_dump'd dicts). When absent or malformed, no
+    bypass applies — the original INTERRUPT decision stands. Failures
+    in parsing are swallowed (logged at WARNING) so a malformed entry
+    can't make policy decisions unsafe (default = INTERRUPT preserved).
+    """
+    raw = run_input.app_metadata.get("approved_prompts") if run_input.app_metadata else None
+    if not isinstance(raw, list) or not raw:
+        return None
+    approved: list[AllowedPrompt] = []
+    for item in raw:
+        try:
+            if isinstance(item, AllowedPrompt):
+                approved.append(item)
+            elif isinstance(item, dict):
+                approved.append(AllowedPrompt.model_validate(item))
+        except Exception:
+            logger.warning(
+                "ignoring malformed approved_prompts entry in app_metadata",
+                exc_info=True,
+            )
+    if not approved:
+        return None
+    return find_matching_prompt(
+        tool_name=call.tool_name, args=call.args, approved=approved
+    )
 
 
 def _read_concurrency_limit_env() -> int:
@@ -369,6 +408,27 @@ class GovernedToolExecutor:
                     "interrupt_reason": None,
                 }
             )
+        # Phase 11 H13 — prompt-based permissions. When the policy says
+        # INTERRUPT but the call's shape matches a previously-approved
+        # AllowedPrompt category for this run, collapse to ALLOW. The
+        # host wires approved categories into
+        # ``run_input.app_metadata["approved_prompts"]`` after an
+        # operator approves them via ``ResumeCommand.approved_prompts``.
+        # See ``agent_driver.contracts.interrupts.AllowedPrompt`` for
+        # the matcher contract.
+        if policy.decision == ToolPolicyDecision.INTERRUPT:
+            matched = _match_run_approved_prompts(run_input=run_input, call=call)
+            if matched is not None:
+                policy = policy.model_copy(
+                    update={
+                        "decision": ToolPolicyDecision.ALLOW,
+                        "reason": (
+                            f"matches approved prompt category "
+                            f"{matched.category_id!r}"
+                        ),
+                        "interrupt_reason": None,
+                    }
+                )
         if policy.decision == ToolPolicyDecision.DENY:
             self._append_block(
                 result=result,
