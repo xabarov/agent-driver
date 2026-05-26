@@ -220,6 +220,12 @@ class GovernedToolExecutor:
         for sub_result in sub_results:
             for envelope, trace in zip(sub_result.envelopes, sub_result.traces):
                 result.append(envelope=envelope, trace=trace)
+            # Phase 11 H16 — propagate progress events from parallel
+            # sub-results into the canonical result; preserve their
+            # within-task order (which is already chronological) and
+            # group by call_index.
+            for entry in sub_result.progress_events:
+                result.progress_events.append(entry)
             if sub_result.interrupt is not None and result.interrupt is None:
                 # Preserve the FIRST (lowest-index) interrupt — matches
                 # serial semantics where the loop stops on first

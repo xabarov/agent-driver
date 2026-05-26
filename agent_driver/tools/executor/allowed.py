@@ -25,7 +25,10 @@ from agent_driver.tools.executor.trace import (
     trace_spec_denied,
 )
 from agent_driver.tools.guardrails import GuardrailPipeline, enforce_output_budget
-from agent_driver.tools.context import tool_call_context_scope
+from agent_driver.tools.context import (
+    tool_call_context_scope,
+    tool_progress_scope,
+)
 
 
 def _bounded_structured_output(
@@ -138,10 +141,20 @@ async def execute_allowed_path(
         )
         return False
     try:
+        # Phase 11 H16 — wire a per-call progress reporter that records
+        # each ``report_tool_progress`` invocation into the executor
+        # result. Tools that don't call the reporter incur no overhead.
+        def _record_progress(progress) -> None:  # noqa: ANN001
+            spec.result.record_progress(
+                call_index=spec.index,
+                tool_name=spec.call.tool_name,
+                progress=progress,
+            )
+
         with tool_call_context_scope(
             run_id=str(spec.run_metadata.get("run_id") or ""),
             thread_id=str(spec.run_metadata.get("thread_id") or ""),
-        ):
+        ), tool_progress_scope(_record_progress):
             raw = await spec.registered.handler(spec.call.args)
         raw_guard = await guardrails.on_tool_result(
             {"tool_name": spec.call.tool_name, "result": raw}

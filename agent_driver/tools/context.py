@@ -4,12 +4,49 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Callable, Iterator
 
 _workspace_cwd: ContextVar[Path | None] = ContextVar("workspace_cwd", default=None)
 _tool_call_context: ContextVar[dict[str, str] | None] = ContextVar(
     "tool_call_context", default=None
+)
+
+
+# Phase 11 H16 — optional progress reporter for long-running tools.
+# Stored as a ContextVar so handlers don't need an extra parameter; the
+# context is set up by the executor immediately before invoking the
+# handler and cleared on return. ``None`` means progress reporting is a
+# no-op for this call (default for hosts that don't wire it).
+@dataclass(frozen=True, slots=True)
+class ToolProgress:
+    """One progress update emitted by a running tool handler.
+
+    Fields:
+        kind: free-form short label (e.g. ``"scan"``, ``"download"``,
+            ``"validate"``). Used by stream consumers for routing and
+            for display ("Scanning 100/300 hosts").
+        message: human-friendly status line, suitable for display in a
+            CLI or chat-UI timeline.
+        completion_ratio: optional float in ``[0.0, 1.0]`` reporting
+            estimated completion. ``None`` when unknown / indeterminate.
+        data: optional structured payload for richer consumers. Must be
+            JSON-serializable (the runtime projector will serialize via
+            ``model_dump`` / ``json.dumps``); keep small.
+    """
+
+    kind: str
+    message: str
+    completion_ratio: float | None = None
+    data: dict[str, Any] = field(default_factory=dict)
+
+
+ProgressReporter = Callable[[ToolProgress], None]
+
+
+_on_progress: ContextVar[ProgressReporter | None] = ContextVar(
+    "tool_on_progress", default=None
 )
 
 
@@ -32,6 +69,44 @@ def get_tool_call_context() -> dict[str, str]:
     if not isinstance(payload, dict):
         return {}
     return dict(payload)
+
+
+def report_tool_progress(
+    *,
+    kind: str,
+    message: str,
+    completion_ratio: float | None = None,
+    data: dict[str, Any] | None = None,
+) -> None:
+    """Emit a progress update for the currently running tool handler.
+
+    Phase 11 H16 — handlers may call this freely; when no reporter is
+    wired (default), the call is a silent no-op. When the host wires
+    a reporter via ``tool_progress_scope()``, each invocation produces
+    a ``RuntimeEventType.TOOL_PROGRESS`` event correlated with the
+    current ``tool_call_id``.
+
+    Errors raised by the reporter are swallowed (logged at WARNING)
+    so a misbehaving observability sink can never crash a tool
+    handler.
+    """
+    reporter = _on_progress.get()
+    if reporter is None:
+        return
+    progress = ToolProgress(
+        kind=kind,
+        message=message,
+        completion_ratio=completion_ratio,
+        data=dict(data) if data else {},
+    )
+    try:
+        reporter(progress)
+    except Exception:  # pragma: no cover - defensive isolation
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "tool_progress reporter raised; swallowing", exc_info=True
+        )
 
 
 def set_workspace_cwd(path: Path | None) -> Token[Path | None]:
@@ -77,12 +152,36 @@ def tool_call_context_scope(
         _tool_call_context.reset(token)
 
 
+@contextmanager
+def tool_progress_scope(reporter: ProgressReporter | None) -> Iterator[None]:
+    """Phase 11 H16 — wire a progress reporter for the current tool call.
+
+    Hosts set up a reporter (e.g. a closure that captures ``call_id`` +
+    runtime emit) immediately before invoking a tool handler. When the
+    handler calls :func:`report_tool_progress`, the reporter is invoked
+    synchronously; on scope exit the reporter is cleared so it never
+    leaks across tool calls.
+
+    Pass ``None`` to install a no-op (e.g. when the host doesn't care
+    about progress for a particular call).
+    """
+    token = _on_progress.set(reporter)
+    try:
+        yield
+    finally:
+        _on_progress.reset(token)
+
+
 __all__ = [
+    "ProgressReporter",
+    "ToolProgress",
     "get_workspace_cwd",
     "get_workspace_jail_root",
     "get_tool_call_context",
+    "report_tool_progress",
     "set_tool_call_context",
     "set_workspace_cwd",
     "tool_call_context_scope",
+    "tool_progress_scope",
     "workspace_cwd_scope",
 ]
