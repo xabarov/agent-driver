@@ -51,6 +51,11 @@ class RuntimeEventType(StrEnum):
     TOKEN_DELTA = "token_delta"
     REASONING_DELTA = "reasoning_delta"
     TOOL_CALL_STARTED = "tool_call_started"
+    # Phase 11 H16 — optional intermediate progress emission while a tool
+    # handler is still running. Handlers opt in by calling the
+    # ``on_progress(...)`` callback passed via context. Stream order:
+    # TOOL_CALL_STARTED → 0..N TOOL_PROGRESS → TOOL_CALL_COMPLETED.
+    TOOL_PROGRESS = "tool_progress"
     TOOL_CALL_COMPLETED = "tool_call_completed"
     GUARDRAIL_DECISION = "guardrail_decision"
     CHECKPOINT_SAVED = "checkpoint_saved"

@@ -32,6 +32,14 @@ class ToolManifest(ContractModel):
     timeout_seconds: float | None = 30.0
     output_char_budget: int | None = 4000
     idempotent: bool = True
+    # Phase 11 H12 — whether this tool may run concurrently with other
+    # ``concurrency_safe=True`` tools in the same planned batch. When
+    # ``None`` (default), the executor derives the value from
+    # ``idempotent`` + ``side_effect`` via ``is_concurrency_safe()``.
+    # Set explicitly when the derived default would be wrong (e.g. an
+    # idempotent network read whose remote rate-limits forbid parallel
+    # calls — declare ``concurrency_safe=False``).
+    concurrency_safe: bool | None = None
     args_schema: dict[str, Any] | None = None
     output_type: str | None = None
     output_schema: dict[str, Any] | None = None
@@ -44,6 +52,24 @@ class ToolManifest(ContractModel):
         ]
     )
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def is_concurrency_safe(self) -> bool:
+        """Resolve the effective concurrency-safe flag.
+
+        Phase 11 H12 — when ``concurrency_safe`` is set explicitly, use it.
+        Otherwise derive from ``idempotent`` + ``side_effect``: a tool is
+        concurrency-safe by default only when it's idempotent AND has no
+        observable side effect (``NONE`` or ``READ_ONLY``).
+
+        Any write / external action defaults to ``False`` (executor must
+        serialize it) even when ``idempotent=True``.
+        """
+        if self.concurrency_safe is not None:
+            return self.concurrency_safe
+        return self.idempotent and self.side_effect in (
+            SideEffectClass.NONE,
+            SideEffectClass.READ_ONLY,
+        )
 
     @field_validator("timeout_seconds")
     @classmethod

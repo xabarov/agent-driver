@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
+
 from agent_driver.contracts.enums import GuardrailDecision, ToolPolicyDecision
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolCall
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.tools.executor.allowed import execute_allowed_path
 from agent_driver.tools.executor.blocks import append_blocked_call
+from agent_driver.tools.executor.partition import (
+    ParallelBatch,
+    SerialCall,
+    is_call_concurrency_safe,
+    partition_concurrent_calls,
+)
 from agent_driver.tools.executor.planned import extract_planned_tool_calls
 from agent_driver.tools.executor.policy_interrupt import record_interrupt_and_trace
 from agent_driver.tools.executor.result import GovernedExecutionResult
@@ -22,18 +32,65 @@ from agent_driver.tools.guardrails import GuardrailPipeline
 from agent_driver.tools.policy import evaluate_tool_policy
 from agent_driver.tools.registry import ToolRegistry
 
+logger = logging.getLogger(__name__)
+
+# Phase 11 H12 — soft cap on tools running in one ``asyncio.gather`` parallel
+# batch. The partitioner is unbounded; the semaphore here protects the
+# host from spawning unbounded coroutines when a model emits a long
+# read-only fan-out (e.g. 30 file_reads). Mirrors openclaude
+# ``CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY``.
+DEFAULT_CONCURRENCY_LIMIT = 8
+
+
+def _read_concurrency_limit_env() -> int:
+    raw = os.environ.get("AGENT_DRIVER_TOOL_CONCURRENCY", "").strip()
+    if not raw:
+        return DEFAULT_CONCURRENCY_LIMIT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "AGENT_DRIVER_TOOL_CONCURRENCY=%r is not an integer; "
+            "falling back to %d",
+            raw,
+            DEFAULT_CONCURRENCY_LIMIT,
+        )
+        return DEFAULT_CONCURRENCY_LIMIT
+    if value < 1:
+        logger.warning(
+            "AGENT_DRIVER_TOOL_CONCURRENCY=%d is < 1; falling back to %d",
+            value,
+            DEFAULT_CONCURRENCY_LIMIT,
+        )
+        return DEFAULT_CONCURRENCY_LIMIT
+    return value
+
 
 class GovernedToolExecutor:
-    """Execute deterministic planned tool calls with policy and guardrails."""
+    """Execute deterministic planned tool calls with policy and guardrails.
+
+    Phase 11 H12 — adjacent concurrency-safe calls (per
+    ``ToolManifest.is_concurrency_safe``) run in a single
+    ``asyncio.gather`` batch capped by ``concurrency_limit``. Calls that
+    aren't safe (writes, external actions) execute serially as before.
+    Result ordering matches the original LLM-emit order regardless of
+    completion order inside parallel batches.
+    """
 
     def __init__(
         self,
         *,
         registry: ToolRegistry,
         guardrails: GuardrailPipeline | None = None,
+        concurrency_limit: int | None = None,
     ) -> None:
         self._registry = registry
         self._guardrails = guardrails or GuardrailPipeline()
+        self._concurrency_limit = (
+            concurrency_limit
+            if concurrency_limit is not None
+            else _read_concurrency_limit_env()
+        )
 
     @staticmethod
     def planned_calls(llm_response: LlmResponse) -> list[ToolCall]:
@@ -55,22 +112,122 @@ class GovernedToolExecutor:
         *,
         current_tool_calls: int = 0,
     ) -> GovernedExecutionResult:
-        """Run policy + guardrails + tool handlers for planned calls."""
+        """Run policy + guardrails + tool handlers for planned calls.
+
+        Phase 11 H12 — partitions the planned-call sequence into parallel
+        batches (concurrency-safe adjacent calls) and serial calls.
+        ``ParallelBatch`` runs via ``asyncio.gather`` with a semaphore
+        capping the per-batch coroutine count. Stops further units
+        (parallel or serial) when any prior call records an interrupt or
+        a STOP-style policy decision.
+        """
         result = GovernedExecutionResult()
         planned_calls = extract_planned_tool_calls(llm_response)
-        for index, call in enumerate(planned_calls, start=1):
-            stop = await self._execute_one_call(
-                ExecSpec(
-                    result=result,
-                    run_input=run_input,
-                    call=call,
-                    index=index,
-                    current_tool_calls=current_tool_calls,
+        units = partition_concurrent_calls(
+            planned_calls,
+            is_safe=lambda c: is_call_concurrency_safe(
+                c, manifest_lookup=self._lookup_manifest
+            ),
+        )
+
+        next_index = 1
+        for unit in units:
+            if isinstance(unit, SerialCall):
+                stop = await self._execute_one_call(
+                    ExecSpec(
+                        result=result,
+                        run_input=run_input,
+                        call=unit.item,
+                        index=next_index,
+                        current_tool_calls=current_tool_calls,
+                    )
                 )
+                next_index += 1
+                if stop:
+                    return result
+                continue
+            # ParallelBatch
+            stop = await self._execute_parallel_batch(
+                batch=unit,
+                run_input=run_input,
+                result=result,
+                start_index=next_index,
+                current_tool_calls=current_tool_calls,
             )
+            next_index += len(unit.items)
             if stop:
-                break
+                return result
         return result
+
+    def _lookup_manifest(self, tool_name: str):
+        registered = self._registry.get(tool_name)
+        return registered.manifest if registered is not None else None
+
+    async def _execute_parallel_batch(
+        self,
+        *,
+        batch: ParallelBatch[ToolCall],
+        run_input: AgentRunInput,
+        result: GovernedExecutionResult,
+        start_index: int,
+        current_tool_calls: int,
+    ) -> bool:
+        """Run a parallel batch; merge sub-results into ``result`` in order.
+
+        Returns True when any call recorded a stop signal (interrupt or
+        policy STOP); callers should not run subsequent units.
+
+        Implementation notes:
+        * each task gets its OWN ``GovernedExecutionResult`` so mutations
+          don't race; we merge afterwards in original (start_index-based)
+          order so the trace/envelope sequence stays deterministic for
+          the LLM and observability;
+        * semaphore caps active coroutines at ``concurrency_limit`` —
+          partition emits unbounded batches because cap is a runtime
+          concern, not a planning one;
+        * exceptions inside any one task surface as
+          ``BaseException`` propagation (``return_exceptions=False``) —
+          this matches the existing serial executor which doesn't
+          swallow handler exceptions. ``execute_allowed_path`` already
+          catches handler exceptions itself and writes them into the
+          sub-result, so this layer typically only sees task-cancellation
+          / fatal errors.
+        """
+        if not batch.items:
+            return False
+        semaphore = asyncio.Semaphore(self._concurrency_limit)
+
+        async def run_one(call: ToolCall, index: int) -> GovernedExecutionResult:
+            async with semaphore:
+                sub_result = GovernedExecutionResult()
+                await self._execute_one_call(
+                    ExecSpec(
+                        result=sub_result,
+                        run_input=run_input,
+                        call=call,
+                        index=index,
+                        current_tool_calls=current_tool_calls,
+                    )
+                )
+                return sub_result
+
+        tasks = [
+            run_one(call, start_index + offset)
+            for offset, call in enumerate(batch.items)
+        ]
+        sub_results = await asyncio.gather(*tasks)
+        stop_overall = False
+        for sub_result in sub_results:
+            for envelope, trace in zip(sub_result.envelopes, sub_result.traces):
+                result.append(envelope=envelope, trace=trace)
+            if sub_result.interrupt is not None and result.interrupt is None:
+                # Preserve the FIRST (lowest-index) interrupt — matches
+                # serial semantics where the loop stops on first
+                # interrupt; for parallel batches we surface the
+                # earliest planned-call interrupt as canonical.
+                result.interrupt = sub_result.interrupt
+                stop_overall = True
+        return stop_overall
 
     async def _execute_one_call(self, spec: ExecSpec) -> bool:
         """Execute one tool call, returning True when loop must stop."""
@@ -92,11 +249,18 @@ class GovernedToolExecutor:
             if registered is not None
             else safe_manifest(call.tool_name)
         )
+        # Phase 11 H12 — use index-based cumulative count rather than
+        # ``len(result.traces)``. In sequential mode the two are
+        # equivalent (the result accumulates one trace per completed
+        # call before the next iteration), but parallel batches all
+        # see the same ``result.traces`` length because each task
+        # owns a private sub-result. Index is monotonic across
+        # serial/parallel units.
         policy = evaluate_tool_policy(
             policy=run_input.tool_policy,
             manifest=manifest,
             call=call,
-            current_tool_calls=spec.current_tool_calls + len(result.traces),
+            current_tool_calls=spec.current_tool_calls + spec.index - 1,
         )
         approved_interrupt_id = call.metadata.get("approved_interrupt_id")
         if (
