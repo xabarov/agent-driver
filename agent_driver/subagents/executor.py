@@ -24,6 +24,13 @@ from agent_driver.subagents.store import SubagentStore
 
 ChildRunner = Callable[[AgentRunInput], "object"]
 
+# Optional observability callback for group-level transitions (P3a H11).
+# Hosts pass this in when they want SUBAGENT_* runtime events surfaced
+# without taking ownership of the executor signature. Failure to invoke
+# (callback raises, or callback is None) must never break execution —
+# callers depend on the result envelope, not the event stream.
+SubagentEventCallback = Callable[[str, dict], None]
+
 
 @dataclass(frozen=True, slots=True)
 class SubagentExecutionResult:
@@ -33,6 +40,18 @@ class SubagentExecutionResult:
     runs: list[SubagentRun]
     join_state: str
     merged_summary: str
+
+
+def _safe_emit(
+    on_event: "SubagentEventCallback | None", event_type: str, payload: dict
+) -> None:
+    """Invoke ``on_event`` defensively — observability must never break exec."""
+    if on_event is None:
+        return
+    try:
+        on_event(event_type, payload)
+    except Exception:  # pragma: no cover — host bug must not abort group
+        pass
 
 
 def _status_from_output(
@@ -146,9 +165,44 @@ async def execute_subagent_group_sync(
     child_runner: ChildRunner,
     max_child_runs: int,
     child_app_metadata: dict | None = None,
+    on_event: SubagentEventCallback | None = None,
 ) -> SubagentExecutionResult:
-    """Execute child tasks synchronously and persist group/run rows."""
+    """Execute child tasks synchronously and persist group/run rows.
+
+    ``on_event`` (optional) is invoked for group + child transitions with
+    transport-neutral payloads so callers can fan out to SSE / Phoenix /
+    custom sinks without coupling the executor to a specific delivery
+    mechanism. Emission is best-effort — exceptions raised by the callback
+    are swallowed so observability glitches cannot abort the group.
+
+    Event types (correspond 1:1 to ``RuntimeEventType.SUBAGENT_*``):
+
+    * ``subagent_group_started`` — once at group entry. Payload has
+      ``group_id``, ``task_count``, ``join_policy``, ``merge_mode``.
+    * ``subagent_started`` — before each child task runs. Payload has
+      ``group_id``, ``index``, ``task_id``, ``role`` (when set).
+    * ``subagent_completed`` — after each child task. Payload has
+      ``group_id``, ``index``, ``task_id``, ``status`` (str), ``role``.
+    * ``subagent_group_joined`` — at successful join (``done=True``).
+    * ``subagent_group_failed`` — when join_state is not "done"
+      (waiting / cancelled). Payload carries ``join_state`` so consumers
+      can distinguish.
+    """
     limited_tasks = list(group_spec.tasks[:max_child_runs])
+    _safe_emit(
+        on_event,
+        "subagent_group_started",
+        {
+            "group_id": group_spec.group_id,
+            "task_count": len(limited_tasks),
+            "join_policy": group_spec.join_policy.value
+            if hasattr(group_spec.join_policy, "value")
+            else str(group_spec.join_policy),
+            "merge_mode": group_spec.merge_mode.value
+            if hasattr(group_spec.merge_mode, "value")
+            else str(group_spec.merge_mode),
+        },
+    )
     group = store.upsert_group(
         SubagentGroup(
             group_id=group_spec.group_id,
@@ -165,8 +219,19 @@ async def execute_subagent_group_sync(
             metadata={**group_spec.metadata, "requested_tasks": len(group_spec.tasks)},
         )
     )
-    child_runs = [
-        await _run_single_child_task(
+    child_runs: list[SubagentRun] = []
+    for idx, task in enumerate(limited_tasks, start=1):
+        _safe_emit(
+            on_event,
+            "subagent_started",
+            {
+                "group_id": group_spec.group_id,
+                "index": idx,
+                "task_id": task.task_id,
+                "role": getattr(task, "role", None) or "",
+            },
+        )
+        completed = await _run_single_child_task(
             parent=parent,
             group=group,
             task=task,
@@ -175,8 +240,20 @@ async def execute_subagent_group_sync(
             child_runner=child_runner,
             child_app_metadata=child_app_metadata,
         )
-        for idx, task in enumerate(limited_tasks, start=1)
-    ]
+        child_runs.append(completed)
+        _safe_emit(
+            on_event,
+            "subagent_completed",
+            {
+                "group_id": group_spec.group_id,
+                "index": idx,
+                "task_id": task.task_id,
+                "role": getattr(task, "role", None) or "",
+                "status": completed.status.value
+                if hasattr(completed.status, "value")
+                else str(completed.status),
+            },
+        )
     join_decision = evaluate_join_policy(
         join_policy=group_spec.join_policy,
         runs=child_runs,
@@ -207,6 +284,17 @@ async def execute_subagent_group_sync(
             }
         )
     )
+    _safe_emit(
+        on_event,
+        "subagent_group_joined" if join_decision.done else "subagent_group_failed",
+        {
+            "group_id": group_spec.group_id,
+            "join_state": join_decision.state,
+            "completed_count": len(join_decision.completed_ids),
+            "failed_count": len(join_decision.failed_ids),
+            "cancelled_count": len(join_decision.cancelled_ids),
+        },
+    )
     return SubagentExecutionResult(
         group=group,
         runs=child_runs,
@@ -215,4 +303,8 @@ async def execute_subagent_group_sync(
     )
 
 
-__all__ = ["SubagentExecutionResult", "execute_subagent_group_sync"]
+__all__ = [
+    "SubagentEventCallback",
+    "SubagentExecutionResult",
+    "execute_subagent_group_sync",
+]
