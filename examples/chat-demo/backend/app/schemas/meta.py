@@ -47,10 +47,32 @@ class ToolManifestView(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class WorkspaceStatusView(BaseModel):
+    """Public status for the session workspace visible to file tools."""
+
+    mode: str = "session"
+    root: str
+    session_id: str | None = Field(default=None, alias="sessionId")
+    exists: bool
+    file_count: int = Field(alias="fileCount")
+    sample_available: bool = Field(alias="sampleAvailable")
+
+    model_config = {"populate_by_name": True}
+
+
 class ToolsResponse(BaseModel):
     """Tool list endpoint response."""
 
     tools: list[ToolManifestView]
+    workspace: WorkspaceStatusView
+
+
+class WorkspaceImportResponse(BaseModel):
+    """Response after importing demo files into a session workspace."""
+
+    ok: bool = True
+    files: list[str]
+    workspace: WorkspaceStatusView
 
 
 class ModelView(BaseModel):

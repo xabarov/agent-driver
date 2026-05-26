@@ -13,9 +13,11 @@ from app.deps import get_settings, reset_dependency_caches
 from app.workspace import (
     build_chat_app_metadata,
     find_session_id_for_run,
+    import_sample_project,
     merge_resume_app_metadata,
     resolve_session_workspace,
     resolved_workspace_root,
+    workspace_status,
 )
 
 
@@ -45,6 +47,22 @@ def test_build_chat_app_metadata_includes_workspace_and_chat_mode(settings) -> N
     assert meta["stream_poll_interval_ms"] == settings.stream_poll_interval_ms
     workspace = Path(str(meta["workspace_cwd"]))
     assert workspace == resolve_session_workspace(settings, "session_xyz")
+
+
+def test_workspace_status_counts_session_files(settings) -> None:
+    workspace = resolve_session_workspace(settings, "session_status")
+    (workspace / "notes.txt").write_text("hello", encoding="utf-8")
+    status = workspace_status(settings, "session_status")
+    assert status.session_id == "session_status"
+    assert status.exists is True
+    assert status.file_count == 1
+
+
+def test_import_sample_project_creates_demo_files(settings) -> None:
+    files = import_sample_project(settings, "session_sample")
+    workspace = resolve_session_workspace(settings, "session_sample")
+    assert "README.md" in files
+    assert (workspace / "src" / "vision_transformer.py").is_file()
 
 
 def test_find_session_id_for_run(settings) -> None:

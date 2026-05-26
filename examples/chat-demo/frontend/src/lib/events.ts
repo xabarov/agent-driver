@@ -15,6 +15,10 @@ export type StreamEventName =
   | "run_resumed"
   | "llm_call_started"
   | "llm_call_completed"
+  | "assistant_message_started"
+  | "assistant_message_completed"
+  | "assistant_message_replaced"
+  | "assistant_message_tombstoned"
   | "token_delta"
   | "tool_call_started"
   | "tool_call_completed"
@@ -68,6 +72,11 @@ export function isTokenDelta(event: RunStreamEvent<Record<string, unknown>>): bo
 export function getTokenDeltaText(event: RunStreamEvent<Record<string, unknown>>): string {
   const delta = event.data.delta_text;
   return typeof delta === "string" ? delta : "";
+}
+
+export function getAssistantSnapshotContent(event: RunStreamEvent<Record<string, unknown>>): string | undefined {
+  const content = event.data.content;
+  return typeof content === "string" ? content : undefined;
 }
 
 export function isTerminalEvent(event: RunStreamEvent<Record<string, unknown>>): boolean {
@@ -190,6 +199,7 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
   const messages: ChatMessage[] = [];
   let assistantId: string | null = null;
   let assistantContent = "";
+  let assistantRawContent = "";
   let assistantMetadata: AssistantMessageMetadata | undefined = undefined;
   let assistantPlanningSnapshot: PlanningSnapshot | undefined = undefined;
   let seq = 0;
@@ -207,14 +217,36 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
     }
     assistantId = null;
     assistantContent = "";
+    assistantRawContent = "";
     assistantMetadata = undefined;
     assistantPlanningSnapshot = undefined;
   };
 
   for (const event of events) {
-    if (event.event === "run_started" && !assistantId) {
+    if (
+      (event.event === "run_started" || event.event === "assistant_message_started") &&
+      !assistantId
+    ) {
       assistantId = `assistant_replay_${seq}`;
       assistantContent = "";
+      assistantRawContent = "";
+    }
+    if (event.event === "assistant_message_completed" || event.event === "assistant_message_replaced") {
+      const content = getAssistantSnapshotContent(event);
+      if (content !== undefined) {
+        if (!assistantId) {
+          assistantId = `assistant_replay_${seq}`;
+        }
+        assistantRawContent = content;
+        assistantContent = stripTextFormToolCalls(content);
+      }
+    }
+    if (event.event === "assistant_message_tombstoned") {
+      assistantId = null;
+      assistantContent = "";
+      assistantRawContent = "";
+      assistantMetadata = undefined;
+      assistantPlanningSnapshot = undefined;
     }
     if (event.event === "llm_call_completed" || event.event === "run_completed") {
       const snapshot = parsePlanningSnapshot(event.data.planning_snapshot);
@@ -239,7 +271,8 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
       if (!assistantId) {
         assistantId = `assistant_replay_${seq}`;
       }
-      assistantContent = stripTextFormToolCalls(assistantContent + getTokenDeltaText(event));
+      assistantRawContent += getTokenDeltaText(event);
+      assistantContent = stripTextFormToolCalls(assistantRawContent);
     }
     if (isToolCallStarted(event)) {
       if (!assistantId) {
@@ -255,6 +288,7 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
           planningSnapshot: assistantPlanningSnapshot,
         });
         assistantContent = "";
+        assistantRawContent = "";
         assistantMetadata = undefined;
         assistantPlanningSnapshot = undefined;
       }

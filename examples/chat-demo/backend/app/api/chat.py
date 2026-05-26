@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import asyncio
+from collections.abc import AsyncIterator, Iterable
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from agent_driver.adapters import parse_after_seq, render_sse_line
 from agent_driver.contracts import AgentRunInput, ChatMessage
 from agent_driver.contracts.enums import ChatRole, ResumeAction
 from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
-from agent_driver.runtime.stream import project_runtime_events
+from agent_driver.runtime.stream import backfill_stream_events, project_runtime_events
 
 from app.config import Settings, ToolPreset
 from app.deps import (
     get_agent_bundle,
-    get_agent_bundle_for_preset,
     get_agent_bundle_for_request,
     get_settings,
     resolve_tool_preset,
@@ -25,10 +26,11 @@ from app.run_cancel import is_cancelled, request_cancel
 from app.schemas.chat import CancelRunResponse, ChatMessageRequest, InterruptView, ResumeRequest
 from app.services.agent_factory import AgentBundle
 from app.services.message_metadata import aggregate_metadata_from_events
-from app.sse_relay import relay_and_capture
+from app.sse_relay import ensure_run_task, relay_and_capture
 from app.workspace import build_chat_app_metadata, merge_resume_app_metadata
 
 router = APIRouter(tags=["chat"])
+_TERMINAL_EVENTS = {"run_completed", "run_failed", "run_cancelled"}
 
 
 def _transcript_to_messages(transcript: Iterable[tuple[str, str]]) -> list[ChatMessage]:
@@ -43,6 +45,85 @@ def _transcript_to_messages(transcript: Iterable[tuple[str, str]]) -> list[ChatM
         elif role == "system":
             messages.append(ChatMessage(role=ChatRole.SYSTEM, content=content))
     return messages
+
+
+def _truncate_for_retry(
+    *,
+    transcript: list[tuple[str, str]],
+    run_ids: list[str],
+    retry_from_run_id: str | None,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Drop the retried run and everything after it from persisted chat history."""
+    if not retry_from_run_id:
+        return transcript, run_ids
+    try:
+        run_index = run_ids.index(retry_from_run_id)
+    except ValueError:
+        return transcript, run_ids
+
+    user_seen = 0
+    cut_index = len(transcript)
+    for index, (role, _content) in enumerate(transcript):
+        if role != "user":
+            continue
+        if user_seen == run_index:
+            cut_index = index
+            break
+        user_seen += 1
+    return transcript[:cut_index], run_ids[:run_index]
+
+
+def _client_requests_dict(record: object | None) -> dict[str, dict[str, object]]:
+    rows = getattr(record, "client_requests", ()) if record is not None else ()
+    return {str(key): dict(value) for key, value in rows}
+
+
+def _filter_client_requests_for_runs(
+    client_requests: dict[str, dict[str, object]],
+    run_ids: list[str],
+) -> dict[str, dict[str, object]]:
+    allowed = set(run_ids)
+    return {
+        key: value
+        for key, value in client_requests.items()
+        if isinstance(value.get("run_id"), str) and value["run_id"] in allowed
+    }
+
+
+async def _tail_existing_run(
+    *,
+    bundle: AgentBundle,
+    run_id: str,
+    request: Request,
+    last_event_id: str | None,
+    timeout_seconds: float,
+    keepalive_seconds: float,
+) -> AsyncIterator[str]:
+    """Backfill and tail an already reserved run without starting it again."""
+    after_seq = parse_after_seq(last_event_id, run_id=run_id) or 0
+    started = asyncio.get_running_loop().time()
+    keepalive_after = started + keepalive_seconds
+    while True:
+        saw_event = False
+        for event in backfill_stream_events(
+            bundle.event_log,
+            run_id=run_id,
+            after_seq=after_seq,
+        ):
+            saw_event = True
+            after_seq = event.seq
+            yield render_sse_line(event)
+            if event.event in _TERMINAL_EVENTS:
+                return
+        if await request.is_disconnected():
+            return
+        now = asyncio.get_running_loop().time()
+        if now - started >= timeout_seconds:
+            return
+        if keepalive_seconds > 0 and not saw_event and now >= keepalive_after:
+            keepalive_after = now + keepalive_seconds
+            yield ":keepalive\n\n"
+        await asyncio.sleep(0.2)
 
 
 def _bundle_for_request(preset: ToolPreset, model: str | None = None) -> AgentBundle:
@@ -103,15 +184,53 @@ async def chat_messages(
         thread_id = record.thread_id
         run_ids = list(record.run_ids)
         transcript = list(record.transcript)
+    client_requests = _client_requests_dict(record)
+    request_key = body.client_request_id.strip() if body.client_request_id else ""
+    if request_key and request_key in client_requests:
+        existing_run_id = client_requests[request_key].get("run_id")
+        if (
+            isinstance(existing_run_id, str)
+            and existing_run_id
+            and existing_run_id != body.retry_from_run_id
+        ):
+            return StreamingResponse(
+                _tail_existing_run(
+                    bundle=bundle,
+                    run_id=existing_run_id,
+                    request=request,
+                    last_event_id=request.headers.get("Last-Event-ID"),
+                    timeout_seconds=settings.deadline_seconds,
+                    keepalive_seconds=settings.sse_keepalive_seconds,
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "X-Session-Id": session_id,
+                    "X-Run-Id": existing_run_id,
+                },
+            )
+    transcript, run_ids = _truncate_for_retry(
+        transcript=transcript,
+        run_ids=run_ids,
+        retry_from_run_id=body.retry_from_run_id,
+    )
+    client_requests = _filter_client_requests_for_runs(client_requests, run_ids)
 
     transcript.append(("user", body.message))
     run_id = f"run_{uuid.uuid4().hex[:12]}"
     run_ids.append(run_id)
+    if request_key:
+        client_requests[request_key] = {
+            "run_id": run_id,
+            "transcript_user_index": len(transcript) - 1,
+        }
     bundle.session_store.upsert(
         session_id=session_id,
         thread_id=thread_id,
         run_ids=run_ids,
         transcript=transcript,
+        client_requests=client_requests,
     )
     run_input = AgentRunInput(
         input=body.message,
@@ -129,7 +248,7 @@ async def chat_messages(
 
     def _persist_assistant(assistant_text: str, _terminal_event: str | None) -> None:
         next_transcript = list(transcript)
-        if assistant_text.strip():
+        if _terminal_event == "run_completed" and assistant_text.strip():
             next_transcript.append(("assistant", assistant_text))
         run_metadata = aggregate_metadata_from_events(
             replay_events_for_run(bundle, run_id),
@@ -141,14 +260,22 @@ async def chat_messages(
             run_ids=run_ids,
             transcript=next_transcript,
             metadata_by_run=metadata_patch,
+            client_requests=client_requests,
         )
 
-    stream = relay_and_capture(
+    ensure_run_task(
         agent=bundle.agent,
         run_input=run_input,
         event_log=bundle.event_log,
-        last_event_id=request.headers.get("Last-Event-ID"),
         on_finish=_persist_assistant,
+    )
+    stream = _tail_existing_run(
+        bundle=bundle,
+        run_id=run_id,
+        request=request,
+        last_event_id=request.headers.get("Last-Event-ID"),
+        timeout_seconds=settings.deadline_seconds,
+        keepalive_seconds=settings.sse_keepalive_seconds,
     )
     return StreamingResponse(
         stream,

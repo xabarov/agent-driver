@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cancelRun, fetchInterrupt } from "../lib/api";
 import {
   buildLastEventId,
+  getAssistantSnapshotContent,
   isInterruptEvent,
   isTerminalEvent,
   getTokenDeltaText,
@@ -32,6 +33,13 @@ interface RunStreamController {
   stopStreaming: () => void;
 }
 
+function createClientRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `req_${crypto.randomUUID()}`;
+  }
+  return `req_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`;
+}
+
 function applyStreamEvent(
   event: RunStreamEvent,
   assistantId: string,
@@ -46,6 +54,15 @@ function applyStreamEvent(
   }
   if (isTokenDelta(event)) {
     store.appendDelta(assistantId, getTokenDeltaText(event));
+  }
+  if (event.event === "assistant_message_completed" || event.event === "assistant_message_replaced") {
+    const content = getAssistantSnapshotContent(event);
+    if (content !== undefined) {
+      store.replaceAssistantContent(assistantId, content);
+    }
+  }
+  if (event.event === "assistant_message_tombstoned") {
+    store.tombstoneAssistant(assistantId);
   }
   if (isToolCallStarted(event)) {
     for (const tool of parseToolStatesFromEvent(event)) {
@@ -174,8 +191,9 @@ export function useRunStream(): RunStreamController {
   );
 
   const streamUserMessage = useCallback(
-    async (trimmed: string, assistantId: string) => {
+    async (trimmed: string, assistantId: string, retryFromRunId?: string) => {
       activeAssistantRef.current = assistantId;
+      const clientRequestId = createClientRequestId();
       await runStream(async (activeId, signal) => {
         const state = useChatStore.getState();
         await startChatStream({
@@ -183,8 +201,10 @@ export function useRunStream(): RunStreamController {
           sessionId: state.sessionId,
           toolPreset,
           model: model || undefined,
+          retryFromRunId,
+          clientRequestId,
           signal,
-          lastEventId: buildLastEventId(state.runId, state.lastSeq),
+          lastEventId: retryFromRunId ? undefined : buildLastEventId(state.runId, state.lastSeq),
           onMeta: (meta) => {
             const store = useChatStore.getState();
             if (meta.sessionId) {
@@ -230,7 +250,11 @@ export function useRunStream(): RunStreamController {
       if (!prepared) {
         return;
       }
-      await streamUserMessage(prepared.userText, prepared.newAssistantId);
+      await streamUserMessage(
+        prepared.userText,
+        prepared.newAssistantId,
+        prepared.retryFromRunId,
+      );
     },
     [streamUserMessage],
   );

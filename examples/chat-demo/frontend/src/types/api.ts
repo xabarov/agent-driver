@@ -30,8 +30,24 @@ export interface ToolManifestView {
   approvalMode: string;
 }
 
+export interface WorkspaceStatusView {
+  mode: string;
+  root: string;
+  sessionId: string | null;
+  exists: boolean;
+  fileCount: number;
+  sampleAvailable: boolean;
+}
+
 export interface ToolsResponse {
   tools: ToolManifestView[];
+  workspace: WorkspaceStatusView;
+}
+
+export interface WorkspaceImportResponse {
+  ok: boolean;
+  files: string[];
+  workspace: WorkspaceStatusView;
 }
 
 export interface AssistantMessageMetadataView {

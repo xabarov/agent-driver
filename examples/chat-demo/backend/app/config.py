@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ToolPreset = Literal["off", "safe", "dev", "all"]
+ToolPreset = Literal["off", "safe", "workspace", "dev", "all"]
 
 
 def _discover_env_files() -> tuple[str, ...]:
@@ -49,16 +49,24 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CHAT_DEMO_MAX_STEPS"),
     )
     max_tool_calls: int = Field(
-        default=12,
+        default=24,
         validation_alias=AliasChoices("CHAT_DEMO_MAX_TOOL_CALLS"),
     )
     deadline_seconds: float = Field(
-        default=180.0,
+        default=600.0,
         validation_alias=AliasChoices("CHAT_DEMO_DEADLINE_SECONDS"),
     )
     stream_poll_interval_ms: int = Field(
         default=20,
         validation_alias=AliasChoices("CHAT_DEMO_STREAM_POLL_INTERVAL_MS"),
+    )
+    llm_stream_idle_timeout_seconds: float = Field(
+        default=60.0,
+        validation_alias=AliasChoices("CHAT_DEMO_LLM_STREAM_IDLE_TIMEOUT_SECONDS"),
+    )
+    sse_keepalive_seconds: float = Field(
+        default=15.0,
+        validation_alias=AliasChoices("CHAT_DEMO_SSE_KEEPALIVE_SECONDS"),
     )
     sessions_path: Path = Field(
         default=Path("./.agent-driver/sessions.json"),

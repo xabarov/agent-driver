@@ -31,3 +31,5 @@ def test_force_final_answer_templates_are_non_empty() -> None:
     force_answer = force_final_answer_tool_message()
     assert force_answer
     assert "Exception:" in force_answer
+    assert "Produce the requested deliverable" in force_answer
+    assert "do not only summarize progress" in force_answer

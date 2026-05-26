@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
@@ -40,9 +41,16 @@ async def test_runner_stream_mode_emits_token_delta_events() -> None:
     assert output.status.value == "completed"
     assert output.answer == "stream output"
     types = [event.type for event in output.events]
+    assert RuntimeEventType.ASSISTANT_MESSAGE_STARTED in types
     assert RuntimeEventType.TOKEN_DELTA in types
+    assert RuntimeEventType.ASSISTANT_MESSAGE_COMPLETED in types
     assert types.index(RuntimeEventType.TOKEN_DELTA) < types.index(
         RuntimeEventType.LLM_CALL_COMPLETED
+    )
+    assert any(
+        event.type == RuntimeEventType.ASSISTANT_MESSAGE_COMPLETED
+        and event.payload.get("content") == "stream output"
+        for event in output.events
     )
 
 
@@ -82,6 +90,18 @@ class _FailingStreamProvider:
         raise RuntimeError("stream failure")
 
 
+class _HangingStreamProvider(_FailingStreamProvider):
+    """Test provider that yields once and then never reaches a done event."""
+
+    def __init__(self) -> None:
+        super().__init__(fail_after_first_token=True)
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        yield LlmStreamEvent(event="token", delta_text="partial")
+        await asyncio.sleep(10)
+        yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.STOP)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail_after_first_token", [False, True])
 async def test_runner_stream_failure_emits_terminal_failure_event(
@@ -110,8 +130,42 @@ async def test_runner_stream_failure_emits_terminal_failure_event(
     assert RuntimeEventType.RUN_FAILED in event_types
     if fail_after_first_token:
         assert RuntimeEventType.TOKEN_DELTA in event_types
+        assert RuntimeEventType.ASSISTANT_MESSAGE_TOMBSTONED in event_types
     else:
         assert RuntimeEventType.TOKEN_DELTA not in event_types
+        assert RuntimeEventType.ASSISTANT_MESSAGE_TOMBSTONED not in event_types
     latest = checkpoint_store.latest("run_stream_failure")
     assert latest is not None
     assert latest.state.metadata.get("next_step") == "llm_call"
+
+
+@pytest.mark.asyncio
+async def test_runner_stream_idle_timeout_fails_after_partial_delta() -> None:
+    """Idle provider streams should fail terminally instead of leaving SSE pending."""
+    event_log = InMemoryEventLog()
+    runner = SingleAgentRunner(
+        provider=_HangingStreamProvider(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=event_log,
+    )
+    with pytest.raises(RuntimeExecutionError):
+        await runner.run(
+            AgentRunInput(
+                input="stream hangs",
+                run_id="run_stream_idle_timeout",
+                agent_id="agent",
+                graph_preset="single_react",
+                stream=True,
+                app_metadata={"llm_stream_idle_timeout_seconds": 0.01},
+            )
+        )
+
+    events = event_log.list_for_run("run_stream_idle_timeout")
+    assert [event.type for event in events].count(RuntimeEventType.TOKEN_DELTA) == 1
+    assert RuntimeEventType.ASSISTANT_MESSAGE_TOMBSTONED in [event.type for event in events]
+    assert any(
+        event.type == RuntimeEventType.RUN_FAILED
+        and event.payload.get("reason") == "model_error"
+        and event.payload.get("transition_reason") == "stream_idle_timeout"
+        for event in events
+    )

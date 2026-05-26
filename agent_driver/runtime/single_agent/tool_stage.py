@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any, Protocol
 
-from agent_driver.code_agent.profile import run_code_agent_stage
 from agent_driver.contracts.enums import AgentProfile, ChatRole, RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmFinishReason
@@ -615,6 +614,13 @@ def _update_zero_result_policy(context: RunContext, result: ToolExecutionResult)
             if isinstance(envelope.structured_output, dict)
             else None
         )
+        parse_status = (
+            str(envelope.structured_output.get("parse_status") or "")
+            if isinstance(envelope.structured_output, dict)
+            else ""
+        )
+        if parse_status == "upstream_error":
+            continue
         if isinstance(rows, list) and rows:
             zero_streak = 0
         else:

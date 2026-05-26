@@ -47,11 +47,25 @@ def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
     if preset == "off":
         return CliToolConfig(tools_mode="none")
     if preset == "safe":
-        return CliToolConfig(tools_mode="default")
+        return CliToolConfig(
+            tools_mode="default",
+            tool_packs=("web", "planning"),
+        )
+    if preset == "workspace":
+        return CliToolConfig(
+            tools_mode="default",
+            tool_packs=("web", "planning", "filesystem_read"),
+        )
     if preset == "dev":
         return CliToolConfig(
             tools_mode="default",
-            tool_packs=("filesystem_write", "shell"),
+            tool_packs=(
+                "web",
+                "planning",
+                "filesystem_read",
+                "filesystem_write",
+                "shell",
+            ),
             allow_dangerous_tools=True,
         )
     return CliToolConfig(

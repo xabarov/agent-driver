@@ -87,3 +87,32 @@ def test_apply_planning_state_tool_update_applies_todo_items_and_mode() -> None:
     )
     assert len(updated.todos) == 2
     assert updated.metadata["planning_mode"] == "plan"
+
+
+def test_apply_planning_state_tool_update_merges_status_without_content() -> None:
+    """merge=true status rows should update existing todos without repeating content."""
+    state = apply_planning_state_tool_update(
+        planning_state_init("run_plan_merge"),
+        {
+            "todo_items": [
+                {"id": "research", "content": "Research topic", "status": "in_progress"},
+                {"id": "outline", "content": "Create outline", "status": "pending"},
+            ],
+            "todo_merge": False,
+        },
+    )
+    updated = apply_planning_state_tool_update(
+        state,
+        {
+            "todo_items": [
+                {"id": "research", "status": "completed"},
+                {"id": "outline", "status": "in_progress"},
+            ],
+            "todo_merge": True,
+        },
+    )
+    rows = {item.todo_id: item for item in updated.todos}
+    assert rows["research"].content == "Research topic"
+    assert rows["research"].status.value == "completed"
+    assert rows["outline"].content == "Create outline"
+    assert rows["outline"].status.value == "in_progress"

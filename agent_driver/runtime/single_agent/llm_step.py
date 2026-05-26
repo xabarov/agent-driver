@@ -43,6 +43,7 @@ from agent_driver.runtime.single_agent.llm import (
 from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.step_planning import build_planning_snapshot
 from agent_driver.runtime.single_agent.streaming import (
+    LlmStreamIdleTimeout,
     complete_streaming_request,
     emit_token_delta_events,
     is_stream_enabled,
@@ -70,6 +71,33 @@ class LlmStepHost(CompactionStageHost, Protocol):
         self, context: RunContext, *, latest_output: Any, node_id: str
     ) -> Any: ...
     def _maybe_fail_after_step(self, step_name: str) -> None: ...
+
+
+def _emit_partial_assistant_tombstone(
+    host: LlmStepHost,
+    context: RunContext,
+    *,
+    reason: str,
+) -> None:
+    """Mark partial streamed assistant output as invalid before terminal failure."""
+    if not context.metadata.get("assistant_stream_started"):
+        return
+    if context.metadata.get("assistant_stream_completed"):
+        return
+    content = context.metadata.get("assistant_stream_content")
+    if not isinstance(content, str) or not content:
+        return
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.ASSISTANT_MESSAGE_TOMBSTONED,
+        payload={
+            "reason": reason,
+            "content": content,
+            "transition_reason": "partial_tombstone",
+        },
+    )
+    context.metadata["assistant_stream_tombstoned"] = True
 
 
 async def execute_llm_call_step(
@@ -133,23 +161,36 @@ async def execute_llm_call_step(
         context.metadata["last_provider_error"] = reason
         raise RuntimeExecutionError("LLM completion failed") from exc
     except httpx.HTTPError as exc:
+        transition_reason = (
+            "stream_idle_timeout"
+            if isinstance(exc, LlmStreamIdleTimeout)
+            else TerminalReason.MODEL_ERROR.value
+        )
+        _emit_partial_assistant_tombstone(host, context, reason=transition_reason)
         host._emit(
             EventSpec(
                 run_id=context.run_id,
                 attempt_id=context.attempt_id,
                 event_type=RuntimeEventType.RUN_FAILED,
-                payload={"reason": TerminalReason.MODEL_ERROR.value},
+                payload={
+                    "reason": TerminalReason.MODEL_ERROR.value,
+                    "transition_reason": transition_reason,
+                },
             )
         )
-        context.metadata["last_provider_error"] = TerminalReason.MODEL_ERROR.value
+        context.metadata["last_provider_error"] = transition_reason
         raise RuntimeExecutionError("LLM completion failed") from exc
     except (RuntimeError, ValueError) as exc:
+        _emit_partial_assistant_tombstone(host, context, reason="provider_stream_error")
         host._emit(
             EventSpec(
                 run_id=context.run_id,
                 attempt_id=context.attempt_id,
                 event_type=RuntimeEventType.RUN_FAILED,
-                payload={"reason": TerminalReason.MODEL_ERROR.value},
+                payload={
+                    "reason": TerminalReason.MODEL_ERROR.value,
+                    "transition_reason": "provider_stream_error",
+                },
             )
         )
         raise RuntimeExecutionError("LLM completion failed") from exc
@@ -317,6 +358,8 @@ async def _complete_request(
             return await complete_streaming_request(host, context, request)
         except httpx.TimeoutException as exc:
             last_timeout = exc
+            if isinstance(exc, LlmStreamIdleTimeout) and exc.emitted_chunks > 0:
+                raise
             if attempt == 0:
                 continue
             raise

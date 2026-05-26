@@ -7,6 +7,7 @@ import json
 import sys
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 
 from agent_driver.contracts import AgentRunInput
 from agent_driver.cli.commands.common import (
@@ -44,6 +45,16 @@ def _python_settings_from_args(args: argparse.Namespace) -> PythonToolSettings:
         default_imports=merged_defaults,
         allow_overlay=bool(extra_imports),
     )
+
+
+def _resolve_workspace_arg(args: argparse.Namespace) -> str | None:
+    raw = getattr(args, "workspace", None)
+    if raw is None or not str(raw).strip():
+        return None
+    path = Path(str(raw)).expanduser().resolve()
+    if not path.exists() or not path.is_dir():
+        raise ValueError(f"--workspace must be an existing directory: {path}")
+    return str(path)
 
 
 async def run_command(
@@ -87,6 +98,17 @@ async def run_command(
         config=RunnerConfig(python_tool=_python_settings_from_args(args)),
     )
     run_id = args.run_id or f"run_{uuid.uuid4().hex[:12]}"
+    app_metadata: dict[str, object] = {
+        "stream_poll_interval_ms": args.stream_poll_interval_ms,
+        "debug_tool_protocol": args.debug_tool_protocol,
+    }
+    try:
+        workspace_cwd = _resolve_workspace_arg(args)
+    except ValueError as exc:
+        print(f"workspace error: {exc}", file=sys.stderr)
+        return 2
+    if workspace_cwd is not None:
+        app_metadata["workspace_cwd"] = workspace_cwd
     run_input = AgentRunInput(
         input=args.prompt,
         run_id=run_id,
@@ -96,10 +118,7 @@ async def run_command(
         max_steps=args.max_steps,
         max_tool_calls=args.max_tool_calls,
         deadline_seconds=args.deadline_seconds,
-        app_metadata={
-            "stream_poll_interval_ms": args.stream_poll_interval_ms,
-            "debug_tool_protocol": args.debug_tool_protocol,
-        },
+        app_metadata=app_metadata,
     )
     async for line in cli_run_live_lines(agent.stream(run_input), prefer_rich=prefer_rich(args)):
         print(line)
@@ -154,6 +173,11 @@ async def chat_command(
     )
     ui_mode = "rich" if (not args.plain and (args.rich or sys.stdout.isatty())) else "plain"
     selected_manifests = [row.manifest for row in agent.runner.deps.tool_registry.list_registered()]
+    try:
+        workspace_cwd = _resolve_workspace_arg(args)
+    except ValueError as exc:
+        print(f"workspace error: {exc}", file=sys.stderr)
+        return 2
     return await run_chat_session(
         agent=agent,
         event_log=bundle.event_log,
@@ -169,6 +193,7 @@ async def chat_command(
         model_name=getattr(provider, "_model", None),
         selected_manifests=selected_manifests,
         ui_mode=ui_mode,
+        workspace_cwd=workspace_cwd,
     )
 
 

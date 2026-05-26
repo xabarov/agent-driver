@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type ToolPreset = "off" | "safe" | "dev" | "all";
+export type ToolPreset = "off" | "safe" | "workspace" | "dev" | "all";
 
 interface SettingsState {
   toolPreset: ToolPreset;

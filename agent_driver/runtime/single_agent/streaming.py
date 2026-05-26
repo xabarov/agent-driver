@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Protocol
+
+import httpx
 
 from agent_driver.contracts import ChatMessage, UsageSummary
 from agent_driver.contracts.enums import RuntimeEventType
@@ -16,6 +19,18 @@ class StreamingHost(Protocol):
     """Minimal host surface needed for emitting runtime events."""
 
     _deps: RunnerDeps
+
+
+class LlmStreamIdleTimeout(httpx.ReadTimeout):
+    """Raised when a provider stream stops yielding events mid-run."""
+
+    def __init__(self, *, idle_timeout_seconds: float, emitted_chunks: int) -> None:
+        self.idle_timeout_seconds = idle_timeout_seconds
+        self.emitted_chunks = emitted_chunks
+        super().__init__(
+            "LLM stream produced no events for "
+            f"{idle_timeout_seconds:g}s after {emitted_chunks} emitted chunks"
+        )
 
 
 def is_stream_enabled(run_input: AgentRunInput) -> bool:
@@ -73,37 +88,69 @@ async def complete_streaming_request(
     provider_name = host._deps.provider.name
     model_name = request.model or "stream-model"
     stream_metadata: dict[str, Any] = {}
-    async for item in host._deps.provider.stream(request):
-        chunk = item.delta_text or ""
-        if chunk:
-            delta_chunks.append(chunk)
-            emit_token_delta_events(
-                host, context, [chunk], start_index=len(delta_chunks) - 1
+    idle_timeout = _stream_idle_timeout_seconds(context.run_input)
+    context.metadata["assistant_stream_started"] = True
+    context.metadata["assistant_stream_completed"] = False
+    context.metadata["assistant_stream_content"] = ""
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.ASSISTANT_MESSAGE_STARTED,
+        payload={"provider": provider_name, "model": model_name},
+    )
+    iterator = host._deps.provider.stream(request).__aiter__()
+    try:
+        while True:
+            try:
+                if idle_timeout is None:
+                    item = await anext(iterator)
+                else:
+                    item = await asyncio.wait_for(
+                        anext(iterator),
+                        timeout=idle_timeout,
+                    )
+            except StopAsyncIteration:
+                break
+            except TimeoutError as exc:
+                raise LlmStreamIdleTimeout(
+                    idle_timeout_seconds=idle_timeout or 0.0,
+                    emitted_chunks=len(delta_chunks) + len(reasoning_chunks),
+                ) from exc
+
+            _collect_stream_item(
+                host=host,
+                context=context,
+                item=item,
+                delta_chunks=delta_chunks,
+                reasoning_chunks=reasoning_chunks,
+                stream_metadata=stream_metadata,
             )
-        reasoning_chunk = item.delta_reasoning or ""
-        if reasoning_chunk:
-            reasoning_chunks.append(reasoning_chunk)
-            emit_reasoning_delta_events(
-                host,
-                context,
-                [reasoning_chunk],
-                start_index=len(reasoning_chunks) - 1,
-            )
-        if isinstance(item.metadata, dict):
-            if "planned_tool_calls" in item.metadata:
-                stream_metadata["planned_tool_calls"] = item.metadata["planned_tool_calls"]
-            if "tool_call_parse_errors" in item.metadata:
-                stream_metadata["tool_call_parse_errors"] = item.metadata[
-                    "tool_call_parse_errors"
-                ]
-        if item.finish_reason is not None:
-            finish_reason = item.finish_reason
-        if item.usage is not None:
-            usage = item.usage
-            model_name = item.usage.model_name or model_name
-            provider_name = item.usage.model_provider or provider_name
+            if item.finish_reason is not None:
+                finish_reason = item.finish_reason
+            if item.usage is not None:
+                usage = item.usage
+                model_name = item.usage.model_name or model_name
+                provider_name = item.usage.model_provider or provider_name
+    finally:
+        aclose = getattr(iterator, "aclose", None)
+        if callable(aclose):
+            await aclose()
+    content = "".join(delta_chunks)
+    context.metadata["assistant_stream_completed"] = True
+    context.metadata["assistant_stream_content"] = content
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.ASSISTANT_MESSAGE_COMPLETED,
+        payload={
+            "content": content,
+            "finish_reason": finish_reason.value,
+            "provider": provider_name,
+            "model": model_name,
+        },
+    )
     return LlmResponse(
-        message=ChatMessage(role="assistant", content="".join(delta_chunks)),
+        message=ChatMessage(role="assistant", content=content),
         finish_reason=finish_reason,
         usage=usage,
         provider=provider_name,
@@ -117,7 +164,51 @@ async def complete_streaming_request(
     )
 
 
+def _collect_stream_item(
+    *,
+    host: StreamingHost,
+    context: RunContext,
+    item: Any,
+    delta_chunks: list[str],
+    reasoning_chunks: list[str],
+    stream_metadata: dict[str, Any],
+) -> None:
+    """Append one provider stream event and emit durable deltas."""
+    chunk = item.delta_text or ""
+    if chunk:
+        delta_chunks.append(chunk)
+        context.metadata["assistant_stream_content"] = "".join(delta_chunks)
+        emit_token_delta_events(
+            host, context, [chunk], start_index=len(delta_chunks) - 1
+        )
+    reasoning_chunk = item.delta_reasoning or ""
+    if reasoning_chunk:
+        reasoning_chunks.append(reasoning_chunk)
+        emit_reasoning_delta_events(
+            host,
+            context,
+            [reasoning_chunk],
+            start_index=len(reasoning_chunks) - 1,
+        )
+    if isinstance(item.metadata, dict):
+        if "planned_tool_calls" in item.metadata:
+            stream_metadata["planned_tool_calls"] = item.metadata["planned_tool_calls"]
+        if "tool_call_parse_errors" in item.metadata:
+            stream_metadata["tool_call_parse_errors"] = item.metadata[
+                "tool_call_parse_errors"
+            ]
+
+
+def _stream_idle_timeout_seconds(run_input: AgentRunInput) -> float | None:
+    raw = run_input.app_metadata.get("llm_stream_idle_timeout_seconds")
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+        return None
+    value = float(raw)
+    return value if value > 0 else None
+
+
 __all__ = [
+    "LlmStreamIdleTimeout",
     "complete_streaming_request",
     "emit_reasoning_delta_events",
     "emit_token_delta_events",

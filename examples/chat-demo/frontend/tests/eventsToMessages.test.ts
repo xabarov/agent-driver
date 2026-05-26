@@ -52,4 +52,25 @@ describe("eventsToMessages", () => {
     expect(roles).toEqual(["assistant", "tool", "assistant"]);
     expect(messages[1]).toMatchObject({ role: "tool", name: "web_search", status: "done" });
   });
+
+  it("uses assistant completed snapshots for replay recovery", () => {
+    const messages = eventsToMessages([
+      ev("assistant_message_started", 1),
+      ev("token_delta", 2, { delta_text: "partial" }),
+      ev("assistant_message_completed", 3, { content: "final answer" }),
+      ev("run_completed", 4),
+    ]);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ role: "assistant", content: "final answer" });
+  });
+
+  it("drops tombstoned partial assistant output", () => {
+    const messages = eventsToMessages([
+      ev("assistant_message_started", 1),
+      ev("token_delta", 2, { delta_text: "partial" }),
+      ev("assistant_message_tombstoned", 3, { reason: "stream_idle_timeout" }),
+      ev("run_failed", 4, { reason: "model_error" }),
+    ]);
+    expect(messages).toEqual([]);
+  });
 });

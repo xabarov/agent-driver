@@ -15,6 +15,7 @@ from app.api.providers import router as providers_router
 from app.api.sessions import router as sessions_router
 from app.api.models import router as models_router
 from app.api.tools import router as tools_router
+from app.api.workspace import router as workspace_router
 from app.deps import get_settings
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
     app.include_router(models_router, prefix="/api")
     app.include_router(sessions_router, prefix="/api")
     app.include_router(chat_router, prefix="/api")
+    app.include_router(workspace_router, prefix="/api")
 
     if _STATIC_DIR.exists():
         app.mount("/assets", StaticFiles(directory=_STATIC_DIR / "assets"), name="assets")

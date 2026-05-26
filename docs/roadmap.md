@@ -911,6 +911,44 @@ Implementation notes from hardening pass:
   - fixed 10-scenario suite with expected/forbidden tool expectations;
   - artifact bundles under `.agent-driver/evals/<timestamp>/` with summary/report/triage;
   - deterministic `agent-driver eval inspect` for summary and compact timeline views.
+- Session hardening pass now landed for the chat demo and runtime stream path:
+  - chat-demo tool presets split `safe`, `workspace`, `dev`, and `all` so
+    default safe mode exposes web/planning tools without filesystem access;
+  - per-session workspace metadata, sample import, CLI `--workspace` and chat
+    `/workspace` support make filesystem tools operate against explicit scope;
+  - shell `cwd` validation now respects the workspace jail in web chat mode;
+  - streamed/replayed text-form tool calls are stripped from assistant display
+    while raw assistant text is preserved until final sanitization;
+  - continuation detection and stronger force-final prompts reduce premature
+    final answers that only announce the next step;
+  - `todo_write merge=true` accepts status-only rows for existing todo ids;
+  - web search/fetch now distinguish zero results, upstream errors, blocked
+    pages, and unavailable/time-out resources without forcing false finals;
+  - run deadlines interrupt blocking runner steps instead of allowing indefinite
+    LLM/tool waits;
+  - chat regenerate passes `retry_from_run_id`, truncates persisted transcript
+    and `run_ids`, resets local stream state, and avoids stale `Last-Event-ID`;
+  - LLM streaming now has an app-configurable idle timeout, avoids retrying a
+    provider stream after partial chunks, and handles OpenRouter-style
+    `choices: []` bookkeeping chunks;
+  - chat stream starts now accept `client_request_id`, reserve a stable run, and
+    replay/tail duplicate POSTs without duplicating transcript rows;
+  - browser reconnect for chat message streams is enabled only through
+    idempotent request identity and durable high-water mark replay, with chat
+    runs decoupled from the first HTTP response via a background run task;
+  - streaming emits assistant lifecycle snapshots plus tombstone events for
+    invalidated partial output, and chat transcript persistence stores only
+    finalized assistant text;
+  - SSE keepalives are configurable separately from provider stream idle timeout,
+    and terminal failures include machine-readable transition reasons such as
+    `stream_idle_timeout` and `partial_tombstone`.
+
+OpenClaude-inspired Phase 10 streaming/retry follow-up backlog:
+
+- Consider broker/fanout support if multiple browser clients must attach to the
+  same still-running stream across processes.
+- Add richer transition reason coverage for continuation nudges and provider
+  parser recoveries in observability exporters.
 
 ## Deferrals
 

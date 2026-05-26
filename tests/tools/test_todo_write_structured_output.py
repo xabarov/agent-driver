@@ -47,3 +47,19 @@ async def test_todo_write_tool_returns_structured_fields() -> None:
     assert structured["merge"] is True
     assert structured["next_action"]
     assert result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_todo_write_tool_allows_merge_status_only_rows() -> None:
+    result = await _todo_write_tool(
+        {
+            "merge": True,
+            "todos": [
+                {"id": "research", "status": "completed"},
+                {"id": "outline", "status": "in_progress"},
+            ],
+        }
+    )
+    applied = result["applied_args"]
+    assert applied["todo_merge"] is True
+    assert applied["todo_items"][0]["content"] == ""

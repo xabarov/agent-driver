@@ -1,16 +1,20 @@
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Wrench } from "lucide-react";
 
 import { cn } from "../../lib/cn";
-import { PRESET_HINTS, useToolsForPreset } from "../../lib/tools";
+import { importSampleWorkspace } from "../../lib/api";
+import { PRESET_HINTS, toolsQueryKey, useToolsForPreset } from "../../lib/tools";
+import { useChatStore } from "../../store/chatStore";
 import type { ToolPreset } from "../../store/settingsStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
 
-const PRESETS: ToolPreset[] = ["off", "safe", "dev", "all"];
+const PRESETS: ToolPreset[] = ["off", "safe", "workspace", "dev", "all"];
 const VISIBLE_TOOL_LIMIT = 8;
+const WORKSPACE_PRESETS = new Set<ToolPreset>(["workspace", "dev", "all"]);
 
 interface ToolsPickerProps {
   disabled?: boolean;
@@ -19,14 +23,24 @@ interface ToolsPickerProps {
 }
 
 export function ToolsPicker({ disabled, compact, onPresetChange }: ToolsPickerProps) {
+  const queryClient = useQueryClient();
+  const sessionId = useChatStore((state) => state.sessionId);
   const toolPreset = useSettingsStore((state) => state.toolPreset);
   const setToolPreset = useSettingsStore((state) => state.setToolPreset);
-  const toolsQuery = useToolsForPreset(toolPreset);
+  const toolsQuery = useToolsForPreset(toolPreset, sessionId);
   const [showAllTools, setShowAllTools] = useState(false);
+  const sampleMutation = useMutation({
+    mutationFn: () => importSampleWorkspace(sessionId ?? ""),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: toolsQueryKey(toolPreset, sessionId) });
+    },
+  });
 
   const toolNames = toolsQuery.data?.tools.map((tool) => tool.name) ?? [];
   const visibleTools = showAllTools ? toolNames : toolNames.slice(0, VISIBLE_TOOL_LIMIT);
   const hiddenCount = Math.max(0, toolNames.length - VISIBLE_TOOL_LIMIT);
+  const workspace = toolsQuery.data?.workspace;
+  const showWorkspaceDetails = WORKSPACE_PRESETS.has(toolPreset);
 
   return (
     <div className={cn("space-y-2", compact && "space-y-1.5")}>
@@ -58,6 +72,40 @@ export function ToolsPicker({ disabled, compact, onPresetChange }: ToolsPickerPr
         </ToggleGroup>
       </div>
       <p className="text-xs text-muted-foreground">{PRESET_HINTS[toolPreset]}</p>
+      {showWorkspaceDetails ? (
+        <div className="rounded-lg border border-border/70 bg-background/60 p-2 text-xs">
+          <div className="font-medium text-foreground">Session workspace</div>
+          {sessionId ? (
+            <>
+              <div className="mt-1 text-muted-foreground">
+                {workspace?.exists ? `${workspace.fileCount} files available` : "Empty workspace"}
+              </div>
+              {workspace?.root ? (
+                <div className="mt-1 truncate font-mono text-muted-foreground" title={workspace.root}>
+                  {workspace.root}
+                </div>
+              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="mt-2 h-7 px-2 text-xs"
+                disabled={disabled || sampleMutation.isPending}
+                onClick={() => sampleMutation.mutate()}
+              >
+                {sampleMutation.isPending ? "Importing…" : "Import sample project"}
+              </Button>
+              {sampleMutation.isSuccess ? (
+                <span className="ml-2 text-muted-foreground">Sample files ready.</span>
+              ) : null}
+            </>
+          ) : (
+            <div className="mt-1 text-muted-foreground">
+              Workspace is created after the first message in a session.
+            </div>
+          )}
+        </div>
+      ) : null}
       {toolPreset === "all" ? (
         <p className="flex items-center gap-1 text-xs text-amber-400">
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" />

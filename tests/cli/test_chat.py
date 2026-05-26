@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from agent_driver.cli.chat import parse_chat_command, render_chat_stream, run_chat_session
@@ -643,6 +641,32 @@ async def test_chat_session_supports_bang_shell_command() -> None:
     text = "".join(io.output)
     assert "● Bash(!printf hello)" in text
     assert "⎿ hello" in text
+
+
+@pytest.mark.asyncio
+async def test_chat_session_workspace_command_updates_bang_cwd(tmp_path) -> None:
+    event_log = InMemoryEventLog()
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=event_log,
+    )
+    io = _IoHarness([f"/workspace {tmp_path}", "!pwd", "/exit"])
+    code = await run_chat_session(
+        agent=agent,
+        event_log=event_log,
+        agent_id="agent.cli",
+        graph_preset="single_react",
+        stream_poll_interval_ms=10,
+        selected_manifests=[],
+        input_reader=io.read,
+        output=io.write,
+    )
+    assert code == 0
+    text = "".join(io.output)
+    assert f"workspace> {tmp_path.resolve()}" in text
+    assert f"⎿ {tmp_path.resolve()}" in text
 
 
 @pytest.mark.asyncio

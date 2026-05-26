@@ -23,7 +23,7 @@ from agent_driver.tools.registry import ToolRegistry
 
 _WEB_FETCH_TOOL = "web_fetch"
 _WEB_SEARCH_TOOL = "web_search"
-_DEFAULT_TIMEOUT_SECONDS = 10.0
+_DEFAULT_TIMEOUT_SECONDS = 15.0
 _DEFAULT_MAX_BYTES = 150_000
 _DEFAULT_MAX_RESULTS = 5
 _DEFAULT_PREVIEW_CHARS = 1_500
@@ -31,6 +31,7 @@ _WEB_FETCH_MAX_CHARS_CAP = 8_000
 _WEB_FETCH_EXCERPT_CHARS = 2_000
 _DEFAULT_USER_AGENT = "agent-driver/0.1"
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_BLOCKED_STATUS_CODES = {401, 403}
 _TEXT_CONTENT_TYPES = (
     "text/",
     "application/json",
@@ -178,15 +179,47 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
     max_chars = min(requested_max_chars, _WEB_FETCH_MAX_CHARS_CAP)
     extract_mode = _extract_mode(args.get("extract_mode"))
     try:
-        payload = await _fetch_url_text(
+        payload = await _fetch_url_text_with_retry(
             url=url,
             timeout_seconds=timeout_seconds,
             max_bytes=max_bytes,
+        )
+    except httpx.TimeoutException as exc:
+        return _web_fetch_unavailable_payload(
+            url=url,
+            extract_mode=extract_mode,
+            timeout_seconds=timeout_seconds,
+            max_chars=max_chars,
+            reason=f"timeout: {_error_message(exc)}",
         )
     except (httpx.HTTPError, ValueError) as exc:
         raise ValueError(f"web_fetch failed: {exc}") from exc
     if not _is_text_content_type(payload.content_type):
         raise ValueError(f"unsupported content type: {payload.content_type}")
+    if payload.status_code in _BLOCKED_STATUS_CODES:
+        metadata = (
+            _extract_og_metadata(payload.text) if "html" in payload.content_type else {}
+        )
+        return {
+            "summary": (
+                f"web_fetch blocked by upstream HTTP {payload.status_code} for "
+                f"{payload.url}; try another search result, an official source, "
+                "or a cached/reader URL."
+            ),
+            "url": payload.url,
+            "status_code": payload.status_code,
+            "content_type": payload.content_type,
+            "extract_mode": extract_mode,
+            "bytes_total": payload.bytes_total,
+            "bytes_loaded": payload.bytes_loaded,
+            "bytes_truncated": payload.bytes_loaded < payload.bytes_total,
+            "metadata": metadata,
+            "excerpt": "",
+            "content": "",
+            "truncated": False,
+            "max_chars_applied": max_chars,
+            "blocked": True,
+        }
     extracted = _extract_payload_text(
         text=payload.text,
         content_type=payload.content_type,
@@ -222,6 +255,36 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
         "content": content,
         "truncated": truncated,
         "max_chars_applied": max_chars,
+    }
+
+
+def _web_fetch_unavailable_payload(
+    *,
+    url: str,
+    extract_mode: str,
+    timeout_seconds: float,
+    max_chars: int,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "summary": (
+            f"web_fetch unavailable for {url}: {reason}; try another search result, "
+            "an official source, or a cached/reader URL."
+        ),
+        "url": url,
+        "status_code": None,
+        "content_type": "",
+        "extract_mode": extract_mode,
+        "bytes_total": 0,
+        "bytes_loaded": 0,
+        "bytes_truncated": False,
+        "metadata": {},
+        "excerpt": "",
+        "content": "",
+        "truncated": False,
+        "max_chars_applied": max_chars,
+        "timeout_seconds": timeout_seconds,
+        "unavailable": True,
     }
 
 
@@ -298,7 +361,7 @@ async def _duckduckgo_html_search(
     original_query: str | None = None,
 ) -> dict[str, Any]:
     """Run DuckDuckGo html search; retry without site: when DDG returns no parseable hits."""
-    search_url = f"https://duckduckgo.com/html/?q={quote_plus(query)}"
+    search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
     try:
         payload = await _fetch_ddg_with_retry(
             search_url=search_url,
@@ -478,7 +541,8 @@ async def _fetch_url_text(
     headers = {"User-Agent": _DEFAULT_USER_AGENT}
     async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_seconds) as client:
         response = await client.get(url, headers=headers)
-    response.raise_for_status()
+    if response.status_code not in _BLOCKED_STATUS_CODES:
+        response.raise_for_status()
     content = response.content
     bytes_total = len(content)
     if len(content) > max_bytes:
@@ -495,8 +559,32 @@ async def _fetch_url_text(
     )
 
 
+async def _fetch_url_text_with_retry(
+    *,
+    url: str,
+    timeout_seconds: float,
+    max_bytes: int,
+) -> _HttpPayload:
+    last_error: httpx.TimeoutException | None = None
+    for attempt in range(3):
+        try:
+            return await _fetch_url_text(
+                url=url,
+                timeout_seconds=timeout_seconds,
+                max_bytes=max_bytes,
+            )
+        except httpx.TimeoutException as exc:
+            last_error = exc
+            if attempt == 2:
+                raise
+            await asyncio.sleep(0.5 + (0.5 * attempt))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("web fetch failed without specific exception")
+
+
 def _is_retryable_search_exception(exc: Exception) -> bool:
-    if isinstance(exc, httpx.ReadTimeout):
+    if isinstance(exc, httpx.TimeoutException):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
@@ -508,7 +596,7 @@ async def _fetch_ddg_with_retry(
     *, search_url: str, timeout_seconds: float, max_bytes: int
 ) -> _HttpPayload:
     last_error: Exception | None = None
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             return await _fetch_url_text(
                 url=search_url,

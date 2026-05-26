@@ -34,7 +34,7 @@ AGENT_DRIVER_MODEL=your/model
 
 2. Restart `make dev-full` (backend reloads env from repo `.env` automatically).
 
-3. In the UI set **Tools → Safe** (includes `web_search`) or **All**. **Off** disables all tools.
+3. In the UI set **Tools → Safe** (web + planning), **Workspace** (adds read-only session files), **Dev** (adds writes + governed shell), or **All**. **Off** disables all tools.
 
 Header should show `openrouter · <model>` instead of `fake · default`.
 
@@ -81,6 +81,28 @@ Open `http://127.0.0.1:8000` (UI + API on one port).
 - `/api/*` -> `http://127.0.0.1:8010` (override with `VITE_API_PROXY_TARGET` / `APP_PORT`)
 - SSE (`POST /api/chat/messages`, `POST /api/chat/runs/{id}/resume`) as `text/event-stream`
 
+## Streaming And Retry Behavior
+
+- Runtime streams emit durable token/progress events and still finish with a
+  terminal event (`run_completed`, `run_failed`, or `run_cancelled`).
+- `CHAT_DEMO_LLM_STREAM_IDLE_TIMEOUT_SECONDS` fails a provider stream that stops
+  emitting events, so the UI does not stay in a permanent pending state.
+- `CHAT_DEMO_SSE_KEEPALIVE_SECONDS` sends transport keepalives while the HTTP
+  connection is quiet; this is separate from provider idle timeout.
+- OpenAI-compatible provider streams tolerate empty `choices: []` chunks from
+  gateways such as OpenRouter.
+- Regenerating an assistant response truncates the persisted session transcript
+  from the retried run before starting a replacement run.
+- Browser reconnect for `POST /api/chat/messages` is idempotent when the
+  frontend supplies `client_request_id`; duplicate starts replay/backfill the
+  existing run instead of appending another transcript row.
+- Chat message runs execute independently of the HTTP response that first
+  created them, so a disconnected browser can reconnect and continue tailing the
+  same durable event stream.
+- Runtime streams emit assistant lifecycle snapshots. Failed partial output is
+  tombstoned before `run_failed`, and only finalized assistant text is persisted
+  to the session transcript.
+
 ## Features by stage
 
 | Stage | Capability |
@@ -96,6 +118,7 @@ Open `http://127.0.0.1:8000` (UI + API on one port).
 
 - Store file: `CHAT_DEMO_SESSIONS_PATH` (default `./.agent-driver/sessions.json`)
 - Routes: `/sessions/new`, `/sessions/<session_id>`, `/sessions/<session_id>/replay/<run_id>`
+- Tool presets: `safe` does not expose filesystem tools; `workspace`/`dev` operate only on the per-session workspace.
 - Runtime event log: `AGENT_DRIVER_RUNTIME_STORE_KIND=sqlite` recommended for HITL/replay durability
 
 ## Environment
@@ -104,6 +127,8 @@ See [`.env.example`](.env.example). Key variables:
 
 - `AGENT_DRIVER_PROVIDER` — `fake` (default), `openrouter`, `vllm`, `ollama`
 - `CHAT_DEMO_TOOL_PRESET` — default tool surface when UI does not override
+- `CHAT_DEMO_DEADLINE_SECONDS` — run wall-clock limit; default `600` for longer research/write tasks
+- `CHAT_DEMO_LLM_STREAM_IDLE_TIMEOUT_SECONDS` — fail a provider stream that stops emitting events; default `60`
 - `AGENT_DRIVER_RUNTIME_STORE_KIND` — `memory` (fast tests) or `sqlite` (HITL + replay)
 
 ## Smoke checks

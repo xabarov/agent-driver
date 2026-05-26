@@ -327,6 +327,38 @@ async def test_openai_stream_adapter_uses_mock_transport_progressively() -> None
 
 
 @pytest.mark.asyncio
+async def test_openai_stream_adapter_ignores_empty_choices_chunk() -> None:
+    """OpenRouter can emit bookkeeping chunks with choices=[] during streaming."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chat/completions"):
+            body = "\n".join(
+                [
+                    'data: {"choices":[]}',
+                    'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}',
+                    "data: [DONE]",
+                ]
+            )
+            return httpx.Response(200, text=body)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(404, json={})
+
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleProvider.Config(
+            name="openai-mock",
+            base_url="https://mock.local/v1",
+            api_key=None,
+            model="gpt-test",
+            http_client_config=HttpClientConfig(transport=httpx.MockTransport(handler)),
+        )
+    )
+    request = LlmRequest(messages=[ChatMessage(role="user", content="hi")], stream=True)
+    events = [event async for event in provider.stream(request)]
+    assert [event.delta_text for event in events] == ["", "ok"]
+
+
+@pytest.mark.asyncio
 async def test_openai_complete_sends_tools_when_present() -> None:
     """OpenAI complete payload should include tools/tool_choice from request."""
     captured: dict[str, object] = {}

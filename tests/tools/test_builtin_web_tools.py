@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import pytest
+import httpx
 
 from agent_driver.tools.builtin.web import register_web_tools
 from agent_driver.tools.registry import ToolRegistry
@@ -310,6 +311,69 @@ async def test_web_fetch_wraps_http_errors(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_web_fetch_returns_blocked_payload_for_forbidden_text(monkeypatch) -> None:
+    """403 text pages should guide the model to try another source, not hard-fail."""
+    response = _DummyResponse(
+        url="https://example.com/blocked",
+        status_code=403,
+        content=b"<html><head><title>Blocked</title></head><body>Forbidden</body></html>",
+        headers={"content-type": "text/html"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient",
+        _client_factory,
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    out = await tool.handler({"url": "https://example.com/blocked"})
+    assert out["status_code"] == 403
+    assert out["blocked"] is True
+    assert out["content"] == ""
+    assert "try another search result" in out["summary"]
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_returns_unavailable_payload_after_timeouts(monkeypatch) -> None:
+    """Persistent fetch timeouts should guide the model to another source."""
+
+    class _TimeoutClient:
+        async def __aenter__(self) -> "_TimeoutClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+        async def get(
+            self, url: str, headers: dict[str, str] | None = None
+        ) -> _DummyResponse:
+            _ = (url, headers)
+            raise httpx.ConnectTimeout("connect timed out")
+
+    def _client_factory(*_args, **_kwargs):
+        return _TimeoutClient()
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient",
+        _client_factory,
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    out = await tool.handler({"url": "https://example.com/slow"})
+    assert out["status_code"] is None
+    assert out["unavailable"] is True
+    assert out["content"] == ""
+    assert "try another search result" in out["summary"]
+
+
+@pytest.mark.asyncio
 async def test_web_search_parses_duckduckgo_html(monkeypatch) -> None:
     """web_search should parse at least one result from DDG-like HTML."""
     html = (
@@ -499,3 +563,50 @@ async def test_web_search_returns_upstream_error_payload_on_provider_failure(mon
     assert out["results"] == []
     assert out["parse_status"] == "upstream_error"
     assert "web_search unavailable" in out["summary"]
+
+
+@pytest.mark.asyncio
+async def test_web_search_retries_connect_timeout_and_uses_html_endpoint(
+    monkeypatch,
+) -> None:
+    """DDG search should retry transient connect timeouts against the HTML endpoint."""
+    html = '<html><body><a class="result__a" href="https://example.com">Hit</a></body></html>'
+    response = _DummyResponse(
+        url="https://html.duckduckgo.com/html/?q=test",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html"},
+    )
+    calls: list[str] = []
+
+    class _FlakyClient:
+        async def __aenter__(self) -> "_FlakyClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+        async def get(
+            self, url: str, headers: dict[str, str] | None = None
+        ) -> _DummyResponse:
+            _ = headers
+            calls.append(url)
+            if len(calls) == 1:
+                raise httpx.ConnectTimeout("connect timed out")
+            return response
+
+    def _client_factory(*_args, **_kwargs):
+        return _FlakyClient()
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient",
+        _client_factory,
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler({"query": "test", "max_results": 2})
+    assert len(calls) == 2
+    assert calls[0].startswith("https://html.duckduckgo.com/html/?")
+    assert out["parse_status"] == "ok"
+    assert out["results"][0]["title"] == "Hit"

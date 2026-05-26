@@ -14,6 +14,8 @@ class ChatMessageRequest(BaseModel):
     message: str = Field(min_length=1)
     tool_preset: ToolPreset | None = None
     model: str | None = None
+    retry_from_run_id: str | None = None
+    client_request_id: str | None = None
 
 
 class ResumeRequest(BaseModel):

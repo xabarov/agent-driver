@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agent_driver.contracts.enums import ResumeAction
@@ -18,6 +20,14 @@ from agent_driver.runtime import (
     fake_noop_tool_executor,
 )
 from agent_driver.runtime.errors import RuntimeExecutionError
+
+
+class _SlowProvider(FakeProvider):
+    """Provider that blocks longer than the run deadline."""
+
+    async def complete(self, request):  # noqa: ANN001
+        await asyncio.sleep(10)
+        return await super().complete(request)
 
 
 @pytest.mark.asyncio
@@ -134,6 +144,34 @@ async def test_single_agent_runner_deadline_timeout() -> None:
     )
     assert output.status.value == "timed_out"
     assert output.terminal_reason.value == "deadline_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_single_agent_runner_deadline_interrupts_blocking_step() -> None:
+    """Run deadline should cancel an in-flight provider call, not wait forever."""
+    provider = _SlowProvider(response_text="too late")
+    events = InMemoryEventLog()
+    runner = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=events,
+    )
+    output = await runner.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_deadline_blocking_step",
+            agent_id="agent-test",
+            graph_preset="single_react",
+            deadline_seconds=0.01,
+        )
+    )
+    assert output.status.value == "timed_out"
+    assert output.terminal_reason.value == "deadline_exceeded"
+    assert any(
+        event.type.value == "run_failed"
+        and event.payload.get("reason") == "deadline_exceeded"
+        for event in events.list_for_run("run_deadline_blocking_step")
+    )
 
 
 @pytest.mark.asyncio

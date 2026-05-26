@@ -8,11 +8,15 @@ interface StreamMeta {
   runId?: string;
 }
 
+class FatalSseError extends Error {}
+
 export interface StartChatStreamOptions {
   message: string;
   sessionId?: string;
   toolPreset?: ToolPreset;
   model?: string;
+  retryFromRunId?: string;
+  clientRequestId?: string;
   signal?: AbortSignal;
   lastEventId?: string;
   onEvent: (event: RunStreamEvent) => void;
@@ -30,6 +34,7 @@ export interface ResumeRunStreamOptions {
   signal?: AbortSignal;
   lastEventId?: string;
   onEvent: (event: RunStreamEvent) => void;
+  allowReconnect?: boolean;
 }
 
 async function consumeSse(
@@ -37,6 +42,7 @@ async function consumeSse(
   init: RequestInit,
   onEvent: (event: RunStreamEvent) => void,
   onMeta?: (meta: StreamMeta) => void,
+  allowReconnect = false,
 ): Promise<void> {
   await fetchEventSource(url, {
     ...init,
@@ -47,7 +53,7 @@ async function consumeSse(
         !response.ok ||
         !response.headers.get("content-type")?.startsWith("text/event-stream")
       ) {
-        throw new Error(`bad sse response: ${response.status}`);
+        throw new FatalSseError(`bad sse response: ${response.status}`);
       }
       onMeta?.({
         sessionId: response.headers.get("x-session-id") ?? undefined,
@@ -60,6 +66,11 @@ async function consumeSse(
       }
       const payload = JSON.parse(message.data) as RunStreamEvent;
       onEvent(payload);
+    },
+    onerror(error) {
+      if (!allowReconnect || error instanceof FatalSseError) {
+        throw error;
+      }
     },
   });
 }
@@ -79,11 +90,14 @@ export async function startChatStream(opts: StartChatStreamOptions): Promise<voi
         session_id: opts.sessionId,
         tool_preset: opts.toolPreset,
         model: opts.model,
+        retry_from_run_id: opts.retryFromRunId,
+        client_request_id: opts.clientRequestId,
       }),
       signal: opts.signal,
     },
     opts.onEvent,
     opts.onMeta,
+    Boolean(opts.clientRequestId),
   );
 }
 
@@ -108,5 +122,7 @@ export async function resumeRunStream(opts: ResumeRunStreamOptions): Promise<voi
       signal: opts.signal,
     },
     opts.onEvent,
+    undefined,
+    false,
   );
 }

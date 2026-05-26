@@ -44,6 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=20,
         help="Polling interval for incremental stream projection.",
     )
+    run_parser.add_argument(
+        "--workspace",
+        default=None,
+        help="Workspace directory for filesystem and shell tools.",
+    )
     add_runtime_bounds_options(
         run_parser,
         default_max_steps=12,
@@ -102,6 +107,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=20,
         help="Polling interval for incremental stream projection.",
+    )
+    chat_parser.add_argument(
+        "--workspace",
+        default=None,
+        help="Initial workspace directory for filesystem and shell tools.",
     )
     add_runtime_bounds_options(
         chat_parser,

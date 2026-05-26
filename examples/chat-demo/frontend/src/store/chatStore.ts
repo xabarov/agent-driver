@@ -13,6 +13,7 @@ import { stripTextFormToolCalls } from "../lib/stripToolCalls";
 import type { SessionDetailView } from "../types/api";
 
 const PLANNING_TOOL_NAMES = new Set(["todo_write", "planning_state_update"]);
+const assistantRawContent = new Map<string, string>();
 
 export type { AssistantMessageMetadata };
 
@@ -84,6 +85,8 @@ interface ChatState {
   lastError?: string;
   beginUserTurn: (text: string) => string;
   appendDelta: (assistantId: string, text: string) => void;
+  replaceAssistantContent: (assistantId: string, text: string) => void;
+  tombstoneAssistant: (assistantId: string) => void;
   appendToolStarted: (assistantId: string, tool: ParsedToolState) => void;
   updateToolCompleted: (toolCallId: string, tool: ParsedToolState) => void;
   finishTurn: (assistantId: string) => void;
@@ -98,7 +101,7 @@ interface ChatState {
   setLastError: (message?: string) => void;
   setMessages: (messages: ChatMessage[]) => void;
   deleteMessage: (messageId: string) => void;
-  prepareRetry: (assistantId: string) => { userText: string; newAssistantId: string } | null;
+  prepareRetry: (assistantId: string) => { userText: string; newAssistantId: string; retryFromRunId?: string } | null;
   loadSession: (detail: SessionDetailView) => void;
   reset: () => void;
 }
@@ -114,8 +117,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   beginUserTurn: (text) => {
     const userId = createId("user");
     const assistantId = createId("assistant");
+    assistantRawContent.set(assistantId, "");
     set((state) => ({
       streaming: true,
+      lastSeq: 0,
+      runId: undefined,
       pendingInterrupt: undefined,
       lastError: undefined,
       messages: [
@@ -130,16 +136,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!text) {
       return;
     }
+    const previousRaw = assistantRawContent.get(assistantId);
     set((state) => ({
       messages: state.messages.map((message) => {
         if (message.id !== assistantId || message.role !== "assistant") {
           return message;
         }
-        const merged = `${message.content}${text}`;
+        const merged = `${previousRaw ?? message.content}${text}`;
+        assistantRawContent.set(assistantId, merged);
         return { ...message, content: stripTextFormToolCalls(merged) };
       }),
     }));
   },
+  replaceAssistantContent: (assistantId, text) => {
+    assistantRawContent.set(assistantId, text);
+    set((state) => ({
+      messages: state.messages.map((message) =>
+        message.id === assistantId && message.role === "assistant"
+          ? { ...message, content: stripTextFormToolCalls(text) }
+          : message,
+      ),
+    }));
+  },
+  tombstoneAssistant: (assistantId) =>
+    set((state) => {
+      const index = state.messages.findIndex(
+        (message) => message.id === assistantId && message.role === "assistant",
+      );
+      if (index < 0) {
+        return state;
+      }
+      let end = index + 1;
+      while (end < state.messages.length && state.messages[end]?.role === "tool") {
+        end += 1;
+      }
+      assistantRawContent.delete(assistantId);
+      return { messages: [...state.messages.slice(0, index), ...state.messages.slice(end)] };
+    }),
   appendToolStarted: (assistantId, tool) =>
     set((state) => {
       if (PLANNING_TOOL_NAMES.has(tool.name)) {
@@ -182,7 +215,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (message.id !== assistantId || message.role !== "assistant") {
           return message;
         }
-        const content = message.content ? stripTextFormToolCalls(message.content) : message.content;
+        const rawContent = assistantRawContent.get(assistantId) ?? message.content;
+        const content = rawContent ? stripTextFormToolCalls(rawContent) : rawContent;
+        assistantRawContent.delete(assistantId);
         return { ...message, pending: false, content };
       }),
     }));
@@ -237,6 +272,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         while (end < state.messages.length && state.messages[end]?.role !== "user") {
           end += 1;
         }
+        for (const message of state.messages.slice(index, end)) {
+          if (message.role === "assistant") {
+            assistantRawContent.delete(message.id);
+          }
+        }
         return { messages: [...state.messages.slice(0, index), ...state.messages.slice(end)] };
       }
       if (target.role === "assistant") {
@@ -244,6 +284,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         while (end < state.messages.length && state.messages[end]?.role === "tool") {
           end += 1;
         }
+        assistantRawContent.delete(target.id);
         return { messages: [...state.messages.slice(0, index), ...state.messages.slice(end)] };
       }
       return { messages: state.messages.filter((message) => message.id !== messageId) };
@@ -267,8 +308,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return null;
     }
     const newAssistantId = createId("assistant");
+    const retryFromRunId = assistant.runId;
+    assistantRawContent.delete(assistantId);
+    assistantRawContent.set(newAssistantId, "");
     set({
       streaming: true,
+      lastSeq: 0,
+      runId: undefined,
       pendingInterrupt: undefined,
       lastError: undefined,
       messages: [
@@ -276,7 +322,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         { id: newAssistantId, role: "assistant", content: "", pending: true },
       ],
     });
-    return { userText: userMessage.content, newAssistantId };
+    return {
+      userText: userMessage.content,
+      newAssistantId,
+      ...(retryFromRunId ? { retryFromRunId } : {}),
+    };
   },
   loadSession: (detail) => {
     const prior = get().messages;
@@ -309,7 +359,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           return {
             id: createId(item.role),
             role: "assistant" as const,
-            content: item.content,
+            content: stripTextFormToolCalls(item.content),
             pending: false,
             runId,
             metadata: pickMetadata(serverMetadata, localMetadata),
@@ -321,6 +371,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           content: item.content,
         };
       });
+    assistantRawContent.clear();
     set({
       streaming: false,
       lastSeq: 0,
@@ -331,7 +382,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages,
     });
   },
-  reset: () =>
+  reset: () => {
+    assistantRawContent.clear();
     set({
       messages: [],
       streaming: false,
@@ -340,5 +392,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       runId: undefined,
       pendingInterrupt: undefined,
       lastError: undefined,
-    }),
+    });
+  },
 }));

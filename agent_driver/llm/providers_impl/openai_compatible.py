@@ -239,7 +239,7 @@ def normalize_openai_stream_chunk(
     cost_per_1k_tokens: float = 0.0,
 ) -> LlmStreamEvent:
     """Normalize one OpenAI-compatible stream chunk."""
-    choice = payload.get("choices", [{}])[0]
+    choice = _first_choice(payload)
     delta = choice.get("delta", {}) if isinstance(choice, dict) else {}
     text = str(delta.get("content", "") or "")
     # vLLM-served Qwen3 + DeepSeek-R1 surface chain-of-thought in a
@@ -283,6 +283,14 @@ def normalize_openai_stream_chunk(
         usage=usage,
         metadata=metadata,
     )
+
+
+def _first_choice(payload: dict[str, Any]) -> dict[str, Any]:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return {}
+    choice = choices[0]
+    return choice if isinstance(choice, dict) else {}
 
 
 class OpenAICompatibleProvider(ProviderBase):
@@ -436,34 +444,33 @@ class OpenAICompatibleProvider(ProviderBase):
                 if raw.strip() == "[DONE]":
                     break
                 payload = httpx.Response(200, text=raw).json()
-                choice = payload.get("choices", [{}])[0]
-                if isinstance(choice, dict):
-                    delta = choice.get("delta")
-                    if isinstance(delta, dict):
-                        for entry in delta.get("tool_calls", []) or []:
-                            if not isinstance(entry, dict):
-                                continue
-                            try:
-                                index = int(entry.get("index", 0) or 0)
-                            except (TypeError, ValueError):
-                                index = 0
-                            function = entry.get("function")
-                            state = pending_tool_calls.setdefault(
-                                index,
-                                {"id": entry.get("id"), "function": {"name": "", "arguments": ""}},
+                choice = _first_choice(payload)
+                delta = choice.get("delta")
+                if isinstance(delta, dict):
+                    for entry in delta.get("tool_calls", []) or []:
+                        if not isinstance(entry, dict):
+                            continue
+                        try:
+                            index = int(entry.get("index", 0) or 0)
+                        except (TypeError, ValueError):
+                            index = 0
+                        function = entry.get("function")
+                        state = pending_tool_calls.setdefault(
+                            index,
+                            {"id": entry.get("id"), "function": {"name": "", "arguments": ""}},
+                        )
+                        if isinstance(entry.get("id"), str) and entry.get("id"):
+                            state["id"] = entry["id"]
+                        if isinstance(function, dict):
+                            state_fn = state.setdefault(
+                                "function", {"name": "", "arguments": ""}
                             )
-                            if isinstance(entry.get("id"), str) and entry.get("id"):
-                                state["id"] = entry["id"]
-                            if isinstance(function, dict):
-                                state_fn = state.setdefault(
-                                    "function", {"name": "", "arguments": ""}
+                            if isinstance(function.get("name"), str):
+                                state_fn["name"] = f"{state_fn.get('name', '')}{function['name']}"
+                            if isinstance(function.get("arguments"), str):
+                                state_fn["arguments"] = (
+                                    f"{state_fn.get('arguments', '')}{function['arguments']}"
                                 )
-                                if isinstance(function.get("name"), str):
-                                    state_fn["name"] = f"{state_fn.get('name', '')}{function['name']}"
-                                if isinstance(function.get("arguments"), str):
-                                    state_fn["arguments"] = (
-                                        f"{state_fn.get('arguments', '')}{function['arguments']}"
-                                    )
                 yield normalize_openai_stream_chunk(
                     payload,
                     provider_name=self.name,

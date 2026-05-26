@@ -5,14 +5,15 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.config import ToolPreset
-from app.deps import get_agent_bundle_for_preset, resolve_tool_preset
+from app.deps import get_agent_bundle_for_preset, get_settings, resolve_tool_preset
 from app.schemas.meta import ToolManifestView, ToolsResponse
+from app.workspace import workspace_status
 
 router = APIRouter(tags=["meta"])
 
 
 @router.get("/tools", response_model=ToolsResponse)
-def tools(preset: ToolPreset | None = None) -> ToolsResponse:
+def tools(preset: ToolPreset | None = None, session_id: str | None = None) -> ToolsResponse:
     """List tool manifests for the requested or default preset."""
     bundle = get_agent_bundle_for_preset(resolve_tool_preset(preset))
     payload = [
@@ -25,4 +26,7 @@ def tools(preset: ToolPreset | None = None) -> ToolsResponse:
         )
         for manifest in bundle.manifests
     ]
-    return ToolsResponse(tools=payload)
+    return ToolsResponse(
+        tools=payload,
+        workspace=workspace_status(get_settings(), session_id),
+    )

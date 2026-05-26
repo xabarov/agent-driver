@@ -50,6 +50,7 @@ class ChatSessionState:
     turn_index: int = 0
     debug_tool_protocol: bool = False
     planning_state: dict[str, object] | None = None
+    workspace_cwd: Path | None = None
 
     def next_run_id(self) -> str:
         """Generate deterministic run id prefix for one chat turn."""
@@ -138,12 +139,24 @@ def _doctor_last_signal(state: ChatSessionState, event_log: RuntimeEventLog) -> 
 def _print_help(output: Callable[[str], None]) -> None:
     output(
         "Commands: /help /exit /quit /clear /reset /plan /runs /sessions /history "
-        "/resume <session_id> /tools [verbose] /model /provider /limits "
+        "/resume <session_id> /tools [verbose] /workspace [path] /cd <path> "
+        "/model /provider /limits "
         "/debug on|off /save [path] /export [path] /doctor "
         "/approve <run_id> <interrupt_id> /reject <run_id> <interrupt_id> [message] "
         "/cancel <run_id> <interrupt_id> /clarify <run_id> <interrupt_id> <message> "
         "/replay [run_id] /tail [run_id] [last_n]\n"
     )
+
+
+def _resolve_workspace_path(raw: str, current: Path | None) -> Path:
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = ((current or Path.cwd()) / path).resolve()
+    else:
+        path = path.resolve()
+    if not path.exists() or not path.is_dir():
+        raise ValueError(f"workspace is not an existing directory: {path}")
+    return path
 
 
 def _resolve_run_id(args: list[str], state: ChatSessionState) -> str | None:
@@ -261,6 +274,17 @@ async def _handle_local_command(
             return True
         names = ", ".join(manifest.name for manifest in selected_manifests)
         output(f"tools> {names}\n")
+        return True
+    if command in {"workspace", "cd"}:
+        if not args:
+            output(f"workspace> {state.workspace_cwd or Path.cwd()}\n")
+            return True
+        try:
+            state.workspace_cwd = _resolve_workspace_path(args[0], state.workspace_cwd)
+        except ValueError as exc:
+            output(f"workspace> error: {exc}\n")
+            return True
+        output(f"workspace> {state.workspace_cwd}\n")
         return True
     if command == "model":
         output(f"model> {model_name or 'default'}\n")
@@ -408,10 +432,16 @@ async def _handle_local_command(
     return True
 
 
-async def _run_shell_bang(command_text: str, output: Callable[[str], None]) -> None:
+async def _run_shell_bang(
+    command_text: str,
+    output: Callable[[str], None],
+    *,
+    cwd: Path | None = None,
+) -> None:
     output(f"● Bash(!{command_text})\n")
     process = await asyncio.create_subprocess_shell(
         command_text,
+        cwd=str(cwd) if cwd is not None else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -441,6 +471,7 @@ async def run_chat_session(
     model_name: str | None = None,
     selected_manifests: list[ToolManifest] | None = None,
     ui_mode: str | None = None,
+    workspace_cwd: str | Path | None = None,
     animate: bool = False,
     input_reader: Callable[[str], str] | None = None,
     output: Callable[[str], None] | None = None,
@@ -458,7 +489,13 @@ async def run_chat_session(
     renderer = build_renderer(output=write, ui_mode=effective_mode)
     store = session_store or SessionStore()
     manifests = list(selected_manifests or [])
-    state = ChatSessionState(debug_tool_protocol=debug_tool_protocol)
+    initial_workspace = (
+        _resolve_workspace_path(str(workspace_cwd), None) if workspace_cwd is not None else None
+    )
+    state = ChatSessionState(
+        debug_tool_protocol=debug_tool_protocol,
+        workspace_cwd=initial_workspace,
+    )
     if resume_session_id:
         record = store.get(resume_session_id)
         if record is not None:
@@ -469,6 +506,7 @@ async def run_chat_session(
                 transcript=list(record.transcript),
                 turn_index=len(record.run_ids),
                 debug_tool_protocol=debug_tool_protocol,
+                workspace_cwd=initial_workspace,
             )
 
     session_input_tokens = 0
@@ -489,6 +527,7 @@ async def run_chat_session(
                 capture_output=True,
                 text=True,
                 timeout=0.5,
+                cwd=str(state.workspace_cwd) if state.workspace_cwd is not None else None,
             )
         except Exception:
             return None
@@ -522,7 +561,7 @@ async def run_chat_session(
                 if deadline_seconds is not None
                 else f"steps={max_steps} tools={max_tool_calls} deadline=none"
             ),
-            cwd=str(Path.cwd()),
+                cwd=str(state.workspace_cwd or Path.cwd()),
             git_branch=_detect_git_branch(),
             mode_label="chat+debug" if state.debug_tool_protocol else "chat",
         )
@@ -572,7 +611,11 @@ async def run_chat_session(
             if prompt_session is not None and renderer.rich_enabled:
                 renderer.emit_raw(prompt_session.prompt_closing_frame())
             if text.startswith("!") and len(text) > 1:
-                await _run_shell_bang(text[1:].strip(), renderer.emit_raw)
+                await _run_shell_bang(
+                    text[1:].strip(),
+                    renderer.emit_raw,
+                    cwd=state.workspace_cwd,
+                )
                 continue
             parsed = parse_chat_command(text)
             if parsed is not None:
@@ -619,6 +662,8 @@ async def run_chat_session(
                 "chat_mode": True,
                 "debug_tool_protocol": state.debug_tool_protocol,
             }
+            if state.workspace_cwd is not None:
+                app_metadata["workspace_cwd"] = str(state.workspace_cwd)
             if isinstance(state.planning_state, dict) and state.planning_state.get("todos"):
                 app_metadata["planning_state_seed"] = state.planning_state
             stream = agent.stream(

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from time import monotonic
 
 from agent_driver.code_agent.backends import create_python_backend
 from agent_driver.code_agent.executor import FakeRestrictedCodeExecutor
@@ -11,7 +13,7 @@ from agent_driver.context import (
     InMemoryContextStore,
     InMemorySessionStore,
 )
-from agent_driver.contracts.enums import RuntimeEventType, TerminalReason
+from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.errors import RuntimeExecutionError
@@ -23,9 +25,9 @@ from agent_driver.runtime.single_agent.steps import SingleAgentStepMixin
 # isort: off
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
-    PendingInterruptState as _PendingInterruptState,
     RunContext as _RunContext,
     RunnerConfig,
+    TerminalResult,
 )  # noqa: F401
 
 # isort: on
@@ -131,7 +133,29 @@ class SingleAgentRunner(
                         )
                     )
                     return self._build_output(context, terminal)
-                result = await self._execute_step(context)
+                timeout = _remaining_deadline_seconds(context)
+                try:
+                    if timeout is None:
+                        result = await self._execute_step(context)
+                    else:
+                        result = await asyncio.wait_for(
+                            self._execute_step(context),
+                            timeout=max(0.001, timeout),
+                        )
+                except TimeoutError:
+                    terminal = TerminalResult(
+                        status=RunStatus.TIMED_OUT,
+                        reason=TerminalReason.DEADLINE_EXCEEDED,
+                    )
+                    self._emit(
+                        EventSpec(
+                            run_id=context.run_id,
+                            attempt_id=context.attempt_id,
+                            event_type=RuntimeEventType.RUN_FAILED,
+                            payload={"reason": terminal.reason.value},
+                        )
+                    )
+                    return self._build_output(context, terminal)
                 context.step_name = result.next_step
             payload = context.metadata.get("terminal_output")
             if not isinstance(payload, dict):
@@ -148,6 +172,13 @@ def _pick_workspace_cwd(context: _RunContext):
     if isinstance(sandbox_raw, str) and sandbox_raw.strip():
         return Path(sandbox_raw).expanduser().resolve()
     return None
+
+
+def _remaining_deadline_seconds(context: _RunContext) -> float | None:
+    deadline = context.run_input.deadline_seconds
+    if deadline is None:
+        return None
+    return float(deadline) - (monotonic() - context.started_at)
 
 
 

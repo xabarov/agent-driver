@@ -48,12 +48,15 @@ def apply_planning_state_tool_update(
         todo_merge = bool(args.get("todo_merge", False))
         if not todo_merge:
             next_state = next_state.model_copy(update={"todos": []})
+        existing_by_id = {item.todo_id: item for item in next_state.todos}
         for row in todo_items:
             if not isinstance(row, dict):
                 continue
             todo_id = str(row.get("id") or row.get("todo_id") or "").strip()
             content = str(row.get("content") or "").strip()
             status_raw = str(row.get("status") or "pending").strip()
+            if not content and todo_merge and todo_id in existing_by_id:
+                content = existing_by_id[todo_id].content
             if not todo_id or not content:
                 continue
             next_state = planning_state_upsert_todo(
@@ -168,7 +171,7 @@ async def _todo_write_tool(args: dict[str, Any]) -> dict[str, Any]:
         status = str(row.get("status") or "pending").strip()
         if not todo_id:
             raise ValueError("todo.id is required")
-        if not content:
+        if not content and not merge:
             raise ValueError("todo.content is required")
         if status not in {"pending", "in_progress", "completed", "cancelled"}:
             raise ValueError(
@@ -256,7 +259,10 @@ def _register_todo_write_tool(registry: ToolRegistry) -> None:
                             "type": "object",
                             "properties": {
                                 "id": {"type": "string"},
-                                "content": {"type": "string"},
+                                "content": {
+                                    "type": "string",
+                                    "description": "Required for new todos; optional for merge=true status updates of existing todos.",
+                                },
                                 "status": {
                                     "type": "string",
                                     "enum": [
@@ -267,7 +273,7 @@ def _register_todo_write_tool(registry: ToolRegistry) -> None:
                                     ],
                                 },
                             },
-                            "required": ["id", "content", "status"],
+                            "required": ["id", "status"],
                             "additionalProperties": False,
                         },
                     },

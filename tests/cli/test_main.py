@@ -167,6 +167,14 @@ def test_cli_chat_applies_default_runtime_bounds(monkeypatch) -> None:
     assert captured["deadline_seconds"] == 180.0
 
 
+def test_cli_run_and_chat_accept_workspace_option(tmp_path) -> None:
+    parser = cli_main._build_parser()  # pylint: disable=protected-access
+    run_args = parser.parse_args(["run", "hello", "--workspace", str(tmp_path)])
+    chat_args = parser.parse_args(["chat", "--workspace", str(tmp_path)])
+    assert run_args.workspace == str(tmp_path)
+    assert chat_args.workspace == str(tmp_path)
+
+
 def test_cli_chat_keyboard_interrupt_returns_130(monkeypatch, capsys) -> None:
     """Top-level chat command should hide traceback on KeyboardInterrupt."""
 
@@ -213,7 +221,7 @@ def test_chat_command_enables_compaction_flags(monkeypatch) -> None:
 
     monkeypatch.setattr(cli_main, "create_runtime_store_bundle", _fake_store_bundle)
     monkeypatch.setattr(cli_main, "build_cli_provider", lambda _cfg: fake_provider)
-    monkeypatch.setattr(cli_main, "build_cli_toolset", lambda _cfg: object())
+    monkeypatch.setattr(cli_main, "build_cli_toolset", lambda _cfg: SimpleNamespace(names=()))
     monkeypatch.setattr(cli_main, "create_agent", _fake_create_agent)
     monkeypatch.setattr(cli_main, "run_chat_session", _fake_run_chat_session)
 

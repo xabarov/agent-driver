@@ -9,6 +9,7 @@ import type {
   SessionDetailView,
   SessionsListResponse,
   ToolsResponse,
+  WorkspaceImportResponse,
 } from "../types/api";
 import type { ToolPreset } from "../store/settingsStore";
 
@@ -32,9 +33,23 @@ export function fetchModels(): Promise<ModelsResponse> {
   return request<ModelsResponse>("/api/models");
 }
 
-export function fetchTools(preset?: ToolPreset): Promise<ToolsResponse> {
-  const query = preset ? `?preset=${preset}` : "";
-  return request<ToolsResponse>(`/api/tools${query}`);
+export function fetchTools(preset?: ToolPreset, sessionId?: string): Promise<ToolsResponse> {
+  const params = new URLSearchParams();
+  if (preset) {
+    params.set("preset", preset);
+  }
+  if (sessionId) {
+    params.set("session_id", sessionId);
+  }
+  const query = params.toString();
+  return request<ToolsResponse>(`/api/tools${query ? `?${query}` : ""}`);
+}
+
+export function importSampleWorkspace(sessionId: string): Promise<WorkspaceImportResponse> {
+  const params = new URLSearchParams({ session_id: sessionId });
+  return request<WorkspaceImportResponse>(`/api/workspace/sample?${params.toString()}`, {
+    method: "POST",
+  });
 }
 
 export function cancelRun(runId: string): Promise<{ ok: boolean; run_id: string; cancelled: boolean }> {

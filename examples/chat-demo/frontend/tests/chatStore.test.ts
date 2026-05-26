@@ -7,6 +7,7 @@ import { useChatStore } from "../src/store/chatStore";
 const sampleSnapshot: PlanningSnapshot = {
   todos: [{ id: "s1", content: "Do work", status: "in_progress" }],
   inProgressId: "s1",
+  inProgressIndex: 0,
   completed: 0,
   total: 1,
   planTitle: "Do work",
@@ -18,9 +19,13 @@ describe("chatStore", () => {
   });
 
   test("beginUserTurn creates user and pending assistant", () => {
+    useChatStore.getState().setLastSeq(42);
+    useChatStore.getState().setRunId("run_previous");
     const assistantId = useChatStore.getState().beginUserTurn("hello");
     const state = useChatStore.getState();
 
+    expect(state.lastSeq).toBe(0);
+    expect(state.runId).toBeUndefined();
     expect(state.messages).toHaveLength(2);
     expect(state.messages[0]).toMatchObject({ role: "user", content: "hello" });
     expect(state.messages[1]).toMatchObject({
@@ -41,6 +46,19 @@ describe("chatStore", () => {
       .getState()
       .messages.find((item) => item.id === assistantId);
     expect(assistant?.role === "assistant" && assistant.content).toBe("hello world");
+  });
+
+  test("appendDelta hides streamed text-form tool calls across chunks", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("plan");
+    useChatStore.getState().appendDelta(assistantId, "Before\n<tool_call>{");
+    useChatStore.getState().appendDelta(assistantId, '"name":"todo_write"');
+    useChatStore.getState().appendDelta(assistantId, "}</tool_call>\nAfter");
+    useChatStore.getState().finishTurn(assistantId);
+
+    const assistant = useChatStore
+      .getState()
+      .messages.find((item) => item.id === assistantId);
+    expect(assistant?.role === "assistant" && assistant.content).toBe("Before\nAfter");
   });
 
   test("finishTurn clears pending and streaming", () => {
@@ -133,12 +151,18 @@ describe("chatStore", () => {
   test("prepareRetry replaces assistant and returns user text", () => {
     const assistantId = useChatStore.getState().beginUserTurn("retry me");
     useChatStore.getState().appendDelta(assistantId, "old answer");
+    useChatStore.getState().setAssistantRunId(assistantId, "run_old");
     useChatStore.getState().finishTurn(assistantId);
     const prepared = useChatStore.getState().prepareRetry(assistantId);
-    expect(prepared).toEqual({ userText: "retry me", newAssistantId: expect.any(String) });
+    expect(prepared).toEqual({
+      userText: "retry me",
+      newAssistantId: expect.any(String),
+      retryFromRunId: "run_old",
+    });
     const messages = useChatStore.getState().messages;
     expect(messages).toHaveLength(2);
     expect(messages[1]).toMatchObject({ role: "assistant", content: "", pending: true });
+    expect(useChatStore.getState().lastSeq).toBe(0);
   });
 
   test("setPlanningSnapshot updates assistant in place", () => {

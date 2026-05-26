@@ -20,6 +20,7 @@ class SessionRecord:
     created_at: str
     updated_at: str
     metadata_by_run: tuple[tuple[str, dict[str, Any]], ...] = ()
+    client_requests: tuple[tuple[str, dict[str, Any]], ...] = ()
 
 
 class SessionStore:
@@ -58,6 +59,7 @@ class SessionStore:
         run_ids: list[str],
         transcript: list[tuple[str, str]],
         metadata_by_run: dict[str, dict[str, Any]] | None = None,
+        client_requests: dict[str, dict[str, Any]] | None = None,
     ) -> SessionRecord:
         now = datetime.now(UTC).isoformat()
         payload = self._read()
@@ -66,6 +68,7 @@ class SessionStore:
             rows = []
         existing_created_at = now
         existing_metadata: dict[str, dict[str, Any]] = {}
+        existing_client_requests: dict[str, dict[str, Any]] = {}
         updated_rows: list[dict[str, Any]] = []
         for row in rows:
             if not isinstance(row, dict):
@@ -79,11 +82,21 @@ class SessionStore:
                         for key, value in prior.items()
                         if isinstance(value, dict)
                     }
+                prior_requests = row.get("client_requests")
+                if isinstance(prior_requests, dict):
+                    existing_client_requests = {
+                        str(key): dict(value)
+                        for key, value in prior_requests.items()
+                        if isinstance(value, dict)
+                    }
                 continue
             updated_rows.append(row)
         merged_metadata = dict(existing_metadata)
         if metadata_by_run:
             merged_metadata.update(metadata_by_run)
+        merged_client_requests = dict(existing_client_requests)
+        if client_requests is not None:
+            merged_client_requests = dict(client_requests)
         record = SessionRecord(
             session_id=session_id,
             thread_id=thread_id,
@@ -92,6 +105,7 @@ class SessionStore:
             created_at=existing_created_at,
             updated_at=now,
             metadata_by_run=tuple(sorted(merged_metadata.items())),
+            client_requests=tuple(sorted(merged_client_requests.items())),
         )
         updated_rows.append(_record_to_dict(record))
         payload["sessions"] = updated_rows
@@ -132,6 +146,14 @@ def _record_from_dict(row: dict[str, Any]) -> SessionRecord:
             for key, value in metadata_rows.items()
             if isinstance(value, dict)
         )
+    request_rows = row.get("client_requests")
+    client_requests: tuple[tuple[str, dict[str, Any]], ...] = ()
+    if isinstance(request_rows, dict):
+        client_requests = tuple(
+            (str(key), dict(value))
+            for key, value in request_rows.items()
+            if isinstance(value, dict)
+        )
     return SessionRecord(
         session_id=str(row.get("session_id", "")),
         thread_id=str(row.get("thread_id", "")),
@@ -140,6 +162,7 @@ def _record_from_dict(row: dict[str, Any]) -> SessionRecord:
         created_at=str(row.get("created_at", "")),
         updated_at=str(row.get("updated_at", "")),
         metadata_by_run=metadata_by_run,
+        client_requests=client_requests,
     )
 
 
@@ -154,6 +177,8 @@ def _record_to_dict(record: SessionRecord) -> dict[str, Any]:
     }
     if record.metadata_by_run:
         payload["metadata_by_run"] = {key: value for key, value in record.metadata_by_run}
+    if record.client_requests:
+        payload["client_requests"] = {key: value for key, value in record.client_requests}
     return payload
 
 
