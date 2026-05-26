@@ -33,6 +33,7 @@ class LlmProviderKind(str, Enum):
     FAKE = "fake"
     OPENAI_COMPATIBLE = "openai_compatible"
     OLLAMA = "ollama"
+    ANTHROPIC = "anthropic"
 
 
 class RouterStrategy(str, Enum):
