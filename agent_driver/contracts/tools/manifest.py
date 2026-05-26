@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import keyword
 import re
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -40,6 +40,14 @@ class ToolManifest(ContractModel):
     # idempotent network read whose remote rate-limits forbid parallel
     # calls — declare ``concurrency_safe=False``).
     concurrency_safe: bool | None = None
+    # Phase 11 H17 — per-tool semantic for "what happens when a new
+    # user message arrives mid-execution". When ``None`` (default), the
+    # executor derives from ``side_effect``: irreversible / external
+    # action → ``"block"`` (queue the new message until tool completes,
+    # avoiding mid-write torn state); reversible or no side effect →
+    # ``"cancel"`` (drop the in-flight tool result and route the new
+    # message immediately). Set explicitly to override.
+    interrupt_behavior: Literal["cancel", "block"] | None = None
     args_schema: dict[str, Any] | None = None
     output_type: str | None = None
     output_schema: dict[str, Any] | None = None
@@ -70,6 +78,30 @@ class ToolManifest(ContractModel):
             SideEffectClass.NONE,
             SideEffectClass.READ_ONLY,
         )
+
+    def resolved_interrupt_behavior(self) -> Literal["cancel", "block"]:
+        """Resolve the effective interrupt behaviour.
+
+        Phase 11 H17 — when ``interrupt_behavior`` is set explicitly,
+        use it. Otherwise:
+
+        * IRREVERSIBLE_WRITE / EXTERNAL_ACTION → ``"block"`` (we must
+          let the tool complete to avoid mid-write torn state);
+        * NONE / READ_ONLY / REVERSIBLE_WRITE → ``"cancel"`` (safe to
+          drop the in-flight result and serve the new user message
+          immediately).
+
+        Runtime consumers should call this rather than reading the
+        raw field so the default-derivation logic stays in one place.
+        """
+        if self.interrupt_behavior is not None:
+            return self.interrupt_behavior
+        if self.side_effect in (
+            SideEffectClass.IRREVERSIBLE_WRITE,
+            SideEffectClass.EXTERNAL_ACTION,
+        ):
+            return "block"
+        return "cancel"
 
     @field_validator("timeout_seconds")
     @classmethod
