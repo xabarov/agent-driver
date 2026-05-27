@@ -17,6 +17,66 @@ T = TypeVar("T")
 _STREAM_OPEN_RETRIES = 1
 _STREAM_OPEN_RETRY_BACKOFF_SECONDS = 0.5
 
+# Phase 13 H25 — HTTP status-code-based retry knobs.
+# Generic retry loop on top of stream-open retry: when the provider returns
+# 429 / 502 / 503 / 504, wait per backoff and retry. Network errors (DNS /
+# TLS / reset) are still handled by the stream-open retry above.
+_STATUS_RETRY_STATUSES: frozenset[int] = frozenset({429, 502, 503, 504})
+_STATUS_RETRY_MAX_ATTEMPTS = 4  # 1 initial + 3 retries
+_STATUS_RETRY_BACKOFF_SCHEDULE_SECONDS: tuple[float, ...] = (1.0, 2.0, 4.0)
+_STATUS_RETRY_BACKOFF_CAP_SECONDS = 32.0
+
+
+def _parse_retry_after(header_value: str | None) -> float | None:
+    """Parse the Retry-After header per RFC 7231 §7.1.3.
+
+    Returns the wait duration in seconds, capped at
+    ``_STATUS_RETRY_BACKOFF_CAP_SECONDS`` (32s). Returns ``None`` for
+    malformed / missing headers; the caller falls back to the exponential
+    schedule. Both bare-seconds and HTTP-date forms are accepted; HTTP-
+    date is interpreted as "wait until that date" relative to ``now``.
+    """
+    if not header_value:
+        return None
+    raw = header_value.strip()
+    if not raw:
+        return None
+    try:
+        seconds = float(raw)
+        if seconds < 0:
+            return None
+        return min(seconds, _STATUS_RETRY_BACKOFF_CAP_SECONDS)
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        from datetime import datetime, timezone
+
+        when = parsedate_to_datetime(raw)
+        if when is None:
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        delta = (when - datetime.now(timezone.utc)).total_seconds()
+        if delta < 0:
+            return 0.0
+        return min(delta, _STATUS_RETRY_BACKOFF_CAP_SECONDS)
+    except (TypeError, ValueError):
+        return None
+
+
+def _status_retry_delay(attempt: int, retry_after: float | None) -> float:
+    """Compute the wait time before retry ``attempt`` (1-indexed).
+
+    Honors a parsed ``Retry-After`` value when present; otherwise picks
+    from the exponential schedule with cap.
+    """
+    if retry_after is not None:
+        return retry_after
+    if attempt - 1 < len(_STATUS_RETRY_BACKOFF_SCHEDULE_SECONDS):
+        return _STATUS_RETRY_BACKOFF_SCHEDULE_SECONDS[attempt - 1]
+    return _STATUS_RETRY_BACKOFF_CAP_SECONDS
+
 
 @dataclass(frozen=True, slots=True)
 class StreamRequest:
@@ -127,7 +187,22 @@ class ProviderBase:
         self,
         request: StreamRequest,
     ) -> AsyncIterator[AsyncIterator[str]]:
-        """Open HTTP stream with telemetry and yield iterator over text lines."""
+        """Open HTTP stream with telemetry and yield iterator over text lines.
+
+        Phase 13 H25 — retry loop semantics:
+
+        * Network errors during stream-open (`RemoteProtocolError`,
+          `ReadError`) → ``_STREAM_OPEN_RETRIES`` retries with linear
+          backoff (existing behavior).
+        * HTTP status codes 429 / 502 / 503 / 504 →
+          ``_STATUS_RETRY_MAX_ATTEMPTS`` total attempts with
+          exponential backoff (1s / 2s / 4s, cap 32s), honoring
+          ``Retry-After`` when the server provides it. This directly
+          addresses the ZION recon_v3 ``d9fa88f3`` cascade where
+          litellm.c.com returned three consecutive 503s without retry.
+        * Other 4xx → no retry, raise immediately.
+        * 2xx → yield the stream iterator.
+        """
         async with self.stream_with_telemetry(
             handled_exceptions=request.handled_exceptions
         ):
@@ -135,28 +210,63 @@ class ProviderBase:
                 timeout=request.timeout_s,
                 transport=self._http_client_config.transport,
             ) as client:
-                for attempt in range(_STREAM_OPEN_RETRIES + 1):
-                    stream_context = client.stream(
-                        request.method,
-                        request.url,
-                        headers=request.headers,
-                        json=request.json,
-                    )
-                    try:
-                        response = await stream_context.__aenter__()
-                    except (httpx.RemoteProtocolError, httpx.ReadError):
-                        if attempt >= _STREAM_OPEN_RETRIES:
-                            raise
-                        await asyncio.sleep(
-                            _STREAM_OPEN_RETRY_BACKOFF_SECONDS * (attempt + 1)
+                status_attempt = 0
+                while True:
+                    status_attempt += 1
+                    for attempt in range(_STREAM_OPEN_RETRIES + 1):
+                        stream_context = client.stream(
+                            request.method,
+                            request.url,
+                            headers=request.headers,
+                            json=request.json,
                         )
-                        continue
-                    try:
-                        response.raise_for_status()
-                        yield response.aiter_lines()
+                        try:
+                            response = await stream_context.__aenter__()
+                        except (httpx.RemoteProtocolError, httpx.ReadError):
+                            if attempt >= _STREAM_OPEN_RETRIES:
+                                raise
+                            await asyncio.sleep(
+                                _STREAM_OPEN_RETRY_BACKOFF_SECONDS * (attempt + 1)
+                            )
+                            continue
+                        # Phase 13 H25 — check status before raise_for_status so
+                        # we can retry on transient server errors.
+                        if response.status_code in _STATUS_RETRY_STATUSES:
+                            retry_after = _parse_retry_after(
+                                response.headers.get("retry-after")
+                            )
+                            await stream_context.__aexit__(None, None, None)
+                            if status_attempt >= _STATUS_RETRY_MAX_ATTEMPTS:
+                                # Out of retries — re-raise as HTTPStatusError
+                                # by opening a fresh request and calling
+                                # raise_for_status. Cleaner than synthesizing
+                                # an httpx exception manually.
+                                final_resp = await client.request(
+                                    request.method,
+                                    request.url,
+                                    headers=request.headers,
+                                    json=request.json,
+                                )
+                                final_resp.raise_for_status()
+                                # Should not reach here (5xx must raise), but
+                                # if the server recovered after we ran out of
+                                # retries, yield a synthetic non-stream body.
+                                yield iter([])
+                                return
+                            delay = _status_retry_delay(status_attempt, retry_after)
+                            await asyncio.sleep(delay)
+                            break  # break the inner stream-open retry loop, continue outer status loop
+                        try:
+                            response.raise_for_status()
+                            yield response.aiter_lines()
+                            return
+                        finally:
+                            await stream_context.__aexit__(None, None, None)
+                    else:
+                        # Inner for-loop completed without break — should not
+                        # happen because each attempt either returns, raises,
+                        # or hits the network-retry continue. Safety net.
                         return
-                    finally:
-                        await stream_context.__aexit__(None, None, None)
 
     @asynccontextmanager
     async def stream_with_telemetry(
