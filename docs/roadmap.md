@@ -1501,7 +1501,24 @@ single-user / CLI workflows; ZION fallback when Mongo unavailable.
   observable.
 
 
-## Phase 13: provider hardening — production resilience (Planned 2026-05-27)
+## Phase 13: provider hardening — production resilience (In progress 2026-05-27)
+
+**Status snapshot (2026-05-27):** H24, H25, H26, H29.1 landed; H27, H28
+still planned. Wave brought up live by ZION live verify session that
+exposed both the original 503 cascade (H25 motivation) and the
+operator_report JSON-tail flake (H26 motivation).
+
+| # | Status | Commit | Surface |
+|---|--------|--------|---------|
+| H24 | **landed** | `5657632` | Anthropic prompt-cache via cache_control ephemeral; `LlmRequest.enable_prompt_cache` opt-in. |
+| H25 | **landed** | `9cade72` | OpenAI-compat 429/5xx retry w/ Retry-After honor; base.py retry loop wrapper. |
+| H26 | **landed** | `a9e93f5` | `LlmRequest.response_format` passthrough on OpenAI-compat; validator for json_object / json_schema shapes; vendor `extra_body` overrides preserved. ZION Tier 2 entry point for slice 4.L follow-up — once pinned, ZION's `instructor_findings_extractor` switches from direct openai client to agent-driver-routed call so H4 (span attrs) / H20 (cost ledger) / Phase 8 (compaction) integrate. AnthropicMessagesProvider silently drops the field today (no native equivalent API key); follow-up can translate to system-prompt addendum + post-call validate. |
+| H27 | planned | — | vLLM guided decoding (`guided_json` / `guided_regex` / `guided_choice`); deferred until ZION vLLM deploy is unblocked. |
+| H28 | planned | — | Streaming optimizer (StreamCoalescer); UI smoothness for chat surfaces. |
+| H29.1 | **landed** | `16b67dc` | Explicit `parallel_tool_calls: bool \| None` on OpenAI-compat; null = backend default. |
+
+---
+
 
 Context: Phase 1.2 root-cause investigation of the ZION P5o slice 4.L
 operator_report JSON-tail bug exposed a side-by-side comparison of
