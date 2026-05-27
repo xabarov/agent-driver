@@ -74,6 +74,27 @@ class ToolManifest(ContractModel):
     should_defer: bool = False
     always_load: bool = False
     aliases: list[str] = Field(default_factory=list)
+    # Phase 12 H18 — disk-spill threshold for oversized handler outputs.
+    #
+    # ``output_char_budget`` (above) caps the prompt-window representation
+    # — anything beyond is truncated, losing data permanently within the
+    # run. ``max_result_size_chars`` is a SEPARATE threshold that says:
+    # "instead of truncating, persist the FULL output to the configured
+    # ArtifactStore and replace the in-context value with a 2 KB preview
+    # + artifact reference". The model can then fetch the full payload
+    # via ``read_artifact`` if it really needs it.
+    #
+    # ``None`` (default) — no spill, fall back to the
+    # ``output_char_budget`` truncation behaviour. Most existing tools
+    # set this implicitly to ``None`` and keep working unchanged.
+    #
+    # A positive int — spill when raw JSON-encoded output exceeds this
+    # many chars. Recommend setting to 50_000 for tools that may emit
+    # large outputs (file reads, nuclei JSON, dirfuzzer wordlist
+    # output). The executor only spills when the host has wired an
+    # ArtifactStore into the executor; without one, ``max_result_size_chars``
+    # is treated as informational only and the legacy truncation runs.
+    max_result_size_chars: int | None = None
     args_schema: dict[str, Any] | None = None
     output_type: str | None = None
     output_schema: dict[str, Any] | None = None
@@ -154,6 +175,12 @@ class ToolManifest(ContractModel):
     def validate_output_budget(cls, value: int | None) -> int | None:
         """Validate positive output budget when configured."""
         return ensure_positive_int(value, field_name="output_char_budget")
+
+    @field_validator("max_result_size_chars")
+    @classmethod
+    def validate_max_result_size_chars(cls, value: int | None) -> int | None:
+        """Phase 12 H18 — validate positive spill threshold when set."""
+        return ensure_positive_int(value, field_name="max_result_size_chars")
 
     @field_validator("metadata")
     @classmethod

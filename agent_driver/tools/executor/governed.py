@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from typing import Any
 
 from agent_driver.contracts.enums import GuardrailDecision, ToolPolicyDecision
 from agent_driver.contracts.hooks import ToolHook
@@ -124,6 +125,7 @@ class GovernedToolExecutor:
         guardrails: GuardrailPipeline | None = None,
         concurrency_limit: int | None = None,
         tool_hooks: "list[ToolHook] | tuple[ToolHook, ...] | None" = None,
+        artifact_store: Any = None,
     ) -> None:
         self._registry = registry
         self._guardrails = guardrails or GuardrailPipeline()
@@ -141,6 +143,10 @@ class GovernedToolExecutor:
             "tool_name": call.tool_name,
             "args": call.args,
         }
+        # Phase 12 H18 — optional artifact store for spilling oversized
+        # tool handler outputs to persistent storage. When ``None``,
+        # legacy ``output_char_budget`` truncation runs.
+        self._artifact_store = artifact_store
 
     @staticmethod
     def planned_calls(llm_response: LlmResponse) -> list[ToolCall]:
@@ -485,6 +491,10 @@ class GovernedToolExecutor:
                 registered=registered,
                 input_guard_decision=input_guard.decision,
                 run_metadata=run_metadata,
+                # Phase 12 H18 — pass the executor-scoped artifact store
+                # so the allow-path can spill oversized outputs when
+                # the manifest opts in via ``max_result_size_chars``.
+                artifact_store=self._artifact_store,
             ),
         )
         # Phase 11 H15 — apply post_tool_use hook chain to any envelope

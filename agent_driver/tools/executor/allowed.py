@@ -29,6 +29,10 @@ from agent_driver.tools.context import (
     tool_call_context_scope,
     tool_progress_scope,
 )
+from agent_driver.tools.executor.spill import (
+    should_spill_payload,
+    spill_payload_to_artifact,
+)
 
 
 def _bounded_structured_output(
@@ -176,6 +180,27 @@ async def execute_allowed_path(
             raw = _planning_update_payload(raw if isinstance(raw, dict) else {})
         if spec.call.tool_name == "ask_user_question":
             return _append_clarification_interrupt(spec=spec, raw=raw)
+        # Phase 12 H18 — disk-spill for oversized handler outputs.
+        # When the manifest has ``max_result_size_chars`` set AND the
+        # executor has an ArtifactStore wired, persist the full payload
+        # to storage and replace the in-context value with a 2 KB
+        # preview + artifact reference. Falls back to legacy
+        # ``_bounded_structured_output`` truncation when either
+        # condition isn't met or when spill fails.
+        if should_spill_payload(
+            payload=raw,
+            max_result_size_chars=spec.manifest.max_result_size_chars,
+            store=spec.artifact_store,
+        ):
+            spilled = spill_payload_to_artifact(
+                payload=raw,
+                store=spec.artifact_store,
+                tool_name=spec.call.tool_name,
+                run_id=str(spec.run_metadata.get("run_id") or ""),
+                tool_call_id=str(spec.run_metadata.get("attempt_id") or ""),
+            )
+            if spilled is not None:
+                raw = spilled[0]
         raw, structured_truncated = _bounded_structured_output(
             raw,
             max_chars=spec.manifest.output_char_budget,

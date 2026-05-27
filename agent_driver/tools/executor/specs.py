@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from agent_driver.contracts.enums import (
     ApprovalMode,
@@ -64,6 +65,10 @@ class AllowedSpec:
     registered: RegisteredTool | None
     input_guard_decision: GuardrailDecision = GuardrailDecision.ALLOW
     run_metadata: dict[str, str | int | None] = field(default_factory=dict)
+    # Phase 12 H18 — optional artifact store for spilling oversized
+    # tool handler outputs. When ``None`` (default), no spill happens;
+    # legacy ``output_char_budget`` truncation runs as before.
+    artifact_store: Any = None
 
 
 @dataclass(frozen=True, slots=True)
