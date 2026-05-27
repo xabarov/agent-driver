@@ -69,6 +69,14 @@ class AllowedSpec:
     # tool handler outputs. When ``None`` (default), no spill happens;
     # legacy ``output_char_budget`` truncation runs as before.
     artifact_store: Any = None
+    # Phase 13 H29.3 — names of all tools registered with the executor's
+    # registry. Passed by ``GovernedToolExecutor`` so the
+    # ``tool_not_registered`` block path can build a fuzzy-match
+    # feedback string (``"Tool 'X' not found. Did you mean: 'Y'?
+    # Available tools: …"``) the model can use to self-correct on the
+    # next turn. Empty/None — default, fall back to the legacy short
+    # "tool is not registered" reason without suggestions.
+    available_tool_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

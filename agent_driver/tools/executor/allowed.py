@@ -133,6 +133,20 @@ async def execute_allowed_path(
         )
         return False
     if spec.registered is None:
+        # Phase 13 H29.3 — enrich the feedback string with closest-match
+        # suggestions when the executor knows the registry's tool names.
+        # Models (especially open-weights) often recover on the next
+        # turn when shown a fuzzy match for their misspelled call.
+        if spec.available_tool_names:
+            from agent_driver.tools.fallback_feedback import (
+                build_unknown_tool_feedback,
+            )
+
+            reason = build_unknown_tool_feedback(
+                spec.call.tool_name, spec.available_tool_names
+            )
+        else:
+            reason = "tool is not registered"
         append_blocked_call(
             result=spec.result,
             spec=BlockSpec(
@@ -140,7 +154,7 @@ async def execute_allowed_path(
                 call=spec.call,
                 manifest=spec.manifest,
                 code="tool_not_registered",
-                reason="tool is not registered",
+                reason=reason,
             ),
         )
         return False

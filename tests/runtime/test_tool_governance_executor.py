@@ -70,6 +70,98 @@ async def test_governed_executor_completes_tool_and_truncates() -> None:
 
 
 @pytest.mark.asyncio
+async def test_governed_executor_unknown_tool_returns_fuzzy_match_suggestion() -> None:
+    """Phase 13 H29.3 — when the model calls a tool that's close to a
+    registered name (typo), the executor's block envelope should carry
+    the fuzzy-match suggestion in the ``reason`` field so the next LLM
+    turn can self-correct."""
+    registry = ToolRegistry()
+
+    async def _screenshot(_args):
+        return {"summary": "ok"}
+
+    registry.register(
+        ToolManifest(
+            name="screenshot_tool",
+            description="Take a screenshot",
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.READ_ONLY,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _screenshot,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="hello",
+        run_id="run_unknown_tool_fuzzy",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            # Typo: "scrennshot_tool" — one transposed letter from
+            # the registered "screenshot_tool".
+            planned=[ToolCall(tool_name="scrennshot_tool", args={})]
+        )
+    )
+    result = await executor.execute(run_input, response)
+    assert result.envelopes, "expected at least one envelope for the blocked call"
+    envelope = result.envelopes[0]
+    assert envelope.error is not None
+    assert envelope.error.code == "tool_not_registered"
+    reason = envelope.error.message
+    assert "scrennshot_tool" in reason  # quoted name surfaced
+    assert "screenshot_tool" in reason  # fuzzy match surfaced
+    assert "Available tools:" in reason
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_unknown_tool_without_fuzzy_match() -> None:
+    """When the misspelled name doesn't pass the fuzzy-match cutoff, the
+    feedback still includes the catalog listing — model can pick a tool
+    from there if it had a fully-unrelated hallucination."""
+    registry = ToolRegistry()
+
+    async def _alpha(_args):
+        return {}
+
+    registry.register(
+        ToolManifest(
+            name="alpha",
+            description="Alpha",
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.READ_ONLY,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _alpha,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="hello",
+        run_id="run_unknown_tool_unrelated",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[ToolCall(tool_name="zzz_unrelated_name", args={})]
+        )
+    )
+    result = await executor.execute(run_input, response)
+    envelope = result.envelopes[0]
+    assert envelope.error.code == "tool_not_registered"
+    reason = envelope.error.message
+    assert "zzz_unrelated_name" in reason
+    assert "Did you mean:" not in reason  # no candidate above cutoff
+    assert "Available tools:" in reason
+    assert "alpha" in reason
+
+
+@pytest.mark.asyncio
 async def test_governed_executor_bounds_structured_output_lists() -> None:
     """Executor should cap oversized structured outputs and expose omitted_count."""
     registry = ToolRegistry()

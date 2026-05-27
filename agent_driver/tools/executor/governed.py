@@ -616,6 +616,11 @@ class GovernedToolExecutor:
                 # so the allow-path can spill oversized outputs when
                 # the manifest opts in via ``max_result_size_chars``.
                 artifact_store=self._artifact_store,
+                # Phase 13 H29.3 — give the allow-path the registry's
+                # tool names so the unregistered-tool branch can build
+                # a "did you mean: X" feedback string for the next LLM
+                # turn instead of the bare "tool is not registered".
+                available_tool_names=tuple(self._registry.list_names()),
             ),
         )
         # Phase 11 H15 — apply post_tool_use hook chain to any envelope
