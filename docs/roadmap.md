@@ -1499,3 +1499,212 @@ single-user / CLI workflows; ZION fallback when Mongo unavailable.
 - Additionally: each item updates the existing examples
   (``examples/chat-demo``, ``examples/eval``) where the feature is
   observable.
+
+
+## Phase 13: provider hardening — production resilience (Planned 2026-05-27)
+
+Context: Phase 1.2 root-cause investigation of the ZION P5o slice 4.L
+operator_report JSON-tail bug exposed a side-by-side comparison of
+agent-driver vs openclaude provider implementations. agent-driver has
+solid baseline tool-calling for Anthropic + OpenAI-compatible
+providers, but lacks several production-resilience features that
+openclaude has. ZION's litellm.c.com 503 cascade during validation
+run `d9fa88f3` (Qwen3.6 cold-start + auth glitch killed mid-run
+without retry) is a concrete operator pain that motivates this wave.
+
+Five items, sequenced by effort × impact. Recommended order:
+**H24 + H25 first** (LOW/MED effort, immediate value), then H26,
+H28, H27 if vLLM deploy gets prioritized.
+
+### H24 — Anthropic prompt-cache (cache_control ephemeral)
+
+Reference: openclaude `src/utils/api.ts` (cache_control ephemeral
+blocks on tools and large system prompts).
+
+Today: `AnthropicMessagesProvider` (~450 LOC) emits raw
+`tools=[{name, description, input_schema}]` and `system="..."`
+without cache_control markers. Every request re-bills the full
+prompt prefix (system + tools catalog) — typical recon-v3
+operator_report has ~3k tokens of system + tools = ~3k tokens
+billed at full input rate per call.
+
+Proposal: when the parent run signals a cacheable prefix (via
+`CacheSafeParams` from H19, or an explicit per-call flag), the
+provider attaches `cache_control: {type: "ephemeral"}` to:
+- the `system` field (as a content block with cache_control), and
+- the LAST tool in the `tools` array (Anthropic caches everything
+  up to and including the marker — see Anthropic docs).
+
+Acceptance:
+- offline test: a request with two consecutive calls to the same
+  prefix produces `cache_read_input_tokens > 0` on call 2 (against
+  FakeProvider that simulates the field);
+- contract test: `cache_control` markers are NEVER set when the
+  caller didn't request caching (avoid bloating tokens for one-off
+  calls).
+
+Value/effort: HIGH (cost win) / LOW (~50 LOC + 4 tests).
+
+### H25 — OpenAI-compatible 429 retry + Retry-After honor
+
+Reference: openclaude `src/services/api/openaiShim.ts:103-105 +
+2311-2326` (GitHub Models specific: 1→2→4→32s exp backoff capped,
+Retry-After header parsed).
+
+Today: `OpenAICompatibleProvider` retries once on stream-open
+failure (`base.py:138-153`) but has NO 429 / 503 / 502 retry loop.
+ZION's recon_v3 run `d9fa88f3` died mid-flight when litellm.c.com
+returned 503 "Loading model" three times consecutively — no fallback
+was attempted, and the model would have been warm by retry 2.
+
+Proposal: generic retry loop on the OpenAI-compatible provider for:
+- 429 Too Many Requests — honor `Retry-After` header if present,
+  else exponential backoff (1s, 2s, 4s, 8s, 16s, 32s, capped at
+  3 retries).
+- 503 Service Unavailable — same backoff, suggests transient.
+- 502 Bad Gateway — same backoff, capped at 2 retries.
+- 5xx other — same backoff.
+Network errors (DNS / TLS handshake fail / connection reset) are
+already partly handled in `base.py` stream-open retry; this slice
+ONLY adds the HTTP-status-code branch.
+
+Acceptance:
+- offline test: mocked 429 with Retry-After: 1 → request succeeds
+  on retry 2 after ~1s delay;
+- offline test: three 503s in a row → request retries 3 times then
+  raises;
+- contract: streaming requests get the same retry on the OPEN; mid-
+  stream chunks don't retry (those are unrecoverable).
+
+Value/effort: HIGH (reliability) / MEDIUM (~80 LOC + 6 tests).
+
+### H26 — OpenAI `response_format=json_schema` (decode-time enforcement)
+
+Reference: openclaude `src/services/api/codexShim.ts:380-432`
+(`enforceStrictSchema`: strips `uri` format, sets
+`additionalProperties=false`, recurses nested objects).
+
+Today: `OpenAICompatibleProvider` accepts `response_format` only
+when callers pass it via `Config.extra_body`. There's no first-
+class API to request `{"type": "json_object"}` or
+`{"type": "json_schema", "json_schema": {...}}` from the SDK
+contract. Modern OpenRouter (Qwen, GPT-4) and OpenAI itself
+support decode-time JSON schema validation: the model is FORCED to
+produce a response matching the schema. This would be a much
+stronger fix for the ZION 4.L JSON-tail bug than prompt-engineering
+— but it requires the response to be PURE JSON (no surrounding
+markdown), so adopting it means restructuring operator_report.
+
+Proposal: add `LlmRequest.response_format` field (Pydantic):
+
+  ```python
+  class ResponseFormatJsonObject(BaseModel):
+      type: Literal["json_object"] = "json_object"
+
+  class ResponseFormatJsonSchema(BaseModel):
+      type: Literal["json_schema"] = "json_schema"
+      json_schema: dict[str, Any]
+      strict: bool = True
+
+  ResponseFormat = ResponseFormatJsonObject | ResponseFormatJsonSchema | None
+  ```
+
+Then `OpenAICompatibleProvider` translates to the wire request
+body, applying `enforceStrictSchema` projection (mirror openclaude).
+`AnthropicMessagesProvider` has no native support — falls back to
+adding a strong "respond with JSON matching this schema" system-
+prompt addendum + post-call validation.
+
+Acceptance:
+- offline test: round-trip a schema through `response_format` →
+  wire body has the right shape;
+- contract test: `json_schema` strict=True coerces `additionalProperties=False`
+  at all nesting levels;
+- compat test: Anthropic provider receives the same request and
+  doesn't crash (graceful degradation via system prompt addendum).
+
+Value/effort: MEDIUM (proper structured-output) / MEDIUM (~80 LOC + 5 tests).
+
+### H27 — vLLM guided decoding (guided_json / guided_regex / guided_choice)
+
+Reference: openclaude has no vLLM-specific support either. This is
+a new feature in agent-driver.
+
+Today: ZION's vLLM deploy is on the Phase 3+ roadmap. When it
+lands, deterministic structured output via vLLM's guided decoding
+would be the gold standard — the decode loop is constrained to
+only emit tokens that match the JSON schema / regex / choice list,
+making model output FORMALLY guaranteed to validate.
+
+Proposal: when `provider.kind == "vllm"` (or via opt-in flag),
+translate `response_format=json_schema` to vLLM's `extra_body`:
+
+  ```python
+  extra_body = {
+      "guided_json": json_schema,
+      # or
+      "guided_regex": pattern,
+      # or
+      "guided_choice": ["one_of", "these", "tokens"],
+  }
+  ```
+
+Acceptance:
+- offline test against a vLLM mock: schema in `response_format` →
+  request body has `extra_body.guided_json` populated;
+- conformance: when both `response_format` and `extra_body.guided_*`
+  are set, `extra_body.guided_*` wins (operator override);
+- contract: non-vLLM providers ignore the vLLM-specific knobs.
+
+Value/effort: HIGH (vLLM gold standard) / HIGH (~200 LOC + integration
+test against a running vLLM instance).
+
+### H28 — Streaming optimizer (buffer + flush + chunk coalescing)
+
+Reference: openclaude `src/utils/streamingOptimizer.ts`
+(`createStreamState`, `processStreamChunk` — accumulates tokens
+into ~80ms buffers, emits coalesced chunks, smooths perceived
+latency for chat UIs).
+
+Today: `OpenAICompatibleProvider` streams line-by-line.
+`AnthropicMessagesProvider` streams per-event. Both emit raw
+SSE events as the SDK consumer's stream. ZION chat UI flickers
+on rapid delta arrivals (visible during recon_v3 progress; also
+the operator's #1 observation in `my-findings-about-last.md`:
+"Runs page обновляется каждые 5 секунд").
+
+Proposal: add `agent_driver.llm.streaming_optimizer` with
+`StreamCoalescer` — receives raw stream events, batches `text_delta`
+into ~80ms windows, flushes on `tool_use_start` / `tool_use_stop`
+/ `message_stop` / 200ms idle. Caller opts in via a request flag.
+
+Acceptance:
+- offline test: 100 1-byte deltas in 50ms → 1 coalesced chunk
+  emitted;
+- contract: tool-use start/stop events are NEVER coalesced (UI
+  needs them prompt);
+- perf: typical recon_v3 progress stream cuts emitted chunks by
+  ≥3× without losing information.
+
+Value/effort: MEDIUM (UI smoothness) / MEDIUM (~100 LOC + 8 tests).
+
+### Phase 13 sequencing recommendation
+
+1. **H24 + H25** first — LOW + MED effort, both immediate value
+   (cost / reliability). Each independent; can land in parallel.
+2. **H26** next — MEDIUM effort, opens the door for principled
+   structured output (downstream candidate fix for ZION 4.L JSON
+   tail bug if operator_report gets restructured to emit pure
+   JSON).
+3. **H28** then — MEDIUM effort, UI quality win.
+4. **H27** last — HIGH effort, deferred until vLLM deploy gates
+   are unblocked.
+
+### Phase 13 exit criteria
+
+- Same as Phase 12: offline tests + no breaking changes to public
+  surface + opt-in flags documented in ZION `unified-plan.md`.
+- Each item adds at least one regression test demonstrating the
+  resilience / cost-saving / structured-output behavior.
+- ZION's recon_v3 stack picks up the new providers via the pin
+  bump after each commit.
