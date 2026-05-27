@@ -48,6 +48,32 @@ class ToolManifest(ContractModel):
     # ``"cancel"`` (drop the in-flight tool result and route the new
     # message immediately). Set explicitly to override.
     interrupt_behavior: Literal["cancel", "block"] | None = None
+    # Phase 12 H21 — tool dispatch metadata.
+    #
+    # ``should_defer`` — when True, the tool is OMITTED from the agent's
+    # initial enumeration. The LLM has to call ``catalog_search``-style
+    # discovery first to surface it. Use for bulky / niche tool sets
+    # (large MCP catalogues, vendor SDK wrappers) that would otherwise
+    # inflate every prompt by thousands of tokens. Honored by the SDK
+    # surface that builds the agent's tool list; runtime ``ToolRegistry``
+    # always keeps the tool available for invocation once the LLM names
+    # it explicitly.
+    #
+    # ``always_load`` — explicit opt-out from deference. Use for
+    # system-critical tools that must be visible from turn 1 (e.g.
+    # ``ask_user_question``, ``planning_state_update``). When both
+    # ``should_defer`` and ``always_load`` are True, ``always_load``
+    # wins (so the operator can flip a tool back on without removing
+    # the defer flag).
+    #
+    # ``aliases`` — alternative names the registry resolves to this
+    # tool. Use for backwards compatibility after a rename, or for
+    # exposing a tool under multiple framework-specific spellings
+    # (``file_read`` + ``read_file``). Each alias must be a valid
+    # tool-name regex match (same rules as the primary ``name``).
+    should_defer: bool = False
+    always_load: bool = False
+    aliases: list[str] = Field(default_factory=list)
     args_schema: dict[str, Any] | None = None
     output_type: str | None = None
     output_schema: dict[str, Any] | None = None
@@ -103,6 +129,18 @@ class ToolManifest(ContractModel):
             return "block"
         return "cancel"
 
+    def is_deferred(self) -> bool:
+        """Resolve the effective dispatch-deference flag.
+
+        Phase 12 H21 — ``always_load=True`` wins over ``should_defer=True``
+        so an operator can flip a tool back on without removing the
+        defer flag. When both are False, the tool is included in default
+        enumeration (the historical behaviour).
+        """
+        if self.always_load:
+            return False
+        return self.should_defer
+
     @field_validator("timeout_seconds")
     @classmethod
     def validate_timeout(cls, value: float | None) -> float | None:
@@ -131,6 +169,26 @@ class ToolManifest(ContractModel):
             raise ValueError(
                 "tool name must match [A-Za-z0-9_.:-]+ for stable prompt rendering"
             )
+        return value
+
+    @field_validator("aliases")
+    @classmethod
+    def validate_aliases(cls, value: list[str]) -> list[str]:
+        """Phase 12 H21 — each alias must satisfy the same naming rules as
+        the primary tool name; aliases must be unique within the list.
+        """
+        seen: set[str] = set()
+        for alias in value:
+            if not isinstance(alias, str) or not alias:
+                raise ValueError("alias must be a non-empty string")
+            if not re.fullmatch(r"[A-Za-z0-9_.:-]+", alias):
+                raise ValueError(
+                    f"alias {alias!r} must match [A-Za-z0-9_.:-]+ for stable "
+                    "prompt rendering"
+                )
+            if alias in seen:
+                raise ValueError(f"duplicate alias {alias!r}")
+            seen.add(alias)
         return value
 
     @field_validator("args_schema", "output_schema")
