@@ -302,11 +302,38 @@ class AnthropicProvider(ProviderBase):
             "stream": stream,
         }
         if system_text:
-            payload["system"] = system_text
+            # Phase 13 H24 — when prompt caching is opted in, emit ``system``
+            # as a content-block array with cache_control: ephemeral. The
+            # marker tells Anthropic to cache everything up to and including
+            # the system prompt for ~5 minutes (ephemeral TTL), so subsequent
+            # requests with the same prefix get ``cache_read_input_tokens``
+            # instead of full input-rate billing. The string form (without
+            # cache_control) stays default for callers that haven't opted in.
+            if request.enable_prompt_cache:
+                payload["system"] = [
+                    {
+                        "type": "text",
+                        "text": system_text,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+            else:
+                payload["system"] = system_text
         if request.temperature is not None:
             payload["temperature"] = request.temperature
         if request.tools:
-            payload["tools"] = list(request.tools)
+            tools_list = list(request.tools)
+            # Phase 13 H24 — Anthropic's cache marker on the LAST tool
+            # extends the cached prefix to include the entire tools catalog.
+            # We attach to the final tool only (markers on earlier tools
+            # would be redundant — caching is always cumulative up to the
+            # outermost marker). Tool dicts are shallow-copied so we don't
+            # mutate the caller's list.
+            if request.enable_prompt_cache and tools_list:
+                last = dict(tools_list[-1])
+                last["cache_control"] = {"type": "ephemeral"}
+                tools_list = tools_list[:-1] + [last]
+            payload["tools"] = tools_list
         if request.tool_choice is not None:
             payload["tool_choice"] = request.tool_choice
         return payload

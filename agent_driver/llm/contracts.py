@@ -57,6 +57,15 @@ class LlmRequest(ContractModel):
     tool_choice: str | dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    # Phase 13 H24 — opt-in flag for provider-side prompt caching. Today
+    # only `AnthropicMessagesProvider` honors this, attaching
+    # ``cache_control: {"type": "ephemeral"}`` to the system message + the
+    # LAST tool in the catalog so Anthropic caches everything up to and
+    # including that marker (system + full tools catalog). Default False
+    # for backwards compatibility — callers must opt in per-request so
+    # one-off calls don't pay the cache-write surcharge unnecessarily.
+    enable_prompt_cache: bool = False
+
     @field_validator("max_tokens")
     @classmethod
     def validate_max_tokens(cls, value: int | None) -> int | None:
