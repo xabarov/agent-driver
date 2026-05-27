@@ -1503,11 +1503,14 @@ single-user / CLI workflows; ZION fallback when Mongo unavailable.
 
 ## Phase 13: provider hardening — production resilience (In progress 2026-05-27)
 
-**Status snapshot (2026-05-27):** H24, H25, H26, H28, H29.1 landed; only
-H27 still planned (deferred until vLLM deploy unblocks). Wave brought
-up live by ZION live verify session that exposed both the original 503
-cascade (H25 motivation) and the operator_report JSON-tail flake (H26
-motivation), plus operator UI flicker (H28 motivation).
+**Status snapshot (2026-05-27, functionally closed):** H24, H25, H26,
+H28, H29.1, H29.2, H29.3 all landed. Only H27 (vLLM guided decoding)
+remains, deferred until ZION vLLM deploy gates unblock — out of scope
+for this wave. Wave was brought up live by ZION live-verify session
+that exposed: original 503 cascade (H25 motivation), operator_report
+JSON-tail flake (H26 motivation), operator UI flicker (H28
+motivation), and tool-calling robustness gaps for open-weights models
+(H29 family motivation).
 
 | # | Status | Commit | Surface |
 |---|--------|--------|---------|
@@ -1517,6 +1520,8 @@ motivation), plus operator UI flicker (H28 motivation).
 | H27 | planned | — | vLLM guided decoding (`guided_json` / `guided_regex` / `guided_choice`); deferred until ZION vLLM deploy is unblocked. |
 | H28 | **landed** | `a2c1508` | `agent_driver.llm.streaming_optimizer.coalesce_stream` standalone async-generator helper. Window (default 80ms) + idle (default 200ms) flush; non-delta events flush pending buffer THEN pass through verbatim; reasoning channel preserved without coalescing; producer exceptions drain buffer first. Caller opts in by wrapping their provider stream. |
 | H29.1 | **landed** | `16b67dc` | Explicit `parallel_tool_calls: bool \| None` on OpenAI-compat; null = backend default. |
+| H29.2 | **landed** | `3cd1641` | Tool result image attachment unpacking. New module `agent_driver.llm.tool_result_unpacker` extracts `attachments: [{kind, mime_type, data}]` from tool envelope's `structured_output`, plants them on `ChatMessage.metadata`; OpenAI-compat `_payload` emits content-list shape with text + image_url blocks. Tools producing screenshots / OCR images now reach the model as actual visual input instead of mangled string-coerced bytes. Anthropic native shape follow-up deferred. |
+| H29.3 | **landed** | `c92e7a1` | Tool-call fallback feedback. New module `agent_driver.tools.fallback_feedback` with `closest_tool_names` (difflib fuzzy match), `build_unknown_tool_feedback`, `build_arguments_parse_feedback`, `build_missing_tool_name_feedback`. `AllowedSpec` gains `available_tool_names`; `tool_not_registered` block path uses fuzzy match → "Did you mean: X?" feedback. Open-weights models recover in one turn instead of looping. The parse-error feedback helpers are landed but not yet wired (separate slice). |
 
 ---
 
