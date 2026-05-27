@@ -1207,3 +1207,281 @@ Value/effort: LOW value (rare path) / LOW effort.
 - ZION pin bump documents the new opt-in flags in
   `docs/design/similar_system_design/unified-plan.md` §9 history when
   consumed.
+
+## Phase 12: OpenClaude wave 2 — additional patterns (Planned 2026-05-27)
+
+Context: a re-pass through openclaude after closing Phase 11 surfaced
+six more patterns with real value. The first six (H12-H17) were the
+obvious "Tier 1" items; Phase 12 is the considered Tier 2 — patterns
+with clear engineering merit that we chose to defer past the first
+batch because of higher effort, narrower applicability, or because
+they extend rather than replace existing agent-driver subsystems.
+
+Items NOT included in this Phase (after explicit review):
+
+* PermissionRequest hook variant — H15 + H13 already cover ~95% of
+  the realistic use cases; the extra hook surface adds complexity
+  without clear new wins.
+* CoordinatorMode — openclaude implements it as a system-prompt +
+  feature-flag pair, not a framework. Phase 9 SubagentGroup is the
+  more general primitive; coordinator patterns belong to app
+  layers (ZION recon_v3, examples).
+* REPL message queue processor — tightly coupled to Ink/React; not
+  applicable to a SDK that doesn't ship its own REPL.
+* Streaming token counter stub — deprecated in openclaude.
+* Streaming optimizer (collapseReadSearch) — pure UI rendering
+  optimization for Ink; not runtime.
+
+### H18 — Tool output spill-to-disk
+
+Reference: openclaude `src/utils/toolResultStorage.ts`,
+`Tool.maxResultSizeChars`.
+
+Today: `ToolManifest.output_char_budget` (default 4000 chars) triggers
+``enforce_output_budget`` which truncates the summary mid-string. For
+large structured payloads, ``_bounded_structured_output`` also caps
+list lengths and marks ``truncated=True``. The lost data is unrecoverable
+within the run.
+
+Proposal:
+
+- Add `ToolManifest.max_result_size_chars: int | None = None` (default
+  ``None`` → use a global 50 KB cap; explicit ``None`` semantically
+  same; explicit value overrides; ``math.inf``-style "never spill"
+  via a sentinel ``float('inf')`` or large int).
+- When raw handler output exceeds the cap, write the full payload to
+  `agent_driver.context.artifacts` (already Phase 6 surface) and
+  replace ``raw`` in the envelope with a structured wrapper:
+
+  ```python
+  {"summary": "<2KB preview>",
+   "persisted_artifact": {"name": "<artifact_id>",
+                          "size": <bytes>,
+                          "mime": "application/json"},
+   "truncated": False,  # not lost — persisted
+   "persisted": True}
+  ```
+
+- LLM observation includes a ``<persisted-output>`` tag with the
+  preview + artifact ref so the model can decide to read the artifact
+  via a follow-up tool call (existing ``read_artifact`` already in
+  builtins).
+- File-read style tools opt out via large ``max_result_size_chars``
+  because their output IS the data the model needs in-context.
+
+Acceptance:
+
+- offline test: a tool that returns 200 KB JSON gets persisted; the
+  envelope carries preview + artifact_ref; ``read_artifact(name)``
+  returns the original payload byte-identical.
+- regression: tools that fit in budget produce identical envelopes
+  to today (no behaviour change).
+
+Value/effort: HIGH / MEDIUM. Direct context-window save for recon /
+file-grep heavy runs.
+
+### H19 — Prompt-cache sharing across SubagentGroup children
+
+Reference: openclaude `src/utils/forkedAgent.ts` — `CacheSafeParams`
++ `lastCacheSafeParams` singleton.
+
+Today: ``execute_subagent_group_sync`` spawns each child with its own
+``AgentRunInput``, independently constructed. Each child triggers a
+fresh provider request whose prompt prefix (system + tools + parent
+message preamble) the provider treats as cold cache — billing twice
+(or 4× for a 4-way fan-out).
+
+Proposal:
+
+- Add `agent_driver.subagents.cache_safe_params.CacheSafeParams`
+  dataclass — immutable struct containing `(system_prompt, tools,
+  model, parent_prefix_messages)`. Subagents that share this struct
+  are guaranteed cache-eligible at the provider layer.
+- `execute_subagent_group_sync` derives a `CacheSafeParams` from the
+  parent run; each child's `AgentRunInput` references it
+  (by-reference, not by-copy).
+- Add a provider-aware caching layer:
+  - Anthropic: emit `cache_control: {"type": "ephemeral"}` markers
+    on the shared prefix in the request payload.
+  - OpenAI compatible: extra_body hint (`prompt_cache=true`) when
+    the provider advertises support (vLLM ≥ 0.5, some
+    Together/Groq deployments).
+  - Other providers: no-op (still share the params by reference,
+    just don't claim cache support).
+- Mutable per-child state (sub-agent's own message buffer,
+  workspace cwd, abortable token) stays per-child — only immutable
+  state shares.
+
+Acceptance:
+
+- offline test: a 4-way SubagentGroup shares the same parent
+  prefix; provider mock asserts identical prompt prefix bytes
+  across all 4 calls.
+- integration test (Anthropic): a 4-way fan-out reports
+  ``usage.cache_read_input_tokens > 0`` on calls 2/3/4.
+
+Value/effort: HIGH / HIGH. Direct $ savings for parallel sub-agent
+fan-outs.
+
+### H20 — Per-(model, session) cost ledger
+
+Reference: openclaude `src/cost-tracker.ts` + session config.
+
+Today: ``LlmResponse.usage`` carries per-call tokens; observability
+exporters (Phoenix, Langfuse) get per-call traces. There's no per-run
+or per-session cost rollup.
+
+Proposal:
+
+- `agent_driver.observability.cost_ledger` — new module with
+  `CostLedger` dataclass:
+
+  ```python
+  @dataclass
+  class CostLedger:
+      per_model: dict[str, ModelTokenTally]
+      per_tool_duration_ms: dict[str, float]
+      lines_added: int = 0
+      lines_removed: int = 0
+      total_api_duration_ms: float = 0.0
+      total_api_duration_ms_incl_retries: float = 0.0
+  ```
+
+- Hook into the runtime's existing ``LLM_CALL_COMPLETED`` event
+  payload: accumulate tokens + USD (lookup by canonical model id
+  from a small pricing table in `agent_driver.observability.pricing`).
+- Persist ledger snapshots to the checkpoint store under
+  `cost_ledger_v1` key; `/resume` re-hydrates.
+- New `RuntimeEventType.COST_LEDGER_UPDATED` event for downstream
+  consumers (ZION report builder pulls these to put "cost: $X.XX"
+  in the DOCX summary).
+
+Acceptance:
+
+- offline test: 3-step run with mock provider returning usage →
+  ledger reflects correct cumulative tokens + USD.
+- /resume restores ledger from checkpoint; subsequent steps
+  accumulate on top.
+
+Value/effort: MODERATE / MEDIUM.
+
+### H21 — Tool metadata for dispatch (defer / always_load / aliases)
+
+Reference: openclaude `Tool.ts` + `toolSearch.ts`.
+
+Today: ``ToolRegistry`` always emits the full registered set in the
+agent's initial system prompt. With > 100 tools, this consumes
+significant tokens.
+
+Proposal:
+
+- Add 3 ``ToolManifest`` fields:
+  - `should_defer: bool = False` — when ``True``, tool is omitted from
+    the initial prompt; only inserted after a ``tool_search`` call
+    returns it.
+  - `always_load: bool = False` — explicit opt-out from deference
+    (e.g. system tools like ``ask_user_question``).
+  - `aliases: list[str] = []` — alternative names; registry lookup
+    checks both primary and aliases for backwards compat after
+    renames.
+- ``ToolSet.from_preset`` and SDK rendering paths honor ``should_defer``
+  unless an explicit env var (``AGENT_DRIVER_TOOL_SEARCH_MODE=eager``)
+  flips to eager mode.
+- ``tool_search`` builtin (already in registry as ``catalog_search``)
+  returns deferred tools by name + manifest snippet; the LLM then
+  invokes them; registry promotes them to "loaded" for the rest of
+  the run.
+
+Acceptance:
+
+- offline test: registry with 5 deferred + 2 always_load tools →
+  initial prompt enumerates only the 2; after ``tool_search``
+  matching one deferred tool, next prompt includes it.
+- alias lookup test: registering ``file_read`` with
+  ``aliases=["read_file"]`` makes both names resolve.
+
+Value/effort: MODERATE / LOW. Becomes important when ZION grows
+its tool catalog past ~100 tools.
+
+### H22 — Hook chain aggregation
+
+Reference: openclaude `src/utils/hookChains.ts`.
+
+Today (Phase 11 H15): ``GovernedToolExecutor(tool_hooks=[...])`` runs
+hooks in order; each hook sees previous output (chain). Hook errors
+are isolated per-hook. There's no aggregation of permission decisions,
+no "first blocker wins" early-exit semantic beyond exceptions, and
+no async hook with external-approver timeout.
+
+Proposal:
+
+- Extend ``ToolHook`` Protocol with optional ``preventContinuation:
+  bool`` flag on hook response. When True, the runtime exits the
+  chain early (other hooks for that event skipped) and applies the
+  decision.
+- Add async hook support: hooks may return a coroutine; runtime
+  awaits with per-hook timeout (configurable via
+  ``ToolHook.timeout_seconds``).
+- ``HookChainResult`` aggregates per-hook outputs: first-blocking
+  flag, merged permissions, merged additional_context.
+
+Acceptance:
+
+- offline test: 3-hook chain where hook 2 returns
+  ``preventContinuation=True`` → hook 3 not called; decision applied.
+- async hook with 100 ms timeout returns within budget → applied;
+  one that exceeds timeout → ignored with warning.
+
+Value/effort: MODERATE / MEDIUM. Important for plugin systems
+(multi-vendor security overlays).
+
+### H23 — JSONL session persistence + batched flush
+
+Reference: openclaude `src/utils/sessionStorage.ts` +
+`sessionRestore.ts`.
+
+Today: agent-driver has SQLite/Postgres ``RuntimeEventLog`` +
+``CheckpointStore``. The pattern works but requires DB setup.
+
+Proposal:
+
+- ``agent_driver.runtime.storage.jsonl_store.JsonlRuntimeStore`` —
+  new backend implementing the existing protocols.
+- One file per session: ``{storage_dir}/{session_id}.jsonl``.
+- Per-file ``asyncio.Queue`` + 100 ms batched flush; dedup by
+  ``event_id`` before append (so retries don't double-write).
+- ``parent_event_id`` chain reconstruction on resume (linked-list
+  style; tolerates out-of-order writes when reading).
+- Tail-scan optimization: ``read_metadata(session_id, limit=N)``
+  reads the LAST N lines via reverse-seek without loading the full
+  file — useful for ``--list-sessions`` / restoration UIs.
+
+Acceptance:
+
+- offline conformance: same replay/resume test suite as SQLite
+  passes against JSONL backend.
+- 10k-event write smoke: batched flush coalesces into < 100
+  syscalls.
+- corruption test: a truncated JSONL line at EOF is ignored on
+  restore (don't crash on partial writes from a kill -9).
+
+Value/effort: MODERATE / MEDIUM. Cheap durable tier for
+single-user / CLI workflows; ZION fallback when Mongo unavailable.
+
+### Phase 12 sequencing recommendation
+
+1. **H21 + H18** first (LOW/MEDIUM effort, immediate value).
+2. **H22** next (enhancement of H15 hook chain; minimal new contracts).
+3. **H20 + H23** then (observability + persistence; somewhat
+   independent of LLM-step path).
+4. **H19** last (HIGH effort, provider-aware code; touches Phase 9
+   subagent executor).
+
+### Phase 12 exit criteria
+
+- Same as Phase 11: offline tests + no breaking changes to public
+  surface + opt-in flags documented in ZION ``unified-plan.md``
+  on each pin bump.
+- Additionally: each item updates the existing examples
+  (``examples/chat-demo``, ``examples/eval``) where the feature is
+  observable.
