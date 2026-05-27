@@ -377,6 +377,15 @@ class OpenAICompatibleProvider(ProviderBase):
                 payload["parallel_tool_calls"] = request.parallel_tool_calls
         elif request.tool_choice is not None:
             payload["tool_choice"] = request.tool_choice
+        # Phase 13 H26 — structured output enforcement at the provider
+        # layer. Pass through the native OpenAI ``response_format`` shape
+        # when the caller set it; omit entirely when None so we don't
+        # accidentally activate enforcement on backends that interpret the
+        # presence of the key (even with permissive values) differently.
+        # Vendor-specific re-routing (e.g. vLLM ``guided_json``) is the
+        # responsibility of ``extra_body`` below.
+        if request.response_format is not None:
+            payload["response_format"] = request.response_format
         # Vendor-specific extras (e.g. vLLM ``chat_template_kwargs``,
         # OpenRouter ``provider`` hints) — merged last so they win on
         # collision with the standard openai-compat keys.

@@ -76,6 +76,26 @@ class LlmRequest(ContractModel):
     # uses its own ``disable_parallel_tool_use`` knob (not yet wired).
     parallel_tool_calls: bool | None = None
 
+    # Phase 13 H26 — structured output enforcement at the provider layer.
+    # Accepts the native OpenAI ``response_format`` shape so callers do not
+    # have to translate between vendor dialects:
+    #   * ``{"type": "json_object"}`` — model MUST return parseable JSON
+    #     (no schema enforcement). Widely supported (OpenAI, Anthropic via
+    #     fallback, OpenRouter, vLLM, most Qwen routes).
+    #   * ``{"type": "json_schema", "json_schema": {"name": str,
+    #     "schema": <jsonschema>, "strict": bool}}`` — decode-time schema
+    #     enforcement. Currently only OpenAI direct + some vLLM routes
+    #     honor strict; OpenRouter passthrough varies by upstream.
+    # ``None`` (default) means the provider emits no ``response_format``
+    # — backwards compatible. Today only ``OpenAICompatibleProvider``
+    # passes this through to the wire payload; ``AnthropicMessagesProvider``
+    # silently drops it (Anthropic has no equivalent API field; future
+    # work can translate to a system-prompt addendum + post-call validate).
+    # Callers that want Pydantic-validated structured output across all
+    # providers should layer a library like ``instructor`` on top — this
+    # field is the transport-layer plumbing for the strict path.
+    response_format: dict[str, Any] | None = None
+
     @field_validator("max_tokens")
     @classmethod
     def validate_max_tokens(cls, value: int | None) -> int | None:
@@ -124,6 +144,49 @@ class LlmRequest(ContractModel):
     def validate_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
         """Ensure metadata stays JSON-compatible for transport."""
         return ensure_json_serializable(value, field_name="metadata")
+
+    @field_validator("response_format")
+    @classmethod
+    def validate_response_format(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Validate the H26 structured-output envelope.
+
+        Accepts ``None`` (no enforcement) or a JSON-serializable dict.
+        Performs lightweight structural sanity-checks for the two known
+        ``type`` values so misconfigurations surface at the call site, not
+        as a provider-side ``400`` later:
+
+          * ``json_object``: nothing else required.
+          * ``json_schema``: must carry a ``json_schema`` dict that has at
+            least ``name`` (str) and ``schema`` (dict).
+
+        Unknown ``type`` values pass through unchanged — agent-driver does
+        not gate-keep vendor extensions; the underlying provider returns
+        its own error if it does not recognize the shape.
+        """
+        if value is None:
+            return value
+        if not isinstance(value, dict):
+            raise ValueError("response_format must be a dict or null")
+        normalized = ensure_json_serializable(value, field_name="response_format")
+        kind = normalized.get("type")
+        if kind == "json_schema":
+            schema_envelope = normalized.get("json_schema")
+            if not isinstance(schema_envelope, dict):
+                raise ValueError(
+                    "response_format type=json_schema requires 'json_schema' "
+                    "to be a dict"
+                )
+            if not isinstance(schema_envelope.get("name"), str) or not schema_envelope.get("name"):
+                raise ValueError(
+                    "response_format json_schema requires non-empty 'name'"
+                )
+            if not isinstance(schema_envelope.get("schema"), dict):
+                raise ValueError(
+                    "response_format json_schema requires 'schema' to be a dict"
+                )
+        return normalized
 
 
 class LlmResponse(ContractModel):
