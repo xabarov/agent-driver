@@ -8,7 +8,7 @@ import os
 from typing import Any
 
 from agent_driver.contracts.enums import GuardrailDecision, ToolPolicyDecision
-from agent_driver.contracts.hooks import ToolHook
+from agent_driver.contracts.hooks import HookResponse, ToolHook
 from agent_driver.contracts.interrupts import (
     AllowedPrompt,
     find_matching_prompt,
@@ -228,19 +228,105 @@ class GovernedToolExecutor:
         registered = self._registry.get(tool_name)
         return registered.manifest if registered is not None else None
 
+    async def _invoke_hook_with_timeout(
+        self,
+        coro,
+        *,
+        hook,
+        stage: str,
+    ):
+        """Phase 12 H22 — run one hook coroutine with optional timeout.
+
+        Returns the coroutine's result, or raises asyncio.TimeoutError
+        when the hook exceeds its declared ``timeout_seconds`` budget.
+        Hooks without ``timeout_seconds`` (default ``None``) run
+        unbounded — preserves the H15 behaviour for legacy hooks.
+        """
+        timeout = getattr(hook, "timeout_seconds", None)
+        if timeout is None or timeout <= 0:
+            return await coro
+        return await asyncio.wait_for(coro, timeout=timeout)
+
+    @staticmethod
+    def _unwrap_hook_response(replacement, expected_type, hook):
+        """Phase 12 H22 — normalize a hook's return into
+        ``(value_or_None, prevent_continuation, additional_context)``.
+
+        Accepts three legal shapes:
+        * ``None`` — no change.
+        * ``HookResponse[expected_type]`` — full aggregation envelope.
+        * ``expected_type`` — bare value (legacy H15 shape).
+
+        Anything else is ignored with a WARNING; treated as ``None``.
+        """
+        if replacement is None:
+            return None, False, {}
+        if isinstance(replacement, HookResponse):
+            value = replacement.value
+            if value is not None and not isinstance(value, expected_type):
+                logger.warning(
+                    "tool_hook %r HookResponse.value is %s (expected %s); "
+                    "treating as None",
+                    getattr(hook, "name", type(hook).__name__),
+                    type(value).__name__,
+                    expected_type.__name__,
+                )
+                value = None
+            return (
+                value,
+                bool(replacement.prevent_continuation),
+                dict(replacement.additional_context or {}),
+            )
+        if isinstance(replacement, expected_type):
+            return replacement, False, {}
+        logger.warning(
+            "tool_hook %r returned %r (expected %s | HookResponse | None); ignoring",
+            getattr(hook, "name", type(hook).__name__),
+            type(replacement).__name__,
+            expected_type.__name__,
+        )
+        return None, False, {}
+
     async def _apply_pre_hooks(self, call: ToolCall) -> ToolCall:
-        """Phase 11 H15 — run the pre_tool_use chain.
+        """Phase 11 H15 + Phase 12 H22 — run the pre_tool_use chain.
 
         Hooks run in registration order; each sees the previous hook's
-        output. On any hook exception the chain falls back to the
-        pre-hook value for THAT hook and continues with the next hook
-        (errors are isolated). Returns the final transformed call.
+        output AND any ``additional_context`` accumulated from earlier
+        hooks. On any hook exception or per-hook timeout the chain
+        falls back to the pre-hook value for THAT hook and continues
+        with the next hook (errors are isolated). Returns the final
+        transformed call.
+
+        Phase 12 additions:
+        * ``HookResponse.prevent_continuation=True`` exits the chain
+          early; subsequent hooks for this event are skipped.
+        * ``HookResponse.additional_context`` accumulates (later
+          hooks win on key collisions).
+        * Hook ``timeout_seconds`` bounds each await; timeout is
+          treated like an exception (preserve previous value).
         """
         current = call
+        chained_context: dict[str, Any] = {}
         for hook in self._tool_hooks:
-            context = self._tool_hooks_make_context(current)
+            base_context = self._tool_hooks_make_context(current)
+            # Merge chained context FIRST so the hook's view contains
+            # both its tool context and any prior aggregations; the
+            # hook's tool context takes precedence on conflicts.
+            context: dict[str, Any] = {**chained_context, **base_context}
             try:
-                replacement = await hook.pre_tool_use(current, context)
+                replacement = await self._invoke_hook_with_timeout(
+                    hook.pre_tool_use(current, context),
+                    hook=hook,
+                    stage="pre_tool_use",
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "tool_hook %r timed out in pre_tool_use after %ss; "
+                    "preserving previous call",
+                    getattr(hook, "name", type(hook).__name__),
+                    getattr(hook, "timeout_seconds", None),
+                )
+                continue
             except Exception:
                 logger.warning(
                     "tool_hook %r raised in pre_tool_use; preserving "
@@ -249,32 +335,57 @@ class GovernedToolExecutor:
                     exc_info=True,
                 )
                 continue
-            if replacement is None:
-                continue
-            if not isinstance(replacement, ToolCall):
-                logger.warning(
-                    "tool_hook %r pre_tool_use returned %r (expected "
-                    "ToolCall | None); ignoring",
+            value, prevent_continuation, extra_ctx = self._unwrap_hook_response(
+                replacement, ToolCall, hook
+            )
+            if value is not None:
+                current = value
+            if extra_ctx:
+                chained_context.update(extra_ctx)
+            if prevent_continuation:
+                logger.debug(
+                    "tool_hook %r requested prevent_continuation in "
+                    "pre_tool_use; stopping chain",
                     getattr(hook, "name", type(hook).__name__),
-                    type(replacement).__name__,
                 )
-                continue
-            current = replacement
+                break
         return current
 
     async def _apply_post_hooks(
         self, envelope: ToolResultEnvelope
     ) -> ToolResultEnvelope:
-        """Phase 11 H15 — run the post_tool_use chain (mirror of pre)."""
+        """Phase 11 H15 + Phase 12 H22 — run the post_tool_use chain.
+
+        Same semantics as ``_apply_pre_hooks`` (HookResponse support,
+        additional_context accumulation, per-hook timeout, early-exit
+        via prevent_continuation). Aggregated ``additional_context`` is
+        merged into the final envelope's metadata under
+        ``hook_chain_context`` so downstream consumers can inspect
+        what each hook contributed.
+        """
         current = envelope
+        chained_context: dict[str, Any] = {}
         for hook in self._tool_hooks:
-            context = {
+            base_context = {
                 "tool_name": current.call.tool_name,
                 "decision": current.decision.value,
                 "guardrail_decision": current.guardrail_decision.value,
             }
+            context = {**chained_context, **base_context}
             try:
-                replacement = await hook.post_tool_use(current, context)
+                replacement = await self._invoke_hook_with_timeout(
+                    hook.post_tool_use(current, context),
+                    hook=hook,
+                    stage="post_tool_use",
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "tool_hook %r timed out in post_tool_use after %ss; "
+                    "preserving previous envelope",
+                    getattr(hook, "name", type(hook).__name__),
+                    getattr(hook, "timeout_seconds", None),
+                )
+                continue
             except Exception:
                 logger.warning(
                     "tool_hook %r raised in post_tool_use; preserving "
@@ -283,17 +394,27 @@ class GovernedToolExecutor:
                     exc_info=True,
                 )
                 continue
-            if replacement is None:
-                continue
-            if not isinstance(replacement, ToolResultEnvelope):
-                logger.warning(
-                    "tool_hook %r post_tool_use returned %r (expected "
-                    "ToolResultEnvelope | None); ignoring",
+            value, prevent_continuation, extra_ctx = self._unwrap_hook_response(
+                replacement, ToolResultEnvelope, hook
+            )
+            if value is not None:
+                current = value
+            if extra_ctx:
+                chained_context.update(extra_ctx)
+            if prevent_continuation:
+                logger.debug(
+                    "tool_hook %r requested prevent_continuation in "
+                    "post_tool_use; stopping chain",
                     getattr(hook, "name", type(hook).__name__),
-                    type(replacement).__name__,
                 )
-                continue
-            current = replacement
+                break
+        # Surface aggregated chain context into envelope metadata so
+        # downstream consumers (observability sinks, audit logs) can
+        # inspect what each hook contributed without parsing logs.
+        if chained_context:
+            merged_metadata = dict(current.metadata or {})
+            merged_metadata["hook_chain_context"] = chained_context
+            current = current.model_copy(update={"metadata": merged_metadata})
         return current
 
     async def _execute_parallel_batch(
