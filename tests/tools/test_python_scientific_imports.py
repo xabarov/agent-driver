@@ -1,4 +1,10 @@
-"""Tests for scientific python sandbox imports."""
+"""Tests for scientific python sandbox imports.
+
+The three handler tests below spawn a real ``LocalPythonBackend``
+subprocess that imports numpy/scipy/pandas — each costs ~3-10s of
+wall-time. They are tagged ``slow`` so the default sweep skips them;
+run with ``pytest -m slow`` (or ``-m 'slow or not slow'``) to include.
+"""
 
 from __future__ import annotations
 
@@ -39,6 +45,7 @@ def test_parse_python_scientific_enabled_cli_and_env() -> None:
     assert parse_python_scientific_enabled() is True
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_handler_numpy_ok_when_scientific_on() -> None:
     settings = PythonToolSettings(
@@ -56,6 +63,7 @@ async def test_handler_numpy_ok_when_scientific_on() -> None:
     assert "1" in (result.get("stdout") or "")
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_handler_scipy_gamma_cdf_ok_when_scientific_on() -> None:
     settings = PythonToolSettings(
@@ -85,6 +93,7 @@ async def test_handler_scipy_gamma_cdf_ok_when_scientific_on() -> None:
     assert 0.0 < value < 1.0
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_handler_scipy_blocked_when_scientific_off() -> None:
     settings = PythonToolSettings(

@@ -23,6 +23,7 @@ dev = [
   "pylint>=4.0.0",
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
+  "pytest-xdist>=3.6.0",
 ]
 postgres = [
   "psycopg[binary]>=3.2.0",
@@ -45,9 +46,14 @@ include = ["agent_driver*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-q"
+# Default sweep excludes live (network-bound) and slow (subprocess /
+# scientific stack import) tests. Override with `-m slow` or
+# `-m "slow or not slow"` to include them. Opt-in parallel: `-n auto`
+# (requires pytest-xdist from the dev extra).
+addopts = "-q -m 'not live and not slow'"
 markers = [
   "live: optional network/provider checks disabled by default",
+  "slow: subprocess- or scientific-stack-bound tests; excluded from default sweep",
 ]
 
 [tool.setuptools]

@@ -1,4 +1,9 @@
-"""Tests for python builtin tool handler."""
+"""Tests for python builtin tool handler.
+
+Every test below instantiates ``LocalPythonBackend`` (real subprocess
+spawn + interpreter warm-up). Tagged ``slow`` at file scope; included
+under ``pytest -m slow`` or ``-m 'slow or not slow'``.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,8 @@ from agent_driver.code_agent.backends.local import LocalPythonBackend
 from agent_driver.code_agent.contracts import CodeAgentLimits
 from agent_driver.runtime.single_agent.config_sections import PythonToolSettings
 from agent_driver.tools.builtin.python import python_tool_handler
+
+pytestmark = pytest.mark.slow
 
 
 @pytest.mark.asyncio
