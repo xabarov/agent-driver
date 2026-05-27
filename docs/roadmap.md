@@ -1208,7 +1208,21 @@ Value/effort: LOW value (rare path) / LOW effort.
   `docs/design/similar_system_design/unified-plan.md` §9 history when
   consumed.
 
-## Phase 12: OpenClaude wave 2 — additional patterns (Planned 2026-05-27)
+## Phase 12: OpenClaude wave 2 — additional patterns (Landed 2026-05-27)
+
+### Phase 12 status table
+
+| Item | Commit | Notes |
+|------|--------|-------|
+| H18 — Tool output spill-to-disk | `9d0e96c` | `ToolManifest.max_result_size_chars`; executor accepts `artifact_store`; `spill.py` helpers. |
+| H19 — Prompt-cache sharing for SubagentGroup | `f76f9bd` | `subagents/cache_safe_params.py`; provider hint helpers for anthropic / openai_compat / vllm / ollama / unknown. |
+| H20 — Per-(model, session) cost ledger | `50e28aa` | `observability/cost_ledger.py`; `register_pricing`, `estimate_cost_usd`, `ModelTokenTally`. |
+| H21 — Tool dispatch metadata | `b6b0f6d` | `should_defer` / `always_load` / `aliases`; registry alias index + `list_non_deferred()`. |
+| H22 — Hook chain aggregation | `9431c80` | `HookResponse` (value, prevent_continuation, additional_context); per-hook `timeout_seconds`. |
+| H23 — JSONL session persistence | `55ddad8` | `runtime/storage/jsonl_store.py`; dedup by `event_id`; crash-tolerant read past partial last line. |
+| Test suite speedup | `3b48448` | `slow` marker + deselect-by-default; pytest-xdist opt-in. 4+ min → 6s. |
+
+
 
 Context: a re-pass through openclaude after closing Phase 11 surfaced
 six more patterns with real value. The first six (H12-H17) were the
