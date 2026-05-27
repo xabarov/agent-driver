@@ -323,12 +323,28 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
             metadata={"tool_calls": assistant_tool_calls},
         )
     )
+    from agent_driver.llm.tool_result_unpacker import (
+        extract_attachments_from_structured_output,
+    )
+
     for envelope in result.envelopes:
+        # Phase 13 H29.2 — split binary attachments (images, …) off the
+        # structured payload BEFORE json-serialization so they don't
+        # round-trip through string-coerced corruption. The attachments
+        # ride on ChatMessage.metadata; the provider _payload() rebuilds
+        # the native wire shape (e.g. OpenAI content list with image_url
+        # blocks) when it sees them. Providers that don't natively
+        # accept tool-role attachments still see the text content and
+        # degrade gracefully.
+        structured_for_protocol, attachments = (
+            extract_attachments_from_structured_output(envelope.structured_output)
+        )
+
         tool_payload: dict[str, Any] = {}
-        if isinstance(envelope.structured_output, dict):
+        if isinstance(structured_for_protocol, dict):
             tool_payload.update(
                 _compact_tool_payload_for_protocol(
-                    envelope.call.tool_name, envelope.structured_output
+                    envelope.call.tool_name, structured_for_protocol
                 )
             )
         tool_payload["truncated"] = bool(envelope.truncated)
@@ -344,12 +360,16 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
             if tool_payload
             else (envelope.summary or "")
         )
+        message_metadata: dict[str, Any] = {}
+        if attachments:
+            message_metadata["attachments"] = attachments
         messages.append(
             ChatMessage(
                 role=ChatRole.TOOL,
                 name=envelope.call.tool_name,
                 tool_call_id=envelope.call.tool_call_id,
                 content=content,
+                metadata=message_metadata,
             )
         )
     _append_denial_recovery_message(context, result, messages)
