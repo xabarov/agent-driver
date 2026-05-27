@@ -369,6 +369,12 @@ class OpenAICompatibleProvider(ProviderBase):
             payload["tool_choice"] = (
                 request.tool_choice if request.tool_choice is not None else "auto"
             )
+            # Phase 13 H29 — emit ``parallel_tool_calls`` only when the
+            # caller explicitly set it. None means "use provider default"
+            # (most backends are True), so omitting the key avoids
+            # accidental opt-out on backends that default differently.
+            if request.parallel_tool_calls is not None:
+                payload["parallel_tool_calls"] = request.parallel_tool_calls
         elif request.tool_choice is not None:
             payload["tool_choice"] = request.tool_choice
         # Vendor-specific extras (e.g. vLLM ``chat_template_kwargs``,

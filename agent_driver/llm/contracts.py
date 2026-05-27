@@ -66,6 +66,16 @@ class LlmRequest(ContractModel):
     # one-off calls don't pay the cache-write surcharge unnecessarily.
     enable_prompt_cache: bool = False
 
+    # Phase 13 H29 — explicit parallel tool calls control. ``None`` = use
+    # the provider's default (most modern OpenAI-compat backends default
+    # to ``True``). ``False`` forces sequential tool execution (one tool
+    # call per LLM turn) which is useful when tools have ordering deps or
+    # when a misbehaving model proposes redundant parallel calls. ``True``
+    # explicitly enables parallel — most callers should leave this None.
+    # Currently honored by the OpenAI-compatible provider only; Anthropic
+    # uses its own ``disable_parallel_tool_use`` knob (not yet wired).
+    parallel_tool_calls: bool | None = None
+
     @field_validator("max_tokens")
     @classmethod
     def validate_max_tokens(cls, value: int | None) -> int | None:
