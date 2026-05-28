@@ -3,6 +3,13 @@
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
 from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
 from agent_driver.runtime.events import InMemoryEventLog
+from agent_driver.runtime.planning_check import (
+    PLANNING_TOOL_NAMES,
+    data_tool_called,
+    planning_executed,
+    planning_executed_across,
+    planning_tool_called,
+)
 from agent_driver.runtime.postgres_store import (
     POSTGRES_CAPABILITIES,
 )
@@ -57,4 +64,10 @@ __all__ = [
     "ToolExecutionResult",
     "fake_noop_tool_executor",
     "wrap_governed_executor",
+    # planning-check helpers (see planning_check.py)
+    "PLANNING_TOOL_NAMES",
+    "data_tool_called",
+    "planning_executed",
+    "planning_executed_across",
+    "planning_tool_called",
 ]
