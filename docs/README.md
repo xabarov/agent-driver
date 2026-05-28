@@ -17,6 +17,7 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - [SDK + ToolSet examples](examples/sdk-toolset-examples.md)
 - [Multi-agent orchestration and parallel subagents](architecture/multi-agent-orchestration.md)
 - [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md)
+- [Multi-mode prompt assembly](patterns/multi-mode-prompts.md) — when an agent has ask / plan / code modes, substitute the behaviour block instead of prepending a "mode header"; reference impl in `excel_ai`
 - [Testing and live trace policy](architecture/testing-and-live-trace-policy.md)
 - [Test plan and coverage matrix](architecture/test-plan-and-matrix.md)
 - [Next-stage follow-up tracks](architecture/next-stage-followups.md)
