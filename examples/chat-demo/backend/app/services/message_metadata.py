@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_driver.runtime.planning_check import PLANNING_TOOL_NAMES
+
 
 def _as_int(value: object) -> int | None:
     if isinstance(value, bool):
@@ -97,6 +99,47 @@ def merge_metadata(previous: dict[str, Any] | None, patch: dict[str, Any]) -> di
     return base
 
 
+def _planning_verdict(events: list[dict[str, object]]) -> str | None:
+    """Compute a planning-mode execution verdict from tool_call_completed events.
+
+    Returns:
+      ``None``         — no planning tool was called (plan mode not engaged).
+      ``"engaged"``    — planning ran AND at least one data tool ran.
+      ``"fabricated"`` — planning ran but no data tool ran. The assistant's
+                         final text is almost certainly fabricated; consumers
+                         can surface a warning.
+
+    Uses ``agent_driver.runtime.planning_check.PLANNING_TOOL_NAMES`` so the
+    classification stays in sync with the library's planning tool registry.
+    """
+    saw_planning = False
+    saw_data = False
+    for event in events:
+        if str(event.get("event")) != "tool_call_completed":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        tools = data.get("tools")
+        if not isinstance(tools, list):
+            continue
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            name = tool.get("tool_name")
+            if not isinstance(name, str) or not name:
+                continue
+            if name in PLANNING_TOOL_NAMES:
+                saw_planning = True
+            else:
+                saw_data = True
+            if saw_planning and saw_data:
+                return "engaged"
+    if not saw_planning:
+        return None
+    return "engaged" if saw_data else "fabricated"
+
+
 def aggregate_metadata_from_events(events: list[dict[str, object]]) -> dict[str, Any]:
     """Build OpenRouter-style metadata from a run event list."""
     metadata: dict[str, Any] | None = None
@@ -107,4 +150,8 @@ def aggregate_metadata_from_events(events: list[dict[str, object]]) -> dict[str,
         if not isinstance(data, dict):
             continue
         metadata = merge_metadata(metadata, _parse_llm_completed(data))
+    verdict = _planning_verdict(events)
+    if verdict is not None:
+        metadata = metadata or {}
+        metadata["planningExecuted"] = verdict
     return metadata or {}

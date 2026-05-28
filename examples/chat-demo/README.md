@@ -65,6 +65,7 @@ Remove old artifacts manually if they were created in `backend/` before this iso
 - **Code blocks:** fenced `python` / `json` / `bash` / `typescript` with highlight.js (github-dark theme)
 - **Header tokens:** last assistant message shows `↑ prompt · ↓ completion` counts
 - **Plan checklist:** live todo list inside the assistant bubble (`planning_snapshot` from SSE); progress bar, current step, completed items stay visible; raw `todo_write` cards hidden
+- **Plan-execution warning:** when the agent emits a plan via `todo_write` but never calls any non-planning ("data") tool — a common failure mode where the final answer is fabricated — an amber "the agent wrote a plan but never invoked a data tool to execute it" chip appears above the assistant bubble. Verdict is computed by `aggregate_metadata_from_events` using `agent_driver.runtime.planning_check.PLANNING_TOOL_NAMES`; surfaced in the message metadata as `planningExecuted: "engaged" | "fabricated"`.
 - **Replay:** run replay shows the final plan state; reloading the session page does not restore plans (transcript is text-only)
 
 ## Single-port demo build

@@ -1,3 +1,16 @@
+/**
+ * Verdict from `agent_driver.runtime.planning_check` (surfaced by backend
+ * `aggregate_metadata_from_events`). Absent when the assistant turn never
+ * touched a planning tool — i.e. the agent wasn't in plan mode at all.
+ *
+ *  - `"engaged"`    — planning ran AND a data tool ran. The plan was
+ *                     actually executed; no warning needed.
+ *  - `"fabricated"` — planning ran but no data tool ran. The model wrote
+ *                     a plan and then a prose answer without invoking any
+ *                     of it. UI should warn the user.
+ */
+export type PlanningExecutedVerdict = "engaged" | "fabricated";
+
 export interface AssistantMessageMetadata {
   promptTokens?: number;
   completionTokens?: number;
@@ -8,6 +21,7 @@ export interface AssistantMessageMetadata {
   model?: string;
   provider?: string;
   estimated?: boolean;
+  planningExecuted?: PlanningExecutedVerdict;
 }
 
 export interface LlmCompletedPatch {

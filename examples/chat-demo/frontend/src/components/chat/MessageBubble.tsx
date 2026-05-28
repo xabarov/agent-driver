@@ -1,4 +1,4 @@
-import { Bot, User } from "lucide-react";
+import { AlertTriangle, Bot, User } from "lucide-react";
 
 import { cn } from "../../lib/cn";
 import { MarkdownRenderer } from "../../lib/markdown";
@@ -52,6 +52,13 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
   }
 
   const showActions = !message.pending && Boolean(message.content || message.metadata);
+  // Surface the planning-mode fabrication verdict (see
+  // `agent_driver.runtime.planning_check`). When the agent wrote a plan
+  // via todo_write but never invoked a data tool, the prose answer is
+  // almost certainly fabricated. We show a small amber warning above the
+  // assistant bubble for that case only.
+  const planningFabricated =
+    !message.pending && message.metadata?.planningExecuted === "fabricated";
 
   return (
     <div className="group flex gap-3 outline-none" tabIndex={-1}>
@@ -59,6 +66,23 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
         <Bot className="h-4 w-4 text-primary" />
       </div>
       <div className="relative min-w-0 max-w-[92%] flex-1">
+        {planningFabricated ? (
+          <div
+            role="alert"
+            className={cn(
+              "mb-2 flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
+              "border-amber-300 bg-amber-50 text-amber-900",
+              "dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200",
+            )}
+          >
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span>
+              The agent wrote a plan but never invoked a data tool to execute
+              it — the answer below is likely fabricated. Try re-asking with
+              an explicit instruction to use the tools.
+            </span>
+          </div>
+        ) : null}
         <div
           className={cn(
             "rounded-2xl px-4 py-3 text-sm leading-relaxed",
