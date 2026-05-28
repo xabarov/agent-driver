@@ -374,6 +374,7 @@ def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionRes
         )
     _append_denial_recovery_message(context, result, messages)
     _append_python_policy_recovery_hint(context, result, messages)
+    _append_tool_call_parse_error_feedback(context, result, messages)
     append_todo_progress_hint_after_substantive_tool(context, result, messages)
     _append_web_fetch_verification_hint(context, result, messages)
     _append_web_fetch_duplicate_guard(context, result, messages)
@@ -413,6 +414,127 @@ def _compact_tool_payload_for_protocol(
     if isinstance(excerpt, str) and len(excerpt) > 2500:
         compact["excerpt"] = excerpt[:2500]
     return compact
+
+
+def _append_tool_call_parse_error_feedback(
+    context: RunContext,
+    result: ToolExecutionResult,
+    messages: list[ChatMessage],
+) -> None:
+    """Phase 13 H29.3 wire-up — surface text-form tool-call parse errors.
+
+    The provider's normalization step (``OpenAICompatibleProvider`` /
+    ``AnthropicMessagesProvider``) calls ``extract_text_form_tool_calls``
+    and stores the resulting ``parse_errors`` in
+    ``LlmResponse.metadata["tool_call_parse_errors"]``. Previously
+    those errors propagated to ``stream_metadata`` but never reached the
+    LLM as feedback — when the model emitted a malformed
+    ``<tool_call>{...}</tool_call>`` block (missing ``name``, malformed
+    JSON args, etc.) the next turn saw NOTHING (the block was silently
+    dropped) and the model often retried the same broken call multiple
+    times.
+
+    This helper formats parse errors via the H29.3 fallback feedback
+    helpers and appends ONE synthetic user-role ChatMessage with the
+    aggregated hint. Only fires when:
+
+      * at least one parse_error is present in the LlmResponse metadata,
+        AND
+      * we're already adding tool messages (i.e. the assistant emitted
+        SOMETHING the runtime is responding to), so a dangling user
+        note doesn't interrupt a quiet turn.
+
+    Deduped by ``context.metadata["parse_error_feedback_sent_keys"]`` so
+    repeat parse errors across consecutive turns don't loop.
+    """
+    response = context.llm_response
+    if response is None:
+        return
+    parse_errors = response.metadata.get("tool_call_parse_errors")
+    if not isinstance(parse_errors, list) or not parse_errors:
+        return
+    # Only emit when we're already adding tool messages (i.e. some
+    # tool calls DID succeed) — pure-malformed-block turns are rare
+    # and the cleanest signal is silence + the natural next-turn
+    # recovery; injecting a feedback message into an otherwise-empty
+    # tool stage would risk double-emission with other recovery hints.
+    if not any(m.role == ChatRole.TOOL for m in messages):
+        return
+
+    # Dedup — don't loop on the same parse-error fingerprint turn after turn.
+    seen_keys: set[str] = set(context.metadata.get("parse_error_feedback_sent_keys") or [])
+    new_keys: list[str] = []
+    new_errors: list[dict[str, Any]] = []
+    for err in parse_errors:
+        if not isinstance(err, dict):
+            continue
+        key = "|".join(
+            str(err.get(k, "")) for k in ("source", "error", "tool_name", "index")
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        new_keys.append(key)
+        new_errors.append(err)
+    if not new_errors:
+        return
+
+    try:
+        from agent_driver.tools.fallback_feedback import (
+            build_arguments_parse_feedback,
+            build_missing_tool_name_feedback,
+        )
+    except ImportError:
+        return
+
+    lines: list[str] = []
+    for err in new_errors[:5]:  # cap so a chatty model can't blow context
+        code = str(err.get("error") or "").strip()
+        if code == "missing_tool_name":
+            lines.append("- " + build_missing_tool_name_feedback())
+        elif code in ("arguments_json_parse_failed", "arguments_json_must_be_object"):
+            lines.append(
+                "- "
+                + build_arguments_parse_feedback(
+                    str(err.get("tool_name") or "(unknown)"),
+                    raw_arguments=err.get("raw_arguments"),
+                    error_detail=code,
+                )
+            )
+        elif code == "payload_json_parse_failed":
+            raw = err.get("raw_payload")
+            snippet = ""
+            if isinstance(raw, str) and raw:
+                trim = raw.strip()
+                if len(trim) > 200:
+                    trim = trim[:200] + "…"
+                snippet = f" Raw payload seen: `{trim}`."
+            lines.append(
+                f"- Tool-call block JSON failed to parse.{snippet} "
+                'Emit `{"name": "<tool>", "arguments": {...}}` exactly.'
+            )
+        elif code in ("payload_json_must_be_object", "tool_call_validation_failed"):
+            lines.append(
+                f"- Tool-call payload was malformed (code: {code}). "
+                'Each block must be a JSON object with a "name" string and '
+                'an "arguments" object.'
+            )
+        else:
+            # Unknown error code — preserve diagnostic without inventing
+            # specific advice.
+            lines.append(f"- Tool-call parse error: {code or '(unspecified)'}.")
+
+    if not lines:
+        return
+
+    body = (
+        "Note: the runtime detected malformed tool-call blocks in your "
+        "previous response that were dropped (not executed). Fix and retry:\n"
+        + "\n".join(lines)
+    )
+    messages.append(ChatMessage(role=ChatRole.USER, content=body))
+    seen_keys_list = list(seen_keys)
+    context.metadata["parse_error_feedback_sent_keys"] = seen_keys_list
 
 
 def _append_python_policy_recovery_hint(
