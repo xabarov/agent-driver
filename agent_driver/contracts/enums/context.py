@@ -33,6 +33,16 @@ class PlanningHintLevel(StrEnum):
     REQUIRED = "required"
 
 
+class PlanningPolicyMode(StrEnum):
+    """Force-planning runtime policy mode."""
+
+    OFF = "off"
+    PROMPT_ONLY = "prompt_only"
+    REQUIRED_FOR_WRITES = "required_for_writes"
+    REQUIRED_FOR_RISKY_TOOLS = "required_for_risky_tools"
+    ALWAYS_FOR_MULTISTEP = "always_for_multistep"
+
+
 class ObservationSource(StrEnum):
     """Source of observation preview captured for model-facing memory."""
 
@@ -66,6 +76,7 @@ __all__ = [
     "ObservationTrust",
     "PlanningModeState",
     "PlanningHintLevel",
+    "PlanningPolicyMode",
     "PlanningTodoStatus",
     "TrimAction",
 ]

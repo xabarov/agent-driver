@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
-
+from agent_driver.contracts.context import PlanningPolicyInput
 from agent_driver.contracts.enums import (
+    PlanningPolicyMode,
     SideEffectClass,
     ToolPolicyDecision,
     ToolPolicyMode,
@@ -30,47 +30,26 @@ _DEFAULT_FORCE_PLANNING_SIDE_EFFECTS = {
     SideEffectClass.IRREVERSIBLE_WRITE.value,
     SideEffectClass.EXTERNAL_ACTION.value,
 }
-_FORCE_PLANNING_MODES = {
-    "off",
-    "prompt_only",
-    "required_for_writes",
-    "required_for_risky_tools",
-    "always_for_multistep",
-}
 
 
-def _force_planning_config(policy: ToolPolicyInput) -> dict[str, Any]:
-    raw = policy.metadata.get("force_planning")
-    if isinstance(raw, dict):
-        return raw
-    if policy.metadata.get("force_planning_enabled") is True:
-        return {"enabled": True}
-    return {}
-
-
-def _force_planning_mode(config: dict[str, Any]) -> str:
-    raw_mode = str(config.get("mode") or "").strip()
-    if raw_mode in _FORCE_PLANNING_MODES:
-        return raw_mode
-    return "required_for_writes"
-
-
-def _force_planning_enabled(config: dict[str, Any]) -> bool:
-    mode = _force_planning_mode(config)
-    if mode in {"off", "prompt_only"}:
+def _force_planning_enabled(config: PlanningPolicyInput) -> bool:
+    if config.mode in {
+        PlanningPolicyMode.OFF,
+        PlanningPolicyMode.PROMPT_ONLY,
+    }:
         return False
-    if config.get("enabled") is False:
+    if config.enabled is False:
         return False
-    return config.get("enabled") is True or isinstance(config.get("mode"), str)
+    return config.enabled is True or config.mode != PlanningPolicyMode.REQUIRED_FOR_WRITES
 
 
-def _force_planning_has_approved_plan(config: dict[str, Any]) -> bool:
-    if config.get("approved") is True:
+def _force_planning_has_approved_plan(config: PlanningPolicyInput) -> bool:
+    if config.approved is True:
         return True
-    approved_plan_id = config.get("approved_plan_id")
+    approved_plan_id = config.approved_plan_id
     if isinstance(approved_plan_id, str) and approved_plan_id.strip():
         return True
-    approved_plan = config.get("approved_plan")
+    approved_plan = config.approved_plan
     if isinstance(approved_plan, dict):
         plan_id = approved_plan.get("plan_id")
         if isinstance(plan_id, str) and plan_id.strip():
@@ -81,63 +60,49 @@ def _force_planning_has_approved_plan(config: dict[str, Any]) -> bool:
 
 def _force_planning_applies(
     *,
-    config: dict[str, Any],
+    config: PlanningPolicyInput,
     manifest: ToolManifest,
     call: ToolCall,
     current_tool_calls: int,
 ) -> bool:
-    exempt_tools = config.get("exempt_tools")
-    if not isinstance(exempt_tools, list):
-        exempt = _DEFAULT_FORCE_PLANNING_EXEMPT_TOOLS
-    else:
-        exempt = {str(item) for item in exempt_tools if str(item).strip()}
+    exempt = (
+        set(config.exempt_tools)
+        if config.exempt_tools is not None
+        else _DEFAULT_FORCE_PLANNING_EXEMPT_TOOLS
+    )
     if call.tool_name in exempt:
         return False
 
-    gated_tools = config.get("gated_tools")
-    if isinstance(gated_tools, list) and call.tool_name in {
-        str(item) for item in gated_tools
-    }:
+    if config.gated_tools is not None and call.tool_name in set(config.gated_tools):
         return True
 
-    mode = _force_planning_mode(config)
-    if mode == "always_for_multistep":
-        if config.get("multistep") is True:
+    if config.mode == PlanningPolicyMode.ALWAYS_FOR_MULTISTEP:
+        if config.multistep is True:
             return True
-        threshold_raw = config.get("step_threshold", 2)
-        threshold = (
-            threshold_raw
-            if isinstance(threshold_raw, int)
-            and not isinstance(threshold_raw, bool)
-            and threshold_raw > 0
-            else 2
-        )
-        expected_steps_raw = config.get("expected_steps")
         if (
-            isinstance(expected_steps_raw, int)
-            and not isinstance(expected_steps_raw, bool)
-            and expected_steps_raw >= threshold
+            config.expected_steps is not None
+            and config.expected_steps >= config.step_threshold
         ):
             return True
-        return current_tool_calls + 1 >= threshold
+        return current_tool_calls + 1 >= config.step_threshold
 
-    if mode == "required_for_risky_tools":
-        min_risk = str(config.get("min_risk") or ToolRisk.MEDIUM.value).strip()
+    if config.mode == PlanningPolicyMode.REQUIRED_FOR_RISKY_TOOLS:
+        min_risk = str(config.min_risk or ToolRisk.MEDIUM.value).strip()
         try:
             threshold = ToolRisk(min_risk)
         except ValueError:
             threshold = ToolRisk.MEDIUM
         return is_risk_at_or_above(manifest, threshold.value)
 
-    gated_side_effects = config.get("gated_side_effects")
-    if not isinstance(gated_side_effects, list):
-        side_effects = _DEFAULT_FORCE_PLANNING_SIDE_EFFECTS
-    else:
-        side_effects = {str(item) for item in gated_side_effects if str(item).strip()}
+    side_effects = (
+        set(config.gated_side_effects)
+        if config.gated_side_effects is not None
+        else _DEFAULT_FORCE_PLANNING_SIDE_EFFECTS
+    )
     if manifest.side_effect.value in side_effects:
         return True
 
-    min_risk = config.get("min_risk")
+    min_risk = config.min_risk
     if isinstance(min_risk, str) and min_risk.strip():
         try:
             threshold = ToolRisk(min_risk.strip())
@@ -154,8 +119,8 @@ def _evaluate_force_planning(
     call: ToolCall,
     current_tool_calls: int,
 ) -> ToolPolicyOutcome | None:
-    config = _force_planning_config(policy)
-    if not _force_planning_enabled(config):
+    config = PlanningPolicyInput.from_metadata(policy.metadata)
+    if config is None or not _force_planning_enabled(config):
         return None
     if _force_planning_has_approved_plan(config):
         return None
@@ -166,7 +131,6 @@ def _evaluate_force_planning(
         current_tool_calls=current_tool_calls,
     ):
         return None
-    mode = _force_planning_mode(config)
     return ToolPolicyOutcome(
         decision=ToolPolicyDecision.DENY,
         reason=(
@@ -179,7 +143,7 @@ def _evaluate_force_planning(
                 "tool_name": call.tool_name,
                 "risk": manifest.risk.value,
                 "side_effect": manifest.side_effect.value,
-                "mode": mode,
+                "mode": config.mode.value,
             }
         },
     )

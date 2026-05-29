@@ -97,6 +97,9 @@ Current completed slices:
 - Chat-demo backend now accepts `CHAT_DEMO_FORCE_PLANNING_MODE` /
   `CHAT_DEMO_PLANNING_MODE` and passes the chosen mode into
   `tool_policy.metadata.force_planning` when force planning is enabled.
+- Added typed `PlanningPolicyInput` / `PlanningPolicyMode` contracts and
+  switched force-planning evaluator normalization away from ad hoc dictionaries
+  while keeping legacy metadata compatibility.
 
 Next Phase 2 slice:
 
@@ -160,6 +163,137 @@ Phase-specific chat-demo gates:
 - Phase 5-6: subagent spawn, background status, mailbox notifications,
   continue and stop are visible in chat-demo.
 - Phase 7: coordinator/worker mode is selectable and shows worker lifecycle.
+
+## Execution Todo Backlog
+
+This checklist is the live execution board for the roadmap. Keep it updated
+when a slice is implemented, tested, committed, or intentionally deferred.
+
+### Phase 1: Planning Artifact And Approval Gate
+
+- [x] Add `PlanArtifact`, `PlanningModeState`, and `PlanApprovalPayload`
+  contracts.
+- [x] Add in-memory plan artifact lifecycle helpers.
+- [x] Wire `exit_plan_mode_v2` plan content to
+  `plan_approval_required` interrupts.
+- [x] Support approve/edit resume metadata for approved plans.
+- [x] Show plan approval cards in chat-demo.
+- [x] Add deterministic plan-approval fake scenario and backend tests.
+- [ ] Add SQLite or durable plan artifact persistence beyond process-local
+  helpers.
+- [ ] Emit dedicated plan lifecycle runtime events:
+  `plan_mode_entered`, `plan_artifact_updated`, `plan_approval_requested`,
+  `plan_approved`, `plan_rejected`.
+- [ ] Add checkpoint/resume tests for awaiting plan approval after process
+  restart or durable store reload.
+
+### Phase 2: Force Planning Policy Engine
+
+- [x] Add runtime gate for write/external side-effect tools.
+- [x] Keep planning tools exempt from force-planning gate.
+- [x] Add model-facing remediation for force-planning denials.
+- [x] Add adaptive chat prompt guidance for voluntary plan mode.
+- [x] Add deterministic `planning_hint` classifier with English/Russian tests.
+- [x] Attach `planning_hint` metadata in chat-demo.
+- [x] Add configurable evaluator modes:
+  `off`, `prompt_only`, `required_for_writes`,
+  `required_for_risky_tools`, `always_for_multistep`.
+- [x] Wire chat-demo env config for force-planning mode.
+- [x] Add typed `PlanningPolicyInput` contract/normalizer for metadata instead
+  of relying on ad hoc dictionaries.
+- [ ] Extend `planning_hint` to planned tool batches:
+  side-effecting tools, native `agent_tool`, expected step count.
+- [ ] Gate native subagent spawn once `agent_tool` becomes a runtime spawn
+  surface.
+- [ ] Run and document a current Playwright smoke for chat-demo force-planning
+  policy-denied replay after the latest design changes.
+- [ ] Decide and document chat-demo default mode:
+  `prompt_only` or `required_for_writes`.
+
+### Phase 3: Steering Contracts And Queue
+
+- [ ] Add `agent_driver/contracts/control.py` with `ControlRequest`,
+  `ControlResponse`, and `CommandQueueItem`.
+- [ ] Add command queue stores:
+  in-memory first, SQLite second.
+- [ ] Add control dispatcher with priority semantics:
+  `now > next > later`, FIFO within priority.
+- [ ] Add SDK methods:
+  `control`, `enqueue`, `set_model`, `set_permission_mode`,
+  `cancel_queued_message`.
+- [ ] Drain queue at runtime step boundaries.
+- [ ] Emit typed control/queue runtime events.
+- [ ] Add tests for priority, FIFO, cancellation, checkpoint/resume, and
+  `set_model` affecting the next LLM request.
+
+### Phase 4: User Steering UX Adapters
+
+- [ ] Extend SSE projection for control/queue events.
+- [ ] Add chat-demo/backend control endpoints.
+- [ ] Add chat-demo/frontend controls for enqueue/cancel/interrupt/model
+  switch where product-appropriate.
+- [ ] Persist steering operations in session transcript/history.
+- [ ] Add replay view support for queued messages and controls.
+- [ ] Verify mid-run steering with Playwright and record screenshot/DOM
+  assertion.
+
+### Phase 4a: Optional Instructor Spike
+
+- [ ] Add optional dependency extra without affecting default installs.
+- [ ] Add `agent_driver/structured/` adapter boundary.
+- [ ] Prototype one steering parser into typed `ControlRequest`.
+- [ ] Prototype one plan artifact validator.
+- [ ] Surface validation/retry failures as structured runtime observations or
+  errors.
+
+### Phase 5: Native Agent Tool Spawn
+
+- [ ] Make `agent_tool` a runtime-recognized spawn request.
+- [ ] Convert tool envelopes into `SubagentGroupSpec`.
+- [ ] Persist group before child execution with idempotency keys.
+- [ ] Pass subagent event callback through sync execution.
+- [ ] Add native `task_stop_tool`.
+- [ ] Add `send_message_tool` continuation semantics for existing child
+  context.
+- [ ] Add tests for spawn, resume idempotency, continuation, stop, and events.
+
+### Phase 6: Background Subagents And Mailbox
+
+- [ ] Add `asyncio_background` subagent backend.
+- [ ] Add durable mailbox for messages, permissions, plan approvals, and task
+  notifications.
+- [ ] Queue child-to-parent notifications as `later` commands.
+- [ ] Add status polling and collection APIs.
+- [ ] Propagate parent abort to children.
+- [ ] Add budgets/backpressure for child/group scheduling.
+
+### Phase 7: Coordinator Profile
+
+- [ ] Add coordinator profile/config.
+- [ ] Add coordinator prompt snapshot based on OpenClaude principles.
+- [ ] Add worker definitions: `worker`, `researcher`, `implementer`,
+  `verifier`.
+- [ ] Restrict coordinator/worker tool surfaces.
+- [ ] Add scratchpad/artifact handoff rules.
+- [ ] Add evals for research fan-out, corrected continuation, and verifier
+  catch.
+
+### Phase 8: Isolation And Advanced Backends
+
+- [ ] Add worktree isolation for child runs.
+- [ ] Add cwd override with policy validation.
+- [ ] Evaluate process backend after `asyncio_background`.
+- [ ] Add bounded artifact refs for child outputs.
+- [ ] Add cleanup tests for completed/cancelled children.
+
+### Documentation And Recipes
+
+- [ ] Update `docs/roadmap.md` with a pointer to this plan.
+- [ ] Add `docs/architecture/force-planning.md`.
+- [ ] Add `docs/architecture/steering-control-plane.md`.
+- [ ] Extend `docs/architecture/multi-agent-orchestration.md`.
+- [ ] Add SDK recipes for plan approval, mid-run steering, child continuation,
+  and stopping a child.
 
 ## Optional Structured Extraction: Instructor Spike
 

@@ -7,6 +7,7 @@ from agent_driver.contracts.enums.context import (
     ObservationTrust,
     PlanningHintLevel,
     PlanningModeState,
+    PlanningPolicyMode,
     PlanningTodoStatus,
     TrimAction,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "PlanningModeState",
     "PlanningHintLevel",
     "PlanningTodoStatus",
+    "PlanningPolicyMode",
     "ObservationSource",
     "ObservationTrust",
     "TrimAction",

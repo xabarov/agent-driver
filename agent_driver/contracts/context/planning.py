@@ -11,6 +11,7 @@ from agent_driver.contracts.base import ContractModel
 from agent_driver.contracts.enums import (
     PlanningHintLevel,
     PlanningModeState,
+    PlanningPolicyMode,
     PlanningTodoStatus,
 )
 from agent_driver.contracts.validation import (
@@ -163,3 +164,72 @@ class PlanningHint(ContractModel):
     def validate_hint_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
         """Ensure planning hint metadata is JSON-compatible."""
         return ensure_json_serializable(value, field_name="planning hint metadata")
+
+
+class PlanningPolicyInput(ContractModel):
+    """Typed force-planning policy embedded in tool-policy metadata."""
+
+    enabled: bool | None = None
+    mode: PlanningPolicyMode = PlanningPolicyMode.REQUIRED_FOR_WRITES
+    approved: bool = False
+    approved_plan_id: str | None = None
+    approved_plan: dict[str, Any] | None = None
+    exempt_tools: list[str] | None = None
+    gated_tools: list[str] | None = None
+    gated_side_effects: list[str] | None = None
+    min_risk: str | None = None
+    multistep: bool = False
+    expected_steps: int | None = None
+    step_threshold: int = 2
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @classmethod
+    def from_metadata(cls, metadata: dict[str, Any]) -> "PlanningPolicyInput | None":
+        """Build policy from legacy/current ``ToolPolicyInput.metadata``."""
+        raw = metadata.get("force_planning")
+        if isinstance(raw, dict):
+            payload = dict(raw)
+            if "mode" in payload and "enabled" not in payload:
+                payload["enabled"] = True
+            return cls.model_validate(payload)
+        if metadata.get("force_planning_enabled") is True:
+            return cls(enabled=True)
+        return None
+
+    @field_validator(
+        "exempt_tools",
+        "gated_tools",
+        "gated_side_effects",
+    )
+    @classmethod
+    def validate_optional_string_list(
+        cls, value: list[str] | None
+    ) -> list[str] | None:
+        """Normalize optional string lists and drop blank entries."""
+        if value is None:
+            return None
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @field_validator("expected_steps")
+    @classmethod
+    def validate_expected_steps(cls, value: int | None) -> int | None:
+        """Require non-negative expected step count when present."""
+        return ensure_non_negative_int(value, field_name="expected_steps")
+
+    @field_validator("step_threshold")
+    @classmethod
+    def validate_step_threshold(cls, value: int) -> int:
+        """Require a positive multistep threshold."""
+        if isinstance(value, bool) or value <= 0:
+            raise ValueError("step_threshold must be a positive integer")
+        return value
+
+    @field_validator("approved_plan", "metadata")
+    @classmethod
+    def validate_policy_metadata(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Ensure nested policy metadata is JSON-compatible."""
+        if value is None:
+            return None
+        return ensure_json_serializable(value, field_name="planning policy metadata")
