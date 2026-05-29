@@ -537,6 +537,22 @@ def _react_system_instruction(host: LlmStepHost, context: RunContext) -> str | N
                     "with todo_write (merge=true) as each step completes, and do "
                     "not restate the full plan checklist in chat."
                 )
+        planning_hint = context.run_input.tool_policy.metadata.get("planning_hint")
+        if isinstance(planning_hint, dict):
+            level = str(planning_hint.get("level") or "")
+            reason = str(planning_hint.get("reason") or "").strip()
+            if level == "suggested":
+                lines.append(
+                    "Planning hint: this request looks like non-trivial "
+                    "implementation work; prefer enter_plan_mode before execution. "
+                    f"Reason: {reason or 'adaptive planning suggested'}."
+                )
+            elif level == "required":
+                lines.append(
+                    "Planning hint: approved planning is required before "
+                    "side-effecting execution. Enter plan mode and call "
+                    "exit_plan_mode_v2 with concrete plan content."
+                )
     return "\n".join(lines)
 
 

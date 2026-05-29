@@ -25,6 +25,14 @@ class PlanningModeState(StrEnum):
     EXPIRED = "expired"
 
 
+class PlanningHintLevel(StrEnum):
+    """Runtime hint for whether a request should enter planning mode."""
+
+    NONE = "none"
+    SUGGESTED = "suggested"
+    REQUIRED = "required"
+
+
 class ObservationSource(StrEnum):
     """Source of observation preview captured for model-facing memory."""
 
@@ -57,6 +65,7 @@ __all__ = [
     "ObservationSource",
     "ObservationTrust",
     "PlanningModeState",
+    "PlanningHintLevel",
     "PlanningTodoStatus",
     "TrimAction",
 ]

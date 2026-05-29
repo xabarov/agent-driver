@@ -8,7 +8,11 @@ from typing import Any
 from pydantic import Field, field_validator, model_validator
 
 from agent_driver.contracts.base import ContractModel
-from agent_driver.contracts.enums import PlanningModeState, PlanningTodoStatus
+from agent_driver.contracts.enums import (
+    PlanningHintLevel,
+    PlanningModeState,
+    PlanningTodoStatus,
+)
 from agent_driver.contracts.validation import (
     ensure_json_serializable,
     ensure_non_negative_int,
@@ -138,3 +142,24 @@ class PlanApprovalPayload(ContractModel):
     def validate_payload_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
         """Ensure plan approval metadata is JSON-compatible."""
         return ensure_json_serializable(value, field_name="plan approval metadata")
+
+
+class PlanningHint(ContractModel):
+    """Deterministic hint for adaptive plan-mode behavior."""
+
+    level: PlanningHintLevel = PlanningHintLevel.NONE
+    reason: str = "planning not needed"
+    signals: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("signals")
+    @classmethod
+    def validate_signals(cls, value: list[str]) -> list[str]:
+        """Keep signals compact and non-empty."""
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_hint_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        """Ensure planning hint metadata is JSON-compatible."""
+        return ensure_json_serializable(value, field_name="planning hint metadata")

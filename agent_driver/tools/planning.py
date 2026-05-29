@@ -360,7 +360,10 @@ def _register_enter_plan_mode_tool(registry: ToolRegistry) -> None:
     registry.register(
         ToolManifest(
             name="enter_plan_mode",
-            description="Switch planning state to plan mode.",
+            description=(
+                "Switch planning state to plan mode for non-trivial implementation "
+                "work before side-effecting execution."
+            ),
             risk=ToolRisk.LOW,
             side_effect=SideEffectClass.NONE,
             approval_mode=ApprovalMode.NEVER,
@@ -396,13 +399,31 @@ def _register_exit_plan_mode_v2_tool(registry: ToolRegistry) -> None:
     registry.register(
         ToolManifest(
             name="exit_plan_mode_v2",
-            description="Switch planning state back to agent mode.",
+            description=(
+                "Present a concrete plan for approval and switch planning state "
+                "back to agent mode."
+            ),
             risk=ToolRisk.LOW,
             side_effect=SideEffectClass.NONE,
             approval_mode=ApprovalMode.NEVER,
             args_schema={
                 "type": "object",
-                "properties": {"reason": {"type": "string"}},
+                "properties": {
+                    "reason": {"type": "string"},
+                    "plan_id": {"type": "string"},
+                    "content": {
+                        "type": "string",
+                        "description": "Approval-ready plan content.",
+                    },
+                    "plan": {
+                        "type": "string",
+                        "description": "Alias for content.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional plan artifact path.",
+                    },
+                },
                 "additionalProperties": False,
             },
             output_type="json",

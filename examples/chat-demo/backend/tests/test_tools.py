@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from app.api.chat import _chat_tool_policy
+from app.config import Settings
+from app.schemas.chat import ChatMessageRequest
+
 
 async def test_tools_default_preset(client) -> None:
     response = await client.get("/api/tools")
@@ -48,3 +52,16 @@ async def test_workspace_sample_import_populates_session_workspace(client) -> No
     assert "README.md" in payload["files"]
     assert payload["workspace"]["sessionId"] == "session_sample"
     assert payload["workspace"]["fileCount"] >= 3
+
+
+def test_chat_tool_policy_adds_adaptive_planning_hint() -> None:
+    """Chat requests should carry adaptive planning metadata into the runtime."""
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="Add adaptive planning support and update runtime tests",
+        ),
+        settings=Settings(),
+    )
+    hint = policy.metadata["planning_hint"]
+    assert isinstance(hint, dict)
+    assert hint["level"] == "suggested"

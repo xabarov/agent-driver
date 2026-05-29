@@ -79,6 +79,17 @@ Current completed slices:
 - Added model-facing remediation for force-planning denials: a blocked
   side-effecting tool now carries structured guidance to enter plan mode and
   call `exit_plan_mode_v2` before retrying.
+- Added Claude Code-like adaptive planning guidance to the chat policy:
+  use plan mode proactively for non-trivial implementation, skip it for simple
+  direct tasks and research-only work, and follow `force_planning_required`
+  remediation when the runtime gate blocks a side-effecting tool.
+- Exposed `content`, `plan`, `plan_id`, and `path` in the model-visible
+  `exit_plan_mode_v2` schema so the tool contract matches the existing handler
+  and plan approval interrupts can be requested by native tool call.
+- Added deterministic `planning_hint` classification with English/Russian rule
+  tests. Chat-demo now attaches the hint to `tool_policy.metadata`, and the
+  React chat system prompt surfaces it only when planning is suggested or
+  required.
 
 Next Phase 2 slice:
 
@@ -86,6 +97,9 @@ Next Phase 2 slice:
   runtime scheduling surface.
 - Add a replay/UI polish pass for policy-denied tool cards so remediation is
   visually distinct from the raw denial reason.
+- Extend `planning_hint` from request-text rules to planned tool batches
+  (side-effecting tools, native `agent_tool`, estimated step count) so the
+  same contract can drive runtime-required planning outside chat-demo.
 
 ## Periodic Product Checks
 
@@ -330,6 +344,20 @@ Acceptance criteria for the spike:
 Ключевой принцип: `todo_write` остается live-progress checklist; plan artifact
 является approval документом для начала исполнения.
 
+Adaptive planning principle:
+
+- Planning tools should be available to the model by default, but not forced
+  for every prompt. Simple factual answers, typo fixes and narrowly specified
+  edits can stay direct.
+- The model should proactively enter plan mode for non-trivial implementation:
+  new features, multi-file changes, architectural choices, unclear
+  requirements, risky behavior changes, or tasks where user preference affects
+  the approach.
+- Runtime policy should only force plan approval at safety boundaries
+  (`required_for_writes`, `required_for_risky_tools`,
+  `always_for_multistep`). This keeps the Claude Code-like behavior where
+  planning is chosen for complex work without making every interaction modal.
+
 ### 2. Steering Control Plane
 
 Добавить transport-neutral control protocol:
@@ -434,6 +462,9 @@ Scope:
   planned tool has side effect;
   model requests `agent_tool`;
   max expected steps > threshold.
+- Add adaptive prompt guidance for voluntary planning:
+  prefer `enter_plan_mode` for non-trivial implementation, but skip it for
+  simple fixes and pure research/exploration.
 - Add model-facing remediation when gate blocks:
   "enter plan mode and prepare approval plan".
 

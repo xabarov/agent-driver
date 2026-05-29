@@ -13,6 +13,7 @@ from agent_driver.adapters import parse_after_seq, render_sse_line
 from agent_driver.contracts import AgentRunInput, ChatMessage, ToolPolicyInput
 from agent_driver.contracts.enums import ChatRole, ResumeAction
 from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
+from agent_driver.runtime.planning_policy import classify_planning_hint
 from agent_driver.runtime.stream import backfill_stream_events, project_runtime_events
 
 from app.config import Settings, ToolPreset
@@ -177,6 +178,8 @@ def _chat_tool_policy(*, body: ChatMessageRequest, settings: Settings) -> ToolPo
         else settings.force_planning
     )
     metadata: dict[str, object] = {}
+    hint = classify_planning_hint(body.message)
+    metadata["planning_hint"] = hint.model_dump(mode="json")
     if force_planning:
         metadata["force_planning"] = {"enabled": True}
     return ToolPolicyInput(metadata=metadata)

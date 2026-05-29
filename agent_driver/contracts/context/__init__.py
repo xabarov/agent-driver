@@ -17,6 +17,7 @@ from agent_driver.contracts.context.observations import (
 from agent_driver.contracts.context.planning import (
     PlanApprovalPayload,
     PlanArtifact,
+    PlanningHint,
     PlanningState,
     PlanningStep,
     TodoState,
@@ -40,6 +41,7 @@ __all__ = [
     "ObservationProvenance",
     "PlanApprovalPayload",
     "PlanArtifact",
+    "PlanningHint",
     "PlanningState",
     "PlanningStep",
     "TodoState",
