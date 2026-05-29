@@ -162,17 +162,19 @@ Current completed slices:
   aborts cascade into children, and scheduling backpressure enforces declared
   group limits.
 
-Next Phase 2 slice:
+Final closure checklist, 2026-05-29:
 
-- Extend the same gate to native subagent spawn once `agent_tool` becomes a
-  runtime scheduling surface.
-- Add a replay/UI polish pass for policy-denied tool cards so remediation is
-  visually distinct from the raw denial reason.
-- Extend `planning_hint` from request-text rules to planned tool batches
-  (side-effecting tools, native `agent_tool`, estimated step count) so the
-  same contract can drive runtime-required planning outside chat-demo.
-- Pick and document the product default for chat-demo
-  (`prompt_only` vs `required_for_writes`) after live demo checks.
+- [x] Native subagent spawn is covered by the force-planning gate.
+- [x] Policy-denied tool cards remain visible in live transcript and replay;
+  terminal tool outcomes now survive assistant tombstones.
+- [x] `planning_hint` covers request text and planned tool batches:
+  side-effecting tools, native `agent_tool`, and expected step count.
+- [x] Chat-demo force-planning default is documented as
+  `required_for_writes` when force planning is enabled.
+- [x] Chat-demo concept smoke covers planning approval, clarification,
+  denied tool feedback, web-search final answers, and subagent final answers.
+- [x] Live frontend check against configured OpenRouter/web tools produced a
+  final answer and screenshot: `/tmp/chat-demo-live-web-check.png`.
 
 ## Periodic Product Checks
 
@@ -201,7 +203,8 @@ Current demo-gate status:
 - Python Playwright installed in the repo `.venv`; Chromium browser installed.
 - Added `examples/chat-demo/frontend/tests/e2e/chat_concepts_smoke.py` for
   deterministic concept checks over the real React UI. Current scenarios cover
-  plan approval and the plan/tombstone/clarification/resume regression.
+  plan approval, plan/tombstone/clarification/resume, denied tool feedback,
+  web-search final answer, and subagent final answer.
 - Current concept smoke writes screenshots to `/tmp/chat-demo-concepts` and
   can be run through `make test-chat-concepts`.
 - Root `.venv` has backend/frontend test dependencies installed for local
@@ -243,8 +246,10 @@ Phase-specific chat-demo gates:
   reconnect/replay. Current checkpoint: composer enqueue/cancel controls are
   visible while streaming, and replay shows persisted control lifecycle events.
 - Phase 5-6: subagent spawn, background status, mailbox notifications,
-  continue and stop are visible in chat-demo.
-- Phase 7: coordinator/worker mode is selectable and shows worker lifecycle.
+  continue and stop are covered by runtime tests and by the chat-demo
+  `agent_tool` concept smoke.
+- Phase 7: coordinator/worker behavior is covered by runtime/eval tests and
+  the chat-demo subagent synthesis smoke.
 
 ## Execution Todo Backlog
 

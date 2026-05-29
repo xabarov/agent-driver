@@ -253,6 +253,74 @@ describe("chatStore", () => {
     }
   });
 
+  test("tombstone preserves terminal tool outcomes but removes running tools", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("tool policy");
+    useChatStore.getState().appendToolStarted(assistantId, {
+      toolCallId: "denied_1",
+      name: "file_write",
+      status: "running",
+    });
+    useChatStore.getState().appendToolStarted(assistantId, {
+      toolCallId: "running_1",
+      name: "web_search",
+      status: "running",
+    });
+    useChatStore.getState().updateToolCompleted("denied_1", {
+      toolCallId: "denied_1",
+      name: "file_write",
+      status: "denied",
+      resultPreview: "force planning requires an approved plan",
+    });
+    useChatStore.getState().tombstoneAssistant(assistantId);
+
+    const messages = useChatStore.getState().messages;
+    expect(messages.some((item) => item.id === assistantId)).toBe(false);
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "tool",
+          name: "file_write",
+          status: "denied",
+          resultPreview: "force planning requires an approved plan",
+        }),
+      ]),
+    );
+    expect(
+      messages.some(
+        (item) => item.role === "tool" && item.toolCallId === "running_1",
+      ),
+    ).toBe(false);
+  });
+
+  test("appendDelta recreates assistant output after tombstone", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("tool policy");
+    useChatStore.getState().appendToolStarted(assistantId, {
+      toolCallId: "denied_1",
+      name: "file_write",
+      status: "running",
+    });
+    useChatStore.getState().updateToolCompleted("denied_1", {
+      toolCallId: "denied_1",
+      name: "file_write",
+      status: "denied",
+    });
+    useChatStore.getState().tombstoneAssistant(assistantId);
+    useChatStore.getState().appendDelta(assistantId, "Final answer after denial.");
+    useChatStore.getState().finishTurn(assistantId);
+
+    expect(useChatStore.getState().messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "tool", status: "denied" }),
+        expect.objectContaining({
+          id: assistantId,
+          role: "assistant",
+          content: "Final answer after denial.",
+          pending: false,
+        }),
+      ]),
+    );
+  });
+
   test("appendToolStarted skips todo_write", () => {
     const assistantId = useChatStore.getState().beginUserTurn("plan");
     useChatStore.getState().appendToolStarted(assistantId, {

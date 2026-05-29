@@ -80,6 +80,9 @@ export function ToolCallCard({ message }: ToolCallCardProps) {
       {message.argsSummary ? (
         <p className="mt-2 truncate text-xs text-muted-foreground">{message.argsSummary}</p>
       ) : null}
+      {message.resultPreview && !open ? (
+        <p className="mt-2 truncate text-xs text-foreground/80">{message.resultPreview}</p>
+      ) : null}
       {open ? (
         <div className="mt-3 space-y-2">
           {message.args ? (

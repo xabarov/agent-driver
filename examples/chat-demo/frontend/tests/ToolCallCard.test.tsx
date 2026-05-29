@@ -38,4 +38,21 @@ describe("ToolCallCard", () => {
     expect(screen.getByText("denied")).toBeInTheDocument();
     expect(screen.getByText("force planning requires an approved plan")).toBeInTheDocument();
   });
+
+  test("shows completed result preview while collapsed", () => {
+    render(
+      <ToolCallCard
+        message={{
+          id: "tool_1",
+          role: "tool",
+          toolCallId: "call_1",
+          name: "agent_tool",
+          status: "done",
+          resultPreview: "2 subagents completed",
+        }}
+      />,
+    );
+    expect(screen.getByText("agent_tool")).toBeInTheDocument();
+    expect(screen.getByText("2 subagents completed")).toBeInTheDocument();
+  });
 });

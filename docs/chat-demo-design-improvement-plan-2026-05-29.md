@@ -75,10 +75,10 @@ Dependency stance, 2026-05-29:
   - Make active session selection stronger than inactive cards.
   - Add an empty search result state.
 
-- [ ] Verification checklist.
+- [x] Verification checklist.
   - [x] Desktop screenshot at `1440x900`: empty state, composer, sidebar.
   - [x] Mobile screenshot at `390x844`: header does not exceed two rows.
-  - [ ] Keyboard tab order reaches sidebar search, new session, model picker, tools picker, composer, send.
+  - [x] Keyboard tab order reaches sidebar search, new session, model picker, tools picker, composer, send.
   - [x] No text overlaps in English and with an existing Cyrillic session title.
 
 Phase 1 implementation notes, 2026-05-29:
@@ -116,11 +116,11 @@ Phase 1 implementation notes, 2026-05-29:
   - Surface current run ID/count in the header when a session is active.
   - Keep token metadata out of the primary header until an assistant message exists.
 
-- [ ] Verification checklist.
+- [x] Verification checklist.
   - [x] Open model picker, search, select a model, reopen and confirm selected state.
   - [x] Open tools picker, change presets, confirm popover placement and enabled tool count.
   - [x] Simulate loading/error health state and verify visual copy.
-  - [ ] Confirm all icon-only controls have accessible names and tooltips where useful.
+  - [x] Confirm all icon-only controls have accessible names and tooltips where useful.
 
 Header runtime controls implementation note, 2026-05-29:
 
@@ -244,19 +244,22 @@ Phase 5 implementation notes, 2026-05-29:
 - Smoke coverage includes empty state, sidebar search, model search, tools picker, mobile sidebar open/close, keyboard reachability, and desktop/mobile/tablet/wide layout invariants.
 - README now documents the smoke command and adds it to the manual QA checklist.
 
-Open design regression notes, 2026-05-29:
+Closed design regression notes, 2026-05-29:
 
-- [ ] Policy-denied tool activity can disappear from the live transcript view.
+- [x] Policy-denied tool activity can disappear from the live transcript view.
   A Playwright force-planning smoke with fake provider confirmed backend replay
   events include `tool_call_started` / `tool_call_completed` for denied
   `file_write`, including remediation text, but the current chat UI showed only
   the final assistant sentence. Restore visible/replayable `ToolCallCard`
   rendering for denied tool calls and include this in the e2e smoke.
+  Fixed: terminal tool outcomes now survive assistant tombstones in the live
+  store, completed tool summaries are visible while collapsed, and
+  `chat_concepts_smoke.py` covers the denied live-transcript path.
 
 ## Acceptance Criteria
 
-- [ ] A new user can understand what to try from the first screen without reading external docs.
-- [ ] The app feels like an agent runtime console: provider, model, tools, runs, and workspace state are visible but not noisy.
+- [x] A new user can understand what to try from the first screen without reading external docs.
+- [x] The app feels like an agent runtime console: provider, model, tools, runs, and workspace state are visible but not noisy.
 - [x] Mobile first viewport shows title, essential controls, empty/message content, and composer without awkward wrapping.
 - [x] Model and tools controls are usable with long real-world OpenRouter model names.
 - [x] Public tools UI exposes web search/fetch controls only; filesystem and shell capabilities stay hidden from the default web demo.

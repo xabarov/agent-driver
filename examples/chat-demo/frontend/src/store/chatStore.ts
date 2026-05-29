@@ -186,27 +186,64 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!text) {
       return;
     }
-    const previousRaw = assistantRawContent.get(assistantId);
-    set((state) => ({
-      messages: state.messages.map((message) => {
-        if (message.id !== assistantId || message.role !== "assistant") {
-          return message;
-        }
-        const merged = `${previousRaw ?? message.content}${text}`;
-        assistantRawContent.set(assistantId, merged);
-        return { ...message, content: stripTextFormToolCalls(merged) };
-      }),
-    }));
+    set((state) => {
+      const previousRaw = assistantRawContent.get(assistantId);
+      const index = state.messages.findIndex(
+        (message) => message.id === assistantId && message.role === "assistant",
+      );
+      if (index < 0) {
+        assistantRawContent.set(assistantId, text);
+        return {
+          messages: [
+            ...state.messages,
+            {
+              id: assistantId,
+              role: "assistant",
+              content: stripTextFormToolCalls(text),
+              pending: true,
+            },
+          ],
+        };
+      }
+      return {
+        messages: state.messages.map((message) => {
+          if (message.id !== assistantId || message.role !== "assistant") {
+            return message;
+          }
+          const merged = `${previousRaw ?? message.content}${text}`;
+          assistantRawContent.set(assistantId, merged);
+          return { ...message, content: stripTextFormToolCalls(merged) };
+        }),
+      };
+    });
   },
   replaceAssistantContent: (assistantId, text) => {
     assistantRawContent.set(assistantId, text);
-    set((state) => ({
-      messages: state.messages.map((message) =>
-        message.id === assistantId && message.role === "assistant"
-          ? { ...message, content: stripTextFormToolCalls(text) }
-          : message,
-      ),
-    }));
+    set((state) => {
+      const hasAssistant = state.messages.some(
+        (message) => message.id === assistantId && message.role === "assistant",
+      );
+      if (!hasAssistant) {
+        return {
+          messages: [
+            ...state.messages,
+            {
+              id: assistantId,
+              role: "assistant",
+              content: stripTextFormToolCalls(text),
+              pending: false,
+            },
+          ],
+        };
+      }
+      return {
+        messages: state.messages.map((message) =>
+          message.id === assistantId && message.role === "assistant"
+            ? { ...message, content: stripTextFormToolCalls(text) }
+            : message,
+        ),
+      };
+    });
   },
   tombstoneAssistant: (assistantId) =>
     set((state) => {
@@ -220,6 +257,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       while (end < state.messages.length && state.messages[end]?.role === "tool") {
         end += 1;
       }
+      const terminalTools = state.messages
+        .slice(index + 1, end)
+        .filter(
+          (message): message is ToolChatMessage =>
+            message.role === "tool" && message.status !== "running",
+        );
       assistantRawContent.delete(assistantId);
       const target = state.messages[index];
       if (target?.role === "assistant" && target.planningSnapshot) {
@@ -227,11 +270,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
           messages: [
             ...state.messages.slice(0, index),
             { ...target, content: "", pending: false },
+            ...terminalTools,
             ...state.messages.slice(end),
           ],
         };
       }
-      return { messages: [...state.messages.slice(0, index), ...state.messages.slice(end)] };
+      return {
+        messages: [
+          ...state.messages.slice(0, index),
+          ...terminalTools,
+          ...state.messages.slice(end),
+        ],
+      };
     }),
   appendToolStarted: (assistantId, tool) =>
     set((state) => {

@@ -287,9 +287,208 @@ def run_plan_approval_regression(page: Page) -> None:
     )
 
 
+def run_denied_tool_regression(page: Page) -> None:
+    """A tombstoned assistant must not hide terminal policy-denied tools."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(2, "token_delta", {"delta_text": "Пробую выполнить запись."}),
+            sse_event(
+                3,
+                "tool_call_started",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "file_write",
+                            "tool_call_id": "file_write_1",
+                            "status": "running",
+                            "args": {"path": "docs/demo.txt"},
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                4,
+                "tool_call_completed",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "file_write",
+                            "tool_call_id": "file_write_1",
+                            "status": "denied",
+                            "result_summary": (
+                                "force planning requires an approved plan before writes"
+                            ),
+                            "risk": "high",
+                        }
+                    ]
+                },
+            ),
+            sse_event(5, "assistant_message_tombstoned"),
+            sse_event(
+                6,
+                "token_delta",
+                {"delta_text": ("Запись заблокирована политикой. Сначала нужен план.")},
+            ),
+            sse_event(7, "run_completed"),
+        ]
+    )
+
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    # 5-step visible path: type, send, see denied tool, expand details, see final answer.
+    send_chat_message(page, "запиши результат в файл")
+    expect(page.get_by_text("file_write")).to_be_visible(timeout=5000)
+    expect(page.get_by_text("denied")).to_be_visible()
+    expect(page.get_by_text("force planning requires an approved plan")).to_be_visible()
+    expect(page.get_by_text("Запись заблокирована политикой")).to_be_visible()
+    page.screenshot(
+        path=str(ARTIFACT_DIR / "denied-tool-regression.png"),
+        full_page=True,
+    )
+
+
+def run_web_search_final_answer(page: Page) -> None:
+    """Web search/fetch activity remains visible and produces a final answer."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "tool_call_started",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "web_search",
+                            "tool_call_id": "web_1",
+                            "status": "running",
+                            "args": {"query": "Fender Stratocaster history"},
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                3,
+                "tool_call_completed",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "web_search",
+                            "tool_call_id": "web_1",
+                            "status": "ok",
+                            "result_summary": (
+                                "Found sources about Leo Fender and the 1954 Stratocaster."
+                            ),
+                            "duration_ms": 120,
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                4,
+                "token_delta",
+                {
+                    "delta_text": (
+                        "Fender Stratocaster стала важной моделью благодаря "
+                        "эргономике, трем звукоснимателям и массовому влиянию "
+                        "на рок- и поп-музыку."
+                    )
+                },
+            ),
+            sse_event(5, "run_completed"),
+        ]
+    )
+
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    # 5-step visible path: type research request, send, see web tool, see source
+    # summary, see final synthesized answer.
+    send_chat_message(page, "найди в интернете краткую историю Fender Stratocaster")
+    expect(page.get_by_text("web_search")).to_be_visible(timeout=5000)
+    expect(page.get_by_text("done")).to_be_visible()
+    expect(page.get_by_text("Found sources about Leo Fender")).to_be_visible()
+    expect(page.get_by_text("Fender Stratocaster стала важной моделью")).to_be_visible()
+    page.screenshot(path=str(ARTIFACT_DIR / "web-search-final.png"), full_page=True)
+
+
+def run_subagent_final_answer(page: Page) -> None:
+    """Subagent fan-out is visible as runtime activity and ends with synthesis."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "tool_call_started",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "agent_tool",
+                            "tool_call_id": "agent_1",
+                            "status": "running",
+                            "args": {
+                                "tasks": [
+                                    "research Fender history",
+                                    "verify model timeline",
+                                ]
+                            },
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                3,
+                "tool_call_completed",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "agent_tool",
+                            "tool_call_id": "agent_1",
+                            "status": "ok",
+                            "result_summary": (
+                                "2 subagents completed: researcher and verifier."
+                            ),
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                4,
+                "token_delta",
+                {
+                    "delta_text": (
+                        "Субагенты собрали историю и проверили временную линию. "
+                        "Итог: Stratocaster появилась в 1954 году и стала одной "
+                        "из ключевых электрогитар Fender."
+                    )
+                },
+            ),
+            sse_event(5, "run_completed"),
+        ]
+    )
+
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    # 5-step visible path: type fan-out request, send, see agent tool, see
+    # completed subagents, see final coordinator answer.
+    send_chat_message(page, "поручи субагентам собрать и проверить факты о Fender")
+    expect(page.get_by_text("agent_tool")).to_be_visible(timeout=5000)
+    expect(page.get_by_text("2 subagents completed")).to_be_visible()
+    expect(page.get_by_text("Субагенты собрали историю")).to_be_visible()
+    page.screenshot(path=str(ARTIFACT_DIR / "subagent-final.png"), full_page=True)
+
+
 SCENARIOS = {
     "clarification": run_clarification_regression,
+    "denied-tool": run_denied_tool_regression,
     "plan-approval": run_plan_approval_regression,
+    "subagent-final": run_subagent_final_answer,
+    "web-search-final": run_web_search_final_answer,
 }
 
 
