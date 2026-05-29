@@ -72,6 +72,34 @@ describe("chatStore", () => {
     expect(assistant?.role === "assistant" && assistant.pending).toBe(false);
   });
 
+  test("tracks steering control lifecycle", () => {
+    useChatStore.getState().addSteeringControl({
+      queueId: "cmd_1",
+      message: "be concise",
+      status: "queued",
+    });
+    useChatStore.getState().updateSteeringControl("cmd_1", "applied");
+
+    expect(useChatStore.getState().steeringControls).toEqual([
+      {
+        queueId: "cmd_1",
+        message: "be concise",
+        status: "applied",
+      },
+    ]);
+  });
+
+  test("reset clears steering controls", () => {
+    useChatStore.getState().addSteeringControl({
+      queueId: "cmd_1",
+      message: "be concise",
+      status: "queued",
+    });
+    useChatStore.getState().reset();
+
+    expect(useChatStore.getState().steeringControls).toEqual([]);
+  });
+
   test("loadSession replaces messages and resets stream state", () => {
     const state = useChatStore.getState();
     state.beginUserTurn("stale");

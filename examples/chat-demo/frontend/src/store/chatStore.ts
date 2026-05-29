@@ -55,6 +55,12 @@ export interface PendingInterrupt {
   allowedActions: string[];
 }
 
+export interface SteeringControl {
+  queueId: string;
+  message: string;
+  status: "queued" | "dequeued" | "applied" | "cancelled";
+}
+
 function createId(prefix: string): string {
   return `${prefix}_${Math.random().toString(16).slice(2, 10)}`;
 }
@@ -82,6 +88,7 @@ interface ChatState {
   sessionId?: string;
   runId?: string;
   pendingInterrupt?: PendingInterrupt;
+  steeringControls: SteeringControl[];
   lastError?: string;
   beginUserTurn: (text: string) => string;
   appendDelta: (assistantId: string, text: string) => void;
@@ -95,6 +102,8 @@ interface ChatState {
   setSessionId: (sessionId?: string) => void;
   setRunId: (runId?: string) => void;
   setPendingInterrupt: (interrupt?: PendingInterrupt) => void;
+  addSteeringControl: (control: SteeringControl) => void;
+  updateSteeringControl: (queueId: string, status: SteeringControl["status"]) => void;
   appendAssistantMetadata: (assistantId: string, patch: LlmCompletedPatch) => void;
   setPlanningSnapshot: (assistantId: string, snapshot: PlanningSnapshot) => void;
   setAssistantRunId: (assistantId: string, runId: string) => void;
@@ -113,6 +122,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sessionId: undefined,
   runId: undefined,
   pendingInterrupt: undefined,
+  steeringControls: [],
   lastError: undefined,
   beginUserTurn: (text) => {
     const userId = createId("user");
@@ -123,6 +133,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       lastSeq: 0,
       runId: undefined,
       pendingInterrupt: undefined,
+      steeringControls: [],
       lastError: undefined,
       messages: [
         ...state.messages,
@@ -227,6 +238,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setSessionId: (sessionId) => set({ sessionId }),
   setRunId: (runId) => set({ runId }),
   setPendingInterrupt: (pendingInterrupt) => set({ pendingInterrupt }),
+  addSteeringControl: (control) =>
+    set((state) => {
+      if (state.steeringControls.some((item) => item.queueId === control.queueId)) {
+        return state;
+      }
+      return { steeringControls: [...state.steeringControls, control] };
+    }),
+  updateSteeringControl: (queueId, status) =>
+    set((state) => ({
+      steeringControls: state.steeringControls.map((item) =>
+        item.queueId === queueId ? { ...item, status } : item,
+      ),
+    })),
   appendAssistantMetadata: (assistantId, patch) =>
     set((state) => ({
       messages: state.messages.map((message) => {
@@ -316,6 +340,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       lastSeq: 0,
       runId: undefined,
       pendingInterrupt: undefined,
+      steeringControls: [],
       lastError: undefined,
       messages: [
         ...state.messages.slice(0, index),
@@ -378,6 +403,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sessionId: detail.session_id,
       runId: detail.run_ids.at(-1),
       pendingInterrupt: undefined,
+      steeringControls: [],
       lastError: undefined,
       messages,
     });
@@ -391,6 +417,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sessionId: undefined,
       runId: undefined,
       pendingInterrupt: undefined,
+      steeringControls: [],
       lastError: undefined,
     });
   },

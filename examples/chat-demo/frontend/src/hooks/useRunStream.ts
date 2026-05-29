@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { cancelRun, controlRun, fetchInterrupt } from "../lib/api";
+import { cancelQueuedCommand, cancelRun, controlRun, fetchInterrupt } from "../lib/api";
 import {
   buildLastEventId,
   getAssistantSnapshotContent,
@@ -25,6 +25,7 @@ import { normalizeToolPreset, useSettingsStore } from "../store/settingsStore";
 interface RunStreamController {
   sendMessage: (message: string) => Promise<void>;
   steerRun: (message: string) => Promise<void>;
+  cancelSteering: (queueId: string) => Promise<void>;
   retryAssistant: (assistantId: string) => Promise<void>;
   resumeInterrupt: (payload: {
     action: string;
@@ -89,6 +90,24 @@ function applyStreamEvent(
     const patch = parseLlmCompletedData(event.data);
     if (Object.keys(patch).length > 0) {
       store.appendAssistantMetadata(assistantId, patch);
+    }
+  }
+  if (event.event === "command_dequeued") {
+    const queueId = typeof event.data.queue_id === "string" ? event.data.queue_id : "";
+    if (queueId) {
+      store.updateSteeringControl(queueId, "dequeued");
+    }
+  }
+  if (event.event === "control_applied") {
+    const queueId = typeof event.data.queue_id === "string" ? event.data.queue_id : "";
+    if (queueId) {
+      store.updateSteeringControl(queueId, "applied");
+    }
+  }
+  if (event.event === "command_cancelled") {
+    const queueId = typeof event.data.queue_id === "string" ? event.data.queue_id : "";
+    if (queueId) {
+      store.updateSteeringControl(queueId, "cancelled");
     }
   }
   if (isTerminalEvent(event) && event.data.usage && typeof event.data.usage === "object") {
@@ -249,11 +268,30 @@ export function useRunStream(): RunStreamController {
       return;
     }
     try {
-      await controlRun(runId, {
+      const response = await controlRun(runId, {
         kind: "enqueue_user_message",
         priority: "next",
         payload: { message: trimmed },
       });
+      if (response.queue_id) {
+        useChatStore.getState().addSteeringControl({
+          queueId: response.queue_id,
+          message: trimmed,
+          status: "queued",
+        });
+      }
+    } catch (error) {
+      useChatStore.getState().setLastError(formatStreamError(error));
+    }
+  }, []);
+
+  const cancelSteering = useCallback(async (queueId: string) => {
+    if (!queueId) {
+      return;
+    }
+    try {
+      await cancelQueuedCommand(queueId);
+      useChatStore.getState().updateSteeringControl(queueId, "cancelled");
     } catch (error) {
       useChatStore.getState().setLastError(formatStreamError(error));
     }
@@ -319,5 +357,12 @@ export function useRunStream(): RunStreamController {
     [invalidateAfterTerminal, model, runStream, toolPreset],
   );
 
-  return { sendMessage, steerRun, retryAssistant, resumeInterrupt, stopStreaming };
+  return {
+    sendMessage,
+    steerRun,
+    cancelSteering,
+    retryAssistant,
+    resumeInterrupt,
+    stopStreaming,
+  };
 }

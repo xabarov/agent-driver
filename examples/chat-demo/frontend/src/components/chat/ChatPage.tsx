@@ -25,7 +25,15 @@ export function ChatPage({ mode }: ChatPageProps) {
   const loadSession = useChatStore((state) => state.loadSession);
   const messages = useChatStore((state) => state.messages);
   const streaming = useChatStore((state) => state.streaming);
-  const { sendMessage, steerRun, retryAssistant, resumeInterrupt, stopStreaming } = useRunStream();
+  const steeringControls = useChatStore((state) => state.steeringControls);
+  const {
+    sendMessage,
+    steerRun,
+    cancelSteering,
+    retryAssistant,
+    resumeInterrupt,
+    stopStreaming,
+  } = useRunStream();
   const selectedSessionId = mode === "existing" ? params.id ?? "" : "";
   const sessionQuery = useSession(selectedSessionId);
 
@@ -126,11 +134,15 @@ export function ChatPage({ mode }: ChatPageProps) {
       <ChatComposer
         streaming={streaming}
         disabled={blocked}
+        steeringControls={steeringControls}
         onSend={(text) => {
           void sendMessage(text);
         }}
         onSteer={(text) => {
           void steerRun(text);
+        }}
+        onCancelSteering={(queueId) => {
+          void cancelSteering(queueId);
         }}
         onStop={stopStreaming}
       />

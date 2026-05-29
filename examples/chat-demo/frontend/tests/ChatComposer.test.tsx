@@ -45,4 +45,29 @@ describe("ChatComposer", () => {
     expect(onSteer).toHaveBeenCalledWith("prefer concise answer");
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  test("shows queued steering messages and can cancel them", () => {
+    const onCancelSteering = vi.fn();
+    render(
+      <ChatComposer
+        streaming
+        steeringControls={[
+          {
+            queueId: "cmd_1",
+            message: "keep it short",
+            status: "queued",
+          },
+        ]}
+        onSend={vi.fn()}
+        onSteer={vi.fn()}
+        onCancelSteering={onCancelSteering}
+        onStop={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("keep it short")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Cancel steering message"));
+
+    expect(onCancelSteering).toHaveBeenCalledWith("cmd_1");
+  });
 });

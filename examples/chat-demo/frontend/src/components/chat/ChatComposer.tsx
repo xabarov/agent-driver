@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUp, Square, Wrench } from "lucide-react";
+import { ArrowUp, Square, Wrench, X } from "lucide-react";
 
 import { cn } from "../../lib/cn";
+import type { SteeringControl } from "../../store/chatStore";
 import { ToolsPicker } from "../settings/ToolsPicker";
 import { normalizeToolPreset, toolPresetLabel, useSettingsStore } from "../../store/settingsStore";
 import { Button } from "../ui/button";
@@ -12,12 +13,22 @@ import { Textarea } from "../ui/textarea";
 interface ChatComposerProps {
   streaming: boolean;
   disabled?: boolean;
+  steeringControls?: SteeringControl[];
   onSend: (text: string) => void;
   onSteer?: (text: string) => void;
+  onCancelSteering?: (queueId: string) => void;
   onStop: () => void;
 }
 
-export function ChatComposer({ streaming, disabled, onSend, onSteer, onStop }: ChatComposerProps) {
+export function ChatComposer({
+  streaming,
+  disabled,
+  steeringControls = [],
+  onSend,
+  onSteer,
+  onCancelSteering,
+  onStop,
+}: ChatComposerProps) {
   const [value, setValue] = useState("");
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolPreset = normalizeToolPreset(useSettingsStore((state) => state.toolPreset));
@@ -50,6 +61,34 @@ export function ChatComposer({ streaming, disabled, onSend, onSteer, onStop }: C
           )
         : null}
       <div className="relative z-[100] mx-auto w-full max-w-3xl rounded-lg border border-border bg-card/70 p-3 shadow-sm lg:max-w-4xl xl:max-w-5xl">
+        {steeringControls.length > 0 ? (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {steeringControls.map((control) => (
+              <span
+                key={control.queueId}
+                className={cn(
+                  "inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-xs",
+                  control.status === "queued" && "border-primary/40 bg-primary/10 text-primary",
+                  control.status === "dequeued" && "border-border bg-muted text-muted-foreground",
+                  control.status === "applied" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-600",
+                  control.status === "cancelled" && "border-border bg-muted/60 text-muted-foreground line-through",
+                )}
+              >
+                <span className="truncate">{control.message}</span>
+                {control.status === "queued" && onCancelSteering ? (
+                  <button
+                    type="button"
+                    className="rounded-sm p-0.5 text-current opacity-70 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => onCancelSteering(control.queueId)}
+                    aria-label="Cancel steering message"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                ) : null}
+              </span>
+            ))}
+          </div>
+        ) : null}
         <Textarea
           value={value}
           onChange={(event) => setValue(event.target.value)}
