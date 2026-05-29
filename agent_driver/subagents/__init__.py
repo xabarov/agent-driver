@@ -32,6 +32,12 @@ from agent_driver.subagents.store import (
     SqliteSubagentStore,
     SubagentStore,
 )
+from agent_driver.subagents.workers import (
+    DEFAULT_WORKER_DEFINITIONS,
+    WorkerDefinition,
+    default_worker_definitions,
+    worker_definition_by_type,
+)
 
 __all__ = [
     "InMemorySubagentStore",
@@ -45,10 +51,13 @@ __all__ = [
     "SubagentGroupSpec",
     "SubagentParentHandoff",
     "SubagentTaskSpec",
+    "WorkerDefinition",
+    "DEFAULT_WORKER_DEFINITIONS",
     "append_subagent_continuation",
     "build_child_context_handoff",
     "build_subagent_status_snapshot",
     "collect_subagent_mailbox",
+    "default_worker_definitions",
     "evaluate_join_policy",
     "execute_subagent_group_background",
     "execute_subagent_group_sync",
@@ -56,4 +65,5 @@ __all__ = [
     "merge_subagent_outputs",
     "stop_subagent_run",
     "summarize_child_runs_for_parent",
+    "worker_definition_by_type",
 ]

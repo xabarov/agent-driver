@@ -13,8 +13,10 @@ from agent_driver.tools.builtin.python_imports import scientific_imports_enabled
 
 @lru_cache(maxsize=None)
 def _read_prompt(filename: str) -> str:
-    text = resources.files("agent_driver.prompts.templates").joinpath(filename).read_text(
-        encoding="utf-8"
+    text = (
+        resources.files("agent_driver.prompts.templates")
+        .joinpath(filename)
+        .read_text(encoding="utf-8")
     )
     return text.strip()
 
@@ -31,13 +33,16 @@ def react_chat_tool_policy(*, include_scientific_python: bool = False) -> str:
             "prefer scipy.stats for distributions and pandas for tabular data."
         )
     else:
-        scientific_note = (
-            "Do not assume numpy, scipy, or pandas are installed unless listed in python policy."
-        )
+        scientific_note = "Do not assume numpy, scipy, or pandas are installed unless listed in python policy."
     format_kwargs: dict[str, str] = {"python_scientific_note": scientific_note}
     if "{current_date}" in template:
         format_kwargs["current_date"] = datetime.now(UTC).date().isoformat()
     return template.format(**format_kwargs)
+
+
+def coordinator_system_prompt() -> str:
+    """Static coordinator system prompt snapshot."""
+    return _read_prompt("coordinator_system_prompt.txt")
 
 
 def todo_write_guidance() -> str:
@@ -106,6 +111,7 @@ def python_tool_system_addendum(settings: PythonToolSettingsLike) -> str:
 
 
 __all__ = [
+    "coordinator_system_prompt",
     "force_final_answer_tool_message",
     "force_final_answer_user_message",
     "python_tool_system_addendum",

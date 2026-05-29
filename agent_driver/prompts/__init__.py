@@ -1,6 +1,7 @@
 """Prompt templates used by runtime and CLI."""
 
 from agent_driver.prompts.agent import (
+    coordinator_system_prompt,
     force_final_answer_tool_message,
     force_final_answer_user_message,
     python_tool_system_addendum,
@@ -10,6 +11,7 @@ from agent_driver.prompts.agent import (
 )
 
 __all__ = [
+    "coordinator_system_prompt",
     "force_final_answer_tool_message",
     "force_final_answer_user_message",
     "python_tool_system_addendum",

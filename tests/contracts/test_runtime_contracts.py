@@ -244,6 +244,17 @@ def test_agent_run_input_accepts_profile_and_serialization_policy() -> None:
     assert req.serialization_policy.schema_version == "v2"
 
 
+def test_agent_run_input_accepts_coordinator_profile() -> None:
+    """Coordinator should be a first-class run profile."""
+    req = AgentRunInput(
+        input="coordinate this",
+        agent_id="agent.coordinator",
+        graph_preset="single_react",
+        agent_profile=AgentProfile.COORDINATOR,
+    )
+    assert req.agent_profile == AgentProfile.COORDINATOR
+
+
 def test_agent_run_output_accepts_new_projection_and_group_fields() -> None:
     """Allow optional memory projection, prompt render, and subagent groups."""
     output = AgentRunOutput(

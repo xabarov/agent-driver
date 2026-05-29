@@ -388,9 +388,12 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 
 ### Phase 7: Coordinator Profile
 
-- [ ] Add coordinator profile/config.
-- [ ] Add coordinator prompt snapshot based on OpenClaude principles.
-- [ ] Add worker definitions: `worker`, `researcher`, `implementer`,
+- [x] Add coordinator profile/config.
+  `AgentProfile.COORDINATOR` is now a first-class run profile.
+- [x] Add coordinator prompt snapshot based on OpenClaude principles.
+  The prompt pins self-contained worker tasks, existing-worker continuation,
+  no fake worker results, provenance-aware synthesis, and verifier usage.
+- [x] Add worker definitions: `worker`, `researcher`, `implementer`,
   `verifier`.
 - [ ] Restrict coordinator/worker tool surfaces.
 - [ ] Add scratchpad/artifact handoff rules.

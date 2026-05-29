@@ -1,2 +1,1 @@
 """Prompt template resources package."""
-
