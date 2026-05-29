@@ -334,7 +334,7 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 
 - [x] Update `docs/roadmap.md` with a pointer to this plan.
 - [ ] Add `docs/architecture/force-planning.md`.
-- [ ] Add `docs/architecture/steering-control-plane.md`.
+- [x] Add `docs/architecture/steering-control-plane.md`.
 - [ ] Extend `docs/architecture/multi-agent-orchestration.md`.
 - [ ] Add SDK recipes for plan approval, mid-run steering, child continuation,
   and stopping a child.
@@ -851,7 +851,9 @@ Exit criteria:
 - Done: `docs/roadmap.md` points to this plan from the cross-phase
   OpenClaude improvement workstream note.
 - Add `docs/architecture/force-planning.md`.
-- Add `docs/architecture/steering-control-plane.md`.
+- Done: `docs/architecture/steering-control-plane.md` records the current
+  control contracts, queue semantics, runtime boundary, events, SDK surface,
+  chat-demo adapter, and remaining work.
 - Extend `docs/architecture/multi-agent-orchestration.md` with mailbox,
   background execution and native `agent_tool` semantics.
 - Add SDK recipes for:
