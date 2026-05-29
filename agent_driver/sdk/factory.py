@@ -57,6 +57,8 @@ def create_agent(
 ) -> Agent:
     """Create SDK Agent facade with filtered tool registry."""
     config_copy = deepcopy(config) if config is not None else RunnerConfig()
+    if command_queue_store is not None:
+        config_copy.command_queue_store = command_queue_store
     source_registry = config_copy.tool_registry or build_default_registry(config_copy)
     selected_tools = tools or ToolSet.all()
     selected_tools.validate_known_names(source_registry)

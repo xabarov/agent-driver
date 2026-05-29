@@ -26,6 +26,7 @@ from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
+from agent_driver.runtime.control.protocols import CommandQueueStore
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.runtime.tools import ToolExecutor
 from agent_driver.subagents.store import SubagentStore
@@ -55,6 +56,7 @@ class RunnerConfig:
     subagent_store: SubagentStore | None
     code_executor: CodeActionExecutor | None
     tool_registry: ToolRegistry | None
+    command_queue_store: CommandQueueStore | None
     trimming: TrimmingSettings
     compaction: CompactionSettings
     subagents: SubagentSettings
@@ -89,6 +91,7 @@ class RunnerConfig:
         self.subagent_store = kwargs.pop("subagent_store", None)
         self.code_executor = kwargs.pop("code_executor", None)
         self.tool_registry = kwargs.pop("tool_registry", None)
+        self.command_queue_store = kwargs.pop("command_queue_store", None)
         self.trimming = trimming
         self.compaction = compaction
         self.subagents = subagents
@@ -308,6 +311,7 @@ class RunnerDeps:
     subagent_store: SubagentStore
     code_executor: CodeActionExecutor
     tool_registry: ToolRegistry
+    command_queue_store: CommandQueueStore | None = None
     python_backend: Any | None = None
 
 

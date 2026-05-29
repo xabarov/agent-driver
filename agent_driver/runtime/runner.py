@@ -17,6 +17,7 @@ from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalRe
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.abort import RunAbortHandle  # noqa: F401
 from agent_driver.runtime.tool_gate import ToolGate  # noqa: F401 (re-exported via runtime/__init__)
 from agent_driver.runtime.single_agent.journal import SingleAgentJournalMixin
 from agent_driver.runtime.single_agent.output import SingleAgentOutputMixin
@@ -100,6 +101,7 @@ class SingleAgentRunner(
                 config=self._config,
                 python_backend=python_backend,
             ),
+            command_queue_store=self._config.command_queue_store,
             python_backend=python_backend,
         )
 

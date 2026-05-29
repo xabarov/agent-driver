@@ -159,6 +159,60 @@ class _CaptureRequestProvider(FakeProvider):
         return await super().complete(request)
 
 
+@pytest.mark.asyncio
+async def test_sdk_set_model_control_affects_next_llm_request() -> None:
+    """Queued set_model controls should affect the next LLM boundary."""
+    provider = _CaptureRequestProvider()
+    queue = InMemoryCommandQueueStore()
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        command_queue_store=queue,
+    )
+    agent.set_model("openai/gpt-4.1-mini", run_id="run_sdk_model_control")
+
+    await agent.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_sdk_model_control",
+            agent_id="agent",
+            graph_preset="single_react",
+        )
+    )
+
+    assert provider.last_request is not None
+    assert provider.last_request.model == "openai/gpt-4.1-mini"
+    assert queue.list_pending(run_id="run_sdk_model_control") == []
+
+
+@pytest.mark.asyncio
+async def test_sdk_enqueue_control_appends_user_message_at_next_llm_boundary() -> None:
+    """Queued user messages should be appended before the next LLM request."""
+    provider = _CaptureRequestProvider()
+    queue = InMemoryCommandQueueStore()
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        command_queue_store=queue,
+    )
+    agent.enqueue("steer this next", run_id="run_sdk_enqueue_control")
+
+    await agent.run(
+        AgentRunInput(
+            input="original task",
+            run_id="run_sdk_enqueue_control",
+            agent_id="agent",
+            graph_preset="single_react",
+        )
+    )
+
+    assert provider.last_request is not None
+    contents = [message.content for message in provider.last_request.messages]
+    assert "original task" in contents
+    assert contents[-1] == "steer this next"
+    assert queue.list_pending(run_id="run_sdk_enqueue_control") == []
+
+
 class _ToolLoopProvider(FakeProvider):
     def __init__(self) -> None:
         super().__init__(response_text="ignored")

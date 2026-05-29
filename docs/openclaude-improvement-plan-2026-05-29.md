@@ -115,6 +115,10 @@ Current completed slices:
 - Added SDK steering facade methods:
   `control`, `enqueue`, `set_model`, `set_permission_mode`, and
   `cancel_queued_message`, backed by the command queue store.
+- Wired command queue draining into the runtime LLM step boundary for `now` and
+  `next` controls. `set_model` affects the next provider request,
+  `enqueue_user_message` appends a user message before the next LLM call, and
+  applied commands are marked in the queue.
 
 Next Phase 2 slice:
 
@@ -238,12 +242,13 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Add SDK methods:
   `control`, `enqueue`, `set_model`, `set_permission_mode`,
   `cancel_queued_message`.
-- [ ] Drain queue at runtime step boundaries.
+- [x] Drain queue at runtime step boundaries.
 - [ ] Emit typed control/queue runtime events.
 - [ ] Add tests for priority, FIFO, cancellation, checkpoint/resume, and
   `set_model` affecting the next LLM request.
   Priority/FIFO/cancellation/dedupe route tests are done; checkpoint/resume and
-  runtime request effects remain.
+  `set_model`/queued-message runtime request effects are done; checkpoint/resume
+  remains.
 
 ### Phase 4: User Steering UX Adapters
 

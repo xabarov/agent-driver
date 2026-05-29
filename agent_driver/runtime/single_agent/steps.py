@@ -7,6 +7,7 @@ from agent_driver.context import CompactionOrchestrator
 from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.control.dispatcher import drain_step_boundary_controls
 from agent_driver.runtime.single_agent.compaction_stage import apply_compaction_if_eligible
 from agent_driver.runtime.single_agent.continuation import analyze_continuation_intent
 from agent_driver.runtime.single_agent.llm_step import execute_llm_call_step
@@ -133,6 +134,10 @@ class SingleAgentStepMixin:
         return RuntimeStepResult(next_step="llm_call")
 
     async def _execute_llm_call(self, context: RunContext) -> RuntimeStepResult:
+        drain_step_boundary_controls(
+            context=context,
+            store=self._deps.command_queue_store,
+        )
         return await execute_llm_call_step(self, context)
 
     async def _execute_tool_stage(self, context: RunContext) -> RuntimeStepResult:
