@@ -373,7 +373,9 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Propagate parent abort to children.
   Sync subagent execution now derives child abort handles from the parent and
   persists cancelled child rows when the parent is already aborted.
-- [ ] Add budgets/backpressure for child/group scheduling.
+- [x] Add budgets/backpressure for child/group scheduling.
+  Sync group scheduling now applies `max_parallel`, `token_budget`, and
+  `cost_budget_usd` before starting child runs and records skipped tasks.
 
 ### Phase 7: Coordinator Profile
 

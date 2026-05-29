@@ -219,6 +219,47 @@ def _cancelled_child_run(
     )
 
 
+def _select_schedulable_tasks(
+    *,
+    group_spec: SubagentGroupSpec,
+    max_child_runs: int,
+) -> tuple[list[SubagentTaskSpec], dict[str, object]]:
+    """Apply deterministic group scheduling limits before child execution."""
+    max_parallel = (
+        max(0, group_spec.max_parallel)
+        if group_spec.max_parallel is not None
+        else max_child_runs
+    )
+    slot_limit = max(0, min(max_child_runs, max_parallel))
+    token_remaining = group_spec.token_budget
+    cost_remaining = group_spec.cost_budget_usd
+    scheduled: list[SubagentTaskSpec] = []
+    skipped: list[dict[str, object]] = []
+    for task in group_spec.tasks:
+        if len(scheduled) >= slot_limit:
+            skipped.append({"task_id": task.task_id, "reason": "parallel_limit"})
+            continue
+        task_tokens = task.token_budget or 0
+        if token_remaining is not None and task_tokens > token_remaining:
+            skipped.append({"task_id": task.task_id, "reason": "token_budget"})
+            continue
+        task_cost = task.cost_budget_usd or 0.0
+        if cost_remaining is not None and task_cost > cost_remaining:
+            skipped.append({"task_id": task.task_id, "reason": "cost_budget"})
+            continue
+        scheduled.append(task)
+        if token_remaining is not None:
+            token_remaining -= task_tokens
+        if cost_remaining is not None:
+            cost_remaining -= task_cost
+    return scheduled, {
+        "scheduled_tasks": len(scheduled),
+        "backpressure_skipped_tasks": skipped,
+        "token_budget_remaining": token_remaining,
+        "cost_budget_usd_remaining": cost_remaining,
+    }
+
+
 async def execute_subagent_group_sync(
     *,
     parent: SubagentParentHandoff,
@@ -251,7 +292,10 @@ async def execute_subagent_group_sync(
       (waiting / cancelled). Payload carries ``join_state`` so consumers
       can distinguish.
     """
-    limited_tasks = list(group_spec.tasks[:max_child_runs])
+    limited_tasks, scheduling_metadata = _select_schedulable_tasks(
+        group_spec=group_spec,
+        max_child_runs=max_child_runs,
+    )
     _safe_emit(
         on_event,
         "subagent_group_started",
@@ -279,7 +323,11 @@ async def execute_subagent_group_sync(
             token_budget=group_spec.token_budget,
             cost_budget_usd=group_spec.cost_budget_usd,
             status=SubagentGroupStatus.RUNNING,
-            metadata={**group_spec.metadata, "requested_tasks": len(group_spec.tasks)},
+            metadata={
+                **group_spec.metadata,
+                "requested_tasks": len(group_spec.tasks),
+                **scheduling_metadata,
+            },
         )
     )
     child_runs: list[SubagentRun] = []
