@@ -10,6 +10,7 @@ from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
 from agent_driver.runtime.events import InMemoryEventLog
 from agent_driver.runtime.runner import SingleAgentRunner
+from agent_driver.runtime.control import CommandQueueStore
 from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import wrap_governed_executor
@@ -50,6 +51,7 @@ def create_agent(
     config: RunnerConfig | None = None,
     checkpoint_store: CheckpointStore | None = None,
     event_log: RuntimeEventLog | None = None,
+    command_queue_store: CommandQueueStore | None = None,
     agent_id: str = "agent",
     graph_preset: str = "single_react",
 ) -> Agent:
@@ -72,6 +74,7 @@ def create_agent(
     return Agent(
         runner,
         defaults=AgentDefaults(agent_id=agent_id, graph_preset=graph_preset),
+        command_queue_store=command_queue_store,
     )
 
 

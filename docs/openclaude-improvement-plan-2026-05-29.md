@@ -112,6 +112,9 @@ Current completed slices:
   state, dedupe keys, and route filters.
 - Added SQLite command queue persistence with the same behavior contract as the
   in-memory queue and a re-instantiation persistence test.
+- Added SDK steering facade methods:
+  `control`, `enqueue`, `set_model`, `set_permission_mode`, and
+  `cancel_queued_message`, backed by the command queue store.
 
 Next Phase 2 slice:
 
@@ -232,7 +235,7 @@ when a slice is implemented, tested, committed, or intentionally deferred.
   in-memory first, SQLite second.
 - [x] Add control dispatcher/store priority semantics:
   `now > next > later`, FIFO within priority.
-- [ ] Add SDK methods:
+- [x] Add SDK methods:
   `control`, `enqueue`, `set_model`, `set_permission_mode`,
   `cancel_queued_message`.
 - [ ] Drain queue at runtime step boundaries.

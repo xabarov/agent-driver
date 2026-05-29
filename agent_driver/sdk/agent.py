@@ -8,12 +8,19 @@ from contextlib import suppress
 from dataclasses import dataclass
 import uuid
 
+from agent_driver.contracts.control import (
+    ControlKind,
+    ControlPriority,
+    ControlRequest,
+    ControlResponse,
+)
 from agent_driver.contracts.enums import ResumeAction
 from agent_driver.contracts.interrupts import ResumeCommand
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.runner import SingleAgentRunner
+from agent_driver.runtime.control import CommandQueueStore, InMemoryCommandQueueStore
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.runtime.stream import project_runtime_events
 
@@ -30,15 +37,108 @@ class Agent:
     """High-level facade for run/resume flows."""
 
     def __init__(
-        self, runner: SingleAgentRunner, *, defaults: AgentDefaults | None = None
+        self,
+        runner: SingleAgentRunner,
+        *,
+        defaults: AgentDefaults | None = None,
+        command_queue_store: CommandQueueStore | None = None,
     ) -> None:
         self._runner = runner
         self._defaults = defaults or AgentDefaults()
+        self._command_queue_store = command_queue_store or InMemoryCommandQueueStore()
 
     @property
     def runner(self) -> SingleAgentRunner:
         """Expose low-level runner for advanced embedders."""
         return self._runner
+
+    @property
+    def command_queue_store(self) -> CommandQueueStore:
+        """Expose steering command queue store for advanced embedders."""
+        return self._command_queue_store
+
+    def control(self, request: ControlRequest) -> ControlResponse:
+        """Queue a typed steering control request."""
+        item = self._command_queue_store.enqueue(request)
+        return ControlResponse(
+            ok=True,
+            control_id=item.control_id,
+            queue_id=item.queue_id,
+        )
+
+    def enqueue(
+        self,
+        message: str,
+        *,
+        run_id: str | None = None,
+        thread_id: str | None = None,
+        agent_id: str | None = None,
+        priority: ControlPriority = ControlPriority.NEXT,
+        dedupe_key: str | None = None,
+    ) -> ControlResponse:
+        """Queue a user message for the next/later runtime boundary."""
+        return self.control(
+            ControlRequest(
+                kind=ControlKind.ENQUEUE_USER_MESSAGE,
+                run_id=run_id,
+                thread_id=thread_id,
+                agent_id=agent_id or self._defaults.agent_id,
+                priority=priority,
+                payload={"message": message},
+                dedupe_key=dedupe_key,
+            )
+        )
+
+    def set_model(
+        self,
+        model: str,
+        *,
+        run_id: str | None = None,
+        thread_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> ControlResponse:
+        """Queue a model change for the next runtime boundary."""
+        return self.control(
+            ControlRequest(
+                kind=ControlKind.SET_MODEL,
+                run_id=run_id,
+                thread_id=thread_id,
+                agent_id=agent_id or self._defaults.agent_id,
+                priority=ControlPriority.NEXT,
+                payload={"model": model},
+            )
+        )
+
+    def set_permission_mode(
+        self,
+        mode: str,
+        *,
+        run_id: str | None = None,
+        thread_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> ControlResponse:
+        """Queue a permission-mode change for the next runtime boundary."""
+        return self.control(
+            ControlRequest(
+                kind=ControlKind.SET_PERMISSION_MODE,
+                run_id=run_id,
+                thread_id=thread_id,
+                agent_id=agent_id or self._defaults.agent_id,
+                priority=ControlPriority.NEXT,
+                payload={"mode": mode},
+            )
+        )
+
+    def cancel_queued_message(self, queue_id: str) -> ControlResponse:
+        """Cancel a pending queued steering command."""
+        item = self._command_queue_store.cancel(queue_id)
+        if item is None:
+            return ControlResponse(ok=False, queue_id=queue_id, error="queue item not found")
+        return ControlResponse(
+            ok=True,
+            control_id=item.control_id,
+            queue_id=item.queue_id,
+        )
 
     async def run(
         self,

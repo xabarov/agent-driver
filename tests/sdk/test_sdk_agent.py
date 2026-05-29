@@ -6,7 +6,15 @@ import asyncio
 
 import pytest
 
-from agent_driver.contracts import AgentRunInput, RuntimeEventType, ToolCall, ToolManifest
+from agent_driver.contracts import (
+    AgentRunInput,
+    ControlKind,
+    ControlPriority,
+    ControlRequest,
+    RuntimeEventType,
+    ToolCall,
+    ToolManifest,
+)
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.enums import ApprovalMode, SideEffectClass, ToolRisk
 from agent_driver.llm.providers_impl.fake import FakeProvider
@@ -18,6 +26,7 @@ from agent_driver.llm.contracts import (
     UsageSummary,
 )
 from agent_driver.runtime import RunnerConfig
+from agent_driver.runtime.control import InMemoryCommandQueueStore
 from agent_driver.sdk import Agent, build_default_registry, create_agent, sdk_config_from_env
 from agent_driver.tools import ToolRegistry, ToolSet
 
@@ -51,6 +60,52 @@ async def test_sdk_create_agent_returns_facade_and_runs() -> None:
         )
     )
     assert output.status.value == "completed"
+
+
+def test_sdk_control_methods_queue_commands() -> None:
+    """SDK facade should expose typed steering queue helpers."""
+    queue = InMemoryCommandQueueStore()
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        command_queue_store=queue,
+    )
+
+    control = agent.control(
+        ControlRequest(
+            kind=ControlKind.INTERRUPT,
+            run_id="run_sdk_control",
+            priority=ControlPriority.NOW,
+        )
+    )
+    follow_up = agent.enqueue("continue with this constraint", run_id="run_sdk_control")
+    model_change = agent.set_model("openai/gpt-4.1-mini", run_id="run_sdk_control")
+
+    pending = queue.list_pending(run_id="run_sdk_control")
+    assert control.ok is True
+    assert follow_up.ok is True
+    assert model_change.ok is True
+    assert [item.kind for item in pending] == [
+        ControlKind.INTERRUPT,
+        ControlKind.ENQUEUE_USER_MESSAGE,
+        ControlKind.SET_MODEL,
+    ]
+
+
+def test_sdk_cancel_queued_message_marks_item_cancelled() -> None:
+    """SDK facade should cancel queued command items by id."""
+    queue = InMemoryCommandQueueStore()
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        command_queue_store=queue,
+    )
+    response = agent.enqueue("later", run_id="run_sdk_cancel")
+
+    cancelled = agent.cancel_queued_message(response.queue_id or "")
+
+    assert cancelled.ok is True
+    assert queue.list_pending(run_id="run_sdk_cancel") == []
 
 
 @pytest.mark.asyncio
