@@ -121,6 +121,8 @@ Current completed slices:
   applied commands are marked in the queue.
 - Added runtime event names for control/queue activity and started emitting
   `control_applied` when step-boundary controls are drained.
+- SDK queue operations now emit `control_requested`, `command_queued`, and
+  `command_cancelled` events when the control is scoped to a `run_id`.
 
 Next Phase 2 slice:
 
@@ -246,9 +248,9 @@ when a slice is implemented, tested, committed, or intentionally deferred.
   `cancel_queued_message`.
 - [x] Drain queue at runtime step boundaries.
 - [ ] Emit typed control/queue runtime events.
-  `control_applied` is emitted; queue lifecycle events
-  (`control_requested`, `command_queued`, `command_dequeued`,
-  `command_cancelled`) remain to be wired through SDK/adapters.
+  `control_requested`, `command_queued`, `command_cancelled`, and
+  `control_applied` are emitted. `command_dequeued` remains to be wired when
+  drain semantics distinguish dequeue from apply.
 - [ ] Add tests for priority, FIFO, cancellation, checkpoint/resume, and
   `set_model` affecting the next LLM request.
   Priority/FIFO/cancellation/dedupe route tests are done; checkpoint/resume and

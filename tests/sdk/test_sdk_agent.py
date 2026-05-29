@@ -82,6 +82,7 @@ def test_sdk_control_methods_queue_commands() -> None:
     model_change = agent.set_model("openai/gpt-4.1-mini", run_id="run_sdk_control")
 
     pending = queue.list_pending(run_id="run_sdk_control")
+    events = agent.runner.deps.event_log.list_for_run("run_sdk_control")
     assert control.ok is True
     assert follow_up.ok is True
     assert model_change.ok is True
@@ -90,6 +91,7 @@ def test_sdk_control_methods_queue_commands() -> None:
         ControlKind.ENQUEUE_USER_MESSAGE,
         ControlKind.SET_MODEL,
     ]
+    assert any(event.type == RuntimeEventType.COMMAND_QUEUED for event in events)
 
 
 def test_sdk_cancel_queued_message_marks_item_cancelled() -> None:
@@ -106,6 +108,8 @@ def test_sdk_cancel_queued_message_marks_item_cancelled() -> None:
 
     assert cancelled.ok is True
     assert queue.list_pending(run_id="run_sdk_cancel") == []
+    events = agent.runner.deps.event_log.list_for_run("run_sdk_cancel")
+    assert any(event.type == RuntimeEventType.COMMAND_CANCELLED for event in events)
 
 
 @pytest.mark.asyncio

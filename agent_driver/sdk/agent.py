@@ -14,7 +14,8 @@ from agent_driver.contracts.control import (
     ControlRequest,
     ControlResponse,
 )
-from agent_driver.contracts.enums import ResumeAction
+from agent_driver.contracts.enums import ResumeAction, RuntimeEventType
+from agent_driver.contracts.events import RuntimeEventContext, new_runtime_event
 from agent_driver.contracts.interrupts import ResumeCommand
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.contracts.stream import RunStreamEvent
@@ -60,6 +61,26 @@ class Agent:
     def control(self, request: ControlRequest) -> ControlResponse:
         """Queue a typed steering control request."""
         item = self._command_queue_store.enqueue(request)
+        self._emit_control_event(
+            run_id=item.run_id,
+            event_type=RuntimeEventType.CONTROL_REQUESTED,
+            payload={
+                "control_id": item.control_id,
+                "queue_id": item.queue_id,
+                "kind": item.kind.value,
+                "priority": item.priority.value,
+            },
+        )
+        self._emit_control_event(
+            run_id=item.run_id,
+            event_type=RuntimeEventType.COMMAND_QUEUED,
+            payload={
+                "control_id": item.control_id,
+                "queue_id": item.queue_id,
+                "kind": item.kind.value,
+                "priority": item.priority.value,
+            },
+        )
         return ControlResponse(
             ok=True,
             control_id=item.control_id,
@@ -134,10 +155,42 @@ class Agent:
         item = self._command_queue_store.cancel(queue_id)
         if item is None:
             return ControlResponse(ok=False, queue_id=queue_id, error="queue item not found")
+        self._emit_control_event(
+            run_id=item.run_id,
+            event_type=RuntimeEventType.COMMAND_CANCELLED,
+            payload={
+                "control_id": item.control_id,
+                "queue_id": item.queue_id,
+                "kind": item.kind.value,
+            },
+        )
         return ControlResponse(
             ok=True,
             control_id=item.control_id,
             queue_id=item.queue_id,
+        )
+
+    def _emit_control_event(
+        self,
+        *,
+        run_id: str | None,
+        event_type: RuntimeEventType,
+        payload: dict[str, object],
+    ) -> None:
+        if not run_id:
+            return
+        events = self._runner.deps.event_log.list_for_run(run_id)
+        next_seq = (max(event.seq for event in events) + 1) if events else 1
+        self._runner.deps.event_log.append(
+            new_runtime_event(
+                event_type=event_type,
+                context=RuntimeEventContext(
+                    run_id=run_id,
+                    attempt_id="control",
+                    seq=next_seq,
+                ),
+                options={"payload": payload},
+            )
         )
 
     async def run(
