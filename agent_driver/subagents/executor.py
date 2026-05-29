@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from inspect import signature
 from dataclasses import dataclass
 from typing import Callable
 from uuid import uuid4
@@ -75,7 +76,14 @@ async def _run_single_child_task(
     store: SubagentStore,
     child_runner: ChildRunner,
     child_app_metadata: dict | None,
+    parent_abort_handle: object | None,
 ) -> SubagentRun:
+    child_abort_handle = (
+        parent_abort_handle.child()
+        if parent_abort_handle is not None
+        and hasattr(parent_abort_handle, "child")
+        else parent_abort_handle
+    )
     handoff, handoff_audit = build_child_context_handoff(
         task=task,
         parent_summary=parent.answer or "",
@@ -98,6 +106,15 @@ async def _run_single_child_task(
         ),
         idempotency_key=task.idempotency_key,
     )
+    if bool(getattr(child_abort_handle, "is_aborted", False)):
+        cancelled = _cancelled_child_run(
+            pending=pending,
+            task=task,
+            idx=idx,
+            reason=str(getattr(child_abort_handle, "reason", None) or "parent_aborted"),
+        )
+        store.upsert_run(cancelled, idempotency_key=task.idempotency_key)
+        return cancelled
     child_input = AgentRunInput(
         input=task.task,
         run_id=f"child_{uuid4().hex[:12]}",
@@ -114,7 +131,11 @@ async def _run_single_child_task(
             **(child_app_metadata or {}),
         },
     )
-    output_any = child_runner(child_input)
+    output_any = _call_child_runner(
+        child_runner,
+        child_input,
+        child_abort_handle=child_abort_handle,
+    )
     output = await output_any if hasattr(output_any, "__await__") else output_any
     if not isinstance(output, AgentRunOutput):
         raise RuntimeError("child_runner must return AgentRunOutput")
@@ -157,6 +178,47 @@ async def _run_single_child_task(
     return completed
 
 
+def _call_child_runner(
+    child_runner: ChildRunner,
+    child_input: AgentRunInput,
+    *,
+    child_abort_handle: object | None,
+) -> object:
+    if child_abort_handle is None:
+        return child_runner(child_input)
+    try:
+        runner_signature = signature(child_runner)
+    except (TypeError, ValueError):
+        return child_runner(child_input)
+    if "abort_handle" not in runner_signature.parameters:
+        return child_runner(child_input)
+    return child_runner(child_input, abort_handle=child_abort_handle)
+
+
+def _cancelled_child_run(
+    *,
+    pending: SubagentRun,
+    task: SubagentTaskSpec,
+    idx: int,
+    reason: str,
+) -> SubagentRun:
+    return SubagentRun(
+        subagent_run_id=pending.subagent_run_id,
+        parent_run_id=pending.parent_run_id,
+        parent_attempt_id=pending.parent_attempt_id,
+        parent_checkpoint_id=pending.parent_checkpoint_id,
+        child_run_id=None,
+        task_id=task.task_id,
+        task_type="subagent_task",
+        description=task.description,
+        execution_mode=SubagentExecutionMode.SYNC,
+        fanout_slot=idx,
+        status=SubagentStatus.CANCELLED,
+        terminal_state=SubagentTerminalState.CANCELLED,
+        metadata={"status": "cancelled", "terminal_reason": reason},
+    )
+
+
 async def execute_subagent_group_sync(
     *,
     parent: SubagentParentHandoff,
@@ -166,6 +228,7 @@ async def execute_subagent_group_sync(
     max_child_runs: int,
     child_app_metadata: dict | None = None,
     on_event: SubagentEventCallback | None = None,
+    parent_abort_handle: object | None = None,
 ) -> SubagentExecutionResult:
     """Execute child tasks synchronously and persist group/run rows.
 
@@ -239,6 +302,7 @@ async def execute_subagent_group_sync(
             store=store,
             child_runner=child_runner,
             child_app_metadata=child_app_metadata,
+            parent_abort_handle=parent_abort_handle,
         )
         child_runs.append(completed)
         _safe_emit(

@@ -85,6 +85,7 @@ async def maybe_execute_subagent_group(
         on_event=lambda event_type, payload: _emit_child_subagent_event(
             host, context, event_type, payload
         ),
+        parent_abort_handle=context.abort_handle,
     )
     context.metadata["subagent_groups"] = [
         row.model_dump(mode="json")

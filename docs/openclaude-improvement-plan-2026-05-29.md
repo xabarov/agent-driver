@@ -370,7 +370,9 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Add status polling and collection APIs.
   `agent_driver.subagents` now exposes a bounded status snapshot and mailbox
   collection helper for parent runs.
-- [ ] Propagate parent abort to children.
+- [x] Propagate parent abort to children.
+  Sync subagent execution now derives child abort handles from the parent and
+  persists cancelled child rows when the parent is already aborted.
 - [ ] Add budgets/backpressure for child/group scheduling.
 
 ### Phase 7: Coordinator Profile
