@@ -251,11 +251,11 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Emit typed control/queue runtime events:
   `control_requested`, `command_queued`, `command_dequeued`,
   `command_cancelled`, and `control_applied`.
-- [ ] Add tests for priority, FIFO, cancellation, checkpoint/resume, and
+- [x] Add tests for priority, FIFO, cancellation, checkpoint/restart, and
   `set_model` affecting the next LLM request.
-  Priority/FIFO/cancellation/dedupe route tests are done; checkpoint/resume and
-  `set_model`/queued-message runtime request effects are done; checkpoint/resume
-  remains.
+  Priority/FIFO/cancellation/dedupe route tests are done; SQLite queue
+  persistence covers store restart, and SDK runtime tests cover pre-LLM
+  checkpoint restart plus `set_model`/queued-message request effects.
 
 ### Phase 4: User Steering UX Adapters
 

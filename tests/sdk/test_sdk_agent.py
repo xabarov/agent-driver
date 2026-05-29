@@ -26,7 +26,8 @@ from agent_driver.llm.contracts import (
     UsageSummary,
 )
 from agent_driver.runtime import RunnerConfig
-from agent_driver.runtime.control import InMemoryCommandQueueStore
+from agent_driver.runtime.control import InMemoryCommandQueueStore, SqliteCommandQueueStore
+from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.sdk import Agent, build_default_registry, create_agent, sdk_config_from_env
 from agent_driver.tools import ToolRegistry, ToolSet
 
@@ -218,6 +219,59 @@ async def test_sdk_enqueue_control_appends_user_message_at_next_llm_boundary() -
     assert "original task" in contents
     assert contents[-1] == "steer this next"
     assert queue.list_pending(run_id="run_sdk_enqueue_control") == []
+
+
+@pytest.mark.asyncio
+async def test_sdk_command_queue_survives_runner_recreation_before_llm_boundary(
+    tmp_path,
+) -> None:
+    """Queued controls should survive a pre-LLM restart and then apply once."""
+    path = tmp_path / "steering_queue.db"
+    first_queue = SqliteCommandQueueStore(path=str(path))
+    first_agent = create_agent(
+        provider=FakeProvider(response_text="unused"),
+        tools=ToolSet.only(),
+        command_queue_store=first_queue,
+        config=RunnerConfig(fail_after_step="run_started"),
+    )
+    queued = first_agent.enqueue("persisted steer", run_id="run_sdk_queue_restart")
+
+    with pytest.raises(RuntimeExecutionError):
+        await first_agent.run(
+            AgentRunInput(
+                input="original task",
+                run_id="run_sdk_queue_restart",
+                agent_id="agent",
+                graph_preset="single_react",
+            )
+        )
+
+    assert [item.queue_id for item in first_queue.list_pending()] == [queued.queue_id]
+
+    provider = _CaptureRequestProvider()
+    second_queue = SqliteCommandQueueStore(path=str(path))
+    second_agent = create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        command_queue_store=second_queue,
+    )
+
+    await second_agent.run(
+        AgentRunInput(
+            input="original task",
+            run_id="run_sdk_queue_restart",
+            agent_id="agent",
+            graph_preset="single_react",
+        )
+    )
+
+    assert provider.last_request is not None
+    contents = [message.content for message in provider.last_request.messages]
+    assert contents[-1] == "persisted steer"
+    assert second_queue.list_pending(run_id="run_sdk_queue_restart") == []
+    events = second_agent.runner.deps.event_log.list_for_run("run_sdk_queue_restart")
+    assert any(event.type == RuntimeEventType.COMMAND_DEQUEUED for event in events)
+    assert any(event.type == RuntimeEventType.CONTROL_APPLIED for event in events)
 
 
 class _ToolLoopProvider(FakeProvider):
