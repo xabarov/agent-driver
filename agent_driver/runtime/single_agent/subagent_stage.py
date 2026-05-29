@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from agent_driver.contracts.control import ControlKind, ControlPriority, ControlRequest
 from agent_driver.contracts.enums import (
+    AgentProfile,
     RuntimeEventType,
     SubagentJoinPolicy,
     SubagentMergeMode,
@@ -148,11 +149,25 @@ def _group_spec_from_planned(
                 task_id=str(item.get("task_id", f"task_{uuid4().hex[:8]}")),
                 task=str(item.get("task", "")),
                 description=str(item.get("description", "subagent task")),
+                profile=_task_profile(item),
+                context_refs=(
+                    tuple(
+                        str(ref)
+                        for ref in item.get("context_refs", [])
+                        if ref is not None
+                    )
+                    if isinstance(item.get("context_refs"), list)
+                    else ()
+                ),
+                deadline_seconds=item.get("deadline_seconds"),
+                token_budget=item.get("token_budget"),
+                cost_budget_usd=item.get("cost_budget_usd"),
                 idempotency_key=(
                     str(item.get("idempotency_key"))
                     if item.get("idempotency_key") is not None
                     else None
                 ),
+                metadata=_task_metadata(item),
             )
         )
     if not task_specs:
@@ -172,6 +187,31 @@ def _group_spec_from_planned(
             "execution_mode": str(planned.get("execution_mode") or "sync"),
         },
     )
+
+
+def _task_profile(item: dict[str, object]) -> AgentProfile:
+    profile = item.get("profile") or item.get("agent_profile")
+    if profile is None:
+        return AgentProfile.REACT_TEXT
+    try:
+        return AgentProfile(str(profile))
+    except ValueError:
+        return AgentProfile.REACT_TEXT
+
+
+def _task_metadata(item: dict[str, object]) -> dict[str, object]:
+    metadata = item.get("metadata")
+    payload = dict(metadata) if isinstance(metadata, dict) else {}
+    for key in (
+        "worker_type",
+        "role",
+        "required_outputs",
+        "scratchpad",
+        "artifact_handoff",
+    ):
+        if key in item and key not in payload:
+            payload[key] = item[key]
+    return payload
 
 
 def _list_metadata(context: RunContext, key: str) -> list[dict[str, object]]:

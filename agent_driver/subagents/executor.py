@@ -23,6 +23,7 @@ from agent_driver.subagents.merge import merge_subagent_outputs
 from agent_driver.subagents.planner import build_child_context_handoff
 from agent_driver.subagents.specs import SubagentGroupSpec, SubagentTaskSpec
 from agent_driver.subagents.store import SubagentStore
+from agent_driver.subagents.workers import apply_worker_tool_surface
 
 ChildRunner = Callable[[AgentRunInput], "object"]
 
@@ -131,7 +132,7 @@ async def _run_single_child_task(
         graph_preset=parent.graph_preset,
         model_role=parent.model_role,
         agent_profile=task.profile,
-        tool_policy=parent.tool_policy,
+        tool_policy=_child_tool_policy(parent=parent, task=task),
         deadline_seconds=task.deadline_seconds,
         app_metadata={
             "parent_run_id": parent.run_id,
@@ -175,6 +176,7 @@ async def _run_single_child_task(
         tokens=output.usage,
         merge_provenance=merge_provenance,
         metadata={
+            **pending.metadata,
             "summary": output.answer or "",
             "status": output.status.value,
             "terminal_reason": (
@@ -201,6 +203,16 @@ def _call_child_runner(
     if "abort_handle" not in runner_signature.parameters:
         return child_runner(child_input)
     return child_runner(child_input, abort_handle=child_abort_handle)
+
+
+def _child_tool_policy(
+    *, parent: SubagentParentHandoff, task: SubagentTaskSpec
+) -> dict[str, object]:
+    worker_type = task.metadata.get("worker_type") or task.metadata.get("role")
+    return apply_worker_tool_surface(
+        parent_tool_policy=parent.tool_policy,
+        worker_type=str(worker_type) if worker_type is not None else None,
+    )
 
 
 def _child_abort_handle(parent_abort_handle: object | None) -> object | None:
@@ -255,7 +267,7 @@ def _build_child_input(
         graph_preset=parent.graph_preset,
         model_role=parent.model_role,
         agent_profile=task.profile,
-        tool_policy=parent.tool_policy,
+        tool_policy=_child_tool_policy(parent=parent, task=task),
         deadline_seconds=task.deadline_seconds,
         app_metadata={
             "parent_run_id": parent.run_id,
@@ -285,7 +297,11 @@ def _cancelled_child_run(
         fanout_slot=idx,
         status=SubagentStatus.CANCELLED,
         terminal_state=SubagentTerminalState.CANCELLED,
-        metadata={"status": "cancelled", "terminal_reason": reason},
+        metadata={
+            **pending.metadata,
+            "status": "cancelled",
+            "terminal_reason": reason,
+        },
     )
 
 
@@ -328,6 +344,11 @@ def _select_schedulable_tasks(
         "token_budget_remaining": token_remaining,
         "cost_budget_usd_remaining": cost_remaining,
     }
+
+
+def _task_role(task: SubagentTaskSpec) -> str:
+    role = task.metadata.get("worker_type") or task.metadata.get("role")
+    return str(role) if role is not None else ""
 
 
 async def execute_subagent_group_sync(
@@ -413,7 +434,7 @@ async def execute_subagent_group_sync(
                 "group_id": group_spec.group_id,
                 "index": idx,
                 "task_id": task.task_id,
-                "role": getattr(task, "role", None) or "",
+                "role": _task_role(task),
             },
         )
         completed = await _run_single_child_task(
@@ -434,7 +455,7 @@ async def execute_subagent_group_sync(
                 "group_id": group_spec.group_id,
                 "index": idx,
                 "task_id": task.task_id,
-                "role": getattr(task, "role", None) or "",
+                "role": _task_role(task),
                 "subagent_run_id": completed.subagent_run_id,
                 "child_run_id": completed.child_run_id,
                 "status": (
@@ -570,7 +591,7 @@ async def execute_subagent_group_background(
                 "group_id": group_spec.group_id,
                 "index": idx,
                 "task_id": task.task_id,
-                "role": getattr(task, "role", None) or "",
+                "role": _task_role(task),
                 "subagent_run_id": pending.subagent_run_id,
                 "child_run_id": child_run_id,
                 "execution_mode": SubagentExecutionMode.BACKGROUND.value,
@@ -679,7 +700,7 @@ async def _complete_background_child_task(
             "group_id": group.group_id,
             "index": idx,
             "task_id": task.task_id,
-            "role": getattr(task, "role", None) or "",
+            "role": _task_role(task),
             "subagent_run_id": completed.subagent_run_id,
             "child_run_id": completed.child_run_id,
             "status": (
@@ -730,6 +751,7 @@ def _completed_child_run_from_output(
         tokens=output.usage,
         merge_provenance=merge_provenance,
         metadata={
+            **pending.metadata,
             "summary": output.answer or "",
             "status": output.status.value,
             "terminal_reason": (
@@ -760,7 +782,7 @@ def _failed_child_run(
         status=SubagentStatus.FAILED,
         terminal_state=SubagentTerminalState.FAILED,
         failure_code=reason,
-        metadata={"status": "failed", "terminal_reason": reason},
+        metadata={**pending.metadata, "status": "failed", "terminal_reason": reason},
     )
 
 

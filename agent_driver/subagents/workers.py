@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 from agent_driver.contracts.enums import AgentProfile
 
@@ -81,9 +82,60 @@ def worker_definition_by_type(worker_type: str) -> WorkerDefinition | None:
     return None
 
 
+def worker_definition_for_metadata(
+    metadata: Mapping[str, Any] | None,
+) -> WorkerDefinition | None:
+    """Resolve a worker definition from task metadata."""
+    if not metadata:
+        return None
+    worker_type = metadata.get("worker_type") or metadata.get("role")
+    if worker_type is None:
+        return None
+    return worker_definition_by_type(str(worker_type))
+
+
+def apply_worker_tool_surface(
+    *,
+    parent_tool_policy: Mapping[str, Any],
+    worker_type: str | None,
+) -> dict[str, Any]:
+    """Return a child tool policy narrowed by worker role definition."""
+    policy = dict(parent_tool_policy)
+    if not worker_type:
+        return policy
+    definition = worker_definition_by_type(worker_type)
+    if definition is None:
+        return policy
+
+    worker_allowed = list(definition.allowed_tools)
+    parent_allowed = policy.get("allowed_tools")
+    if isinstance(parent_allowed, list):
+        parent_allowed_set = {str(item) for item in parent_allowed}
+        allowed_tools = [tool for tool in worker_allowed if tool in parent_allowed_set]
+    else:
+        allowed_tools = worker_allowed
+
+    denied = policy.get("denied_tools")
+    if isinstance(denied, list) and denied:
+        denied_set = {str(item) for item in denied}
+        allowed_tools = [tool for tool in allowed_tools if tool not in denied_set]
+
+    metadata = dict(policy.get("metadata") or {})
+    metadata["worker_type"] = definition.worker_type
+    metadata["worker_allowed_tools"] = worker_allowed
+    metadata["worker_tool_surface"] = "role_restricted"
+    return {
+        **policy,
+        "allowed_tools": allowed_tools,
+        "metadata": metadata,
+    }
+
+
 __all__ = [
     "DEFAULT_WORKER_DEFINITIONS",
     "WorkerDefinition",
+    "apply_worker_tool_surface",
     "default_worker_definitions",
+    "worker_definition_for_metadata",
     "worker_definition_by_type",
 ]

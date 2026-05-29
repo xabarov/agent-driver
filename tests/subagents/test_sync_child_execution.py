@@ -107,6 +107,50 @@ async def test_sync_child_execution_passes_abort_handle_to_child_runner() -> Non
 
 
 @pytest.mark.asyncio
+async def test_sync_child_execution_restricts_worker_tool_surface() -> None:
+    """Child run policy should be narrowed by worker role definitions."""
+    store = InMemorySubagentStore()
+    seen = {}
+
+    async def _runner(run_input):
+        seen["tool_policy"] = run_input.tool_policy
+        return await _ok_child_runner(run_input)
+
+    await execute_subagent_group_sync(
+        parent=default_parent_handoff(
+            answer="parent summary",
+            tool_policy={
+                "allowed_tools": ["read_file", "grep_search", "python"],
+                "metadata": {"source": "parent"},
+            },
+        ),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_parent",
+            purpose="analysis",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="task_1",
+                    task="verify",
+                    description="desc",
+                    metadata={"worker_type": "verifier"},
+                ),
+            ),
+        ),
+        store=store,
+        child_runner=_runner,
+        max_child_runs=4,
+    )
+
+    assert seen["tool_policy"].allowed_tools == [
+        "read_file",
+        "grep_search",
+        "python",
+    ]
+    assert seen["tool_policy"].metadata["worker_type"] == "verifier"
+    assert seen["tool_policy"].metadata["worker_tool_surface"] == "role_restricted"
+
+
+@pytest.mark.asyncio
 async def test_sync_child_execution_skips_child_when_parent_already_aborted() -> None:
     """Pre-aborted parent should persist cancelled child rows without calling child."""
     store = InMemorySubagentStore()

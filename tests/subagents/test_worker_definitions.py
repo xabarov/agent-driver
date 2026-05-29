@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent_driver.contracts import AgentProfile
 from agent_driver.subagents import (
+    apply_worker_tool_surface,
     default_worker_definitions,
     worker_definition_by_type,
 )
@@ -29,3 +30,29 @@ def test_worker_definition_lookup_is_normalized() -> None:
     assert definition is not None
     assert definition.worker_type == "researcher"
     assert "url" in " ".join(definition.handoff_rules).lower()
+
+
+def test_worker_tool_surface_intersects_parent_allowlist() -> None:
+    """Worker roles should narrow child tools without broadening parent policy."""
+    policy = apply_worker_tool_surface(
+        parent_tool_policy={
+            "allowed_tools": ["web_search", "web_fetch", "python"],
+            "denied_tools": ["web_fetch"],
+            "metadata": {"source": "parent"},
+        },
+        worker_type="researcher",
+    )
+
+    assert policy["allowed_tools"] == ["web_search"]
+    assert policy["denied_tools"] == ["web_fetch"]
+    assert policy["metadata"] == {
+        "source": "parent",
+        "worker_type": "researcher",
+        "worker_allowed_tools": [
+            "web_search",
+            "web_fetch",
+            "grep_search",
+            "read_file",
+        ],
+        "worker_tool_surface": "role_restricted",
+    }

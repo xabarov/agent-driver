@@ -151,11 +151,16 @@ async def test_runtime_without_subagents_keeps_default_flow() -> None:
 @pytest.mark.asyncio
 async def test_runtime_with_subagents_executes_group_from_metadata() -> None:
     """Subagent-enabled runtime should produce group/run metadata."""
+    store = InMemorySubagentStore()
     runner = FakeSingleStepRunner(
         provider=FakeProvider(response_text="parent"),
         checkpoint_store=InMemoryCheckpointStore(),
         event_log=InMemoryEventLog(),
-        config=RunnerConfig(enable_subagents=True, max_child_runs=2),
+        config=RunnerConfig(
+            enable_subagents=True,
+            max_child_runs=2,
+            subagent_store=store,
+        ),
     )
     output = await runner.run(
         AgentRunInput(
@@ -171,7 +176,12 @@ async def test_runtime_with_subagents_executes_group_from_metadata() -> None:
                         "join_policy": "wait_all",
                         "merge_mode": "append",
                         "tasks": [
-                            {"task_id": "t1", "task": "a", "description": "d1"},
+                            {
+                                "task_id": "t1",
+                                "task": "a",
+                                "description": "d1",
+                                "worker_type": "verifier",
+                            },
                             {"task_id": "t2", "task": "b", "description": "d2"},
                         ],
                     }
@@ -181,6 +191,8 @@ async def test_runtime_with_subagents_executes_group_from_metadata() -> None:
     )
     assert output.metadata.get("subagent_groups")
     assert output.metadata.get("subagent_runs")
+    verifier_run = store.list_runs("run_with_sub")[0]
+    assert verifier_run.metadata["handoff"]["worker"]["type"] == "verifier"
 
 
 @pytest.mark.asyncio

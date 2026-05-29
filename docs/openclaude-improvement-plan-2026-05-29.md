@@ -395,8 +395,12 @@ when a slice is implemented, tested, committed, or intentionally deferred.
   no fake worker results, provenance-aware synthesis, and verifier usage.
 - [x] Add worker definitions: `worker`, `researcher`, `implementer`,
   `verifier`.
-- [ ] Restrict coordinator/worker tool surfaces.
-- [ ] Add scratchpad/artifact handoff rules.
+- [x] Restrict coordinator/worker tool surfaces.
+  Worker tasks now narrow child `ToolPolicyInput.allowed_tools` by role while
+  preserving parent deny lists and metadata.
+- [x] Add scratchpad/artifact handoff rules.
+  Child handoff metadata now carries role rules, bounded scratchpad policy, and
+  refs-only artifact handoff requirements through completed child rows.
 - [ ] Add evals for research fan-out, corrected continuation, and verifier
   catch.
 

@@ -35,8 +35,10 @@ from agent_driver.subagents.store import (
 from agent_driver.subagents.workers import (
     DEFAULT_WORKER_DEFINITIONS,
     WorkerDefinition,
+    apply_worker_tool_surface,
     default_worker_definitions,
     worker_definition_by_type,
+    worker_definition_for_metadata,
 )
 
 __all__ = [
@@ -54,6 +56,7 @@ __all__ = [
     "WorkerDefinition",
     "DEFAULT_WORKER_DEFINITIONS",
     "append_subagent_continuation",
+    "apply_worker_tool_surface",
     "build_child_context_handoff",
     "build_subagent_status_snapshot",
     "collect_subagent_mailbox",
@@ -65,5 +68,6 @@ __all__ = [
     "merge_subagent_outputs",
     "stop_subagent_run",
     "summarize_child_runs_for_parent",
+    "worker_definition_for_metadata",
     "worker_definition_by_type",
 ]
