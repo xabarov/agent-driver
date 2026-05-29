@@ -219,7 +219,7 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Emit dedicated plan lifecycle runtime events:
   `plan_mode_entered`, `plan_artifact_updated`, `plan_approval_requested`,
   `plan_approved`, `plan_rejected`.
-- [ ] Add checkpoint/resume tests for awaiting plan approval after process
+- [x] Add checkpoint/resume tests for awaiting plan approval after process
   restart or durable store reload.
 
 ### Phase 2: Force Planning Policy Engine

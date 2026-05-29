@@ -26,6 +26,7 @@ from agent_driver.runtime import (
     InMemoryCheckpointStore,
     InMemoryEventLog,
     RunnerConfig,
+    SqliteRuntimeStore,
     wrap_governed_executor,
 )
 from agent_driver.tools import GovernedToolExecutor, ToolRegistry
@@ -225,6 +226,70 @@ async def test_runner_pauses_for_exit_plan_mode_approval_and_resumes() -> None:
     )
     assert resumed.status.value == "completed"
     assert any(event.type == RuntimeEventType.PLAN_APPROVED for event in resumed.events)
+
+
+@pytest.mark.asyncio
+async def test_runner_plan_approval_survives_sqlite_store_reload(tmp_path) -> None:
+    """Plan approval interrupts should resume after durable store reload."""
+    path = tmp_path / "runtime.sqlite3"
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    config = RunnerConfig(
+        tool_executor=wrap_governed_executor(GovernedToolExecutor(registry=registry))
+    )
+    first_store = SqliteRuntimeStore(path=str(path))
+    first_runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ok"),
+        checkpoint_store=first_store,
+        event_log=first_store,
+        config=config,
+    )
+    plan_call = ToolCall(
+        tool_name="exit_plan_mode_v2",
+        args={"content": "1. Inspect\n2. Implement\n3. Verify"},
+        tool_call_id="plan_call",
+    )
+
+    paused = await first_runner.run(
+        AgentRunInput(
+            input="approve durable plan",
+            run_id="run_plan_approval_sqlite_reload",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(
+                mode=ToolPolicyMode.ALLOW_TOOLS,
+                metadata={"planned_tool_calls": [plan_call.model_dump(mode="json")]},
+            ),
+        )
+    )
+
+    assert paused.status.value == "paused"
+    assert paused.interrupt is not None
+
+    second_store = SqliteRuntimeStore(path=str(path))
+    second_runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ok"),
+        checkpoint_store=second_store,
+        event_log=second_store,
+        config=config,
+    )
+    resumed = await second_runner.run(
+        AgentRunInput(
+            run_id="run_plan_approval_sqlite_reload",
+            resume=ResumeCommand(
+                interrupt_id=paused.interrupt.interrupt_id,
+                action=ResumeAction.APPROVE,
+            ),
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        )
+    )
+
+    assert resumed.status.value == "completed"
+    event_types = [event.type for event in second_store.list_for_run(resumed.run_id)]
+    assert RuntimeEventType.PLAN_APPROVAL_REQUESTED in event_types
+    assert RuntimeEventType.PLAN_APPROVED in event_types
 
 
 @pytest.mark.asyncio
