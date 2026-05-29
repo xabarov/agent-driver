@@ -107,6 +107,9 @@ Current completed slices:
   provider. Backend replay includes the denied `file_write` and remediation,
   but the live UI did not render the denied tool card; tracked as a design
   regression in `docs/chat-demo-design-improvement-plan-2026-05-29.md`.
+- Started Phase 3 with transport-neutral steering contracts and an in-memory
+  command queue store covering priority ordering, FIFO, cancellation, applied
+  state, dedupe keys, and route filters.
 
 Next Phase 2 slice:
 
@@ -221,11 +224,11 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 
 ### Phase 3: Steering Contracts And Queue
 
-- [ ] Add `agent_driver/contracts/control.py` with `ControlRequest`,
+- [x] Add `agent_driver/contracts/control.py` with `ControlRequest`,
   `ControlResponse`, and `CommandQueueItem`.
 - [ ] Add command queue stores:
-  in-memory first, SQLite second.
-- [ ] Add control dispatcher with priority semantics:
+  in-memory first [done], SQLite second.
+- [x] Add control dispatcher/store priority semantics:
   `now > next > later`, FIFO within priority.
 - [ ] Add SDK methods:
   `control`, `enqueue`, `set_model`, `set_permission_mode`,
@@ -234,6 +237,8 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [ ] Emit typed control/queue runtime events.
 - [ ] Add tests for priority, FIFO, cancellation, checkpoint/resume, and
   `set_model` affecting the next LLM request.
+  Priority/FIFO/cancellation/dedupe route tests are done; checkpoint/resume and
+  runtime request effects remain.
 
 ### Phase 4: User Steering UX Adapters
 

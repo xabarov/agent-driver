@@ -30,6 +30,14 @@ from agent_driver.contracts.context import (
     TrimmedContext,
     TurnDigest,
 )
+from agent_driver.contracts.control import (
+    CommandQueueItem,
+    CommandQueueStatus,
+    ControlKind,
+    ControlPriority,
+    ControlRequest,
+    ControlResponse,
+)
 from agent_driver.contracts.enums import (
     AgentProfile,
     ApprovalMode,
@@ -110,6 +118,8 @@ __all__ = [
     "ChatMessage",
     "ChatRole",
     "CheckpointRef",
+    "CommandQueueItem",
+    "CommandQueueStatus",
     "SessionRef",
     "SessionMemory",
     "SessionTurn",
@@ -131,6 +141,10 @@ __all__ = [
     "TrimAuditRecord",
     "TrimmedContext",
     "ContractModel",
+    "ControlKind",
+    "ControlPriority",
+    "ControlRequest",
+    "ControlResponse",
     "EventSeverity",
     "GuardrailDecision",
     "CompactionMode",
