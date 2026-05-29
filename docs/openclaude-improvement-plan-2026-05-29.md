@@ -259,8 +259,8 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 
 ### Phase 4: User Steering UX Adapters
 
-- [ ] Extend SSE projection for control/queue events.
-- [ ] Add chat-demo/backend control endpoints.
+- [x] Extend SSE projection for control/queue events.
+- [x] Add chat-demo/backend control endpoints.
 - [ ] Add chat-demo/frontend controls for enqueue/cancel/interrupt/model
   switch where product-appropriate.
 - [ ] Persist steering operations in session transcript/history.

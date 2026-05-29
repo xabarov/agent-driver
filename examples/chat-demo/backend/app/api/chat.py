@@ -10,7 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from agent_driver.adapters import parse_after_seq, render_sse_line
-from agent_driver.contracts import AgentRunInput, ChatMessage, ToolPolicyInput
+from agent_driver.contracts import (
+    AgentRunInput,
+    ChatMessage,
+    ControlRequest,
+    ToolPolicyInput,
+)
 from agent_driver.contracts.enums import ChatRole, ResumeAction
 from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
 from agent_driver.runtime.planning_policy import classify_planning_hint
@@ -24,7 +29,14 @@ from app.deps import (
     resolve_tool_preset,
 )
 from app.run_cancel import is_cancelled, request_cancel
-from app.schemas.chat import CancelRunResponse, ChatMessageRequest, InterruptView, ResumeRequest
+from app.schemas.chat import (
+    CancelRunResponse,
+    ChatControlRequest,
+    ChatControlResponse,
+    ChatMessageRequest,
+    InterruptView,
+    ResumeRequest,
+)
 from app.services.agent_factory import AgentBundle
 from app.services.message_metadata import aggregate_metadata_from_events
 from app.sse_relay import ensure_run_task, relay_and_capture
@@ -336,6 +348,48 @@ def cancel_run(run_id: str) -> CancelRunResponse:
     """Request cooperative cancellation for an in-flight run."""
     request_cancel(run_id)
     return CancelRunResponse(run_id=run_id, cancelled=is_cancelled(run_id))
+
+
+@router.post("/chat/runs/{run_id}/control", response_model=ChatControlResponse)
+def control_run(
+    run_id: str,
+    body: ChatControlRequest,
+    bundle: AgentBundle = Depends(get_agent_bundle),
+) -> ChatControlResponse:
+    """Queue a typed steering command for the next runtime boundary."""
+    response = bundle.agent.control(
+        ControlRequest(
+            kind=body.kind,
+            run_id=run_id,
+            thread_id=body.thread_id,
+            agent_id=body.agent_id,
+            priority=body.priority,
+            payload=body.payload,
+            source="chat-demo",
+            dedupe_key=body.dedupe_key,
+        )
+    )
+    return ChatControlResponse(
+        ok=response.ok,
+        control_id=response.control_id,
+        queue_id=response.queue_id,
+        error=response.error,
+    )
+
+
+@router.delete("/chat/commands/{queue_id}", response_model=ChatControlResponse)
+def cancel_queued_command(
+    queue_id: str,
+    bundle: AgentBundle = Depends(get_agent_bundle),
+) -> ChatControlResponse:
+    """Cancel a queued steering command before it is applied."""
+    response = bundle.agent.cancel_queued_message(queue_id)
+    return ChatControlResponse(
+        ok=response.ok,
+        control_id=response.control_id,
+        queue_id=response.queue_id,
+        error=response.error,
+    )
 
 
 @router.post("/chat/runs/{run_id}/resume")

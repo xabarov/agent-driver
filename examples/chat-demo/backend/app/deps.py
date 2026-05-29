@@ -42,11 +42,13 @@ def reset_dependency_caches() -> None:
     """Clear singleton caches (mainly for tests)."""
     from app.services.agent_factory import (
         get_shared_runtime_store_bundle,
+        get_shared_command_queue_store,
         get_shared_session_store,
     )
 
     get_agent_bundle_for_preset.cache_clear()
     get_settings.cache_clear()
+    get_shared_command_queue_store.cache_clear()
     get_shared_runtime_store_bundle.cache_clear()
     get_shared_session_store.cache_clear()
     from app.run_cancel import reset_caches_for_tests

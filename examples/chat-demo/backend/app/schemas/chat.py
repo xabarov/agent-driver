@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from agent_driver.contracts import ControlKind, ControlPriority
+
 from app.config import ToolPreset
 
 
@@ -55,3 +57,23 @@ class CancelRunResponse(BaseModel):
     ok: bool = True
     run_id: str
     cancelled: bool
+
+
+class ChatControlRequest(BaseModel):
+    """Steering control payload for a live or resumable chat run."""
+
+    kind: ControlKind
+    priority: ControlPriority = ControlPriority.NEXT
+    payload: dict[str, object] = Field(default_factory=dict)
+    thread_id: str | None = None
+    agent_id: str | None = None
+    dedupe_key: str | None = None
+
+
+class ChatControlResponse(BaseModel):
+    """Accepted/cancelled steering command response."""
+
+    ok: bool
+    control_id: str | None = None
+    queue_id: str | None = None
+    error: str | None = None

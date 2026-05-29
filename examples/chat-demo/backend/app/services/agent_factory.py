@@ -11,6 +11,11 @@ from agent_driver.cli.sessions import SessionStore
 from agent_driver.cli.tools import CliToolConfig, build_cli_toolset
 from agent_driver.contracts.tools import ToolManifest
 from agent_driver.runtime import create_runtime_store_bundle, runtime_store_config_from_env
+from agent_driver.runtime.control import (
+    CommandQueueStore,
+    InMemoryCommandQueueStore,
+    SqliteCommandQueueStore,
+)
 from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.sdk import Agent, create_agent
@@ -32,6 +37,20 @@ def get_shared_session_store(sessions_path: str) -> SessionStore:
     return SessionStore(path=Path(sessions_path))
 
 
+@lru_cache(maxsize=1)
+def get_shared_command_queue_store(kind: str, sqlite_path: str | None) -> CommandQueueStore:
+    """Return one steering command queue shared across tool presets."""
+    if kind == "sqlite":
+        path = (
+            Path(sqlite_path).with_suffix(".command_queue.sqlite3")
+            if sqlite_path
+            else Path.cwd() / ".agent-driver" / "command_queue.sqlite3"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return SqliteCommandQueueStore(path=str(path))
+    return InMemoryCommandQueueStore()
+
+
 @dataclass(frozen=True, slots=True)
 class AgentBundle:
     """Container with long-lived backend dependencies."""
@@ -39,6 +58,7 @@ class AgentBundle:
     agent: Agent
     event_log: RuntimeEventLog
     checkpoint_store: CheckpointStore
+    command_queue_store: CommandQueueStore
     session_store: SessionStore
     manifests: tuple[ToolManifest, ...]
     store_kind: str
@@ -117,6 +137,10 @@ def create_agent_bundle(
     toolset = build_cli_toolset(_tool_config_from_preset(effective_preset))
     runtime_store_config = runtime_store_config_from_env()
     runtime_store_bundle = get_shared_runtime_store_bundle()
+    command_queue_store = get_shared_command_queue_store(
+        runtime_store_config.kind,
+        runtime_store_config.sqlite_path,
+    )
     runner_config = RunnerConfig(cancellation_probe=cancellation_probe)
     agent = create_agent(
         provider=provider,
@@ -124,6 +148,7 @@ def create_agent_bundle(
         config=runner_config,
         checkpoint_store=runtime_store_bundle.checkpoint_store,
         event_log=runtime_store_bundle.event_log,
+        command_queue_store=command_queue_store,
     )
     registry = agent.runner.config.tool_registry
     manifests: tuple[ToolManifest, ...] = ()
@@ -134,6 +159,7 @@ def create_agent_bundle(
         agent=agent,
         event_log=runtime_store_bundle.event_log,
         checkpoint_store=runtime_store_bundle.checkpoint_store,
+        command_queue_store=command_queue_store,
         session_store=session_store,
         manifests=manifests,
         store_kind=runtime_store_config.kind,
