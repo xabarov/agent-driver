@@ -103,6 +103,10 @@ Current completed slices:
 - Extended `planning_hint` to planned tool batches. Runtime can now derive a
   required hint from side-effecting tools, `agent_tool`, or expected step count;
   hosts can opt into enforcement with `planning_hint_enforce=true`.
+- Re-ran a current force-planning browser smoke against chat-demo with fake
+  provider. Backend replay includes the denied `file_write` and remediation,
+  but the live UI did not render the denied tool card; tracked as a design
+  regression in `docs/chat-demo-design-improvement-plan-2026-05-29.md`.
 
 Next Phase 2 slice:
 
@@ -208,8 +212,10 @@ when a slice is implemented, tested, committed, or intentionally deferred.
   side-effecting tools, native `agent_tool`, expected step count.
 - [ ] Gate native subagent spawn once `agent_tool` becomes a runtime spawn
   surface.
-- [ ] Run and document a current Playwright smoke for chat-demo force-planning
-  policy-denied replay after the latest design changes.
+- [ ] Run and document a passing current Playwright smoke for chat-demo
+  force-planning policy-denied replay after the latest design changes.
+  2026-05-29 attempt: backend replay passed, live UI card rendering failed and
+  was moved to the chat-demo design backlog.
 - [ ] Decide and document chat-demo default mode:
   `prompt_only` or `required_for_writes`.
 

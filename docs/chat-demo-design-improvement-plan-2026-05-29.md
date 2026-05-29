@@ -205,6 +205,15 @@ Tools implementation note, 2026-05-29:
 - [ ] Document manual QA before releases.
   - Add a short checklist to `examples/chat-demo/README.md` or keep this document linked from `docs/README.md`.
 
+Open design regression notes, 2026-05-29:
+
+- [ ] Policy-denied tool activity can disappear from the live transcript view.
+  A Playwright force-planning smoke with fake provider confirmed backend replay
+  events include `tool_call_started` / `tool_call_completed` for denied
+  `file_write`, including remediation text, but the current chat UI showed only
+  the final assistant sentence. Restore visible/replayable `ToolCallCard`
+  rendering for denied tool calls and include this in the e2e smoke.
+
 ## Acceptance Criteria
 
 - [ ] A new user can understand what to try from the first screen without reading external docs.
