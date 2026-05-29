@@ -21,7 +21,7 @@ const markdownComponents: Components = {
     return (
       <a
         href={href}
-        className="text-sky-400 underline underline-offset-2 hover:text-sky-300"
+        className="text-sky-700 underline underline-offset-2 hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300"
         {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
         {...props}
       >
@@ -79,10 +79,11 @@ const rehypePlugins = [
   ],
 ];
 
-const proseClassName = [
-  "prose prose-sm prose-invert max-w-none",
+export const proseClassName = [
+  "prose prose-sm max-w-none dark:prose-invert",
   "prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2",
-  "prose-a:text-sky-400 prose-a:underline prose-a:underline-offset-2 hover:prose-a:text-sky-300",
+  "prose-a:text-sky-700 prose-a:underline prose-a:underline-offset-2 hover:prose-a:text-sky-800",
+  "dark:prose-a:text-sky-400 dark:hover:prose-a:text-sky-300",
   "prose-code:before:content-none prose-code:after:content-none",
   "prose-pre:my-2 prose-pre:border-0 prose-pre:bg-transparent prose-pre:p-0",
   "prose-table:my-2",

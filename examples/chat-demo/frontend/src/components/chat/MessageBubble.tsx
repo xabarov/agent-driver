@@ -86,7 +86,7 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
         <div
           className={cn(
             "rounded-2xl px-4 py-3 text-sm leading-relaxed",
-            "bg-[hsl(var(--chat-assistant-bg))]",
+            "bg-[hsl(var(--chat-assistant-bg))] text-foreground",
           )}
         >
           {message.content ? (

@@ -124,6 +124,11 @@ Tools implementation note, 2026-05-29:
 
 ## Phase 3 - Message Stream Polish
 
+- [x] Fix light-theme assistant message readability.
+  - Target files: `MarkdownRenderer`, `MessageBubble`, global theme tokens.
+  - Use normal prose colors in light mode and `dark:prose-invert` only in dark mode.
+  - Verify assistant text, links, inline code, and code blocks against light and dark backgrounds.
+
 - [ ] Improve message rhythm and density.
   - Target files: `MessageList.tsx`, `MessageBubble.tsx`.
   - Reduce avatar prominence or align it with message metadata.
