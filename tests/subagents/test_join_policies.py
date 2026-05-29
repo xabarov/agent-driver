@@ -42,7 +42,11 @@ def _run(sub_id: str, status: SubagentStatus) -> SubagentRun:
         fanout_slot=1,
         status=status,
         terminal_state=terminal if status != SubagentStatus.RUNNING else None,
-        merge_provenance={"strategy": "x", "source_kind": "y"} if status == SubagentStatus.COMPLETED else None,
+        merge_provenance=(
+            {"strategy": "x", "source_kind": "y"}
+            if status == SubagentStatus.COMPLETED
+            else None
+        ),
         metadata={},
     )
 

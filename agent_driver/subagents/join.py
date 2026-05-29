@@ -27,29 +27,65 @@ def evaluate_join_policy(
     deadline_reached: bool = False,
 ) -> JoinDecision:
     """Evaluate whether group can be joined under policy."""
-    completed = [item.subagent_run_id for item in runs if item.status == SubagentStatus.COMPLETED]
-    failed = [item.subagent_run_id for item in runs if item.status == SubagentStatus.FAILED]
+    completed = [
+        item.subagent_run_id for item in runs if item.status == SubagentStatus.COMPLETED
+    ]
+    failed = [
+        item.subagent_run_id for item in runs if item.status == SubagentStatus.FAILED
+    ]
     cancelled = [
         item.subagent_run_id
         for item in runs
         if item.status in {SubagentStatus.CANCELLED, SubagentStatus.TIMED_OUT}
     ]
     if join_policy == SubagentJoinPolicy.WAIT_ALL:
-        done = len(runs) > 0 and len(completed) + len(failed) + len(cancelled) == len(runs)
-        return JoinDecision(done=done, state="joined" if done else "waiting", completed_ids=tuple(completed), failed_ids=tuple(failed), cancelled_ids=tuple(cancelled))
+        done = len(runs) > 0 and len(completed) + len(failed) + len(cancelled) == len(
+            runs
+        )
+        return JoinDecision(
+            done=done,
+            state="joined" if done else "waiting",
+            completed_ids=tuple(completed),
+            failed_ids=tuple(failed),
+            cancelled_ids=tuple(cancelled),
+        )
     if join_policy == SubagentJoinPolicy.WAIT_ANY:
         done = len(completed) >= 1
-        return JoinDecision(done=done, state="joined" if done else "waiting", completed_ids=tuple(completed), failed_ids=tuple(failed), cancelled_ids=tuple(cancelled))
+        return JoinDecision(
+            done=done,
+            state="joined" if done else "waiting",
+            completed_ids=tuple(completed),
+            failed_ids=tuple(failed),
+            cancelled_ids=tuple(cancelled),
+        )
     if join_policy == SubagentJoinPolicy.K_OF_N:
         target = max(1, k or 1)
         done = len(completed) >= target
-        return JoinDecision(done=done, state="joined" if done else "waiting", completed_ids=tuple(completed), failed_ids=tuple(failed), cancelled_ids=tuple(cancelled))
+        return JoinDecision(
+            done=done,
+            state="joined" if done else "waiting",
+            completed_ids=tuple(completed),
+            failed_ids=tuple(failed),
+            cancelled_ids=tuple(cancelled),
+        )
     if join_policy == SubagentJoinPolicy.BEST_EFFORT_UNTIL_DEADLINE:
         done = deadline_reached
-        return JoinDecision(done=done, state="partial_joined" if done else "waiting", completed_ids=tuple(completed), failed_ids=tuple(failed), cancelled_ids=tuple(cancelled))
+        return JoinDecision(
+            done=done,
+            state="partial_joined" if done else "waiting",
+            completed_ids=tuple(completed),
+            failed_ids=tuple(failed),
+            cancelled_ids=tuple(cancelled),
+        )
     if join_policy == SubagentJoinPolicy.RACE:
         done = len(completed) >= 1
-        return JoinDecision(done=done, state="race_won" if done else "waiting", completed_ids=tuple(completed), failed_ids=tuple(failed), cancelled_ids=tuple(cancelled))
+        return JoinDecision(
+            done=done,
+            state="race_won" if done else "waiting",
+            completed_ids=tuple(completed),
+            failed_ids=tuple(failed),
+            cancelled_ids=tuple(cancelled),
+        )
     return JoinDecision(
         done=False,
         state="manual_review_pending",

@@ -1,7 +1,30 @@
-.PHONY: test selftest selftest-fake eval-deep-offline eval-regression eval-nightly-live-deep eval-scientific test-plan-ui
+BLACK ?= ./.uv-bootstrap/bin/black
+ISORT ?= ./.uv-bootstrap/bin/isort
+PYLINT ?= ./.uv-bootstrap/bin/pylint
+PYTEST ?= uv run pytest
+RUFF ?= ./.venv/bin/ruff
+LINT_PATHS ?= agent_driver/subagents tests/subagents agent_driver/runtime/single_agent/subagent_stage.py tests/runtime/test_subagent_integration.py
+
+.PHONY: test format format-check lint lint-python lint-fast selftest selftest-fake eval-deep-offline eval-regression eval-nightly-live-deep eval-scientific test-plan-ui
 
 test:
-	uv run pytest -q
+	$(PYTEST) -q
+
+format:
+	$(ISORT) $(LINT_PATHS)
+	$(BLACK) $(LINT_PATHS)
+
+format-check:
+	$(ISORT) --check-only --diff $(LINT_PATHS)
+	$(BLACK) --check --diff $(LINT_PATHS)
+
+lint-fast:
+	$(RUFF) check $(LINT_PATHS)
+
+lint-python: format-check
+	$(PYLINT) agent_driver/subagents agent_driver/runtime/single_agent/subagent_stage.py --fail-under=8.0
+
+lint: lint-fast lint-python
 
 selftest:
 	uv run python tools/selftest/run.py --scenarios A,B,C,D

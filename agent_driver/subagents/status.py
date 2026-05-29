@@ -37,9 +37,7 @@ def build_subagent_status_snapshot(
             [run.model_dump(mode="json") for run in runs]
         ),
         "pending_mailbox_count": len(pending_mailbox),
-        "pending_mailbox": [
-            item.model_dump(mode="json") for item in pending_mailbox
-        ],
+        "pending_mailbox": [item.model_dump(mode="json") for item in pending_mailbox],
     }
 
 

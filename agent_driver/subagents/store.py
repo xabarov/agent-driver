@@ -28,7 +28,9 @@ class InMemorySubagentStore:
 
     _runs_by_parent: dict[str, list[SubagentRun]] = field(default_factory=dict)
     _groups_by_parent: dict[str, list[SubagentGroup]] = field(default_factory=dict)
-    _run_by_idempotency: dict[tuple[str, str], SubagentRun] = field(default_factory=dict)
+    _run_by_idempotency: dict[tuple[str, str], SubagentRun] = field(
+        default_factory=dict
+    )
 
     def upsert_group(self, group: SubagentGroup) -> SubagentGroup:
         """Insert or replace subagent group row."""
@@ -44,13 +46,17 @@ class InMemorySubagentStore:
         """List group rows by parent run."""
         return list(self._groups_by_parent.get(parent_run_id, []))
 
-    def upsert_run(self, run: SubagentRun, *, idempotency_key: str | None = None) -> SubagentRun:
+    def upsert_run(
+        self, run: SubagentRun, *, idempotency_key: str | None = None
+    ) -> SubagentRun:
         """Insert or replace subagent run row with optional idempotency key."""
         if idempotency_key:
             dedup_key = (run.parent_run_id, idempotency_key)
             existing = self._run_by_idempotency.get(dedup_key)
             if existing is not None:
-                run = run.model_copy(update={"subagent_run_id": existing.subagent_run_id})
+                run = run.model_copy(
+                    update={"subagent_run_id": existing.subagent_run_id}
+                )
                 self._run_by_idempotency[dedup_key] = run
             else:
                 self._run_by_idempotency[dedup_key] = run
@@ -81,32 +87,26 @@ class SqliteSubagentStore:
 
     def _ensure_schema(self) -> None:
         with self._connect() as conn:
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS subagent_groups (
                     group_id TEXT PRIMARY KEY,
                     parent_run_id TEXT NOT NULL,
                     payload TEXT NOT NULL
                 )
-                """
-            )
-            conn.execute(
-                """
+                """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS subagent_runs (
                     subagent_run_id TEXT PRIMARY KEY,
                     parent_run_id TEXT NOT NULL,
                     idempotency_key TEXT,
                     payload TEXT NOT NULL
                 )
-                """
-            )
-            conn.execute(
-                """
+                """)
+            conn.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS subagent_runs_parent_idempotency_idx
                 ON subagent_runs(parent_run_id, idempotency_key)
                 WHERE idempotency_key IS NOT NULL
-                """
-            )
+                """)
 
     def upsert_group(self, group: SubagentGroup) -> SubagentGroup:
         payload = json.dumps(group.model_dump(mode="json"), ensure_ascii=False)
@@ -154,7 +154,9 @@ class SqliteSubagentStore:
                     run = run.model_copy(
                         update={"subagent_run_id": existing_run.subagent_run_id}
                     )
-                    payload = json.dumps(run.model_dump(mode="json"), ensure_ascii=False)
+                    payload = json.dumps(
+                        run.model_dump(mode="json"), ensure_ascii=False
+                    )
             conn.execute(
                 """
                 INSERT INTO subagent_runs (subagent_run_id, parent_run_id, idempotency_key, payload)

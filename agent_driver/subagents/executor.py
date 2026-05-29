@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from inspect import signature
 from dataclasses import dataclass
+from inspect import signature
 from typing import Callable
 from uuid import uuid4
 
@@ -80,8 +80,7 @@ async def _run_single_child_task(
 ) -> SubagentRun:
     child_abort_handle = (
         parent_abort_handle.child()
-        if parent_abort_handle is not None
-        and hasattr(parent_abort_handle, "child")
+        if parent_abort_handle is not None and hasattr(parent_abort_handle, "child")
         else parent_abort_handle
     )
     handoff, handoff_audit = build_child_context_handoff(
@@ -302,12 +301,16 @@ async def execute_subagent_group_sync(
         {
             "group_id": group_spec.group_id,
             "task_count": len(limited_tasks),
-            "join_policy": group_spec.join_policy.value
-            if hasattr(group_spec.join_policy, "value")
-            else str(group_spec.join_policy),
-            "merge_mode": group_spec.merge_mode.value
-            if hasattr(group_spec.merge_mode, "value")
-            else str(group_spec.merge_mode),
+            "join_policy": (
+                group_spec.join_policy.value
+                if hasattr(group_spec.join_policy, "value")
+                else str(group_spec.join_policy)
+            ),
+            "merge_mode": (
+                group_spec.merge_mode.value
+                if hasattr(group_spec.merge_mode, "value")
+                else str(group_spec.merge_mode)
+            ),
         },
     )
     group = store.upsert_group(
@@ -363,9 +366,11 @@ async def execute_subagent_group_sync(
                 "role": getattr(task, "role", None) or "",
                 "subagent_run_id": completed.subagent_run_id,
                 "child_run_id": completed.child_run_id,
-                "status": completed.status.value
-                if hasattr(completed.status, "value")
-                else str(completed.status),
+                "status": (
+                    completed.status.value
+                    if hasattr(completed.status, "value")
+                    else str(completed.status)
+                ),
             },
         )
     join_decision = evaluate_join_policy(

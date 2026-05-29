@@ -17,7 +17,6 @@ from agent_driver.subagents import (
     SubagentTaskSpec,
     execute_subagent_group_sync,
 )
-
 from tests.subagents.parent_handoff import default_parent_handoff
 
 
@@ -30,7 +29,11 @@ async def _fake_child_runner(run_input):
         events=[
             new_runtime_event(
                 event_type=RuntimeEventType.RUN_COMPLETED,
-                context={"run_id": run_input.run_id or "child", "attempt_id": "att_child", "seq": 1},
+                context={
+                    "run_id": run_input.run_id or "child",
+                    "attempt_id": "att_child",
+                    "seq": 1,
+                },
             )
         ],
         answer=f"done:{run_input.input}",

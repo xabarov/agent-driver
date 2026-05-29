@@ -17,7 +17,12 @@ from agent_driver.contracts import (
 )
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.subagents import SubagentRun
-from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse, UsageSummary
+from agent_driver.llm.contracts import (
+    LlmFinishReason,
+    LlmRequest,
+    LlmResponse,
+    UsageSummary,
+)
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime import (
     FakeSingleStepRunner,
@@ -27,9 +32,12 @@ from agent_driver.runtime import (
     wrap_governed_executor,
 )
 from agent_driver.runtime.control import InMemoryCommandQueueStore
-from agent_driver.subagents import InMemorySubagentStore
-from agent_driver.subagents import InMemorySubagentMailboxStore
-from agent_driver.tools import GovernedToolExecutor, ToolRegistry, register_builtin_tools
+from agent_driver.subagents import InMemorySubagentMailboxStore, InMemorySubagentStore
+from agent_driver.tools import (
+    GovernedToolExecutor,
+    ToolRegistry,
+    register_builtin_tools,
+)
 
 
 class _AgentToolSpawnProvider(FakeProvider):
@@ -219,9 +227,12 @@ async def test_runtime_with_subagents_executes_group_from_agent_tool() -> None:
     assert queued[0].kind == ControlKind.ENQUEUE_USER_MESSAGE
     assert queued[0].priority == ControlPriority.LATER
     assert queued[0].source == "subagent_notification"
-    assert mailbox_store.list_pending(parent_run_id="run_agent_tool_sub")[0].payload[
-        "status"
-    ] == "completed"
+    assert (
+        mailbox_store.list_pending(parent_run_id="run_agent_tool_sub")[0].payload[
+            "status"
+        ]
+        == "completed"
+    )
 
 
 @pytest.mark.asyncio
@@ -271,7 +282,9 @@ async def test_send_message_tool_records_subagent_continuation() -> None:
     assert continuation["message"] == "please continue with the latest evidence"
     assert continuation["metadata"] == {"priority": "later"}
     mailbox_items = mailbox_store.list_pending(parent_run_id="run_child_continue")
-    assert mailbox_items[0].payload == {"message": "please continue with the latest evidence"}
+    assert mailbox_items[0].payload == {
+        "message": "please continue with the latest evidence"
+    }
     assert mailbox_items[0].subagent_run_id == "sub_child"
     assert output.metadata["subagent_runs"][0]["subagent_run_id"] == "sub_child"
     event_types = [event.type for event in event_log.list_for_run("run_child_continue")]

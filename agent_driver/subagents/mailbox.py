@@ -76,7 +76,9 @@ class InMemorySubagentMailboxStore:
     def list_for_parent(self, parent_run_id: str) -> list[SubagentMailboxItem]:
         """Return all mailbox items for one parent run."""
         return [
-            item for item in self._ordered_items() if item.parent_run_id == parent_run_id
+            item
+            for item in self._ordered_items()
+            if item.parent_run_id == parent_run_id
         ]
 
     def mark_delivered(self, mailbox_id: str) -> SubagentMailboxItem | None:
@@ -104,7 +106,9 @@ class InMemorySubagentMailboxStore:
         )
 
     def _ordered_items(self) -> list[SubagentMailboxItem]:
-        return [self._items[item_id] for item_id in self._order if item_id in self._items]
+        return [
+            self._items[item_id] for item_id in self._order if item_id in self._items
+        ]
 
     def _update_status(
         self,
@@ -151,8 +155,7 @@ class SqliteSubagentMailboxStore:
 
     def _ensure_schema(self) -> None:
         with self._connect() as conn:
-            conn.execute(
-                """
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS subagent_mailbox (
                     mailbox_id TEXT PRIMARY KEY,
                     parent_run_id TEXT NOT NULL,
@@ -163,15 +166,12 @@ class SqliteSubagentMailboxStore:
                     created_at TEXT NOT NULL,
                     payload TEXT NOT NULL
                 )
-                """
-            )
-            conn.execute(
-                """
+                """)
+            conn.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS subagent_mailbox_dedupe_idx
                 ON subagent_mailbox(parent_run_id, dedupe_key)
                 WHERE dedupe_key IS NOT NULL AND status = 'queued'
-                """
-            )
+                """)
 
     def enqueue(self, item: SubagentMailboxItem) -> SubagentMailboxItem:
         """Persist a mailbox item or return a deduped queued item."""

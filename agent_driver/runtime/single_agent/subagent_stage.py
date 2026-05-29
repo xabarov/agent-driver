@@ -53,7 +53,9 @@ async def maybe_execute_subagent_group(
         planned = context.metadata.get("planned_subagent_group")
     if not isinstance(planned, dict):
         return
-    group_spec = _group_spec_from_planned(planned, max_child_runs=host._config.max_child_runs)
+    group_spec = _group_spec_from_planned(
+        planned, max_child_runs=host._config.max_child_runs
+    )
     if group_spec is None:
         return
     emit_step_event(

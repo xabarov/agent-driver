@@ -69,3 +69,21 @@ target-version = ["py311"]
 [tool.isort]
 profile = "black"
 line_length = 88
+
+[tool.pylint.main]
+py-version = "3.11"
+jobs = 0
+recursive = true
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.pylint.messages_control]
+disable = [
+  "duplicate-code",
+  "fixme",
+  "missing-module-docstring",
+  "too-few-public-methods",
+  "too-many-arguments",
+  "too-many-locals",
+]

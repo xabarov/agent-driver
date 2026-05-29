@@ -30,7 +30,6 @@ from agent_driver.subagents import (
     SubagentTaskSpec,
     execute_subagent_group_sync,
 )
-
 from tests.subagents.parent_handoff import default_parent_handoff
 
 
@@ -43,7 +42,11 @@ async def _ok_child_runner(run_input):
         events=[
             new_runtime_event(
                 event_type=RuntimeEventType.RUN_COMPLETED,
-                context={"run_id": run_input.run_id or "child", "attempt_id": "att_child", "seq": 1},
+                context={
+                    "run_id": run_input.run_id or "child",
+                    "attempt_id": "att_child",
+                    "seq": 1,
+                },
             )
         ],
         answer="child answer",
@@ -59,14 +62,20 @@ async def _fail_child_runner(run_input):
         events=[
             new_runtime_event(
                 event_type=RuntimeEventType.RUN_FAILED,
-                context={"run_id": run_input.run_id or "child", "attempt_id": "att_child", "seq": 1},
+                context={
+                    "run_id": run_input.run_id or "child",
+                    "attempt_id": "att_child",
+                    "seq": 1,
+                },
             )
         ],
         answer="",
     )
 
 
-def _group_spec(*task_ids: str, join_policy: JoinPolicy = JoinPolicy.WAIT_ALL) -> SubagentGroupSpec:
+def _group_spec(
+    *task_ids: str, join_policy: JoinPolicy = JoinPolicy.WAIT_ALL
+) -> SubagentGroupSpec:
     return SubagentGroupSpec(
         group_id="grp_obs",
         purpose="analysis",
@@ -139,7 +148,9 @@ async def test_emits_group_joined_when_join_policy_satisfied() -> None:
         max_child_runs=4,
         on_event=lambda etype, payload: events.append((etype, payload)),
     )
-    terminals = [e for e in events if e[0] in ("subagent_group_joined", "subagent_group_failed")]
+    terminals = [
+        e for e in events if e[0] in ("subagent_group_joined", "subagent_group_failed")
+    ]
     assert terminals[0][0] == "subagent_group_joined"
     payload = terminals[0][1]
     assert payload["completed_count"] == 2
@@ -167,7 +178,9 @@ async def test_emits_group_failed_when_join_not_done() -> None:
         max_child_runs=4,
         on_event=lambda etype, payload: events.append((etype, payload)),
     )
-    terminals = [e for e in events if e[0] in ("subagent_group_joined", "subagent_group_failed")]
+    terminals = [
+        e for e in events if e[0] in ("subagent_group_joined", "subagent_group_failed")
+    ]
     assert terminals[0][0] == "subagent_group_failed"
     assert terminals[0][1]["failed_count"] == 2
 

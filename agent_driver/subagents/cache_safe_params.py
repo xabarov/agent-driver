@@ -49,7 +49,6 @@ from typing import Any, Literal
 
 from agent_driver.contracts.runtime import AgentRunInput
 
-
 CACHE_SAFE_METADATA_KEY = "_cache_safe_params"
 
 
@@ -152,7 +151,9 @@ def _hash_message_prefix(input_str: str | None, messages: list[Any] | None) -> s
             role = getattr(msg, "role", "")
             content = getattr(msg, "content", "")
             try:
-                content_str = json.dumps(content, ensure_ascii=True, sort_keys=True, default=str)
+                content_str = json.dumps(
+                    content, ensure_ascii=True, sort_keys=True, default=str
+                )
             except (TypeError, ValueError):
                 content_str = str(content)
             parts.append(f"{role}::{content_str}")
