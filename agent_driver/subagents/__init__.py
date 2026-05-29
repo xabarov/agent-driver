@@ -1,6 +1,11 @@
 """Subagent orchestration package (Phase 9)."""
 
 from agent_driver.subagents.join import JoinDecision, evaluate_join_policy
+from agent_driver.subagents.control import (
+    append_subagent_continuation,
+    find_subagent_run,
+    stop_subagent_run,
+)
 from agent_driver.subagents.merge import (
     merge_subagent_outputs,
     summarize_child_runs_for_parent,
@@ -23,9 +28,12 @@ __all__ = [
     "SubagentGroupSpec",
     "SubagentParentHandoff",
     "SubagentTaskSpec",
+    "append_subagent_continuation",
     "build_child_context_handoff",
     "evaluate_join_policy",
     "execute_subagent_group_sync",
+    "find_subagent_run",
     "merge_subagent_outputs",
+    "stop_subagent_run",
     "summarize_child_runs_for_parent",
 ]

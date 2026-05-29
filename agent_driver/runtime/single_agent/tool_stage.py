@@ -41,6 +41,7 @@ from agent_driver.runtime.single_agent.types import (
     RuntimeStepResult,
 )
 from agent_driver.runtime.tools import ToolExecutionResult
+from agent_driver.subagents import append_subagent_continuation, stop_subagent_run
 from agent_driver.tools.executor.planned import extract_planned_tool_calls
 
 
@@ -142,6 +143,7 @@ def _post_process_tool_result(
         context.metadata["observations"] = observations
     _update_tool_protocol_messages(context, result)
     _apply_agent_tool_spawn_requests(context, result)
+    _apply_subagent_control_tool_outputs(host, context, result)
     _update_zero_result_policy(context, result)
     _refresh_force_final_controls(context)
     if not planning_updated:
@@ -228,6 +230,112 @@ def _apply_agent_tool_spawn_requests(
         "tasks": tasks,
         "source": "agent_tool",
     }
+
+
+def _apply_subagent_control_tool_outputs(
+    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
+) -> None:
+    """Apply parent-to-child continuation/stop tool outputs to subagent rows."""
+    for envelope in result.envelopes:
+        structured = envelope.structured_output
+        if not isinstance(structured, dict):
+            continue
+        if envelope.call.tool_name == "send_message_tool":
+            _apply_subagent_continuation_output(host, context, structured)
+        elif envelope.call.tool_name == "task_stop_tool":
+            _apply_subagent_stop_output(host, context, structured)
+
+
+def _apply_subagent_continuation_output(
+    host: ToolStageHost, context: RunContext, structured: dict[str, Any]
+) -> None:
+    message_event = structured.get("message_event")
+    if not isinstance(message_event, dict):
+        return
+    recipient = _clean_optional_text(message_event.get("recipient"))
+    message = _clean_optional_text(message_event.get("message"))
+    if recipient is None or message is None:
+        return
+    metadata = message_event.get("metadata")
+    updated = append_subagent_continuation(
+        host._deps.subagent_store,
+        parent_run_id=context.run_id,
+        subagent_run_id=recipient,
+        child_run_id=recipient,
+        message=message,
+        metadata=metadata if isinstance(metadata, dict) else None,
+    )
+    if updated is None:
+        return
+    _refresh_subagent_metadata(host, context)
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.CONTROL_APPLIED,
+        payload={
+            "kind": "subagent_continuation",
+            "subagent_run_id": updated.subagent_run_id,
+            "child_run_id": updated.child_run_id,
+            "messages": len(updated.metadata.get("continuation_messages") or []),
+        },
+    )
+
+
+def _apply_subagent_stop_output(
+    host: ToolStageHost, context: RunContext, structured: dict[str, Any]
+) -> None:
+    stop_payload = structured.get("subagent_stop")
+    if not isinstance(stop_payload, dict):
+        return
+    subagent_run_id = _clean_optional_text(
+        stop_payload.get("subagent_run_id") or stop_payload.get("task_id")
+    )
+    child_run_id = _clean_optional_text(stop_payload.get("child_run_id"))
+    updated = stop_subagent_run(
+        host._deps.subagent_store,
+        parent_run_id=context.run_id,
+        subagent_run_id=subagent_run_id,
+        child_run_id=child_run_id,
+        reason=_clean_optional_text(stop_payload.get("reason")),
+    )
+    if updated is None:
+        return
+    _refresh_subagent_metadata(host, context)
+    payload = {
+        "subagent_run_id": updated.subagent_run_id,
+        "child_run_id": updated.child_run_id,
+        "status": updated.status.value,
+        "terminal_state": (
+            updated.terminal_state.value if updated.terminal_state is not None else None
+        ),
+        "reason": updated.metadata.get("stop_reason"),
+    }
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.SUBAGENT_COMPLETED,
+        payload=payload,
+    )
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.CONTROL_APPLIED,
+        payload={"kind": "subagent_stop", **payload},
+    )
+
+
+def _refresh_subagent_metadata(host: ToolStageHost, context: RunContext) -> None:
+    context.metadata["subagent_runs"] = [
+        row.model_dump(mode="json")
+        for row in host._deps.subagent_store.list_runs(context.run_id)
+    ]
+
+
+def _clean_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
 
 
 def _try_code_agent_loop_transition(

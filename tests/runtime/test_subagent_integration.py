@@ -7,11 +7,14 @@ import pytest
 from agent_driver.contracts import (
     ChatMessage,
     RuntimeEventType,
+    SubagentExecutionMode,
+    SubagentStatus,
     ToolCall,
     ToolPolicyInput,
     ToolPolicyMode,
 )
 from agent_driver.contracts.runtime import AgentRunInput
+from agent_driver.contracts.subagents import SubagentRun
 from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse, UsageSummary
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime import (
@@ -21,6 +24,7 @@ from agent_driver.runtime import (
     RunnerConfig,
     wrap_governed_executor,
 )
+from agent_driver.subagents import InMemorySubagentStore
 from agent_driver.tools import GovernedToolExecutor, ToolRegistry, register_builtin_tools
 
 
@@ -62,6 +66,44 @@ class _AgentToolSpawnProvider(FakeProvider):
                 usage=usage,
                 provider="fake",
                 model="test",
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="parent done"),
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+            provider="fake",
+            model="test",
+        )
+
+
+class _SubagentControlProvider(FakeProvider):
+    """Provider that emits one parent-to-child control tool call."""
+
+    def __init__(self, *, tool_name: str, args: dict[str, object]) -> None:
+        super().__init__(response_text="parent done")
+        self.tool_name = tool_name
+        self.args = args
+        self.calls = 0
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.calls += 1
+        usage = UsageSummary(model_provider="fake", model_name="test")
+        if self.calls == 1:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                provider="fake",
+                model="test",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name=self.tool_name,
+                            tool_call_id=f"{self.tool_name}_call",
+                            args=self.args,
+                        ).model_dump(mode="json")
+                    ]
+                },
             )
         return LlmResponse(
             message=ChatMessage(role="assistant", content="parent done"),
@@ -164,3 +206,116 @@ async def test_runtime_with_subagents_executes_group_from_agent_tool() -> None:
     event_types = [event.type for event in event_log.list_for_run("run_agent_tool_sub")]
     assert RuntimeEventType.SUBAGENT_STARTED in event_types
     assert RuntimeEventType.SUBAGENT_COMPLETED in event_types
+
+
+@pytest.mark.asyncio
+async def test_send_message_tool_records_subagent_continuation() -> None:
+    """send_message_tool should target an existing child context by id."""
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    store = InMemorySubagentStore()
+    store.upsert_run(_running_child_row(parent_run_id="run_child_continue"))
+    event_log = InMemoryEventLog()
+    runner = FakeSingleStepRunner(
+        provider=_SubagentControlProvider(
+            tool_name="send_message_tool",
+            args={
+                "recipient": "sub_child",
+                "message": "please continue with the latest evidence",
+                "thread_id": "run_child_continue",
+                "channel": "direct",
+                "metadata": {"priority": "later"},
+            },
+        ),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=event_log,
+        config=RunnerConfig(
+            enable_subagents=True,
+            subagent_store=store,
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            ),
+        ),
+    )
+
+    output = await runner.run(
+        AgentRunInput(
+            input="continue child",
+            run_id="run_child_continue",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        )
+    )
+
+    row = store.list_runs("run_child_continue")[0]
+    continuation = row.metadata["continuation_messages"][0]
+    assert continuation["message"] == "please continue with the latest evidence"
+    assert continuation["metadata"] == {"priority": "later"}
+    assert output.metadata["subagent_runs"][0]["subagent_run_id"] == "sub_child"
+    event_types = [event.type for event in event_log.list_for_run("run_child_continue")]
+    assert RuntimeEventType.CONTROL_APPLIED in event_types
+
+
+@pytest.mark.asyncio
+async def test_task_stop_tool_cancels_existing_subagent_run() -> None:
+    """task_stop_tool should mark an existing child row as cancelled."""
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    store = InMemorySubagentStore()
+    store.upsert_run(_running_child_row(parent_run_id="run_child_stop"))
+    event_log = InMemoryEventLog()
+    runner = FakeSingleStepRunner(
+        provider=_SubagentControlProvider(
+            tool_name="task_stop_tool",
+            args={
+                "task_id": "sub_child",
+                "subagent_run_id": "sub_child",
+                "status": "killed",
+                "reason": "no longer needed",
+            },
+        ),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=event_log,
+        config=RunnerConfig(
+            enable_subagents=True,
+            subagent_store=store,
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            ),
+        ),
+    )
+
+    output = await runner.run(
+        AgentRunInput(
+            input="stop child",
+            run_id="run_child_stop",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        )
+    )
+
+    row = store.list_runs("run_child_stop")[0]
+    assert row.status == SubagentStatus.CANCELLED
+    assert row.metadata["stop_reason"] == "no longer needed"
+    assert output.metadata["subagent_runs"][0]["status"] == "cancelled"
+    event_types = [event.type for event in event_log.list_for_run("run_child_stop")]
+    assert RuntimeEventType.SUBAGENT_COMPLETED in event_types
+    assert RuntimeEventType.CONTROL_APPLIED in event_types
+
+
+def _running_child_row(*, parent_run_id: str) -> SubagentRun:
+    return SubagentRun(
+        subagent_run_id="sub_child",
+        parent_run_id=parent_run_id,
+        parent_attempt_id="attempt_1",
+        child_run_id="child_run_1",
+        task_id="task_child",
+        task_type="agent",
+        description="existing child task",
+        execution_mode=SubagentExecutionMode.SYNC,
+        fanout_slot=1,
+        status=SubagentStatus.RUNNING,
+        metadata={"idempotency_key": "child-key"},
+    )

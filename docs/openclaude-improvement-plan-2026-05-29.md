@@ -344,10 +344,15 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Pass subagent event callback through sync execution.
   Child `subagent_started` / `subagent_completed` callbacks are projected into
   parent runtime events.
-- [ ] Add native `task_stop_tool`.
-- [ ] Add `send_message_tool` continuation semantics for existing child
+- [x] Add native `task_stop_tool`.
+  `task_stop_tool` now accepts native subagent ids and the runtime marks the
+  matching child row as `cancelled`, emitting subagent/control lifecycle events.
+- [x] Add `send_message_tool` continuation semantics for existing child
   context.
-- [ ] Add tests for spawn, resume idempotency, continuation, stop, and events.
+  Parent-to-child messages now append bounded continuation entries to the
+  existing child row; Phase 6 can move this metadata mailbox into durable
+  background delivery.
+- [x] Add tests for spawn, resume idempotency, continuation, stop, and events.
 
 ### Phase 6: Background Subagents And Mailbox
 

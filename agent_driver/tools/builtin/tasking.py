@@ -300,11 +300,26 @@ def _task_stop_manifest() -> ToolManifest:
         args_schema={
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "Task identifier"},
+                "task_id": {
+                    "type": "string",
+                    "description": "Task identifier or subagent_run_id fallback",
+                },
+                "subagent_run_id": {
+                    "type": "string",
+                    "description": "Optional native subagent run identifier to stop",
+                },
+                "child_run_id": {
+                    "type": "string",
+                    "description": "Optional child runtime run_id to stop",
+                },
                 "status": {
                     "type": "string",
                     "enum": ["killed", "timed_out", "failed", "completed"],
                     "description": "Terminal status to set (default: killed)",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional stop reason for native subagent runs",
                 },
             },
             "required": ["task_id"],
@@ -472,6 +487,20 @@ async def _task_stop_handler(args: dict[str, Any]) -> dict[str, Any]:
     status = str(args.get("status") or "killed").strip()
     if status not in {"killed", "timed_out", "failed", "completed"}:
         raise ValueError("status must be one of: killed, timed_out, failed, completed")
+    subagent_run_id = str(args.get("subagent_run_id") or "").strip()
+    child_run_id = str(args.get("child_run_id") or "").strip()
+    if subagent_run_id or child_run_id:
+        stop_payload = {
+            "task_id": task_id,
+            "subagent_run_id": subagent_run_id or task_id,
+            "child_run_id": child_run_id or None,
+            "status": status,
+            "reason": str(args.get("reason") or "parent_requested_stop").strip(),
+        }
+        return {
+            "summary": f"subagent stop requested: {subagent_run_id or child_run_id}",
+            "subagent_stop": stop_payload,
+        }
     task = _TASK_STORE.update(
         task_id=task_id,
         status=status,
