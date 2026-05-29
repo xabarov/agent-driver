@@ -96,6 +96,11 @@ def _client_requests_dict(record: object | None) -> dict[str, dict[str, object]]
     return {str(key): dict(value) for key, value in rows}
 
 
+def _metadata_by_run_dict(record: object | None) -> dict[str, dict[str, object]]:
+    rows = getattr(record, "metadata_by_run", ()) if record is not None else ()
+    return {str(key): dict(value) for key, value in rows}
+
+
 def _filter_client_requests_for_runs(
     client_requests: dict[str, dict[str, object]],
     run_ids: list[str],
@@ -106,6 +111,73 @@ def _filter_client_requests_for_runs(
         for key, value in client_requests.items()
         if isinstance(value.get("run_id"), str) and value["run_id"] in allowed
     }
+
+
+def _session_record_for_run(bundle: AgentBundle, run_id: str):
+    for record in bundle.session_store.list_sessions():
+        if run_id in record.run_ids:
+            return record
+    return None
+
+
+def _persist_steering_history(
+    *,
+    bundle: AgentBundle,
+    run_id: str | None,
+    queue_id: str | None,
+    control_id: str | None,
+    status: str,
+) -> None:
+    if not run_id or not queue_id:
+        return
+    record = _session_record_for_run(bundle, run_id)
+    if record is None:
+        return
+    queued = bundle.command_queue_store.get(queue_id)
+    metadata_by_run = _metadata_by_run_dict(record)
+    run_metadata = dict(metadata_by_run.get(run_id, {}))
+    existing_controls = run_metadata.get("steering_controls")
+    controls: list[dict[str, object]] = []
+    if isinstance(existing_controls, list):
+        controls = [
+            dict(item) for item in existing_controls if isinstance(item, dict)
+        ]
+    entry: dict[str, object] = {
+        "queue_id": queue_id,
+        "status": status,
+    }
+    if control_id:
+        entry["control_id"] = control_id
+    if queued is not None:
+        entry.update(
+            {
+                "control_id": queued.control_id,
+                "kind": queued.kind.value,
+                "priority": queued.priority.value,
+                "payload": dict(queued.payload),
+                "source": queued.source,
+                "created_at": queued.created_at,
+                "updated_at": queued.updated_at,
+            }
+        )
+    replaced = False
+    for index, item in enumerate(controls):
+        if item.get("queue_id") == queue_id:
+            controls[index] = {**item, **entry}
+            replaced = True
+            break
+    if not replaced:
+        controls.append(entry)
+    run_metadata["steering_controls"] = controls
+    metadata_by_run[run_id] = run_metadata
+    bundle.session_store.upsert(
+        session_id=record.session_id,
+        thread_id=record.thread_id,
+        run_ids=list(record.run_ids),
+        transcript=list(record.transcript),
+        metadata_by_run=metadata_by_run,
+        client_requests=_client_requests_dict(record),
+    )
 
 
 async def _tail_existing_run(
@@ -369,6 +441,13 @@ def control_run(
             dedupe_key=body.dedupe_key,
         )
     )
+    _persist_steering_history(
+        bundle=bundle,
+        run_id=run_id,
+        queue_id=response.queue_id,
+        control_id=response.control_id,
+        status="queued" if response.ok else "failed",
+    )
     return ChatControlResponse(
         ok=response.ok,
         control_id=response.control_id,
@@ -383,7 +462,15 @@ def cancel_queued_command(
     bundle: AgentBundle = Depends(get_agent_bundle),
 ) -> ChatControlResponse:
     """Cancel a queued steering command before it is applied."""
+    queued = bundle.command_queue_store.get(queue_id)
     response = bundle.agent.cancel_queued_message(queue_id)
+    _persist_steering_history(
+        bundle=bundle,
+        run_id=queued.run_id if queued is not None else None,
+        queue_id=queue_id,
+        control_id=response.control_id,
+        status="cancelled" if response.ok else "failed",
+    )
     return ChatControlResponse(
         ok=response.ok,
         control_id=response.control_id,

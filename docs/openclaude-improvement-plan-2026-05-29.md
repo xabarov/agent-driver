@@ -131,6 +131,10 @@ Current completed slices:
   from control lifecycle stream events.
 - Chat-demo replay now includes a compact steering timeline for
   control/queue events.
+- Chat-demo session history now persists steering controls in
+  `metadata_by_run[run_id].steering_controls`; cancelling a queued command
+  updates the persisted status, and the frontend restores these controls when
+  loading a session.
 
 Next Phase 2 slice:
 
@@ -287,7 +291,10 @@ when a slice is implemented, tested, committed, or intentionally deferred.
   switch where product-appropriate.
   Enqueue-user-message steering is wired into the streaming composer with
   queued-command cancellation; model switching remains.
-- [ ] Persist steering operations in session transcript/history.
+- [x] Persist steering operations in session transcript/history.
+  Chat-demo writes queue lifecycle snapshots to
+  `metadata_by_run[run_id].steering_controls` and restores them in the
+  frontend store when a session is loaded.
 - [x] Add replay view support for queued messages and controls.
 - [ ] Verify mid-run steering with Playwright and record screenshot/DOM
   assertion.

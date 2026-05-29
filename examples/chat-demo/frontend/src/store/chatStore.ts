@@ -69,6 +69,43 @@ function isChatRole(role: string): role is "user" | "assistant" {
   return role === "user" || role === "assistant";
 }
 
+function steeringControlsFromSession(detail: SessionDetailView): SteeringControl[] {
+  const runId = detail.run_ids.at(-1);
+  if (!runId) {
+    return [];
+  }
+  const metadata = detail.metadata_by_run?.[runId];
+  const rawControls = metadata?.steering_controls ?? metadata?.steeringControls;
+  if (!Array.isArray(rawControls)) {
+    return [];
+  }
+  return rawControls
+    .filter((item): item is NonNullable<typeof rawControls>[number] =>
+      typeof item === "object" && item !== null,
+    )
+    .map((item) => {
+      const queueId = item.queue_id ?? item.queueId;
+      const payload = item.payload;
+      const message =
+        payload && typeof payload === "object" && typeof payload.message === "string"
+          ? payload.message
+          : item.kind ?? "steering command";
+      const status = item.status;
+      const normalizedStatus: SteeringControl["status"] =
+        status === "dequeued" ||
+        status === "applied" ||
+        status === "cancelled"
+          ? status
+          : "queued";
+      return {
+        queueId: typeof queueId === "string" ? queueId : "",
+        message,
+        status: normalizedStatus,
+      };
+    })
+    .filter((item) => item.queueId);
+}
+
 function insertAfterAssistant(messages: ChatMessage[], assistantId: string, item: ChatMessage): ChatMessage[] {
   const index = messages.findIndex((message) => message.id === assistantId);
   if (index < 0) {
@@ -403,7 +440,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sessionId: detail.session_id,
       runId: detail.run_ids.at(-1),
       pendingInterrupt: undefined,
-      steeringControls: [],
+      steeringControls: steeringControlsFromSession(detail),
       lastError: undefined,
       messages,
     });

@@ -60,6 +60,22 @@ export interface AssistantMessageMetadataView {
   model?: string;
   provider?: string;
   estimated?: boolean;
+  steering_controls?: SteeringControlView[];
+  steeringControls?: SteeringControlView[];
+}
+
+export interface SteeringControlView {
+  queue_id?: string;
+  queueId?: string;
+  control_id?: string;
+  controlId?: string;
+  kind?: string;
+  priority?: string;
+  status?: string;
+  payload?: Record<string, unknown>;
+  source?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface SessionMessageView {

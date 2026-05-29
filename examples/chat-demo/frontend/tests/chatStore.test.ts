@@ -133,6 +133,41 @@ describe("chatStore", () => {
     });
   });
 
+  test("loadSession restores persisted steering controls for latest run", () => {
+    useChatStore.getState().loadSession({
+      session_id: "session_abc123",
+      thread_id: "thread_abc123",
+      title: "Session title",
+      run_ids: ["run_1"],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:01:00Z",
+      transcript: [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "world" },
+      ],
+      metadata_by_run: {
+        run_1: {
+          steering_controls: [
+            {
+              queue_id: "cmd_1",
+              kind: "enqueue_user_message",
+              status: "cancelled",
+              payload: { message: "persisted steering" },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(useChatStore.getState().steeringControls).toEqual([
+      {
+        queueId: "cmd_1",
+        message: "persisted steering",
+        status: "cancelled",
+      },
+    ]);
+  });
+
   test("deleteMessage removes assistant turn including tools", () => {
     const assistantId = useChatStore.getState().beginUserTurn("hi");
     useChatStore.getState().appendToolStarted(assistantId, {
