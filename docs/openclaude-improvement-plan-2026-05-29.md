@@ -175,6 +175,9 @@ Current demo-gate status:
   user-facing control.
 - Playwright smoke verifies replay rendering for a force-planning blocked write
   and writes `/tmp/agent-driver-chat-demo-force-planning-block.png`.
+- Current Playwright replay DOM check verifies the post-design policy-denied
+  card for `file_write` and writes
+  `/tmp/agent-driver-chat-demo-force-planning-block-current.png`.
 - Playwright DOM check verifies the replay steering timeline after queueing a
   chat-demo control command and writes
   `/tmp/agent-driver-chat-demo-steering-replay.png`.
@@ -243,10 +246,13 @@ when a slice is implemented, tested, committed, or intentionally deferred.
   Current `agent_tool` request envelope is `external_action` and now has an
   explicit force-planning regression test; native spawn should preserve that
   manifest/policy boundary.
-- [ ] Run and document a passing current Playwright smoke for chat-demo
+- [x] Run and document a passing current Playwright smoke for chat-demo
   force-planning policy-denied replay after the latest design changes.
   2026-05-29 attempt: backend replay passed, live UI card rendering failed and
   was moved to the chat-demo design backlog.
+  2026-05-29 current check: replay DOM asserts `file_write`, `denied`, and the
+  force-planning remediation text; screenshot:
+  `/tmp/agent-driver-chat-demo-force-planning-block-current.png`.
 - [x] Decide and document chat-demo default mode:
   `prompt_only` or `required_for_writes`.
   Documented in `docs/architecture/force-planning.md`: keep
