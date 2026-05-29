@@ -26,8 +26,8 @@ export function FakeProviderBanner() {
           Every reply is fixed to &quot;ok&quot; — no real LLM and no web search. Set{" "}
           <code className="rounded bg-black/30 px-1">AGENT_DRIVER_PROVIDER=openrouter</code>{" "}
           (and API key) in the repo <code className="rounded bg-black/30 px-1">.env</code>, restart{" "}
-          <code className="rounded bg-black/30 px-1">make dev-full</code>, then choose Tools{" "}
-          <strong>Safe</strong> or <strong>All</strong>
+          <code className="rounded bg-black/30 px-1">make dev-full</code>, then enable{" "}
+          <strong>Web Search</strong> or <strong>Web Fetch</strong>
           {toolPreset === "off" ? " (currently Off — tools disabled)." : "."}
         </p>
       </div>

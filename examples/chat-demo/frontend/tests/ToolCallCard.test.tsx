@@ -20,4 +20,22 @@ describe("ToolCallCard", () => {
     expect(screen.getByText("web_search")).toBeInTheDocument();
     expect(screen.getByText("running")).toBeInTheDocument();
   });
+
+  test("renders denied policy state", () => {
+    render(
+      <ToolCallCard
+        message={{
+          id: "tool_1",
+          role: "tool",
+          toolCallId: "call_1",
+          name: "file_write",
+          status: "denied",
+          resultPreview: "force planning requires an approved plan",
+        }}
+      />,
+    );
+    expect(screen.getByText("file_write")).toBeInTheDocument();
+    expect(screen.getByText("denied")).toBeInTheDocument();
+    expect(screen.getByText("force planning requires an approved plan")).toBeInTheDocument();
+  });
 });

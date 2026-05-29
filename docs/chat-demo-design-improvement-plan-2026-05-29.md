@@ -29,6 +29,12 @@ Observed state:
 
 Use a restrained "agent operations console" direction: dense, quiet, highly legible, with subtle runtime telemetry. The demo should feel like a working chat client for inspecting agent behavior, not a landing page or decorative showcase.
 
+Product scope update, 2026-05-29:
+
+- The public web demo is intentionally web-tools-only. Filesystem, workspace mutation, shell, glob, and grep controls are hidden from the user-facing Tools picker.
+- Planning remains an available agent/runtime capability, not a user-facing tool preset. The agent can use it when a task needs planning, while simple answers can stay direct. The UI should show planning outcomes, approvals, snapshots, and policy-denied states when they occur, but should not expose raw planning tool handles as manual controls.
+- Internal presets may still exist for runtime development, but filesystem-write workspace scenarios are no longer covered as chat-demo web integration behavior.
+
 Principles:
 
 - Preserve the current practical shell: sidebar, header controls, message stream, composer.
@@ -47,7 +53,7 @@ Principles:
 - [x] Replace the empty state card with a useful start panel.
   - Target files: `EmptyState.tsx`, `ChatPage.tsx`.
   - Include 3-4 prompt chips for demo-relevant tasks such as planning, tool use, workspace inspection, and replay.
-  - Show current tool preset and provider status in small inline metadata.
+- Show current web tool mode and provider status in small inline metadata.
   - Keep the panel compact enough that the composer remains visually connected on desktop and mobile.
 
 - [x] Improve composer hierarchy.
@@ -91,11 +97,12 @@ Phase 1 implementation notes, 2026-05-29:
   - Add a tooltip or accessible label with provider health details.
   - Avoid red status on first paint while health is still loading.
 
-- [ ] Refine tools preset popover.
+- [x] Refine tools preset popover.
   - Target files: `ChatComposer.tsx`, `ToolsPicker.tsx`.
   - Remove or soften the full-screen dim layer for compact desktop use.
   - On mobile, use a bottom sheet or full-width popover anchored above composer.
-  - Add clearer selected state for presets and better risk semantics for `dev` and `all`.
+  - Keep only user-facing web toggles in the public demo.
+- Communicate that planning is available to the agent without exposing raw planning tool names.
 
 - [ ] Add run context where it helps.
   - Target files: `Header.tsx`, `SessionRunsMenu.tsx`, `MessageMetadataPopover.tsx`.
@@ -104,9 +111,16 @@ Phase 1 implementation notes, 2026-05-29:
 
 - [ ] Verification checklist.
   - [ ] Open model picker, search, select a model, reopen and confirm selected state.
-  - [ ] Open tools picker, change presets, confirm popover placement and enabled tool count.
+  - [x] Open tools picker, change presets, confirm popover placement and enabled tool count.
   - [ ] Simulate loading/error health state and verify visual copy.
   - [ ] Confirm all icon-only controls have accessible names and tooltips where useful.
+
+Tools implementation note, 2026-05-29:
+
+- Replaced the old `Off/Safe/Workspace/Dev/All` web picker with user-facing **Web Search** and **Web Fetch** toggles.
+- Planning tools remain available inside the agent toolset when useful, but are no longer shown or configured in the web UI.
+- Local file, glob/grep, and shell tools are not exposed by the web picker or the public `/api/tools` response.
+- Backend still accepts legacy/internal presets for test and development scenarios.
 
 ## Phase 3 - Message Stream Polish
 
@@ -125,6 +139,7 @@ Phase 1 implementation notes, 2026-05-29:
   - Target files: `PlanningCard.tsx`, `ToolCallCard.tsx`, `InterruptCard.tsx`.
   - Use consistent status badges, compact headers, and collapsible details.
   - Make tool risk/approval states scannable without long explanatory text.
+  - Show hidden runtime activity, such as plan approvals and policy-denied filesystem attempts, as replayable outcomes rather than as manual tool controls.
   - Align card radius and borders with the rest of the UI.
 
 - [ ] Improve message actions.
@@ -179,7 +194,7 @@ Phase 1 implementation notes, 2026-05-29:
 
 - [ ] Add component tests where interaction is local.
   - `ModelPicker`: search filtering, selected state, loading/error states.
-  - `ToolsPicker`: preset changes, hidden tools expansion, workspace-state copy.
+- `ToolsPicker`: Web Search/Web Fetch toggles, legacy preset normalization, hidden planning/filesystem internals.
   - `SessionItem`: active state, delete affordance, long titles.
 
 - [ ] Document manual QA before releases.
@@ -191,6 +206,8 @@ Phase 1 implementation notes, 2026-05-29:
 - [ ] The app feels like an agent runtime console: provider, model, tools, runs, and workspace state are visible but not noisy.
 - [ ] Mobile first viewport shows title, essential controls, empty/message content, and composer without awkward wrapping.
 - [ ] Model and tools controls are usable with long real-world OpenRouter model names.
+- [ ] Public tools UI exposes web search/fetch controls only; filesystem and shell capabilities stay hidden from the default web demo.
+- [ ] Planning is visible through outcomes and approvals, but remains agent-controlled and is not presented as a manual user tool.
 - [ ] Sidebar supports scanning and session management without permanent destructive visual noise.
 - [ ] Empty, loading, error, streaming, interrupt, tool-call, and planning states share a coherent visual language.
 - [ ] Playwright smoke coverage exists for the core scenarios listed above.

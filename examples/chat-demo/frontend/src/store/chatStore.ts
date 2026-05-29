@@ -17,7 +17,7 @@ const assistantRawContent = new Map<string, string>();
 
 export type { AssistantMessageMetadata };
 
-export type ToolCallStatus = "running" | "done" | "failed";
+export type ToolCallStatus = "running" | "done" | "failed" | "denied";
 
 export interface ToolChatMessage {
   id: string;

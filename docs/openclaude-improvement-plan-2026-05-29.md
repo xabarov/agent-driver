@@ -33,6 +33,7 @@ OpenClaude, а в переносе зрелых продуктовых патт�
 | 2 | in progress | Force planning policy engine | Runtime gate for risky tools/subagent spawn |
 | 3 | pending | Steering contracts and queue | `ControlRequest` + durable command queue |
 | 4 | pending | Steering adapters | SSE/SDK/chat-demo control APIs |
+| 4a | pending | Optional Instructor spike | Pydantic-validated structured extraction adapter |
 | 5 | pending | Native subagent spawn | `agent_tool` schedules durable child runs |
 | 6 | pending | Background subagents + mailbox | async children, task notifications, mailbox |
 | 7 | pending | Coordinator profile | coordinator/worker prompts and evals |
@@ -65,14 +66,22 @@ Current completed slices:
   `plan_approval_required` interrupt now stores approved plan metadata and
   updates the run's tool policy metadata so later side-effect tools in the same
   run can proceed.
-- Added chat-demo Force planning control in the Tools popover; `/chat/messages`
-  accepts `force_planning`, and `CHAT_DEMO_FORCE_PLANNING` can set the backend
-  default.
+- Added chat-demo force-planning request plumbing: `/chat/messages` accepts
+  `force_planning`, and `CHAT_DEMO_FORCE_PLANNING` can set the backend default.
+  The public web UI now keeps planning always-on and hides raw planning handles.
+- Added deterministic `CHAT_DEMO_FAKE_SCENARIO=force_planning_block` path:
+  the fake provider attempts a gated `file_write`, force planning denies it
+  before execution, and run replay renders a visible `denied` tool card.
+- Product decision for chat-demo: public web UI exposes web search/fetch only;
+  filesystem/shell controls and raw planning handles are hidden. Planning stays
+  always-on inside the agent/runtime and is surfaced through outcomes such as
+  plan approvals, planning snapshots, and policy-denied replay cards.
 
 Next Phase 2 slice:
 
-- Add a visible blocked-execution demo path that guides the user into plan
-  approval when a risky tool is attempted before approval.
+- Add model-facing remediation that guides the next step into
+  `enter_plan_mode` / `exit_plan_mode_v2` when force planning denies a risky
+  tool before approval.
 - Extend the same gate to native subagent spawn once `agent_tool` becomes a
   runtime scheduling surface.
 
@@ -102,23 +111,70 @@ Current demo-gate status:
 - Playwright smoke against the dev compose verifies the real configured
   provider (`openrouter`) and writes
   `/tmp/agent-driver-chat-demo-openrouter.png`.
-- Playwright smoke verifies the Force planning toggle in the Tools popover and
-  writes `/tmp/agent-driver-chat-demo-force-planning-toggle.png`.
+- Earlier Playwright smoke covered the Force planning toggle; the current
+  public web UX keeps planning always-on and no longer exposes that toggle as a
+  user-facing control.
+- Playwright smoke verifies replay rendering for a force-planning blocked write
+  and writes `/tmp/agent-driver-chat-demo-force-planning-block.png`.
 - Optional deterministic plan approval browser smoke can be run by restarting
   dev compose with `AGENT_DRIVER_PROVIDER=fake` and
   `CHAT_DEMO_FAKE_SCENARIO=plan_approval`.
+- Optional deterministic force-planning denial smoke can be run by restarting
+  dev compose with `AGENT_DRIVER_PROVIDER=fake`,
+  `CHAT_DEMO_FAKE_SCENARIO=force_planning_block`, and
+  `CHAT_DEMO_FORCE_PLANNING=true`.
 
 Phase-specific chat-demo gates:
 
 - Phase 1: plan approval card can show plan content/hash/path and approve,
   edit, reject, or cancel through existing resume endpoints.
-- Phase 2: forced planning policy visibly blocks risky execution and guides the
-  user into plan approval.
+- Phase 2: forced planning policy visibly blocks risky execution in replay;
+  next step is model-facing guidance into plan approval.
 - Phase 3-4: mid-run steering controls appear in chat-demo and survive SSE
   reconnect/replay.
 - Phase 5-6: subagent spawn, background status, mailbox notifications,
   continue and stop are visible in chat-demo.
 - Phase 7: coordinator/worker mode is selectable and shows worker lifecycle.
+
+## Optional Structured Extraction: Instructor Spike
+
+Reference: `https://python.useinstructor.com/`.
+
+Instructor is not a replacement for `agent-driver` runtime, providers, event
+log, checkpoints, HITL, or governed tools. Its best fit is an optional,
+schema-first extraction layer for places where the runtime needs "LLM output
+as a validated Pydantic object" with retry/reask semantics.
+
+Recommended scope:
+
+- Add optional dependency extra: `agent-driver[instructor]`.
+- Add an adapter under `agent_driver/structured/`, for example
+  `extract_structured(messages, response_model, purpose=...)`.
+- Keep provider/runtime contracts independent of Instructor; the adapter should
+  consume existing `LlmRequest`/provider configuration or wrap an external
+  Instructor client at the edge.
+
+High-value use cases in this roadmap:
+
+- Phase 3 steerability: parse natural-language steering such as "stop the
+  worker", "switch to cheaper model", "continue but ask before writes" into a
+  typed `ControlRequest`.
+- Phase 1-2 force planning: validate plan artifacts against a schema containing
+  scope, steps, touched resources, risks, verification, rollback, and requested
+  permission categories before approval.
+- Phase 5-7 subagents: validate `SubagentTaskSpec`, worker reports, research
+  findings, coordinator synthesis, and plan-approval mailbox messages.
+- Memory/compaction: extract durable facts, decisions, unresolved questions,
+  and user preferences from transcripts into typed context records.
+
+Acceptance criteria for the spike:
+
+- Instructor remains optional and disabled by default.
+- Existing provider tests pass without Instructor installed.
+- A focused prototype demonstrates one steering parser and one plan artifact
+  validator using existing Pydantic contracts.
+- Validation/retry failures are surfaced as runtime observations or structured
+  errors, not hidden inside provider-specific exceptions.
 
 ## Source Analysis
 

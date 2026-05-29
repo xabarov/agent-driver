@@ -4,7 +4,7 @@ import { ArrowUp, Square, Wrench } from "lucide-react";
 
 import { cn } from "../../lib/cn";
 import { ToolsPicker } from "../settings/ToolsPicker";
-import { useSettingsStore } from "../../store/settingsStore";
+import { normalizeToolPreset, toolPresetLabel, useSettingsStore } from "../../store/settingsStore";
 import { Button } from "../ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { Textarea } from "../ui/textarea";
@@ -19,8 +19,7 @@ interface ChatComposerProps {
 export function ChatComposer({ streaming, disabled, onSend, onStop }: ChatComposerProps) {
   const [value, setValue] = useState("");
   const [toolsOpen, setToolsOpen] = useState(false);
-  const toolPreset = useSettingsStore((state) => state.toolPreset);
-  const forcePlanning = useSettingsStore((state) => state.forcePlanning);
+  const toolPreset = normalizeToolPreset(useSettingsStore((state) => state.toolPreset));
 
   const submit = () => {
     const trimmed = value.trim();
@@ -67,14 +66,13 @@ export function ChatComposer({ streaming, disabled, onSend, onStop }: ChatCompos
                 <Button
                   type="button"
                   size="sm"
-                  variant={toolPreset === "safe" ? "ghost" : "secondary"}
+                  variant={toolPreset === "web" ? "ghost" : "secondary"}
                   className="gap-1.5 capitalize"
                   disabled={disabled}
                 >
                   <Wrench className="h-4 w-4" />
                   <span className="hidden sm:inline">Tools ·</span>
-                  {toolPreset}
-                  {forcePlanning ? " · plan" : ""}
+                  {toolPresetLabel(toolPreset)}
                 </Button>
               </PopoverTrigger>
               <PopoverContent

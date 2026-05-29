@@ -46,8 +46,23 @@ class AgentBundle:
 
 def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
     if preset == "off":
-        return CliToolConfig(tools_mode="none")
-    if preset == "safe":
+        return CliToolConfig(
+            tools_mode="default",
+            tool_packs=("planning",),
+        )
+    if preset == "web_search":
+        return CliToolConfig(
+            tools_mode="default",
+            tools=("web_search",),
+            tool_packs=("planning",),
+        )
+    if preset == "web_fetch":
+        return CliToolConfig(
+            tools_mode="default",
+            tools=("web_fetch",),
+            tool_packs=("planning",),
+        )
+    if preset in {"web", "safe"}:
         return CliToolConfig(
             tools_mode="default",
             tool_packs=("web", "planning"),

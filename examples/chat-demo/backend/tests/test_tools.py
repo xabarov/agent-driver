@@ -6,8 +6,7 @@ async def test_tools_default_preset(client) -> None:
     assert response.status_code == 200
     payload = response.json()
     names = {item["name"] for item in payload["tools"]}
-    assert "web_search" in names
-    assert "todo_write" in names
+    assert names == {"web_fetch", "web_search"}
     assert "read_file" not in names
     assert "bash" not in names
     assert payload["workspace"]["mode"] == "session"
@@ -20,23 +19,25 @@ async def test_tools_off_preset_query(client) -> None:
     assert payload["tools"] == []
 
 
-async def test_tools_workspace_preset_includes_readonly_filesystem(client) -> None:
-    response = await client.get("/api/tools", params={"preset": "workspace", "session_id": "session_a"})
+async def test_tools_web_search_preset_only_shows_search(client) -> None:
+    response = await client.get("/api/tools", params={"preset": "web_search"})
     assert response.status_code == 200
-    payload = response.json()
-    names = {item["name"] for item in payload["tools"]}
-    assert "web_search" in names
-    assert "read_file" in names
-    assert "grep_search" in names
-    assert "file_write" not in names
-    assert payload["workspace"]["sessionId"] == "session_a"
+    names = {item["name"] for item in response.json()["tools"]}
+    assert names == {"web_search"}
 
 
-async def test_tools_dev_preset_includes_workspace_write_and_shell(client) -> None:
+async def test_tools_web_fetch_preset_only_shows_fetch(client) -> None:
+    response = await client.get("/api/tools", params={"preset": "web_fetch"})
+    assert response.status_code == 200
+    names = {item["name"] for item in response.json()["tools"]}
+    assert names == {"web_fetch"}
+
+
+async def test_tools_legacy_dev_preset_still_hides_filesystem_from_public_endpoint(client) -> None:
     response = await client.get("/api/tools", params={"preset": "dev"})
     assert response.status_code == 200
     names = {item["name"] for item in response.json()["tools"]}
-    assert {"web_search", "read_file", "file_write", "bash"}.issubset(names)
+    assert names == {"web_fetch", "web_search"}
 
 
 async def test_workspace_sample_import_populates_session_workspace(client) -> None:

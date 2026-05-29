@@ -11,6 +11,8 @@ from app.workspace import workspace_status
 
 router = APIRouter(tags=["meta"])
 
+PUBLIC_TOOL_NAMES = {"web_fetch", "web_search"}
+
 
 @router.get("/tools", response_model=ToolsResponse)
 def tools(preset: ToolPreset | None = None, session_id: str | None = None) -> ToolsResponse:
@@ -25,6 +27,7 @@ def tools(preset: ToolPreset | None = None, session_id: str | None = None) -> To
             approvalMode=manifest.approval_mode.value,
         )
         for manifest in bundle.manifests
+        if manifest.name in PUBLIC_TOOL_NAMES
     ]
     return ToolsResponse(
         tools=payload,

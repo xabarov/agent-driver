@@ -53,6 +53,38 @@ describe("eventsToMessages", () => {
     expect(messages[1]).toMatchObject({ role: "tool", name: "web_search", status: "done" });
   });
 
+  it("keeps denied tool calls visible for policy feedback", () => {
+    const messages = eventsToMessages([
+      ev("run_started", 1),
+      ev("tool_call_started", 2, {
+        tools: [
+          {
+            tool_name: "file_write",
+            tool_call_id: "tc1",
+            args: { path: "demo.txt" },
+          },
+        ],
+      }),
+      ev("tool_call_completed", 3, {
+        tools: [
+          {
+            tool_name: "file_write",
+            tool_call_id: "tc1",
+            status: "denied",
+            result_summary: "force planning requires an approved plan",
+          },
+        ],
+      }),
+      ev("run_completed", 4),
+    ]);
+    expect(messages[0]).toMatchObject({
+      role: "tool",
+      name: "file_write",
+      status: "denied",
+      resultPreview: "force planning requires an approved plan",
+    });
+  });
+
   it("uses assistant completed snapshots for replay recovery", () => {
     const messages = eventsToMessages([
       ev("assistant_message_started", 1),

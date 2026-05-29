@@ -8,7 +8,17 @@ from typing import Literal
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ToolPreset = Literal["off", "safe", "workspace", "dev", "all"]
+ToolPreset = Literal[
+    "off",
+    "web_search",
+    "web_fetch",
+    "web",
+    # Legacy/internal presets remain accepted for backend scenarios and older clients.
+    "safe",
+    "workspace",
+    "dev",
+    "all",
+]
 
 
 def _discover_env_files() -> tuple[str, ...]:
@@ -41,7 +51,7 @@ class Settings(BaseSettings):
     )
 
     tool_preset: ToolPreset = Field(
-        default="safe",
+        default="web",
         validation_alias=AliasChoices("CHAT_DEMO_TOOL_PRESET"),
     )
     force_planning: bool = Field(

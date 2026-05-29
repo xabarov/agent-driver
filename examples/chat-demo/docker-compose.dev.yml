@@ -36,7 +36,6 @@ services:
       CHAT_DEMO_FORCE_PLANNING: ${CHAT_DEMO_FORCE_PLANNING:-false}
       AGENT_DRIVER_RUNTIME_STORE_KIND: sqlite
       CHAT_DEMO_SESSIONS_PATH: /workspace/examples/chat-demo/.agent-driver/sessions.json
-      CHAT_DEMO_WORKSPACE_ROOT: /workspace/examples/chat-demo/workspace
 
   frontend:
     image: node:20-bookworm-slim

@@ -4,14 +4,15 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent_driver.contracts import AgentRunInput, ChatMessage
-from agent_driver.contracts.enums import ResumeAction, ToolRisk
+from agent_driver.contracts.enums import ApprovalMode, ResumeAction, SideEffectClass, ToolRisk
+from agent_driver.contracts.tools import ToolCall, ToolManifest
 from agent_driver.llm.contracts import LlmFinishReason
-from agent_driver.contracts.tools import ToolCall
 from agent_driver.llm.contracts import LlmRequest, LlmResponse, UsageSummary
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime import create_runtime_store_bundle, runtime_store_config_from_env
+from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.sdk import create_agent
-from agent_driver.tools import ToolSet
+from agent_driver.tools import ToolRegistry, ToolSet
 
 from app.deps import reset_dependency_caches
 from app.main import create_app
@@ -35,14 +36,14 @@ class _InterruptThenStop(FakeProvider):
                 metadata={
                     "planned_tool_calls": [
                         ToolCall(
-                            tool_name="file_write",
-                            args={"path": "/tmp/resume-test.txt", "content": "approved\n"},
+                            tool_name="approval_test",
+                            args={"message": "approved"},
                         ).model_dump(mode="json")
                     ]
                 },
             )
         return LlmResponse(
-            message=ChatMessage(role="assistant", content="write completed"),
+            message=ChatMessage(role="assistant", content="approval completed"),
             finish_reason=LlmFinishReason.STOP,
             usage=UsageSummary(model_provider="fake", model_name="test"),
             provider="fake",
@@ -53,16 +54,32 @@ class _InterruptThenStop(FakeProvider):
 def _interrupt_bundle(tmp_path, monkeypatch) -> AgentBundle:
     monkeypatch.setenv("AGENT_DRIVER_PROVIDER", "fake")
     monkeypatch.setenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "memory")
-    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "dev")
+    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "web")
     monkeypatch.setenv("CHAT_DEMO_SESSIONS_PATH", str(tmp_path / "sessions.json"))
     reset_dependency_caches()
     settings = __import__("app.deps", fromlist=["get_settings"]).get_settings()
     provider = _InterruptThenStop()
-    toolset = ToolSet.only("file_write")
+    registry = ToolRegistry()
+
+    async def approval_test_tool(args: dict[str, object]) -> dict[str, object]:
+        return {"ok": True, "message": str(args.get("message", ""))}
+
+    registry.register(
+        ToolManifest(
+            name="approval_test",
+            description="Test-only approval tool for resume API coverage.",
+            risk=ToolRisk.MEDIUM,
+            side_effect=SideEffectClass.EXTERNAL_ACTION,
+            approval_mode=ApprovalMode.ON_POLICY_MATCH,
+        ),
+        approval_test_tool,
+    )
+    toolset = ToolSet.only("approval_test")
     runtime_store_bundle = create_runtime_store_bundle(runtime_store_config_from_env())
     agent = create_agent(
         provider=provider,
         tools=toolset,
+        config=RunnerConfig(tool_registry=registry),
         checkpoint_store=runtime_store_bundle.checkpoint_store,
         event_log=runtime_store_bundle.event_log,
     )
@@ -131,7 +148,7 @@ async def test_fake_plan_approval_scenario_streams_interrupt_and_resume(
     monkeypatch.setenv("AGENT_DRIVER_PROVIDER", "fake")
     monkeypatch.setenv("CHAT_DEMO_FAKE_SCENARIO", "plan_approval")
     monkeypatch.setenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "memory")
-    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "safe")
+    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "web")
     monkeypatch.setenv("CHAT_DEMO_SESSIONS_PATH", str(tmp_path / "sessions.json"))
     reset_dependency_caches()
     application = create_app()
@@ -145,7 +162,7 @@ async def test_fake_plan_approval_scenario_streams_interrupt_and_resume(
             "/api/chat/messages",
             json={
                 "message": "please plan this change",
-                "tool_preset": "safe",
+                "tool_preset": "web",
                 "force_planning": True,
             },
         ) as stream_response:
@@ -161,7 +178,7 @@ async def test_fake_plan_approval_scenario_streams_interrupt_and_resume(
         assert "interrupt_requested" in events
         from app.deps import get_agent_bundle_for_request
 
-        checkpoint = get_agent_bundle_for_request("safe").checkpoint_store.latest(run_id)
+        checkpoint = get_agent_bundle_for_request("web").checkpoint_store.latest(run_id)
         assert checkpoint is not None
         policy_metadata = checkpoint.state.run_input.tool_policy.metadata
         assert policy_metadata["force_planning"]["enabled"] is True
@@ -189,4 +206,48 @@ async def test_fake_plan_approval_scenario_streams_interrupt_and_resume(
 
     assert "run_resumed" in resumed_events
     assert "run_completed" in resumed_events
+    reset_dependency_caches()
+
+
+@pytest.mark.asyncio
+async def test_fake_force_planning_block_scenario_streams_denied_tool(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENT_DRIVER_PROVIDER", "fake")
+    monkeypatch.setenv("CHAT_DEMO_FAKE_SCENARIO", "force_planning_block")
+    monkeypatch.setenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "memory")
+    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "dev")
+    monkeypatch.setenv("CHAT_DEMO_SESSIONS_PATH", str(tmp_path / "sessions.json"))
+    reset_dependency_caches()
+    application = create_app()
+
+    event_names: list[str] = []
+    event_data: list[str] = []
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with client.stream(
+            "POST",
+            "/api/chat/messages",
+            json={
+                "message": "try a write before planning",
+                "tool_preset": "dev",
+                "force_planning": True,
+            },
+        ) as stream_response:
+            assert stream_response.status_code == 200
+            async for line in stream_response.aiter_lines():
+                if line.startswith("event: "):
+                    event = line.removeprefix("event: ").strip()
+                    event_names.append(event)
+                    if event == "run_completed":
+                        break
+                if line.startswith("data: "):
+                    event_data.append(line.removeprefix("data: ").strip())
+
+    assert "tool_call_completed" in event_names
+    assert "run_completed" in event_names
+    joined_data = "\n".join(event_data)
+    assert '"tool_name": "file_write"' in joined_data
+    assert '"status": "denied"' in joined_data
+    assert "force planning requires an approved plan" in joined_data
     reset_dependency_caches()

@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { Compass, FolderSearch, ListChecks, Wrench } from "lucide-react";
+import { Compass, Link2, ListChecks, Wrench } from "lucide-react";
 
 import { fetchHealth } from "../../lib/api";
-import { useSettingsStore } from "../../store/settingsStore";
+import { normalizeToolPreset, toolPresetLabel, useSettingsStore } from "../../store/settingsStore";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 
@@ -22,9 +22,9 @@ const STARTERS = [
     prompt: "Show which tools are available in this session and when you would use each one.",
   },
   {
-    icon: FolderSearch,
-    label: "Inspect workspace",
-    prompt: "Inspect the current workspace and summarize the files that matter for the chat demo.",
+    icon: Link2,
+    label: "Fetch a URL",
+    prompt: "Fetch and summarize the main points from a URL I provide.",
   },
   {
     icon: Compass,
@@ -34,7 +34,7 @@ const STARTERS = [
 ];
 
 export function EmptyState({ onPromptSelect }: EmptyStateProps) {
-  const toolPreset = useSettingsStore((state) => state.toolPreset);
+  const toolPreset = normalizeToolPreset(useSettingsStore((state) => state.toolPreset));
   const health = useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,
@@ -60,7 +60,7 @@ export function EmptyState({ onPromptSelect }: EmptyStateProps) {
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <Badge variant="outline" className="capitalize text-xs">
-              Tools: {toolPreset}
+              Tools: {toolPresetLabel(toolPreset)}
             </Badge>
             <Badge variant="outline" className="gap-1.5 text-xs">
               <span className={`h-1.5 w-1.5 rounded-full bg-current ${providerStatus}`} />

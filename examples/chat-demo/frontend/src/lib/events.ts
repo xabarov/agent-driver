@@ -148,7 +148,9 @@ export function parseToolStatesFromEvent(
     .map((tool, index) => {
       const rawStatus = tool.status;
       let status: ToolCallStatus = event.event === "tool_call_completed" ? "done" : "running";
-      if (rawStatus === "failed" || rawStatus === "error") {
+      if (rawStatus === "denied") {
+        status = "denied";
+      } else if (rawStatus === "failed" || rawStatus === "error") {
         status = "failed";
       }
       return {

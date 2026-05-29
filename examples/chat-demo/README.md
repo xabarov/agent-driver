@@ -34,26 +34,15 @@ AGENT_DRIVER_MODEL=your/model
 
 2. Restart `make dev-full` (backend reloads env from repo `.env` automatically).
 
-3. In the UI set **Tools → Safe** (web + planning), **Workspace** (adds read-only session files), **Dev** (adds writes + governed shell), or **All**. **Off** disables all tools.
+3. In the UI use **Tools** to enable **Web Search** and/or **Web Fetch**. Planning tools are available internally when the agent decides they are useful; local file and shell tools are not exposed in the web UI.
 
 Header should show `openrouter · <model>` instead of `fake · default`.
-
-## Agent workspace (file writes)
-
-When **Tools** include filesystem write (`dev` / `all`), the agent writes under a **per-session sandbox**, not under `backend/`:
-
-- Default root: `examples/chat-demo/workspace/<session_id>/`
-- Override: `CHAT_DEMO_WORKSPACE_ROOT=/path/to/root` (absolute or relative to chat-demo root)
-- Relative paths in `file_write` / `bash` resolve against that session folder
-- `workspace/` is gitignored; reload the session page does not move files between chats
-
-Remove old artifacts manually if they were created in `backend/` before this isolation (e.g. `snake_game/`).
 
 ## UI/UX (OpenRouter-like)
 
 - Full-height layout: sidebar + sticky composer
 - **Model picker** in header (`GET /api/models`, OpenRouter catalog when configured)
-- **Tools** popover: preset toggle + live tool list from `GET /api/tools?preset=`
+- **Tools** popover: Web Search and Web Fetch toggles; planning is internal
 - Message avatars, copy assistant reply, tool cards with type icons
 - **Runs** menu (replay) instead of chip row above chat
 - Stream errors shown inline (SSL/network/API)
@@ -110,7 +99,7 @@ Open `http://127.0.0.1:8000` (UI + API on one port).
 | ----- | ---------- |
 | 1–2 | Backend meta + chat SSE; React chat with markdown streaming |
 | 3 | Sessions sidebar, `/sessions/:id` routing, transcript restore |
-| 4 | Tool preset per request (`off/safe/dev/all`), `ToolCallCard` in chat |
+| 4 | Web tool selection per request (`off/web_search/web_fetch/web`), `ToolCallCard` in chat |
 | 5 | HITL: `interrupt_requested` → `InterruptCard` → `POST /api/chat/runs/{id}/resume` |
 | 6 | Replay: `GET /api/sessions/{id}/replay?run_id=`, theme toggle, mobile sidebar |
 | 7 | Static SPA via FastAPI, acceptance checklist below |
@@ -119,7 +108,7 @@ Open `http://127.0.0.1:8000` (UI + API on one port).
 
 - Store file: `CHAT_DEMO_SESSIONS_PATH` (default `./.agent-driver/sessions.json`)
 - Routes: `/sessions/new`, `/sessions/<session_id>`, `/sessions/<session_id>/replay/<run_id>`
-- Tool presets: `safe` does not expose filesystem tools; `workspace`/`dev` operate only on the per-session workspace.
+- Web tool presets: `off`, `web_search`, `web_fetch`, `web`. Planning tools are hidden from UI and always available to the agent.
 - Runtime event log: `AGENT_DRIVER_RUNTIME_STORE_KIND=sqlite` recommended for HITL/replay durability
 
 ## Environment
@@ -137,10 +126,10 @@ See [`.env.example`](.env.example). Key variables:
 ```bash
 curl http://127.0.0.1:8010/api/health
 curl http://127.0.0.1:8010/api/models
-curl "http://127.0.0.1:8000/api/tools?preset=safe"
-curl -N -X POST "http://127.0.0.1:8000/api/chat/messages" \
+curl "http://127.0.0.1:8010/api/tools?preset=web"
+curl -N -X POST "http://127.0.0.1:8010/api/chat/messages" \
   -H "content-type: application/json" \
-  -d '{"message":"hi","tool_preset":"safe"}'
+  -d '{"message":"hi","tool_preset":"web"}'
 ```
 
 ## Tests
@@ -154,7 +143,7 @@ make test-frontend
 
 - [ ] `/` redirects to `/sessions/new`; sidebar lists sessions
 - [ ] Send message → URL becomes `/sessions/<id>`; transcript persists on reload
-- [ ] Tool preset chips change next run; tool cards appear with real provider + `dev` preset
+- [ ] Web Search/Web Fetch toggles change the next run; web tool cards appear with a real provider
 - [ ] Interrupt card shows on approval-required tool; Approve resumes stream
 - [ ] Replay link opens read-only run timeline
 - [ ] Theme toggle switches light/dark; provider badge shows health

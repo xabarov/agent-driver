@@ -4,6 +4,7 @@ import {
   ChevronRight,
   FileText,
   Globe,
+  ShieldAlert,
   Terminal,
   Wrench,
 } from "lucide-react";
@@ -31,8 +32,10 @@ function toolIcon(name: string): LucideIcon {
 }
 
 export function ToolCallCard({ message }: ToolCallCardProps) {
-  const [open, setOpen] = useState(message.status === "running");
-  const Icon = toolIcon(message.name);
+  const [open, setOpen] = useState(
+    message.status === "running" || message.status === "denied",
+  );
+  const Icon = message.status === "denied" ? ShieldAlert : toolIcon(message.name);
 
   return (
     <div className="ml-11 rounded-lg border border-border/80 bg-muted/20 p-3 text-sm">
@@ -49,6 +52,7 @@ export function ToolCallCard({ message }: ToolCallCardProps) {
           className={cn(
             message.status === "running" && "animate-pulse",
             message.status === "failed" && "bg-destructive/20 text-destructive",
+            message.status === "denied" && "bg-amber-500/15 text-amber-400",
           )}
         >
           {message.status}

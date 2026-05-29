@@ -100,8 +100,91 @@ class PlanApprovalFakeProvider(FakeProvider):
         )
 
 
+class ForcePlanningBlockFakeProvider(FakeProvider):
+    """Fake provider that first attempts a gated write before planning."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="Force planning blocked the file write.")
+        self._calls = 0
+
+    def _usage(self, request: LlmRequest) -> UsageSummary:
+        return UsageSummary(
+            input_tokens=max(
+                1, sum(len(message.content) for message in request.messages) // 4
+            ),
+            output_tokens=12,
+            total_tokens=24,
+            model_provider=self.name,
+            model_name=request.model or "fake-model",
+        )
+
+    def _write_call(self) -> list[dict[str, object]]:
+        return [
+            ToolCall(
+                tool_name="file_write",
+                tool_call_id="force_planning_block_demo",
+                args={
+                    "path": "docs/force-planning-demo.txt",
+                    "content": "This write should be blocked until a plan is approved.\n",
+                },
+            ).model_dump(mode="json")
+        ]
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            return LlmResponse(
+                message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                provider=self.name,
+                model=request.model or "fake-model",
+                metadata={
+                    "provider_kind": "fake",
+                    "planned_tool_calls": self._write_call(),
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(
+                role=ChatRole.ASSISTANT,
+                content=(
+                    "Force planning blocked the file write. I need to enter "
+                    "plan mode and get approval before retrying."
+                ),
+            ),
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+            provider=self.name,
+            model=request.model or "fake-model",
+            metadata={"provider_kind": "fake"},
+        )
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            yield LlmStreamEvent(
+                event="tool_calls",
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                metadata={"planned_tool_calls": self._write_call()},
+            )
+            return
+        yield LlmStreamEvent(event="delta", delta_text="Force planning blocked ")
+        yield LlmStreamEvent(event="delta", delta_text="the file write.")
+        yield LlmStreamEvent(
+            event="done",
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+        )
+
+
 def build_fake_scenario_provider(scenario: str | None) -> FakeProvider | None:
     """Return a scenario provider, or None when no scenario is selected."""
-    if (scenario or "").strip() == "plan_approval":
+    normalized = (scenario or "").strip()
+    if normalized == "plan_approval":
         return PlanApprovalFakeProvider()
+    if normalized == "force_planning_block":
+        return ForcePlanningBlockFakeProvider()
     return None
