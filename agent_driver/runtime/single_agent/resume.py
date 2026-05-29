@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
 from agent_driver.contracts.enums import (
+    InterruptReason,
     ResumeAction,
     RunStatus,
     RuntimeEventType,
@@ -28,6 +29,71 @@ from agent_driver.runtime.single_agent.types import (
     TerminalResult,
 )
 from agent_driver.runtime.storage import CheckpointRecord
+
+if TYPE_CHECKING:
+    from agent_driver.runtime.abort import RunAbortHandle
+    from agent_driver.runtime.tool_gate import ToolGate
+
+
+def _plan_approval_payload(pending: PendingInterruptState) -> dict[str, object] | None:
+    """Return plan approval payload from a pending interrupt, if present."""
+    if pending.interrupt.reason != InterruptReason.PLAN_APPROVAL_REQUIRED:
+        return None
+    proposed = pending.interrupt.proposed_action
+    payload = proposed.get("plan_approval")
+    if isinstance(payload, dict):
+        return dict(payload)
+    structured = pending.envelope.structured_output
+    if isinstance(structured, dict):
+        payload = structured.get("plan_approval")
+        if isinstance(payload, dict):
+            return dict(payload)
+    return None
+
+
+def _mark_force_planning_approved(
+    context: RunContext,
+    *,
+    pending: PendingInterruptState,
+) -> None:
+    """Store approved plan markers in run metadata and tool policy metadata."""
+    payload = _plan_approval_payload(pending)
+    if payload is None:
+        return
+    plan_id = str(
+        payload.get("plan_id") or pending.interrupt.metadata.get("plan_id") or ""
+    ).strip()
+    content_hash = str(
+        payload.get("content_hash")
+        or pending.interrupt.metadata.get("content_hash")
+        or ""
+    ).strip()
+    approved_plan = {
+        "plan_id": plan_id,
+        "content_hash": content_hash,
+        "path": payload.get("path"),
+    }
+    context.metadata["approved_plan"] = approved_plan
+    current_policy = context.run_input.tool_policy
+    policy_metadata = dict(current_policy.metadata)
+    raw_force = policy_metadata.get("force_planning")
+    force_planning = dict(raw_force) if isinstance(raw_force, dict) else {}
+    if not force_planning and policy_metadata.get("force_planning_enabled") is True:
+        force_planning["enabled"] = True
+    if force_planning:
+        force_planning["approved"] = True
+        if plan_id:
+            force_planning["approved_plan_id"] = plan_id
+        if content_hash:
+            force_planning["approved_content_hash"] = content_hash
+        policy_metadata["force_planning"] = force_planning
+        context.run_input = context.run_input.model_copy(
+            update={
+                "tool_policy": current_policy.model_copy(
+                    update={"metadata": policy_metadata}
+                )
+            }
+        )
 
 
 class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
@@ -157,6 +223,7 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             return
 
         if resume.action in {ResumeAction.APPROVE, ResumeAction.EDIT}:
+            _mark_force_planning_approved(context, pending=pending)
             call = apply_resume_to_call(
                 pending.call, resume.action, resume.edited_tool_args
             )

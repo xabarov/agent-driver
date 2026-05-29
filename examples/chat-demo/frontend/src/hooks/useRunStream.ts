@@ -139,6 +139,7 @@ function applyStreamEvent(
 export function useRunStream(): RunStreamController {
   const queryClient = useQueryClient();
   const toolPreset = useSettingsStore((state) => state.toolPreset);
+  const forcePlanning = useSettingsStore((state) => state.forcePlanning);
   const model = useSettingsStore((state) => state.model);
   const abortRef = useRef<AbortController | null>(null);
   const activeAssistantRef = useRef<string | null>(null);
@@ -200,6 +201,7 @@ export function useRunStream(): RunStreamController {
           message: trimmed,
           sessionId: state.sessionId,
           toolPreset,
+          forcePlanning,
           model: model || undefined,
           retryFromRunId,
           clientRequestId,
@@ -226,7 +228,7 @@ export function useRunStream(): RunStreamController {
         });
       });
     },
-    [invalidateAfterTerminal, model, runStream, toolPreset],
+    [forcePlanning, invalidateAfterTerminal, model, runStream, toolPreset],
   );
 
   const sendMessage = useCallback(

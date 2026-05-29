@@ -13,6 +13,7 @@ class ChatMessageRequest(BaseModel):
     session_id: str | None = None
     message: str = Field(min_length=1)
     tool_preset: ToolPreset | None = None
+    force_planning: bool | None = None
     model: str | None = None
     retry_from_run_id: str | None = None
     client_request_id: str | None = None
@@ -54,4 +55,3 @@ class CancelRunResponse(BaseModel):
     ok: bool = True
     run_id: str
     cancelled: bool
-

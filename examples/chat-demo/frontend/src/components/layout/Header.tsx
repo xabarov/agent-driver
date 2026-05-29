@@ -24,40 +24,41 @@ export function Header() {
     refetchInterval: 5000,
   });
 
-  const providerName = health.data?.provider.provider_name ?? "unknown";
+  const providerName = health.data?.provider.provider_name ?? "checking";
   const isHealthy = health.data?.provider.healthy ?? false;
+  const providerTone = health.isLoading
+    ? "fill-muted-foreground text-muted-foreground"
+    : isHealthy
+      ? "fill-emerald-500 text-emerald-500"
+      : "fill-red-500 text-red-500";
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-center gap-2">
         <MessageSquare className="h-5 w-5 text-primary" />
-        <div>
+        <div className="min-w-0">
           <h1 className="text-base font-semibold leading-tight">Chat</h1>
-          <p className="text-xs text-muted-foreground">agent-driver demo</p>
+          <p className="truncate text-xs text-muted-foreground">agent-driver demo</p>
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex min-w-0 items-center gap-2 overflow-x-auto pb-1 sm:justify-end sm:overflow-visible sm:pb-0">
         {lastAssistantMetadata?.promptTokens != null ||
         lastAssistantMetadata?.completionTokens != null ? (
-          <Badge variant="outline" className="gap-1.5 text-xs font-mono">
+          <Badge variant="outline" className="shrink-0 gap-1.5 text-xs font-mono">
             <span className="text-muted-foreground">↑ prompt</span>
             {lastAssistantMetadata.promptTokens ?? 0}
             <span className="text-muted-foreground">· ↓ completion</span>
             {lastAssistantMetadata.completionTokens ?? 0}
           </Badge>
         ) : null}
-        <Badge variant="secondary" className="gap-1.5 text-xs">
-          <Circle
-            className={`h-2 w-2 ${
-              isHealthy ? "fill-emerald-500 text-emerald-500" : "fill-red-500 text-red-500"
-            }`}
-          />
+        <Badge variant="secondary" className="shrink-0 gap-1.5 text-xs">
+          <Circle className={`h-2 w-2 ${providerTone}`} />
           {providerName}
         </Badge>
         <ModelPicker />
         <button
           type="button"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md hover:bg-secondary"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md hover:bg-secondary"
           onClick={toggleTheme}
           aria-label="Toggle theme"
         >

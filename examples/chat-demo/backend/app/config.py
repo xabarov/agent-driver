@@ -44,6 +44,10 @@ class Settings(BaseSettings):
         default="safe",
         validation_alias=AliasChoices("CHAT_DEMO_TOOL_PRESET"),
     )
+    force_planning: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("CHAT_DEMO_FORCE_PLANNING"),
+    )
     max_steps: int = Field(
         default=24,
         validation_alias=AliasChoices("CHAT_DEMO_MAX_STEPS"),
@@ -81,6 +85,10 @@ class Settings(BaseSettings):
         default="fake",
         validation_alias=AliasChoices("AGENT_DRIVER_PROVIDER"),
     )
+    fake_scenario: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CHAT_DEMO_FAKE_SCENARIO"),
+    )
     model: str | None = Field(
         default=None,
         validation_alias=AliasChoices("AGENT_DRIVER_MODEL"),
@@ -110,4 +118,3 @@ class Settings(BaseSettings):
             for item in self.app_cors_origins.split(",")
             if item.strip()
         ] or ["http://localhost:5173"]
-

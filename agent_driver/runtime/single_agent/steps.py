@@ -63,7 +63,7 @@ class SingleAgentStepMixin:
             return await run_code_agent_stage(runner=self, context=context)
         if context.llm_response is None:
             raise RuntimeExecutionError("Missing LLM response before tool stage")
-        approved_call = context.metadata.get("approved_tool_call")
+        approved_call = context.metadata.pop("approved_tool_call", None)
         # A0.2 — only forward ``tool_gate`` when the caller actually set
         # one. Old executors and test mocks have ``(run_input,
         # llm_response)`` signatures and would reject an unknown kwarg;

@@ -29,8 +29,8 @@ OpenClaude, а в переносе зрелых продуктовых патт�
 
 | Phase | Status | Focus | First deliverable |
 | ----- | ------ | ----- | ----------------- |
-| 1 | in progress | Plan artifact + approval foundation | `PlanArtifact`, approval payload, artifact store |
-| 2 | pending | Force planning policy engine | Runtime gate for risky tools/subagent spawn |
+| 1 | done | Plan artifact + approval foundation | `PlanArtifact`, approval payload, artifact store |
+| 2 | in progress | Force planning policy engine | Runtime gate for risky tools/subagent spawn |
 | 3 | pending | Steering contracts and queue | `ControlRequest` + durable command queue |
 | 4 | pending | Steering adapters | SSE/SDK/chat-demo control APIs |
 | 5 | pending | Native subagent spawn | `agent_tool` schedules durable child runs |
@@ -38,7 +38,7 @@ OpenClaude, а в переносе зрелых продуктовых патт�
 | 7 | pending | Coordinator profile | coordinator/worker prompts and evals |
 | 8 | pending | Isolation and advanced backends | worktree/cwd isolation, artifact handoff |
 
-Current Phase 1 slice started:
+Current completed slices:
 
 - Added public contracts for durable plan artifacts and plan approval payloads.
 - Added process-local plan artifact store and lifecycle helpers.
@@ -47,8 +47,34 @@ Current Phase 1 slice started:
   HITL interrupts; approve resumes through the existing interrupt path.
 - Added chat-demo plan-specific interrupt rendering: plan content, path/hash,
   and plan-content edit submission are visible in `InterruptCard`.
-- Next slice: repair/reinstall chat-demo backend venv, then run full
-  backend+frontend Playwright approval flow instead of frontend-only smoke.
+- Added `enter_plan_mode` and `exit_plan_mode_v2` to the built-in `planning`
+  tool pack so chat-demo safe/dev presets can exercise approval mode.
+- Added chat-demo dev compose with backend/frontend hot reload, repo `.env`
+  passthrough, Docker volumes for Python/Node dependencies, and optional
+  `CHAT_DEMO_FAKE_SCENARIO=plan_approval` smoke path.
+- Added fake plan-approval backend scenario and backend test covering
+  stream -> `interrupt_requested` -> fetch interrupt -> approve resume.
+- Fixed chat-demo SSE tailing so `interrupt_requested` terminates the current
+  stream cleanly, and fixed the frontend session reload path so the pending
+  approval card is not overwritten.
+- Started Phase 2 with a metadata-driven force-planning policy gate:
+  `tool_policy.metadata.force_planning.enabled=true` blocks gated side-effect
+  tools until `approved_plan_id` or `approved=true` is present, while planning
+  tools remain exempt.
+- Wired plan approval resume into the force-planning gate: approving/editing a
+  `plan_approval_required` interrupt now stores approved plan metadata and
+  updates the run's tool policy metadata so later side-effect tools in the same
+  run can proceed.
+- Added chat-demo Force planning control in the Tools popover; `/chat/messages`
+  accepts `force_planning`, and `CHAT_DEMO_FORCE_PLANNING` can set the backend
+  default.
+
+Next Phase 2 slice:
+
+- Add a visible blocked-execution demo path that guides the user into plan
+  approval when a risky tool is attempted before approval.
+- Extend the same gate to native subagent spawn once `agent_tool` becomes a
+  runtime scheduling surface.
 
 ## Periodic Product Checks
 
@@ -66,12 +92,21 @@ include a chat-demo integration checkpoint:
 Current demo-gate status:
 
 - Python Playwright installed in the repo `.venv`; Chromium browser installed.
+- Root `.venv` has backend/frontend test dependencies installed for local
+  checks; the stale `examples/chat-demo/backend/.venv` is no longer used.
 - Frontend unit tests pass.
-- Frontend-only Playwright smoke passes and writes a screenshot to
-  `/tmp/agent-driver-chat-demo-smoke.png`.
-- Full backend+frontend demo gate is blocked until
-  `examples/chat-demo/backend/.venv` is repaired/reinstalled; its scripts point
-  at stale absolute Python paths from another checkout.
+- Backend plan approval scenario passes in-process.
+- Dev compose is running at `http://127.0.0.1:5174` with backend
+  `http://127.0.0.1:8010`, hot reload enabled, and provider settings loaded
+  from repo `.env`.
+- Playwright smoke against the dev compose verifies the real configured
+  provider (`openrouter`) and writes
+  `/tmp/agent-driver-chat-demo-openrouter.png`.
+- Playwright smoke verifies the Force planning toggle in the Tools popover and
+  writes `/tmp/agent-driver-chat-demo-force-planning-toggle.png`.
+- Optional deterministic plan approval browser smoke can be run by restarting
+  dev compose with `AGENT_DRIVER_PROVIDER=fake` and
+  `CHAT_DEMO_FAKE_SCENARIO=plan_approval`.
 
 Phase-specific chat-demo gates:
 

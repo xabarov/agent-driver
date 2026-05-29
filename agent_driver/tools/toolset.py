@@ -21,7 +21,13 @@ _BUILTIN_PACKS: dict[str, tuple[str, ...]] = {
     "shell": ("bash", "powershell_tool"),
     "python_exec": ("python",),
     "code_intelligence": ("lsp_tool",),
-    "planning": ("planning_state_update", "todo_write", "ask_user_question"),
+    "planning": (
+        "planning_state_update",
+        "todo_write",
+        "ask_user_question",
+        "enter_plan_mode",
+        "exit_plan_mode_v2",
+    ),
     "tasking": (
         "task_create",
         "task_get",

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Wrench } from "lucide-react";
+import { AlertTriangle, ShieldCheck, Wrench } from "lucide-react";
 
 import { cn } from "../../lib/cn";
 import { importSampleWorkspace } from "../../lib/api";
@@ -26,7 +26,9 @@ export function ToolsPicker({ disabled, compact, onPresetChange }: ToolsPickerPr
   const queryClient = useQueryClient();
   const sessionId = useChatStore((state) => state.sessionId);
   const toolPreset = useSettingsStore((state) => state.toolPreset);
+  const forcePlanning = useSettingsStore((state) => state.forcePlanning);
   const setToolPreset = useSettingsStore((state) => state.setToolPreset);
+  const setForcePlanning = useSettingsStore((state) => state.setForcePlanning);
   const toolsQuery = useToolsForPreset(toolPreset, sessionId);
   const [showAllTools, setShowAllTools] = useState(false);
   const sampleMutation = useMutation({
@@ -72,6 +74,17 @@ export function ToolsPicker({ disabled, compact, onPresetChange }: ToolsPickerPr
         </ToggleGroup>
       </div>
       <p className="text-xs text-muted-foreground">{PRESET_HINTS[toolPreset]}</p>
+      <label className="flex items-center gap-2 rounded-lg border border-border/70 bg-background/60 px-2 py-2 text-xs">
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-primary"
+          checked={forcePlanning}
+          disabled={disabled}
+          onChange={(event) => setForcePlanning(event.target.checked)}
+        />
+        <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+        <span className="font-medium text-foreground">Force planning</span>
+      </label>
       {showWorkspaceDetails ? (
         <div className="rounded-lg border border-border/70 bg-background/60 p-2 text-xs">
           <div className="font-medium text-foreground">Session workspace</div>

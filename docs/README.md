@@ -15,6 +15,7 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - [Context engineering, tools, and MCP integration](architecture/context-tools-and-mcp.md)
 - [Built-in tools overview](builtin-tools.md)
 - [SDK + ToolSet examples](examples/sdk-toolset-examples.md)
+- [Chat demo design improvement plan](chat-demo-design-improvement-plan-2026-05-29.md)
 - [Multi-agent orchestration and parallel subagents](architecture/multi-agent-orchestration.md)
 - [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md)
 - [Multi-mode prompt assembly](patterns/multi-mode-prompts.md) — when an agent has ask / plan / code modes, substitute the behaviour block instead of prepending a "mode header"; reference impl in `excel_ai`

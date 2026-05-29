@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from agent_driver.adapters import parse_after_seq, render_sse_line
-from agent_driver.contracts import AgentRunInput, ChatMessage
+from agent_driver.contracts import AgentRunInput, ChatMessage, ToolPolicyInput
 from agent_driver.contracts.enums import ChatRole, ResumeAction
 from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
 from agent_driver.runtime.stream import backfill_stream_events, project_runtime_events
@@ -30,7 +30,12 @@ from app.sse_relay import ensure_run_task, relay_and_capture
 from app.workspace import build_chat_app_metadata, merge_resume_app_metadata
 
 router = APIRouter(tags=["chat"])
-_TERMINAL_EVENTS = {"run_completed", "run_failed", "run_cancelled"}
+_TERMINAL_EVENTS = {
+    "interrupt_requested",
+    "run_completed",
+    "run_failed",
+    "run_cancelled",
+}
 
 
 def _transcript_to_messages(transcript: Iterable[tuple[str, str]]) -> list[ChatMessage]:
@@ -165,6 +170,18 @@ def _interrupt_from_checkpoint(bundle: AgentBundle, run_id: str) -> InterruptReq
     return interrupt
 
 
+def _chat_tool_policy(*, body: ChatMessageRequest, settings: Settings) -> ToolPolicyInput:
+    force_planning = (
+        body.force_planning
+        if body.force_planning is not None
+        else settings.force_planning
+    )
+    metadata: dict[str, object] = {}
+    if force_planning:
+        metadata["force_planning"] = {"enabled": True}
+    return ToolPolicyInput(metadata=metadata)
+
+
 @router.post("/chat/messages")
 async def chat_messages(
     body: ChatMessageRequest,
@@ -243,6 +260,7 @@ async def chat_messages(
         max_steps=settings.max_steps,
         max_tool_calls=settings.max_tool_calls,
         deadline_seconds=settings.deadline_seconds,
+        tool_policy=_chat_tool_policy(body=body, settings=settings),
         app_metadata=build_chat_app_metadata(settings, session_id),
     )
 

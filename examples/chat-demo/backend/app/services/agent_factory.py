@@ -17,6 +17,7 @@ from agent_driver.sdk import Agent, create_agent
 
 from app.config import Settings, ToolPreset
 from app.run_cancel import cancellation_probe
+from app.services.fake_scenarios import build_fake_scenario_provider
 
 
 @lru_cache(maxsize=1)
@@ -83,15 +84,21 @@ def create_agent_bundle(
     """Build provider, stores, filtered toolset, and SDK facade."""
     effective_preset = tool_preset or settings.tool_preset
     effective_model = model or settings.model
-    provider = build_cli_provider(
-        CliProviderConfig(
-            provider=settings.provider,
-            model=effective_model,
-            base_url=settings.base_url,
-            api_key=settings.api_key,
-            timeout_s=settings.provider_timeout_seconds,
-        )
+    provider = (
+        build_fake_scenario_provider(settings.fake_scenario)
+        if settings.provider == "fake"
+        else None
     )
+    if provider is None:
+        provider = build_cli_provider(
+            CliProviderConfig(
+                provider=settings.provider,
+                model=effective_model,
+                base_url=settings.base_url,
+                api_key=settings.api_key,
+                timeout_s=settings.provider_timeout_seconds,
+            )
+        )
     toolset = build_cli_toolset(_tool_config_from_preset(effective_preset))
     runtime_store_config = runtime_store_config_from_env()
     runtime_store_bundle = get_shared_runtime_store_bundle()
@@ -116,4 +123,3 @@ def create_agent_bundle(
         manifests=manifests,
         store_kind=runtime_store_config.kind,
     )
-

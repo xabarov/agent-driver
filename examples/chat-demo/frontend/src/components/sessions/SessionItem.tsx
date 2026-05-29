@@ -41,7 +41,7 @@ export function SessionItem({ session }: SessionItemProps) {
     <>
       <div
         className={cn(
-          "grid w-full max-w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-md border py-1.5 pr-1 pl-2 text-sm transition-colors",
+          "group grid w-full max-w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-md border py-1.5 pr-1 pl-2 text-sm transition-colors",
           isActive
             ? "border-primary/60 border-l-2 border-l-primary bg-accent/50 pl-[calc(0.5rem-1px)]"
             : "border-border border-l-2 border-l-transparent hover:bg-muted/40",
@@ -58,7 +58,10 @@ export function SessionItem({ session }: SessionItemProps) {
           type="button"
           size="icon"
           variant="ghost"
-          className="h-8 w-8 shrink-0 text-destructive hover:bg-destructive/15 hover:text-destructive"
+          className={cn(
+            "h-8 w-8 shrink-0 text-muted-foreground opacity-70 transition-opacity hover:bg-destructive/15 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100",
+            !isActive && "sm:opacity-0",
+          )}
           aria-label={`Delete session ${session.title}`}
           title="Delete session"
           disabled={deleteSession.isPending}

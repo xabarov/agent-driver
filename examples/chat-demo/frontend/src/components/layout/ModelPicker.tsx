@@ -57,7 +57,12 @@ export function ModelPicker() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" variant="secondary" size="sm" className="max-w-[16rem] gap-1 font-normal">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          className="max-w-[14rem] shrink-0 gap-1 font-normal sm:max-w-[16rem]"
+        >
           <span className="truncate">{label}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
         </Button>

@@ -52,11 +52,16 @@ export function ChatPage({ mode }: ChatPageProps) {
     if (store.streaming && store.sessionId === detail.session_id) {
       return;
     }
+    // Interrupt metadata arrives right before the session query invalidates; keep
+    // the approval card mounted instead of reloading the transcript over it.
+    if (store.pendingInterrupt && store.sessionId === detail.session_id) {
+      return;
+    }
     if (store.streaming) {
       stopStreaming();
     }
     loadSession(detail);
-  }, [loadSession, mode, sessionQuery.data, stopStreaming]);
+  }, [loadSession, mode, pendingInterrupt, sessionQuery.data, stopStreaming]);
 
   if (mode === "existing" && sessionQuery.isLoading) {
     return (
@@ -93,7 +98,11 @@ export function ChatPage({ mode }: ChatPageProps) {
         </div>
         <div className="min-h-0 flex-1">
           {messages.length === 0 ? (
-            <EmptyState />
+            <EmptyState
+              onPromptSelect={(text) => {
+                void sendMessage(text);
+              }}
+            />
           ) : (
             <MessageList
               messages={messages}

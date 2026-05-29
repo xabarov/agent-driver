@@ -16,7 +16,12 @@ from app.run_cancel import clear_cancel, reset_active_run, set_active_run
 
 TerminalEvent = str | None
 OnFinish = Callable[[str, TerminalEvent], None]
-_TERMINAL_EVENTS = {"run_completed", "run_failed", "run_cancelled"}
+_TERMINAL_EVENTS = {
+    "interrupt_requested",
+    "run_completed",
+    "run_failed",
+    "run_cancelled",
+}
 _ACTIVE_RUN_TASKS: dict[str, asyncio.Task[None]] = {}
 
 

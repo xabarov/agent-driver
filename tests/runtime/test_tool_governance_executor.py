@@ -219,6 +219,123 @@ def test_policy_denies_explicit_denied_tool() -> None:
     assert outcome.decision.value == "deny"
 
 
+def test_policy_force_planning_denies_write_without_approved_plan() -> None:
+    """Force planning should block side-effecting tools until a plan is approved."""
+    call = ToolCall(tool_name="file_write")
+    manifest = ToolManifest(
+        name="file_write",
+        description="Write file",
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.REVERSIBLE_WRITE,
+    )
+    outcome = evaluate_tool_policy(
+        policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            metadata={"force_planning": {"enabled": True}},
+        ),
+        manifest=manifest,
+        call=call,
+        current_tool_calls=0,
+    )
+    assert outcome.decision.value == "deny"
+    assert "approved plan" in outcome.reason
+    assert outcome.metadata["force_planning"]["required"] is True
+
+
+def test_policy_force_planning_allows_planning_tool_without_approved_plan() -> None:
+    """Planning tools must remain available so the model can request approval."""
+    call = ToolCall(tool_name="exit_plan_mode_v2")
+    manifest = ToolManifest(
+        name="exit_plan_mode_v2",
+        description="Exit plan mode",
+        risk=ToolRisk.LOW,
+        side_effect=SideEffectClass.NONE,
+    )
+    outcome = evaluate_tool_policy(
+        policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            metadata={"force_planning": {"enabled": True}},
+        ),
+        manifest=manifest,
+        call=call,
+        current_tool_calls=0,
+    )
+    assert outcome.decision.value == "allow"
+
+
+def test_policy_force_planning_allows_write_with_approved_plan() -> None:
+    """An approved plan marker should unblock the gated tool surface."""
+    call = ToolCall(tool_name="file_write")
+    manifest = ToolManifest(
+        name="file_write",
+        description="Write file",
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.REVERSIBLE_WRITE,
+    )
+    outcome = evaluate_tool_policy(
+        policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            metadata={
+                "force_planning": {
+                    "enabled": True,
+                    "approved_plan_id": "plan_123",
+                }
+            },
+        ),
+        manifest=manifest,
+        call=call,
+        current_tool_calls=0,
+    )
+    assert outcome.decision.value == "allow"
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_force_planning_blocks_write_tool() -> None:
+    """Executor should enforce force-planning denial before handler execution."""
+    registry = ToolRegistry()
+    called = False
+
+    async def _write(_args):
+        nonlocal called
+        called = True
+        return {"summary": "wrote"}
+
+    registry.register(
+        ToolManifest(
+            name="file_write",
+            description="Write file",
+            risk=ToolRisk.MEDIUM,
+            side_effect=SideEffectClass.REVERSIBLE_WRITE,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _write,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="write",
+        run_id="run_force_planning_blocks",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            metadata={"force_planning": {"enabled": True}},
+        ),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[ToolCall(tool_name="file_write", args={"path": "x"})]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert called is False
+    assert result.traces[0].status.value == "denied"
+    assert result.traces[0].error_code == "policy_denied"
+    assert "approved plan" in (result.envelopes[0].error.message or "")
+
+
 @pytest.mark.asyncio
 async def test_governed_executor_guardrail_blocks_args() -> None:
     """Guardrail should block tool execution when args are unsafe."""

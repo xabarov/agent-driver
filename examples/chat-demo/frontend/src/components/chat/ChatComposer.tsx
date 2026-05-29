@@ -20,6 +20,7 @@ export function ChatComposer({ streaming, disabled, onSend, onStop }: ChatCompos
   const [value, setValue] = useState("");
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolPreset = useSettingsStore((state) => state.toolPreset);
+  const forcePlanning = useSettingsStore((state) => state.forcePlanning);
 
   const submit = () => {
     const trimmed = value.trim();
@@ -31,7 +32,7 @@ export function ChatComposer({ streaming, disabled, onSend, onStop }: ChatCompos
   };
 
   return (
-    <div className="relative z-20 shrink-0 border-t border-border/60 bg-background px-4 py-3">
+    <div className="relative z-20 shrink-0 border-t border-border/60 bg-background/95 px-4 py-3 shadow-[0_-10px_30px_rgba(0,0,0,0.16)]">
       {toolsOpen
         ? createPortal(
             <button
@@ -43,14 +44,14 @@ export function ChatComposer({ streaming, disabled, onSend, onStop }: ChatCompos
             document.body,
           )
         : null}
-      <div className="relative z-[100] mx-auto w-full max-w-3xl rounded-2xl border border-border bg-muted/20 p-3 shadow-sm lg:max-w-4xl xl:max-w-5xl">
+      <div className="relative z-[100] mx-auto w-full max-w-3xl rounded-lg border border-border bg-card/70 p-3 shadow-sm lg:max-w-4xl xl:max-w-5xl">
         <Textarea
           value={value}
           onChange={(event) => setValue(event.target.value)}
           placeholder="Message the assistant…"
           disabled={streaming || disabled}
           rows={1}
-          className="min-h-[2.75rem] max-h-40 resize-none border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+          className="min-h-[2.5rem] max-h-40 resize-none border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
           style={{ fieldSizing: "content" } as React.CSSProperties}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -71,7 +72,9 @@ export function ChatComposer({ streaming, disabled, onSend, onStop }: ChatCompos
                   disabled={disabled}
                 >
                   <Wrench className="h-4 w-4" />
-                  Tools · {toolPreset}
+                  <span className="hidden sm:inline">Tools ·</span>
+                  {toolPreset}
+                  {forcePlanning ? " · plan" : ""}
                 </Button>
               </PopoverTrigger>
               <PopoverContent
@@ -101,7 +104,10 @@ export function ChatComposer({ streaming, disabled, onSend, onStop }: ChatCompos
               type="button"
               size="icon"
               variant={value.trim() ? "default" : "secondary"}
-              className={cn(value.trim() && "bg-primary text-primary-foreground")}
+              className={cn(
+                "transition-transform",
+                value.trim() && "bg-primary text-primary-foreground hover:scale-[1.03]",
+              )}
               onClick={submit}
               disabled={disabled || !value.trim()}
               aria-label="Send"

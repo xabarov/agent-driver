@@ -122,3 +122,71 @@ async def test_resume_approve_streams_terminal_event(tmp_path, monkeypatch) -> N
 
     assert "run_completed" in events
     reset_dependency_caches()
+
+
+@pytest.mark.asyncio
+async def test_fake_plan_approval_scenario_streams_interrupt_and_resume(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENT_DRIVER_PROVIDER", "fake")
+    monkeypatch.setenv("CHAT_DEMO_FAKE_SCENARIO", "plan_approval")
+    monkeypatch.setenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "memory")
+    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "safe")
+    monkeypatch.setenv("CHAT_DEMO_SESSIONS_PATH", str(tmp_path / "sessions.json"))
+    reset_dependency_caches()
+    application = create_app()
+
+    run_id = ""
+    interrupt_id = ""
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with client.stream(
+            "POST",
+            "/api/chat/messages",
+            json={
+                "message": "please plan this change",
+                "tool_preset": "safe",
+                "force_planning": True,
+            },
+        ) as stream_response:
+            assert stream_response.status_code == 200
+            run_id = stream_response.headers["x-run-id"]
+            events: list[str] = []
+            async for line in stream_response.aiter_lines():
+                if line.startswith("event: "):
+                    event = line.removeprefix("event: ").strip()
+                    events.append(event)
+                    if event == "interrupt_requested":
+                        break
+        assert "interrupt_requested" in events
+        from app.deps import get_agent_bundle_for_request
+
+        checkpoint = get_agent_bundle_for_request("safe").checkpoint_store.latest(run_id)
+        assert checkpoint is not None
+        policy_metadata = checkpoint.state.run_input.tool_policy.metadata
+        assert policy_metadata["force_planning"]["enabled"] is True
+
+        interrupt_response = await client.get(f"/api/chat/runs/{run_id}/interrupt")
+        assert interrupt_response.status_code == 200
+        interrupt = interrupt_response.json()
+        interrupt_id = interrupt["interrupt_id"]
+        assert interrupt["reason"] == "plan_approval_required"
+        assert interrupt["proposed_action"]["plan_approval"]["content"]
+
+        resumed_events: list[str] = []
+        async with client.stream(
+            "POST",
+            f"/api/chat/runs/{run_id}/resume",
+            json={"interrupt_id": interrupt_id, "action": ResumeAction.APPROVE.value},
+        ) as resume_response:
+            assert resume_response.status_code == 200
+            async for line in resume_response.aiter_lines():
+                if line.startswith("event: "):
+                    event = line.removeprefix("event: ").strip()
+                    resumed_events.append(event)
+                    if event == "run_completed":
+                        break
+
+    assert "run_resumed" in resumed_events
+    assert "run_completed" in resumed_events
+    reset_dependency_caches()

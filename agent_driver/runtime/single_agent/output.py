@@ -35,7 +35,6 @@ from agent_driver.runtime.single_agent.output_builders import (
     build_memory_audit,
     build_memory_projection_for_context,
     collect_tool_trace,
-    dict_metadata,
     list_dict_metadata,
 )
 from agent_driver.runtime.single_agent.types import (
@@ -279,6 +278,7 @@ class SingleAgentOutputMixin:
             ),
             "prompt_render": context.metadata.get("prompt_render"),
             "approval_payload": self._approval_payload_from_context(context),
+            "approved_plan": context.metadata.get("approved_plan"),
             "step_count": context.step_count,
             "tool_calls": context.tool_calls,
             "raw_assistant_content": context.metadata.get("raw_assistant_content"),

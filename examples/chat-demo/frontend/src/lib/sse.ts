@@ -14,6 +14,7 @@ export interface StartChatStreamOptions {
   message: string;
   sessionId?: string;
   toolPreset?: ToolPreset;
+  forcePlanning?: boolean;
   model?: string;
   retryFromRunId?: string;
   clientRequestId?: string;
@@ -89,6 +90,7 @@ export async function startChatStream(opts: StartChatStreamOptions): Promise<voi
         message: opts.message,
         session_id: opts.sessionId,
         tool_preset: opts.toolPreset,
+        force_planning: opts.forcePlanning,
         model: opts.model,
         retry_from_run_id: opts.retryFromRunId,
         client_request_id: opts.clientRequestId,
