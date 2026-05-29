@@ -214,7 +214,7 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Support approve/edit resume metadata for approved plans.
 - [x] Show plan approval cards in chat-demo.
 - [x] Add deterministic plan-approval fake scenario and backend tests.
-- [ ] Add SQLite or durable plan artifact persistence beyond process-local
+- [x] Add SQLite or durable plan artifact persistence beyond process-local
   helpers.
 - [ ] Emit dedicated plan lifecycle runtime events:
   `plan_mode_entered`, `plan_artifact_updated`, `plan_approval_requested`,

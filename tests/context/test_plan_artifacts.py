@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from agent_driver.context.planning import (
     InMemoryPlanArtifactStore,
+    SqlitePlanArtifactStore,
     approve_plan_artifact,
     create_plan_artifact,
     mark_plan_awaiting_approval,
@@ -12,6 +15,14 @@ from agent_driver.context.planning import (
     update_plan_artifact_content,
 )
 from agent_driver.contracts import PlanningModeState
+
+
+@pytest.fixture(params=["memory", "sqlite"])
+def artifact_store(request, tmp_path):
+    """Run plan artifact store behavior tests against all local stores."""
+    if request.param == "sqlite":
+        return SqlitePlanArtifactStore(path=str(tmp_path / "plans.db"))
+    return InMemoryPlanArtifactStore()
 
 
 def test_plan_artifact_lifecycle_hash_and_status() -> None:
@@ -46,9 +57,9 @@ def test_plan_artifact_lifecycle_hash_and_status() -> None:
     assert rejected.rejection_reason == "revise"
 
 
-def test_in_memory_plan_artifact_store_lists_by_run() -> None:
-    """In-memory store should preserve insertion order per run."""
-    store = InMemoryPlanArtifactStore()
+def test_plan_artifact_store_lists_by_run(artifact_store) -> None:
+    """Plan artifact stores should preserve insertion order per run."""
+    store = artifact_store
     first = create_plan_artifact(
         plan_id="plan_1", run_id="run_1", agent_id="agent", content="A"
     )
@@ -66,4 +77,27 @@ def test_in_memory_plan_artifact_store_lists_by_run() -> None:
     assert [item.plan_id for item in store.list_for_run("run_1")] == [
         "plan_1",
         "plan_2",
+    ]
+
+
+def test_sqlite_plan_artifact_store_persists_rows(tmp_path) -> None:
+    """SQLite plan artifacts should survive store re-instantiation."""
+    path = tmp_path / "plans.db"
+    first_store = SqlitePlanArtifactStore(path=str(path))
+    artifact = create_plan_artifact(
+        plan_id="plan_persist",
+        run_id="run_persist",
+        agent_id="agent",
+        content="Persistent plan",
+    )
+    first_store.put(mark_plan_awaiting_approval(artifact))
+
+    second_store = SqlitePlanArtifactStore(path=str(path))
+
+    loaded = second_store.get("plan_persist")
+    assert loaded is not None
+    assert loaded.content == "Persistent plan"
+    assert loaded.status == PlanningModeState.AWAITING_APPROVAL
+    assert [item.plan_id for item in second_store.list_for_run("run_persist")] == [
+        "plan_persist"
     ]

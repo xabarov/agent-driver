@@ -3,6 +3,7 @@
 from agent_driver.context.planning.artifacts import (
     InMemoryPlanArtifactStore,
     PlanArtifactStore,
+    SqlitePlanArtifactStore,
     approve_plan_artifact,
     create_plan_artifact,
     mark_plan_awaiting_approval,
@@ -32,6 +33,7 @@ __all__ = [
     "planning_state_event",
     "PlanArtifactStore",
     "InMemoryPlanArtifactStore",
+    "SqlitePlanArtifactStore",
     "plan_content_hash",
     "create_plan_artifact",
     "update_plan_artifact_content",
