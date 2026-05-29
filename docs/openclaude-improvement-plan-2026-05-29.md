@@ -411,7 +411,10 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [ ] Add worktree isolation for child runs.
 - [ ] Add cwd override with policy validation.
 - [ ] Evaluate process backend after `asyncio_background`.
-- [ ] Add bounded artifact refs for child outputs.
+- [x] Add bounded artifact refs for child outputs.
+  Completed child rows now keep a bounded `child_artifact_refs` list, audit
+  dropped refs, expose the first artifact as `output_pointer`, and mark
+  artifact refs in merge provenance.
 - [ ] Add cleanup tests for completed/cancelled children.
 
 ### Documentation And Recipes

@@ -8,6 +8,7 @@ from inspect import signature
 from typing import Callable
 from uuid import uuid4
 
+from agent_driver.contracts.artifacts import ArtifactRef
 from agent_driver.contracts.enums import (
     ParentStateWriteMode,
     SubagentExecutionMode,
@@ -51,6 +52,7 @@ _TERMINAL_STATUSES = {
     SubagentStatus.CANCELLED,
     SubagentStatus.TIMED_OUT,
 }
+_MAX_CHILD_OUTPUT_ARTIFACT_REFS = 8
 
 
 def _safe_emit(
@@ -149,11 +151,12 @@ async def _run_single_child_task(
     if not isinstance(output, AgentRunOutput):
         raise RuntimeError("child_runner must return AgentRunOutput")
     run_status, terminal_state = _status_from_output(output)
+    artifact_refs = _bounded_output_artifact_refs(output)
     merge_provenance = (
         MergeProvenance(
             strategy="child_output",
             source_kind="child_run",
-            carried_keys=["summary"],
+            carried_keys=_carried_child_keys(artifact_refs),
             parent_state_write=ParentStateWriteMode.BOUNDED_APPEND_ONLY,
             metadata={"child_run_id": output.run_id},
         )
@@ -174,10 +177,13 @@ async def _run_single_child_task(
         terminal_state=terminal_state,
         latency_ms=None,
         tokens=output.usage,
+        output_pointer=_first_output_artifact(output),
         merge_provenance=merge_provenance,
         metadata={
             **pending.metadata,
             "summary": output.answer or "",
+            "child_artifact_refs": artifact_refs,
+            "child_artifact_audit": _child_artifact_audit(output, artifact_refs),
             "status": output.status.value,
             "terminal_reason": (
                 output.terminal_reason.value if output.terminal_reason else None
@@ -203,6 +209,33 @@ def _call_child_runner(
     if "abort_handle" not in runner_signature.parameters:
         return child_runner(child_input)
     return child_runner(child_input, abort_handle=child_abort_handle)
+
+
+def _bounded_output_artifact_refs(
+    output: AgentRunOutput, *, max_refs: int = _MAX_CHILD_OUTPUT_ARTIFACT_REFS
+) -> list[dict[str, object]]:
+    return [item.model_dump(mode="json") for item in output.artifacts[:max_refs]]
+
+
+def _first_output_artifact(output: AgentRunOutput) -> ArtifactRef | None:
+    return output.artifacts[0] if output.artifacts else None
+
+
+def _child_artifact_audit(
+    output: AgentRunOutput, artifact_refs: list[dict[str, object]]
+) -> dict[str, int]:
+    return {
+        "artifact_refs_in": len(output.artifacts),
+        "artifact_refs_kept": len(artifact_refs),
+        "dropped_artifacts": max(0, len(output.artifacts) - len(artifact_refs)),
+    }
+
+
+def _carried_child_keys(artifact_refs: list[dict[str, object]]) -> list[str]:
+    keys = ["summary"]
+    if artifact_refs:
+        keys.append("artifact_refs")
+    return keys
 
 
 def _child_tool_policy(
@@ -724,11 +757,12 @@ def _completed_child_run_from_output(
     execution_mode: SubagentExecutionMode,
 ) -> SubagentRun:
     run_status, terminal_state = _status_from_output(output)
+    artifact_refs = _bounded_output_artifact_refs(output)
     merge_provenance = (
         MergeProvenance(
             strategy="child_output",
             source_kind="child_run",
-            carried_keys=["summary"],
+            carried_keys=_carried_child_keys(artifact_refs),
             parent_state_write=ParentStateWriteMode.BOUNDED_APPEND_ONLY,
             metadata={"child_run_id": output.run_id},
         )
@@ -749,10 +783,13 @@ def _completed_child_run_from_output(
         terminal_state=terminal_state,
         latency_ms=None,
         tokens=output.usage,
+        output_pointer=_first_output_artifact(output),
         merge_provenance=merge_provenance,
         metadata={
             **pending.metadata,
             "summary": output.answer or "",
+            "child_artifact_refs": artifact_refs,
+            "child_artifact_audit": _child_artifact_audit(output, artifact_refs),
             "status": output.status.value,
             "terminal_reason": (
                 output.terminal_reason.value if output.terminal_reason else None

@@ -8,6 +8,8 @@ import pytest
 
 from agent_driver.contracts import (
     AgentRunOutput,
+    ArtifactKind,
+    ArtifactRef,
     RunStatus,
     RuntimeEventType,
     TerminalReason,
@@ -148,6 +150,57 @@ async def test_sync_child_execution_restricts_worker_tool_surface() -> None:
     ]
     assert seen["tool_policy"].metadata["worker_type"] == "verifier"
     assert seen["tool_policy"].metadata["worker_tool_surface"] == "role_restricted"
+
+
+@pytest.mark.asyncio
+async def test_sync_child_execution_records_bounded_output_artifact_refs() -> None:
+    """Child output artifacts should be bounded and auditable on completed rows."""
+    store = InMemorySubagentStore()
+
+    async def _artifact_child(run_input):
+        output = await _ok_child_runner(run_input)
+        return output.model_copy(
+            update={
+                "artifacts": [
+                    ArtifactRef(
+                        artifact_id=f"artifact_{idx}",
+                        kind=ArtifactKind.SUBAGENT_OUTPUT,
+                        title=f"Artifact {idx}",
+                    )
+                    for idx in range(12)
+                ]
+            }
+        )
+
+    result = await execute_subagent_group_sync(
+        parent=default_parent_handoff(answer="parent summary"),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_parent",
+            purpose="analysis",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="task_1",
+                    task="investigate",
+                    description="desc",
+                ),
+            ),
+        ),
+        store=store,
+        child_runner=_artifact_child,
+        max_child_runs=4,
+    )
+
+    row = result.runs[0]
+    assert row.output_pointer is not None
+    assert row.output_pointer.artifact_id == "artifact_0"
+    assert row.merge_provenance is not None
+    assert row.merge_provenance.carried_keys == ["summary", "artifact_refs"]
+    assert len(row.metadata["child_artifact_refs"]) == 8
+    assert row.metadata["child_artifact_audit"] == {
+        "artifact_refs_in": 12,
+        "artifact_refs_kept": 8,
+        "dropped_artifacts": 4,
+    }
 
 
 @pytest.mark.asyncio
