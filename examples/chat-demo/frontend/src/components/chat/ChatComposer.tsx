@@ -13,20 +13,26 @@ interface ChatComposerProps {
   streaming: boolean;
   disabled?: boolean;
   onSend: (text: string) => void;
+  onSteer?: (text: string) => void;
   onStop: () => void;
 }
 
-export function ChatComposer({ streaming, disabled, onSend, onStop }: ChatComposerProps) {
+export function ChatComposer({ streaming, disabled, onSend, onSteer, onStop }: ChatComposerProps) {
   const [value, setValue] = useState("");
   const [toolsOpen, setToolsOpen] = useState(false);
   const toolPreset = normalizeToolPreset(useSettingsStore((state) => state.toolPreset));
+  const canSteer = streaming && !disabled && Boolean(onSteer);
 
   const submit = () => {
     const trimmed = value.trim();
-    if (!trimmed || streaming || disabled) {
+    if (!trimmed || disabled) {
       return;
     }
-    onSend(trimmed);
+    if (streaming) {
+      onSteer?.(trimmed);
+    } else {
+      onSend(trimmed);
+    }
     setValue("");
   };
 
@@ -47,8 +53,8 @@ export function ChatComposer({ streaming, disabled, onSend, onStop }: ChatCompos
         <Textarea
           value={value}
           onChange={(event) => setValue(event.target.value)}
-          placeholder="Message the assistant…"
-          disabled={streaming || disabled}
+          placeholder={streaming ? "Steer the running assistant…" : "Message the assistant…"}
+          disabled={disabled || (streaming && !canSteer)}
           rows={1}
           className="min-h-[2.5rem] max-h-40 resize-none border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
           style={{ fieldSizing: "content" } as React.CSSProperties}
@@ -94,9 +100,22 @@ export function ChatComposer({ streaming, disabled, onSend, onStop }: ChatCompos
             </span>
           </div>
           {streaming ? (
-            <Button type="button" size="icon" variant="destructive" onClick={onStop} aria-label="Stop">
-              <Square className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                size="icon"
+                variant={value.trim() && canSteer ? "default" : "secondary"}
+                className={cn(value.trim() && canSteer && "bg-primary text-primary-foreground")}
+                onClick={submit}
+                disabled={!canSteer || !value.trim()}
+                aria-label="Queue steering message"
+              >
+                <ArrowUp className="h-4 w-4" />
+              </Button>
+              <Button type="button" size="icon" variant="destructive" onClick={onStop} aria-label="Stop">
+                <Square className="h-4 w-4" />
+              </Button>
+            </div>
           ) : (
             <Button
               type="button"

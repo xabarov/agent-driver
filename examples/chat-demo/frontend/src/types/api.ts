@@ -117,6 +117,22 @@ export interface ResumeRequest {
   message?: string;
 }
 
+export interface ChatControlRequest {
+  kind: string;
+  priority?: "now" | "next" | "later";
+  payload?: Record<string, unknown>;
+  thread_id?: string;
+  agent_id?: string;
+  dedupe_key?: string;
+}
+
+export interface ChatControlResponse {
+  ok: boolean;
+  control_id?: string | null;
+  queue_id?: string | null;
+  error?: string | null;
+}
+
 export interface ReplayResponse {
   run_id: string;
   events: Array<Record<string, unknown>>;

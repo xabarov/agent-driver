@@ -263,6 +263,8 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Add chat-demo/backend control endpoints.
 - [ ] Add chat-demo/frontend controls for enqueue/cancel/interrupt/model
   switch where product-appropriate.
+  Enqueue-user-message steering is wired into the streaming composer; queued
+  command cancellation and model switching remain.
 - [ ] Persist steering operations in session transcript/history.
 - [ ] Add replay view support for queued messages and controls.
 - [ ] Verify mid-run steering with Playwright and record screenshot/DOM

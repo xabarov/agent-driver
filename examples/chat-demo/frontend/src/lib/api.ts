@@ -1,6 +1,8 @@
 import type {
   CreateSessionRequest,
   DeleteSessionResponse,
+  ChatControlRequest,
+  ChatControlResponse,
   HealthResponse,
   InterruptView,
   ProviderResponse,
@@ -54,6 +56,20 @@ export function importSampleWorkspace(sessionId: string): Promise<WorkspaceImpor
 
 export function cancelRun(runId: string): Promise<{ ok: boolean; run_id: string; cancelled: boolean }> {
   return request(`/api/chat/runs/${runId}/cancel`, { method: "POST" });
+}
+
+export function controlRun(runId: string, body: ChatControlRequest): Promise<ChatControlResponse> {
+  return request<ChatControlResponse>(`/api/chat/runs/${runId}/control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function cancelQueuedCommand(queueId: string): Promise<ChatControlResponse> {
+  return request<ChatControlResponse>(`/api/chat/commands/${queueId}`, {
+    method: "DELETE",
+  });
 }
 
 export function fetchInterrupt(runId: string): Promise<InterruptView> {

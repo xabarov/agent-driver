@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { cancelRun, fetchInterrupt } from "../lib/api";
+import { cancelRun, controlRun, fetchInterrupt } from "../lib/api";
 import {
   buildLastEventId,
   getAssistantSnapshotContent,
@@ -24,6 +24,7 @@ import { normalizeToolPreset, useSettingsStore } from "../store/settingsStore";
 
 interface RunStreamController {
   sendMessage: (message: string) => Promise<void>;
+  steerRun: (message: string) => Promise<void>;
   retryAssistant: (assistantId: string) => Promise<void>;
   resumeInterrupt: (payload: {
     action: string;
@@ -241,6 +242,23 @@ export function useRunStream(): RunStreamController {
     [streamUserMessage],
   );
 
+  const steerRun = useCallback(async (message: string) => {
+    const trimmed = message.trim();
+    const runId = useChatStore.getState().runId;
+    if (!trimmed || !runId) {
+      return;
+    }
+    try {
+      await controlRun(runId, {
+        kind: "enqueue_user_message",
+        priority: "next",
+        payload: { message: trimmed },
+      });
+    } catch (error) {
+      useChatStore.getState().setLastError(formatStreamError(error));
+    }
+  }, []);
+
   const retryAssistant = useCallback(
     async (assistantId: string) => {
       if (useChatStore.getState().streaming) {
@@ -301,5 +319,5 @@ export function useRunStream(): RunStreamController {
     [invalidateAfterTerminal, model, runStream, toolPreset],
   );
 
-  return { sendMessage, retryAssistant, resumeInterrupt, stopStreaming };
+  return { sendMessage, steerRun, retryAssistant, resumeInterrupt, stopStreaming };
 }

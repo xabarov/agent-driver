@@ -25,7 +25,7 @@ export function ChatPage({ mode }: ChatPageProps) {
   const loadSession = useChatStore((state) => state.loadSession);
   const messages = useChatStore((state) => state.messages);
   const streaming = useChatStore((state) => state.streaming);
-  const { sendMessage, retryAssistant, resumeInterrupt, stopStreaming } = useRunStream();
+  const { sendMessage, steerRun, retryAssistant, resumeInterrupt, stopStreaming } = useRunStream();
   const selectedSessionId = mode === "existing" ? params.id ?? "" : "";
   const sessionQuery = useSession(selectedSessionId);
 
@@ -128,6 +128,9 @@ export function ChatPage({ mode }: ChatPageProps) {
         disabled={blocked}
         onSend={(text) => {
           void sendMessage(text);
+        }}
+        onSteer={(text) => {
+          void steerRun(text);
         }}
         onStop={stopStreaming}
       />
