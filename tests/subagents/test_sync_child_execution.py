@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -223,6 +226,49 @@ async def test_sync_child_execution_rejects_cwd_outside_parent_workspace(
 
 
 @pytest.mark.asyncio
+async def test_sync_child_execution_uses_git_worktree_isolation(tmp_path) -> None:
+    """Worktree isolation should keep child writes out of parent workspace."""
+    if shutil.which("git") is None:
+        pytest.skip("git is required for worktree isolation")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    seen = {}
+
+    async def _runner(run_input):
+        workspace = Path(run_input.app_metadata["workspace_cwd"])
+        seen["workspace_cwd"] = workspace
+        assert workspace != repo.resolve()
+        (workspace / "tracked.txt").write_text("child edit", encoding="utf-8")
+        return await _ok_child_runner(run_input)
+
+    await execute_subagent_group_sync(
+        parent=default_parent_handoff(
+            answer="parent summary",
+            workspace_cwd=str(repo),
+        ),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_parent",
+            purpose="analysis",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="task_1",
+                    task="edit safely",
+                    description="desc",
+                    metadata={"isolation_mode": "worktree"},
+                ),
+            ),
+        ),
+        store=InMemorySubagentStore(),
+        child_runner=_runner,
+        max_child_runs=4,
+    )
+
+    assert (repo / "tracked.txt").read_text(encoding="utf-8") == "parent\n"
+    assert seen["workspace_cwd"].exists() is False
+
+
+@pytest.mark.asyncio
 async def test_sync_child_execution_records_bounded_output_artifact_refs() -> None:
     """Child output artifacts should be bounded and auditable on completed rows."""
     store = InMemorySubagentStore()
@@ -410,3 +456,23 @@ async def test_background_child_cleanup_completes_group_after_cancelled_child() 
     group = store.list_groups("run_parent")[0]
     assert group.metadata["join_state"] == "background_completed"
     assert group.status.value == "completed"
+
+
+def _init_git_repo(path: Path) -> None:
+    (path / "tracked.txt").write_text("parent\n", encoding="utf-8")
+    commands = [
+        ["git", "init"],
+        ["git", "config", "user.email", "tests@example.invalid"],
+        ["git", "config", "user.name", "Agent Driver Tests"],
+        ["git", "add", "tracked.txt"],
+        ["git", "commit", "-m", "seed"],
+    ]
+    for command in commands:
+        subprocess.run(
+            command,
+            cwd=path,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )

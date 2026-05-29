@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from inspect import signature
-from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
@@ -20,6 +19,11 @@ from agent_driver.contracts.enums import (
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.contracts.subagents import MergeProvenance, SubagentGroup, SubagentRun
 from agent_driver.subagents.handoff import SubagentParentHandoff
+from agent_driver.subagents.isolation import (
+    ChildWorkspace,
+    cleanup_child_workspace,
+    prepare_child_workspace,
+)
 from agent_driver.subagents.join import evaluate_join_policy
 from agent_driver.subagents.merge import merge_subagent_outputs
 from agent_driver.subagents.planner import build_child_context_handoff
@@ -127,31 +131,38 @@ async def _run_single_child_task(
         )
         store.upsert_run(cancelled, idempotency_key=task.idempotency_key)
         return cancelled
-    child_input = AgentRunInput(
-        input=task.task,
-        run_id=f"child_{uuid4().hex[:12]}",
-        thread_id=parent.thread_id,
-        agent_id=f"{parent.agent_id}.child",
-        graph_preset=parent.graph_preset,
-        model_role=parent.model_role,
-        agent_profile=task.profile,
-        tool_policy=_child_tool_policy(parent=parent, task=task),
-        deadline_seconds=task.deadline_seconds,
-        app_metadata=_child_app_metadata(
-            parent=parent,
-            group=group,
-            task=task,
-            child_app_metadata=child_app_metadata,
-        ),
+    workspace = prepare_child_workspace(
+        parent_workspace_cwd=parent.workspace_cwd,
+        task_metadata=task.metadata,
     )
-    output_any = _call_child_runner(
-        child_runner,
-        child_input,
-        child_abort_handle=child_abort_handle,
-    )
-    output = await output_any if hasattr(output_any, "__await__") else output_any
-    if not isinstance(output, AgentRunOutput):
-        raise RuntimeError("child_runner must return AgentRunOutput")
+    try:
+        child_input = AgentRunInput(
+            input=task.task,
+            run_id=f"child_{uuid4().hex[:12]}",
+            thread_id=parent.thread_id,
+            agent_id=f"{parent.agent_id}.child",
+            graph_preset=parent.graph_preset,
+            model_role=parent.model_role,
+            agent_profile=task.profile,
+            tool_policy=_child_tool_policy(parent=parent, task=task),
+            deadline_seconds=task.deadline_seconds,
+            app_metadata=_child_app_metadata(
+                parent=parent,
+                group=group,
+                child_app_metadata=child_app_metadata,
+                workspace=workspace,
+            ),
+        )
+        output_any = _call_child_runner(
+            child_runner,
+            child_input,
+            child_abort_handle=child_abort_handle,
+        )
+        output = await output_any if hasattr(output_any, "__await__") else output_any
+        if not isinstance(output, AgentRunOutput):
+            raise RuntimeError("child_runner must return AgentRunOutput")
+    finally:
+        cleanup_child_workspace(workspace)
     run_status, terminal_state = _status_from_output(output)
     artifact_refs = _bounded_output_artifact_refs(output)
     merge_provenance = (
@@ -254,56 +265,18 @@ def _child_app_metadata(
     *,
     parent: SubagentParentHandoff,
     group: SubagentGroup,
-    task: SubagentTaskSpec,
     child_app_metadata: dict | None,
+    workspace: ChildWorkspace,
 ) -> dict[str, object]:
     metadata: dict[str, object] = {
         "parent_run_id": parent.run_id,
         "subagent_group_id": group.group_id,
         **(child_app_metadata or {}),
     }
-    workspace_cwd = _resolve_child_workspace_cwd(parent=parent, task=task)
-    if workspace_cwd is not None:
-        metadata["workspace_cwd"] = str(workspace_cwd)
-        metadata["workspace_cwd_source"] = (
-            "subagent_task"
-            if task.metadata.get("cwd") or task.metadata.get("workspace_cwd")
-            else "parent"
-        )
+    if workspace.cwd is not None:
+        metadata["workspace_cwd"] = str(workspace.cwd)
+        metadata["workspace_cwd_source"] = workspace.mode
     return metadata
-
-
-def _resolve_child_workspace_cwd(
-    *, parent: SubagentParentHandoff, task: SubagentTaskSpec
-) -> Path | None:
-    parent_root = _optional_workspace_path(parent.workspace_cwd)
-    raw_override = task.metadata.get("workspace_cwd") or task.metadata.get("cwd")
-    if raw_override is None:
-        return parent_root
-    if parent_root is None:
-        raise ValueError("subagent cwd override requires parent workspace_cwd")
-    requested = Path(str(raw_override)).expanduser()
-    if not requested.is_absolute():
-        requested = parent_root / requested
-    resolved = requested.resolve()
-    if not resolved.exists() or not resolved.is_dir():
-        raise ValueError(f"subagent cwd is not an existing directory: {resolved}")
-    try:
-        resolved.relative_to(parent_root)
-    except ValueError as exc:
-        raise ValueError(
-            f"subagent cwd outside parent workspace ({parent_root}): {resolved}"
-        ) from exc
-    return resolved
-
-
-def _optional_workspace_path(raw: str | None) -> Path | None:
-    if raw is None or not str(raw).strip():
-        return None
-    path = Path(str(raw)).expanduser().resolve()
-    if not path.exists() or not path.is_dir():
-        raise ValueError(f"parent workspace_cwd is not an existing directory: {path}")
-    return path
 
 
 def _child_abort_handle(parent_abort_handle: object | None) -> object | None:
@@ -349,6 +322,7 @@ def _build_child_input(
     task: SubagentTaskSpec,
     child_run_id: str,
     child_app_metadata: dict | None,
+    workspace: ChildWorkspace,
 ) -> AgentRunInput:
     return AgentRunInput(
         input=task.task,
@@ -363,8 +337,8 @@ def _build_child_input(
         app_metadata=_child_app_metadata(
             parent=parent,
             group=group,
-            task=task,
             child_app_metadata=child_app_metadata,
+            workspace=workspace,
         ),
     )
 
@@ -689,6 +663,10 @@ async def execute_subagent_group_background(
                 "execution_mode": SubagentExecutionMode.BACKGROUND.value,
             },
         )
+        workspace = prepare_child_workspace(
+            parent_workspace_cwd=parent.workspace_cwd,
+            task_metadata=task.metadata,
+        )
         child_input = _build_child_input(
             parent=parent,
             group=group,
@@ -698,6 +676,7 @@ async def execute_subagent_group_background(
                 "subagent_execution_mode": "asyncio_background",
                 **(child_app_metadata or {}),
             },
+            workspace=workspace,
         )
         asyncio.create_task(
             _complete_background_child_task(
@@ -712,6 +691,7 @@ async def execute_subagent_group_background(
                 child_abort_handle=_child_abort_handle(parent_abort_handle),
                 idempotency_key=task.idempotency_key,
                 on_event=on_event,
+                workspace=workspace,
             )
         )
     group = store.upsert_group(
@@ -749,41 +729,47 @@ async def _complete_background_child_task(
     child_abort_handle: object | None,
     idempotency_key: str | None,
     on_event: SubagentEventCallback | None,
+    workspace: ChildWorkspace,
 ) -> None:
-    if bool(getattr(child_abort_handle, "is_aborted", False)):
-        completed = _cancelled_child_run(
-            pending=pending,
-            task=task,
-            idx=idx,
-            reason=str(getattr(child_abort_handle, "reason", None) or "parent_aborted"),
-        )
-    else:
-        try:
-            output_any = _call_child_runner(
-                child_runner,
-                child_input,
-                child_abort_handle=child_abort_handle,
-            )
-            output = (
-                await output_any if hasattr(output_any, "__await__") else output_any
-            )
-            if not isinstance(output, AgentRunOutput):
-                raise RuntimeError("child_runner must return AgentRunOutput")
-            completed = _completed_child_run_from_output(
-                parent=parent,
+    try:
+        if bool(getattr(child_abort_handle, "is_aborted", False)):
+            completed = _cancelled_child_run(
                 pending=pending,
                 task=task,
                 idx=idx,
-                output=output,
-                execution_mode=SubagentExecutionMode.BACKGROUND,
+                reason=str(
+                    getattr(child_abort_handle, "reason", None) or "parent_aborted"
+                ),
             )
-        except Exception as exc:  # pragma: no cover - defensive task boundary
-            completed = _failed_child_run(
-                pending=pending,
-                task=task,
-                idx=idx,
-                reason=type(exc).__name__,
-            )
+        else:
+            try:
+                output_any = _call_child_runner(
+                    child_runner,
+                    child_input,
+                    child_abort_handle=child_abort_handle,
+                )
+                output = (
+                    await output_any if hasattr(output_any, "__await__") else output_any
+                )
+                if not isinstance(output, AgentRunOutput):
+                    raise RuntimeError("child_runner must return AgentRunOutput")
+                completed = _completed_child_run_from_output(
+                    parent=parent,
+                    pending=pending,
+                    task=task,
+                    idx=idx,
+                    output=output,
+                    execution_mode=SubagentExecutionMode.BACKGROUND,
+                )
+            except Exception as exc:  # pragma: no cover - defensive task boundary
+                completed = _failed_child_run(
+                    pending=pending,
+                    task=task,
+                    idx=idx,
+                    reason=type(exc).__name__,
+                )
+    finally:
+        cleanup_child_workspace(workspace)
     store.upsert_run(completed, idempotency_key=idempotency_key)
     _safe_emit(
         on_event,
