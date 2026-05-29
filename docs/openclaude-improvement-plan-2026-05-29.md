@@ -110,6 +110,8 @@ Current completed slices:
 - Started Phase 3 with transport-neutral steering contracts and an in-memory
   command queue store covering priority ordering, FIFO, cancellation, applied
   state, dedupe keys, and route filters.
+- Added SQLite command queue persistence with the same behavior contract as the
+  in-memory queue and a re-instantiation persistence test.
 
 Next Phase 2 slice:
 
@@ -226,8 +228,8 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 
 - [x] Add `agent_driver/contracts/control.py` with `ControlRequest`,
   `ControlResponse`, and `CommandQueueItem`.
-- [ ] Add command queue stores:
-  in-memory first [done], SQLite second.
+- [x] Add command queue stores:
+  in-memory first, SQLite second.
 - [x] Add control dispatcher/store priority semantics:
   `now > next > later`, FIFO within priority.
 - [ ] Add SDK methods:
