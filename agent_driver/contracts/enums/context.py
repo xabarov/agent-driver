@@ -14,6 +14,17 @@ class PlanningTodoStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class PlanningModeState(StrEnum):
+    """Approval lifecycle for a durable plan artifact."""
+
+    DISABLED = "disabled"
+    COLLECTING = "collecting"
+    AWAITING_APPROVAL = "awaiting_approval"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
 class ObservationSource(StrEnum):
     """Source of observation preview captured for model-facing memory."""
 
@@ -42,4 +53,10 @@ class TrimAction(StrEnum):
     DROPPED = "dropped"
 
 
-__all__ = ["ObservationSource", "ObservationTrust", "PlanningTodoStatus", "TrimAction"]
+__all__ = [
+    "ObservationSource",
+    "ObservationTrust",
+    "PlanningModeState",
+    "PlanningTodoStatus",
+    "TrimAction",
+]

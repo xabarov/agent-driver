@@ -7,6 +7,7 @@ import pytest
 from agent_driver.contracts import (
     AgentRunInput,
     ResumeAction,
+    ToolCall,
     ToolPolicyInput,
     ToolPolicyMode,
 )
@@ -20,6 +21,7 @@ from agent_driver.runtime import (
     wrap_governed_executor,
 )
 from agent_driver.tools import GovernedToolExecutor, ToolRegistry
+from agent_driver.tools import register_planning_tool
 from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
 from tests.runtime.conftest import danger_tool_manifest, planned_danger_tool_policy
 
@@ -101,6 +103,60 @@ async def test_runner_resume_approve_executes_pending_tool_once() -> None:
     assert resume_output.status.value == "completed"
     assert len(calls) == 1
     assert calls[0]["target"] == "x"
+
+
+@pytest.mark.asyncio
+async def test_runner_pauses_for_exit_plan_mode_approval_and_resumes() -> None:
+    """Plan exit should pause for approval, then resume through existing HITL path."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ok"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            )
+        ),
+    )
+    plan_call = ToolCall(
+        tool_name="exit_plan_mode_v2",
+        args={"content": "1. Inspect\n2. Implement\n3. Verify"},
+        tool_call_id="plan_call",
+    )
+    paused = await runner.run(
+        AgentRunInput(
+            input="approve plan",
+            run_id="run_plan_approval_hitl",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(
+                mode=ToolPolicyMode.ALLOW_TOOLS,
+                metadata={"planned_tool_calls": [plan_call.model_dump(mode="json")]},
+            ),
+        )
+    )
+    assert paused.status.value == "paused"
+    assert paused.interrupt is not None
+    assert paused.interrupt.reason.value == "plan_approval_required"
+    approval = paused.metadata["approval_payload"]
+    assert approval["tool_name"] == "exit_plan_mode_v2"
+    assert paused.interrupt.proposed_action["plan_approval"]["content_hash"]
+
+    resumed = await runner.run(
+        AgentRunInput(
+            run_id="run_plan_approval_hitl",
+            resume=ResumeCommand(
+                interrupt_id=paused.interrupt.interrupt_id,
+                action=ResumeAction.APPROVE,
+            ),
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        )
+    )
+    assert resumed.status.value == "completed"
 
 
 @pytest.mark.asyncio

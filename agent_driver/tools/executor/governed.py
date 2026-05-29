@@ -593,6 +593,7 @@ class GovernedToolExecutor:
             "run_id": run_input.run_id,
             "thread_id": run_input.thread_id,
             "attempt_id": f"attempt_{index}",
+            "agent_id": run_input.agent_id,
             "agent_profile": run_input.agent_profile.value,
             "prompt_template_id": run_input.prompt_template_id,
             "prompt_template_version": run_input.prompt_template_version,

@@ -1,5 +1,15 @@
 """Planning-state helpers, prompt renderer, and planning events."""
 
+from agent_driver.context.planning.artifacts import (
+    InMemoryPlanArtifactStore,
+    PlanArtifactStore,
+    approve_plan_artifact,
+    create_plan_artifact,
+    mark_plan_awaiting_approval,
+    plan_content_hash,
+    reject_plan_artifact,
+    update_plan_artifact_content,
+)
 from agent_driver.context.planning.events import (
     planning_state_event,
     planning_step_event,
@@ -20,4 +30,12 @@ __all__ = [
     "render_planning_step_prompt",
     "planning_step_event",
     "planning_state_event",
+    "PlanArtifactStore",
+    "InMemoryPlanArtifactStore",
+    "plan_content_hash",
+    "create_plan_artifact",
+    "update_plan_artifact_content",
+    "mark_plan_awaiting_approval",
+    "approve_plan_artifact",
+    "reject_plan_artifact",
 ]

@@ -64,11 +64,15 @@ async def test_enter_and_exit_plan_mode_tools_return_applied_args() -> None:
     assert enter is not None
     assert exit_v2 is not None
     entered = await enter.handler({"reason": "need architecture pass"})
-    exited = await exit_v2.handler({"reason": "ready to implement"})
+    exited = await exit_v2.handler(
+        {"reason": "ready to implement", "content": "1. Inspect\n2. Change"}
+    )
     assert entered["applied_args"]["planning_mode"] == "plan"
     assert entered["planning_state"]["mode"] == "plan"
     assert exited["applied_args"]["planning_mode"] == "agent"
     assert exited["planning_state"]["mode"] == "agent"
+    assert exited["interrupt_reason"] == "plan_approval_required"
+    assert exited["plan_approval"]["content_hash"]
 
 
 def test_apply_planning_state_tool_update_applies_todo_items_and_mode() -> None:

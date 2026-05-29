@@ -18,6 +18,13 @@ increment should add a first-class app-facing SDK facade and a transport-neutral
 runtime stream projection that both FastAPI/SSE and CLI can reuse. SSE remains
 an adapter over durable runtime events rather than the runtime core protocol.
 
+Additional OpenClaude improvement workstream: force planning, dialogue
+steerability, and subagent orchestration should be developed as a focused
+cross-phase initiative rather than copied wholesale from OpenClaude. See
+[OpenClaude improvement plan](openclaude-improvement-plan-2026-05-29.md) for
+the detailed source analysis, gap analysis, implementation phases, and exit
+criteria.
+
 ## Repository structure policy
 
 Before adding non-trivial backend code, place it in an existing **package** that matches the phase below. Do not grow new flat `agent_driver/foo_bar.py` files next to an established package for the same concern (for example, extend `agent_driver/runtime/storage/` rather than adding `runtime/storage_extra.py`). Keep package `__init__.py` files as **facades**; implement in named submodules.

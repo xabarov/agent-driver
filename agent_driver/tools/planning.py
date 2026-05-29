@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
+from agent_driver.context.planning import plan_content_hash
 from agent_driver.context import (
     planning_state_set_step,
     planning_state_set_todo_status,
@@ -327,13 +329,28 @@ async def _enter_plan_mode_tool(args: dict[str, Any]) -> dict[str, Any]:
 
 async def _exit_plan_mode_v2_tool(args: dict[str, Any]) -> dict[str, Any]:
     reason = str(args.get("reason") or "").strip()
+    content = str(args.get("content") or args.get("plan") or "").strip()
+    path = str(args.get("path") or "").strip() or None
+    plan_id = str(args.get("plan_id") or f"plan_{uuid4().hex[:12]}").strip()
     summary = "exited plan mode"
     if reason:
         summary = f"exited plan mode: {reason}"
+    approval_payload = None
+    if content:
+        approval_payload = {
+            "plan_id": plan_id,
+            "content": content,
+            "content_hash": plan_content_hash(content),
+            "path": path,
+        }
     return {
         "summary": summary,
-        "applied_args": {"planning_mode": "agent"},
+        "applied_args": {"planning_mode": "agent", "plan_id": plan_id},
         "planning_state": {"mode": "agent"},
+        "plan_approval": approval_payload,
+        "interrupt_reason": (
+            InterruptReason.PLAN_APPROVAL_REQUIRED.value if content else None
+        ),
     }
 
 
@@ -349,7 +366,22 @@ def _register_enter_plan_mode_tool(registry: ToolRegistry) -> None:
             approval_mode=ApprovalMode.NEVER,
             args_schema={
                 "type": "object",
-                "properties": {"reason": {"type": "string"}},
+                "properties": {
+                    "reason": {"type": "string"},
+                    "plan_id": {"type": "string"},
+                    "content": {
+                        "type": "string",
+                        "description": "Plan content to present for approval.",
+                    },
+                    "plan": {
+                        "type": "string",
+                        "description": "Alias for content.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional plan artifact path.",
+                    },
+                },
                 "additionalProperties": False,
             },
             output_type="json",

@@ -9,6 +9,9 @@ from agent_driver.contracts import (
     ContextBudget,
     ObservationMemory,
     ObservationProvenance,
+    PlanApprovalPayload,
+    PlanArtifact,
+    PlanningModeState,
     ObservationSource,
     ObservationTrust,
     PlanningState,
@@ -42,6 +45,34 @@ def test_planning_state_carries_todos_and_latest_step() -> None:
     restored = PlanningState.model_validate(state.model_dump(mode="json"))
     assert restored.todos[0].status == PlanningTodoStatus.PENDING
     assert restored.latest_step is not None
+
+
+def test_plan_artifact_requires_approval_timestamp_when_approved() -> None:
+    """Approved plan artifacts should carry approval metadata."""
+    with pytest.raises(ValidationError):
+        PlanArtifact(
+            plan_id="plan_1",
+            run_id="run_1",
+            agent_id="agent",
+            content="Do the work",
+            content_hash="hash",
+            status=PlanningModeState.APPROVED,
+        )
+
+
+def test_plan_approval_payload_round_trip() -> None:
+    """Plan approval payload should remain JSON-contract friendly."""
+    payload = PlanApprovalPayload(
+        plan_id="plan_1",
+        run_id="run_1",
+        agent_id="agent",
+        content="1. Inspect\n2. Change",
+        content_hash="hash",
+        metadata={"source": "exit_plan_mode_v2"},
+    )
+    restored = PlanApprovalPayload.model_validate(payload.model_dump(mode="json"))
+    assert restored.plan_id == "plan_1"
+    assert restored.metadata["source"] == "exit_plan_mode_v2"
 
 
 def test_trimmed_context_rejects_negative_budget() -> None:
