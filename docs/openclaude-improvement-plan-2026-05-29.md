@@ -367,7 +367,9 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Queue child-to-parent notifications as `later` commands.
   Child completion events now enqueue deferred parent notifications through the
   steering command queue and mirror them into the subagent mailbox.
-- [ ] Add status polling and collection APIs.
+- [x] Add status polling and collection APIs.
+  `agent_driver.subagents` now exposes a bounded status snapshot and mailbox
+  collection helper for parent runs.
 - [ ] Propagate parent abort to children.
 - [ ] Add budgets/backpressure for child/group scheduling.
 
