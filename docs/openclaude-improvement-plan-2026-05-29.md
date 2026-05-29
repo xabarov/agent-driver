@@ -184,12 +184,26 @@ include a chat-demo integration checkpoint:
 - render or operate the concept in `examples/chat-demo/frontend`;
 - run targeted backend/frontend tests;
 - start the demo locally and verify the main user path with Playwright;
+- run the concept smoke suite when the phase touches planning, HITL,
+  steerability, subagents, replay, or tool policy:
+  `make test-chat-concepts CHAT_DEMO_URL=http://localhost:5174`;
 - capture at least one screenshot or DOM assertion for the changed surface;
 - document any deferred UI gap in this file before moving to the next phase.
+
+Phase-end Playwright concept scenarios should stay short and human-shaped:
+each scenario should cover roughly 5-7 visible chat actions or checks, using
+phrases that a real reviewer would type. Deterministic SSE mocks are preferred
+for regression gates, while live-provider checks remain optional exploratory
+checks.
 
 Current demo-gate status:
 
 - Python Playwright installed in the repo `.venv`; Chromium browser installed.
+- Added `examples/chat-demo/frontend/tests/e2e/chat_concepts_smoke.py` for
+  deterministic concept checks over the real React UI. Current scenarios cover
+  plan approval and the plan/tombstone/clarification/resume regression.
+- Current concept smoke writes screenshots to `/tmp/chat-demo-concepts` and
+  can be run through `make test-chat-concepts`.
 - Root `.venv` has backend/frontend test dependencies installed for local
   checks; the stale `examples/chat-demo/backend/.venv` is no longer used.
 - Frontend unit tests pass.

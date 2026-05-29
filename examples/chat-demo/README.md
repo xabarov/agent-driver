@@ -143,7 +143,15 @@ Optional UI smoke checks against a running dev server:
 
 ```bash
 CHAT_DEMO_URL=http://localhost:5174 python3 examples/chat-demo/frontend/tests/e2e/chat_demo_smoke.py
+CHAT_DEMO_URL=http://localhost:5174 ./.uv-bootstrap/bin/python \
+  examples/chat-demo/frontend/tests/e2e/chat_concepts_smoke.py
 ```
+
+`chat_demo_smoke.py` covers shell/layout behavior across desktop, mobile,
+tablet, and wide viewports. `chat_concepts_smoke.py` covers short 5-step chat
+flows for agent concepts with mocked SSE: plan approval and the
+plan → clarification → resume path. It writes screenshots to
+`/tmp/chat-demo-concepts` by default.
 
 ## Acceptance checklist (manual QA)
 
