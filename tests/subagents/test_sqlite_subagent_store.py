@@ -68,3 +68,35 @@ def test_sqlite_subagent_store_idempotency_key_prevents_duplicate(tmp_path) -> N
     second_saved = store.upsert_run(second, idempotency_key="dup")
     assert first_saved.subagent_run_id == second_saved.subagent_run_id
     assert len(store.list_runs("run_sql_1")) == 1
+
+
+def test_sqlite_subagent_store_idempotency_key_updates_terminal_row(tmp_path) -> None:
+    """Pending idempotent row should be replaced by terminal update."""
+    store = SqliteSubagentStore(path=str(tmp_path / "subagents.sqlite3"))
+    pending = SubagentRun(
+        subagent_run_id="sub_sql_1",
+        parent_run_id="run_sql_1",
+        parent_attempt_id="att_sql_1",
+        task_id="task_sql_1",
+        task_type="analysis",
+        description="sqlite child",
+        execution_mode=SubagentExecutionMode.SYNC,
+        fanout_slot=1,
+        status=SubagentStatus.RUNNING,
+        metadata={},
+    )
+    completed = pending.model_copy(
+        update={
+            "status": SubagentStatus.COMPLETED,
+            "terminal_state": SubagentTerminalState.SUCCEEDED,
+            "merge_provenance": MergeProvenance(strategy="test", source_kind="child"),
+        }
+    )
+
+    store.upsert_run(pending, idempotency_key="dup")
+    store.upsert_run(completed, idempotency_key="dup")
+
+    rows = store.list_runs("run_sql_1")
+    assert len(rows) == 1
+    assert rows[0].subagent_run_id == "sub_sql_1"
+    assert rows[0].status == SubagentStatus.COMPLETED

@@ -50,8 +50,10 @@ class InMemorySubagentStore:
             dedup_key = (run.parent_run_id, idempotency_key)
             existing = self._run_by_idempotency.get(dedup_key)
             if existing is not None:
-                return existing
-            self._run_by_idempotency[dedup_key] = run
+                run = run.model_copy(update={"subagent_run_id": existing.subagent_run_id})
+                self._run_by_idempotency[dedup_key] = run
+            else:
+                self._run_by_idempotency[dedup_key] = run
         rows = self._runs_by_parent.setdefault(run.parent_run_id, [])
         for idx, existing in enumerate(rows):
             if existing.subagent_run_id == run.subagent_run_id:
@@ -148,7 +150,11 @@ class SqliteSubagentStore:
                     (run.parent_run_id, idempotency_key),
                 ).fetchone()
                 if existing is not None:
-                    return SubagentRun.model_validate_json(existing["payload"])
+                    existing_run = SubagentRun.model_validate_json(existing["payload"])
+                    run = run.model_copy(
+                        update={"subagent_run_id": existing_run.subagent_run_id}
+                    )
+                    payload = json.dumps(run.model_dump(mode="json"), ensure_ascii=False)
             conn.execute(
                 """
                 INSERT INTO subagent_runs (subagent_run_id, parent_run_id, idempotency_key, payload)

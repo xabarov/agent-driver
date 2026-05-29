@@ -148,6 +148,9 @@ Current completed slices:
   converted into runtime `planned_subagent_group` metadata, sync child
   execution persists the group/run rows with idempotency keys, and child-level
   subagent events are emitted through the runtime callback path.
+- Tightened subagent idempotent persistence so a pending child row is replaced
+  by its terminal update instead of staying `running` under the same
+  idempotency key.
 
 Next Phase 2 slice:
 
@@ -337,6 +340,7 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Persist group before child execution with idempotency keys.
   The sync executor already persists group/run rows before child execution;
   `agent_tool` request ids flow into task id/idempotency fields.
+  Store tests now assert pending idempotent rows update to terminal status.
 - [x] Pass subagent event callback through sync execution.
   Child `subagent_started` / `subagent_completed` callbacks are projected into
   parent runtime events.
