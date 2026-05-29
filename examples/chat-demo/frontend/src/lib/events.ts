@@ -65,6 +65,15 @@ export interface ParsedToolState {
   durationMs?: number;
 }
 
+export interface ParsedSteeringEvent {
+  seq: number;
+  event: string;
+  queueId: string;
+  controlId?: string;
+  kind?: string;
+  priority?: string;
+}
+
 export function isTokenDelta(event: RunStreamEvent<Record<string, unknown>>): boolean {
   return event.event === "token_delta";
 }
@@ -173,6 +182,36 @@ export function buildLastEventId(runId: string | undefined, seq: number): string
     return undefined;
   }
   return `${runId}:${seq}`;
+}
+
+export function parseSteeringEvents(
+  events: RunStreamEvent<Record<string, unknown>>[],
+): ParsedSteeringEvent[] {
+  return events
+    .filter((event) =>
+      [
+        "control_requested",
+        "command_queued",
+        "command_dequeued",
+        "command_cancelled",
+        "control_applied",
+      ].includes(event.event),
+    )
+    .map((event) => {
+      const queueId = event.data.queue_id;
+      const controlId = event.data.control_id;
+      const kind = event.data.kind;
+      const priority = event.data.priority;
+      return {
+        seq: event.seq,
+        event: event.event,
+        queueId: typeof queueId === "string" ? queueId : "",
+        controlId: typeof controlId === "string" ? controlId : undefined,
+        kind: typeof kind === "string" ? kind : undefined,
+        priority: typeof priority === "string" ? priority : undefined,
+      };
+    })
+    .filter((event) => event.queueId);
 }
 
 function applyPlanningToAssistantMessage(

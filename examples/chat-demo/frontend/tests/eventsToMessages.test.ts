@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { eventsToMessages, type RunStreamEvent } from "../src/lib/events";
+import {
+  eventsToMessages,
+  parseSteeringEvents,
+  type RunStreamEvent,
+} from "../src/lib/events";
 
 function ev(
   event: string,
@@ -104,5 +108,44 @@ describe("eventsToMessages", () => {
       ev("run_failed", 4, { reason: "model_error" }),
     ]);
     expect(messages).toEqual([]);
+  });
+});
+
+describe("parseSteeringEvents", () => {
+  it("extracts control queue lifecycle events for replay", () => {
+    const events = [
+      ev("run_started", 1),
+      ev("command_queued", 2, {
+        queue_id: "cmd_1",
+        control_id: "ctrl_1",
+        kind: "enqueue_user_message",
+        priority: "next",
+      }),
+      ev("control_applied", 3, {
+        queue_id: "cmd_1",
+        control_id: "ctrl_1",
+        kind: "enqueue_user_message",
+        priority: "next",
+      }),
+    ];
+
+    expect(parseSteeringEvents(events)).toEqual([
+      {
+        seq: 2,
+        event: "command_queued",
+        queueId: "cmd_1",
+        controlId: "ctrl_1",
+        kind: "enqueue_user_message",
+        priority: "next",
+      },
+      {
+        seq: 3,
+        event: "control_applied",
+        queueId: "cmd_1",
+        controlId: "ctrl_1",
+        kind: "enqueue_user_message",
+        priority: "next",
+      },
+    ]);
   });
 });
