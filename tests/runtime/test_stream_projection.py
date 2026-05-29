@@ -44,6 +44,7 @@ def test_project_runtime_events_maps_type_and_seq() -> None:
         RuntimeEventType.TOOL_CALL_STARTED,
         RuntimeEventType.TOOL_CALL_COMPLETED,
         RuntimeEventType.INTERRUPT_REQUESTED,
+        RuntimeEventType.CONTROL_APPLIED,
         RuntimeEventType.WARNING,
         RuntimeEventType.RUN_FAILED,
     ],

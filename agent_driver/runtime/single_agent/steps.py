@@ -134,10 +134,24 @@ class SingleAgentStepMixin:
         return RuntimeStepResult(next_step="llm_call")
 
     async def _execute_llm_call(self, context: RunContext) -> RuntimeStepResult:
-        drain_step_boundary_controls(
+        applied_controls = drain_step_boundary_controls(
             context=context,
             store=self._deps.command_queue_store,
         )
+        for item in applied_controls:
+            self._emit(
+                EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType.CONTROL_APPLIED,
+                    payload={
+                        "queue_id": item.queue_id,
+                        "control_id": item.control_id,
+                        "kind": item.kind.value,
+                        "priority": item.priority.value,
+                    },
+                )
+            )
         return await execute_llm_call_step(self, context)
 
     async def _execute_tool_stage(self, context: RunContext) -> RuntimeStepResult:

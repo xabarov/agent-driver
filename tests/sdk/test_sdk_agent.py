@@ -183,6 +183,8 @@ async def test_sdk_set_model_control_affects_next_llm_request() -> None:
     assert provider.last_request is not None
     assert provider.last_request.model == "openai/gpt-4.1-mini"
     assert queue.list_pending(run_id="run_sdk_model_control") == []
+    events = agent.runner.deps.event_log.list_for_run("run_sdk_model_control")
+    assert any(event.type == RuntimeEventType.CONTROL_APPLIED for event in events)
 
 
 @pytest.mark.asyncio
