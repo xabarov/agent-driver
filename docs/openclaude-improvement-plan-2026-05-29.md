@@ -90,6 +90,10 @@ Current completed slices:
   tests. Chat-demo now attaches the hint to `tool_policy.metadata`, and the
   React chat system prompt surfaces it only when planning is suggested or
   required.
+- Added evaluator support for configurable force-planning modes:
+  `off`, `prompt_only`, `required_for_writes`, `required_for_risky_tools`, and
+  `always_for_multistep`. The existing `enabled=true` behavior remains
+  compatible and maps to write/external side-effect gating.
 
 Next Phase 2 slice:
 
@@ -100,6 +104,8 @@ Next Phase 2 slice:
 - Extend `planning_hint` from request-text rules to planned tool batches
   (side-effecting tools, native `agent_tool`, estimated step count) so the
   same contract can drive runtime-required planning outside chat-demo.
+- Wire configurable planning mode into chat-demo/server configuration once the
+  product default is chosen (`prompt_only` vs `required_for_writes`).
 
 ## Periodic Product Checks
 
@@ -454,7 +460,7 @@ Scope:
 
 - Add `PlanningPolicyInput` to run/tool policy metadata:
   task class, risk threshold, tool categories, files touched, subagent spawn.
-- Add configurable planning modes:
+- Add configurable planning modes: [done in evaluator; config/UI wiring remains]
   `off`, `prompt_only`, `required_for_writes`, `required_for_risky_tools`,
   `always_for_multistep`.
 - Add deterministic classifiers/rules first:

@@ -289,6 +289,102 @@ def test_policy_force_planning_allows_write_with_approved_plan() -> None:
     assert outcome.decision.value == "allow"
 
 
+def test_policy_force_planning_prompt_only_does_not_gate() -> None:
+    """prompt_only mode should leave execution ungated for voluntary planning."""
+    call = ToolCall(tool_name="file_write")
+    manifest = ToolManifest(
+        name="file_write",
+        description="Write file",
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.REVERSIBLE_WRITE,
+    )
+    outcome = evaluate_tool_policy(
+        policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            metadata={"force_planning": {"enabled": True, "mode": "prompt_only"}},
+        ),
+        manifest=manifest,
+        call=call,
+        current_tool_calls=0,
+    )
+    assert outcome.decision.value == "allow"
+
+
+def test_policy_force_planning_explicit_disabled_wins_over_mode() -> None:
+    """Explicit enabled=false should disable the gate even when mode is present."""
+    call = ToolCall(tool_name="file_write")
+    manifest = ToolManifest(
+        name="file_write",
+        description="Write file",
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.REVERSIBLE_WRITE,
+    )
+    outcome = evaluate_tool_policy(
+        policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            metadata={
+                "force_planning": {
+                    "enabled": False,
+                    "mode": "required_for_writes",
+                }
+            },
+        ),
+        manifest=manifest,
+        call=call,
+        current_tool_calls=0,
+    )
+    assert outcome.decision.value == "allow"
+
+
+def test_policy_force_planning_required_for_risky_tools_blocks_read_only() -> None:
+    """Risk mode should gate high-risk tools even without write side effects."""
+    call = ToolCall(tool_name="prod_query")
+    manifest = ToolManifest(
+        name="prod_query",
+        description="Query production data",
+        risk=ToolRisk.HIGH,
+        side_effect=SideEffectClass.READ_ONLY,
+    )
+    outcome = evaluate_tool_policy(
+        policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            metadata={"force_planning": {"mode": "required_for_risky_tools"}},
+        ),
+        manifest=manifest,
+        call=call,
+        current_tool_calls=0,
+    )
+    assert outcome.decision.value == "deny"
+    assert outcome.metadata["force_planning"]["mode"] == "required_for_risky_tools"
+
+
+def test_policy_force_planning_always_for_multistep_blocks_after_threshold() -> None:
+    """Multistep mode should gate non-exempt tools once the step threshold is hit."""
+    call = ToolCall(tool_name="lookup")
+    manifest = ToolManifest(
+        name="lookup",
+        description="Lookup",
+        risk=ToolRisk.LOW,
+        side_effect=SideEffectClass.READ_ONLY,
+    )
+    outcome = evaluate_tool_policy(
+        policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            metadata={
+                "force_planning": {
+                    "mode": "always_for_multistep",
+                    "step_threshold": 2,
+                }
+            },
+        ),
+        manifest=manifest,
+        call=call,
+        current_tool_calls=1,
+    )
+    assert outcome.decision.value == "deny"
+    assert outcome.metadata["force_planning"]["mode"] == "always_for_multistep"
+
+
 @pytest.mark.asyncio
 async def test_governed_executor_force_planning_blocks_write_tool() -> None:
     """Executor should enforce force-planning denial before handler execution."""
