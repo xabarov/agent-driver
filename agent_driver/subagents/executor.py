@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from inspect import signature
+from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
@@ -136,11 +137,12 @@ async def _run_single_child_task(
         agent_profile=task.profile,
         tool_policy=_child_tool_policy(parent=parent, task=task),
         deadline_seconds=task.deadline_seconds,
-        app_metadata={
-            "parent_run_id": parent.run_id,
-            "subagent_group_id": group.group_id,
-            **(child_app_metadata or {}),
-        },
+        app_metadata=_child_app_metadata(
+            parent=parent,
+            group=group,
+            task=task,
+            child_app_metadata=child_app_metadata,
+        ),
     )
     output_any = _call_child_runner(
         child_runner,
@@ -248,6 +250,62 @@ def _child_tool_policy(
     )
 
 
+def _child_app_metadata(
+    *,
+    parent: SubagentParentHandoff,
+    group: SubagentGroup,
+    task: SubagentTaskSpec,
+    child_app_metadata: dict | None,
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "parent_run_id": parent.run_id,
+        "subagent_group_id": group.group_id,
+        **(child_app_metadata or {}),
+    }
+    workspace_cwd = _resolve_child_workspace_cwd(parent=parent, task=task)
+    if workspace_cwd is not None:
+        metadata["workspace_cwd"] = str(workspace_cwd)
+        metadata["workspace_cwd_source"] = (
+            "subagent_task"
+            if task.metadata.get("cwd") or task.metadata.get("workspace_cwd")
+            else "parent"
+        )
+    return metadata
+
+
+def _resolve_child_workspace_cwd(
+    *, parent: SubagentParentHandoff, task: SubagentTaskSpec
+) -> Path | None:
+    parent_root = _optional_workspace_path(parent.workspace_cwd)
+    raw_override = task.metadata.get("workspace_cwd") or task.metadata.get("cwd")
+    if raw_override is None:
+        return parent_root
+    if parent_root is None:
+        raise ValueError("subagent cwd override requires parent workspace_cwd")
+    requested = Path(str(raw_override)).expanduser()
+    if not requested.is_absolute():
+        requested = parent_root / requested
+    resolved = requested.resolve()
+    if not resolved.exists() or not resolved.is_dir():
+        raise ValueError(f"subagent cwd is not an existing directory: {resolved}")
+    try:
+        resolved.relative_to(parent_root)
+    except ValueError as exc:
+        raise ValueError(
+            f"subagent cwd outside parent workspace ({parent_root}): {resolved}"
+        ) from exc
+    return resolved
+
+
+def _optional_workspace_path(raw: str | None) -> Path | None:
+    if raw is None or not str(raw).strip():
+        return None
+    path = Path(str(raw)).expanduser().resolve()
+    if not path.exists() or not path.is_dir():
+        raise ValueError(f"parent workspace_cwd is not an existing directory: {path}")
+    return path
+
+
 def _child_abort_handle(parent_abort_handle: object | None) -> object | None:
     if parent_abort_handle is not None and hasattr(parent_abort_handle, "child"):
         return parent_abort_handle.child()
@@ -302,11 +360,12 @@ def _build_child_input(
         agent_profile=task.profile,
         tool_policy=_child_tool_policy(parent=parent, task=task),
         deadline_seconds=task.deadline_seconds,
-        app_metadata={
-            "parent_run_id": parent.run_id,
-            "subagent_group_id": group.group_id,
-            **(child_app_metadata or {}),
-        },
+        app_metadata=_child_app_metadata(
+            parent=parent,
+            group=group,
+            task=task,
+            child_app_metadata=child_app_metadata,
+        ),
     )
 
 

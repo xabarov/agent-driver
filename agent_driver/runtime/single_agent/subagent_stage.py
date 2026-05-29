@@ -78,6 +78,7 @@ async def maybe_execute_subagent_group(
         artifact_refs=_list_metadata(context, "artifact_refs"),
         digest_refs=_list_metadata(context, "digest_refs"),
         planning_state=_dict_metadata(context, "planning_state"),
+        workspace_cwd=_optional_text(context.metadata.get("workspace_cwd")),
     )
 
     def on_event(event_type: str, payload: dict[str, object]) -> None:
@@ -208,6 +209,8 @@ def _task_metadata(item: dict[str, object]) -> dict[str, object]:
         "required_outputs",
         "scratchpad",
         "artifact_handoff",
+        "cwd",
+        "workspace_cwd",
     ):
         if key in item and key not in payload:
             payload[key] = item[key]

@@ -153,6 +153,76 @@ async def test_sync_child_execution_restricts_worker_tool_surface() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sync_child_execution_applies_validated_cwd_override(tmp_path) -> None:
+    """Child workspace cwd overrides should stay inside parent workspace."""
+    store = InMemorySubagentStore()
+    child_workspace = tmp_path / "child"
+    child_workspace.mkdir()
+    seen = {}
+
+    async def _runner(run_input):
+        seen["app_metadata"] = run_input.app_metadata
+        return await _ok_child_runner(run_input)
+
+    await execute_subagent_group_sync(
+        parent=default_parent_handoff(
+            answer="parent summary",
+            workspace_cwd=str(tmp_path),
+        ),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_parent",
+            purpose="analysis",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="task_1",
+                    task="verify",
+                    description="desc",
+                    metadata={"cwd": "child"},
+                ),
+            ),
+        ),
+        store=store,
+        child_runner=_runner,
+        max_child_runs=4,
+    )
+
+    assert seen["app_metadata"]["workspace_cwd"] == str(child_workspace.resolve())
+    assert seen["app_metadata"]["workspace_cwd_source"] == "subagent_task"
+
+
+@pytest.mark.asyncio
+async def test_sync_child_execution_rejects_cwd_outside_parent_workspace(
+    tmp_path,
+) -> None:
+    """Subagent cwd policy should reject escapes from parent workspace."""
+    store = InMemorySubagentStore()
+    outside = tmp_path.parent
+
+    with pytest.raises(ValueError, match="outside parent workspace"):
+        await execute_subagent_group_sync(
+            parent=default_parent_handoff(
+                answer="parent summary",
+                workspace_cwd=str(tmp_path),
+            ),
+            group_spec=SubagentGroupSpec(
+                group_id="grp_parent",
+                purpose="analysis",
+                tasks=(
+                    SubagentTaskSpec(
+                        task_id="task_1",
+                        task="verify",
+                        description="desc",
+                        metadata={"cwd": str(outside)},
+                    ),
+                ),
+            ),
+            store=store,
+            child_runner=_ok_child_runner,
+            max_child_runs=4,
+        )
+
+
+@pytest.mark.asyncio
 async def test_sync_child_execution_records_bounded_output_artifact_refs() -> None:
     """Child output artifacts should be bounded and auditable on completed rows."""
     store = InMemorySubagentStore()

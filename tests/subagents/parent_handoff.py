@@ -19,6 +19,7 @@ def default_parent_handoff(**overrides: object) -> SubagentParentHandoff:
         "artifact_refs": [],
         "digest_refs": [],
         "planning_state": None,
+        "workspace_cwd": None,
     }
     base.update(overrides)
     return SubagentParentHandoff(**base)  # type: ignore[arg-type]
