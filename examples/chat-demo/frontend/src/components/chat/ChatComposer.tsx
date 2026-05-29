@@ -37,7 +37,7 @@ export function ChatComposer({ streaming, disabled, onSend, onStop }: ChatCompos
             <button
               type="button"
               aria-label="Close tools"
-              className="fixed inset-0 z-[95] cursor-default bg-black/55 backdrop-blur-[1px]"
+              className="fixed inset-0 z-[95] cursor-default bg-black/55 backdrop-blur-[1px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => setToolsOpen(false)}
             />,
             document.body,

@@ -43,6 +43,13 @@ Principles:
 - Keep controls compact and predictable; avoid hero-style UI, oversized cards, and decorative gradients.
 - Improve mobile by prioritizing active task controls over static labels.
 
+Dependency stance, 2026-05-29:
+
+- The current stack is sufficient for the target chat UI: React, Tailwind v4, Radix primitives, lucide icons, typography, markdown, and syntax highlighting.
+- Do not add a broad component framework such as MUI/AntD/NextUI, or a generic chat UI framework; the runtime-specific planning/tool/replay surfaces should stay locally designed.
+- Only add focused packages when there is a concrete need: `cmdk` for a command-palette model picker, `@tanstack/react-virtual` for large message/model lists, `react-resizable-panels` for a split run inspector, or a toast library for durable copy/error feedback.
+- Prefer design-system rules, component tests, and Playwright guardrails before adding visual or animation dependencies.
+
 ## Phase 1 - Triage And Layout Foundations
 
 - [x] Tighten app shell spacing.
@@ -84,14 +91,14 @@ Phase 1 implementation notes, 2026-05-29:
 
 ## Phase 2 - Runtime Controls And Menus
 
-- [ ] Redesign the model picker.
+- [x] Redesign the model picker.
   - Target file: `ModelPicker.tsx`.
   - Add sections for selected/default, recent, and all models.
   - Keep a sticky search input inside the menu.
   - Show provider/model distinction with a compact monospace ID and optional display name.
   - Cap dropdown height and make scroll behavior obvious.
 
-- [ ] Improve provider health presentation.
+- [x] Improve provider health presentation.
   - Target file: `Header.tsx`.
   - Replace "unknown" as a normal-looking state with explicit loading/offline/healthy states.
   - Add a tooltip or accessible label with provider health details.
@@ -104,16 +111,27 @@ Phase 1 implementation notes, 2026-05-29:
   - Keep only user-facing web toggles in the public demo.
 - Communicate that planning is available to the agent without exposing raw planning tool names.
 
-- [ ] Add run context where it helps.
+- [x] Add run context where it helps.
   - Target files: `Header.tsx`, `SessionRunsMenu.tsx`, `MessageMetadataPopover.tsx`.
   - Surface current run ID/count in the header when a session is active.
   - Keep token metadata out of the primary header until an assistant message exists.
 
 - [ ] Verification checklist.
-  - [ ] Open model picker, search, select a model, reopen and confirm selected state.
+  - [x] Open model picker, search, select a model, reopen and confirm selected state.
   - [x] Open tools picker, change presets, confirm popover placement and enabled tool count.
-  - [ ] Simulate loading/error health state and verify visual copy.
+  - [x] Simulate loading/error health state and verify visual copy.
   - [ ] Confirm all icon-only controls have accessible names and tooltips where useful.
+
+Header runtime controls implementation note, 2026-05-29:
+
+- Provider status now has explicit `checking`, `healthy`, `offline`, and `not configured` labels with tooltip details and accessible status text.
+- Current run context appears as a compact header badge once a session/run exists, while token usage remains hidden until assistant metadata exists.
+
+Model picker implementation note, 2026-05-29:
+
+- Added selected/default, recent, and all/matching sections with provider chips and compact model IDs.
+- Recent selections persist locally under `chat-demo-recent-models`.
+- Added component coverage for selected/default rendering, search filtering, selection, and recent models.
 
 Tools implementation note, 2026-05-29:
 
@@ -129,81 +147,102 @@ Tools implementation note, 2026-05-29:
   - Use normal prose colors in light mode and `dark:prose-invert` only in dark mode.
   - Verify assistant text, links, inline code, and code blocks against light and dark backgrounds.
 
-- [ ] Improve message rhythm and density.
+- [x] Improve message rhythm and density.
   - Target files: `MessageList.tsx`, `MessageBubble.tsx`.
   - Reduce avatar prominence or align it with message metadata.
   - Make assistant messages feel like readable documents, not generic bubbles, especially for markdown/code.
   - Keep user messages compact and clearly right-aligned.
 
-- [ ] Make streaming state more legible.
+- [x] Make streaming state more legible.
   - Target files: `AssistantStreaming.tsx`, `MessageBubble.tsx`, `ChatComposer.tsx`.
   - Add a subtle streaming row that differentiates "thinking", "tool running", and "writing" if event data supports it.
   - Ensure stop action is visually clear while streaming.
 
-- [ ] Upgrade planning/tool cards.
+- [x] Upgrade planning/tool cards.
   - Target files: `PlanningCard.tsx`, `ToolCallCard.tsx`, `InterruptCard.tsx`.
   - Use consistent status badges, compact headers, and collapsible details.
   - Make tool risk/approval states scannable without long explanatory text.
   - Show hidden runtime activity, such as plan approvals and policy-denied filesystem attempts, as replayable outcomes rather than as manual tool controls.
   - Align card radius and borders with the rest of the UI.
 
-- [ ] Improve message actions.
+- [x] Improve message actions.
   - Target files: `MessageActions.tsx`, `MessageMetadataPopover.tsx`.
   - Show actions on hover/focus with stable reserved space to avoid layout shift.
   - Group retry, copy, metadata, and delete by intent.
 
-- [ ] Verification checklist.
-  - [ ] Existing session with multiple runs renders without layout jump.
-  - [ ] Markdown, code blocks, planning snapshots, and tool call cards remain readable in dark and light themes.
-  - [ ] Long assistant output scrolls smoothly with composer pinned.
-  - [ ] Retry/delete/copy controls are reachable by keyboard.
+Phase 3 implementation notes, 2026-05-29:
+
+- Assistant messages now use a quieter document surface with smaller avatars and constrained readable width.
+- User messages stay compact, right-aligned, and visually distinct from assistant output.
+- Planning and tool cards now share card radius, border weight, shadow, and compact status badge treatment across light and dark themes.
+- Streaming now renders an inline `Writing` row with a spinner instead of a low-contrast cursor glyph.
+- Message actions reserve stable height, group retry/copy/metadata as utility actions, and separate destructive delete visually.
+
+- [x] Verification checklist.
+  - [x] Existing session with multiple runs renders without layout jump.
+  - [x] Markdown, code blocks, planning snapshots, and tool call cards remain readable in dark and light themes.
+  - [x] Long assistant output scrolls smoothly with composer pinned.
+  - [x] Retry/delete/copy controls are reachable by keyboard.
 
 ## Phase 4 - Responsive And Accessibility Pass
 
-- [ ] Define responsive shell rules.
+- [x] Define responsive shell rules.
   - Desktop: persistent sidebar, compact header, centered message column.
   - Tablet: narrower sidebar or collapsible sidebar with retained session context.
   - Mobile: hidden sidebar, compact header controls, composer above safe-area padding.
 
-- [ ] Add viewport-specific QA.
+- [x] Add viewport-specific QA.
   - `390x844`: common mobile.
   - `768x1024`: tablet.
   - `1440x900`: laptop/desktop.
   - `1920x1080`: wide desktop, ensure content does not feel stranded.
 
-- [ ] Improve focus and contrast.
+- [x] Improve focus and contrast.
   - Use visible focus rings on all controls.
   - Check muted text against dark background.
   - Confirm disabled controls are distinguishable from inactive secondary controls.
 
-- [ ] Verify reduced motion compatibility.
+- [x] Verify reduced motion compatibility.
   - Any new transitions should respect `prefers-reduced-motion`.
   - Avoid animations that affect reading or streaming output.
 
-- [ ] Verification checklist.
-  - [ ] Run Playwright screenshots for all target viewports.
-  - [ ] Run keyboard-only flow for new session, search, model, tools, composer.
-  - [ ] Check accessible names for icon buttons: menu, theme, send, stop, delete, metadata.
-  - [ ] Confirm no header/composer text truncation hides critical state.
+Phase 4 implementation notes, 2026-05-29:
+
+- Added visible focus styling to custom overlay, theme, planning-collapse, and tool-card controls.
+- Added a mobile close control inside the sidebar; Playwright caught that the header close button was covered by the open sidebar layer.
+- Added a global `prefers-reduced-motion: reduce` guard for transitions and animations.
+- Verified desktop, mobile, tablet, and wide layouts with Playwright smoke screenshots.
+
+- [x] Verification checklist.
+  - [x] Run Playwright screenshots for all target viewports.
+  - [x] Run keyboard-only flow for new session, search, model, tools, composer.
+  - [x] Check accessible names for icon buttons: menu, theme, send, stop, delete, metadata.
+  - [x] Confirm no header/composer text truncation hides critical state.
 
 ## Phase 5 - Test Coverage And Design Regression Guardrails
 
-- [ ] Add Playwright smoke tests for user scenarios.
+- [x] Add Playwright smoke tests for user scenarios.
   - Suggested location: `examples/chat-demo/frontend/tests/e2e/` if Playwright becomes a project dependency, or a documented external script if not.
   - Scenarios: empty state, sidebar search, model search/select, tool preset change, composer typed state, mobile sidebar open/close.
 
-- [ ] Add visual assertions for layout invariants.
+- [x] Add visual assertions for layout invariants.
   - Header height on mobile stays below the agreed threshold.
   - Composer remains visible and does not overlap message content.
   - Model picker and tools picker stay within viewport.
 
-- [ ] Add component tests where interaction is local.
+- [x] Add component tests where interaction is local.
   - `ModelPicker`: search filtering, selected state, loading/error states.
-- `ToolsPicker`: Web Search/Web Fetch toggles, legacy preset normalization, hidden planning/filesystem internals.
+  - `ToolsPicker`: Web Search/Web Fetch toggles, legacy preset normalization, hidden planning/filesystem internals.
   - `SessionItem`: active state, delete affordance, long titles.
 
-- [ ] Document manual QA before releases.
+- [x] Document manual QA before releases.
   - Add a short checklist to `examples/chat-demo/README.md` or keep this document linked from `docs/README.md`.
+
+Phase 5 implementation notes, 2026-05-29:
+
+- Added `examples/chat-demo/frontend/tests/e2e/chat_demo_smoke.py` as a documented external Playwright smoke script.
+- Smoke coverage includes empty state, sidebar search, model search, tools picker, mobile sidebar open/close, keyboard reachability, and desktop/mobile/tablet/wide layout invariants.
+- README now documents the smoke command and adds it to the manual QA checklist.
 
 Open design regression notes, 2026-05-29:
 
@@ -218,13 +257,13 @@ Open design regression notes, 2026-05-29:
 
 - [ ] A new user can understand what to try from the first screen without reading external docs.
 - [ ] The app feels like an agent runtime console: provider, model, tools, runs, and workspace state are visible but not noisy.
-- [ ] Mobile first viewport shows title, essential controls, empty/message content, and composer without awkward wrapping.
-- [ ] Model and tools controls are usable with long real-world OpenRouter model names.
-- [ ] Public tools UI exposes web search/fetch controls only; filesystem and shell capabilities stay hidden from the default web demo.
-- [ ] Planning is visible through outcomes and approvals, but remains agent-controlled and is not presented as a manual user tool.
-- [ ] Sidebar supports scanning and session management without permanent destructive visual noise.
-- [ ] Empty, loading, error, streaming, interrupt, tool-call, and planning states share a coherent visual language.
-- [ ] Playwright smoke coverage exists for the core scenarios listed above.
+- [x] Mobile first viewport shows title, essential controls, empty/message content, and composer without awkward wrapping.
+- [x] Model and tools controls are usable with long real-world OpenRouter model names.
+- [x] Public tools UI exposes web search/fetch controls only; filesystem and shell capabilities stay hidden from the default web demo.
+- [x] Planning is visible through outcomes and approvals, but remains agent-controlled and is not presented as a manual user tool.
+- [x] Sidebar supports scanning and session management without permanent destructive visual noise.
+- [x] Empty, loading, error, streaming, interrupt, tool-call, and planning states share a coherent visual language.
+- [x] Playwright smoke coverage exists for the core scenarios listed above.
 
 ## Suggested Implementation Order
 

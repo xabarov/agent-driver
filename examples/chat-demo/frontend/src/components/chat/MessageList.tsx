@@ -33,8 +33,8 @@ export function MessageList({ messages, onRetryAssistant }: MessageListProps) {
   const viewportRef = useChatScroll(messages, streaming);
 
   return (
-    <div ref={viewportRef} className="h-full overflow-y-auto pr-3">
-      <div className="space-y-4 pb-2 pt-1">
+    <div ref={viewportRef} className="h-full overflow-y-auto px-1 pr-3">
+      <div className="mx-auto max-w-5xl space-y-5 pb-3 pt-1">
         {messages
           .filter((message) => shouldRenderMessage(message, messages))
           .map((message) => (

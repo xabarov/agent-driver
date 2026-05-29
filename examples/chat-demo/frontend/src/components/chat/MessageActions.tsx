@@ -21,11 +21,13 @@ interface MessageActionsProps {
 function ActionButton({
   label,
   disabled,
+  danger,
   onClick,
   children,
 }: {
   label: string;
   disabled?: boolean;
+  danger?: boolean;
   onClick?: () => void;
   children: React.ReactNode;
 }) {
@@ -36,7 +38,10 @@ function ActionButton({
           type="button"
           size="icon"
           variant="ghost"
-          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+          className={cn(
+            "h-8 w-8 text-muted-foreground hover:text-foreground",
+            danger && "hover:bg-destructive/10 hover:text-destructive",
+          )}
           aria-label={label}
           disabled={disabled}
           onClick={onClick}
@@ -73,7 +78,8 @@ export function MessageActions({
   return (
     <div
       className={cn(
-        "flex items-center gap-0.5 transition-opacity duration-150",
+        "flex items-center gap-1 transition-opacity duration-150",
+        "min-h-8",
         "opacity-100 sm:opacity-0 sm:pointer-events-none",
         "sm:group-hover:pointer-events-auto sm:group-hover:opacity-100",
         "sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100",
@@ -81,18 +87,21 @@ export function MessageActions({
         align === "end" && "justify-end",
       )}
     >
-      {showRetry ? (
-        <ActionButton label="Retry" disabled={disabled} onClick={onRetry}>
-          <RotateCcw className="h-4 w-4" />
+      <span className="inline-flex items-center gap-0.5">
+        {showRetry ? (
+          <ActionButton label="Retry" disabled={disabled} onClick={onRetry}>
+            <RotateCcw className="h-4 w-4" />
+          </ActionButton>
+        ) : null}
+        <ActionButton label="Copy" disabled={disabled || !content.trim()} onClick={() => void copyContent()}>
+          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
         </ActionButton>
-      ) : null}
-      <ActionButton label="Copy" disabled={disabled || !content.trim()} onClick={() => void copyContent()}>
-        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-      </ActionButton>
-      {showMetadata ? (
-        <MessageMetadataPopover metadata={metadata} disabled={disabled} align={align} />
-      ) : null}
-      <ActionButton label="Delete" disabled={disabled} onClick={onDelete}>
+        {showMetadata ? (
+          <MessageMetadataPopover metadata={metadata} disabled={disabled} align={align} />
+        ) : null}
+      </span>
+      <span className="h-4 w-px bg-border" aria-hidden />
+      <ActionButton label="Delete" disabled={disabled} danger onClick={onDelete}>
         <Trash2 className="h-4 w-4" />
       </ActionButton>
     </div>

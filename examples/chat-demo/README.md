@@ -139,6 +139,12 @@ make test
 make test-frontend
 ```
 
+Optional UI smoke checks against a running dev server:
+
+```bash
+CHAT_DEMO_URL=http://localhost:5174 python3 examples/chat-demo/frontend/tests/e2e/chat_demo_smoke.py
+```
+
 ## Acceptance checklist (manual QA)
 
 - [ ] `/` redirects to `/sessions/new`; sidebar lists sessions
@@ -147,6 +153,7 @@ make test-frontend
 - [ ] Interrupt card shows on approval-required tool; Approve resumes stream
 - [ ] Replay link opens read-only run timeline
 - [ ] Theme toggle switches light/dark; provider badge shows health
+- [ ] UI smoke script passes at desktop, mobile, tablet, and wide viewports
 - [ ] `make test` and `make test-frontend` pass
 - [ ] `make build` serves UI from backend on one port
 

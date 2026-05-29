@@ -24,14 +24,11 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
 
   if (message.role === "user") {
     return (
-      <div
-        className="group flex justify-end gap-3 outline-none"
-        tabIndex={-1}
-      >
-        <div className="flex min-w-0 max-w-[85%] flex-col items-end">
+      <div className="group flex justify-end gap-2.5 outline-none" tabIndex={-1}>
+        <div className="flex min-w-0 max-w-[78%] flex-col items-end sm:max-w-[70%]">
           <div
             className={cn(
-              "rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
+              "rounded-2xl rounded-tr-md px-4 py-2.5 text-sm leading-relaxed shadow-sm",
               "bg-[hsl(var(--chat-user-bg))] text-[hsl(var(--chat-user-fg))]",
             )}
           >
@@ -44,7 +41,7 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
             onDelete={() => deleteMessage(message.id)}
           />
         </div>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-secondary">
           <User className="h-4 w-4 text-muted-foreground" />
         </div>
       </div>
@@ -61,11 +58,11 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
     !message.pending && message.metadata?.planningExecuted === "fabricated";
 
   return (
-    <div className="group flex gap-3 outline-none" tabIndex={-1}>
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15">
-        <Bot className="h-4 w-4 text-primary" />
+    <div className="group flex gap-2.5 outline-none" tabIndex={-1}>
+      <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-background shadow-sm">
+        <Bot className="h-3.5 w-3.5 text-primary" />
       </div>
-      <div className="relative min-w-0 max-w-[92%] flex-1">
+      <div className="relative min-w-0 max-w-[min(100%,58rem)] flex-1">
         {planningFabricated ? (
           <div
             role="alert"
@@ -85,8 +82,9 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
         ) : null}
         <div
           className={cn(
-            "rounded-2xl px-4 py-3 text-sm leading-relaxed",
+            "rounded-lg border border-border/70 px-4 py-3 text-sm leading-relaxed shadow-sm shadow-black/5",
             "bg-[hsl(var(--chat-assistant-bg))] text-foreground",
+            "dark:border-border/80 dark:shadow-none",
           )}
         >
           {message.content ? (
