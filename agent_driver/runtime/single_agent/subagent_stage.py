@@ -40,9 +40,11 @@ async def maybe_execute_subagent_group(
     if context.metadata.get("subagent_origin") == "child":
         return
     policy_metadata = context.run_input.tool_policy.metadata
-    if not isinstance(policy_metadata, dict):
-        return
-    planned = policy_metadata.get("planned_subagent_group")
+    planned = None
+    if isinstance(policy_metadata, dict):
+        planned = policy_metadata.get("planned_subagent_group")
+    if not isinstance(planned, dict):
+        planned = context.metadata.get("planned_subagent_group")
     if not isinstance(planned, dict):
         return
     group_spec = _group_spec_from_planned(planned, max_child_runs=host._config.max_child_runs)
@@ -74,6 +76,9 @@ async def maybe_execute_subagent_group(
         child_runner=host.run,
         max_child_runs=host._config.max_child_runs,
         child_app_metadata={"subagent_origin": "child"},
+        on_event=lambda event_type, payload: _emit_child_subagent_event(
+            host, context, event_type, payload
+        ),
     )
     context.metadata["subagent_groups"] = [
         row.model_dump(mode="json")
@@ -86,6 +91,7 @@ async def maybe_execute_subagent_group(
         ]
     )
     context.metadata["subagent_merge_summary"] = result.merged_summary
+    context.metadata.pop("planned_subagent_group", None)
     emit_step_event(
         host,
         context,
@@ -144,6 +150,28 @@ def _list_metadata(context: RunContext, key: str) -> list[dict[str, object]]:
 def _dict_metadata(context: RunContext, key: str) -> dict[str, object] | None:
     value = context.metadata.get(key)
     return value if isinstance(value, dict) else None
+
+
+def _emit_child_subagent_event(
+    host: SubagentStageHost,
+    context: RunContext,
+    event_type: str,
+    payload: dict[str, object],
+) -> None:
+    mapping = {
+        RuntimeEventType.SUBAGENT_STARTED.value: RuntimeEventType.SUBAGENT_STARTED,
+        RuntimeEventType.SUBAGENT_COMPLETED.value: RuntimeEventType.SUBAGENT_COMPLETED,
+        RuntimeEventType.SUBAGENT_SPAWNED.value: RuntimeEventType.SUBAGENT_SPAWNED,
+    }
+    runtime_type = mapping.get(event_type)
+    if runtime_type is None:
+        return
+    emit_step_event(
+        host,
+        context,
+        event_type=runtime_type,
+        payload=payload,
+    )
 
 
 __all__ = ["SubagentStageHost", "maybe_execute_subagent_group"]

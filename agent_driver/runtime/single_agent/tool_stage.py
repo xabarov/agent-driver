@@ -141,6 +141,7 @@ def _post_process_tool_result(
     if observations:
         context.metadata["observations"] = observations
     _update_tool_protocol_messages(context, result)
+    _apply_agent_tool_spawn_requests(context, result)
     _update_zero_result_policy(context, result)
     _refresh_force_final_controls(context)
     if not planning_updated:
@@ -178,6 +179,55 @@ def _try_build_interrupt_transition(
     context.metadata["terminal_output"] = paused_output.model_dump(mode="json")
     host._save_checkpoint(context, latest_output=paused_output, node_id="tool_stage")
     return RuntimeStepResult(next_step="done")
+
+
+def _apply_agent_tool_spawn_requests(
+    context: RunContext, result: ToolExecutionResult
+) -> None:
+    """Turn successful ``agent_tool`` envelopes into runtime subagent plans."""
+    tasks: list[dict[str, object]] = []
+    for envelope in result.envelopes:
+        if envelope.call.tool_name != "agent_tool":
+            continue
+        structured = envelope.structured_output
+        if not isinstance(structured, dict):
+            continue
+        request = structured.get("subagent_request")
+        if not isinstance(request, dict):
+            continue
+        task = str(request.get("task") or "").strip()
+        description = str(request.get("description") or task or "subagent task").strip()
+        if not task:
+            continue
+        request_id = str(request.get("request_id") or envelope.call.tool_call_id).strip()
+        task_id = request_id or f"task_{len(tasks) + 1}"
+        idempotency_key = request.get("idempotency_key")
+        tasks.append(
+            {
+                "task_id": task_id,
+                "task": task,
+                "description": description,
+                "idempotency_key": (
+                    str(idempotency_key) if idempotency_key is not None else task_id
+                ),
+            }
+        )
+    if not tasks:
+        return
+    existing = context.metadata.get("planned_subagent_group")
+    if isinstance(existing, dict) and isinstance(existing.get("tasks"), list):
+        merged_tasks = [item for item in existing["tasks"] if isinstance(item, dict)]
+        merged_tasks.extend(tasks)
+        context.metadata["planned_subagent_group"] = {**existing, "tasks": merged_tasks}
+        return
+    context.metadata["planned_subagent_group"] = {
+        "group_id": f"group_{context.run_id}_agent_tool",
+        "purpose": "agent_tool_spawn",
+        "join_policy": "wait_all",
+        "merge_mode": "append",
+        "tasks": tasks,
+        "source": "agent_tool",
+    }
 
 
 def _try_code_agent_loop_transition(

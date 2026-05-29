@@ -144,6 +144,10 @@ Current completed slices:
   structured validation failures as observation-friendly payloads, a prototype
   steering parser returns typed `ControlRequest`, and a plan draft validator
   checks approval-plan structure before artifact creation.
+- Started native subagent spawn: successful `agent_tool` envelopes are now
+  converted into runtime `planned_subagent_group` metadata, sync child
+  execution persists the group/run rows with idempotency keys, and child-level
+  subagent events are emitted through the runtime callback path.
 
 Next Phase 2 slice:
 
@@ -325,10 +329,17 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 
 ### Phase 5: Native Agent Tool Spawn
 
-- [ ] Make `agent_tool` a runtime-recognized spawn request.
-- [ ] Convert tool envelopes into `SubagentGroupSpec`.
-- [ ] Persist group before child execution with idempotency keys.
-- [ ] Pass subagent event callback through sync execution.
+- [x] Make `agent_tool` a runtime-recognized spawn request.
+- [x] Convert tool envelopes into `SubagentGroupSpec`.
+  Runtime now maps `agent_tool` `subagent_request` envelopes into
+  `planned_subagent_group`, then reuses the existing `SubagentGroupSpec`
+  conversion path.
+- [x] Persist group before child execution with idempotency keys.
+  The sync executor already persists group/run rows before child execution;
+  `agent_tool` request ids flow into task id/idempotency fields.
+- [x] Pass subagent event callback through sync execution.
+  Child `subagent_started` / `subagent_completed` callbacks are projected into
+  parent runtime events.
 - [ ] Add native `task_stop_tool`.
 - [ ] Add `send_message_tool` continuation semantics for existing child
   context.
