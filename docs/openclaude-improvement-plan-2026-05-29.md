@@ -319,7 +319,7 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 
 ### Documentation And Recipes
 
-- [ ] Update `docs/roadmap.md` with a pointer to this plan.
+- [x] Update `docs/roadmap.md` with a pointer to this plan.
 - [ ] Add `docs/architecture/force-planning.md`.
 - [ ] Add `docs/architecture/steering-control-plane.md`.
 - [ ] Extend `docs/architecture/multi-agent-orchestration.md`.
@@ -835,7 +835,8 @@ Exit criteria:
 
 ## Documentation Updates Needed
 
-- Update `docs/roadmap.md` with a short pointer to this plan.
+- Done: `docs/roadmap.md` points to this plan from the cross-phase
+  OpenClaude improvement workstream note.
 - Add `docs/architecture/force-planning.md`.
 - Add `docs/architecture/steering-control-plane.md`.
 - Extend `docs/architecture/multi-agent-orchestration.md` with mailbox,
