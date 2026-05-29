@@ -415,7 +415,9 @@ when a slice is implemented, tested, committed, or intentionally deferred.
   Completed child rows now keep a bounded `child_artifact_refs` list, audit
   dropped refs, expose the first artifact as `output_pointer`, and mark
   artifact refs in merge provenance.
-- [ ] Add cleanup tests for completed/cancelled children.
+- [x] Add cleanup tests for completed/cancelled children.
+  Background tests now pin group finalization after completed and cancelled
+  child rows reach terminal state.
 
 ### Documentation And Recipes
 

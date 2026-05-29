@@ -291,3 +291,52 @@ async def test_background_child_execution_returns_before_child_completes() -> No
         "background_completed"
     )
     assert events[-1][0] == "subagent_completed"
+
+
+@pytest.mark.asyncio
+async def test_background_child_cleanup_completes_group_after_cancelled_child() -> None:
+    """Background cleanup should advance groups after cancelled children finish."""
+    store = InMemorySubagentStore()
+    parent_abort_handle = RunAbortHandle()
+    parent_abort_handle.abort("operator_stop")
+    called = False
+
+    async def _runner(_run_input):
+        nonlocal called
+        called = True
+        raise AssertionError("cancelled background child should not run")
+
+    result = await execute_subagent_group_background(
+        parent=default_parent_handoff(answer="parent summary"),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_background_cancel",
+            purpose="analysis",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="task_1",
+                    task="investigate",
+                    description="desc",
+                ),
+            ),
+        ),
+        store=store,
+        child_runner=_runner,
+        max_child_runs=4,
+        parent_abort_handle=parent_abort_handle,
+    )
+
+    assert result.join_state == "background_running"
+    for _ in range(20):
+        rows = store.list_runs("run_parent")
+        if rows and rows[0].status.value == "cancelled":
+            break
+        await asyncio.sleep(0.01)
+
+    rows = store.list_runs("run_parent")
+    assert called is False
+    assert rows[0].status.value == "cancelled"
+    assert rows[0].terminal_state.value == "cancelled"
+    assert rows[0].metadata["terminal_reason"] == "operator_stop"
+    group = store.list_groups("run_parent")[0]
+    assert group.metadata["join_state"] == "background_completed"
+    assert group.status.value == "completed"
