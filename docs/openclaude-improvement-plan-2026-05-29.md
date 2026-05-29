@@ -94,6 +94,9 @@ Current completed slices:
   `off`, `prompt_only`, `required_for_writes`, `required_for_risky_tools`, and
   `always_for_multistep`. The existing `enabled=true` behavior remains
   compatible and maps to write/external side-effect gating.
+- Chat-demo backend now accepts `CHAT_DEMO_FORCE_PLANNING_MODE` /
+  `CHAT_DEMO_PLANNING_MODE` and passes the chosen mode into
+  `tool_policy.metadata.force_planning` when force planning is enabled.
 
 Next Phase 2 slice:
 
@@ -104,8 +107,8 @@ Next Phase 2 slice:
 - Extend `planning_hint` from request-text rules to planned tool batches
   (side-effecting tools, native `agent_tool`, estimated step count) so the
   same contract can drive runtime-required planning outside chat-demo.
-- Wire configurable planning mode into chat-demo/server configuration once the
-  product default is chosen (`prompt_only` vs `required_for_writes`).
+- Pick and document the product default for chat-demo
+  (`prompt_only` vs `required_for_writes`) after live demo checks.
 
 ## Periodic Product Checks
 

@@ -181,7 +181,10 @@ def _chat_tool_policy(*, body: ChatMessageRequest, settings: Settings) -> ToolPo
     hint = classify_planning_hint(body.message)
     metadata["planning_hint"] = hint.model_dump(mode="json")
     if force_planning:
-        metadata["force_planning"] = {"enabled": True}
+        metadata["force_planning"] = {
+            "enabled": True,
+            "mode": settings.force_planning_mode,
+        }
     return ToolPolicyInput(metadata=metadata)
 
 

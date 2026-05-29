@@ -19,6 +19,13 @@ ToolPreset = Literal[
     "dev",
     "all",
 ]
+PlanningMode = Literal[
+    "off",
+    "prompt_only",
+    "required_for_writes",
+    "required_for_risky_tools",
+    "always_for_multistep",
+]
 
 
 def _discover_env_files() -> tuple[str, ...]:
@@ -57,6 +64,13 @@ class Settings(BaseSettings):
     force_planning: bool = Field(
         default=False,
         validation_alias=AliasChoices("CHAT_DEMO_FORCE_PLANNING"),
+    )
+    force_planning_mode: PlanningMode = Field(
+        default="required_for_writes",
+        validation_alias=AliasChoices(
+            "CHAT_DEMO_FORCE_PLANNING_MODE",
+            "CHAT_DEMO_PLANNING_MODE",
+        ),
     )
     max_steps: int = Field(
         default=24,

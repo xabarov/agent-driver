@@ -65,3 +65,18 @@ def test_chat_tool_policy_adds_adaptive_planning_hint() -> None:
     hint = policy.metadata["planning_hint"]
     assert isinstance(hint, dict)
     assert hint["level"] == "suggested"
+
+
+def test_chat_tool_policy_adds_force_planning_mode() -> None:
+    """Chat-demo env can choose the force-planning runtime mode."""
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="write a file",
+            force_planning=True,
+        ),
+        settings=Settings(CHAT_DEMO_FORCE_PLANNING_MODE="prompt_only"),
+    )
+    force_planning = policy.metadata["force_planning"]
+    assert isinstance(force_planning, dict)
+    assert force_planning["enabled"] is True
+    assert force_planning["mode"] == "prompt_only"
