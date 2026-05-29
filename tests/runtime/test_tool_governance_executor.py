@@ -334,6 +334,12 @@ async def test_governed_executor_force_planning_blocks_write_tool() -> None:
     assert result.traces[0].status.value == "denied"
     assert result.traces[0].error_code == "policy_denied"
     assert "approved plan" in (result.envelopes[0].error.message or "")
+    structured = result.envelopes[0].structured_output
+    assert structured is not None
+    assert structured["error_kind"] == "force_planning_required"
+    assert structured["blocked_tool"] == "file_write"
+    assert "exit_plan_mode_v2" in structured["next_tools"]
+    assert "enter plan mode" in structured["remediation"]
 
 
 @pytest.mark.asyncio

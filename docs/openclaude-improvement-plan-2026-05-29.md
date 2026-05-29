@@ -76,14 +76,16 @@ Current completed slices:
   filesystem/shell controls and raw planning handles are hidden. Planning stays
   always-on inside the agent/runtime and is surfaced through outcomes such as
   plan approvals, planning snapshots, and policy-denied replay cards.
+- Added model-facing remediation for force-planning denials: a blocked
+  side-effecting tool now carries structured guidance to enter plan mode and
+  call `exit_plan_mode_v2` before retrying.
 
 Next Phase 2 slice:
 
-- Add model-facing remediation that guides the next step into
-  `enter_plan_mode` / `exit_plan_mode_v2` when force planning denies a risky
-  tool before approval.
 - Extend the same gate to native subagent spawn once `agent_tool` becomes a
   runtime scheduling surface.
+- Add a replay/UI polish pass for policy-denied tool cards so remediation is
+  visually distinct from the raw denial reason.
 
 ## Periodic Product Checks
 
@@ -128,8 +130,8 @@ Phase-specific chat-demo gates:
 
 - Phase 1: plan approval card can show plan content/hash/path and approve,
   edit, reject, or cancel through existing resume endpoints.
-- Phase 2: forced planning policy visibly blocks risky execution in replay;
-  next step is model-facing guidance into plan approval.
+- Phase 2: forced planning policy visibly blocks risky execution in replay and
+  gives the next model turn structured remediation toward plan approval.
 - Phase 3-4: mid-run steering controls appear in chat-demo and survive SSE
   reconnect/replay.
 - Phase 5-6: subagent spawn, background status, mailbox notifications,
