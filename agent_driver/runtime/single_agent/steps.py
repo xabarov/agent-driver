@@ -139,17 +139,26 @@ class SingleAgentStepMixin:
             store=self._deps.command_queue_store,
         )
         for item in applied_controls:
+            payload = {
+                "queue_id": item.queue_id,
+                "control_id": item.control_id,
+                "kind": item.kind.value,
+                "priority": item.priority.value,
+            }
+            self._emit(
+                EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType.COMMAND_DEQUEUED,
+                    payload=payload,
+                )
+            )
             self._emit(
                 EventSpec(
                     run_id=context.run_id,
                     attempt_id=context.attempt_id,
                     event_type=RuntimeEventType.CONTROL_APPLIED,
-                    payload={
-                        "queue_id": item.queue_id,
-                        "control_id": item.control_id,
-                        "kind": item.kind.value,
-                        "priority": item.priority.value,
-                    },
+                    payload=payload,
                 )
             )
         return await execute_llm_call_step(self, context)

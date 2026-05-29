@@ -119,8 +119,9 @@ Current completed slices:
   `next` controls. `set_model` affects the next provider request,
   `enqueue_user_message` appends a user message before the next LLM call, and
   applied commands are marked in the queue.
-- Added runtime event names for control/queue activity and started emitting
-  `control_applied` when step-boundary controls are drained.
+- Added runtime event names for control/queue activity and emit
+  `command_dequeued` plus `control_applied` when step-boundary controls are
+  drained.
 - SDK queue operations now emit `control_requested`, `command_queued`, and
   `command_cancelled` events when the control is scoped to a `run_id`.
 
@@ -247,10 +248,9 @@ when a slice is implemented, tested, committed, or intentionally deferred.
   `control`, `enqueue`, `set_model`, `set_permission_mode`,
   `cancel_queued_message`.
 - [x] Drain queue at runtime step boundaries.
-- [ ] Emit typed control/queue runtime events.
-  `control_requested`, `command_queued`, `command_cancelled`, and
-  `control_applied` are emitted. `command_dequeued` remains to be wired when
-  drain semantics distinguish dequeue from apply.
+- [x] Emit typed control/queue runtime events:
+  `control_requested`, `command_queued`, `command_dequeued`,
+  `command_cancelled`, and `control_applied`.
 - [ ] Add tests for priority, FIFO, cancellation, checkpoint/resume, and
   `set_model` affecting the next LLM request.
   Priority/FIFO/cancellation/dedupe route tests are done; checkpoint/resume and
