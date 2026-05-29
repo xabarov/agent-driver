@@ -140,6 +140,72 @@ Start simple:
 
 The public contract should not depend on the execution mode. A `wait_all` group should behave the same whether children run in-process, background threads/processes, or a queue.
 
+## Current Runtime Shape
+
+The implemented local path now has three layers:
+
+- `AgentProfile.COORDINATOR` plus a coordinator prompt snapshot for deliberate
+  worker delegation.
+- Built-in worker definitions: `worker`, `researcher`, `implementer`,
+  `verifier`.
+- Durable subagent groups/runs with sync and `asyncio_background` execution.
+
+Worker roles narrow child tool policy rather than widening parent policy.
+For example, a `researcher` can receive web/read/search tools while a
+`verifier` stays on read/search/python verification tools. Parent deny lists
+still win.
+
+Child context handoff is intentionally bounded:
+
+- parent summary is truncated;
+- artifact/digest refs are capped;
+- worker handoff rules are included;
+- scratchpad defaults to bounded private state;
+- artifact handoff defaults to refs-only.
+
+Child outputs return as:
+
+- a bounded summary used for merge;
+- `child_artifact_refs` capped to a small list;
+- `output_pointer` to the first child artifact when present;
+- merge provenance marking whether artifact refs were carried.
+
+## Steering And Mailbox
+
+Parent-to-child and child-to-parent communication uses durable control and
+mailbox stores:
+
+- `send_message_tool` appends continuation messages to an existing child row.
+- `task_stop_tool` marks an existing child as cancelled.
+- Background child completion queues a `later` parent notification and mirrors
+  it into the subagent mailbox.
+- Status collection APIs expose groups, runs, and pending mailbox items without
+  forcing the parent to block on every child.
+
+The parent should continue an existing child when context is still valuable
+instead of spawning a duplicate worker for the same task.
+
+## Workspace Isolation
+
+Child runs inherit parent `workspace_cwd` by default. A task may provide
+`metadata.cwd` or `metadata.workspace_cwd`; the override is accepted only if it
+resolves inside the parent workspace.
+
+Write-heavy children may request:
+
+```json
+{"metadata": {"isolation_mode": "worktree"}}
+```
+
+When the parent workspace is a git repository, the runtime creates a detached
+git worktree for the child, passes that worktree as `workspace_cwd`, and removes
+it when the child reaches a terminal state. This keeps child writes out of the
+parent workspace while preserving normal filesystem and shell tool semantics.
+
+Process/tmux/remote backends remain future adapters. The current local path is
+`asyncio_background` plus mailbox, abort propagation, cwd/worktree isolation,
+and bounded artifact refs.
+
 ## Evaluation Cases
 
 Add deterministic eval cases before relying on LLM-as-judge:
