@@ -249,6 +249,8 @@ async def execute_subagent_group_sync(
                 "index": idx,
                 "task_id": task.task_id,
                 "role": getattr(task, "role", None) or "",
+                "subagent_run_id": completed.subagent_run_id,
+                "child_run_id": completed.child_run_id,
                 "status": completed.status.value
                 if hasattr(completed.status, "value")
                 else str(completed.status),

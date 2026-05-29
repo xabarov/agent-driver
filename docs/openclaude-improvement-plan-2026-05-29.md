@@ -364,7 +364,9 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [ ] Add `asyncio_background` subagent backend.
 - [x] Add durable mailbox for messages, permissions, plan approvals, and task
   notifications.
-- [ ] Queue child-to-parent notifications as `later` commands.
+- [x] Queue child-to-parent notifications as `later` commands.
+  Child completion events now enqueue deferred parent notifications through the
+  steering command queue and mirror them into the subagent mailbox.
 - [ ] Add status polling and collection APIs.
 - [ ] Propagate parent abort to children.
 - [ ] Add budgets/backpressure for child/group scheduling.

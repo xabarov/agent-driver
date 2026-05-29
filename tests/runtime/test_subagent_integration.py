@@ -6,6 +6,8 @@ import pytest
 
 from agent_driver.contracts import (
     ChatMessage,
+    ControlKind,
+    ControlPriority,
     RuntimeEventType,
     SubagentExecutionMode,
     SubagentStatus,
@@ -24,6 +26,7 @@ from agent_driver.runtime import (
     RunnerConfig,
     wrap_governed_executor,
 )
+from agent_driver.runtime.control import InMemoryCommandQueueStore
 from agent_driver.subagents import InMemorySubagentStore
 from agent_driver.subagents import InMemorySubagentMailboxStore
 from agent_driver.tools import GovernedToolExecutor, ToolRegistry, register_builtin_tools
@@ -176,6 +179,8 @@ async def test_runtime_with_subagents_executes_group_from_agent_tool() -> None:
     registry = ToolRegistry()
     register_builtin_tools(registry)
     event_log = InMemoryEventLog()
+    command_queue = InMemoryCommandQueueStore()
+    mailbox_store = InMemorySubagentMailboxStore()
     runner = FakeSingleStepRunner(
         provider=_AgentToolSpawnProvider(),
         checkpoint_store=InMemoryCheckpointStore(),
@@ -183,6 +188,8 @@ async def test_runtime_with_subagents_executes_group_from_agent_tool() -> None:
         config=RunnerConfig(
             enable_subagents=True,
             max_child_runs=2,
+            command_queue_store=command_queue,
+            subagent_mailbox_store=mailbox_store,
             tool_executor=wrap_governed_executor(
                 GovernedToolExecutor(registry=registry)
             ),
@@ -207,6 +214,14 @@ async def test_runtime_with_subagents_executes_group_from_agent_tool() -> None:
     event_types = [event.type for event in event_log.list_for_run("run_agent_tool_sub")]
     assert RuntimeEventType.SUBAGENT_STARTED in event_types
     assert RuntimeEventType.SUBAGENT_COMPLETED in event_types
+    assert RuntimeEventType.COMMAND_QUEUED in event_types
+    queued = command_queue.list_pending(run_id="run_agent_tool_sub")
+    assert queued[0].kind == ControlKind.ENQUEUE_USER_MESSAGE
+    assert queued[0].priority == ControlPriority.LATER
+    assert queued[0].source == "subagent_notification"
+    assert mailbox_store.list_pending(parent_run_id="run_agent_tool_sub")[0].payload[
+        "status"
+    ] == "completed"
 
 
 @pytest.mark.asyncio

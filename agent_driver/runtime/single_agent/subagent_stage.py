@@ -5,10 +5,16 @@ from __future__ import annotations
 from typing import Any, Protocol
 from uuid import uuid4
 
+from agent_driver.contracts.control import ControlKind, ControlPriority, ControlRequest
 from agent_driver.contracts.enums import (
     RuntimeEventType,
     SubagentJoinPolicy,
     SubagentMergeMode,
+)
+from agent_driver.contracts.subagent_mailbox import (
+    SubagentMailboxDirection,
+    SubagentMailboxItem,
+    SubagentMailboxKind,
 )
 from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.types import RunContext, RunnerConfig, RunnerDeps
@@ -172,6 +178,80 @@ def _emit_child_subagent_event(
         event_type=runtime_type,
         payload=payload,
     )
+    if runtime_type == RuntimeEventType.SUBAGENT_COMPLETED:
+        _queue_child_completion_notification(host, context, payload)
+
+
+def _queue_child_completion_notification(
+    host: SubagentStageHost,
+    context: RunContext,
+    payload: dict[str, object],
+) -> None:
+    """Queue child completion as a deferred parent steering notification."""
+    task_id = str(payload.get("task_id") or "subagent")
+    status = str(payload.get("status") or "unknown")
+    subagent_run_id = _optional_text(payload.get("subagent_run_id"))
+    child_run_id = _optional_text(payload.get("child_run_id"))
+    message = f"Subagent task `{task_id}` finished with status `{status}`."
+    dedupe_key = "|".join(
+        [
+            "subagent_completed",
+            str(payload.get("group_id") or ""),
+            subagent_run_id or task_id,
+            status,
+        ]
+    )
+    if host._deps.subagent_mailbox_store is not None:
+        host._deps.subagent_mailbox_store.enqueue(
+            SubagentMailboxItem(
+                parent_run_id=context.run_id,
+                direction=SubagentMailboxDirection.CHILD_TO_PARENT,
+                kind=SubagentMailboxKind.TASK_NOTIFICATION,
+                subagent_run_id=subagent_run_id,
+                child_run_id=child_run_id,
+                group_id=_optional_text(payload.get("group_id")),
+                payload={"message": message, "status": status, "task_id": task_id},
+                source="subagent_runtime",
+                dedupe_key=dedupe_key,
+            )
+        )
+    if host._deps.command_queue_store is None:
+        return
+    queued = host._deps.command_queue_store.enqueue(
+        ControlRequest(
+            kind=ControlKind.ENQUEUE_USER_MESSAGE,
+            run_id=context.run_id,
+            thread_id=context.run_input.thread_id,
+            agent_id=context.run_input.agent_id,
+            priority=ControlPriority.LATER,
+            payload={
+                "message": message,
+                "subagent_run_id": subagent_run_id,
+                "child_run_id": child_run_id,
+                "status": status,
+            },
+            source="subagent_notification",
+            dedupe_key=dedupe_key,
+        )
+    )
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.COMMAND_QUEUED,
+        payload={
+            "queue_id": queued.queue_id,
+            "kind": queued.kind.value,
+            "priority": queued.priority.value,
+            "source": queued.source,
+        },
+    )
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
 
 
 __all__ = ["SubagentStageHost", "maybe_execute_subagent_group"]
