@@ -77,3 +77,30 @@ async def test_task_get_rejects_unknown_id() -> None:
     assert get is not None
     with pytest.raises(ValueError, match="unknown task_id"):
         await get.handler({"task_id": "missing"})
+
+
+@pytest.mark.asyncio
+async def test_task_stop_monitor_and_sleep_tools() -> None:
+    """task_stop, monitor, sleep should provide bounded deterministic behavior."""
+    registry = ToolRegistry()
+    register_tasking_tools(registry)
+    create = registry.get("task_create")
+    output = registry.get("task_output")
+    stop = registry.get("task_stop_tool")
+    monitor = registry.get("monitor_tool")
+    sleep = registry.get("sleep_tool")
+    assert create is not None
+    assert output is not None
+    assert stop is not None
+    assert monitor is not None
+    assert sleep is not None
+    created = await create.handler({"title": "watch-me"})
+    task_id = created["task"]["task_id"]
+    await output.handler({"task_id": task_id, "text": "monitor line"})
+    monitored = await monitor.handler({"task_id": task_id, "max_preview_chars": 64})
+    assert monitored["status"] == "running"
+    assert monitored["output_rows"]
+    stopped = await stop.handler({"task_id": task_id, "status": "killed"})
+    assert stopped["task"]["status"] == "killed"
+    slept = await sleep.handler({"seconds": 0.0})
+    assert slept["slept_seconds"] == 0.0

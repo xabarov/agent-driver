@@ -1,0 +1,2 @@
+"""Prompt template resources package."""
+

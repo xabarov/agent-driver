@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Lock
@@ -21,6 +22,9 @@ _TASK_GET_TOOL = "task_get"
 _TASK_LIST_TOOL = "task_list"
 _TASK_UPDATE_TOOL = "task_update"
 _TASK_OUTPUT_TOOL = "task_output"
+_TASK_STOP_TOOL = "task_stop_tool"
+_MONITOR_TOOL = "monitor_tool"
+_SLEEP_TOOL = "sleep_tool"
 _TASK_STATUS_VALUES = {"running", "completed", "failed", "timed_out", "killed"}
 _OUTPUT_PREVIEW_CHARS_DEFAULT = 2_000
 
@@ -133,6 +137,9 @@ def register_tasking_tools(registry: ToolRegistry) -> None:
     registry.register(_task_list_manifest(), _task_list_handler)
     registry.register(_task_update_manifest(), _task_update_handler)
     registry.register(_task_output_manifest(), _task_output_handler)
+    registry.register(_task_stop_manifest(), _task_stop_handler)
+    registry.register(_monitor_manifest(), _monitor_handler)
+    registry.register(_sleep_manifest(), _sleep_handler)
 
 
 def _task_create_manifest() -> ToolManifest:
@@ -280,6 +287,87 @@ def _task_output_manifest() -> ToolManifest:
     )
 
 
+def _task_stop_manifest() -> ToolManifest:
+    return ToolManifest(
+        name=_TASK_STOP_TOOL,
+        description="Stop a running task by setting terminal status.",
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.REVERSIBLE_WRITE,
+        approval_mode=ApprovalMode.ON_POLICY_MATCH,
+        timeout_seconds=10.0,
+        output_char_budget=4000,
+        idempotent=False,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task identifier"},
+                "status": {
+                    "type": "string",
+                    "enum": ["killed", "timed_out", "failed", "completed"],
+                    "description": "Terminal status to set (default: killed)",
+                },
+            },
+            "required": ["task_id"],
+            "additionalProperties": False,
+        },
+        output_type="json",
+    )
+
+
+def _monitor_manifest() -> ToolManifest:
+    return ToolManifest(
+        name=_MONITOR_TOOL,
+        description="Read bounded monitoring view for one task.",
+        risk=ToolRisk.LOW,
+        side_effect=SideEffectClass.READ_ONLY,
+        approval_mode=ApprovalMode.NEVER,
+        timeout_seconds=10.0,
+        output_char_budget=4000,
+        idempotent=True,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task identifier"},
+                "max_preview_chars": {
+                    "type": "integer",
+                    "minimum": 32,
+                    "maximum": 50_000,
+                    "description": "Maximum chars per output preview row",
+                },
+            },
+            "required": ["task_id"],
+            "additionalProperties": False,
+        },
+        output_type="json",
+    )
+
+
+def _sleep_manifest() -> ToolManifest:
+    return ToolManifest(
+        name=_SLEEP_TOOL,
+        description="Wait for bounded seconds and return wake metadata.",
+        risk=ToolRisk.LOW,
+        side_effect=SideEffectClass.NONE,
+        approval_mode=ApprovalMode.NEVER,
+        timeout_seconds=15.0,
+        output_char_budget=2000,
+        idempotent=True,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "seconds": {
+                    "type": "number",
+                    "minimum": 0.0,
+                    "maximum": 5.0,
+                    "description": "Sleep duration in seconds (max 5)",
+                }
+            },
+            "additionalProperties": False,
+        },
+        output_type="json",
+    )
+
+
 async def _task_create_handler(args: dict[str, Any]) -> dict[str, Any]:
     title = str(args.get("title") or "").strip()
     if not title:
@@ -309,7 +397,9 @@ async def _task_get_handler(args: dict[str, Any]) -> dict[str, Any]:
     task = _TASK_STORE.get(task_id)
     return {
         "summary": f"task loaded: {task.task_id}",
-        "task": task.as_dict(include_output=include_output, preview_chars=preview_chars),
+        "task": task.as_dict(
+            include_output=include_output, preview_chars=preview_chars
+        ),
     }
 
 
@@ -375,12 +465,73 @@ async def _task_output_handler(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _task_stop_handler(args: dict[str, Any]) -> dict[str, Any]:
+    task_id = str(args.get("task_id") or "").strip()
+    if not task_id:
+        raise ValueError("task_id is required")
+    status = str(args.get("status") or "killed").strip()
+    if status not in {"killed", "timed_out", "failed", "completed"}:
+        raise ValueError("status must be one of: killed, timed_out, failed, completed")
+    task = _TASK_STORE.update(
+        task_id=task_id,
+        status=status,
+        metadata_patch=None,
+        output_chunk=None,
+    )
+    return {
+        "summary": f"task stopped: {task.task_id} ({status})",
+        "task": task.as_dict(include_output=False),
+    }
+
+
+async def _monitor_handler(args: dict[str, Any]) -> dict[str, Any]:
+    task_id = str(args.get("task_id") or "").strip()
+    if not task_id:
+        raise ValueError("task_id is required")
+    preview_chars = _as_int(
+        args.get("max_preview_chars"),
+        default=_OUTPUT_PREVIEW_CHARS_DEFAULT,
+        minimum=32,
+    )
+    task = _TASK_STORE.get(task_id)
+    payload = task.as_dict(include_output=True, preview_chars=preview_chars)
+    output_rows = payload.get("output", [])
+    return {
+        "summary": f"task monitor view: {task.task_id}",
+        "task_id": task.task_id,
+        "status": task.status,
+        "updated_at": task.updated_at,
+        "output_rows": output_rows,
+    }
+
+
+async def _sleep_handler(args: dict[str, Any]) -> dict[str, Any]:
+    seconds = _as_float(args.get("seconds"), default=0.1, minimum=0.0, maximum=5.0)
+    await asyncio.sleep(seconds)
+    return {
+        "summary": f"slept for {seconds:.3f}s",
+        "slept_seconds": seconds,
+        "woke_at": _utc_now(),
+    }
+
+
 def _as_int(raw: Any, *, default: int, minimum: int) -> int:
     if raw is None:
         return default
     value = int(raw)
     if value < minimum:
         raise ValueError(f"value must be >= {minimum}")
+    return value
+
+
+def _as_float(raw: Any, *, default: float, minimum: float, maximum: float) -> float:
+    if raw is None:
+        return default
+    value = float(raw)
+    if value < minimum:
+        raise ValueError(f"value must be >= {minimum}")
+    if value > maximum:
+        raise ValueError(f"value must be <= {maximum}")
     return value
 
 

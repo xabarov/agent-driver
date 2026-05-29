@@ -8,7 +8,7 @@ from agent_driver.subagents.merge import (
 from agent_driver.subagents.planner import build_child_context_handoff
 from agent_driver.subagents.handoff import SubagentParentHandoff
 from agent_driver.subagents.specs import SubagentGroupSpec, SubagentTaskSpec
-from agent_driver.subagents.store import InMemorySubagentStore
+from agent_driver.subagents.store import InMemorySubagentStore, SqliteSubagentStore, SubagentStore
 from agent_driver.subagents.executor import (
     SubagentExecutionResult,
     execute_subagent_group_sync,
@@ -16,6 +16,8 @@ from agent_driver.subagents.executor import (
 
 __all__ = [
     "InMemorySubagentStore",
+    "SqliteSubagentStore",
+    "SubagentStore",
     "JoinDecision",
     "SubagentExecutionResult",
     "SubagentGroupSpec",

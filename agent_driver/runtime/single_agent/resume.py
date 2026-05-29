@@ -182,7 +182,13 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                 context.metadata["clarification"] = resume.message
             context.metadata["interrupt_payload"] = None
 
-    def _init_context(self, run_input: AgentRunInput) -> RunContext:
+    def _init_context(
+        self,
+        run_input: AgentRunInput,
+        *,
+        abort_handle: "RunAbortHandle | None" = None,
+        tool_gate: "ToolGate | None" = None,
+    ) -> RunContext:
         checkpoint_row = self._resolve_resume_checkpoint(run_input)
         if checkpoint_row is None:
             run_id = run_input.run_id or f"run_{uuid4().hex}"
@@ -195,6 +201,7 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                 metadata={
                     "next_step": "run_started",
                     "step_count": 0,
+                    "llm_step_count": 0,
                     "tool_calls": 0,
                     **(
                         run_input.app_metadata
@@ -202,6 +209,8 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                         else {}
                     ),
                 },
+                abort_handle=abort_handle,
+                tool_gate=tool_gate,
             )
         metadata = dict(checkpoint_row.state.metadata)
         context = RunContext(
@@ -219,6 +228,8 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                 if isinstance(metadata.get("last_llm_response"), dict)
                 else None
             ),
+            abort_handle=abort_handle,
+            tool_gate=tool_gate,
         )
         resume = run_input.resume
         if resume is not None:

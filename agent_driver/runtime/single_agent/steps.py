@@ -8,7 +8,9 @@ from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalRe
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.single_agent.compaction_stage import apply_compaction_if_eligible
+from agent_driver.runtime.single_agent.continuation import analyze_continuation_intent
 from agent_driver.runtime.single_agent.llm_step import execute_llm_call_step
+from agent_driver.runtime.single_agent.step_planning import build_planning_snapshot
 from agent_driver.runtime.single_agent.subagent_stage import maybe_execute_subagent_group
 from agent_driver.runtime.single_agent.tool_stage import execute_tool_stage_step
 from agent_driver.runtime.single_agent.types import (
@@ -62,6 +64,16 @@ class SingleAgentStepMixin:
         if context.llm_response is None:
             raise RuntimeExecutionError("Missing LLM response before tool stage")
         approved_call = context.metadata.get("approved_tool_call")
+        # A0.2 — only forward ``tool_gate`` when the caller actually set
+        # one. Old executors and test mocks have ``(run_input,
+        # llm_response)`` signatures and would reject an unknown kwarg;
+        # the new contract documented in ``runtime/tools.py`` allows
+        # ``tool_gate`` but we don't force it on the wire when None.
+        gate_kwargs = (
+            {"tool_gate": context.tool_gate}
+            if context.tool_gate is not None
+            else {}
+        )
         if isinstance(approved_call, dict):
             request = context.llm_response.model_copy(
                 update={
@@ -71,22 +83,35 @@ class SingleAgentStepMixin:
                     }
                 }
             )
-            return await self._deps.tool_executor(context.run_input, request)
-        return await self._deps.tool_executor(context.run_input, context.llm_response)
+            return await self._deps.tool_executor(
+                context.run_input, request, **gate_kwargs
+            )
+        return await self._deps.tool_executor(
+            context.run_input, context.llm_response, **gate_kwargs
+        )
 
     def _store_tool_stage_outputs(
         self, context: RunContext, result: ToolExecutionResult
     ) -> None:
         """Persist tool stage traces/results into context metadata."""
         context.tool_calls += len(result.traces)
-        context.metadata["tool_trace"] = [
-            trace.model_dump(mode="json") for trace in result.traces
-        ]
-        context.metadata["tool_results"] = [
-            item.model_dump(mode="json") for item in result.envelopes
-        ]
+        existing_trace = context.metadata.get("tool_trace")
+        if not isinstance(existing_trace, list):
+            existing_trace = []
+        existing_results = context.metadata.get("tool_results")
+        if not isinstance(existing_results, list):
+            existing_results = []
+        existing_trace.extend(trace.model_dump(mode="json") for trace in result.traces)
+        existing_results.extend(item.model_dump(mode="json") for item in result.envelopes)
+        context.metadata["tool_trace"] = existing_trace
+        context.metadata["tool_results"] = existing_results
 
     async def _execute_run_started(self, context: RunContext) -> RuntimeStepResult:
+        from agent_driver.runtime.single_agent.step_planning import (
+            apply_planning_state_seed_from_metadata,
+        )
+
+        apply_planning_state_seed_from_metadata(context)
         self._emit(
             EventSpec(
                 run_id=context.run_id,
@@ -128,12 +153,31 @@ class SingleAgentStepMixin:
             if context.llm_response
             else "unknown"
         )
+        completed_payload: dict[str, object] = {"finish_reason": finish_reason}
+        if context.llm_response is not None and context.llm_response.usage is not None:
+            completed_payload["usage"] = context.llm_response.usage.model_dump(mode="json")
+        snapshot = build_planning_snapshot(context)
+        if snapshot is not None:
+            completed_payload["planning_snapshot"] = snapshot
+        continuation = _maybe_build_continuation_transition(context)
+        if continuation is not None:
+            context.step_count += 1
+            context.metadata.update(
+                {
+                    "next_step": "llm_call",
+                    "step_count": context.step_count,
+                    "tool_calls": context.tool_calls,
+                }
+            )
+            self._save_checkpoint(context, latest_output=None, node_id="finalize")
+            self._maybe_fail_after_step("finalize")
+            return continuation
         self._emit(
             EventSpec(
                 run_id=context.run_id,
                 attempt_id=context.attempt_id,
                 event_type=RuntimeEventType.RUN_COMPLETED,
-                payload={"finish_reason": finish_reason},
+                payload=completed_payload,
             )
         )
         output = self._build_output(
@@ -170,6 +214,48 @@ class SingleAgentStepMixin:
         if context.step_name == "finalize":
             return await self._execute_finalize(context)
         raise RuntimeExecutionError(f"Unknown step '{context.step_name}'")
+
+
+def _maybe_build_continuation_transition(context: RunContext) -> RuntimeStepResult | None:
+    """Continue when final text itself says there is a next step."""
+    if context.metadata.get("force_final_answer") is True:
+        return None
+    count = int(context.metadata.get("continuation_nudge_count", 0))
+    if count >= 2:
+        return None
+    if context.llm_response is None:
+        return None
+    text = context.llm_response.message.content or ""
+    intent = analyze_continuation_intent(text)
+    if not intent.should_continue:
+        return None
+    from agent_driver.contracts.enums import ChatRole
+    from agent_driver.contracts.messages import ChatMessage
+
+    protocol = context.metadata.get("protocol_messages")
+    messages: list[dict[str, object]] = []
+    if isinstance(protocol, list):
+        messages = [item for item in protocol if isinstance(item, dict)]
+    else:
+        messages = [message.model_dump(mode="json") for message in context.run_input.messages]
+        if not messages:
+            messages = [{"role": ChatRole.USER.value, "content": context.run_input.input or ""}]
+    messages.append(
+        ChatMessage(role=ChatRole.ASSISTANT, content=text).model_dump(mode="json")
+    )
+    messages.append(
+        ChatMessage(
+            role=ChatRole.USER,
+            content=(
+                "Continue with the task. If you were about to proceed to the next "
+                "step, do it now instead of only reporting progress."
+            ),
+        ).model_dump(mode="json")
+    )
+    context.metadata["protocol_messages"] = messages
+    context.metadata["continuation_nudge_count"] = count + 1
+    context.metadata["continuation_nudge_reason"] = intent.reason
+    return RuntimeStepResult(next_step="llm_call")
 
 
 __all__ = ["SingleAgentStepMixin"]

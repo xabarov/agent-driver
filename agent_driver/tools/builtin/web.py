@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from html import unescape
 import ipaddress
+import os
 import re
 from typing import Any
-from urllib.parse import quote_plus
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
 import httpx
 
@@ -22,12 +23,15 @@ from agent_driver.tools.registry import ToolRegistry
 
 _WEB_FETCH_TOOL = "web_fetch"
 _WEB_SEARCH_TOOL = "web_search"
-_DEFAULT_TIMEOUT_SECONDS = 10.0
+_DEFAULT_TIMEOUT_SECONDS = 15.0
 _DEFAULT_MAX_BYTES = 150_000
 _DEFAULT_MAX_RESULTS = 5
 _DEFAULT_PREVIEW_CHARS = 1_500
+_WEB_FETCH_MAX_CHARS_CAP = 8_000
+_WEB_FETCH_EXCERPT_CHARS = 2_000
 _DEFAULT_USER_AGENT = "agent-driver/0.1"
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_BLOCKED_STATUS_CODES = {401, 403}
 _TEXT_CONTENT_TYPES = (
     "text/",
     "application/json",
@@ -38,7 +42,18 @@ _RESULT_LINK_RE = re.compile(
     r'<a[^>]+class="[^"]*result-link[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
     re.IGNORECASE | re.DOTALL,
 )
+_RESULT_LINK_ALT_RE = re.compile(
+    r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+_SITE_OPERATOR_RE = re.compile(r"\bsite:\S+\b", re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
+_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+_META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+_META_ATTR_RE = re.compile(
+    r'([A-Za-z_:.-]+)\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))',
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,30 +175,74 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
         args.get("timeout_seconds"), default=_DEFAULT_TIMEOUT_SECONDS, minimum=0.1
     )
     max_bytes = _as_int(args.get("max_bytes"), default=_DEFAULT_MAX_BYTES, minimum=256)
-    max_chars = _as_int(args.get("max_chars"), default=5_000, minimum=64)
+    requested_max_chars = _as_int(args.get("max_chars"), default=5_000, minimum=64)
+    max_chars = min(requested_max_chars, _WEB_FETCH_MAX_CHARS_CAP)
     extract_mode = _extract_mode(args.get("extract_mode"))
     try:
-        payload = await _fetch_url_text(
+        payload = await _fetch_url_text_with_retry(
             url=url,
             timeout_seconds=timeout_seconds,
             max_bytes=max_bytes,
+        )
+    except httpx.TimeoutException as exc:
+        return _web_fetch_unavailable_payload(
+            url=url,
+            extract_mode=extract_mode,
+            timeout_seconds=timeout_seconds,
+            max_chars=max_chars,
+            reason=f"timeout: {_error_message(exc)}",
         )
     except (httpx.HTTPError, ValueError) as exc:
         raise ValueError(f"web_fetch failed: {exc}") from exc
     if not _is_text_content_type(payload.content_type):
         raise ValueError(f"unsupported content type: {payload.content_type}")
+    if payload.status_code in _BLOCKED_STATUS_CODES:
+        metadata = (
+            _extract_og_metadata(payload.text) if "html" in payload.content_type else {}
+        )
+        return {
+            "summary": (
+                f"web_fetch blocked by upstream HTTP {payload.status_code} for "
+                f"{payload.url}; try another search result, an official source, "
+                "or a cached/reader URL."
+            ),
+            "url": payload.url,
+            "status_code": payload.status_code,
+            "content_type": payload.content_type,
+            "extract_mode": extract_mode,
+            "bytes_total": payload.bytes_total,
+            "bytes_loaded": payload.bytes_loaded,
+            "bytes_truncated": payload.bytes_loaded < payload.bytes_total,
+            "metadata": metadata,
+            "excerpt": "",
+            "content": "",
+            "truncated": False,
+            "max_chars_applied": max_chars,
+            "blocked": True,
+        }
     extracted = _extract_payload_text(
         text=payload.text,
         content_type=payload.content_type,
         mode=extract_mode,
     )
+    metadata = (
+        _extract_og_metadata(payload.text) if "html" in payload.content_type else {}
+    )
     content = extracted[:max_chars]
+    excerpt = content[:_WEB_FETCH_EXCERPT_CHARS]
     truncated = len(extracted) > max_chars
+    summary_parts = [
+        f"fetched {payload.url} (status={payload.status_code}, chars={len(content)})"
+    ]
+    if isinstance(metadata, dict):
+        title = metadata.get("title")
+        if isinstance(title, str) and title.strip():
+            summary_parts.append(f"title={title.strip()}")
+        published = metadata.get("published_time")
+        if isinstance(published, str) and published.strip():
+            summary_parts.append(f"published={published.strip()}")
     return {
-        "summary": (
-            f"fetched {payload.url} "
-            f"(status={payload.status_code}, chars={len(content)})"
-        ),
+        "summary": "; ".join(summary_parts),
         "url": payload.url,
         "status_code": payload.status_code,
         "content_type": payload.content_type,
@@ -191,8 +250,41 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
         "bytes_total": payload.bytes_total,
         "bytes_loaded": payload.bytes_loaded,
         "bytes_truncated": payload.bytes_loaded < payload.bytes_total,
+        "metadata": metadata,
+        "excerpt": excerpt,
         "content": content,
         "truncated": truncated,
+        "max_chars_applied": max_chars,
+    }
+
+
+def _web_fetch_unavailable_payload(
+    *,
+    url: str,
+    extract_mode: str,
+    timeout_seconds: float,
+    max_chars: int,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "summary": (
+            f"web_fetch unavailable for {url}: {reason}; try another search result, "
+            "an official source, or a cached/reader URL."
+        ),
+        "url": url,
+        "status_code": None,
+        "content_type": "",
+        "extract_mode": extract_mode,
+        "bytes_total": 0,
+        "bytes_loaded": 0,
+        "bytes_truncated": False,
+        "metadata": {},
+        "excerpt": "",
+        "content": "",
+        "truncated": False,
+        "max_chars_applied": max_chars,
+        "timeout_seconds": timeout_seconds,
+        "unavailable": True,
     }
 
 
@@ -209,29 +301,163 @@ async def _web_search_handler(args: dict[str, Any]) -> dict[str, Any]:
     mock_rows = args.get("mock_results")
     if isinstance(mock_rows, list):
         normalized = _normalize_mock_results(mock_rows, max_results=max_results)
-        return _search_payload(query=query, source="mock", rows=normalized)
-    search_url = f"https://duckduckgo.com/html/?q={quote_plus(query)}"
+        return _search_payload(
+            query=query,
+            source="mock",
+            rows=normalized,
+            max_results=max_results,
+            parse_status="ok",
+        )
+    backend = _resolve_search_backend()
+    if backend == "tavily":
+        key = os.environ.get("TAVILY_API_KEY")
+        if key:
+            tavily = await _tavily_search(
+                query=query,
+                max_results=max_results,
+                timeout_seconds=timeout_seconds,
+                api_key=key,
+            )
+            if tavily is not None:
+                return tavily
+    elif backend == "brave":
+        key = os.environ.get("BRAVE_SEARCH_API_KEY")
+        if key:
+            brave = await _brave_search(
+                query=query,
+                max_results=max_results,
+                timeout_seconds=timeout_seconds,
+                api_key=key,
+            )
+            if brave is not None:
+                return brave
+    return await _duckduckgo_html_search(
+        query=query,
+        max_results=max_results,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _relax_web_search_query(query: str) -> str | None:
+    """Drop site: operator and keep domain as plain keywords for DDG html backend."""
+    if not _SITE_OPERATOR_RE.search(query):
+        return None
+    site_match = re.search(r"\bsite:(\S+)\b", query, flags=re.IGNORECASE)
+    site_token = site_match.group(1).strip() if site_match else ""
+    relaxed = _SITE_OPERATOR_RE.sub("", query).strip()
+    relaxed = re.sub(r"\s+", " ", relaxed)
+    if site_token and site_token.lower() not in relaxed.lower():
+        relaxed = f"{relaxed} {site_token}".strip()
+    if not relaxed or relaxed == query:
+        return None
+    return relaxed
+
+
+async def _duckduckgo_html_search(
+    *,
+    query: str,
+    max_results: int,
+    timeout_seconds: float,
+    original_query: str | None = None,
+) -> dict[str, Any]:
+    """Run DuckDuckGo html search; retry without site: when DDG returns no parseable hits."""
+    search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
     try:
-        payload = await _fetch_url_text(
-            url=search_url,
+        payload = await _fetch_ddg_with_retry(
+            search_url=search_url,
             timeout_seconds=timeout_seconds,
             max_bytes=_DEFAULT_MAX_BYTES,
         )
-    except (httpx.HTTPError, ValueError) as exc:
-        raise ValueError(f"web_search failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 - fallback message normalization
+        return _search_payload(
+            query=query,
+            source="duckduckgo_html",
+            rows=[],
+            max_results=max_results,
+            parse_status="upstream_error",
+            summary=f"web_search unavailable: {_error_message(exc)}",
+        )
     rows = _parse_duckduckgo_html(payload.text, max_results=max_results)
-    return _search_payload(query=query, source="duckduckgo_html", rows=rows)
+    if not rows:
+        relaxed = _relax_web_search_query(query)
+        if relaxed is not None:
+            return await _duckduckgo_html_search(
+                query=relaxed,
+                max_results=max_results,
+                timeout_seconds=timeout_seconds,
+                original_query=original_query or query,
+            )
+    parse_status = "ok" if rows else "parse_failed"
+    source_query = original_query or query
+    summary = None
+    if rows and original_query and original_query != query:
+        summary = (
+            f"{len(rows)} results for '{query}' via duckduckgo_html "
+            f"(relaxed from '{original_query}')"
+        )
+    result = _search_payload(
+        query=query,
+        source="duckduckgo_html",
+        rows=rows,
+        max_results=max_results,
+        parse_status=parse_status,
+        summary=summary,
+    )
+    if original_query and original_query != query:
+        result["query_original"] = original_query
+        result["query_relaxation"] = "stripped_site_operator"
+    if not rows:
+        result["diagnostic"] = {
+            "status": "no_results_parsed",
+            "html_chars": len(payload.text),
+            "content_type": payload.content_type,
+            "source_query": source_query,
+        }
+    return result
 
 
 def _search_payload(
-    *, query: str, source: str, rows: list[dict[str, str]]
+    *,
+    query: str,
+    source: str,
+    rows: list[dict[str, str]],
+    max_results: int,
+    parse_status: str,
+    summary: str | None = None,
 ) -> dict[str, Any]:
+    truncated = len(rows) >= max_results
+    payload_summary = summary or f"{len(rows)} results for '{query}' via {source}"
+    preview_urls = _build_result_preview_urls(rows)
     return {
-        "summary": f"{len(rows)} results for '{query}' via {source}",
+        "summary": payload_summary,
         "query": query,
         "source": source,
         "results": rows,
+        "result_preview_urls": preview_urls,
+        "returned_count": len(rows),
+        "max_results": max_results,
+        "truncated": truncated,
+        "parse_status": parse_status,
     }
+
+
+def _build_result_preview_urls(rows: list[dict[str, str]]) -> list[str]:
+    previews: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        url = str(row.get("url") or "").strip()
+        if not url:
+            continue
+        snippet = str(row.get("snippet") or "").strip()
+        if snippet:
+            snippet_short = snippet[:80]
+            previews.append(f"{url} — {snippet_short}")
+        else:
+            previews.append(url)
+        if len(previews) >= 3:
+            break
+    return previews
 
 
 def _normalize_mock_results(
@@ -252,10 +478,35 @@ def _normalize_mock_results(
     return normalized
 
 
+def _resolve_search_backend() -> str:
+    raw = str(os.environ.get("AGENT_DRIVER_WEB_SEARCH_BACKEND") or "ddg").strip().lower()
+    if raw in {"ddg", "tavily", "brave"}:
+        return raw
+    return "ddg"
+
+
+def _error_message(exc: Exception) -> str:
+    text = str(exc).strip()
+    if text:
+        return text
+    return repr(exc)
+
+
 def _parse_duckduckgo_html(html: str, *, max_results: int) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for match in _RESULT_LINK_RE.finditer(html):
-        href = unescape(match.group(1)).strip()
+        href = _normalize_search_href(unescape(match.group(1)).strip())
+        title_html = match.group(2)
+        title = _clean_html_text(title_html)
+        if not href:
+            continue
+        rows.append({"title": title, "url": href, "snippet": ""})
+        if len(rows) >= max_results:
+            break
+    if rows:
+        return rows
+    for match in _RESULT_LINK_ALT_RE.finditer(html):
+        href = _normalize_search_href(unescape(match.group(1)).strip())
         title_html = match.group(2)
         title = _clean_html_text(title_html)
         if not href:
@@ -264,6 +515,21 @@ def _parse_duckduckgo_html(html: str, *, max_results: int) -> list[dict[str, str
         if len(rows) >= max_results:
             break
     return rows
+
+
+def _normalize_search_href(raw_href: str) -> str:
+    href = raw_href.strip()
+    if href.startswith("//"):
+        href = f"https:{href}"
+    parsed = urlparse(href)
+    if "duckduckgo.com" in (parsed.netloc or "") and parsed.path.startswith("/l/"):
+        query = parse_qs(parsed.query)
+        uddg_values = query.get("uddg")
+        if isinstance(uddg_values, list) and uddg_values:
+            target = unquote(str(uddg_values[0]).strip())
+            if target:
+                return target
+    return href
 
 
 async def _fetch_url_text(
@@ -275,7 +541,8 @@ async def _fetch_url_text(
     headers = {"User-Agent": _DEFAULT_USER_AGENT}
     async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_seconds) as client:
         response = await client.get(url, headers=headers)
-    response.raise_for_status()
+    if response.status_code not in _BLOCKED_STATUS_CODES:
+        response.raise_for_status()
     content = response.content
     bytes_total = len(content)
     if len(content) > max_bytes:
@@ -289,6 +556,122 @@ async def _fetch_url_text(
         text=text,
         bytes_total=bytes_total,
         bytes_loaded=bytes_loaded,
+    )
+
+
+async def _fetch_url_text_with_retry(
+    *,
+    url: str,
+    timeout_seconds: float,
+    max_bytes: int,
+) -> _HttpPayload:
+    last_error: httpx.TimeoutException | None = None
+    for attempt in range(3):
+        try:
+            return await _fetch_url_text(
+                url=url,
+                timeout_seconds=timeout_seconds,
+                max_bytes=max_bytes,
+            )
+        except httpx.TimeoutException as exc:
+            last_error = exc
+            if attempt == 2:
+                raise
+            await asyncio.sleep(0.5 + (0.5 * attempt))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("web fetch failed without specific exception")
+
+
+def _is_retryable_search_exception(exc: Exception) -> bool:
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status == 429 or status >= 500
+    return False
+
+
+async def _fetch_ddg_with_retry(
+    *, search_url: str, timeout_seconds: float, max_bytes: int
+) -> _HttpPayload:
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            return await _fetch_url_text(
+                url=search_url,
+                timeout_seconds=timeout_seconds,
+                max_bytes=max_bytes,
+            )
+        except Exception as exc:  # noqa: BLE001 - retry envelope
+            if not _is_retryable_search_exception(exc) or attempt == 1:
+                raise
+            last_error = exc
+            await asyncio.sleep(0.5 + (0.5 * attempt))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("ddg search failed without specific exception")
+
+
+async def _tavily_search(
+    *,
+    query: str,
+    max_results: int,
+    timeout_seconds: float,
+    api_key: str,
+) -> dict[str, Any] | None:
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.post(
+                "https://api.tavily.com/search",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={"query": query, "max_results": max_results},
+            )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return None
+    raw_payload = response.json()
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    rows = _normalize_mock_results(payload.get("results", []), max_results=max_results)
+    return _search_payload(
+        query=query,
+        source="tavily",
+        rows=rows,
+        max_results=max_results,
+        parse_status="ok" if rows else "parse_failed",
+    )
+
+
+async def _brave_search(
+    *,
+    query: str,
+    max_results: int,
+    timeout_seconds: float,
+    api_key: str,
+) -> dict[str, Any] | None:
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                headers={
+                    "X-Subscription-Token": api_key,
+                    "Accept": "application/json",
+                },
+                params={"q": query, "count": max_results},
+            )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return None
+    raw_payload = response.json()
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    web_payload = payload.get("web", {}) if isinstance(payload.get("web"), dict) else {}
+    rows = _normalize_mock_results(web_payload.get("results", []), max_results=max_results)
+    return _search_payload(
+        query=query,
+        source="brave",
+        rows=rows,
+        max_results=max_results,
+        parse_status="ok" if rows else "parse_failed",
     )
 
 
@@ -338,13 +721,77 @@ def _extract_payload_text(*, text: str, content_type: str, mode: str) -> str:
     if mode == "raw":
         return text
     is_html = "html" in content_type
+    if not is_html:
+        return text
+    html_without_embeds = _SCRIPT_STYLE_RE.sub(" ", text)
+    metadata = _extract_og_metadata(html_without_embeds)
     if mode == "text":
-        return _clean_html_text(text) if is_html else text
-    if is_html:
-        normalized = _TAG_RE.sub("\n", text)
-        cleaned = "\n".join(line.strip() for line in normalized.splitlines() if line.strip())
-        return unescape(cleaned)
-    return text
+        body = _clean_html_text(html_without_embeds)
+        return _prepend_metadata_text(body=body, metadata=metadata)
+    normalized = _TAG_RE.sub("\n", html_without_embeds)
+    cleaned = "\n".join(line.strip() for line in normalized.splitlines() if line.strip())
+    body = unescape(cleaned)
+    return _prepend_metadata_text(body=body, metadata=metadata)
+
+
+def _extract_og_metadata(raw_html: str) -> dict[str, str]:
+    fields = {
+        "og:title": "title",
+        "og:description": "description",
+        "og:url": "url",
+        "article:published_time": "published_time",
+    }
+    metadata: dict[str, str] = {}
+    html = _SCRIPT_STYLE_RE.sub(" ", raw_html)
+    for match in _META_TAG_RE.finditer(html):
+        attrs = _extract_tag_attributes(match.group(0))
+        key = str(attrs.get("property") or attrs.get("name") or "").strip().lower()
+        if key not in fields:
+            continue
+        content = str(attrs.get("content") or "").strip()
+        if not content:
+            continue
+        target_key = fields[key]
+        if target_key not in metadata:
+            metadata[target_key] = unescape(content)
+    return metadata
+
+
+def _extract_tag_attributes(raw_tag: str) -> dict[str, str]:
+    attrs: dict[str, str] = {}
+    for match in _META_ATTR_RE.finditer(raw_tag):
+        name = str(match.group(1) or "").strip().lower()
+        value = (
+            match.group(3)
+            if match.group(3) is not None
+            else match.group(4)
+            if match.group(4) is not None
+            else match.group(5)
+            if match.group(5) is not None
+            else ""
+        )
+        if name:
+            attrs[name] = value
+    return attrs
+
+
+def _prepend_metadata_text(*, body: str, metadata: dict[str, str]) -> str:
+    lines: list[str] = []
+    if metadata.get("title"):
+        lines.append(f"Title: {metadata['title']}")
+    if metadata.get("description"):
+        lines.append(f"Description: {metadata['description']}")
+    if metadata.get("url"):
+        lines.append(f"URL: {metadata['url']}")
+    if metadata.get("published_time"):
+        lines.append(f"Published: {metadata['published_time']}")
+    if not lines:
+        return body
+    meta_text = "\n".join(lines)
+    body_text = body.strip()
+    if body_text:
+        return f"{meta_text}\n{body_text}"
+    return meta_text
 
 
 def _as_int(raw: Any, *, default: int, minimum: int) -> int:

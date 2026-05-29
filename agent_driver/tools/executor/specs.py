@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from agent_driver.contracts.enums import (
     ApprovalMode,
@@ -13,6 +14,7 @@ from agent_driver.contracts.enums import (
 )
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolCall, ToolManifest, ToolPolicyOutcome
+from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.tools.executor.result import GovernedExecutionResult
 from agent_driver.tools.registry import RegisteredTool
 
@@ -51,6 +53,11 @@ class ExecSpec:
     call: ToolCall
     index: int
     current_tool_calls: int
+    # A0.2 — optional per-call gate forwarded from
+    # ``GovernedToolExecutor.execute(...)``. Lives on ExecSpec rather
+    # than the executor instance so concurrent runs on the same
+    # executor (multi-tenant) can carry their own gates.
+    tool_gate: ToolGate | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +71,18 @@ class AllowedSpec:
     registered: RegisteredTool | None
     input_guard_decision: GuardrailDecision = GuardrailDecision.ALLOW
     run_metadata: dict[str, str | int | None] = field(default_factory=dict)
+    # Phase 12 H18 — optional artifact store for spilling oversized
+    # tool handler outputs. When ``None`` (default), no spill happens;
+    # legacy ``output_char_budget`` truncation runs as before.
+    artifact_store: Any = None
+    # Phase 13 H29.3 — names of all tools registered with the executor's
+    # registry. Passed by ``GovernedToolExecutor`` so the
+    # ``tool_not_registered`` block path can build a fuzzy-match
+    # feedback string (``"Tool 'X' not found. Did you mean: 'Y'?
+    # Available tools: …"``) the model can use to self-correct on the
+    # next turn. Empty/None — default, fall back to the legacy short
+    # "tool is not registered" reason without suggestions.
+    available_tool_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -31,6 +31,14 @@ def _pg_dsn() -> str | None:
     return os.getenv("AGENT_DRIVER_POSTGRES_DSN")
 
 
+def _psycopg_available() -> bool:
+    try:
+        import psycopg  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 @pytest.mark.skipif(
     not _pg_live_enabled(), reason="requires AGENT_DRIVER_RUN_POSTGRES_TESTS=1"
 )
@@ -39,6 +47,8 @@ def test_postgres_runtime_store_round_trip() -> None:
     dsn = _pg_dsn()
     if not dsn:
         pytest.skip("AGENT_DRIVER_POSTGRES_DSN is required")
+    if not _psycopg_available():
+        pytest.skip("psycopg is required (install optional extra: agent-driver[postgres])")
     store = PostgresRuntimeStore(
         config=PostgresRuntimeStoreConfig(dsn=dsn, auto_create_schema=True)
     )

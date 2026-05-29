@@ -69,7 +69,7 @@ Live lane (operator, keys required):
 
 ```bash
 export AGENT_DRIVER_RUN_LIVE_TESTS=1
-# set AGENT_DRIVER_OPENAI_* or OPENROUTER_* — see tests/support/live_harness.py
+# set AGENT_DRIVER_PROVIDER/BASE_URL/MODEL/API_KEY — see tests/support/live_harness.py
 .venv/bin/pytest tests/runtime/live_smoke -q
 ```
 

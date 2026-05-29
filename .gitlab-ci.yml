@@ -1,0 +1,17 @@
+stages:
+  - test
+
+variables:
+  UV_LINK_MODE: copy
+
+test:offline:
+  stage: test
+  image: python:3.12-bookworm
+  before_script:
+    - pip install uv
+    - uv sync --all-extras --dev
+  script:
+    - uv run pytest tests/tools/test_python_scientific_imports.py tests/cli/test_eval_python_scientific_providers.py -q
+    - uv run pytest tests/ -q --ignore=tests/llm --ignore=tests/runtime/live_smoke -m "not live"
+    - uv run python tools/selftest/run.py --provider fake --matrix m1=fake --scenarios B --smoke-only --out /tmp/selftest-ci
+    - uv run agent-driver eval run --provider fake --offline --suite regression --output-dir /tmp/eval-regression

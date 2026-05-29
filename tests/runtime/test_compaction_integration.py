@@ -65,3 +65,38 @@ async def test_compaction_flag_records_decision_and_audit() -> None:
     assert output.metadata is not None
     assert "compaction_decision" in output.metadata
     assert "compaction_audit" in output.metadata
+    failures = output.metadata.get("compaction_failures")
+    assert isinstance(failures, list)
+    assert failures
+    assert failures[0]["kind"] == "llm_compaction_failed"
+
+
+@pytest.mark.asyncio
+async def test_partial_compaction_path_runs_when_llm_compaction_disabled() -> None:
+    """Compaction should use partial mode when full LLM path is disabled."""
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ok"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            enable_compaction=True,
+            enable_llm_compaction=False,
+            enable_session_memory_compaction=False,
+            token_compact_threshold=1,
+            token_blocking_threshold=2,
+            context_window_estimate=100,
+            output_token_reserve=1,
+        ),
+    )
+    output = await runner.run(
+        AgentRunInput(
+            input="hello " * 100,
+            run_id="run_compaction_partial",
+            agent_id="agent-test",
+            graph_preset="single_react",
+        )
+    )
+    assert output.metadata is not None
+    assert output.metadata["compaction_result"]["mode"] == "partial"
+    assert output.metadata["compaction_failures"] == []
+    assert "post_compact_cleanup" in output.memory_audit

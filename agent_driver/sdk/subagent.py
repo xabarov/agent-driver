@@ -1,0 +1,382 @@
+"""Public ``run_subagent`` API for Python-driven child agent spawn.
+
+Why this exists
+---------------
+
+The existing ``subagents/`` machinery (``SubagentTaskSpec`` /
+``SubagentGroupSpec`` / ``execute_subagent_group_sync``) is reachable
+only from inside the runtime — the model emits a planning tool call,
+the tool-stage code parses it into a group spec, then fans out. There
+is no public path for a Python caller (e.g. an excel_ai orchestrator)
+to say: *"run a constrained child agent right here, give me back its
+answer + tools + cost"*.
+
+This module fills that gap. It is intentionally small: a dataclass
+spec, a dataclass result, and one async function that wraps
+``Agent.run`` with the right plumbing. Larger sub-agent features —
+shared system-prompt cache for fork (B0.2), parent-cost aggregation,
+parallel groups — build on this primitive.
+
+Design choices
+--------------
+
+* ``SubagentSpec`` is a **frozen dataclass**, not a Pydantic
+  ``ContractModel``. It is a request shape consumed in-process; we
+  don't store / transport / checkpoint it. Keeping it dataclass avoids
+  the validator overhead and lets us put ``frozen=True, slots=True``
+  on it.
+* ``run_subagent`` takes ``parent_abort_handle`` separately rather than
+  inside the spec — the spec stays JSON-friendly (a future feature can
+  serialise it for debug logging) while the handle carries the
+  non-serialisable cross-thread lock.
+* ``response_format`` flows through as-is to ``AgentRunInput`` — the
+  provider adapter handles the wire shape. Callers wanting strong
+  pydantic validation should run instructor on the resulting
+  ``structured_output`` (or use the ``StructuredExtractor`` shortcut
+  in excel_ai's ``llm/structured/extractor.py``).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import logging
+from dataclasses import dataclass, field
+from typing import Any
+from uuid import uuid4
+
+from agent_driver.contracts.enums import (
+    AgentProfile,
+    RunStatus,
+    RuntimeEventType,
+    TerminalReason,
+    ToolPolicyMode,
+)
+from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.runtime import AgentRunInput
+from agent_driver.contracts.tools import ToolPolicyInput, ToolTrace
+from agent_driver.contracts.usage import UsageSummary
+from agent_driver.runtime.abort import RunAbortHandle
+from agent_driver.runtime.tool_gate import ToolGate
+from agent_driver.sdk.agent import Agent
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentSpec:
+    """Declarative spec for one Python-driven child agent run.
+
+    Conceptually: "run an agent that does exactly THIS task, with these
+    constraints, and give me back the result". Used by the parent
+    orchestrator (in our case excel_ai) to compose specialised stages.
+
+    Attributes
+    ----------
+    agent_type:
+        Free-form label for trace / observability (e.g.
+        ``"chart_implementer"``, ``"data_explorer"``). Surfaces in
+        ``SubagentResult.agent_type`` and in any future
+        ``SubagentRun`` audit record built from this spec.
+    prompt:
+        User-role message body. Becomes the last message of the child's
+        ``AgentRunInput.messages``.
+    system_prompt:
+        Optional system message. When provided, it's prepended as a
+        ``system`` role ``ChatMessage`` to the child's input messages.
+        Required for fork-style cache reuse (B0.2 will populate this
+        from the parent's rendered system prompt).
+    allowed_tools / denied_tools:
+        Tool-policy allowlist / denylist. Flows into
+        ``AgentRunInput.tool_policy.allowed_tools`` /
+        ``denied_tools`` (see the schema-filter pattern landed in
+        commit 55f3dae). The child physically cannot see — and
+        therefore cannot call — tools outside the allowlist.
+    tool_choice:
+        Provider-level tool forcing (``"auto"`` / ``"required"`` /
+        ``"none"`` / ``{"type": "tool", "name": "X"}``). See
+        ``docs/patterns/forcing-tool-calls.md``.
+    response_format:
+        Provider-level structured output enforcement (passed as
+        ``LlmRequest.response_format``).
+    max_tool_calls / deadline_seconds:
+        Per-child caps. The child fails terminal with
+        ``TOOL_POLICY_DENIED`` / ``DEADLINE_EXCEEDED`` accordingly.
+    agent_profile:
+        ``AgentProfile`` for the child. Defaults to ``TOOL_CALLING``
+        because that matches every consumer we have (qwen / gpt /
+        deepseek all speak OpenAI tools). Override for ``CODE_AGENT``
+        in code-style stages.
+    """
+
+    agent_type: str
+    prompt: str
+    system_prompt: str | None = None
+    allowed_tools: tuple[str, ...] | None = None
+    denied_tools: tuple[str, ...] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    response_format: dict[str, Any] | None = None
+    max_tool_calls: int | None = None
+    deadline_seconds: float | None = None
+    agent_profile: AgentProfile = AgentProfile.TOOL_CALLING
+    app_metadata: dict[str, Any] = field(default_factory=dict)
+    max_cost_usd: float | None = None
+    """B2.2 — soft cost ceiling for the child run.
+
+    When set, a background watchdog polls the child's event log,
+    sums ``cost_usd_estimate`` from every ``llm_call_completed``
+    event, and flips the child's :class:`RunAbortHandle` with
+    ``reason="budget_exceeded"`` once the running total reaches
+    ``max_cost_usd``. The child's runner detects the abort at its
+    next step boundary and terminates with
+    ``RunStatus.CANCELLED`` / ``TerminalReason.CANCELLED_BY_USER``
+    (no new terminal reason is introduced — operators see
+    cancellation, and the ``reason`` on the abort handle is logged
+    for diagnostics).
+
+    Skipped when ``None`` (default). The watchdog is also skipped
+    when the provider doesn't supply cost estimates — without per-
+    call cost we can't enforce a USD ceiling. Operators wanting a
+    hard token / call ceiling should still use
+    ``max_tool_calls`` / ``deadline_seconds`` (which the runtime
+    already enforces).
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentResult:
+    """Normalised outcome of one ``run_subagent`` call.
+
+    Carries the bits a parent orchestrator actually consumes — answer,
+    tool trace, usage. Full ``AgentRunOutput`` is also returned via
+    ``raw_output`` for callers that need the rare fields (warnings,
+    memory_projection, etc.).
+    """
+
+    child_run_id: str
+    parent_run_id: str | None
+    agent_type: str
+    status: RunStatus
+    terminal_reason: TerminalReason | None
+    answer: str | None
+    structured_output: dict[str, Any] | None
+    tool_trace: tuple[ToolTrace, ...]
+    usage: UsageSummary | None
+    raw_output: Any  # AgentRunOutput, kept as Any to avoid circular import
+
+
+async def run_subagent(
+    parent: Agent,
+    spec: SubagentSpec,
+    *,
+    parent_run_id: str | None = None,
+    parent_abort_handle: RunAbortHandle | None = None,
+    tool_gate: ToolGate | None = None,
+) -> SubagentResult:
+    """Spawn one child agent and await its result.
+
+    The child shares the parent ``Agent``'s provider, tool registry,
+    and runner config — only the per-call shape (prompt, allowlist,
+    tool_choice, response_format, budgets, profile) is overridden by
+    ``spec``.
+
+    Cancellation
+    ------------
+    When ``parent_abort_handle`` is provided, the child gets
+    ``parent_abort_handle.child()`` — a weakly-linked handle. Aborting
+    the parent cascades to the child at the next child step boundary.
+    Aborting the child does NOT propagate up to the parent.
+
+    Tool gate
+    ---------
+    When ``tool_gate`` is provided, it is forwarded to the child
+    :meth:`Agent.run` call. The gate sees the child's planned tool
+    calls AFTER the static policy passes ALLOW, identical to the
+    parent's contract — useful when the parent's gate captures
+    organisation-wide policy (destructive ops, large fetches) that
+    the child should also respect.
+
+    Structured output extraction
+    ----------------------------
+    If ``spec.response_format`` is set, the function attempts to
+    ``json.loads`` the child's ``answer`` and stores the parsed dict on
+    ``SubagentResult.structured_output``. On parse failure the field is
+    ``None`` and the raw answer is still in ``SubagentResult.answer`` —
+    callers wanting strict validation should run a pydantic model over
+    the dict on their side (or hit the ``StructuredExtractor``
+    shortcut, which uses instructor end-to-end).
+    """
+    messages: list[ChatMessage] = []
+    if spec.system_prompt:
+        messages.append(ChatMessage(role="system", content=spec.system_prompt))
+    messages.append(ChatMessage(role="user", content=spec.prompt))
+
+    app_metadata = {
+        "subagent_origin": "child",
+        "agent_type": spec.agent_type,
+        **(
+            {"parent_run_id": parent_run_id}
+            if parent_run_id is not None
+            else {}
+        ),
+        **spec.app_metadata,
+    }
+
+    tool_policy = ToolPolicyInput(
+        mode=ToolPolicyMode.ALLOW_TOOLS,
+        allowed_tools=list(spec.allowed_tools) if spec.allowed_tools is not None else None,
+        denied_tools=list(spec.denied_tools) if spec.denied_tools else None,
+    )
+
+    child_input = AgentRunInput(
+        messages=messages,
+        run_id=f"sub_{uuid4().hex[:12]}",
+        agent_id=f"{parent._defaults.agent_id}.{spec.agent_type}",
+        graph_preset=parent._defaults.graph_preset,
+        agent_profile=spec.agent_profile,
+        stream=False,
+        max_tool_calls=spec.max_tool_calls,
+        deadline_seconds=spec.deadline_seconds,
+        tool_choice=spec.tool_choice,
+        response_format=spec.response_format,
+        tool_policy=tool_policy,
+        app_metadata=app_metadata,
+    )
+
+    child_abort = (
+        parent_abort_handle.child() if parent_abort_handle is not None else None
+    )
+
+    # B2.2 — when a cost budget is set, ensure we have an abort handle
+    # the watchdog can flip. If the caller didn't supply a parent
+    # handle we mint a standalone one — the child still gets canceled
+    # cleanly on budget violation; only the parent->child cascade is
+    # absent (which is correct, since there's no parent to cascade to).
+    if spec.max_cost_usd is not None and child_abort is None:
+        child_abort = RunAbortHandle()
+
+    watchdog_task: asyncio.Task[None] | None = None
+    if spec.max_cost_usd is not None and child_abort is not None:
+        watchdog_task = asyncio.create_task(
+            _watch_subagent_cost(
+                event_log=parent.runner.deps.event_log,
+                run_id=child_input.run_id,
+                max_cost_usd=spec.max_cost_usd,
+                abort_handle=child_abort,
+                agent_type=spec.agent_type,
+            )
+        )
+
+    try:
+        output = await parent.run(
+            child_input, abort_handle=child_abort, tool_gate=tool_gate
+        )
+    finally:
+        if watchdog_task is not None and not watchdog_task.done():
+            watchdog_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watchdog_task
+
+    # Best-effort structured_output extraction: only when caller asked
+    # for response_format AND the answer parses as a JSON object.
+    structured: dict[str, Any] | None = None
+    if spec.response_format is not None and output.answer:
+        try:
+            candidate = json.loads(output.answer)
+            if isinstance(candidate, dict):
+                structured = candidate
+        except (TypeError, ValueError):
+            structured = None
+
+    return SubagentResult(
+        child_run_id=output.run_id,
+        parent_run_id=parent_run_id,
+        agent_type=spec.agent_type,
+        status=output.status,
+        terminal_reason=output.terminal_reason,
+        answer=output.answer,
+        structured_output=structured,
+        tool_trace=tuple(output.tool_trace),
+        usage=output.usage,
+        raw_output=output,
+    )
+
+
+async def _watch_subagent_cost(
+    *,
+    event_log: Any,
+    run_id: str,
+    max_cost_usd: float,
+    abort_handle: RunAbortHandle,
+    agent_type: str,
+    poll_interval_seconds: float = 0.05,
+) -> None:
+    """B2.2 background watchdog — poll the child's event log, sum
+    ``cost_usd_estimate`` from every ``llm_call_completed`` event,
+    fire ``abort_handle`` once the running total reaches
+    ``max_cost_usd``.
+
+    Why a watchdog (not a runtime hook)
+    -----------------------------------
+
+    The agent runner already polls the abort handle at every step
+    boundary, so the cheapest correct integration is to flip the
+    SAME handle from outside the run. We don't need new runtime
+    surface area: a small async task watching the durable event log
+    is enough to enforce the budget without coupling the runner to a
+    cost-tracking concern.
+
+    Exit conditions
+    ---------------
+
+    * Budget reached → calls ``abort_handle.abort(reason=
+      "budget_exceeded")`` and returns. The child's runner detects
+      at the next step boundary.
+    * Parent cancels the watchdog (run completed / parent aborted)
+      → ``asyncio.CancelledError`` propagates; we let it.
+    * Event log raises (custom backend disconnect, etc.) → we log
+      and return silently. Better to skip enforcement than to crash
+      the parent run; the spec's contract is "soft cost ceiling",
+      not "guaranteed enforcement".
+    """
+    after_seq = 0
+    accumulated_cost = 0.0
+    while not abort_handle.is_aborted:
+        try:
+            events = event_log.list_for_run(run_id, after_seq=after_seq)
+        except Exception:  # pragma: no cover - log + bail on backend error
+            logger.warning(
+                "subagent cost watchdog: event_log error for run_id=%r; "
+                "skipping enforcement",
+                run_id,
+                exc_info=True,
+            )
+            return
+        for event in events:
+            if event.seq > after_seq:
+                after_seq = event.seq
+            if event.type != RuntimeEventType.LLM_CALL_COMPLETED:
+                continue
+            usage = (event.payload or {}).get("usage") or {}
+            if not isinstance(usage, dict):
+                continue
+            cost = usage.get("cost_usd_estimate")
+            if not isinstance(cost, (int, float)):
+                continue
+            accumulated_cost += float(cost)
+            if accumulated_cost >= max_cost_usd:
+                logger.info(
+                    "subagent cost budget exceeded: agent_type=%r run_id=%r "
+                    "cost=%.4f budget=%.4f",
+                    agent_type,
+                    run_id,
+                    accumulated_cost,
+                    max_cost_usd,
+                )
+                abort_handle.abort(reason="budget_exceeded")
+                return
+        await asyncio.sleep(poll_interval_seconds)
+
+
+__all__ = ["SubagentSpec", "SubagentResult", "run_subagent"]

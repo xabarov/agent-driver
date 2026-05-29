@@ -16,6 +16,7 @@ from agent_driver.contracts import (
     ToolManifest,
     ToolRisk,
 )
+from agent_driver.tools.context import get_workspace_cwd, get_workspace_jail_root
 from agent_driver.tools.registry import ToolRegistry
 
 _BASH_TOOL = "bash"
@@ -93,7 +94,9 @@ def _bash_manifest() -> ToolManifest:
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Optional absolute working directory",
+                    "description": (
+                        "Optional working directory; omit to use workspace cwd"
+                    ),
                 },
                 "timeout_seconds": {
                     "type": "number",
@@ -310,7 +313,7 @@ def _risk_from_category(category: str) -> str:
 
 def _resolve_cwd(raw: Any) -> Path:
     if raw is None:
-        cwd = Path.cwd()
+        cwd = get_workspace_cwd()
     elif isinstance(raw, str) and raw.strip():
         cwd = Path(raw).expanduser()
     else:
@@ -319,6 +322,14 @@ def _resolve_cwd(raw: Any) -> Path:
         raise ValueError("cwd must be absolute")
     if not cwd.exists() or not cwd.is_dir():
         raise ValueError(f"cwd is not an existing directory: {cwd}")
+    jail_root = get_workspace_jail_root()
+    if jail_root is not None:
+        resolved = cwd.resolve()
+        try:
+            resolved.relative_to(jail_root.resolve())
+        except ValueError as exc:
+            raise ValueError(f"cwd outside workspace ({jail_root.resolve()}): {resolved}") from exc
+        cwd = resolved
     return cwd
 
 

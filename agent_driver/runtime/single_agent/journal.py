@@ -90,8 +90,19 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
             raise RuntimeExecutionError(f"Injected failure after step '{step_name}'")
 
     def _terminal_from_limits(self, context: RunContext) -> TerminalResult | None:
+        # Two complementary cancellation seams. The probe is config-level
+        # and exists for callers that wire a closure / global flag; the
+        # abort_handle is an object-shaped, hierarchical signal that
+        # subagents inherit via ``parent.child()``. Either fires the
+        # same terminal — first one wins.
         probe = self._config.cancellation_probe
         if probe is not None and probe():
+            return TerminalResult(
+                status=RunStatus.CANCELLED,
+                reason=TerminalReason.CANCELLED_BY_USER,
+            )
+        handle = context.abort_handle
+        if handle is not None and handle.is_aborted:
             return TerminalResult(
                 status=RunStatus.CANCELLED,
                 reason=TerminalReason.CANCELLED_BY_USER,
@@ -103,7 +114,7 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
                 reason=TerminalReason.DEADLINE_EXCEEDED,
             )
         max_steps = context.run_input.max_steps
-        if max_steps is not None and context.step_count >= max_steps:
+        if max_steps is not None and context.llm_step_count >= max_steps:
             return TerminalResult(
                 status=RunStatus.FAILED,
                 reason=TerminalReason.MAX_STEPS_EXCEEDED,

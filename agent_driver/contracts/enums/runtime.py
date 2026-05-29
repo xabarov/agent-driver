@@ -29,6 +29,7 @@ class TerminalReason(StrEnum):
     APPROVAL_REJECTED = "approval_rejected"
     RUNTIME_ERROR = "runtime_error"
     MODEL_ERROR = "model_error"
+    PROVIDER_PROTOCOL = "provider_protocol"
     CHECKPOINT_ERROR = "checkpoint_error"
 
 
@@ -42,8 +43,19 @@ class RuntimeEventType(StrEnum):
     NODE_COMPLETED = "node_completed"
     LLM_CALL_STARTED = "llm_call_started"
     LLM_CALL_COMPLETED = "llm_call_completed"
+    LLM_REQUEST_REJECTED = "llm_request_rejected"
+    ASSISTANT_MESSAGE_STARTED = "assistant_message_started"
+    ASSISTANT_MESSAGE_COMPLETED = "assistant_message_completed"
+    ASSISTANT_MESSAGE_REPLACED = "assistant_message_replaced"
+    ASSISTANT_MESSAGE_TOMBSTONED = "assistant_message_tombstoned"
     TOKEN_DELTA = "token_delta"
+    REASONING_DELTA = "reasoning_delta"
     TOOL_CALL_STARTED = "tool_call_started"
+    # Phase 11 H16 — optional intermediate progress emission while a tool
+    # handler is still running. Handlers opt in by calling the
+    # ``on_progress(...)`` callback passed via context. Stream order:
+    # TOOL_CALL_STARTED → 0..N TOOL_PROGRESS → TOOL_CALL_COMPLETED.
+    TOOL_PROGRESS = "tool_progress"
     TOOL_CALL_COMPLETED = "tool_call_completed"
     GUARDRAIL_DECISION = "guardrail_decision"
     CHECKPOINT_SAVED = "checkpoint_saved"

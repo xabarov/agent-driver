@@ -15,8 +15,12 @@ from agent_driver.context.token_pressure import TokenPressureInput, estimate_tok
 from agent_driver.contracts.context import ContextBudget
 from agent_driver.contracts.enums import AgentProfile
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.tools import ToolManifest
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.llm.contracts import LlmRequest
+from agent_driver.runtime.single_agent.protocol_validate import (
+    validate_and_repair_protocol_messages,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +44,11 @@ class LlmRequestBuildContext:
     compact_threshold: int = 9000
     blocking_threshold: int = 10500
     output_token_reserve: int = 1500
+    stream: bool = False
+    system_instruction: str | None = None
+    protocol_messages: tuple[ChatMessage, ...] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+    response_format: dict[str, Any] | None = None
 
 
 def _normalize_trimmed_messages(
@@ -50,8 +59,87 @@ def _normalize_trimmed_messages(
     for message in prompt_messages:
         role = str(message.get("role", "user"))
         content = str(message.get("content", ""))
-        normalized.append(ChatMessage(role=role, content=content))
+        name = message.get("name")
+        tool_call_id = message.get("tool_call_id")
+        metadata = message.get("metadata")
+        normalized.append(
+            ChatMessage(
+                role=role,
+                content=content,
+                name=str(name) if isinstance(name, str) and name.strip() else None,
+                tool_call_id=(
+                    str(tool_call_id)
+                    if isinstance(tool_call_id, str) and tool_call_id.strip()
+                    else None
+                ),
+                metadata=metadata if isinstance(metadata, dict) else {},
+            )
+        )
     return normalized
+
+
+def _tool_schema_from_manifest(manifest: ToolManifest) -> dict[str, Any]:
+    parameters = manifest.args_schema
+    if not isinstance(parameters, dict):
+        parameters = {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": True,
+        }
+    return {
+        "type": "function",
+        "function": {
+            "name": manifest.name,
+            "description": manifest.description,
+            "parameters": parameters,
+        },
+    }
+
+
+def _request_tools_from_registry(
+    registry: Any | None,
+    *,
+    allowed: tuple[str, ...] | None = None,
+    denied: tuple[str, ...] | None = None,
+) -> list[dict[str, Any]]:
+    """Build the LLM-visible tool list, applying allow/deny filters.
+
+    Filtering happens at request-build time (not just at policy-eval time)
+    so the model NEVER SEES denied tools in its schema. The OpenClaude
+    pattern: restricting the registry at the LLM boundary prevents the
+    model from even trying to invoke a forbidden tool — which would
+    otherwise consume an LLM round-trip + emit a denied trace.
+
+    Filter semantics:
+      * ``allowed=None``  → no allowlist gate; everything (minus denied) passes
+      * ``allowed=()``    → empty allowlist → ZERO tools surface (use this
+        when caller wants ``NO_TOOLS`` via the schema layer)
+      * ``denied=None`` / ``()`` → no denylist gate
+      * ``denied`` always overrides ``allowed`` (deny wins on collision)
+
+    The ``tool_policy.evaluate_tool_policy`` runtime check still runs on
+    every planned call; this filter is the FIRST line of defence, the
+    evaluator is the SECOND. Both are needed because (a) some tools may
+    bypass the schema (e.g. native function-calling smuggling) and (b) the
+    runtime check sees data the schema layer doesn't (current call count,
+    risk threshold).
+    """
+    if registry is None:
+        return []
+    rows = getattr(registry, "list_registered", None)
+    if not callable(rows):
+        return []
+    allowed_set = set(allowed) if allowed is not None else None
+    denied_set = set(denied) if denied else set()
+    schemas: list[dict[str, Any]] = []
+    for item in rows():
+        name = item.manifest.name
+        if name in denied_set:
+            continue
+        if allowed_set is not None and name not in allowed_set:
+            continue
+        schemas.append(_tool_schema_from_manifest(item.manifest))
+    return schemas
 
 
 def build_single_agent_llm_request(
@@ -62,15 +150,25 @@ def build_single_agent_llm_request(
     prompt = run_input.input or (
         run_input.messages[-1].content if run_input.messages else ""
     )
-    prompt_messages = (
-        [msg.model_dump(mode="json") for msg in run_input.messages]
-        if run_input.messages
-        else [{"role": "user", "content": prompt}]
-    )
-    if ctx.clarification is not None and ctx.clarification.strip():
-        prompt = f"{prompt}\n\nClarification: {ctx.clarification.strip()}"
-    if ctx.planning_prompt and ctx.planning_prompt.strip():
-        prompt = f"{prompt}\n\n{ctx.planning_prompt.strip()}"
+    if ctx.protocol_messages is not None:
+        repaired = validate_and_repair_protocol_messages(
+            ctx.protocol_messages,
+            max_total_content_chars=max(ctx.max_chars * 3, ctx.max_chars),
+        )
+        prompt_messages = [
+            message.model_dump(mode="json") for message in repaired.messages
+        ]
+    else:
+        prompt_messages = (
+            [msg.model_dump(mode="json") for msg in run_input.messages]
+            if run_input.messages
+            else [{"role": "user", "content": prompt}]
+        )
+    if ctx.protocol_messages is None:
+        if ctx.clarification is not None and ctx.clarification.strip():
+            prompt = f"{prompt}\n\nClarification: {ctx.clarification.strip()}"
+        if ctx.planning_prompt and ctx.planning_prompt.strip():
+            prompt = f"{prompt}\n\n{ctx.planning_prompt.strip()}"
     code_prompt_render = None
     if run_input.agent_profile == AgentProfile.CODE_AGENT:
         resolved_tool_docs = ctx.tool_docs
@@ -100,7 +198,13 @@ def build_single_agent_llm_request(
             clarification=ctx.clarification,
         )
         prompt = code_prompt_render.rendered_text
-    if prompt_messages:
+    if ctx.system_instruction and ctx.system_instruction.strip():
+        has_system = any(str(item.get("role", "")) == "system" for item in prompt_messages)
+        if not has_system:
+            prompt_messages = [
+                {"role": "system", "content": ctx.system_instruction.strip()}
+            ] + prompt_messages
+    if prompt_messages and ctx.protocol_messages is None:
         prompt_messages[-1]["content"] = prompt
     trimmed = trim_context(
         budget=ContextBudget(
@@ -115,11 +219,30 @@ def build_single_agent_llm_request(
     )
     request_metadata = dict(run_input.tool_policy.metadata)
     forced_model = request_metadata.pop("forced_model", None)
+    # Mirror the runtime policy's allow/deny into the schema layer so the
+    # model only sees tools it's permitted to call. ``None`` allowlist
+    # keeps the legacy "show everything" default; explicit tuples flow
+    # into the filter.
+    policy_allowed = run_input.tool_policy.allowed_tools
+    policy_denied = run_input.tool_policy.denied_tools
+    # Caller-supplied response_format (Phase 1 / 0.1) flows through to
+    # LlmRequest. Inner-loop never overrides it — schema enforcement
+    # is a request-level decision, not a per-step retry.
+    response_format = ctx.response_format
+    if response_format is None:
+        response_format = run_input.response_format
     request = LlmRequest(
         messages=_normalize_trimmed_messages(trimmed.prompt_messages),
         model_role=run_input.model_role,
         model=forced_model if isinstance(forced_model, str) else None,
-        stream=False,
+        stream=ctx.stream,
+        tools=_request_tools_from_registry(
+            ctx.registry,
+            allowed=tuple(policy_allowed) if policy_allowed is not None else None,
+            denied=tuple(policy_denied) if policy_denied else None,
+        ),
+        tool_choice=ctx.tool_choice,
+        response_format=response_format,
         metadata=request_metadata,
     )
     trim_metadata = trimmed.model_dump(mode="json").get("metadata", {})

@@ -16,6 +16,8 @@ class CallableToolSpec:
     name: str
     signature: str
     doc: str
+    required_args: tuple[str, ...]
+    optional_args: tuple[str, ...]
     side_effect: SideEffectClass
     approval_mode: ApprovalMode
 
@@ -29,8 +31,31 @@ def _format_signature(tool: RegisteredTool) -> str:
     parts: list[str] = []
     for name in ordered:
         marker = "" if name in required else " = None"
-        parts.append(f"{name}: object{marker}")
+        annotation = _schema_type_hint(properties.get(name))
+        parts.append(f"{name}: {annotation}{marker}")
     return f"({', '.join(parts)}) -> dict[str, object]"
+
+
+def _schema_type_hint(schema: object) -> str:
+    if not isinstance(schema, dict):
+        return "object"
+    type_raw = schema.get("type")
+    if isinstance(type_raw, list):
+        non_null = [item for item in type_raw if item != "null"]
+        schema_type = str(non_null[0]) if non_null else "object"
+    elif isinstance(type_raw, str):
+        schema_type = type_raw
+    else:
+        schema_type = "object"
+    mapping = {
+        "string": "str",
+        "integer": "int",
+        "number": "float",
+        "boolean": "bool",
+        "object": "dict[str, object]",
+        "array": "list[object]",
+    }
+    return mapping.get(schema_type, "object")
 
 
 def build_callable_tool_surface(registry: ToolRegistry) -> list[CallableToolSpec]:
@@ -45,6 +70,26 @@ def build_callable_tool_surface(registry: ToolRegistry) -> list[CallableToolSpec
                 name=name,
                 signature=_format_signature(registered),
                 doc=registered.manifest.description,
+                required_args=tuple(
+                    sorted(
+                        set((registered.manifest.args_schema or {}).get("required", []))
+                    )
+                ),
+                optional_args=tuple(
+                    sorted(
+                        set(
+                            (
+                                (registered.manifest.args_schema or {}).get(
+                                    "properties"
+                                )
+                                or {}
+                            )
+                        )
+                        - set(
+                            (registered.manifest.args_schema or {}).get("required", [])
+                        )
+                    )
+                ),
                 side_effect=registered.manifest.side_effect,
                 approval_mode=registered.manifest.approval_mode,
             )
@@ -58,6 +103,9 @@ def render_callable_tool_docs(specs: list[CallableToolSpec]) -> str:
     for spec in specs:
         lines.append(f"def {spec.name}{spec.signature}")
         lines.append(f'    """{spec.doc}"""')
+        lines.append(
+            f"    # required={list(spec.required_args)}, optional={list(spec.optional_args)}"
+        )
         lines.append(
             f"    # side_effect={spec.side_effect.value}, approval={spec.approval_mode.value}"
         )

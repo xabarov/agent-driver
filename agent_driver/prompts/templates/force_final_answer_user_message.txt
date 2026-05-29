@@ -1,0 +1,1 @@
+Use provided context and tool results to answer the user now. Produce the requested deliverable or best-effort answer directly; do not only report progress, describe the next planned step, or say that you will continue later. Do not call more tools in this turn.

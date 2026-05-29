@@ -11,6 +11,7 @@ from agent_driver.code_agent.executor import CodeActionExecutor
 from agent_driver.runtime.single_agent.config_sections import (
     CodeAgentSettings,
     CompactionSettings,
+    PythonToolSettings,
     SubagentSettings,
     TrimmingSettings,
 )
@@ -23,9 +24,11 @@ from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolCall, ToolResultEnvelope
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.providers import LlmProvider
+from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
+from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.runtime.tools import ToolExecutor
-from agent_driver.subagents.store import InMemorySubagentStore
+from agent_driver.subagents.store import SubagentStore
 from agent_driver.tools.registry import ToolRegistry
 
 
@@ -33,6 +36,7 @@ _TRIMMING_FIELDS = {item.name for item in fields(TrimmingSettings)}
 _COMPACTION_FIELDS = {item.name for item in fields(CompactionSettings)}
 _SUBAGENT_FIELDS = {item.name for item in fields(SubagentSettings)}
 _CODE_AGENT_FIELDS = {item.name for item in fields(CodeAgentSettings)}
+_PYTHON_TOOL_FIELDS = {item.name for item in fields(PythonToolSettings)}
 
 
 @dataclass(init=False, slots=True)
@@ -48,13 +52,14 @@ class RunnerConfig:
     context_store: ContextStore | None
     observation_max_chars: int
     include_planning_prompt: bool
-    subagent_store: InMemorySubagentStore | None
+    subagent_store: SubagentStore | None
     code_executor: CodeActionExecutor | None
     tool_registry: ToolRegistry | None
     trimming: TrimmingSettings
     compaction: CompactionSettings
     subagents: SubagentSettings
     code_agent: CodeAgentSettings
+    python_tool: PythonToolSettings
 
     def __init__(self, **kwargs: Any) -> None:
         trimming = kwargs.pop("trimming", None) or TrimmingSettings(
@@ -68,6 +73,9 @@ class RunnerConfig:
         )
         code_agent = kwargs.pop("code_agent", None) or CodeAgentSettings(
             **{key: kwargs.pop(key) for key in list(kwargs) if key in _CODE_AGENT_FIELDS}
+        )
+        python_tool = kwargs.pop("python_tool", None) or PythonToolSettings(
+            **{key: kwargs.pop(key) for key in list(kwargs) if key in _PYTHON_TOOL_FIELDS}
         )
         self.graph_id = kwargs.pop("graph_id", "single_agent_runtime")
         self.cancellation_probe = kwargs.pop("cancellation_probe", None)
@@ -85,6 +93,7 @@ class RunnerConfig:
         self.compaction = compaction
         self.subagents = subagents
         self.code_agent = code_agent
+        self.python_tool = python_tool
         if kwargs:
             raise TypeError(f"Unexpected RunnerConfig arguments: {sorted(kwargs)}")
 
@@ -141,6 +150,14 @@ class RunnerConfig:
         return self.compaction.enable_llm_compaction
 
     @property
+    def enable_partial_compaction(self) -> bool:
+        return self.compaction.enable_partial_compaction
+
+    @property
+    def enable_ptl_retry(self) -> bool:
+        return self.compaction.enable_ptl_retry
+
+    @property
     def compaction_failure_limit(self) -> int:
         return self.compaction.compaction_failure_limit
 
@@ -151,6 +168,14 @@ class RunnerConfig:
     @property
     def compaction_model(self) -> str:
         return self.compaction.compaction_model
+
+    @property
+    def ptl_retry_max_chars(self) -> int:
+        return self.compaction.ptl_retry_max_chars
+
+    @property
+    def post_compact_max_reinjected_artifact_refs(self) -> int:
+        return self.compaction.post_compact_max_reinjected_artifact_refs
 
     @property
     def enable_subagents(self) -> bool:
@@ -190,6 +215,19 @@ class RunContext:
     llm_response: LlmResponse | None = None
     prior_checkpoint: CheckpointRef | None = None
     started_at: float = field(default_factory=monotonic)
+    # Optional caller-supplied abort signal. Polled at step boundaries
+    # (see ``_terminal_from_limits``). Lives outside ``AgentRunInput``
+    # because it holds a live threading lock + WeakSet that don't
+    # belong in a JSON-serialisable transport contract.
+    abort_handle: "RunAbortHandle | None" = None
+    # Optional caller-supplied per-call gate (A0.2). Consulted in
+    # ``GovernedToolExecutor._execute_one_call`` AFTER the static
+    # ``ToolPolicyInput`` pass returns ALLOW; the gate can flip the
+    # decision to DENY (blocked envelope) or INTERRUPT (operator
+    # approval). Lives on RunContext for the same reason as
+    # ``abort_handle`` — callables don't belong on a JSON-serialisable
+    # transport contract.
+    tool_gate: "ToolGate | None" = None
 
     @property
     def run_id(self) -> str:
@@ -228,6 +266,15 @@ class RunContext:
     def tool_calls(self, value: int) -> None:
         self.metadata["tool_calls"] = value
 
+    @property
+    def llm_step_count(self) -> int:
+        """Count of completed LLM-call iterations (used for max_steps budget)."""
+        return int(self.metadata.get("llm_step_count", 0))
+
+    @llm_step_count.setter
+    def llm_step_count(self, value: int) -> None:
+        self.metadata["llm_step_count"] = value
+
 
 @dataclass(frozen=True, slots=True)
 class EventSpec:
@@ -258,9 +305,10 @@ class RunnerDeps:
     session_store: SessionStore
     artifact_store: ArtifactStore
     context_store: ContextStore
-    subagent_store: InMemorySubagentStore
+    subagent_store: SubagentStore
     code_executor: CodeActionExecutor
     tool_registry: ToolRegistry
+    python_backend: Any | None = None
 
 
 @dataclass(slots=True)

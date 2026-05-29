@@ -4,12 +4,18 @@ from agent_driver.evals.baseline import compare_reports
 from agent_driver.evals.context_quality import (
     ContextQualityFixture,
     build_synthetic_context_quality_fixture,
+    compaction_default_gate,
+    evaluate_fixture_retention,
     evaluate_baseline_strategies,
     score_context_quality,
 )
 from agent_driver.evals.context_compaction_runner import (
+    ContextQualityGatePolicy,
+    ContextQualityGateResult,
     StrategyComparisonRow,
+    render_context_compaction_gate_report,
     render_context_compaction_report,
+    run_context_compaction_regression_gate,
     run_context_compaction_strategy_comparison,
 )
 from agent_driver.evals.contracts import (
@@ -50,6 +56,7 @@ __all__ = [
     "build_support_bundle",
     "ContextQualityFixture",
     "build_synthetic_context_quality_fixture",
+    "compaction_default_gate",
     "compare_reports",
     "default_evaluators",
     "evaluate_checkpoint_replay",
@@ -58,14 +65,19 @@ __all__ = [
     "evaluate_terminal_state",
     "evaluate_tool_policy",
     "render_cli_replay",
+    "render_context_compaction_gate_report",
     "render_context_compaction_report",
     "render_full_debug_view",
     "render_succinct_view",
     "replay_from_persisted",
     "graph_profile_tool_summary",
+    "evaluate_fixture_retention",
     "evaluate_baseline_strategies",
     "run_dataset",
     "run_context_compaction_strategy_comparison",
+    "run_context_compaction_regression_gate",
     "score_context_quality",
     "StrategyComparisonRow",
+    "ContextQualityGatePolicy",
+    "ContextQualityGateResult",
 ]

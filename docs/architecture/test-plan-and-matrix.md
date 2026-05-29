@@ -23,7 +23,7 @@ Reference policy: [Testing and live trace policy](testing-and-live-trace-policy.
 | Web tools | `web_fetch`, `web_search` parsing, safety, truncation | Unit/tools | `tests/tools/test_builtin_web_tools.py` | Add content-type/url/timeout/parser fallback tests on behavior changes |
 | CodeAgent loop | parse/execute/retry/final-answer semantics | Unit/runtime+eval | `tests/runtime/test_code_agent_profile.py`, `tests/runtime/test_code_agent_multistep.py`, `tests/evals/test_code_agent_evals.py` | Add regression test for every loop semantic fix |
 | Planning/context | planning state, trimming, microcompaction invariants | Unit/context | `tests/context/test_runtime_phase6_metadata.py`, `tests/context/test_deterministic_trimming.py`, `tests/context/test_microcompaction.py` | Add invariant tests for ordering/provenance metadata changes |
-| Context quality | fact retention after trimming/microcompaction/compaction | Unit/eval/live | Planned: `tests/context/test_context_quality_eval.py`, `tests/runtime/test_live_context_quality_openrouter.py` | Required for Phase 8 compaction changes; compare quality/cost/latency before changing defaults |
+| Context quality | fact retention after trimming/microcompaction/compaction | Unit/eval/live | `tests/context/test_context_quality_eval.py`, `tests/evals/test_context_quality_replay.py`, `tests/evals/test_context_compaction_runner.py`, `tests/runtime/test_live_context_quality_openrouter.py` | Required for Phase 8 compaction changes; compare quality/cost/latency before changing defaults |
 | Replay/observability | replay view, eval comparison, trace export | Unit/evals | `tests/evals/test_replay_views.py`, `tests/evals/test_persisted_replay.py`, `tests/observability/test_trace_export.py` | Add assertions on new metadata fields |
 | Live providers | real network health + completion | Live | `tests/llm/test_live_providers.py` | Required for adapter/provider changes |
 | Live agent+tool | real provider + governed tool stage (`web_search` mock lane + real `bash`/`notebook_edit`/`file_write`/`file_edit`/tasking/MCP/todo_write allow lanes + interrupt lanes for `bash`/`file_write`/`ask_user_question` + resume `approve/reject/edit/cancel` for `file_write`) | Live | `tests/runtime/test_live_agent_tool_smoke.py` | Required for tool/runtime integration changes; verify allow-path side effects, interrupt payload/trace semantics, task monitor previews, planning-state propagation from `todo_write`, and resume terminal outcomes including edited-args execution |
@@ -67,9 +67,10 @@ Live context-quality tests are opt-in and must stay skipped by default:
 
 ```bash
 AGENT_DRIVER_RUN_LIVE_TESTS=1 \
-AGENT_DRIVER_OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
-AGENT_DRIVER_OPENAI_API_KEY=... \
-AGENT_DRIVER_OPENAI_MODEL=... \
+AGENT_DRIVER_PROVIDER=openrouter \
+AGENT_DRIVER_BASE_URL=https://openrouter.ai/api/v1 \
+AGENT_DRIVER_API_KEY=... \
+AGENT_DRIVER_MODEL=... \
 .venv/bin/python -m pytest -m live tests/runtime/test_live_context_quality_openrouter.py
 ```
 
@@ -109,3 +110,5 @@ trim/microcompaction or whether the model failed to use retained context.
 - Context-quality baseline is updated when trimming, microcompaction, session
   memory, or compaction behavior changes.
 - Trace review summary is recorded in PR notes (event ordering, tool statuses, terminal reason, key metadata).
+- Streaming-related changes include
+  [Streaming trace review checklist](streaming-trace-review-checklist.md).

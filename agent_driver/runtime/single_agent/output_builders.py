@@ -75,6 +75,10 @@ def build_memory_audit(context: RunContext) -> dict[str, Any]:
         "compaction_audit": context.metadata.get(COMPACTION_AUDIT_KEY),
         "compaction_result": context.metadata.get(COMPACTION_RESULT_KEY),
         "compaction_failures": context.metadata.get(COMPACTION_FAILURES_KEY, []),
+        "post_compact_cleanup": context.metadata.get("post_compact_cleanup", {}),
+        "session_memory_extraction": context.metadata.get(
+            "session_memory_extraction", {}
+        ),
         "retained_digest_ids": context.metadata.get("retained_digest_ids", []),
         "retained_artifact_ids": context.metadata.get("retained_artifact_ids", []),
     }

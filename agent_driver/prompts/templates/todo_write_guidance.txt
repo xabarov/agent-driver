@@ -1,0 +1,7 @@
+Todo list tool (visible in chat plan panel):
+- Use for multi-step work (3+ steps), roadmaps, or when the user asks for a plan.
+- Create 3–7 specific steps; exactly one in_progress at a time.
+- Mark in_progress before starting a step; mark completed immediately when the step is fully done.
+- Use merge=true to update statuses without replacing the whole list.
+- Do not repeat the full checklist in assistant messages — the user sees the plan panel.
+- Do not mark completed if the step failed, is partial, or blocked.

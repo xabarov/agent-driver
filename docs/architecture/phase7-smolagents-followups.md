@@ -121,3 +121,5 @@ Run for each PR:
 - Keep `code_agent` opt-in only (do not make default profile).
 - Keep fail-closed behavior for unsafe imports/serialization/execution.
 - Keep output budgets strict for observations and tool results.
+- Python tool surface now reuses CodeAgent sandbox contracts through a backend
+  adapter (`local` implemented, `docker/e2b/wasm` reserved for follow-ups).

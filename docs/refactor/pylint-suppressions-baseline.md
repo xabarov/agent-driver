@@ -28,8 +28,6 @@ Policy: see [README.md](README.md) § Principles — **decompose first**, disabl
 
 | File | Code | Proposed fix | Effort |
 |------|------|--------------|--------|
-| `context/observations/memory.py` | `too-many-arguments` | `ObservationMemoryInput` dataclass | S |
-| `context/trimming/deterministic.py` | `too-many-locals` | Extract per-strategy trim functions | M |
 | `code_agent/policy.py` | `too-many-locals` | Split validation vs reporting | S |
 | `evals/baseline.py` | `too-many-locals` | Extract comparison sections | S |
 
@@ -54,7 +52,8 @@ Policy: see [README.md](README.md) § Principles — **decompose first**, disabl
 
 | File | ~LOC | Trigger |
 |------|------|---------|
-| `tools/builtin/filesystem.py` | 795 | **Split now** → see [structure-status.md](structure-status.md) |
+| `tools/builtin/filesystem/write.py` | ~300 | Split further if write/edit/notebook logic grows together |
+| `tools/builtin/filesystem/search.py` | ~250 | Monitor search helper growth and parser complexity |
 | `tools/builtin/tasking.py` | 398 | Split if grows past 400 |
 | `tools/builtin/web.py` | 368 | Monitor |
 | `tools/builtin/shell.py` | 343 | Monitor |

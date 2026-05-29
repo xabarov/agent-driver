@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins as py_builtins
 import io
 from dataclasses import dataclass
 from time import monotonic
@@ -31,8 +32,33 @@ SAFE_BUILTINS = {
 }
 
 
+def build_safe_builtins(authorized_imports: set[str] | None = None) -> dict[str, object]:
+    """Return safe builtins map with restricted __import__."""
+    allowlist = {item.strip() for item in (authorized_imports or set()) if item.strip()}
+
+    def _safe_import(
+        name: str,
+        globals_: dict[str, object] | None = None,
+        locals_: dict[str, object] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> object:
+        root = name.split(".", maxsplit=1)[0]
+        if root not in allowlist:
+            raise CodePolicyError(f"unauthorized import '{root}'")
+        return py_builtins.__import__(name, globals_, locals_, fromlist, level)
+
+    payload = dict(SAFE_BUILTINS)
+    payload["__import__"] = _safe_import
+    return payload
+
+
 class CodeExecutionError(RuntimeError):
     """Raised when sandbox policy or execution fails."""
+
+
+class CodePolicyError(CodeExecutionError):
+    """Raised when sandbox policy validation fails."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,13 +79,15 @@ def validate_or_raise(request: CodeExecutionRequest) -> None:
         authorized_imports=request.authorized_imports,
     )
     if violations:
-        raise CodeExecutionError("; ".join(item.message for item in violations))
+        raise CodePolicyError("; ".join(item.message for item in violations))
 
 
-def build_exec_environments(
+def build_exec_namespace(
     tool_wrappers: dict[str, object],
-) -> tuple[dict[str, object], dict[str, object], dict[str, str]]:
-    """Build restricted globals/locals for exec and final_answer holder."""
+    *,
+    authorized_imports: set[str] | None = None,
+) -> tuple[dict[str, object], dict[str, str]]:
+    """Build restricted shared namespace for exec/eval and final_answer holder."""
     final_answer_holder: dict[str, str] = {}
 
     def _final_answer(value: object) -> str:
@@ -67,12 +95,25 @@ def build_exec_environments(
         final_answer_holder["text"] = text
         return text
 
-    locals_env: dict[str, object] = {
+    namespace: dict[str, object] = {
+        "__builtins__": build_safe_builtins(authorized_imports),
         "final_answer": _final_answer,
         **tool_wrappers,
     }
-    globals_env: dict[str, object] = {"__builtins__": SAFE_BUILTINS}
-    return globals_env, locals_env, final_answer_holder
+    return namespace, final_answer_holder
+
+
+def build_exec_environments(
+    tool_wrappers: dict[str, object],
+    *,
+    authorized_imports: set[str] | None = None,
+) -> tuple[dict[str, object], dict[str, object], dict[str, str]]:
+    """Backward-compatible wrapper returning shared namespace as globals/locals."""
+    namespace, final_answer_holder = build_exec_namespace(
+        tool_wrappers,
+        authorized_imports=authorized_imports,
+    )
+    return namespace, namespace, final_answer_holder
 
 
 def observations_from_streams(
@@ -139,8 +180,11 @@ def enforce_elapsed_limit(*, elapsed_ms: int, limits: CodeAgentLimits) -> None:
 
 __all__ = [
     "CodeExecutionError",
+    "CodePolicyError",
     "CodeExecutionRequest",
     "SAFE_BUILTINS",
+    "build_safe_builtins",
+    "build_exec_namespace",
     "build_exec_environments",
     "build_execution_result",
     "enforce_elapsed_limit",

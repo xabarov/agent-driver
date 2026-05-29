@@ -18,7 +18,7 @@ from agent_driver.code_agent.contracts import (
 from agent_driver.code_agent.execution_common import (
     CodeExecutionError,
     CodeExecutionRequest,
-    build_exec_environments,
+    build_exec_namespace,
     build_execution_result,
     enforce_elapsed_limit,
     observations_from_streams,
@@ -65,6 +65,9 @@ class FakeRestrictedCodeExecutor:
                 except TypeError:
                     outcome = _handler(**kwargs)
                 if isawaitable(outcome):
+                    close_fn = getattr(outcome, "close", None)
+                    if callable(close_fn):
+                        close_fn()
                     raise CodeExecutionError(
                         "async tool handlers are not supported in local code executor"
                     )
@@ -91,15 +94,16 @@ class FakeRestrictedCodeExecutor:
         )
         validate_or_raise(request)
         tool_wrappers, planned_calls = self._build_tool_wrappers(callable_tools)
-        globals_env, locals_env, final_answer_holder = build_exec_environments(
-            tool_wrappers
+        namespace, final_answer_holder = build_exec_namespace(
+            tool_wrappers,
+            authorized_imports=authorized_imports,
         )
         stdout = io.StringIO()
         stderr = io.StringIO()
         started = monotonic()
         try:
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                exec(action.code, globals_env, locals_env)  # noqa: S102
+                exec(action.code, namespace)  # noqa: S102
         except Exception as exc:
             raise CodeExecutionError(str(exc)) from exc
         elapsed_ms = int((monotonic() - started) * 1000)

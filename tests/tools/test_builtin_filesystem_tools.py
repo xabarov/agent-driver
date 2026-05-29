@@ -6,9 +6,11 @@ import json
 
 import pytest
 
-from agent_driver.tools.registry import ToolRegistry
 from agent_driver.tools import register_builtin_tools, register_planning_tool
 from agent_driver.tools.builtin.filesystem import register_filesystem_tools
+from agent_driver.tools.context import workspace_cwd_scope
+from agent_driver.tools.registry import ToolRegistry
+from tests.tools._builtin_expected import EXPECTED_BUILTIN_TOOL_NAMES
 
 
 @pytest.mark.asyncio
@@ -17,25 +19,8 @@ async def test_register_builtin_tools_contains_first_wave_names() -> None:
     registry = ToolRegistry()
     register_builtin_tools(registry)
     register_planning_tool(registry)
-    assert registry.get("read_file") is not None
-    assert registry.get("glob_search") is not None
-    assert registry.get("grep_search") is not None
-    assert registry.get("file_write") is not None
-    assert registry.get("file_edit") is not None
-    assert registry.get("notebook_edit") is not None
-    assert registry.get("web_fetch") is not None
-    assert registry.get("web_search") is not None
-    assert registry.get("bash") is not None
-    assert registry.get("task_create") is not None
-    assert registry.get("task_get") is not None
-    assert registry.get("task_list") is not None
-    assert registry.get("task_update") is not None
-    assert registry.get("task_output") is not None
-    assert registry.get("mcp_tool") is not None
-    assert registry.get("mcp_list_resources") is not None
-    assert registry.get("mcp_read_resource") is not None
-    assert registry.get("todo_write") is not None
-    assert registry.get("ask_user_question") is not None
+    for name in EXPECTED_BUILTIN_TOOL_NAMES:
+        assert registry.get(name) is not None
 
 
 @pytest.mark.asyncio
@@ -68,7 +53,9 @@ async def test_glob_and_grep_tools_find_expected_files(tmp_path) -> None:
     grep_tool = registry.get("grep_search")
     assert glob_tool is not None
     assert grep_tool is not None
-    glob_out = await glob_tool.handler({"base_dir": str(tmp_path), "pattern": "*.py"})
+    glob_out = await glob_tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "*.py", "recursive": True}
+    )
     assert glob_out["results"] == ["src/app.py"]
     grep_out = await grep_tool.handler({"base_dir": str(tmp_path), "pattern": "main"})
     paths = {row["path"] for row in grep_out["matches"]}
@@ -77,15 +64,17 @@ async def test_glob_and_grep_tools_find_expected_files(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_file_rejects_relative_path(tmp_path) -> None:
-    """read_file should enforce absolute path contract."""
-    _ = tmp_path
+async def test_read_file_resolves_relative_path_with_workspace_scope(tmp_path) -> None:
+    """read_file should resolve relative path when workspace scope is set."""
+    target = tmp_path / "relative.txt"
+    target.write_text("ok\n", encoding="utf-8")
     registry = ToolRegistry()
     register_filesystem_tools(registry)
     tool = registry.get("read_file")
     assert tool is not None
-    with pytest.raises(ValueError, match="absolute"):
-        await tool.handler({"path": "relative.txt"})
+    with workspace_cwd_scope(tmp_path):
+        out = await tool.handler({"path": "relative.txt"})
+    assert out["returned_lines"] == 1
 
 
 @pytest.mark.asyncio
@@ -101,6 +90,51 @@ async def test_glob_respects_gitignore(tmp_path) -> None:
     out = await tool.handler({"base_dir": str(tmp_path), "pattern": "*.py"})
     assert "ignored.py" not in out["results"]
     assert "seen.py" in out["results"]
+
+
+@pytest.mark.asyncio
+async def test_glob_respects_gitignore_directory_pattern(tmp_path) -> None:
+    """Directory ignore entries should hide nested files under that prefix."""
+    (tmp_path / ".gitignore").write_text(".agent-driver/\n", encoding="utf-8")
+    hidden = tmp_path / ".agent-driver" / "evals"
+    hidden.mkdir(parents=True)
+    (hidden / "report.md").write_text("hidden\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("visible\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "*.md", "recursive": True}
+    )
+    assert "README.md" in out["results"]
+    assert not any(path.startswith(".agent-driver/") for path in out["results"])
+
+
+@pytest.mark.asyncio
+async def test_glob_pattern_star_is_non_recursive_by_default(tmp_path) -> None:
+    """Simple star pattern should match only top-level entries."""
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    (nested / "deep.txt").write_text("x\n", encoding="utf-8")
+    (tmp_path / "top.txt").write_text("x\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "*.txt"})
+    assert out["results"] == ["top.txt"]
+
+
+@pytest.mark.asyncio
+async def test_glob_rejects_parent_path_pattern(tmp_path) -> None:
+    """Parent directory traversal in pattern should be rejected."""
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    with pytest.raises(ValueError, match="workspace-relative"):
+        await tool.handler({"base_dir": str(tmp_path), "pattern": "../*"})
 
 
 @pytest.mark.asyncio
@@ -151,6 +185,45 @@ async def test_read_file_rejects_when_file_exceeds_max_bytes(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_file_rejects_offset_zero(tmp_path) -> None:
+    """read_file should reject offset=0 to avoid silent empty slices."""
+    target = tmp_path / "note.txt"
+    target.write_text("l1\nl2\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("read_file")
+    assert tool is not None
+    with pytest.raises(ValueError, match="offset"):
+        await tool.handler({"path": str(target), "offset": 0})
+
+
+@pytest.mark.asyncio
+async def test_read_file_rejects_limit_zero(tmp_path) -> None:
+    """read_file should reject limit=0 to avoid silent empty slices."""
+    target = tmp_path / "note.txt"
+    target.write_text("l1\nl2\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("read_file")
+    assert tool is not None
+    with pytest.raises(ValueError, match="limit"):
+        await tool.handler({"path": str(target), "limit": 0})
+
+
+@pytest.mark.asyncio
+async def test_read_file_rejects_offset_beyond_eof(tmp_path) -> None:
+    """read_file should fail loudly when offset is beyond available lines."""
+    target = tmp_path / "note.txt"
+    target.write_text("l1\nl2\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("read_file")
+    assert tool is not None
+    with pytest.raises(ValueError, match="line count"):
+        await tool.handler({"path": str(target), "offset": 10})
+
+
+@pytest.mark.asyncio
 async def test_glob_respects_max_depth(tmp_path) -> None:
     """glob_search should skip deep paths beyond max_depth."""
     shallow = tmp_path / "a.py"
@@ -163,8 +236,48 @@ async def test_glob_respects_max_depth(tmp_path) -> None:
     register_filesystem_tools(registry)
     tool = registry.get("glob_search")
     assert tool is not None
-    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "*.py", "max_depth": 0})
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "*.py", "max_depth": 0}
+    )
     assert out["results"] == ["a.py"]
+    assert out["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_glob_directory_pattern_returns_directories_only(tmp_path) -> None:
+    """glob_search with trailing slash should return directories, not files."""
+    src = tmp_path / "src"
+    nested = src / "nested"
+    src.mkdir()
+    nested.mkdir()
+    (src / "app.py").write_text("x=1\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "**/"})
+    assert "src/" in out["results"]
+    assert "src/nested/" in out["results"]
+    assert "src/app.py" not in out["results"]
+
+
+@pytest.mark.asyncio
+async def test_glob_sets_truncated_metadata_on_cap(tmp_path) -> None:
+    """glob_search should expose cap metadata when max_results is reached."""
+    for idx in range(3):
+        (tmp_path / f"f{idx}.py").write_text("x=1\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("glob_search")
+    assert tool is not None
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "*.py", "max_results": 2}
+    )
+    assert out["returned_count"] == 2
+    assert out["truncated"] is True
+    assert out["limit"] == "max_results"
+    assert out["limit_value"] == 2
+    assert out["more_available"] is True
 
 
 @pytest.mark.asyncio
@@ -180,6 +293,52 @@ async def test_grep_respects_max_matches_limit(tmp_path) -> None:
         {"base_dir": str(tmp_path), "pattern": "hit", "max_matches": 2}
     )
     assert len(out["matches"]) == 2
+    assert out["truncated"] is True
+    assert out["limit"] == "max_matches"
+    assert out["limit_value"] == 2
+
+
+@pytest.mark.asyncio
+async def test_grep_auto_prefixes_simple_path_glob(tmp_path) -> None:
+    """grep_search should treat '*.py' path_glob as recursive by default."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.py").write_text("needle\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("grep_search")
+    assert tool is not None
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "needle", "path_glob": "*.py"}
+    )
+    assert out["matches"]
+    assert out["matches"][0]["path"] == "src/a.py"
+
+
+@pytest.mark.asyncio
+async def test_grep_reports_skipped_files_count(tmp_path) -> None:
+    """grep_search should expose number of unreadable/skipped files."""
+    (tmp_path / "a.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "bin.dat").write_bytes(b"\xff\xfe\x00\x00")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("grep_search")
+    assert tool is not None
+    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "needle"})
+    assert out["skipped_files_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_grep_marks_more_lines_in_file_when_capped(tmp_path) -> None:
+    """grep_search should flag that one file has additional matching lines."""
+    target = tmp_path / "log.txt"
+    target.write_text("hit\nhit\nhit\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("grep_search")
+    assert tool is not None
+    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "hit", "max_matches": 1})
+    assert out["matches"][0]["more_lines_in_file"] is True
 
 
 @pytest.mark.asyncio
@@ -227,6 +386,49 @@ async def test_file_write_can_create_parent_when_flag_enabled(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_file_write_dry_run_does_not_change_file(tmp_path) -> None:
+    """file_write dry_run should return preview without persisting changes."""
+    target = tmp_path / "note.txt"
+    target.write_text("alpha\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_write")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "content": "beta\n",
+            "mode": "append",
+            "dry_run": True,
+        }
+    )
+    assert out["dry_run"] is True
+    assert out["operation"] == "write"
+    assert out["preview"]["after"].endswith("beta\n")
+    assert target.read_text(encoding="utf-8") == "alpha\n"
+
+
+@pytest.mark.asyncio
+async def test_file_write_append_respects_max_bytes(tmp_path) -> None:
+    """file_write append should fail when resulting size exceeds max_bytes."""
+    target = tmp_path / "note.txt"
+    target.write_text("abcd", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_write")
+    assert tool is not None
+    with pytest.raises(ValueError, match="max_bytes"):
+        await tool.handler(
+            {
+                "path": str(target),
+                "content": "ef",
+                "mode": "append",
+                "max_bytes": 5,
+            }
+        )
+
+
+@pytest.mark.asyncio
 async def test_file_edit_replaces_expected_occurrences(tmp_path) -> None:
     """file_edit should replace exactly expected old_text occurrences."""
     target = tmp_path / "cfg.txt"
@@ -245,6 +447,30 @@ async def test_file_edit_replaces_expected_occurrences(tmp_path) -> None:
     )
     assert out["replacements"] == 2
     assert target.read_text(encoding="utf-8") == "name=new\nname=new\n"
+
+
+@pytest.mark.asyncio
+async def test_file_edit_dry_run_preserves_existing_newlines(tmp_path) -> None:
+    """file_edit dry_run should preserve file content and expose preview."""
+    target = tmp_path / "cfg.txt"
+    target.write_text("name=old\r\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_edit")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "old_text": "old",
+            "new_text": "new",
+            "dry_run": True,
+        }
+    )
+    assert out["dry_run"] is True
+    assert out["operation"] == "edit"
+    assert target.read_bytes() == b"name=old\r\n"
+    assert out["preview"]["before"] == "name=old\r\n"
+    assert out["preview"]["after"] == "name=new\r\n"
 
 
 @pytest.mark.asyncio
@@ -353,3 +579,26 @@ async def test_notebook_edit_fails_when_old_text_mismatch(tmp_path) -> None:
                 "new_text": "new",
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_notebook_edit_preserves_list_source_roundtrip(tmp_path) -> None:
+    """notebook_edit should keep list source shape for list-backed cells."""
+    target = tmp_path / "nb.ipynb"
+    _write_notebook(target, code="print('old')\nprint('keep')\n")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("notebook_edit")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "cell_idx": 0,
+            "is_new_cell": False,
+            "old_text": "old",
+            "new_text": "new",
+        }
+    )
+    assert out["replacements"] == 1
+    rendered = json.loads(target.read_text(encoding="utf-8"))
+    assert rendered["cells"][0]["source"] == ["print('new')\n", "print('keep')\n"]

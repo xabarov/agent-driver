@@ -156,6 +156,16 @@ Smolagents' local Python executor includes concrete guardrails: authorized impor
 
 The production default should still be conservative: CodeAgent disabled unless an app supplies an acceptable sandbox policy.
 
+### Exec Namespace Pitfall
+
+When embedding Python execution in a sandbox, avoid `exec(code, globals_dict, locals_dict)` with two
+different dict objects unless you intentionally want class-body-like scoping behavior. In that mode,
+`import` bindings land in `locals_dict`, while names inside user-defined functions are resolved via
+module globals (`LOAD_GLOBAL`) and can fail with `NameError` even though the import appeared to succeed.
+
+For REPL- and notebook-like behavior, use one shared namespace for both exec/eval so imports, function
+definitions, and later expressions all resolve consistently.
+
 ### MCP Structured Output And Lifecycle
 
 Smolagents' MCP client is small but useful: connection lifecycle is explicit, context-manager usage is encouraged, transports are validated, and structured output can preserve MCP `outputSchema`/structured content.
@@ -201,3 +211,7 @@ The current durable-first roadmap remains right. Smolagents should change the sh
 - A run can be rendered as full debug memory, succinct model context, and CLI replay from the same persisted events.
 - Executor boundary serialization rejects unsafe pickle/object payloads by default.
 - MCP tools with `outputSchema` import structured output contracts into the manifest.
+- `python` tool can be exposed in regular tool-call profiles with backend abstraction
+  (`local`/`docker`/`e2b`/`wasm`) while reusing CodeAgent policy and serialization guards.
+- Python tool manifest description should be treated as source of truth for model-visible
+  imports/capabilities; system prompt should carry only concise cross-tool sandbox policy.

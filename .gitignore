@@ -9,3 +9,5 @@ coverage.xml
 htmlcov/
 dist/
 build/
+.agent-driver/
+.agent-driver/selftest/

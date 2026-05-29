@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import pytest
+import httpx
 
 from agent_driver.tools.builtin.web import register_web_tools
 from agent_driver.tools.registry import ToolRegistry
@@ -112,6 +113,30 @@ async def test_web_search_uses_mock_results_without_network() -> None:
     assert out["source"] == "mock"
     assert len(out["results"]) == 2
     assert out["results"][0]["title"] == "Doc A"
+    assert out["truncated"] is False
+    assert out["parse_status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_web_search_sets_truncated_when_mock_results_hit_cap() -> None:
+    """web_search should mark truncated when max_results cap is reached."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "query": "agent runtime",
+            "max_results": 1,
+            "mock_results": [
+                {"title": "Doc A", "url": "https://a.test", "snippet": "A"},
+                {"title": "Doc B", "url": "https://b.test", "snippet": "B"},
+            ],
+        }
+    )
+    assert out["returned_count"] == 1
+    assert out["truncated"] is True
+    assert out["max_results"] == 1
 
 
 @pytest.mark.asyncio
@@ -188,6 +213,80 @@ async def test_web_fetch_extract_mode_text_for_html(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_web_fetch_extracts_og_metadata_and_strips_script_style(monkeypatch) -> None:
+    """web_fetch should preserve OG metadata and remove embedded script/style content."""
+    html = (
+        "<html><head>"
+        '<meta property="og:title" content="Segment Anything 3" />'
+        '<meta name="og:description" content="Latest release notes" />'
+        '<meta property="og:url" content="https://example.com/sam3" />'
+        '<meta property="article:published_time" content="2025-04-10" />'
+        "<style>.hidden {display:none;}</style>"
+        "</head><body>"
+        "<script>console.log('noise');</script>"
+        "<p>Model details</p>"
+        "</body></html>"
+    )
+    response = _DummyResponse(
+        url="https://example.com",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html; charset=utf-8"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    out = await tool.handler(
+        {"url": "https://example.com", "extract_mode": "markdown", "max_chars": 500}
+    )
+    assert out["metadata"] == {
+        "title": "Segment Anything 3",
+        "description": "Latest release notes",
+        "url": "https://example.com/sam3",
+        "published_time": "2025-04-10",
+    }
+    assert out["excerpt"] == out["content"]
+    assert "Title: Segment Anything 3" in out["content"]
+    assert "Description: Latest release notes" in out["content"]
+    assert "Model details" in out["content"]
+    assert "console.log('noise')" not in out["content"]
+    assert ".hidden {display:none;}" not in out["content"]
+    assert isinstance(out.get("excerpt"), str)
+    assert out["max_chars_applied"] == 500
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_caps_requested_max_chars(monkeypatch) -> None:
+    """web_fetch should cap oversized max_chars requests server-side."""
+    response = _DummyResponse(
+        url="https://example.com",
+        content=b"abcdefghij",
+        headers={"content-type": "text/plain"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    out = await tool.handler({"url": "https://example.com", "max_chars": 50000})
+    assert out["max_chars_applied"] == 8000
+    assert len(out["content"]) == 10
+
+
+@pytest.mark.asyncio
 async def test_web_fetch_wraps_http_errors(monkeypatch) -> None:
     """web_fetch should wrap HTTP exceptions with stable error prefix."""
     response = _DummyResponse(
@@ -209,6 +308,69 @@ async def test_web_fetch_wraps_http_errors(monkeypatch) -> None:
     assert tool is not None
     with pytest.raises(ValueError, match="web_fetch failed"):
         await tool.handler({"url": "https://example.com/fail"})
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_returns_blocked_payload_for_forbidden_text(monkeypatch) -> None:
+    """403 text pages should guide the model to try another source, not hard-fail."""
+    response = _DummyResponse(
+        url="https://example.com/blocked",
+        status_code=403,
+        content=b"<html><head><title>Blocked</title></head><body>Forbidden</body></html>",
+        headers={"content-type": "text/html"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient",
+        _client_factory,
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    out = await tool.handler({"url": "https://example.com/blocked"})
+    assert out["status_code"] == 403
+    assert out["blocked"] is True
+    assert out["content"] == ""
+    assert "try another search result" in out["summary"]
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_returns_unavailable_payload_after_timeouts(monkeypatch) -> None:
+    """Persistent fetch timeouts should guide the model to another source."""
+
+    class _TimeoutClient:
+        async def __aenter__(self) -> "_TimeoutClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+        async def get(
+            self, url: str, headers: dict[str, str] | None = None
+        ) -> _DummyResponse:
+            _ = (url, headers)
+            raise httpx.ConnectTimeout("connect timed out")
+
+    def _client_factory(*_args, **_kwargs):
+        return _TimeoutClient()
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient",
+        _client_factory,
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    out = await tool.handler({"url": "https://example.com/slow"})
+    assert out["status_code"] is None
+    assert out["unavailable"] is True
+    assert out["content"] == ""
+    assert "try another search result" in out["summary"]
 
 
 @pytest.mark.asyncio
@@ -239,3 +401,212 @@ async def test_web_search_parses_duckduckgo_html(monkeypatch) -> None:
     assert out["source"] == "duckduckgo_html"
     assert len(out["results"]) == 1
     assert out["results"][0]["url"] == "https://example.com/page"
+    assert out["result_preview_urls"] == ["https://example.com/page"]
+    assert out["truncated"] is True
+    assert out["max_results"] == 1
+
+
+@pytest.mark.asyncio
+async def test_web_search_parses_alternate_duckduckgo_anchor_class(monkeypatch) -> None:
+    """web_search should support result__a anchor fallback parsing."""
+    html = (
+        '<html><body>'
+        '<a class="result__a" href="https://example.com/alt">Alt Title</a>'
+        "</body></html>"
+    )
+    response = _DummyResponse(
+        url="https://duckduckgo.com/html/?q=test",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler({"query": "test", "max_results": 1})
+    assert len(out["results"]) == 1
+    assert out["results"][0]["url"] == "https://example.com/alt"
+
+
+@pytest.mark.asyncio
+async def test_web_search_unwraps_duckduckgo_redirect_url(monkeypatch) -> None:
+    """web_search should normalize DDG redirect href into target URL."""
+    html = (
+        '<html><body>'
+        '<a class="result-link" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Ftarget">Target</a>'
+        "</body></html>"
+    )
+    response = _DummyResponse(
+        url="https://duckduckgo.com/html/?q=test",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler({"query": "test", "max_results": 1})
+    assert out["results"][0]["url"] == "https://example.com/target"
+    assert out["result_preview_urls"] == ["https://example.com/target"]
+
+
+@pytest.mark.asyncio
+async def test_web_search_relaxes_site_operator_when_ddg_returns_no_links(monkeypatch) -> None:
+    """site: queries often yield empty DDG html; server should retry without site:."""
+    empty_html = "<html><body><div>no links</div></body></html>"
+    results_html = (
+        '<a class="result-link" href="https://ai.meta.com/sam3/">SAM 3</a>'
+    )
+    calls: list[str] = []
+
+    def _client_factory(*_args, **_kwargs):
+        class _Client:
+            async def get(self, url, headers=None):
+                calls.append(url)
+                body = results_html if len(calls) > 1 else empty_html
+                return _DummyResponse(
+                    url=url,
+                    content=body.encode("utf-8"),
+                    headers={"content-type": "text/html"},
+                )
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        return _Client()
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "query": "latest Segment Anything release site:meta.ai",
+            "max_results": 3,
+        }
+    )
+    assert out["returned_count"] == 1
+    assert out["query_relaxation"] == "stripped_site_operator"
+    assert "meta.ai" in out["query"]
+    assert out["results"][0]["url"] == "https://ai.meta.com/sam3/"
+
+
+@pytest.mark.asyncio
+async def test_web_search_includes_diagnostic_when_no_results_parsed(monkeypatch) -> None:
+    """web_search should provide diagnostic metadata for empty parsed results."""
+    html = "<html><body><div>no links</div></body></html>"
+    response = _DummyResponse(
+        url="https://duckduckgo.com/html/?q=test",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler({"query": "test", "max_results": 2})
+    assert out["results"] == []
+    diagnostic = out.get("diagnostic")
+    assert isinstance(diagnostic, dict)
+    assert diagnostic.get("status") == "no_results_parsed"
+    assert out["parse_status"] == "parse_failed"
+
+
+@pytest.mark.asyncio
+async def test_web_search_returns_upstream_error_payload_on_provider_failure(monkeypatch) -> None:
+    """web_search should return graceful empty payload when upstream fails."""
+    response = _DummyResponse(
+        url="https://duckduckgo.com/html/?q=test",
+        status_code=503,
+        content=b"unavailable",
+        headers={"content-type": "text/html"},
+    )
+
+    def _client_factory(*_args, **_kwargs):
+        return _DummyClient(response)
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler({"query": "test", "max_results": 2})
+    assert out["results"] == []
+    assert out["parse_status"] == "upstream_error"
+    assert "web_search unavailable" in out["summary"]
+
+
+@pytest.mark.asyncio
+async def test_web_search_retries_connect_timeout_and_uses_html_endpoint(
+    monkeypatch,
+) -> None:
+    """DDG search should retry transient connect timeouts against the HTML endpoint."""
+    html = '<html><body><a class="result__a" href="https://example.com">Hit</a></body></html>'
+    response = _DummyResponse(
+        url="https://html.duckduckgo.com/html/?q=test",
+        content=html.encode("utf-8"),
+        headers={"content-type": "text/html"},
+    )
+    calls: list[str] = []
+
+    class _FlakyClient:
+        async def __aenter__(self) -> "_FlakyClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:  # noqa: ANN001
+            return None
+
+        async def get(
+            self, url: str, headers: dict[str, str] | None = None
+        ) -> _DummyResponse:
+            _ = headers
+            calls.append(url)
+            if len(calls) == 1:
+                raise httpx.ConnectTimeout("connect timed out")
+            return response
+
+    def _client_factory(*_args, **_kwargs):
+        return _FlakyClient()
+
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient",
+        _client_factory,
+    )
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_search")
+    assert tool is not None
+    out = await tool.handler({"query": "test", "max_results": 2})
+    assert len(calls) == 2
+    assert calls[0].startswith("https://html.duckduckgo.com/html/?")
+    assert out["parse_status"] == "ok"
+    assert out["results"][0]["title"] == "Hit"

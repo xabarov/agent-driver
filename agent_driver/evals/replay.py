@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_driver.contracts.runtime import AgentRunOutput
-from agent_driver.observability import build_trace_export
+from agent_driver.observability import build_runtime_support_bundle
 
 
 def render_full_debug_view(output: AgentRunOutput) -> dict[str, Any]:
@@ -30,6 +30,10 @@ def render_full_debug_view(output: AgentRunOutput) -> dict[str, Any]:
 def render_succinct_view(output: AgentRunOutput) -> dict[str, Any]:
     """Render compact summary for operator/debug quick checks."""
     event_types = [event.type.value for event in output.events]
+    token_pressure = output.metadata.get("token_pressure")
+    trim_audit = output.metadata.get("trim_audit")
+    micro_audit = output.metadata.get("microcompaction_audit")
+    planning_state = output.metadata.get("planning_state")
     return {
         "run_id": output.run_id,
         "status": output.status.value,
@@ -47,6 +51,12 @@ def render_succinct_view(output: AgentRunOutput) -> dict[str, Any]:
                 if event.payload.get("channel") == "planning"
             ]
         ),
+        "token_pressure": token_pressure if isinstance(token_pressure, dict) else None,
+        "trim_audit_size": len(trim_audit) if isinstance(trim_audit, list) else 0,
+        "microcompaction_audit_size": (
+            len(micro_audit) if isinstance(micro_audit, list) else 0
+        ),
+        "has_planning_state": isinstance(planning_state, dict),
         "subagent_group_count": len(output.subagent_groups),
         "subagent_run_count": len(output.subagent_runs),
     }
@@ -86,32 +96,18 @@ def render_cli_replay(output: AgentRunOutput) -> str:
         lines.append(f"subagent_runs={len(output.subagent_runs)}")
     for event in sorted(output.events, key=lambda item: item.seq):
         lines.append(f"[{event.seq}] {event.type.value} payload={event.payload}")
+    token_pressure = output.metadata.get("token_pressure")
+    if isinstance(token_pressure, dict):
+        lines.append(f"token_pressure={token_pressure}")
+    trim_audit = output.metadata.get("trim_audit")
+    if isinstance(trim_audit, list):
+        lines.append(f"trim_audit_size={len(trim_audit)}")
+    micro_audit = output.metadata.get("microcompaction_audit")
+    if isinstance(micro_audit, list):
+        lines.append(f"microcompaction_audit_size={len(micro_audit)}")
     return "\n".join(lines)
 
 
 def build_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
     """Build redaction-safe support bundle from one run output."""
-    trace_export = build_trace_export(output)
-    return {
-        "run": {
-            "run_id": output.run_id,
-            "attempt_id": output.attempt_id,
-            "status": output.status.value,
-            "terminal_reason": (
-                output.terminal_reason.value if output.terminal_reason else None
-            ),
-        },
-        "trace": trace_export.model_dump(mode="json"),
-        "warnings": [warning.model_dump(mode="json") for warning in output.warnings],
-        "tool_trace": [trace.model_dump(mode="json") for trace in output.tool_trace],
-        "subagent_groups": [group.model_dump(mode="json") for group in output.subagent_groups],
-        "subagent_runs": [row.model_dump(mode="json") for row in output.subagent_runs],
-        "checkpoint": (
-            output.checkpoint.model_dump(mode="json") if output.checkpoint else None
-        ),
-        "redaction": {
-            "safe_by_default": True,
-            "contains_raw_prompt": False,
-            "contains_raw_tool_outputs": False,
-        },
-    }
+    return build_runtime_support_bundle(output)

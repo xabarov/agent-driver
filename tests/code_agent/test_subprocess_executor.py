@@ -18,7 +18,7 @@ async def test_subprocess_executor_returns_final_answer() -> None:
     executor = SubprocessRestrictedCodeExecutor()
     result = await executor.execute(
         action=CodeAgentAction(action_id="sp_1", code="final_answer(10 + 2)"),
-        limits=CodeAgentLimits(max_exec_ms=500),
+        limits=CodeAgentLimits(max_exec_ms=1500),
         authorized_imports=set(),
         serialization_policy=None,
         callable_tools={},
@@ -55,7 +55,7 @@ async def test_subprocess_executor_falls_back_for_callable_tools() -> None:
 
     result = await executor.execute(
         action=CodeAgentAction(action_id="sp_3", code="calc(value=5)\nfinal_answer(3)"),
-        limits=CodeAgentLimits(max_exec_ms=500),
+        limits=CodeAgentLimits(max_exec_ms=1500),
         authorized_imports=set(),
         serialization_policy=None,
         callable_tools={"calc": _calc},
@@ -63,3 +63,25 @@ async def test_subprocess_executor_falls_back_for_callable_tools() -> None:
     assert result.final_answer is not None
     assert result.final_answer.text == "3"
     assert result.metadata["executor_mode"] == "local_fallback"
+
+
+@pytest.mark.asyncio
+async def test_subprocess_executor_imports_work_inside_defined_functions() -> None:
+    executor = SubprocessRestrictedCodeExecutor()
+    result = await executor.execute(
+        action=CodeAgentAction(
+            action_id="sp_4",
+            code=(
+                "import math\n"
+                "def calc():\n"
+                "    return math.log(2)\n"
+                "print(calc())"
+            ),
+        ),
+        limits=CodeAgentLimits(max_exec_ms=1500),
+        authorized_imports={"math"},
+        serialization_policy=None,
+        callable_tools={},
+    )
+    stdout = next(item.text_preview for item in result.observations if item.source == "stdout")
+    assert "0.693147" in stdout

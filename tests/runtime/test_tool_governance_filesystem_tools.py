@@ -6,16 +6,29 @@ import json
 
 import pytest
 
-from agent_driver.contracts import (
-    AgentRunInput,
-    ToolCall,
-    ToolPolicyInput,
-    ToolPolicyMode,
+from agent_driver.contracts import ToolCall, ToolPolicyInput, ToolPolicyMode
+from tests.support.governed_tool_harness import (
+    build_governed_filesystem_executor,
+    default_run_input,
+    execute_planned_tool,
 )
-from agent_driver.llm.providers_impl.fake import FakeProvider
-from agent_driver.tools import GovernedToolExecutor, ToolRegistry
-from agent_driver.tools import register_builtin_tools
-from tests.runtime.conftest import llm_request_with_planned_calls
+
+
+def _notebook_payload(*, source: str) -> dict[str, object]:
+    return {
+        "cells": [
+            {
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": [source],
+            }
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
 
 
 @pytest.mark.asyncio
@@ -23,23 +36,12 @@ async def test_governed_executor_runs_builtin_read_file(tmp_path) -> None:
     """Governed executor should run built-in read_file and emit completed trace."""
     target = tmp_path / "doc.txt"
     target.write_text("alpha\nbeta\n", encoding="utf-8")
-    registry = ToolRegistry()
-    register_builtin_tools(registry)
-    executor = GovernedToolExecutor(registry=registry)
-    run_input = AgentRunInput(
-        input="read file",
-        run_id="run_builtin_read_file",
-        agent_id="agent",
-        graph_preset="single_react",
-        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    executor, _registry = build_governed_filesystem_executor()
+    result = await execute_planned_tool(
+        executor,
+        default_run_input(run_id="run_builtin_read_file"),
+        ToolCall(tool_name="read_file", args={"path": str(target)}),
     )
-    provider = FakeProvider(response_text="ok")
-    response = await provider.complete(
-        llm_request_with_planned_calls(
-            planned=[ToolCall(tool_name="read_file", args={"path": str(target)})]
-        )
-    )
-    result = await executor.execute(run_input, response)
     assert result.interrupt is None
     assert len(result.traces) == 1
     assert result.traces[0].status.value == "completed"
@@ -52,26 +54,16 @@ async def test_governed_executor_denies_builtin_when_tool_not_allowed(tmp_path) 
     """Policy deny list should block built-in tool execution."""
     target = tmp_path / "doc.txt"
     target.write_text("alpha\n", encoding="utf-8")
-    registry = ToolRegistry()
-    register_builtin_tools(registry)
-    executor = GovernedToolExecutor(registry=registry)
-    run_input = AgentRunInput(
-        input="read file",
+    executor, _registry = build_governed_filesystem_executor()
+    run_input = default_run_input(
         run_id="run_builtin_read_file_denied",
-        agent_id="agent",
-        graph_preset="single_react",
-        tool_policy=ToolPolicyInput(
-            mode=ToolPolicyMode.ALLOW_TOOLS,
-            denied_tools=["read_file"],
-        ),
+        denied_tools=["read_file"],
     )
-    provider = FakeProvider(response_text="ok")
-    response = await provider.complete(
-        llm_request_with_planned_calls(
-            planned=[ToolCall(tool_name="read_file", args={"path": str(target)})]
-        )
+    result = await execute_planned_tool(
+        executor,
+        run_input,
+        ToolCall(tool_name="read_file", args={"path": str(target)}),
     )
-    result = await executor.execute(run_input, response)
     assert result.interrupt is None
     assert result.traces[0].status.value == "denied"
     assert result.envelopes[0].decision.value == "deny"
@@ -84,31 +76,26 @@ async def test_governed_executor_interrupts_for_medium_risk_builtin_write(
 ) -> None:
     """Risk-threshold policy should interrupt reversible write builtin tools."""
     target = tmp_path / "doc.txt"
-    registry = ToolRegistry()
-    register_builtin_tools(registry)
-    executor = GovernedToolExecutor(registry=registry)
-    run_input = AgentRunInput(
-        input="write file",
+    executor, _registry = build_governed_filesystem_executor()
+    run_input = default_run_input(
         run_id="run_builtin_write_interrupt",
-        agent_id="agent",
-        graph_preset="single_react",
-        tool_policy=ToolPolicyInput(
-            mode=ToolPolicyMode.ALLOW_TOOLS,
-            approval_required_for_risk="medium",
+        input_text="write file",
+    ).model_copy(
+        update={
+            "tool_policy": ToolPolicyInput(
+                mode=ToolPolicyMode.ALLOW_TOOLS,
+                approval_required_for_risk="medium",
+            )
+        }
+    )
+    result = await execute_planned_tool(
+        executor,
+        run_input,
+        ToolCall(
+            tool_name="file_write",
+            args={"path": str(target), "content": "alpha\n"},
         ),
     )
-    provider = FakeProvider(response_text="ok")
-    response = await provider.complete(
-        llm_request_with_planned_calls(
-            planned=[
-                ToolCall(
-                    tool_name="file_write",
-                    args={"path": str(target), "content": "alpha\n"},
-                )
-            ]
-        )
-    )
-    result = await executor.execute(run_input, response)
     assert result.interrupt is not None
     assert result.traces
     assert result.traces[0].status.value == "denied"
@@ -119,49 +106,25 @@ async def test_governed_executor_interrupts_for_medium_risk_builtin_write(
 async def test_governed_executor_runs_notebook_edit_tool(tmp_path) -> None:
     """Governed executor should execute notebook_edit in allow-tools mode."""
     target = tmp_path / "note.ipynb"
-    payload = {
-        "cells": [
-            {
-                "cell_type": "code",
-                "execution_count": None,
-                "metadata": {},
-                "outputs": [],
-                "source": ["print('old')\n"],
-            }
-        ],
-        "metadata": {},
-        "nbformat": 4,
-        "nbformat_minor": 5,
-    }
+    payload = _notebook_payload(source="print('old')\n")
     target.write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
-    registry = ToolRegistry()
-    register_builtin_tools(registry)
-    executor = GovernedToolExecutor(registry=registry)
-    run_input = AgentRunInput(
-        input="edit notebook",
-        run_id="run_builtin_notebook_edit",
-        agent_id="agent",
-        graph_preset="single_react",
-        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    executor, _registry = build_governed_filesystem_executor()
+    result = await execute_planned_tool(
+        executor,
+        default_run_input(
+            run_id="run_builtin_notebook_edit", input_text="edit notebook"
+        ),
+        ToolCall(
+            tool_name="notebook_edit",
+            args={
+                "path": str(target),
+                "cell_idx": 0,
+                "is_new_cell": False,
+                "old_text": "old",  # keep single-target replacement deterministic
+                "new_text": "new",
+            },
+        ),
     )
-    provider = FakeProvider(response_text="ok")
-    response = await provider.complete(
-        llm_request_with_planned_calls(
-            planned=[
-                ToolCall(
-                    tool_name="notebook_edit",
-                    args={
-                        "path": str(target),
-                        "cell_idx": 0,
-                        "is_new_cell": False,
-                        "old_text": "old",
-                        "new_text": "new",
-                    },
-                )
-            ]
-        )
-    )
-    result = await executor.execute(run_input, response)
     assert result.interrupt is None
     assert result.traces
     assert result.traces[0].status.value == "completed"
@@ -172,25 +135,103 @@ async def test_governed_executor_runs_notebook_edit_tool(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_governed_executor_interrupts_for_bash_under_medium_risk() -> None:
     """bash builtin should interrupt when medium-risk approval threshold is active."""
-    registry = ToolRegistry()
-    register_builtin_tools(registry)
-    executor = GovernedToolExecutor(registry=registry)
-    run_input = AgentRunInput(
-        input="run shell",
+    executor, _registry = build_governed_filesystem_executor()
+    run_input = default_run_input(
         run_id="run_builtin_bash_interrupt",
-        agent_id="agent",
-        graph_preset="single_react",
-        tool_policy=ToolPolicyInput(
-            mode=ToolPolicyMode.ALLOW_TOOLS,
-            approval_required_for_risk="medium",
+        input_text="run shell",
+    ).model_copy(
+        update={
+            "tool_policy": ToolPolicyInput(
+                mode=ToolPolicyMode.ALLOW_TOOLS,
+                approval_required_for_risk="medium",
+            )
+        }
+    )
+    result = await execute_planned_tool(
+        executor,
+        run_input,
+        ToolCall(tool_name="bash", args={"command": "echo hello"}),
+    )
+    assert result.interrupt is not None
+    assert result.envelopes[0].decision.value == "interrupt"
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_interrupts_for_worktree_intent_under_high_risk() -> (
+    None
+):
+    """Worktree request-envelope tool should interrupt under medium threshold."""
+    executor, _registry = build_governed_filesystem_executor()
+    run_input = default_run_input(
+        run_id="run_builtin_worktree_intent_interrupt",
+        input_text="prepare worktree change",
+    ).model_copy(
+        update={
+            "tool_policy": ToolPolicyInput(
+                mode=ToolPolicyMode.ALLOW_TOOLS,
+                approval_required_for_risk="medium",
+            )
+        }
+    )
+    result = await execute_planned_tool(
+        executor,
+        run_input,
+        ToolCall(tool_name="enter_worktree_tool", args={"worktree_name": "feat-risk"}),
+    )
+    assert result.interrupt is not None
+    assert result.envelopes[0].decision.value == "interrupt"
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_interrupts_for_automation_intent_under_medium_risk() -> (
+    None
+):
+    """Automation intent tools should interrupt under medium threshold."""
+    executor, _registry = build_governed_filesystem_executor()
+    run_input = default_run_input(
+        run_id="run_builtin_automation_intent_interrupt",
+        input_text="queue workflow",
+    ).model_copy(
+        update={
+            "tool_policy": ToolPolicyInput(
+                mode=ToolPolicyMode.ALLOW_TOOLS,
+                approval_required_for_risk="medium",
+            )
+        }
+    )
+    result = await execute_planned_tool(
+        executor,
+        run_input,
+        ToolCall(tool_name="workflow_tool", args={"workflow_id": "wf_risky"}),
+    )
+    assert result.interrupt is not None
+    assert result.envelopes[0].decision.value == "interrupt"
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_interrupts_for_collaboration_intent_under_medium_risk() -> (
+    None
+):
+    """Collaboration intent tools should interrupt under medium threshold."""
+    executor, _registry = build_governed_filesystem_executor()
+    run_input = default_run_input(
+        run_id="run_builtin_collab_intent_interrupt",
+        input_text="send teammate message",
+    ).model_copy(
+        update={
+            "tool_policy": ToolPolicyInput(
+                mode=ToolPolicyMode.ALLOW_TOOLS,
+                approval_required_for_risk="medium",
+            )
+        }
+    )
+    result = await execute_planned_tool(
+        executor,
+        run_input,
+        ToolCall(
+            tool_name="send_message_tool",
+            args={"recipient": "agent.teammate", "message": "heads up"},
         ),
     )
-    provider = FakeProvider(response_text="ok")
-    response = await provider.complete(
-        llm_request_with_planned_calls(
-            planned=[ToolCall(tool_name="bash", args={"command": "echo hello"})]
-        )
-    )
-    result = await executor.execute(run_input, response)
     assert result.interrupt is not None
     assert result.envelopes[0].decision.value == "interrupt"

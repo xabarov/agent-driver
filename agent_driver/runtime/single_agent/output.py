@@ -13,6 +13,11 @@ from agent_driver.context import (
     planning_step_event,
     split_preview_and_artifact,
 )
+from agent_driver.context.compaction import (
+    extract_session_memory,
+    load_session_memory,
+    save_session_memory,
+)
 from agent_driver.contracts.context import (
     ContextArtifactRef,
     PlanningState,
@@ -24,6 +29,7 @@ from agent_driver.contracts.context import (
 from agent_driver.contracts.enums import RunStatus
 from agent_driver.contracts.interrupts import ApprovalPayload, InterruptRequest
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.contracts.runtime import AgentRunOutput
 from agent_driver.runtime.single_agent.output_builders import (
     build_memory_audit,
@@ -87,7 +93,40 @@ class SingleAgentOutputMixin:
         )
         digest_ref = {"digest_id": digest.digest_id, "turn_index": digest.turn_index}
         context.metadata["digest_refs"] = [digest_ref]
+        self._maybe_update_session_memory(context=context, session_id=session_id)
         return [digest_ref]
+
+    def _maybe_update_session_memory(self, *, context: RunContext, session_id: str) -> None:
+        """Refresh durable session memory from turn digests when threshold is met."""
+        previous = load_session_memory(
+            artifact_store=self._deps.artifact_store,
+            session_id=session_id,
+        )
+        digests = self._deps.session_store.list_digests(session_id)
+        extraction = extract_session_memory(
+            session_id=session_id,
+            digests=digests,
+            previous=previous,
+        )
+        if extraction.updated and extraction.memory is not None:
+            save_session_memory(
+                artifact_store=self._deps.artifact_store,
+                memory=extraction.memory,
+            )
+        context.metadata["session_memory_extraction"] = {
+            "updated": extraction.updated,
+            "reason": extraction.reason,
+            "considered_digest_ids": list(extraction.considered_digest_ids),
+            "last_summarized_turn_index": (
+                extraction.memory.last_summarized_turn_index
+                if extraction.memory is not None
+                else (
+                    previous.last_summarized_turn_index
+                    if previous is not None
+                    else None
+                )
+            ),
+        }
 
     def _emit_planning_events(self, context: RunContext) -> None:
         """Emit dedicated planning events if state exists in metadata."""
@@ -148,12 +187,24 @@ class SingleAgentOutputMixin:
             normalized_results.append(payload)
         return normalized_results, artifact_refs
 
+    def _sanitize_terminal_answer(self, context: RunContext) -> str | None:
+        """Strip text-form tool call markup from the final assistant answer."""
+        if context.llm_response is None:
+            return None
+        raw = context.llm_response.message.content
+        if not isinstance(raw, str) or not raw.strip():
+            return raw
+        cleaned = strip_text_form_tool_calls(raw)
+        if cleaned != raw:
+            context.metadata["raw_assistant_content"] = raw
+        return cleaned or None
+
     def _build_output(
         self,
         context: RunContext,
         terminal: TerminalResult,
     ) -> AgentRunOutput:
-        answer = context.llm_response.message.content if context.llm_response else None
+        answer = self._sanitize_terminal_answer(context)
         usage = context.llm_response.usage if context.llm_response else None
         messages = [ChatMessage(role="assistant", content=answer)] if answer else []
         tool_trace = collect_tool_trace(context)
@@ -222,8 +273,15 @@ class SingleAgentOutputMixin:
             COMPACTION_AUDIT_KEY: context.metadata.get(COMPACTION_AUDIT_KEY),
             COMPACTION_RESULT_KEY: context.metadata.get(COMPACTION_RESULT_KEY),
             COMPACTION_FAILURES_KEY: context.metadata.get(COMPACTION_FAILURES_KEY, []),
+            "post_compact_cleanup": context.metadata.get("post_compact_cleanup", {}),
+            "session_memory_extraction": context.metadata.get(
+                "session_memory_extraction", {}
+            ),
             "prompt_render": context.metadata.get("prompt_render"),
             "approval_payload": self._approval_payload_from_context(context),
+            "step_count": context.step_count,
+            "tool_calls": context.tool_calls,
+            "raw_assistant_content": context.metadata.get("raw_assistant_content"),
         }
 
     def _approval_payload_from_context(
@@ -278,10 +336,18 @@ class SingleAgentOutputMixin:
                 "token_pressure": context.metadata.get("token_pressure", {}),
                 "subagent_groups": list_dict_metadata(context, "subagent_groups"),
                 "subagent_runs": list_dict_metadata(context, "subagent_runs"),
+                "post_compact_cleanup": context.metadata.get(
+                    "post_compact_cleanup", {}
+                ),
+                "session_memory_extraction": context.metadata.get(
+                    "session_memory_extraction", {}
+                ),
                 "prompt_render": context.metadata.get("prompt_render"),
                 "approval_payload": ApprovalPayload.from_interrupt(
                     result.interrupt
                 ).model_dump(mode="json"),
+                "step_count": context.step_count,
+                "tool_calls": context.tool_calls,
             },
         )
 

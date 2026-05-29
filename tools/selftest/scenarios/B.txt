@@ -1,0 +1,2 @@
+mode: run
+Show only top-level markdown files without recursive traversal.

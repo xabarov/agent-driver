@@ -33,6 +33,7 @@ class LlmProviderKind(str, Enum):
     FAKE = "fake"
     OPENAI_COMPATIBLE = "openai_compatible"
     OLLAMA = "ollama"
+    ANTHROPIC = "anthropic"
 
 
 class RouterStrategy(str, Enum):
@@ -52,7 +53,48 @@ class LlmRequest(ContractModel):
     max_tokens: int | None = None
     temperature: float | None = None
     stream: bool = False
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    tool_choice: str | dict[str, Any] | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    # Phase 13 H24 — opt-in flag for provider-side prompt caching. Today
+    # only `AnthropicMessagesProvider` honors this, attaching
+    # ``cache_control: {"type": "ephemeral"}`` to the system message + the
+    # LAST tool in the catalog so Anthropic caches everything up to and
+    # including that marker (system + full tools catalog). Default False
+    # for backwards compatibility — callers must opt in per-request so
+    # one-off calls don't pay the cache-write surcharge unnecessarily.
+    enable_prompt_cache: bool = False
+
+    # Phase 13 H29 — explicit parallel tool calls control. ``None`` = use
+    # the provider's default (most modern OpenAI-compat backends default
+    # to ``True``). ``False`` forces sequential tool execution (one tool
+    # call per LLM turn) which is useful when tools have ordering deps or
+    # when a misbehaving model proposes redundant parallel calls. ``True``
+    # explicitly enables parallel — most callers should leave this None.
+    # Currently honored by the OpenAI-compatible provider only; Anthropic
+    # uses its own ``disable_parallel_tool_use`` knob (not yet wired).
+    parallel_tool_calls: bool | None = None
+
+    # Phase 13 H26 — structured output enforcement at the provider layer.
+    # Accepts the native OpenAI ``response_format`` shape so callers do not
+    # have to translate between vendor dialects:
+    #   * ``{"type": "json_object"}`` — model MUST return parseable JSON
+    #     (no schema enforcement). Widely supported (OpenAI, Anthropic via
+    #     fallback, OpenRouter, vLLM, most Qwen routes).
+    #   * ``{"type": "json_schema", "json_schema": {"name": str,
+    #     "schema": <jsonschema>, "strict": bool}}`` — decode-time schema
+    #     enforcement. Currently only OpenAI direct + some vLLM routes
+    #     honor strict; OpenRouter passthrough varies by upstream.
+    # ``None`` (default) means the provider emits no ``response_format``
+    # — backwards compatible. Today only ``OpenAICompatibleProvider``
+    # passes this through to the wire payload; ``AnthropicMessagesProvider``
+    # silently drops it (Anthropic has no equivalent API field; future
+    # work can translate to a system-prompt addendum + post-call validate).
+    # Callers that want Pydantic-validated structured output across all
+    # providers should layer a library like ``instructor`` on top — this
+    # field is the transport-layer plumbing for the strict path.
+    response_format: dict[str, Any] | None = None
 
     @field_validator("max_tokens")
     @classmethod
@@ -70,11 +112,81 @@ class LlmRequest(ContractModel):
         """Validate non-negative temperature value."""
         return ensure_non_negative_float(value, field_name="temperature")
 
+    @field_validator("tools")
+    @classmethod
+    def validate_tools(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Ensure tool payloads stay JSON-compatible for provider transport."""
+        normalized: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                raise ValueError("tools must contain object entries")
+            normalized.append(
+                ensure_json_serializable(item, field_name="tools payload")
+            )
+        return normalized
+
+    @field_validator("tool_choice")
+    @classmethod
+    def validate_tool_choice(
+        cls, value: str | dict[str, Any] | None
+    ) -> str | dict[str, Any] | None:
+        """Validate provider-neutral tool choice payload."""
+        if value is None:
+            return value
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            return ensure_json_serializable(value, field_name="tool_choice payload")
+        raise ValueError("tool_choice must be string, object, or null")
+
     @field_validator("metadata")
     @classmethod
     def validate_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
         """Ensure metadata stays JSON-compatible for transport."""
         return ensure_json_serializable(value, field_name="metadata")
+
+    @field_validator("response_format")
+    @classmethod
+    def validate_response_format(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Validate the H26 structured-output envelope.
+
+        Accepts ``None`` (no enforcement) or a JSON-serializable dict.
+        Performs lightweight structural sanity-checks for the two known
+        ``type`` values so misconfigurations surface at the call site, not
+        as a provider-side ``400`` later:
+
+          * ``json_object``: nothing else required.
+          * ``json_schema``: must carry a ``json_schema`` dict that has at
+            least ``name`` (str) and ``schema`` (dict).
+
+        Unknown ``type`` values pass through unchanged — agent-driver does
+        not gate-keep vendor extensions; the underlying provider returns
+        its own error if it does not recognize the shape.
+        """
+        if value is None:
+            return value
+        if not isinstance(value, dict):
+            raise ValueError("response_format must be a dict or null")
+        normalized = ensure_json_serializable(value, field_name="response_format")
+        kind = normalized.get("type")
+        if kind == "json_schema":
+            schema_envelope = normalized.get("json_schema")
+            if not isinstance(schema_envelope, dict):
+                raise ValueError(
+                    "response_format type=json_schema requires 'json_schema' "
+                    "to be a dict"
+                )
+            if not isinstance(schema_envelope.get("name"), str) or not schema_envelope.get("name"):
+                raise ValueError(
+                    "response_format json_schema requires non-empty 'name'"
+                )
+            if not isinstance(schema_envelope.get("schema"), dict):
+                raise ValueError(
+                    "response_format json_schema requires 'schema' to be a dict"
+                )
+        return normalized
 
 
 class LlmResponse(ContractModel):
@@ -100,6 +212,10 @@ class LlmStreamEvent(ContractModel):
 
     event: str
     delta_text: str = ""
+    # Vendor-specific "thinking" channel (vLLM ``delta.reasoning_content``
+    # for Qwen3 enable_thinking, DeepSeek-R1, …). Streamed in parallel
+    # with ``delta_text`` — empty for providers that don't emit reasoning.
+    delta_reasoning: str = ""
     finish_reason: LlmFinishReason | None = None
     usage: UsageSummary | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)

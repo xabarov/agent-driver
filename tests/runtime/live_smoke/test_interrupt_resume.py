@@ -8,9 +8,7 @@ from agent_driver.contracts import AgentRunInput, ResumeAction, ResumeCommand, T
 from tests.support.live_harness import (
     assert_live_interrupt_for_tool,
     build_live_runner,
-    notebook_fixture,
     require_live_openrouter_config,
-    tool_result,
 )
 
 
@@ -162,3 +160,50 @@ async def test_live_agent_run_resume_reject_blocks_pending_file_write(tmp_path) 
     assert rejected.terminal_reason is not None
     assert rejected.terminal_reason.value == "approval_rejected"
     assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_live_agent_run_resume_edit_applies_edited_file_write_args(tmp_path) -> None:
+    """Live HITL lane: edit resume should execute file_write with edited args."""
+    base_url, model, api_key = require_live_openrouter_config()
+    target = tmp_path / "resume-edit.txt"
+    runner = build_live_runner(base_url=base_url, model=model, api_key=api_key)
+    paused = await runner.run(
+        AgentRunInput(
+            input="Reply briefly.",
+            run_id="run_live_agent_tool_file_write_resume_edit",
+            agent_id="agent.live",
+            graph_preset="single_react",
+            tool_policy={
+                "approval_required_for_risk": ToolRisk.MEDIUM.value,
+                "metadata": {
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="file_write",
+                            args={"path": str(target), "content": "original\n"},
+                        ).model_dump(mode="json")
+                    ]
+                },
+            },
+        )
+    )
+    assert_live_interrupt_for_tool(paused, "file_write")
+    assert paused.interrupt is not None
+    resumed = await runner.run(
+        AgentRunInput(
+            run_id="run_live_agent_tool_file_write_resume_edit",
+            resume=ResumeCommand(
+                interrupt_id=paused.interrupt.interrupt_id,
+                action=ResumeAction.EDIT,
+                edited_tool_args={"path": str(target), "content": "edited\n"},
+            ),
+            agent_id="agent.live",
+            graph_preset="single_react",
+        )
+    )
+    assert resumed.status.value == "completed"
+    assert target.read_text(encoding="utf-8") == "edited\n"
+    assert any(
+        item.tool_name == "file_write" and item.status.value == "completed"
+        for item in resumed.tool_trace
+    )

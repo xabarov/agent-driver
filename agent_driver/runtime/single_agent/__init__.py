@@ -1,7 +1,6 @@
 """Single-agent runtime package facade."""
 
 from agent_driver.runtime.single_agent.journal import SingleAgentJournalMixin
-from agent_driver.runtime.single_agent.llm import build_single_agent_llm_request
 from agent_driver.runtime.single_agent.output import SingleAgentOutputMixin
 from agent_driver.runtime.single_agent.pending import (
     apply_resume_to_call,
@@ -33,7 +32,6 @@ __all__ = [
     "SingleAgentOutputMixin",
     "SingleAgentResumeMixin",
     "SingleAgentStepMixin",
-    "build_single_agent_llm_request",
     "apply_resume_to_call",
     "pending_interrupt_from_execution_result",
     "pending_interrupt_from_metadata",

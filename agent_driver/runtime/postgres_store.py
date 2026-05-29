@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from importlib import import_module
+from datetime import datetime
 from typing import Any
 
 from agent_driver.contracts.checkpoints import CheckpointRef
@@ -21,7 +22,9 @@ from agent_driver.runtime.storage.payloads import (
     runtime_event_from_payload,
 )
 from agent_driver.runtime.storage.postgres_sql import (
-    schema_ddl,
+    prune_checkpoints_before_sql,
+    prune_events_before_sql,
+    schema_migrations,
     select_checkpoint_by_id_sql,
     select_checkpoints_sql,
     select_distinct_runs_sql,
@@ -33,7 +36,7 @@ from agent_driver.runtime.storage.postgres_sql import (
     upsert_schema_version_sql,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 POSTGRES_CAPABILITIES = StorageCapabilities(
     transactional_writes=True,
     supports_branching=False,
@@ -63,6 +66,8 @@ class PostgresRuntimeStoreConfig:
     dsn: str
     auto_create_schema: bool = True
     schema: str = "public"
+    connect_timeout_seconds: int = 5
+    application_name: str = "agent_driver_runtime"
 
 
 class PostgresRuntimeStore:
@@ -75,18 +80,35 @@ class PostgresRuntimeStore:
         if self._config.auto_create_schema:
             self.ensure_schema()
 
+    def _connect_kwargs(self) -> dict[str, Any]:
+        return {
+            "connect_timeout": self._config.connect_timeout_seconds,
+            "application_name": self._config.application_name,
+        }
+
+    def _schema_version_safe(self) -> int:
+        """Return schema version or zero when schema meta is absent."""
+        try:
+            return self.schema_version()
+        except Exception:  # pragma: no cover - depends on DB bootstrap state
+            return 0
+
     def ensure_schema(self) -> None:
         """Create schema objects required for runtime store."""
         connect, _ = _pg_dependencies()
-        with connect(self._config.dsn, autocommit=True) as conn:
+        current_version = self._schema_version_safe()
+        with connect(
+            self._config.dsn, autocommit=True, **self._connect_kwargs()
+        ) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    schema_ddl(
+                for version, migration_sql in schema_migrations(
                         schema=self._config.schema,
                         checkpoints_table=self._checkpoints_table,
                         events_table=self._events_table,
-                    )
-                )
+                    ):
+                    if version <= current_version:
+                        continue
+                    cur.execute(migration_sql)
                 cur.execute(
                     upsert_schema_version_sql(schema=self._config.schema),
                     ("runtime_schema_version", str(SCHEMA_VERSION)),
@@ -95,7 +117,9 @@ class PostgresRuntimeStore:
     def schema_version(self) -> int:
         """Return current postgres runtime schema version."""
         connect, _ = _pg_dependencies()
-        with connect(self._config.dsn, autocommit=True) as conn:
+        with connect(
+            self._config.dsn, autocommit=True, **self._connect_kwargs()
+        ) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     select_schema_version_sql(schema=self._config.schema),
@@ -125,7 +149,9 @@ class PostgresRuntimeStore:
         state_with_checkpoint = state.model_copy(update={"checkpoint": checkpoint})
         payload = state_with_checkpoint.model_dump(mode="json")
         payload_json = json.dumps(payload, ensure_ascii=False)
-        with connect(self._config.dsn, autocommit=False) as conn:
+        with connect(
+            self._config.dsn, autocommit=False, **self._connect_kwargs()
+        ) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     upsert_checkpoint_sql(checkpoints_table=self._checkpoints_table),
@@ -141,7 +167,12 @@ class PostgresRuntimeStore:
     def latest(self, run_id: str) -> CheckpointRecord | None:
         """Return latest checkpoint row for run."""
         connect, dict_row = _pg_dependencies()
-        with connect(self._config.dsn, autocommit=True, row_factory=dict_row) as conn:
+        with connect(
+            self._config.dsn,
+            autocommit=True,
+            row_factory=dict_row,
+            **self._connect_kwargs(),
+        ) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     select_latest_checkpoint_sql(
@@ -157,7 +188,12 @@ class PostgresRuntimeStore:
     def load(self, checkpoint_id: str) -> CheckpointRecord | None:
         """Return checkpoint row by checkpoint identifier."""
         connect, dict_row = _pg_dependencies()
-        with connect(self._config.dsn, autocommit=True, row_factory=dict_row) as conn:
+        with connect(
+            self._config.dsn,
+            autocommit=True,
+            row_factory=dict_row,
+            **self._connect_kwargs(),
+        ) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     select_checkpoint_by_id_sql(
@@ -184,7 +220,12 @@ class PostgresRuntimeStore:
             params = (run_id,)
         else:
             params = (run_id, limit)
-        with connect(self._config.dsn, autocommit=True, row_factory=dict_row) as conn:
+        with connect(
+            self._config.dsn,
+            autocommit=True,
+            row_factory=dict_row,
+            **self._connect_kwargs(),
+        ) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
@@ -199,7 +240,12 @@ class PostgresRuntimeStore:
         """Return grouped debug snapshot of checkpoint rows by run id."""
         connect, dict_row = _pg_dependencies()
         grouped: dict[str, list[CheckpointRecord]] = {}
-        with connect(self._config.dsn, autocommit=True, row_factory=dict_row) as conn:
+        with connect(
+            self._config.dsn,
+            autocommit=True,
+            row_factory=dict_row,
+            **self._connect_kwargs(),
+        ) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     select_distinct_runs_sql(checkpoints_table=self._checkpoints_table)
@@ -218,7 +264,9 @@ class PostgresRuntimeStore:
         connect, _ = _pg_dependencies()
         payload = event.model_dump(mode="json")
         payload_json = json.dumps(payload, ensure_ascii=False)
-        with connect(self._config.dsn, autocommit=False) as conn:
+        with connect(
+            self._config.dsn, autocommit=False, **self._connect_kwargs()
+        ) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     upsert_event_sql(events_table=self._events_table),
@@ -239,8 +287,44 @@ class PostgresRuntimeStore:
             params = (run_id,)
         else:
             params = (run_id, after_seq)
-        with connect(self._config.dsn, autocommit=True, row_factory=dict_row) as conn:
+        with connect(
+            self._config.dsn,
+            autocommit=True,
+            row_factory=dict_row,
+            **self._connect_kwargs(),
+        ) as conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
         return [runtime_event_from_payload(row["payload"]) for row in rows]
+
+    def prune_events_before(self, *, before: datetime) -> int:
+        """Delete old runtime events and return removed row count."""
+        connect, _ = _pg_dependencies()
+        with connect(
+            self._config.dsn, autocommit=False, **self._connect_kwargs()
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    prune_events_before_sql(events_table=self._events_table), (before,)
+                )
+                deleted = int(cur.rowcount or 0)
+            conn.commit()
+        return deleted
+
+    def prune_checkpoints_before(self, *, before: datetime) -> int:
+        """Delete old checkpoints and return removed row count."""
+        connect, _ = _pg_dependencies()
+        with connect(
+            self._config.dsn, autocommit=False, **self._connect_kwargs()
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    prune_checkpoints_before_sql(
+                        checkpoints_table=self._checkpoints_table
+                    ),
+                    (before,),
+                )
+                deleted = int(cur.rowcount or 0)
+            conn.commit()
+        return deleted

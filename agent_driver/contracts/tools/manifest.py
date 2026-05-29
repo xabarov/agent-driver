@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import keyword
 import re
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -32,6 +32,69 @@ class ToolManifest(ContractModel):
     timeout_seconds: float | None = 30.0
     output_char_budget: int | None = 4000
     idempotent: bool = True
+    # Phase 11 H12 — whether this tool may run concurrently with other
+    # ``concurrency_safe=True`` tools in the same planned batch. When
+    # ``None`` (default), the executor derives the value from
+    # ``idempotent`` + ``side_effect`` via ``is_concurrency_safe()``.
+    # Set explicitly when the derived default would be wrong (e.g. an
+    # idempotent network read whose remote rate-limits forbid parallel
+    # calls — declare ``concurrency_safe=False``).
+    concurrency_safe: bool | None = None
+    # Phase 11 H17 — per-tool semantic for "what happens when a new
+    # user message arrives mid-execution". When ``None`` (default), the
+    # executor derives from ``side_effect``: irreversible / external
+    # action → ``"block"`` (queue the new message until tool completes,
+    # avoiding mid-write torn state); reversible or no side effect →
+    # ``"cancel"`` (drop the in-flight tool result and route the new
+    # message immediately). Set explicitly to override.
+    interrupt_behavior: Literal["cancel", "block"] | None = None
+    # Phase 12 H21 — tool dispatch metadata.
+    #
+    # ``should_defer`` — when True, the tool is OMITTED from the agent's
+    # initial enumeration. The LLM has to call ``catalog_search``-style
+    # discovery first to surface it. Use for bulky / niche tool sets
+    # (large MCP catalogues, vendor SDK wrappers) that would otherwise
+    # inflate every prompt by thousands of tokens. Honored by the SDK
+    # surface that builds the agent's tool list; runtime ``ToolRegistry``
+    # always keeps the tool available for invocation once the LLM names
+    # it explicitly.
+    #
+    # ``always_load`` — explicit opt-out from deference. Use for
+    # system-critical tools that must be visible from turn 1 (e.g.
+    # ``ask_user_question``, ``planning_state_update``). When both
+    # ``should_defer`` and ``always_load`` are True, ``always_load``
+    # wins (so the operator can flip a tool back on without removing
+    # the defer flag).
+    #
+    # ``aliases`` — alternative names the registry resolves to this
+    # tool. Use for backwards compatibility after a rename, or for
+    # exposing a tool under multiple framework-specific spellings
+    # (``file_read`` + ``read_file``). Each alias must be a valid
+    # tool-name regex match (same rules as the primary ``name``).
+    should_defer: bool = False
+    always_load: bool = False
+    aliases: list[str] = Field(default_factory=list)
+    # Phase 12 H18 — disk-spill threshold for oversized handler outputs.
+    #
+    # ``output_char_budget`` (above) caps the prompt-window representation
+    # — anything beyond is truncated, losing data permanently within the
+    # run. ``max_result_size_chars`` is a SEPARATE threshold that says:
+    # "instead of truncating, persist the FULL output to the configured
+    # ArtifactStore and replace the in-context value with a 2 KB preview
+    # + artifact reference". The model can then fetch the full payload
+    # via ``read_artifact`` if it really needs it.
+    #
+    # ``None`` (default) — no spill, fall back to the
+    # ``output_char_budget`` truncation behaviour. Most existing tools
+    # set this implicitly to ``None`` and keep working unchanged.
+    #
+    # A positive int — spill when raw JSON-encoded output exceeds this
+    # many chars. Recommend setting to 50_000 for tools that may emit
+    # large outputs (file reads, nuclei JSON, dirfuzzer wordlist
+    # output). The executor only spills when the host has wired an
+    # ArtifactStore into the executor; without one, ``max_result_size_chars``
+    # is treated as informational only and the legacy truncation runs.
+    max_result_size_chars: int | None = None
     args_schema: dict[str, Any] | None = None
     output_type: str | None = None
     output_schema: dict[str, Any] | None = None
@@ -44,6 +107,60 @@ class ToolManifest(ContractModel):
         ]
     )
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def is_concurrency_safe(self) -> bool:
+        """Resolve the effective concurrency-safe flag.
+
+        Phase 11 H12 — when ``concurrency_safe`` is set explicitly, use it.
+        Otherwise derive from ``idempotent`` + ``side_effect``: a tool is
+        concurrency-safe by default only when it's idempotent AND has no
+        observable side effect (``NONE`` or ``READ_ONLY``).
+
+        Any write / external action defaults to ``False`` (executor must
+        serialize it) even when ``idempotent=True``.
+        """
+        if self.concurrency_safe is not None:
+            return self.concurrency_safe
+        return self.idempotent and self.side_effect in (
+            SideEffectClass.NONE,
+            SideEffectClass.READ_ONLY,
+        )
+
+    def resolved_interrupt_behavior(self) -> Literal["cancel", "block"]:
+        """Resolve the effective interrupt behaviour.
+
+        Phase 11 H17 — when ``interrupt_behavior`` is set explicitly,
+        use it. Otherwise:
+
+        * IRREVERSIBLE_WRITE / EXTERNAL_ACTION → ``"block"`` (we must
+          let the tool complete to avoid mid-write torn state);
+        * NONE / READ_ONLY / REVERSIBLE_WRITE → ``"cancel"`` (safe to
+          drop the in-flight result and serve the new user message
+          immediately).
+
+        Runtime consumers should call this rather than reading the
+        raw field so the default-derivation logic stays in one place.
+        """
+        if self.interrupt_behavior is not None:
+            return self.interrupt_behavior
+        if self.side_effect in (
+            SideEffectClass.IRREVERSIBLE_WRITE,
+            SideEffectClass.EXTERNAL_ACTION,
+        ):
+            return "block"
+        return "cancel"
+
+    def is_deferred(self) -> bool:
+        """Resolve the effective dispatch-deference flag.
+
+        Phase 12 H21 — ``always_load=True`` wins over ``should_defer=True``
+        so an operator can flip a tool back on without removing the
+        defer flag. When both are False, the tool is included in default
+        enumeration (the historical behaviour).
+        """
+        if self.always_load:
+            return False
+        return self.should_defer
 
     @field_validator("timeout_seconds")
     @classmethod
@@ -59,6 +176,12 @@ class ToolManifest(ContractModel):
         """Validate positive output budget when configured."""
         return ensure_positive_int(value, field_name="output_char_budget")
 
+    @field_validator("max_result_size_chars")
+    @classmethod
+    def validate_max_result_size_chars(cls, value: int | None) -> int | None:
+        """Phase 12 H18 — validate positive spill threshold when set."""
+        return ensure_positive_int(value, field_name="max_result_size_chars")
+
     @field_validator("metadata")
     @classmethod
     def validate_manifest_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
@@ -73,6 +196,26 @@ class ToolManifest(ContractModel):
             raise ValueError(
                 "tool name must match [A-Za-z0-9_.:-]+ for stable prompt rendering"
             )
+        return value
+
+    @field_validator("aliases")
+    @classmethod
+    def validate_aliases(cls, value: list[str]) -> list[str]:
+        """Phase 12 H21 — each alias must satisfy the same naming rules as
+        the primary tool name; aliases must be unique within the list.
+        """
+        seen: set[str] = set()
+        for alias in value:
+            if not isinstance(alias, str) or not alias:
+                raise ValueError("alias must be a non-empty string")
+            if not re.fullmatch(r"[A-Za-z0-9_.:-]+", alias):
+                raise ValueError(
+                    f"alias {alias!r} must match [A-Za-z0-9_.:-]+ for stable "
+                    "prompt rendering"
+                )
+            if alias in seen:
+                raise ValueError(f"duplicate alias {alias!r}")
+            seen.add(alias)
         return value
 
     @field_validator("args_schema", "output_schema")

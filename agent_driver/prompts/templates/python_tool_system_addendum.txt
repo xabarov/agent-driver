@@ -1,0 +1,8 @@
+Python tool sandbox policy:
+- Allowed imports: {imports}
+- Policy: {policy_summary}
+- Limits: exec <= {max_exec_ms} ms, output <= {max_output_chars} chars
+- Sessions are persistent per session_id; idle >= {session_idle_seconds}s drops state
+{scientific_guidance}
+- A `python policy:` or `unauthorized import` message means the sandbox blocked the import — it is NOT "package not installed". Retry with allowlisted modules only.
+- After a policy error, rewrite code using only Allowed imports; do not repeat the same blocked import.

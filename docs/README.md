@@ -13,11 +13,16 @@ This directory captures the initial architecture analysis for `agent-driver`: a 
 - [Human review, interrupts, and guardrails](architecture/hitl-and-guardrails.md)
 - [Observability, evaluation, and regression harness](architecture/evaluation-and-observability.md)
 - [Context engineering, tools, and MCP integration](architecture/context-tools-and-mcp.md)
+- [Built-in tools overview](builtin-tools.md)
+- [SDK + ToolSet examples](examples/sdk-toolset-examples.md)
 - [Multi-agent orchestration and parallel subagents](architecture/multi-agent-orchestration.md)
 - [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md)
+- [Multi-mode prompt assembly](patterns/multi-mode-prompts.md) — when an agent has ask / plan / code modes, substitute the behaviour block instead of prepending a "mode header"; reference impl in `excel_ai`
 - [Testing and live trace policy](architecture/testing-and-live-trace-policy.md)
 - [Test plan and coverage matrix](architecture/test-plan-and-matrix.md)
+- [Next-stage follow-up tracks](architecture/next-stage-followups.md)
 - [Package layout and shim policy](architecture/package-layout.md)
+- [Custom CLI roadmap (OpenClaude-informed)](architecture/custom-cli-roadmap.md)
 - [Implementation roadmap](roadmap.md)
 - [Refactor backlog and quality rules](refactor/README.md) — structure status, pylint policy, package split priorities
 
@@ -162,6 +167,8 @@ stored = local_exporter.get(trace_payload.trace_id)
   - `render_succinct_view(...)`
   - `render_cli_replay(...)`
   - `build_support_bundle(...)`
+  - `build_runtime_support_bundle(...)`
+  - `build_persisted_support_bundle(...)`
 
 Example:
 
@@ -242,12 +249,9 @@ output = await runner.run(
 - `AGENT_DRIVER_RUN_POSTGRES_TESTS=1 AGENT_DRIVER_POSTGRES_DSN=postgresql://... .venv/bin/python -m pytest -m live tests/runtime/test_postgres_store_live.py`
 - If `.env` exists in repository root, live tests auto-load it (without printing secret values).
 - Optional env vars for live adapters:
-  - `AGENT_DRIVER_OPENAI_BASE_URL`, `AGENT_DRIVER_OPENAI_MODEL`, `AGENT_DRIVER_OPENAI_API_KEY`
-  - `AGENT_DRIVER_OLLAMA_BASE_URL`, `AGENT_DRIVER_OLLAMA_MODEL`
+  - `AGENT_DRIVER_PROVIDER` (`openrouter` | `vllm` | `ollama`)
+  - `AGENT_DRIVER_BASE_URL`, `AGENT_DRIVER_MODEL`, `AGENT_DRIVER_API_KEY`
   - `AGENT_DRIVER_POSTGRES_DSN` (for opt-in PostgreSQL runtime store checks)
-- Legacy aliases from `.env.template` are also supported:
-  - `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL`, `OPENROUTER_API_KEY`
-  - `OLLAMA_BASE_URL`, `OLLAMA_MODEL`
 
 ## Optional Extras
 
