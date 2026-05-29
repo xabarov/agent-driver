@@ -244,8 +244,10 @@ when a slice is implemented, tested, committed, or intentionally deferred.
   force-planning policy-denied replay after the latest design changes.
   2026-05-29 attempt: backend replay passed, live UI card rendering failed and
   was moved to the chat-demo design backlog.
-- [ ] Decide and document chat-demo default mode:
+- [x] Decide and document chat-demo default mode:
   `prompt_only` or `required_for_writes`.
+  Documented in `docs/architecture/force-planning.md`: keep
+  `required_for_writes` when force planning is enabled.
 
 ### Phase 3: Steering Contracts And Queue
 
@@ -333,7 +335,7 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 ### Documentation And Recipes
 
 - [x] Update `docs/roadmap.md` with a pointer to this plan.
-- [ ] Add `docs/architecture/force-planning.md`.
+- [x] Add `docs/architecture/force-planning.md`.
 - [x] Add `docs/architecture/steering-control-plane.md`.
 - [ ] Extend `docs/architecture/multi-agent-orchestration.md`.
 - [ ] Add SDK recipes for plan approval, mid-run steering, child continuation,
@@ -850,7 +852,9 @@ Exit criteria:
 
 - Done: `docs/roadmap.md` points to this plan from the cross-phase
   OpenClaude improvement workstream note.
-- Add `docs/architecture/force-planning.md`.
+- Done: `docs/architecture/force-planning.md` records the policy input,
+  adaptive hint behavior, gate semantics, approval flow, chat-demo default,
+  tests, and remaining work.
 - Done: `docs/architecture/steering-control-plane.md` records the current
   control contracts, queue semantics, runtime boundary, events, SDK surface,
   chat-demo adapter, and remaining work.
