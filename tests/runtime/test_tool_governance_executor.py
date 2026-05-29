@@ -22,6 +22,7 @@ from agent_driver.tools import (
     ToolRegistry,
     evaluate_tool_policy,
 )
+from agent_driver.tools.builtin.agent import register_agent_tools
 from tests.runtime.conftest import (
     BlockingToolArgsGuardrails,
     BlockingToolInputGuardrails,
@@ -481,6 +482,45 @@ async def test_governed_executor_planned_tool_hint_can_enforce_planning() -> Non
 
     assert called is False
     assert result.traces[0].status.value == "denied"
+    assert result.envelopes[0].structured_output["error_kind"] == (
+        "force_planning_required"
+    )
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_force_planning_blocks_agent_tool_spawn_request() -> None:
+    """Subagent spawn requests should require approved planning under the gate."""
+    registry = ToolRegistry()
+    register_agent_tools(registry)
+    manifest = registry.get("agent_tool").manifest
+    assert manifest.side_effect == SideEffectClass.EXTERNAL_ACTION
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="delegate work",
+        run_id="run_force_planning_agent_tool",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            metadata={"force_planning": {"enabled": True}},
+        ),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[
+                ToolCall(
+                    tool_name="agent_tool",
+                    args={"task": "research", "description": "Research"},
+                )
+            ]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert result.traces[0].status.value == "denied"
+    assert result.envelopes[0].structured_output["blocked_tool"] == "agent_tool"
     assert result.envelopes[0].structured_output["error_kind"] == (
         "force_planning_required"
     )

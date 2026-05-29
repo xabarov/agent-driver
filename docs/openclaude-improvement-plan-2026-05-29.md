@@ -238,8 +238,11 @@ when a slice is implemented, tested, committed, or intentionally deferred.
   of relying on ad hoc dictionaries.
 - [x] Extend `planning_hint` to planned tool batches:
   side-effecting tools, native `agent_tool`, expected step count.
-- [ ] Gate native subagent spawn once `agent_tool` becomes a runtime spawn
+- [x] Gate native subagent spawn once `agent_tool` becomes a runtime spawn
   surface.
+  Current `agent_tool` request envelope is `external_action` and now has an
+  explicit force-planning regression test; native spawn should preserve that
+  manifest/policy boundary.
 - [ ] Run and document a passing current Playwright smoke for chat-demo
   force-planning policy-denied replay after the latest design changes.
   2026-05-29 attempt: backend replay passed, live UI card rendering failed and
