@@ -8,6 +8,7 @@ from agent_driver.contracts import (
     AgentRunInput,
     ChatMessage,
     ResumeAction,
+    RuntimeEventType,
     ToolCall,
     ToolPolicyInput,
     ToolPolicyMode,
@@ -206,6 +207,9 @@ async def test_runner_pauses_for_exit_plan_mode_approval_and_resumes() -> None:
     approval = paused.metadata["approval_payload"]
     assert approval["tool_name"] == "exit_plan_mode_v2"
     assert paused.interrupt.proposed_action["plan_approval"]["content_hash"]
+    paused_event_types = [event.type for event in paused.events]
+    assert RuntimeEventType.PLAN_ARTIFACT_UPDATED in paused_event_types
+    assert RuntimeEventType.PLAN_APPROVAL_REQUESTED in paused_event_types
 
     resumed = await runner.run(
         AgentRunInput(
@@ -220,6 +224,7 @@ async def test_runner_pauses_for_exit_plan_mode_approval_and_resumes() -> None:
         )
     )
     assert resumed.status.value == "completed"
+    assert any(event.type == RuntimeEventType.PLAN_APPROVED for event in resumed.events)
 
 
 @pytest.mark.asyncio

@@ -96,6 +96,24 @@ def _mark_force_planning_approved(
         )
 
 
+def _plan_lifecycle_payload(
+    pending: PendingInterruptState,
+    *,
+    resume: ResumeCommand,
+) -> dict[str, object] | None:
+    payload = _plan_approval_payload(pending)
+    if payload is None:
+        return None
+    return {
+        "interrupt_id": resume.interrupt_id,
+        "action": resume.action.value,
+        "plan_id": payload.get("plan_id") or pending.interrupt.metadata.get("plan_id"),
+        "content_hash": payload.get("content_hash")
+        or pending.interrupt.metadata.get("content_hash"),
+        "path": payload.get("path"),
+    }
+
+
 class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
     """Mixin: load checkpoint on resume and apply HITL resume actions."""
 
@@ -219,11 +237,31 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             return
 
         if resume.action == ResumeAction.REJECT:
+            plan_payload = _plan_lifecycle_payload(pending, resume=resume)
+            if plan_payload is not None:
+                self._emit(
+                    EventSpec(
+                        run_id=context.run_id,
+                        attempt_id=context.attempt_id,
+                        event_type=RuntimeEventType.PLAN_REJECTED,
+                        payload=plan_payload,
+                    )
+                )
             self._apply_resume_reject(context=context)
             return
 
         if resume.action in {ResumeAction.APPROVE, ResumeAction.EDIT}:
             _mark_force_planning_approved(context, pending=pending)
+            plan_payload = _plan_lifecycle_payload(pending, resume=resume)
+            if plan_payload is not None:
+                self._emit(
+                    EventSpec(
+                        run_id=context.run_id,
+                        attempt_id=context.attempt_id,
+                        event_type=RuntimeEventType.PLAN_APPROVED,
+                        payload=plan_payload,
+                    )
+                )
             call = apply_resume_to_call(
                 pending.call, resume.action, resume.edited_tool_args
             )

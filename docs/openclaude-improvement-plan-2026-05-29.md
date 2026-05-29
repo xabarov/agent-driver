@@ -216,7 +216,7 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Add deterministic plan-approval fake scenario and backend tests.
 - [x] Add SQLite or durable plan artifact persistence beyond process-local
   helpers.
-- [ ] Emit dedicated plan lifecycle runtime events:
+- [x] Emit dedicated plan lifecycle runtime events:
   `plan_mode_entered`, `plan_artifact_updated`, `plan_approval_requested`,
   `plan_approved`, `plan_rejected`.
 - [ ] Add checkpoint/resume tests for awaiting plan approval after process

@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any, Protocol
 
-from agent_driver.contracts.enums import AgentProfile, ChatRole, RuntimeEventType
+from agent_driver.contracts.enums import (
+    AgentProfile,
+    ChatRole,
+    InterruptReason,
+    RuntimeEventType,
+)
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmFinishReason
 from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
@@ -64,6 +69,7 @@ async def execute_tool_stage_step(host: ToolStageHost, context: RunContext) -> R
     result = await host._tool_result_with_approved_override(context)
     host._store_tool_stage_outputs(context, result)
     _post_process_tool_result(host, context, result)
+    _emit_plan_lifecycle_events(host, context, result)
     interrupt_result = _try_build_interrupt_transition(host, context, result)
     if interrupt_result is not None:
         return interrupt_result
@@ -71,6 +77,57 @@ async def execute_tool_stage_step(host: ToolStageHost, context: RunContext) -> R
     if code_loop is not None:
         return code_loop
     return await _finalize_tool_stage_transition(host, context, result)
+
+
+def _emit_plan_lifecycle_events(
+    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
+) -> None:
+    """Emit plan-mode and plan-approval lifecycle events from tool results."""
+    for envelope in result.envelopes:
+        if envelope.call.tool_name == "enter_plan_mode":
+            emit_step_event(
+                host,
+                context,
+                event_type=RuntimeEventType.PLAN_MODE_ENTERED,
+                payload={
+                    "tool_call_id": envelope.call.tool_call_id,
+                    "summary": envelope.summary,
+                },
+            )
+            continue
+        if envelope.call.tool_name != "exit_plan_mode_v2":
+            continue
+        structured = envelope.structured_output
+        if not isinstance(structured, dict):
+            continue
+        plan_payload = structured.get("plan_approval")
+        if not isinstance(plan_payload, dict):
+            continue
+        payload = {
+            "tool_call_id": envelope.call.tool_call_id,
+            "plan_id": plan_payload.get("plan_id"),
+            "content_hash": plan_payload.get("content_hash"),
+            "path": plan_payload.get("path"),
+        }
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.PLAN_ARTIFACT_UPDATED,
+            payload=payload,
+        )
+        if (
+            result.interrupt is not None
+            and result.interrupt.reason == InterruptReason.PLAN_APPROVAL_REQUIRED
+        ):
+            emit_step_event(
+                host,
+                context,
+                event_type=RuntimeEventType.PLAN_APPROVAL_REQUESTED,
+                payload={
+                    **payload,
+                    "interrupt_id": result.interrupt.interrupt_id,
+                },
+            )
 
 
 def _post_process_tool_result(
