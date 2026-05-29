@@ -7,6 +7,7 @@ from agent_driver.subagents.control import (
 )
 from agent_driver.subagents.executor import (
     SubagentExecutionResult,
+    execute_subagent_group_background,
     execute_subagent_group_sync,
 )
 from agent_driver.subagents.handoff import SubagentParentHandoff
@@ -49,6 +50,7 @@ __all__ = [
     "build_subagent_status_snapshot",
     "collect_subagent_mailbox",
     "evaluate_join_policy",
+    "execute_subagent_group_background",
     "execute_subagent_group_sync",
     "find_subagent_run",
     "merge_subagent_outputs",

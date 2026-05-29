@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agent_driver.contracts import (
@@ -179,6 +181,70 @@ async def test_runtime_with_subagents_executes_group_from_metadata() -> None:
     )
     assert output.metadata.get("subagent_groups")
     assert output.metadata.get("subagent_runs")
+
+
+@pytest.mark.asyncio
+async def test_runtime_with_background_subagents_returns_before_join() -> None:
+    """Background subagent backend should let parent complete before child join."""
+    event_log = InMemoryEventLog()
+    store = InMemorySubagentStore()
+    command_queue = InMemoryCommandQueueStore()
+    mailbox_store = InMemorySubagentMailboxStore()
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="parent"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=event_log,
+        config=RunnerConfig(
+            enable_subagents=True,
+            max_child_runs=2,
+            subagent_store=store,
+            command_queue_store=command_queue,
+            subagent_mailbox_store=mailbox_store,
+        ),
+    )
+
+    output = await runner.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_background_sub",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy={
+                "metadata": {
+                    "planned_subagent_group": {
+                        "group_id": "grp_background",
+                        "purpose": "fanout",
+                        "join_policy": "wait_all",
+                        "merge_mode": "append",
+                        "execution_mode": "asyncio_background",
+                        "tasks": [
+                            {"task_id": "t1", "task": "a", "description": "d1"},
+                        ],
+                    }
+                }
+            },
+        )
+    )
+
+    assert output.answer == "parent"
+    assert output.metadata["subagent_groups"][0]["metadata"]["join_state"] == (
+        "background_running"
+    )
+    event_types = [event.type for event in event_log.list_for_run("run_background_sub")]
+    assert RuntimeEventType.SUBAGENT_GROUP_JOIN_WAITING in event_types
+    for _ in range(20):
+        if command_queue.list_pending(run_id="run_background_sub"):
+            break
+        await asyncio.sleep(0.01)
+    assert command_queue.list_pending(run_id="run_background_sub")[0].priority == (
+        ControlPriority.LATER
+    )
+    assert (
+        mailbox_store.list_pending(parent_run_id="run_background_sub")[0].payload[
+            "status"
+        ]
+        == "completed"
+    )
 
 
 @pytest.mark.asyncio

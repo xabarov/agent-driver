@@ -21,6 +21,7 @@ from agent_driver.runtime.single_agent.types import RunContext, RunnerConfig, Ru
 from agent_driver.subagents import (
     SubagentGroupSpec,
     SubagentTaskSpec,
+    execute_subagent_group_background,
     execute_subagent_group_sync,
     summarize_child_runs_for_parent,
 )
@@ -77,18 +78,32 @@ async def maybe_execute_subagent_group(
         digest_refs=_list_metadata(context, "digest_refs"),
         planning_state=_dict_metadata(context, "planning_state"),
     )
-    result = await execute_subagent_group_sync(
-        parent=parent,
-        group_spec=group_spec,
-        store=host._deps.subagent_store,
-        child_runner=host.run,
-        max_child_runs=host._config.max_child_runs,
-        child_app_metadata={"subagent_origin": "child"},
-        on_event=lambda event_type, payload: _emit_child_subagent_event(
-            host, context, event_type, payload
-        ),
-        parent_abort_handle=context.abort_handle,
-    )
+
+    def on_event(event_type: str, payload: dict[str, object]) -> None:
+        _emit_child_subagent_event(host, context, event_type, payload)
+
+    if group_spec.metadata.get("execution_mode") == "asyncio_background":
+        result = await execute_subagent_group_background(
+            parent=parent,
+            group_spec=group_spec,
+            store=host._deps.subagent_store,
+            child_runner=host.run,
+            max_child_runs=host._config.max_child_runs,
+            child_app_metadata={"subagent_origin": "child"},
+            on_event=on_event,
+            parent_abort_handle=context.abort_handle,
+        )
+    else:
+        result = await execute_subagent_group_sync(
+            parent=parent,
+            group_spec=group_spec,
+            store=host._deps.subagent_store,
+            child_runner=host.run,
+            max_child_runs=host._config.max_child_runs,
+            child_app_metadata={"subagent_origin": "child"},
+            on_event=on_event,
+            parent_abort_handle=context.abort_handle,
+        )
     context.metadata["subagent_groups"] = [
         row.model_dump(mode="json")
         for row in host._deps.subagent_store.list_groups(context.run_id)
@@ -101,10 +116,15 @@ async def maybe_execute_subagent_group(
     )
     context.metadata["subagent_merge_summary"] = result.merged_summary
     context.metadata.pop("planned_subagent_group", None)
+    group_event_type = (
+        RuntimeEventType.SUBAGENT_GROUP_JOIN_WAITING
+        if result.join_state == "background_running"
+        else RuntimeEventType.SUBAGENT_GROUP_JOINED
+    )
     emit_step_event(
         host,
         context,
-        event_type=RuntimeEventType.SUBAGENT_GROUP_JOINED,
+        event_type=group_event_type,
         payload={
             "group_id": result.group.group_id,
             "join_state": result.join_state,
@@ -147,7 +167,10 @@ def _group_spec_from_planned(
         deadline_seconds=planned.get("deadline_seconds"),
         token_budget=planned.get("token_budget"),
         cost_budget_usd=planned.get("cost_budget_usd"),
-        metadata={"origin": "runtime_metadata"},
+        metadata={
+            "origin": "runtime_metadata",
+            "execution_mode": str(planned.get("execution_mode") or "sync"),
+        },
     )
 
 

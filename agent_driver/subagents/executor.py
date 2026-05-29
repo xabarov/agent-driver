@@ -1,7 +1,8 @@
-"""Sync subagent execution helpers without coupling to runtime mixins."""
+"""Subagent execution helpers without coupling to runtime mixins."""
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from inspect import signature
 from typing import Callable
@@ -41,6 +42,14 @@ class SubagentExecutionResult:
     runs: list[SubagentRun]
     join_state: str
     merged_summary: str
+
+
+_TERMINAL_STATUSES = {
+    SubagentStatus.COMPLETED,
+    SubagentStatus.FAILED,
+    SubagentStatus.CANCELLED,
+    SubagentStatus.TIMED_OUT,
+}
 
 
 def _safe_emit(
@@ -192,6 +201,68 @@ def _call_child_runner(
     if "abort_handle" not in runner_signature.parameters:
         return child_runner(child_input)
     return child_runner(child_input, abort_handle=child_abort_handle)
+
+
+def _child_abort_handle(parent_abort_handle: object | None) -> object | None:
+    if parent_abort_handle is not None and hasattr(parent_abort_handle, "child"):
+        return parent_abort_handle.child()
+    return parent_abort_handle
+
+
+def _build_pending_child_run(
+    *,
+    parent: SubagentParentHandoff,
+    task: SubagentTaskSpec,
+    idx: int,
+    execution_mode: SubagentExecutionMode,
+    child_run_id: str | None = None,
+) -> SubagentRun:
+    handoff, handoff_audit = build_child_context_handoff(
+        task=task,
+        parent_summary=parent.answer or "",
+        artifact_refs=parent.artifact_refs,
+        digest_refs=parent.digest_refs,
+        planning_state=parent.planning_state,
+    )
+    return SubagentRun(
+        subagent_run_id=f"sub_{uuid4().hex[:12]}",
+        parent_run_id=parent.run_id,
+        parent_attempt_id=parent.attempt_id,
+        child_run_id=child_run_id,
+        task_id=task.task_id,
+        task_type="subagent_task",
+        description=task.description,
+        execution_mode=execution_mode,
+        fanout_slot=idx,
+        status=SubagentStatus.RUNNING,
+        metadata={"handoff": handoff, "handoff_audit": handoff_audit},
+    )
+
+
+def _build_child_input(
+    *,
+    parent: SubagentParentHandoff,
+    group: SubagentGroup,
+    task: SubagentTaskSpec,
+    child_run_id: str,
+    child_app_metadata: dict | None,
+) -> AgentRunInput:
+    return AgentRunInput(
+        input=task.task,
+        run_id=child_run_id,
+        thread_id=parent.thread_id,
+        agent_id=f"{parent.agent_id}.child",
+        graph_preset=parent.graph_preset,
+        model_role=parent.model_role,
+        agent_profile=task.profile,
+        tool_policy=parent.tool_policy,
+        deadline_seconds=task.deadline_seconds,
+        app_metadata={
+            "parent_run_id": parent.run_id,
+            "subagent_group_id": group.group_id,
+            **(child_app_metadata or {}),
+        },
+    )
 
 
 def _cancelled_child_run(
@@ -422,8 +493,319 @@ async def execute_subagent_group_sync(
     )
 
 
+async def execute_subagent_group_background(
+    *,
+    parent: SubagentParentHandoff,
+    group_spec: SubagentGroupSpec,
+    store: SubagentStore,
+    child_runner: ChildRunner,
+    max_child_runs: int,
+    child_app_metadata: dict | None = None,
+    on_event: SubagentEventCallback | None = None,
+    parent_abort_handle: object | None = None,
+) -> SubagentExecutionResult:
+    """Schedule child tasks in the current event loop and return immediately."""
+    limited_tasks, scheduling_metadata = _select_schedulable_tasks(
+        group_spec=group_spec,
+        max_child_runs=max_child_runs,
+    )
+    _safe_emit(
+        on_event,
+        "subagent_group_started",
+        {
+            "group_id": group_spec.group_id,
+            "task_count": len(limited_tasks),
+            "join_policy": (
+                group_spec.join_policy.value
+                if hasattr(group_spec.join_policy, "value")
+                else str(group_spec.join_policy)
+            ),
+            "merge_mode": (
+                group_spec.merge_mode.value
+                if hasattr(group_spec.merge_mode, "value")
+                else str(group_spec.merge_mode)
+            ),
+            "execution_mode": SubagentExecutionMode.BACKGROUND.value,
+        },
+    )
+    group = store.upsert_group(
+        SubagentGroup(
+            group_id=group_spec.group_id,
+            parent_run_id=parent.run_id,
+            parent_attempt_id=parent.attempt_id,
+            purpose=group_spec.purpose,
+            join_policy=group_spec.join_policy,
+            merge_mode=group_spec.merge_mode,
+            max_parallel=group_spec.max_parallel,
+            deadline_seconds=group_spec.deadline_seconds,
+            token_budget=group_spec.token_budget,
+            cost_budget_usd=group_spec.cost_budget_usd,
+            status=SubagentGroupStatus.RUNNING,
+            metadata={
+                **group_spec.metadata,
+                "execution_mode": "asyncio_background",
+                "requested_tasks": len(group_spec.tasks),
+                **scheduling_metadata,
+            },
+        )
+    )
+    pending_runs: list[SubagentRun] = []
+    for idx, task in enumerate(limited_tasks, start=1):
+        child_run_id = f"child_{uuid4().hex[:12]}"
+        pending = store.upsert_run(
+            _build_pending_child_run(
+                parent=parent,
+                task=task,
+                idx=idx,
+                execution_mode=SubagentExecutionMode.BACKGROUND,
+                child_run_id=child_run_id,
+            ),
+            idempotency_key=task.idempotency_key,
+        )
+        pending_runs.append(pending)
+        _safe_emit(
+            on_event,
+            "subagent_started",
+            {
+                "group_id": group_spec.group_id,
+                "index": idx,
+                "task_id": task.task_id,
+                "role": getattr(task, "role", None) or "",
+                "subagent_run_id": pending.subagent_run_id,
+                "child_run_id": child_run_id,
+                "execution_mode": SubagentExecutionMode.BACKGROUND.value,
+            },
+        )
+        child_input = _build_child_input(
+            parent=parent,
+            group=group,
+            task=task,
+            child_run_id=child_run_id,
+            child_app_metadata={
+                "subagent_execution_mode": "asyncio_background",
+                **(child_app_metadata or {}),
+            },
+        )
+        asyncio.create_task(
+            _complete_background_child_task(
+                parent=parent,
+                group=group,
+                task=task,
+                idx=idx,
+                pending=pending,
+                store=store,
+                child_runner=child_runner,
+                child_input=child_input,
+                child_abort_handle=_child_abort_handle(parent_abort_handle),
+                idempotency_key=task.idempotency_key,
+                on_event=on_event,
+            )
+        )
+    group = store.upsert_group(
+        group.model_copy(
+            update={
+                "child_run_ids": [item.child_run_id or "" for item in pending_runs],
+                "metadata": {
+                    **group.metadata,
+                    "scheduled_subagent_run_ids": [
+                        item.subagent_run_id for item in pending_runs
+                    ],
+                    "join_state": "background_running",
+                },
+            }
+        )
+    )
+    return SubagentExecutionResult(
+        group=group,
+        runs=pending_runs,
+        join_state="background_running",
+        merged_summary="",
+    )
+
+
+async def _complete_background_child_task(
+    *,
+    parent: SubagentParentHandoff,
+    group: SubagentGroup,
+    task: SubagentTaskSpec,
+    idx: int,
+    pending: SubagentRun,
+    store: SubagentStore,
+    child_runner: ChildRunner,
+    child_input: AgentRunInput,
+    child_abort_handle: object | None,
+    idempotency_key: str | None,
+    on_event: SubagentEventCallback | None,
+) -> None:
+    if bool(getattr(child_abort_handle, "is_aborted", False)):
+        completed = _cancelled_child_run(
+            pending=pending,
+            task=task,
+            idx=idx,
+            reason=str(getattr(child_abort_handle, "reason", None) or "parent_aborted"),
+        )
+    else:
+        try:
+            output_any = _call_child_runner(
+                child_runner,
+                child_input,
+                child_abort_handle=child_abort_handle,
+            )
+            output = (
+                await output_any if hasattr(output_any, "__await__") else output_any
+            )
+            if not isinstance(output, AgentRunOutput):
+                raise RuntimeError("child_runner must return AgentRunOutput")
+            completed = _completed_child_run_from_output(
+                parent=parent,
+                pending=pending,
+                task=task,
+                idx=idx,
+                output=output,
+                execution_mode=SubagentExecutionMode.BACKGROUND,
+            )
+        except Exception as exc:  # pragma: no cover - defensive task boundary
+            completed = _failed_child_run(
+                pending=pending,
+                task=task,
+                idx=idx,
+                reason=type(exc).__name__,
+            )
+    store.upsert_run(completed, idempotency_key=idempotency_key)
+    _safe_emit(
+        on_event,
+        "subagent_completed",
+        {
+            "group_id": group.group_id,
+            "index": idx,
+            "task_id": task.task_id,
+            "role": getattr(task, "role", None) or "",
+            "subagent_run_id": completed.subagent_run_id,
+            "child_run_id": completed.child_run_id,
+            "status": (
+                completed.status.value
+                if hasattr(completed.status, "value")
+                else str(completed.status)
+            ),
+            "execution_mode": SubagentExecutionMode.BACKGROUND.value,
+        },
+    )
+    _maybe_complete_background_group(store=store, group=group)
+
+
+def _completed_child_run_from_output(
+    *,
+    parent: SubagentParentHandoff,
+    pending: SubagentRun,
+    task: SubagentTaskSpec,
+    idx: int,
+    output: AgentRunOutput,
+    execution_mode: SubagentExecutionMode,
+) -> SubagentRun:
+    run_status, terminal_state = _status_from_output(output)
+    merge_provenance = (
+        MergeProvenance(
+            strategy="child_output",
+            source_kind="child_run",
+            carried_keys=["summary"],
+            parent_state_write=ParentStateWriteMode.BOUNDED_APPEND_ONLY,
+            metadata={"child_run_id": output.run_id},
+        )
+        if run_status == SubagentStatus.COMPLETED
+        else None
+    )
+    return SubagentRun(
+        subagent_run_id=pending.subagent_run_id,
+        parent_run_id=parent.run_id,
+        parent_attempt_id=parent.attempt_id,
+        child_run_id=output.run_id,
+        task_id=task.task_id,
+        task_type="subagent_task",
+        description=task.description,
+        execution_mode=execution_mode,
+        fanout_slot=idx,
+        status=run_status,
+        terminal_state=terminal_state,
+        latency_ms=None,
+        tokens=output.usage,
+        merge_provenance=merge_provenance,
+        metadata={
+            "summary": output.answer or "",
+            "status": output.status.value,
+            "terminal_reason": (
+                output.terminal_reason.value if output.terminal_reason else None
+            ),
+        },
+    )
+
+
+def _failed_child_run(
+    *,
+    pending: SubagentRun,
+    task: SubagentTaskSpec,
+    idx: int,
+    reason: str,
+) -> SubagentRun:
+    return SubagentRun(
+        subagent_run_id=pending.subagent_run_id,
+        parent_run_id=pending.parent_run_id,
+        parent_attempt_id=pending.parent_attempt_id,
+        parent_checkpoint_id=pending.parent_checkpoint_id,
+        child_run_id=pending.child_run_id,
+        task_id=task.task_id,
+        task_type="subagent_task",
+        description=task.description,
+        execution_mode=SubagentExecutionMode.BACKGROUND,
+        fanout_slot=idx,
+        status=SubagentStatus.FAILED,
+        terminal_state=SubagentTerminalState.FAILED,
+        failure_code=reason,
+        metadata={"status": "failed", "terminal_reason": reason},
+    )
+
+
+def _maybe_complete_background_group(
+    *, store: SubagentStore, group: SubagentGroup
+) -> None:
+    current_group = next(
+        (
+            row
+            for row in store.list_groups(group.parent_run_id)
+            if row.group_id == group.group_id
+        ),
+        group,
+    )
+    scheduled_ids = current_group.metadata.get("scheduled_subagent_run_ids")
+    if not isinstance(scheduled_ids, list) or not scheduled_ids:
+        return
+    runs = store.list_runs(group.parent_run_id)
+    rows_by_id = {row.subagent_run_id: row for row in runs}
+    scheduled_rows = [
+        rows_by_id.get(str(subagent_run_id)) for subagent_run_id in scheduled_ids
+    ]
+    if any(
+        row is None or row.status not in _TERMINAL_STATUSES for row in scheduled_rows
+    ):
+        return
+    store.upsert_group(
+        current_group.model_copy(
+            update={
+                "status": SubagentGroupStatus.COMPLETED,
+                "child_run_ids": [
+                    row.child_run_id or "" for row in scheduled_rows if row is not None
+                ],
+                "metadata": {
+                    **current_group.metadata,
+                    "join_state": "background_completed",
+                },
+            }
+        )
+    )
+
+
 __all__ = [
     "SubagentEventCallback",
     "SubagentExecutionResult",
+    "execute_subagent_group_background",
     "execute_subagent_group_sync",
 ]
