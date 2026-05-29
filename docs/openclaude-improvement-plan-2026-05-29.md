@@ -100,6 +100,9 @@ Current completed slices:
 - Added typed `PlanningPolicyInput` / `PlanningPolicyMode` contracts and
   switched force-planning evaluator normalization away from ad hoc dictionaries
   while keeping legacy metadata compatibility.
+- Extended `planning_hint` to planned tool batches. Runtime can now derive a
+  required hint from side-effecting tools, `agent_tool`, or expected step count;
+  hosts can opt into enforcement with `planning_hint_enforce=true`.
 
 Next Phase 2 slice:
 
@@ -201,7 +204,7 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Wire chat-demo env config for force-planning mode.
 - [x] Add typed `PlanningPolicyInput` contract/normalizer for metadata instead
   of relying on ad hoc dictionaries.
-- [ ] Extend `planning_hint` to planned tool batches:
+- [x] Extend `planning_hint` to planned tool batches:
   side-effecting tools, native `agent_tool`, expected step count.
 - [ ] Gate native subagent spawn once `agent_tool` becomes a runtime spawn
   surface.

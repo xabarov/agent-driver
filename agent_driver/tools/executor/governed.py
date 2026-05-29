@@ -24,6 +24,7 @@ from agent_driver.runtime.tool_gate import (
     ToolGateDeny,
     ToolGateResult,
 )
+from agent_driver.runtime.planning_policy import tool_policy_with_planned_tool_hint
 from agent_driver.tools.executor.allowed import execute_allowed_path
 from agent_driver.tools.executor.blocks import append_blocked_call
 from agent_driver.tools.executor.partition import (
@@ -203,6 +204,17 @@ class GovernedToolExecutor:
             for call in planned_calls:
                 transformed.append(await self._apply_pre_hooks(call))
             planned_calls = transformed
+        if planned_calls:
+            run_input = run_input.model_copy(
+                update={
+                    "tool_policy": tool_policy_with_planned_tool_hint(
+                        run_input.tool_policy,
+                        planned_calls,
+                        manifest_lookup=self._lookup_manifest,
+                        current_tool_calls=current_tool_calls,
+                    )
+                }
+            )
         units = partition_concurrent_calls(
             planned_calls,
             is_safe=lambda c: is_call_concurrency_safe(

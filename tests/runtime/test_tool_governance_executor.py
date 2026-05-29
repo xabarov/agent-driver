@@ -439,6 +439,96 @@ async def test_governed_executor_force_planning_blocks_write_tool() -> None:
 
 
 @pytest.mark.asyncio
+async def test_governed_executor_planned_tool_hint_can_enforce_planning() -> None:
+    """Opt-in planning_hint_enforce should gate side-effecting planned batches."""
+    registry = ToolRegistry()
+    called = False
+
+    async def _write(_args):
+        nonlocal called
+        called = True
+        return {"summary": "wrote"}
+
+    registry.register(
+        ToolManifest(
+            name="file_write",
+            description="Write file",
+            risk=ToolRisk.MEDIUM,
+            side_effect=SideEffectClass.REVERSIBLE_WRITE,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _write,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="write",
+        run_id="run_planned_hint_enforce",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            metadata={"planning_hint_enforce": True},
+        ),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[ToolCall(tool_name="file_write", args={"path": "x"})]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert called is False
+    assert result.traces[0].status.value == "denied"
+    assert result.envelopes[0].structured_output["error_kind"] == (
+        "force_planning_required"
+    )
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_planned_tool_hint_does_not_gate_by_default() -> None:
+    """Planned-tool hints are advisory unless the host opts into enforcement."""
+    registry = ToolRegistry()
+    called = False
+
+    async def _write(_args):
+        nonlocal called
+        called = True
+        return {"summary": "wrote"}
+
+    registry.register(
+        ToolManifest(
+            name="file_write",
+            description="Write file",
+            risk=ToolRisk.MEDIUM,
+            side_effect=SideEffectClass.REVERSIBLE_WRITE,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _write,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="write",
+        run_id="run_planned_hint_advisory",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[ToolCall(tool_name="file_write", args={"path": "x"})]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert called is True
+    assert result.traces[0].status.value == "completed"
+
+
+@pytest.mark.asyncio
 async def test_governed_executor_guardrail_blocks_args() -> None:
     """Guardrail should block tool execution when args are unsafe."""
     registry = ToolRegistry()

@@ -194,6 +194,21 @@ class PlanningPolicyInput(ContractModel):
             return cls.model_validate(payload)
         if metadata.get("force_planning_enabled") is True:
             return cls(enabled=True)
+        if metadata.get("planning_hint_enforce") is True:
+            hint = metadata.get("planning_hint")
+            if isinstance(hint, dict) and hint.get("level") == "required":
+                signals = hint.get("signals")
+                signal_rows = signals if isinstance(signals, list) else []
+                signal_set = {str(item) for item in signal_rows if str(item).strip()}
+                if "subagent_spawn_requested" in signal_set:
+                    return cls(enabled=True, gated_tools=["agent_tool"])
+                if "expected_steps_ge_4" in signal_set:
+                    return cls(
+                        enabled=True,
+                        mode=PlanningPolicyMode.ALWAYS_FOR_MULTISTEP,
+                        expected_steps=4,
+                    )
+                return cls(enabled=True)
         return None
 
     @field_validator(
