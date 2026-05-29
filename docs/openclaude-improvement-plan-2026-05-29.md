@@ -127,14 +127,18 @@ Current completed slices:
 - Chat-demo backend exposes typed steering control and queued-command
   cancellation endpoints backed by the shared command queue store.
 - Chat-demo frontend supports enqueue-user-message steering from the streaming
-  composer, shows cancellable queued steering chips, and updates chip state
-  from control lifecycle stream events.
+  composer and next-boundary model switching from the model picker, shows
+  cancellable queued steering chips, and updates chip state from control
+  lifecycle stream events.
 - Chat-demo replay now includes a compact steering timeline for
   control/queue events.
 - Chat-demo session history now persists steering controls in
   `metadata_by_run[run_id].steering_controls`; cancelling a queued command
   updates the persisted status, and the frontend restores these controls when
   loading a session.
+- Current Playwright mid-run steering check waits for a live `run_id`, queues
+  an `enqueue_user_message` control through the composer, verifies the visible
+  chip, and writes `/tmp/agent-driver-chat-demo-mid-run-steering.png`.
 
 Next Phase 2 slice:
 
@@ -287,17 +291,21 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 
 - [x] Extend SSE projection for control/queue events.
 - [x] Add chat-demo/backend control endpoints.
-- [ ] Add chat-demo/frontend controls for enqueue/cancel/interrupt/model
+- [x] Add chat-demo/frontend controls for enqueue/cancel/interrupt/model
   switch where product-appropriate.
   Enqueue-user-message steering is wired into the streaming composer with
-  queued-command cancellation; model switching remains.
+  queued-command cancellation; selecting a model while streaming queues a
+  next-boundary `set_model` command.
 - [x] Persist steering operations in session transcript/history.
   Chat-demo writes queue lifecycle snapshots to
   `metadata_by_run[run_id].steering_controls` and restores them in the
   frontend store when a session is loaded.
 - [x] Add replay view support for queued messages and controls.
-- [ ] Verify mid-run steering with Playwright and record screenshot/DOM
+- [x] Verify mid-run steering with Playwright and record screenshot/DOM
   assertion.
+  Current DOM check waits for `run 1`, posts through the composer, verifies the
+  queued steering chip, and writes
+  `/tmp/agent-driver-chat-demo-mid-run-steering.png`.
 
 ### Phase 4a: Optional Instructor Spike
 

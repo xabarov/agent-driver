@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Search } from "lucide-react";
 
-import { fetchModels, fetchProviders } from "../../lib/api";
+import { controlRun, fetchModels, fetchProviders } from "../../lib/api";
+import { useChatStore } from "../../store/chatStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import type { ModelView } from "../../types/api";
 import { Button } from "../ui/button";
@@ -90,6 +91,8 @@ function Section({
 export function ModelPicker() {
   const model = useSettingsStore((state) => state.model);
   const setModel = useSettingsStore((state) => state.setModel);
+  const runId = useChatStore((state) => state.runId);
+  const streaming = useChatStore((state) => state.streaming);
   const [search, setSearch] = useState("");
   const [recentIds, setRecentIds] = useState<string[]>(() => readRecentModels());
 
@@ -147,6 +150,29 @@ export function ModelPicker() {
     setModel(id);
     writeRecentModel(id);
     setRecentIds(readRecentModels());
+    if (!streaming || !runId) {
+      return;
+    }
+    void controlRun(runId, {
+      kind: "set_model",
+      priority: "next",
+      payload: { model: id },
+    })
+      .then((response) => {
+        if (!response.queue_id) {
+          return;
+        }
+        useChatStore.getState().addSteeringControl({
+          queueId: response.queue_id,
+          message: `switch model: ${id}`,
+          status: "queued",
+        });
+      })
+      .catch((error) => {
+        useChatStore.getState().setLastError(
+          error instanceof Error ? error.message : "Failed to queue model switch.",
+        );
+      });
   };
 
   return (
