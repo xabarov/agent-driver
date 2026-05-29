@@ -405,6 +405,19 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [ ] Add SDK recipes for plan approval, mid-run steering, child continuation,
   and stopping a child.
 
+### End-Of-Phase Quality Pass
+
+At the end of every phase, reserve a separate implementation item for real
+refactoring and code-quality improvement:
+
+- Run focused `pylint` over the touched runtime/domain packages.
+- Prefer fixing design issues, naming, decomposition, typing, imports, and
+  duplicated logic over suppressing warnings.
+- Add `disable` pragmas only when the warning is genuinely inappropriate for
+  the local design, and document why in code or in the phase notes.
+- Keep the quality pass scoped to the phase's touched modules unless a broader
+  cleanup is explicitly planned.
+
 ## Optional Structured Extraction: Instructor Spike
 
 Reference: `https://python.useinstructor.com/`.
@@ -893,6 +906,9 @@ Exit criteria:
    replayable before adding background concurrency.
 4. Phase 7 after native spawn and mailbox, because coordinator behavior depends
    on reliable worker lifecycle.
+5. Finish each phase with a dedicated quality pass: run focused `pylint`, fix
+   real code issues, and avoid broad `disable` usage as a substitute for
+   refactoring.
 
 ## Risks And Mitigations
 
