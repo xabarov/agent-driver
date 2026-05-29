@@ -401,8 +401,10 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 - [x] Add scratchpad/artifact handoff rules.
   Child handoff metadata now carries role rules, bounded scratchpad policy, and
   refs-only artifact handoff requirements through completed child rows.
-- [ ] Add evals for research fan-out, corrected continuation, and verifier
+- [x] Add evals for research fan-out, corrected continuation, and verifier
   catch.
+  Offline eval-style tests now pin role-restricted research fan-out, corrected
+  parent-to-child continuation, and verifier critique preservation.
 
 ### Phase 8: Isolation And Advanced Backends
 
