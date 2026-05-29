@@ -138,6 +138,7 @@ function applyStreamEvent(
             runId,
             interruptId: interrupt.interrupt_id,
             reason: interrupt.reason,
+            assistantId,
             title: interrupt.title ?? undefined,
             description: interrupt.description ?? undefined,
             proposedAction: interrupt.proposed_action,
@@ -149,6 +150,7 @@ function applyStreamEvent(
             runId,
             interruptId: "",
             reason: String(event.data.reason ?? "approval_required"),
+            assistantId,
             allowedActions: ["approve", "reject", "cancel"],
           });
         });
@@ -323,9 +325,11 @@ export function useRunStream(): RunStreamController {
     }) => {
       const state = useChatStore.getState();
       const interrupt = state.pendingInterrupt;
-      const assistantId = [...state.messages]
-        .reverse()
-        .find((item) => item.role === "assistant" && item.pending)?.id;
+      const assistantId =
+        interrupt?.assistantId ??
+        [...state.messages]
+          .reverse()
+          .find((item) => item.role === "assistant")?.id;
       if (!interrupt || !assistantId || !interrupt.interruptId) {
         return;
       }

@@ -1,10 +1,17 @@
 import type { ChatMessage } from "../../store/chatStore";
 
-const PLANNING_TOOL_NAMES = new Set(["todo_write", "planning_state_update"]);
+const CONTROL_TOOL_NAMES = new Set([
+  "todo_write",
+  "planning_state_update",
+  "ask_user_question",
+]);
 
 function shouldRenderMessage(message: ChatMessage, messages: ChatMessage[]): boolean {
-  if (message.role !== "tool" || !PLANNING_TOOL_NAMES.has(message.name)) {
+  if (message.role !== "tool" || !CONTROL_TOOL_NAMES.has(message.name)) {
     return true;
+  }
+  if (message.name === "ask_user_question") {
+    return false;
   }
   let index = messages.indexOf(message) - 1;
   while (index >= 0) {

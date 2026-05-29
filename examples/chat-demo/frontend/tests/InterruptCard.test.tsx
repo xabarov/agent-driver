@@ -30,6 +30,34 @@ describe("InterruptCard", () => {
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
   });
 
+  it("renders clarification interrupts with explicit heading and requires text", () => {
+    const onAction = vi.fn();
+    render(
+      <InterruptCard
+        interrupt={{
+          ...base,
+          reason: "clarification_required",
+          title: "User clarification required",
+          allowedActions: ["clarify", "cancel"],
+        }}
+        onAction={onAction}
+      />,
+    );
+
+    expect(screen.getByText("Clarification required")).toBeInTheDocument();
+    expect(screen.queryByText("ask_user_question")).not.toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Send clarification" });
+    expect(button).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "описание моделей" },
+    });
+    fireEvent.click(button);
+    expect(onAction).toHaveBeenCalledWith({
+      action: "clarify",
+      message: "описание моделей",
+    });
+  });
+
   it("renders plan approval payload and submits edited plan content", () => {
     const onAction = vi.fn();
     render(

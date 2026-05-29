@@ -238,6 +238,21 @@ describe("chatStore", () => {
     }
   });
 
+  test("tombstone preserves planning snapshot instead of dropping the plan", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("plan");
+    useChatStore.getState().appendDelta(assistantId, "partial text");
+    useChatStore.getState().setPlanningSnapshot(assistantId, sampleSnapshot);
+    useChatStore.getState().tombstoneAssistant(assistantId);
+
+    const assistant = useChatStore.getState().messages.find((item) => item.id === assistantId);
+    expect(assistant?.role).toBe("assistant");
+    if (assistant?.role === "assistant") {
+      expect(assistant.content).toBe("");
+      expect(assistant.pending).toBe(false);
+      expect(assistant.planningSnapshot?.total).toBe(1);
+    }
+  });
+
   test("appendToolStarted skips todo_write", () => {
     const assistantId = useChatStore.getState().beginUserTurn("plan");
     useChatStore.getState().appendToolStarted(assistantId, {
@@ -253,6 +268,18 @@ describe("chatStore", () => {
     const tools = useChatStore.getState().messages.filter((item) => item.role === "tool");
     expect(tools).toHaveLength(1);
     expect(tools[0]).toMatchObject({ name: "file_write" });
+  });
+
+  test("appendToolStarted skips ask_user_question control tool", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("clarify");
+    useChatStore.getState().appendToolStarted(assistantId, {
+      toolCallId: "ask1",
+      name: "ask_user_question",
+      status: "running",
+    });
+
+    const tools = useChatStore.getState().messages.filter((item) => item.role === "tool");
+    expect(tools).toHaveLength(0);
   });
 
   test("appendToolStarted inserts tool card after assistant", () => {

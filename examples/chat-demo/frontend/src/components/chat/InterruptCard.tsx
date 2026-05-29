@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { FileText, Hash, ShieldAlert } from "lucide-react";
 
 import type { PendingInterrupt } from "../../store/chatStore";
@@ -39,12 +39,20 @@ function getPlanApproval(interrupt: PendingInterrupt): PlanApprovalView | null {
 
 export function InterruptCard({ interrupt, onAction }: InterruptCardProps) {
   const planApproval = getPlanApproval(interrupt);
+  const isClarification = interrupt.reason === "clarification_required";
+  const heading = planApproval
+    ? "Plan approval required"
+    : isClarification
+      ? "Clarification required"
+      : "Approval required";
+  const showRawAction = !planApproval && !isClarification;
   const [editJson, setEditJson] = useState(
     JSON.stringify(interrupt.proposedAction ?? {}, null, 2),
   );
   const [planEdit, setPlanEdit] = useState(planApproval?.content ?? "");
   const [clarifyMessage, setClarifyMessage] = useState("");
   const canResume = Boolean(interrupt.interruptId);
+  const clarifyId = useId();
 
   return (
     <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
@@ -52,7 +60,7 @@ export function InterruptCard({ interrupt, onAction }: InterruptCardProps) {
         <ShieldAlert className="mt-0.5 h-5 w-5 text-amber-400" />
         <div>
           <h3 className="font-semibold">
-            {planApproval ? "Plan approval required" : "Approval required"}
+            {heading}
           </h3>
           <p className="text-sm text-muted-foreground">
             {interrupt.title ?? interrupt.reason}
@@ -88,11 +96,11 @@ export function InterruptCard({ interrupt, onAction }: InterruptCardProps) {
             {planApproval.content}
           </pre>
         </div>
-      ) : (
+      ) : showRawAction ? (
         <pre className="mb-3 max-h-40 overflow-auto rounded-md border bg-background/80 p-2 text-xs">
           {JSON.stringify(interrupt.proposedAction ?? {}, null, 2)}
         </pre>
-      )}
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {allows(interrupt, "approve") ? (
           <Button
@@ -184,8 +192,14 @@ export function InterruptCard({ interrupt, onAction }: InterruptCardProps) {
       ) : null}
       {allows(interrupt, "clarify") ? (
         <div className="mt-3 space-y-2">
-          <p className="text-xs font-medium text-muted-foreground">Clarify</p>
+          <label
+            className="block text-xs font-medium text-muted-foreground"
+            htmlFor={clarifyId}
+          >
+            Clarify
+          </label>
           <Textarea
+            id={clarifyId}
             value={clarifyMessage}
             onChange={(event) => setClarifyMessage(event.target.value)}
             rows={2}
@@ -193,7 +207,7 @@ export function InterruptCard({ interrupt, onAction }: InterruptCardProps) {
           <Button
             type="button"
             variant="secondary"
-            disabled={!canResume}
+            disabled={!canResume || !clarifyMessage.trim()}
             onClick={() =>
               onAction({ action: "clarify", message: clarifyMessage.trim() })
             }

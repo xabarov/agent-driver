@@ -8,7 +8,11 @@ import { stripTextFormToolCalls } from "./stripToolCalls";
 import type { ChatMessage, ToolCallStatus } from "../store/chatStore";
 import type { PlanningSnapshot } from "./planning";
 
-const PLANNING_TOOL_NAMES = new Set(["todo_write", "planning_state_update"]);
+const CONTROL_TOOL_NAMES = new Set([
+  "todo_write",
+  "planning_state_update",
+  "ask_user_question",
+]);
 
 export type StreamEventName =
   | "run_started"
@@ -283,6 +287,16 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
       }
     }
     if (event.event === "assistant_message_tombstoned") {
+      if (assistantId && assistantPlanningSnapshot) {
+        messages.push({
+          id: assistantId,
+          role: "assistant",
+          content: "",
+          pending: false,
+          metadata: assistantMetadata,
+          planningSnapshot: assistantPlanningSnapshot,
+        });
+      }
       assistantId = null;
       assistantContent = "";
       assistantRawContent = "";
@@ -334,7 +348,7 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
         assistantPlanningSnapshot = undefined;
       }
       for (const tool of parseToolStatesFromEvent(event)) {
-        if (PLANNING_TOOL_NAMES.has(tool.name)) {
+        if (CONTROL_TOOL_NAMES.has(tool.name)) {
           continue;
         }
         messages.push({
@@ -365,7 +379,7 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
         }
       }
       for (const tool of parseToolStatesFromEvent(event)) {
-        if (PLANNING_TOOL_NAMES.has(tool.name)) {
+        if (CONTROL_TOOL_NAMES.has(tool.name)) {
           continue;
         }
         const index = messages.findIndex(

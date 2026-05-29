@@ -13,6 +13,7 @@ import { stripTextFormToolCalls } from "../lib/stripToolCalls";
 import type { SessionDetailView } from "../types/api";
 
 const PLANNING_TOOL_NAMES = new Set(["todo_write", "planning_state_update"]);
+const CONTROL_TOOL_NAMES = new Set([...PLANNING_TOOL_NAMES, "ask_user_question"]);
 const assistantRawContent = new Map<string, string>();
 
 export type { AssistantMessageMetadata };
@@ -49,6 +50,7 @@ export interface PendingInterrupt {
   runId: string;
   interruptId: string;
   reason: string;
+  assistantId?: string;
   title?: string;
   description?: string;
   proposedAction?: Record<string, unknown>;
@@ -219,11 +221,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
         end += 1;
       }
       assistantRawContent.delete(assistantId);
+      const target = state.messages[index];
+      if (target?.role === "assistant" && target.planningSnapshot) {
+        return {
+          messages: [
+            ...state.messages.slice(0, index),
+            { ...target, content: "", pending: false },
+            ...state.messages.slice(end),
+          ],
+        };
+      }
       return { messages: [...state.messages.slice(0, index), ...state.messages.slice(end)] };
     }),
   appendToolStarted: (assistantId, tool) =>
     set((state) => {
-      if (PLANNING_TOOL_NAMES.has(tool.name)) {
+      if (CONTROL_TOOL_NAMES.has(tool.name)) {
         return state;
       }
       if (state.messages.some((item) => item.role === "tool" && item.toolCallId === tool.toolCallId)) {
@@ -301,13 +313,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }),
     })),
   setPlanningSnapshot: (assistantId, snapshot) =>
-    set((state) => ({
-      messages: state.messages.map((message) =>
-        message.id === assistantId && message.role === "assistant"
-          ? { ...message, planningSnapshot: snapshot }
-          : message,
-      ),
-    })),
+    set((state) => {
+      const hasTarget = state.messages.some(
+        (message) => message.id === assistantId && message.role === "assistant",
+      );
+      if (!hasTarget) {
+        return state;
+      }
+      return {
+        messages: state.messages.map((message) =>
+          message.id === assistantId && message.role === "assistant"
+            ? { ...message, planningSnapshot: snapshot }
+            : message,
+        ),
+      };
+    }),
   setAssistantRunId: (assistantId, runId) =>
     set((state) => ({
       messages: state.messages.map((message) =>
