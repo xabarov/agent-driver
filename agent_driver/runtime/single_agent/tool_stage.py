@@ -264,6 +264,7 @@ def _apply_subagent_continuation_output(
         child_run_id=recipient,
         message=message,
         metadata=metadata if isinstance(metadata, dict) else None,
+        mailbox_store=host._deps.subagent_mailbox_store,
     )
     if updated is None:
         return

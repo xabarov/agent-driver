@@ -95,6 +95,12 @@ from agent_driver.contracts.profiles import PromptRenderResult, PromptTemplate
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 from agent_driver.contracts.stream import RunStreamEvent
+from agent_driver.contracts.subagent_mailbox import (
+    SubagentMailboxDirection,
+    SubagentMailboxItem,
+    SubagentMailboxKind,
+    SubagentMailboxStatus,
+)
 from agent_driver.contracts.subagents import MergeProvenance, SubagentGroup, SubagentRun
 from agent_driver.contracts.tools import (
     ToolCall,
@@ -181,6 +187,10 @@ __all__ = [
     "SubagentJoinPolicy",
     "SubagentExecutionMode",
     "SubagentMergeMode",
+    "SubagentMailboxDirection",
+    "SubagentMailboxItem",
+    "SubagentMailboxKind",
+    "SubagentMailboxStatus",
     "SubagentRun",
     "SubagentStatus",
     "SubagentTerminalState",

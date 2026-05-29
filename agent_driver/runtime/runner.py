@@ -36,6 +36,7 @@ from agent_driver.runtime.single_agent.types import (
 from agent_driver.runtime.single_agent.types import RunnerDeps
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import fake_noop_tool_executor
+from agent_driver.subagents.mailbox import InMemorySubagentMailboxStore
 from agent_driver.subagents.store import InMemorySubagentStore
 from agent_driver.tools import register_builtin_tools, register_planning_tool
 from agent_driver.tools.context import workspace_cwd_scope
@@ -95,6 +96,8 @@ class SingleAgentRunner(
             artifact_store=self._config.artifact_store or InMemoryArtifactStore(),
             context_store=self._config.context_store or InMemoryContextStore(),
             subagent_store=self._config.subagent_store or InMemorySubagentStore(),
+            subagent_mailbox_store=self._config.subagent_mailbox_store
+            or InMemorySubagentMailboxStore(),
             code_executor=self._config.code_executor or FakeRestrictedCodeExecutor(),
             tool_registry=self._config.tool_registry
             or self._build_default_tool_registry(

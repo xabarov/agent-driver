@@ -29,6 +29,7 @@ from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.control.protocols import CommandQueueStore
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.runtime.tools import ToolExecutor
+from agent_driver.subagents.mailbox import SubagentMailboxStore
 from agent_driver.subagents.store import SubagentStore
 from agent_driver.tools.registry import ToolRegistry
 
@@ -54,6 +55,7 @@ class RunnerConfig:
     observation_max_chars: int
     include_planning_prompt: bool
     subagent_store: SubagentStore | None
+    subagent_mailbox_store: SubagentMailboxStore | None
     code_executor: CodeActionExecutor | None
     tool_registry: ToolRegistry | None
     command_queue_store: CommandQueueStore | None
@@ -89,6 +91,7 @@ class RunnerConfig:
         self.observation_max_chars = kwargs.pop("observation_max_chars", 400)
         self.include_planning_prompt = kwargs.pop("include_planning_prompt", False)
         self.subagent_store = kwargs.pop("subagent_store", None)
+        self.subagent_mailbox_store = kwargs.pop("subagent_mailbox_store", None)
         self.code_executor = kwargs.pop("code_executor", None)
         self.tool_registry = kwargs.pop("tool_registry", None)
         self.command_queue_store = kwargs.pop("command_queue_store", None)
@@ -309,6 +312,7 @@ class RunnerDeps:
     artifact_store: ArtifactStore
     context_store: ContextStore
     subagent_store: SubagentStore
+    subagent_mailbox_store: SubagentMailboxStore | None
     code_executor: CodeActionExecutor
     tool_registry: ToolRegistry
     command_queue_store: CommandQueueStore | None = None

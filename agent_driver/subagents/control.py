@@ -6,7 +6,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_driver.contracts.enums import SubagentStatus, SubagentTerminalState
+from agent_driver.contracts.subagent_mailbox import (
+    SubagentMailboxDirection,
+    SubagentMailboxItem,
+    SubagentMailboxKind,
+)
 from agent_driver.contracts.subagents import SubagentRun
+from agent_driver.subagents.mailbox import SubagentMailboxStore
 from agent_driver.subagents.store import SubagentStore
 
 
@@ -39,6 +45,7 @@ def append_subagent_continuation(
     child_run_id: str | None = None,
     source: str = "send_message_tool",
     metadata: dict[str, Any] | None = None,
+    mailbox_store: SubagentMailboxStore | None = None,
 ) -> SubagentRun | None:
     """Append a parent-to-child continuation message to a child row."""
     text = str(message or "").strip()
@@ -69,7 +76,22 @@ def append_subagent_continuation(
             }
         }
     )
-    return store.upsert_run(updated)
+    saved = store.upsert_run(updated)
+    if mailbox_store is not None:
+        mailbox_store.enqueue(
+            SubagentMailboxItem(
+                parent_run_id=parent_run_id,
+                direction=SubagentMailboxDirection.PARENT_TO_CHILD,
+                kind=SubagentMailboxKind.MESSAGE,
+                subagent_run_id=saved.subagent_run_id,
+                child_run_id=saved.child_run_id,
+                payload={"message": text},
+                source=source,
+                dedupe_key=None,
+                metadata=metadata or {},
+            )
+        )
+    return saved
 
 
 def stop_subagent_run(

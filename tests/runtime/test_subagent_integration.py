@@ -25,6 +25,7 @@ from agent_driver.runtime import (
     wrap_governed_executor,
 )
 from agent_driver.subagents import InMemorySubagentStore
+from agent_driver.subagents import InMemorySubagentMailboxStore
 from agent_driver.tools import GovernedToolExecutor, ToolRegistry, register_builtin_tools
 
 
@@ -214,6 +215,7 @@ async def test_send_message_tool_records_subagent_continuation() -> None:
     registry = ToolRegistry()
     register_builtin_tools(registry)
     store = InMemorySubagentStore()
+    mailbox_store = InMemorySubagentMailboxStore()
     store.upsert_run(_running_child_row(parent_run_id="run_child_continue"))
     event_log = InMemoryEventLog()
     runner = FakeSingleStepRunner(
@@ -232,6 +234,7 @@ async def test_send_message_tool_records_subagent_continuation() -> None:
         config=RunnerConfig(
             enable_subagents=True,
             subagent_store=store,
+            subagent_mailbox_store=mailbox_store,
             tool_executor=wrap_governed_executor(
                 GovernedToolExecutor(registry=registry)
             ),
@@ -252,6 +255,9 @@ async def test_send_message_tool_records_subagent_continuation() -> None:
     continuation = row.metadata["continuation_messages"][0]
     assert continuation["message"] == "please continue with the latest evidence"
     assert continuation["metadata"] == {"priority": "later"}
+    mailbox_items = mailbox_store.list_pending(parent_run_id="run_child_continue")
+    assert mailbox_items[0].payload == {"message": "please continue with the latest evidence"}
+    assert mailbox_items[0].subagent_run_id == "sub_child"
     assert output.metadata["subagent_runs"][0]["subagent_run_id"] == "sub_child"
     event_types = [event.type for event in event_log.list_for_run("run_child_continue")]
     assert RuntimeEventType.CONTROL_APPLIED in event_types
