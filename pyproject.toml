@@ -32,6 +32,9 @@ cli = [
   "prompt_toolkit>=3.0.43",
   "rich>=13.0.0",
 ]
+instructor = [
+  "instructor>=1.7.0",
+]
 
 [project.scripts]
 agent-driver = "agent_driver.cli.main:main"

@@ -139,6 +139,11 @@ Current completed slices:
 - Current Playwright mid-run steering check waits for a live `run_id`, queues
   an `enqueue_user_message` control through the composer, verifies the visible
   chip, and writes `/tmp/agent-driver-chat-demo-mid-run-steering.png`.
+- Added optional Instructor spike boundary: `agent-driver[instructor]` keeps
+  Instructor out of default installs, `agent_driver/structured/` exposes
+  structured validation failures as observation-friendly payloads, a prototype
+  steering parser returns typed `ControlRequest`, and a plan draft validator
+  checks approval-plan structure before artifact creation.
 
 Next Phase 2 slice:
 
@@ -309,12 +314,14 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 
 ### Phase 4a: Optional Instructor Spike
 
-- [ ] Add optional dependency extra without affecting default installs.
-- [ ] Add `agent_driver/structured/` adapter boundary.
-- [ ] Prototype one steering parser into typed `ControlRequest`.
-- [ ] Prototype one plan artifact validator.
-- [ ] Surface validation/retry failures as structured runtime observations or
+- [x] Add optional dependency extra without affecting default installs.
+- [x] Add `agent_driver/structured/` adapter boundary.
+- [x] Prototype one steering parser into typed `ControlRequest`.
+- [x] Prototype one plan artifact validator.
+- [x] Surface validation/retry failures as structured runtime observations or
   errors.
+  `StructuredExtractionFailure.as_observation()` returns a serializable
+  payload that runtime adapters can publish as observations/warnings.
 
 ### Phase 5: Native Agent Tool Spawn
 
