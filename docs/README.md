@@ -32,6 +32,7 @@ and tied to code that exists in the repository.
 - [SDK toolset examples](examples/sdk-toolset-examples.md)
 - [Forcing tool calls](patterns/forcing-tool-calls.md)
 - [Multi-mode prompts](patterns/multi-mode-prompts.md)
+- [Structured output](patterns/structured-output.md)
 - [Nano banana banner prompt](examples/nano-banana-banner-prompt.md)
 
 ## Documentation Rules

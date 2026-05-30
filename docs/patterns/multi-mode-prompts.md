@@ -1,180 +1,58 @@
-# Multi-mode prompt assembly
+# Multi-Mode Prompts
 
-> **When this applies:** your agent has discrete operating modes (e.g.
-> `ask` / `plan` / `code`) that should make the model behave differently —
-> answer concisely vs. think step-by-step, free exploration vs. strict
-> protocol, etc. The same tools and persona apply across modes; only the
-> *behavioural contract* changes.
->
-> **TL;DR:** prefer **behaviour-block substitution** over **header
-> prepending**. Models read prepended-header text as a "modifier on top of
-> the real rules" and continue to follow the body. Substitution makes the
-> mode-specific rules the *only* spec the model sees for that turn.
+Use this pattern when the same agent can operate in different modes: normal
+chat, live planning, approval planning, deliverable writing, code execution, or
+coordinator/subagent work.
 
-## The anti-pattern: prepending a "mode header"
+## Current Rule
 
-The intuitive first attempt is to render your normal system prompt and
-then push a header in front when a special mode is active:
+Prefer explicit behavior blocks and compact runtime reminders over piling more
+headers onto one large system prompt.
 
-```python
-def build_prompt(mode: str) -> str:
-    prompt = render_ask_mode_prompt()  # the usual content
-    if mode == "plan":
-        prompt = PLAN_MODE_HEADER + "\n\n" + prompt
-    return prompt
-```
+In `agent-driver` this currently shows up as:
 
-`PLAN_MODE_HEADER` typically contains:
+- a shared ReAct base policy;
+- chat-specific tool policy;
+- tool docs generated from the active `ToolRegistry`;
+- runtime reminders such as `planning_mode_active`,
+  `planning_mode_sparse`, `planning_mode_exit`, and
+  `deliverable_request_active`;
+- run metadata such as `planning_hint` and `deliverable_request`.
 
-```
-=== PLAN MODE — READ FIRST ===
+## Good Shape
 
-The user has explicitly requested PLAN MODE for this turn. This OVERRIDES
-the default behaviour described below. Your VERY FIRST action MUST be a
-tool call to `todo_write` …
-```
+Keep stable parts shared:
 
-This **works in casual benchmarks and fails in production** for two
-reasons:
+- persona and safety invariants;
+- tool catalog;
+- workspace/context facts;
+- output budgets and tool-risk policy.
 
-1. **The body of the prompt still teaches "ask" behaviour.** It says
-   things like "answer concisely with markdown tables" or "for list-style
-   answers return plain comma-separated values". The model reads that as
-   the primary contract and treats the prepended header as a side note.
-   On ambiguous questions ("проанализируй эту таблицу" — analyse this
-   table) it'll happily skip the planning protocol and produce a direct
-   prose answer.
-2. **The prepended header has no anchor for invariant rules.** Things
-   like "respond in the user's language" or "never fabricate numbers"
-   live in the ask body. If you tell the model "PLAN MODE OVERRIDES the
-   default behaviour", it may decide that invariant rules are also out
-   of scope. You then need to restate them in the header — at which
-   point the header *is* the new behaviour block, and you've reinvented
-   substitution badly.
+Swap or append only the behavior that is actually mode-specific:
 
-Symptom in practice: the agent calls `todo_write` once, then writes a
-prose answer without invoking any data tool. The plan is fabricated;
-the answer is fabricated to match. You can detect this case with
-[`agent_driver.runtime.planning_check.planning_executed`](../../agent_driver/runtime/planning_check.py)
-— but detection is a fallback for when the prompt didn't hold up.
+- "keep this as a visible todo checklist";
+- "stay read-only and prepare an approval plan";
+- "the user asked for the final draft now";
+- "continue execution after an approved plan";
+- "coordinator must synthesize worker results instead of inventing them".
 
-## The pattern: behaviour-block substitution
+## Anti-Pattern
 
-Restructure the prompt as a shell with a `{behaviour_block}` placeholder:
+Avoid a huge prompt where each mode adds another loud "OVERRIDE EVERYTHING"
+header. Models often treat the old body as the real contract and the new header
+as a weak hint. This caused exactly the kind of failures we are trying to avoid:
+repeated planning, clarification loops, and final-answer avoidance.
 
-```
-{persona}                    # who the agent is (shared)
+## Runtime Tie-In
 
-{behaviour_block}            # how the agent operates THIS TURN
-                             # ← swap based on mode
+Prompt mode should not be the only guard. If the behavior matters to product
+correctness, add a small runtime check:
 
----
+- deny modal plan tools for explicit deliverable turns;
+- force `tool_choice="none"` after enough data has been gathered;
+- keep `ask_user_question` bounded and structured;
+- block side-effect tools until an approval plan exists when force planning is
+  enabled.
 
-{tool_catalog}               # what tools exist (shared)
-
-{operating_guidance}         # tool-by-tool tips (shared)
-```
-
-Define one behaviour block per mode. The mode-specific block carries:
-
-- The mode-specific contract (e.g. "first action = `todo_write`; after
-  each step call `todo_write` with `merge=true`; don't finalise while a
-  todo is `in_progress`").
-- An echo of the cross-cutting invariants (language, format,
-  no-fabrication). Don't rely on the *other* mode's block to carry them
-  through.
-
-```python
-BEHAVIOUR_BLOCK_ASK = """### GLOBAL RULES:
-1. Answer language: respond in {language}.
-2. Final answer format: plain Markdown only.
-3. ... (etc.)
-
-### HOW TO WORK WITH TOOLS:
-- Plan first, then act.
-- Iterate.
-- ..."""
-
-BEHAVIOUR_BLOCK_PLAN_RU = """### РЕЖИМ ПЛАНИРОВАНИЯ — ВАШ ЕДИНСТВЕННЫЙ КОНТРАКТ:
-
-Пользователь явно включил режим планирования. Это **полностью переопределяет**
-поведение по умолчанию.
-
-#### Жёсткие правила:
-1. Самый первый ход — `todo_write` с планом из 3–7 пунктов.
-2. После КАЖДОГО шага — `todo_write` с merge=true.
-3. ... (etc.)
-
-#### Инвариантные правила (применяются И в режиме планирования):
-- Язык: {language}.
-- Формат: plain Markdown.
-- Никаких выдуманных чисел.
-- ..."""
-
-def build_system_prompt(mode: str, language: str, ...) -> str:
-    block = BEHAVIOUR_BLOCK_PLAN_RU if mode == "plan" else BEHAVIOUR_BLOCK_ASK
-    return SHELL.format(
-        persona=persona,
-        behaviour_block=block.format(language=language),
-        tool_catalog=tool_catalog,
-        operating_guidance=operating_guidance,
-    )
-```
-
-## What stays shared
-
-Behaviour-block substitution is *only* for behavioural rules. Don't
-duplicate:
-
-- **Tool catalog** — the model needs the same tool list either way.
-  Trying to hide tools in one mode usually backfires: if you hide
-  `sandbox_execute_pandas` in plan mode, the model builds a plan it can't
-  execute and stalls. Let prompt rules constrain *when* a tool is used,
-  not whether it exists.
-- **Operating guidance** (tips like "for filtering use pandas, not
-  excel_find") — same logic.
-- **Persona** — the agent's role doesn't change just because the user
-  toggled a UI chip.
-- **Workbook / context overview** — pure data, no rules.
-
-## Measured effect
-
-This pattern was introduced in `excel_ai` after the prepend approach
-failed on roughly half of plan-mode questions on `qwen3-235b`. After
-substitution:
-
-- **Single-clause questions** ("how many rows; top 3 values in column X")
-  → the model now reliably runs the plan and produces grounded answers.
-- **Heavy multi-clause questions** (3+ analytical asks in one prompt) →
-  the model still fabricates on this corpus. Prompt-only mitigation has
-  a ceiling; for these cases combine with
-  [`planning_executed`](../../agent_driver/runtime/planning_check.py)
-  detection + an auto-retry directive (caller-side), or move to a more
-  compliant model.
-
-The takeaway is not "substitution always works" but **"the prepend
-approach has a structural ceiling that substitution doesn't"**. With
-substitution, when the model fails, it's the model's limit. With
-prepending, the prompt design is contributing to the failure.
-
-## Reference implementation
-
-See `excel_ai`'s prompt assembly:
-
-- Shell + placeholder:
-  `excel_ai/backend/excel_agent/prompts/components/base_prompt.py`
-  (`EXCEL_AGENT_SYSTEM_PROMPT_BASE`,
-  `BEHAVIOUR_BLOCK_ASK`,
-  `BEHAVIOUR_BLOCK_PLAN_RU`,
-  `BEHAVIOUR_BLOCK_PLAN_EN`)
-- Mode selection:
-  `excel_ai/backend/excel_agent/prompts/system_prompt.py`
-  (`build_system_prompt(..., mode=...)`,
-  `_select_behaviour_block`)
-- Call-site:
-  `excel_ai/backend/excel_agent/core/orchestrator/agent_creation.py`
-  (passes `mode` through; no longer prepends a header)
-
-The Excel project used to call a `_augment_prompt_for_plan_mode(prompt)`
-helper that did the bad pattern; that helper was deleted in the
-substitution pass.
+This keeps the design in the Python Zen lane: readable prompt contracts first,
+small guards where traces show the model needs help.
