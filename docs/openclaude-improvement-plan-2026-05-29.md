@@ -49,13 +49,13 @@
 
 ### Prompt And Runtime Policy
 
-- [ ] Переписать `react_chat_tool_policy.txt` в более модульную форму:
+- [x] Переписать `react_chat_tool_policy.txt` в более модульную форму:
   identity, language, tool calling, planning boundaries, research boundaries,
   deliverable boundaries, ask-question boundaries.
 - [ ] Вынести volatile reminders из base prompt в runtime attachments:
   active task contract, force-final, research-required, existing checklist,
   approved plan state, steering command.
-- [ ] Сделать `ask_user_question` schema/prompt ближе к OpenClaude:
+- [x] Сделать `ask_user_question` schema/prompt ближе к OpenClaude:
   1-4 short questions, explicit choices, no plan approval through questions,
   no clarification for deliverables unless blocked.
 - [ ] Для deliverable задач отделить "progress checklist" от "final answer":
@@ -264,4 +264,3 @@ Dev stack:
 - transcript/run mapping helpers;
 - SSE parsing/capture helpers;
 - provider/runtime compatibility guards.
-

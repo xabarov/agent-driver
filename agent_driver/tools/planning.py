@@ -255,8 +255,8 @@ def _normalize_ask_user_questions(
             raise ValueError(
                 "question.id, question.header, and question.question are required"
             )
-        if len(header) > 32:
-            raise ValueError("question.header must be 32 characters or fewer")
+        if len(header) > 12:
+            raise ValueError("question.header must be 12 characters or fewer")
         if question_id in seen_question_ids:
             raise ValueError("question ids must be unique")
         if header.lower() in seen_headers:
@@ -380,8 +380,9 @@ def _register_ask_user_question_tool(registry: ToolRegistry) -> None:
                 "Create a bounded clarification request for genuinely blocking "
                 "user-owned decisions. Prefer one focused question; use 1-4 "
                 "questions only when separate decisions are required. Each "
-                "structured question must have a short unique header and 2-4 "
-                "unique options. Do not use this tool to ask whether a plan is "
+                "structured question must have a short unique header (12 "
+                "characters or fewer) and 2-4 unique options. Keep option "
+                "labels short. Do not use this tool to ask whether a plan is "
                 "approved or to avoid producing a requested deliverable."
             ),
             risk=ToolRisk.LOW,
@@ -414,7 +415,7 @@ def _register_ask_user_question_tool(registry: ToolRegistry) -> None:
                             "type": "object",
                             "properties": {
                                 "id": {"type": "string"},
-                                "header": {"type": "string", "maxLength": 32},
+                                "header": {"type": "string", "maxLength": 12},
                                 "question": {"type": "string"},
                                 "preview": {"type": "string"},
                                 "choices": {

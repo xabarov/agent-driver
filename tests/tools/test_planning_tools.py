@@ -69,6 +69,8 @@ async def test_ask_user_question_validates_structured_questions() -> None:
     register_planning_tool(registry)
     tool = registry.get("ask_user_question")
     assert tool is not None
+    question_schema = tool.manifest.args_schema["properties"]["questions"]["items"]
+    assert question_schema["properties"]["header"]["maxLength"] == 12
     out = await tool.handler(
         {
             "prompt": "Pick report scope",
@@ -121,6 +123,31 @@ async def test_ask_user_question_rejects_unbounded_question_sets() -> None:
                         ],
                     }
                     for index in range(5)
+                ],
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_ask_user_question_rejects_long_headers() -> None:
+    """Clarification headers should stay compact enough for the chat UI."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    tool = registry.get("ask_user_question")
+    assert tool is not None
+    with pytest.raises(ValueError, match="12 characters or fewer"):
+        await tool.handler(
+            {
+                "prompt": "Pick one",
+                "questions": [
+                    {
+                        "header": "Very long header",
+                        "question": "Pick one",
+                        "choices": [
+                            {"id": "a", "label": "A"},
+                            {"id": "b", "label": "B"},
+                        ],
+                    }
                 ],
             }
         )
