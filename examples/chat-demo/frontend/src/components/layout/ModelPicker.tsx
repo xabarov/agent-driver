@@ -18,7 +18,6 @@ import {
 
 const RECENT_MODELS_KEY = "chat-demo-recent-models";
 const MAX_RECENT_MODELS = 5;
-const MAX_VISIBLE_MODELS = 90;
 
 function readRecentModels(): string[] {
   try {
@@ -131,15 +130,13 @@ export function ModelPicker() {
     const list = modelsQuery.data?.models ?? [];
     const needle = search.trim().toLowerCase();
     if (!needle) {
-      return list.slice(0, MAX_VISIBLE_MODELS);
+      return list;
     }
-    return list
-      .filter(
-        (entry) =>
-          entry.id.toLowerCase().includes(needle) ||
-          (entry.name ?? "").toLowerCase().includes(needle),
-      )
-      .slice(0, MAX_VISIBLE_MODELS);
+    return list.filter(
+      (entry) =>
+        entry.id.toLowerCase().includes(needle) ||
+        (entry.name ?? "").toLowerCase().includes(needle),
+    );
   }, [modelsQuery.data?.models, search]);
 
   const allModels = filtered.filter(

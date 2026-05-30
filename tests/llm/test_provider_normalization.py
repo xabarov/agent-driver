@@ -218,6 +218,30 @@ def test_openai_stream_chunk_fallback_parses_text_form_tool_call() -> None:
     assert event.metadata.get("text_form_tool_calls_parsed") is True
 
 
+def test_openai_stream_chunk_marks_tool_call_delta_as_meaningful() -> None:
+    """Streaming tool-call fragments are progress even before final arguments parse."""
+    chunk = {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "function": {"name": "web_search", "arguments": ""},
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            }
+        ]
+    }
+    event = normalize_openai_stream_chunk(
+        chunk, provider_name="openai-compat", fallback_model="fallback"
+    )
+    assert event.metadata.get("stream_tool_call_delta") is True
+
+
 def test_openai_usage_metadata_includes_cached_tokens_when_present() -> None:
     """Cached token details should be normalized into metadata when provided."""
     payload = {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, Protocol
 
@@ -29,9 +30,11 @@ from agent_driver.prompts import (
     python_tool_system_addendum,
     react_base_policy,
     react_chat_tool_policy,
+    react_chat_tool_policy_fragment_names,
     todo_write_guidance,
 )
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.research_evidence import RESEARCH_DEPTH_SOURCE_VERIFIED
 from agent_driver.runtime.single_agent.compaction_stage import (
     CompactionStageHost,
     apply_compaction_if_eligible,
@@ -39,6 +42,7 @@ from agent_driver.runtime.single_agent.compaction_stage import (
 from agent_driver.runtime.single_agent.llm import (
     LlmRequestBuildContext,
     build_single_agent_llm_request,
+    effective_tool_names_from_registry,
 )
 from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.step_planning import build_planning_snapshot
@@ -146,10 +150,13 @@ async def execute_llm_call_step(
             if exc.response.status_code == 400
             else TerminalReason.MODEL_ERROR.value
         )
+        provider_message = _provider_error_message(exc.response)
         rejected_payload: dict[str, Any] = {
             "reason": reason,
             "status_code": exc.response.status_code,
         }
+        if provider_message:
+            rejected_payload["message"] = provider_message
         if debug_llm_payload_enabled():
             rejected_payload["request_stats"] = summarize_llm_request_payload(request)
         host._emit(
@@ -165,7 +172,11 @@ async def execute_llm_call_step(
                 run_id=context.run_id,
                 attempt_id=context.attempt_id,
                 event_type=RuntimeEventType.RUN_FAILED,
-                payload={"reason": reason},
+                payload={
+                    "reason": reason,
+                    "status_code": exc.response.status_code,
+                    "message": provider_message,
+                },
             )
         )
         context.metadata["last_provider_error"] = reason
@@ -229,6 +240,12 @@ async def execute_llm_call_step(
     planned_tool_calls = context.llm_response.metadata.get("planned_tool_calls")
     if isinstance(planned_tool_calls, list):
         completed_payload["planned_tool_calls"] = planned_tool_calls
+    effective_tool_names = context.metadata.get("effective_tool_names")
+    if isinstance(effective_tool_names, tuple):
+        completed_payload["effective_tool_names"] = list(effective_tool_names)
+    prompt_fragments = context.metadata.get("prompt_fragments")
+    if isinstance(prompt_fragments, tuple):
+        completed_payload["prompt_fragments"] = list(prompt_fragments)
     snapshot = build_planning_snapshot(context)
     if snapshot is not None:
         completed_payload["planning_snapshot"] = snapshot
@@ -253,6 +270,30 @@ async def execute_llm_call_step(
     host._save_checkpoint(context, latest_output=None, node_id="llm_call")
     host._maybe_fail_after_step("llm_call")
     return RuntimeStepResult(next_step="tool_stage")
+
+
+def _provider_error_message(response: httpx.Response) -> str:
+    """Extract a short provider-facing error message from an HTTP response."""
+    body = response.text.strip()
+    if not body:
+        return f"Provider rejected the request with HTTP {response.status_code}."
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return body[:500]
+    if not isinstance(payload, dict):
+        return body[:500]
+    error = payload.get("error")
+    if isinstance(error, dict):
+        for key in ("message", "code", "type"):
+            value = error.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:500]
+    for key in ("message", "detail"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:500]
+    return body[:500]
 
 
 def _microcompact_context_observations(
@@ -308,7 +349,13 @@ def _build_trimmed_request(
     # ``"auto"`` default applied by the provider adapters.
     tool_choice = context.metadata.get("tool_choice_override")
     if tool_choice is None:
-        tool_choice = context.run_input.tool_choice
+        if (
+            context.run_input.app_metadata.get("chat_mode") is True
+            and context.llm_step_count > 0
+        ):
+            tool_choice = None
+        else:
+            tool_choice = context.run_input.tool_choice
     system_instruction = _react_system_instruction(host, context)
     if (
         context.metadata.get("force_final_answer") is True
@@ -550,26 +597,48 @@ def _effective_code_agent_imports(host: LlmStepHost) -> tuple[str, ...]:
     return tuple()
 
 
-def _python_tool_addendum_if_present(host: LlmStepHost) -> str | None:
+def _effective_request_tool_names(
+    host: LlmStepHost, context: RunContext
+) -> tuple[str, ...]:
+    policy = context.run_input.tool_policy
+    return effective_tool_names_from_registry(
+        host._deps.tool_registry,
+        allowed=(
+            tuple(policy.allowed_tools) if policy.allowed_tools is not None else None
+        ),
+        denied=tuple(policy.denied_tools) if policy.denied_tools else None,
+    )
+
+
+def _python_tool_addendum_if_present(
+    host: LlmStepHost, effective_tool_names: tuple[str, ...]
+) -> str | None:
     if not host._config.python_tool.enabled:
         return None
-    has_python_tool = any(
-        row.manifest.name == "python"
-        for row in host._deps.tool_registry.list_registered()
-    )
-    if not has_python_tool:
+    if "python" not in effective_tool_names:
         return None
     return python_tool_system_addendum(host._config.python_tool)
 
 
-def _todo_write_guidance_if_present(host: LlmStepHost) -> str | None:
-    has_todo = any(
-        row.manifest.name == "todo_write"
-        for row in host._deps.tool_registry.list_registered()
-    )
-    if not has_todo:
+def _todo_write_guidance_if_present(
+    effective_tool_names: tuple[str, ...],
+) -> str | None:
+    if "todo_write" not in effective_tool_names:
         return None
     return todo_write_guidance()
+
+
+def _remember_prompt_surface(
+    context: RunContext,
+    *,
+    effective_tool_names: tuple[str, ...],
+    prompt_fragments: tuple[str, ...],
+) -> None:
+    metadata = getattr(context, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    metadata["effective_tool_names"] = effective_tool_names
+    metadata["prompt_fragments"] = prompt_fragments
 
 
 def _react_system_instruction(host: LlmStepHost, context: RunContext) -> str | None:
@@ -579,17 +648,32 @@ def _react_system_instruction(host: LlmStepHost, context: RunContext) -> str | N
     if context.run_input.app_metadata.get("chat_mode") is True:
         from agent_driver.tools.builtin.python_imports import scientific_imports_enabled
 
+        effective_tool_names = _effective_request_tool_names(host, context)
+        prompt_fragments = react_chat_tool_policy_fragment_names(effective_tool_names)
+        _remember_prompt_surface(
+            context,
+            effective_tool_names=effective_tool_names,
+            prompt_fragments=prompt_fragments,
+        )
         lines.append(
             react_chat_tool_policy(
                 include_scientific_python=scientific_imports_enabled(
                     host._config.python_tool
-                )
+                ),
+                available_tool_names=effective_tool_names,
             )
         )
-    python_addendum = _python_tool_addendum_if_present(host)
+    else:
+        effective_tool_names = _effective_request_tool_names(host, context)
+        _remember_prompt_surface(
+            context,
+            effective_tool_names=effective_tool_names,
+            prompt_fragments=tuple(),
+        )
+    python_addendum = _python_tool_addendum_if_present(host, effective_tool_names)
     if python_addendum:
         lines.append(python_addendum)
-    todo_guidance = _todo_write_guidance_if_present(host)
+    todo_guidance = _todo_write_guidance_if_present(effective_tool_names)
     if todo_guidance:
         lines.append(todo_guidance)
     workspace_cwd = context.run_input.app_metadata.get("workspace_cwd")
@@ -615,6 +699,45 @@ def _chat_mode_runtime_reminders(context: RunContext) -> list[str]:
             "answer/draft now; use tools only if needed for missing facts, then "
             "produce the final deliverable. Do not ask for plan approval or another "
             "clarification unless a safety requirement blocks progress."
+        )
+    python_policy = context.run_input.tool_policy.metadata.get(
+        "python_reliability_request"
+    )
+    policy_allowed = context.run_input.tool_policy.allowed_tools
+    policy_denied = context.run_input.tool_policy.denied_tools or []
+    python_allowed_by_policy = "python" not in policy_denied and (
+        policy_allowed is None or "python" in policy_allowed
+    )
+    if (
+        isinstance(python_policy, dict)
+        and python_policy.get("enabled") is True
+        and python_allowed_by_policy
+    ):
+        reminders.append(
+            "Runtime reminder: python_reliability_request. The current user turn "
+            "asks for exact calculation/counting; call the python tool before the "
+            "final answer, then answer naturally from the execution result."
+        )
+    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
+    if (
+        isinstance(task_contract, dict)
+        and task_contract.get("research_depth") == RESEARCH_DEPTH_SOURCE_VERIFIED
+        and "web_fetch" not in policy_denied
+        and (policy_allowed is None or "web_fetch" in policy_allowed)
+    ):
+        reminders.append(
+            "Runtime reminder: source_verified_report. For report/deep-research "
+            "work, search results are candidates, not evidence. Use web_fetch on "
+            "multiple relevant URLs before final synthesis when URLs are available. "
+            "When you synthesize the final answer from fetched web evidence, include "
+            "Markdown links to the concrete fetched/source URLs you relied on."
+        )
+    if context.metadata.get("research_fetch_fallback_required") is True:
+        reminders.append(
+            "Runtime reminder: research_fetch_fallback. Multiple page fetches "
+            "failed; do not retry the same fetch loop. Answer from available "
+            "search metadata and explicitly state that full pages could not be "
+            "verified."
         )
     if context.metadata.get("approved_plan"):
         reminders.append(
@@ -650,8 +773,10 @@ def _chat_mode_runtime_reminders(context: RunContext) -> list[str]:
             reminders.append(
                 "Runtime reminder: planning_mode_sparse. Session todos are active: "
                 "follow existing todos, update statuses with todo_write "
-                "(merge=true) as each step completes, and do not restate the full "
-                "plan checklist in chat."
+                "(merge=true) as each step completes, keep moving to the next "
+                "unfinished todo, and do not give a final answer until the "
+                "requested plan is complete. Do not restate the full plan "
+                "checklist in chat."
             )
     return reminders
 

@@ -154,7 +154,60 @@ def test_update_tool_protocol_messages_compacts_web_fetch_payload() -> None:
     payload = json.loads(tool_rows[-1]["content"])
     assert "content" not in payload
     assert payload["metadata"]["title"] == "Example"
+    assert payload["untrusted_data_notice"].startswith("Fetched web page content")
     assert len(payload["excerpt"]) <= 2500
+
+
+def test_update_tool_protocol_messages_uses_normalized_alias_name() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="read_url",
+                    tool_call_id="call_f1",
+                    args={"url": "https://example.com"},
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    envelope = ToolResultEnvelope(
+        call=ToolCall(
+            tool_name="web_fetch",
+            tool_call_id="call_f1",
+            args={"url": "https://example.com"},
+            metadata={
+                "original_tool_name": "read_url",
+                "tool_alias_normalized": True,
+            },
+        ),
+        decision=ToolPolicyDecision.ALLOW,
+        structured_output={
+            "summary": "fetched https://example.com",
+            "url": "https://example.com",
+        },
+        truncated=False,
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        run_input=SimpleNamespace(messages=(), input="hello"),
+        metadata={},
+    )
+    _update_tool_protocol_messages(
+        context=context, result=ToolExecutionResult(envelopes=[envelope], traces=[])
+    )
+
+    rows = context.metadata["protocol_messages"]
+    assistant_rows = [
+        row for row in rows if row.get("role") == ChatRole.ASSISTANT.value
+    ]
+    assert assistant_rows
+    tool_calls = assistant_rows[-1]["metadata"]["tool_calls"]
+    assert tool_calls[0]["function"]["name"] == "web_fetch"
 
 
 def test_update_tool_protocol_messages_adds_web_fetch_verification_hint() -> None:
@@ -331,6 +384,346 @@ def test_deliverable_request_forces_final_answer_after_data_tool() -> None:
     assert _should_force_final_answer(context) is True
 
 
+def test_source_verified_research_waits_for_fetched_sources() -> None:
+    context = SimpleNamespace(
+        tool_calls=1,
+        llm_step_count=1,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                    }
+                },
+                allowed_tools=None,
+                denied_tools=[],
+            ),
+        ),
+        metadata={
+            "effective_tool_names": ("web_search", "web_fetch"),
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "web_search",
+                        "args": {"query": "fork join queues"},
+                    }
+                }
+            ],
+        },
+    )
+
+    assert _should_force_final_answer(context) is False
+
+    context.metadata["tool_results"].extend(
+        [
+            {
+                "call": {
+                    "tool_name": "web_fetch",
+                    "args": {"url": "https://example.com/a"},
+                },
+                "structured_output": {"url": "https://example.com/a", "text": "a"},
+                "error": None,
+            },
+            {
+                "call": {
+                    "tool_name": "web_fetch",
+                    "args": {"url": "https://example.org/b"},
+                },
+                "structured_output": {"url": "https://example.org/b", "text": "b"},
+                "error": None,
+            },
+        ]
+    )
+
+    assert _should_force_final_answer(context) is True
+
+
+def test_source_verified_research_requires_distinct_fetched_domains() -> None:
+    context = SimpleNamespace(
+        tool_calls=3,
+        llm_step_count=3,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                    }
+                },
+                allowed_tools=None,
+                denied_tools=[],
+            ),
+        ),
+        metadata={
+            "effective_tool_names": ("web_search", "web_fetch"),
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "web_search",
+                        "args": {"query": "fork join queues"},
+                    }
+                },
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.com/a"},
+                    },
+                    "structured_output": {"url": "https://example.com/a", "text": "a"},
+                    "error": None,
+                },
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.com/b"},
+                    },
+                    "structured_output": {"url": "https://example.com/b", "text": "b"},
+                    "error": None,
+                },
+            ],
+        },
+    )
+
+    assert _should_force_final_answer(context) is False
+
+
+def test_research_satisfied_forces_final_even_with_synthesis_todo_pending() -> None:
+    context = SimpleNamespace(
+        tool_calls=3,
+        llm_step_count=3,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                    }
+                },
+                allowed_tools=None,
+                denied_tools=[],
+            ),
+        ),
+        metadata={
+            "effective_tool_names": ("web_search", "web_fetch", "todo_write"),
+            "planning_state": {
+                "run_id": "run_research",
+                "todos": [
+                    {"todo_id": "search", "content": "Search", "status": "completed"},
+                    {"todo_id": "fetch", "content": "Fetch", "status": "completed"},
+                    {
+                        "todo_id": "synthesize",
+                        "content": "Write final synthesis",
+                        "status": "in_progress",
+                    },
+                ],
+                "metadata": {},
+            },
+            "tool_results": [
+                {"call": {"tool_name": "web_search", "args": {"query": "q"}}},
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.com/a"},
+                    },
+                    "structured_output": {"url": "https://example.com/a", "text": "a"},
+                    "error": None,
+                },
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.org/b"},
+                    },
+                    "structured_output": {"url": "https://example.org/b", "text": "b"},
+                    "error": None,
+                },
+            ],
+        },
+    )
+
+    assert _should_force_final_answer(context) is True
+
+
+def test_research_deliverable_waits_for_source_verified_fetches() -> None:
+    context = SimpleNamespace(
+        tool_calls=1,
+        llm_step_count=1,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "deliverable_request": {"enabled": True},
+                    "task_contract": {
+                        "kind": "deliverable",
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                    },
+                },
+                allowed_tools=None,
+                denied_tools=[],
+            ),
+        ),
+        metadata={
+            "effective_tool_names": ("web_search", "web_fetch"),
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "web_search",
+                        "args": {"query": "Fender history"},
+                    }
+                }
+            ],
+        },
+    )
+
+    assert _should_force_final_answer(context) is False
+
+
+def test_source_verified_research_allows_final_after_repeated_fetch_failures() -> None:
+    context = SimpleNamespace(
+        tool_calls=3,
+        llm_step_count=3,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                    }
+                },
+                allowed_tools=None,
+                denied_tools=[],
+            ),
+        ),
+        metadata={
+            "effective_tool_names": ("web_search", "web_fetch"),
+            "tool_results": [
+                {"call": {"tool_name": "web_search", "args": {"query": "paper"}}},
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.com/a"},
+                    },
+                    "error": {"code": "fetch_failed"},
+                },
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.org/b"},
+                    },
+                    "structured_output": {"error_code": "timeout"},
+                },
+            ],
+        },
+    )
+
+    assert _should_force_final_answer(context) is True
+    assert context.metadata["research_fetch_fallback_required"] is True
+
+
+def test_failed_fetch_domain_does_not_satisfy_source_diversity() -> None:
+    context = SimpleNamespace(
+        tool_calls=3,
+        llm_step_count=2,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                    }
+                },
+                allowed_tools=None,
+                denied_tools=[],
+            ),
+        ),
+        metadata={
+            "effective_tool_names": ("web_search", "web_fetch"),
+            "tool_results": [
+                {"call": {"tool_name": "web_search", "args": {"query": "paper"}}},
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.com/a"},
+                    },
+                    "structured_output": {"url": "https://example.com/a", "text": "a"},
+                    "error": None,
+                },
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://blocked.example.org/b"},
+                    },
+                    "structured_output": {
+                        "url": "https://blocked.example.org/b",
+                        "status": "failed",
+                        "error": "HTTP 403",
+                    },
+                    "error": {"message": "HTTP 403"},
+                },
+            ],
+        },
+    )
+
+    assert _should_force_final_answer(context) is False
+
+
+def test_deliverable_request_waits_for_unfinished_todos_after_data_tool() -> None:
+    context = SimpleNamespace(
+        tool_calls=1,
+        llm_step_count=1,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={"deliverable_request": {"enabled": True}}
+            ),
+        ),
+        metadata={
+            "planning_state": {
+                "run_id": "run_todos",
+                "todos": [
+                    {
+                        "todo_id": "search",
+                        "content": "Search sources",
+                        "status": "completed",
+                    },
+                    {
+                        "todo_id": "analyze",
+                        "content": "Analyze second source",
+                        "status": "pending",
+                    },
+                ],
+                "metadata": {},
+            },
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "web_search",
+                        "args": {"query": "fork join queues"},
+                    }
+                }
+            ],
+        },
+    )
+    assert _should_force_final_answer(context) is False
+
+
 def test_deliverable_request_forces_after_progress_only_tool() -> None:
     context = SimpleNamespace(
         tool_calls=1,
@@ -354,3 +747,88 @@ def test_deliverable_request_forces_after_progress_only_tool() -> None:
         },
     )
     assert _should_force_final_answer(context) is True
+
+
+def test_python_reliability_request_forces_final_after_python_result() -> None:
+    context = SimpleNamespace(
+        tool_calls=1,
+        llm_step_count=1,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={"python_reliability_request": {"enabled": True}}
+            ),
+        ),
+        metadata={
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "python",
+                        "args": {"code": "print(17 * 23)"},
+                    },
+                    "summary": "python ok: 1 obs",
+                    "error": None,
+                }
+            ]
+        },
+    )
+    assert _should_force_final_answer(context) is True
+
+
+def test_research_request_waits_for_pending_python_reliability_result() -> None:
+    context = SimpleNamespace(
+        tool_calls=1,
+        llm_step_count=1,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                    },
+                    "python_reliability_request": {"enabled": True},
+                }
+            ),
+        ),
+        metadata={
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "web_search",
+                        "args": {"query": "population"},
+                    }
+                }
+            ]
+        },
+    )
+    assert _should_force_final_answer(context) is False
+
+
+def test_python_policy_error_does_not_force_final_before_recovery() -> None:
+    context = SimpleNamespace(
+        tool_calls=1,
+        llm_step_count=1,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={"python_reliability_request": {"enabled": True}}
+            ),
+        ),
+        metadata={
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "python",
+                        "args": {"code": "import os"},
+                    },
+                    "summary": "python policy: imports blocked by sandbox (os)",
+                    "error": None,
+                }
+            ]
+        },
+    )
+    assert _should_force_final_answer(context) is False

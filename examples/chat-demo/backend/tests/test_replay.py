@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+from app.deps import reset_dependency_caches
+from app.main import create_app
+from httpx import ASGITransport, AsyncClient
+
+pytestmark = pytest.mark.asyncio
+
 
 async def test_session_replay_returns_events(client) -> None:
     session_id: str | None = None
@@ -90,3 +99,50 @@ async def test_run_trace_summary_returns_scenario_verdict(client) -> None:
     assert payload["terminal_event"] == "run_completed"
     assert payload["verdict"] in {"pass", "fail"}
     assert "failures" in payload
+
+
+async def test_fake_compaction_notice_scenario_emits_lifecycle(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("AGENT_DRIVER_PROVIDER", "fake")
+    monkeypatch.setenv("CHAT_DEMO_FAKE_SCENARIO", "compaction_notice")
+    monkeypatch.setenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "memory")
+    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "web")
+    monkeypatch.setenv("CHAT_DEMO_SESSIONS_PATH", str(tmp_path / "sessions.json"))
+    reset_dependency_caches()
+    application = create_app()
+
+    run_id: str | None = None
+    events: list[str] = []
+    payloads: list[dict[str, object]] = []
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as http:
+        async with http.stream(
+            "POST",
+            "/api/chat/messages",
+            json={"message": "trigger synthetic compaction"},
+        ) as response:
+            assert response.status_code == 200
+            run_id = response.headers.get("x-run-id")
+            async for line in response.aiter_lines():
+                if line.startswith("event: "):
+                    event = line.removeprefix("event: ").strip()
+                    events.append(event)
+                    if event == "run_completed":
+                        break
+                if line.startswith("data: "):
+                    payloads.append(json.loads(line.removeprefix("data: ")))
+
+        assert run_id is not None
+        summary = await http.get(f"/api/chat/runs/{run_id}/trace-summary")
+
+    assert "memory_compaction_started" in events
+    assert "memory_compacted" in events
+    assert any(
+        item.get("event") == "memory_compacted"
+        and item.get("data", {}).get("outcome") == "successful"
+        for item in payloads
+    )
+    assert summary.status_code == 200
+    assert summary.json()["compaction"]["successful"] == 1
+    reset_dependency_caches()

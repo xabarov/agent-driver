@@ -106,3 +106,35 @@ def test_planning_verdict_absent_when_no_planning_tool_called() -> None:
     )
 
     assert "planningExecuted" not in metadata
+
+
+def test_aggregate_message_metadata_includes_compaction_lifecycle() -> None:
+    metadata = aggregate_message_metadata_from_events(
+        [
+            {
+                "event": "memory_compaction_started",
+                "data": {
+                    "compaction_id": "compact_1",
+                    "mode": "partial",
+                    "reason": "token_pressure",
+                },
+            },
+            {
+                "event": "memory_compacted",
+                "data": {
+                    "compaction_id": "compact_1",
+                    "mode": "partial",
+                    "outcome": "success",
+                    "summarized_message_count": 9,
+                },
+            },
+        ]
+    )
+
+    assert metadata["compaction"] == {
+        "status": "done",
+        "attempts": 1,
+        "compaction_id": "compact_1",
+        "mode": "partial",
+        "summarized_message_count": 9,
+    }

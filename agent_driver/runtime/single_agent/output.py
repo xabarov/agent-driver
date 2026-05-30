@@ -29,8 +29,12 @@ from agent_driver.contracts.context import (
 from agent_driver.contracts.enums import RunStatus
 from agent_driver.contracts.interrupts import ApprovalPayload, InterruptRequest
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.contracts.runtime import AgentRunOutput
+from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
+from agent_driver.observability.source_evidence import (
+    merge_source_evidence,
+    source_evidence_from_tool_result,
+)
 from agent_driver.runtime.single_agent.output_builders import (
     build_memory_audit,
     build_memory_projection_for_context,
@@ -95,7 +99,9 @@ class SingleAgentOutputMixin:
         self._maybe_update_session_memory(context=context, session_id=session_id)
         return [digest_ref]
 
-    def _maybe_update_session_memory(self, *, context: RunContext, session_id: str) -> None:
+    def _maybe_update_session_memory(
+        self, *, context: RunContext, session_id: str
+    ) -> None:
         """Refresh durable session memory from turn digests when threshold is met."""
         previous = load_session_memory(
             artifact_store=self._deps.artifact_store,
@@ -198,6 +204,36 @@ class SingleAgentOutputMixin:
             context.metadata["raw_assistant_content"] = raw
         return cleaned or None
 
+    def _source_evidence_from_tool_results(
+        self, tool_results: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Build a run-level source evidence list from normalized tool results."""
+        records: list[dict[str, Any]] = []
+        for item in tool_results:
+            call = item.get("call")
+            if not isinstance(call, dict):
+                continue
+            tool_name = call.get("tool_name")
+            if not isinstance(tool_name, str):
+                continue
+            if item.get("error"):
+                continue
+            decision = str(item.get("decision") or "").lower()
+            if decision in {"deny", "interrupt"}:
+                continue
+            tool_call_id = call.get("tool_call_id")
+            structured = item.get("structured_output")
+            records.extend(
+                source_evidence_from_tool_result(
+                    tool_name=tool_name,
+                    structured_output=structured,
+                    tool_call_id=(
+                        tool_call_id if isinstance(tool_call_id, str) else None
+                    ),
+                )
+            )
+        return merge_source_evidence(records)
+
     def _build_output(
         self,
         context: RunContext,
@@ -253,9 +289,13 @@ class SingleAgentOutputMixin:
         digest_refs: list[dict[str, Any]],
     ) -> dict[str, Any]:
         subagent_runs_raw = list_dict_metadata(context, "subagent_runs")
+        source_evidence = self._source_evidence_from_tool_results(
+            normalized_tool_results
+        )
         return {
             "graph_id": self.graph_id,
             "tool_results": normalized_tool_results,
+            "source_evidence": source_evidence,
             "artifact_refs": self._normalize_context_artifacts(
                 context.run_id, artifact_refs
             ),
@@ -300,6 +340,7 @@ class SingleAgentOutputMixin:
         artifact_refs = list_dict_metadata(context, "artifact_refs")
         digest_refs = list_dict_metadata(context, "digest_refs")
         tool_results = list_dict_metadata(context, "tool_results")
+        source_evidence = self._source_evidence_from_tool_results(tool_results)
         projection = build_memory_projection_for_context(
             context,
             answer=None,
@@ -322,6 +363,7 @@ class SingleAgentOutputMixin:
             metadata={
                 "graph_id": self.graph_id,
                 "tool_results": tool_results,
+                "source_evidence": source_evidence,
                 "artifact_refs": self._normalize_context_artifacts(
                     context.run_id, artifact_refs
                 ),

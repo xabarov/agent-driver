@@ -11,6 +11,7 @@ import {
   isTokenDelta,
   isToolCallCompleted,
   isToolCallStarted,
+  parseCompactionNotice,
   parseSubagentLifecycleEvent,
   parseToolStatesFromEvent,
   type RunStreamEvent,
@@ -19,7 +20,7 @@ import { invalidateSessions, sessionDetailQueryKey } from "../lib/sessions";
 import { resumeRunStream, startChatStream } from "../lib/sse";
 import { parseLlmCompletedData } from "../lib/messageMetadata";
 import { parsePlanningSnapshot } from "../lib/planning";
-import { formatStreamError } from "../lib/streamError";
+import { formatRunFailure, formatStreamError } from "../lib/streamError";
 import { useChatStore } from "../store/chatStore";
 import { normalizeToolPreset, useSettingsStore } from "../store/settingsStore";
 
@@ -85,6 +86,10 @@ function applyStreamEvent(
   if (subagentLifecycle) {
     store.applySubagentLifecycle(assistantId, subagentLifecycle);
   }
+  const compactionNotice = parseCompactionNotice(event);
+  if (compactionNotice) {
+    store.upsertCompactionNotice(assistantId, compactionNotice);
+  }
   if (event.event === "llm_call_completed" || event.event === "run_completed") {
     const snapshot = parsePlanningSnapshot(event.data.planning_snapshot);
     if (snapshot) {
@@ -122,12 +127,8 @@ function applyStreamEvent(
     }
   }
   if (event.event === "run_failed") {
-    const reason =
-      typeof event.data.error === "string"
-        ? event.data.error
-        : typeof event.data.message === "string"
-          ? event.data.message
-          : "Run failed";
+    const reason = formatRunFailure(event.data);
+    store.replaceAssistantContent(assistantId, `**Run failed**\n\n${reason}`);
     store.setLastError(reason);
     store.setStreaming(false);
     store.finishTurn(assistantId);

@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from agent_driver.context.compaction import CompactionOrchestrator
-from agent_driver.contracts import AgentRunInput, CompactionMode, CompactionResult
+from agent_driver.contracts import (
+    AgentRunInput,
+    CompactionDecision,
+    CompactionMode,
+    CompactionResult,
+)
 from agent_driver.contracts.enums import RuntimeEventType
 from agent_driver.runtime.single_agent.compaction_stage import (
     _emit_compaction_outcome,
+    _emit_compaction_started,
     _maybe_emit_circuit_breaker_warning,
 )
 from agent_driver.runtime.single_agent.types import EventSpec, RunContext
@@ -58,6 +64,40 @@ def _force_failure(orchestrator: CompactionOrchestrator) -> None:
         result=result,
         failures=[{"kind": "forced"}],
     )
+
+
+# ---------------------------------------------------------------------------
+# _emit_compaction_started
+# ---------------------------------------------------------------------------
+
+
+def test_emit_compaction_started_writes_lifecycle_event() -> None:
+    """Helper emits MEMORY_COMPACTION_STARTED before the terminal outcome."""
+    host = _CaptureHost()
+    orchestrator = CompactionOrchestrator()
+    decision = CompactionDecision(
+        eligible=True,
+        mode=CompactionMode.PARTIAL,
+        metadata={"token_pressure_state": "blocking"},
+    )
+    _emit_compaction_started(
+        host,  # type: ignore[arg-type]
+        context=_make_context(),
+        decision=decision,
+        compaction_id="cmp_started",
+        token_pressure_state="blocking",
+        orchestrator=orchestrator,
+    )
+
+    assert len(host.events) == 1
+    event = host.events[0]
+    assert event.event_type is RuntimeEventType.MEMORY_COMPACTION_STARTED
+    payload = event.payload or {}
+    assert payload["compaction_id"] == "cmp_started"
+    assert payload["mode"] == "partial"
+    assert payload["reason"] == "token_pressure"
+    assert payload["token_pressure_state"] == "blocking"
+    assert payload["compaction_state"]["circuit_breaker_open"] is False
 
 
 # ---------------------------------------------------------------------------

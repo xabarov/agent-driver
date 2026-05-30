@@ -57,6 +57,128 @@ describe("eventsToMessages", () => {
     expect(messages[1]).toMatchObject({ role: "tool", name: "web_search", status: "done" });
   });
 
+  it("keeps replay source evidence on tool messages", () => {
+    const messages = eventsToMessages([
+      ev("run_started", 1),
+      ev("tool_call_started", 2, {
+        tools: [
+          {
+            tool_name: "web_fetch",
+            tool_call_id: "tc1",
+            args: { url: "https://example.com/source" },
+          },
+        ],
+      }),
+      ev("tool_call_completed", 3, {
+        tools: [
+          {
+            tool_name: "web_fetch",
+            tool_call_id: "tc1",
+            status: "completed",
+            sources: [
+              {
+                id: "web_fetch:tc1:1",
+                url: "https://example.com/source",
+                canonical_url: "https://example.com/source",
+                source_type: "web_fetch",
+                title: "Fetched source",
+              },
+            ],
+          },
+        ],
+      }),
+      ev("run_completed", 4),
+    ]);
+
+    expect(messages[0]).toMatchObject({
+      role: "tool",
+      name: "web_fetch",
+      sources: [
+        {
+          sourceType: "web_fetch",
+          title: "Fetched source",
+          domain: "example.com",
+        },
+      ],
+    });
+  });
+
+  it("does not attach source evidence from blocked fetch tool messages", () => {
+    const messages = eventsToMessages([
+      ev("run_started", 1),
+      ev("tool_call_completed", 2, {
+        tools: [
+          {
+            tool_name: "web_fetch",
+            tool_call_id: "tc1",
+            status: "completed",
+            result_summary: "web_fetch blocked by upstream HTTP 403",
+            sources: [
+              {
+                id: "web_fetch:tc1:1",
+                url: "https://example.com/blocked",
+                canonical_url: "https://example.com/blocked",
+                source_type: "web_fetch",
+                title: "Blocked source",
+              },
+            ],
+          },
+        ],
+      }),
+      ev("token_delta", 3, { delta_text: "No trusted source." }),
+      ev("run_completed", 4),
+    ]);
+
+    expect(messages[0]).toMatchObject({
+      role: "tool",
+      name: "web_fetch",
+      status: "done",
+    });
+    expect(messages[0].role).toBe("tool");
+    if (messages[0].role === "tool") {
+      expect(messages[0].sources).toBeUndefined();
+    }
+    const assistant = messages.find((message) => message.role === "assistant");
+    expect(assistant?.sources).toBeUndefined();
+  });
+
+  it("attaches collected replay sources to the final assistant answer", () => {
+    const messages = eventsToMessages([
+      ev("run_started", 1),
+      ev("tool_call_completed", 2, {
+        tools: [
+          {
+            tool_name: "web_fetch",
+            tool_call_id: "tc1",
+            status: "completed",
+            sources: [
+              {
+                id: "web_fetch:tc1:1",
+                url: "https://example.com/source",
+                canonical_url: "https://example.com/source",
+                source_type: "web_fetch",
+                title: "Fetched source",
+              },
+            ],
+          },
+        ],
+      }),
+      ev("token_delta", 3, { delta_text: "Final answer without explicit links." }),
+      ev("run_completed", 4),
+    ]);
+
+    const assistant = messages.find((message) => message.role === "assistant");
+    expect(assistant).toMatchObject({
+      role: "assistant",
+      sources: [
+        {
+          sourceType: "web_fetch",
+          title: "Fetched source",
+        },
+      ],
+    });
+  });
+
   it("keeps denied tool calls visible for policy feedback", () => {
     const messages = eventsToMessages([
       ev("run_started", 1),
@@ -120,6 +242,52 @@ describe("eventsToMessages", () => {
       ev("run_completed", 3),
     ]);
     expect(messages).toEqual([]);
+  });
+
+  it("renders compaction lifecycle once and updates its status", () => {
+    const messages = eventsToMessages([
+      ev("run_started", 1),
+      ev("memory_compaction_started", 2, {
+        compaction_id: "compact_1",
+        mode: "partial",
+        reason: "token_pressure",
+      }),
+      ev("memory_compacted", 3, {
+        compaction_id: "compact_1",
+        mode: "partial",
+        outcome: "success",
+        summarized_message_count: 8,
+      }),
+      ev("token_delta", 4, { delta_text: "Done" }),
+      ev("run_completed", 5),
+    ]);
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      role: "compaction",
+      compactionId: "compact_1",
+      status: "done",
+      summarizedMessageCount: 8,
+    });
+    expect(messages[1]).toMatchObject({ role: "assistant", content: "Done" });
+  });
+
+  it("hides skipped compactions in normal replay messages", () => {
+    const messages = eventsToMessages([
+      ev("run_started", 1),
+      ev("memory_compacted", 2, {
+        compaction_id: "compact_1",
+        outcome: "skipped",
+      }),
+      ev("token_delta", 3, { delta_text: "No compaction needed" }),
+      ev("run_completed", 4),
+    ]);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      role: "assistant",
+      content: "No compaction needed",
+    });
   });
 });
 

@@ -7,7 +7,12 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from agent_driver.contracts import AgentRunInput, ChatMessage, RuntimeEventType, UsageSummary
+from agent_driver.contracts import (
+    AgentRunInput,
+    ChatMessage,
+    RuntimeEventType,
+    UsageSummary,
+)
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmProviderKind,
@@ -17,8 +22,12 @@ from agent_driver.llm.contracts import (
     ProviderStatus,
 )
 from agent_driver.llm.providers_impl.fake import FakeProvider
+from agent_driver.runtime import (
+    InMemoryCheckpointStore,
+    InMemoryEventLog,
+    SingleAgentRunner,
+)
 from agent_driver.runtime.errors import RuntimeExecutionError
-from agent_driver.runtime import InMemoryCheckpointStore, InMemoryEventLog, SingleAgentRunner
 
 
 @pytest.mark.asyncio
@@ -102,6 +111,18 @@ class _HangingStreamProvider(_FailingStreamProvider):
         yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.STOP)
 
 
+class _EmptyHeartbeatStreamProvider(_FailingStreamProvider):
+    """Test provider that keeps yielding empty stream events forever."""
+
+    def __init__(self) -> None:
+        super().__init__(fail_after_first_token=False)
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        while True:
+            await asyncio.sleep(0.002)
+            yield LlmStreamEvent(event="delta")
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail_after_first_token", [False, True])
 async def test_runner_stream_failure_emits_terminal_failure_event(
@@ -162,10 +183,42 @@ async def test_runner_stream_idle_timeout_fails_after_partial_delta() -> None:
 
     events = event_log.list_for_run("run_stream_idle_timeout")
     assert [event.type for event in events].count(RuntimeEventType.TOKEN_DELTA) == 1
-    assert RuntimeEventType.ASSISTANT_MESSAGE_TOMBSTONED in [event.type for event in events]
+    assert RuntimeEventType.ASSISTANT_MESSAGE_TOMBSTONED in [
+        event.type for event in events
+    ]
     assert any(
         event.type == RuntimeEventType.RUN_FAILED
         and event.payload.get("reason") == "model_error"
+        and event.payload.get("transition_reason") == "stream_idle_timeout"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_stream_idle_timeout_ignores_empty_heartbeats() -> None:
+    """Empty provider chunks must not keep the assistant pending forever."""
+    event_log = InMemoryEventLog()
+    runner = SingleAgentRunner(
+        provider=_EmptyHeartbeatStreamProvider(),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=event_log,
+    )
+    with pytest.raises(RuntimeExecutionError):
+        await runner.run(
+            AgentRunInput(
+                input="stream empty heartbeats",
+                run_id="run_stream_empty_heartbeat_timeout",
+                agent_id="agent",
+                graph_preset="single_react",
+                stream=True,
+                app_metadata={"llm_stream_idle_timeout_seconds": 0.01},
+            )
+        )
+
+    events = event_log.list_for_run("run_stream_empty_heartbeat_timeout")
+    assert RuntimeEventType.TOKEN_DELTA not in [event.type for event in events]
+    assert any(
+        event.type == RuntimeEventType.RUN_FAILED
         and event.payload.get("transition_reason") == "stream_idle_timeout"
         for event in events
     )

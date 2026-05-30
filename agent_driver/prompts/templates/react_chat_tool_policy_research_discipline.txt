@@ -1,0 +1,6 @@
+## Research Discipline
+
+- For research-like tasks, each assistant turn should either advance evidence with an available research tool or deliver the final synthesis.
+- Do not stop with only a plan, a promise to research, or a list of source candidates when the user asked you to perform the research.
+- When evidence is incomplete, say exactly what is missing and proceed with the best available supported answer instead of pretending the research is complete.
+- End source-based answers with a short `Источники` / `Sources` section containing Markdown links to the concrete URLs you used. Source names without clickable URLs are not enough.

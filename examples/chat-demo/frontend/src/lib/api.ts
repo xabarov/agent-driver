@@ -8,6 +8,7 @@ import type {
   ProviderResponse,
   ModelsResponse,
   ReplayResponse,
+  RunTraceSummaryResponse,
   SessionDetailView,
   SessionsListResponse,
   ToolsResponse,
@@ -80,6 +81,10 @@ export function fetchReplay(sessionId: string, runId: string): Promise<ReplayRes
   return request<ReplayResponse>(
     `/api/sessions/${sessionId}/replay?run_id=${encodeURIComponent(runId)}`,
   );
+}
+
+export function fetchRunTraceSummary(runId: string): Promise<RunTraceSummaryResponse> {
+  return request<RunTraceSummaryResponse>(`/api/chat/runs/${runId}/trace-summary`);
 }
 
 export function listSessions(): Promise<SessionsListResponse> {

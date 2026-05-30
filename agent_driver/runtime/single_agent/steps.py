@@ -17,6 +17,7 @@ from agent_driver.runtime.single_agent.step_planning import build_planning_snaps
 from agent_driver.runtime.single_agent.subagent_stage import (
     maybe_execute_subagent_group,
 )
+from agent_driver.runtime.single_agent.todo_reminders import has_unfinished_todos
 from agent_driver.runtime.single_agent.tool_stage import execute_tool_stage_step
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
@@ -271,6 +272,10 @@ def _maybe_build_continuation_transition(
         from agent_driver.runtime.single_agent.continuation import ContinuationIntent
 
         intent = ContinuationIntent(True, "research_requirement_missing")
+    if not intent.should_continue and has_unfinished_todos(context):
+        from agent_driver.runtime.single_agent.continuation import ContinuationIntent
+
+        intent = ContinuationIntent(True, "unfinished_todos")
     if not intent.should_continue:
         return None
     from agent_driver.contracts.enums import ChatRole
@@ -308,6 +313,13 @@ def _maybe_build_continuation_transition(
             "The user explicitly requested internet/search/source research, but "
             "there are no web/data tool results in the context. Use native "
             "web_search/web_fetch tool calls now before giving the final answer."
+        )
+    elif intent.reason == "unfinished_todos":
+        nudge = (
+            "The session checklist still has pending or in-progress items. "
+            "Continue with the next unfinished todo now; use tools if needed, "
+            "update statuses with todo_write, and only give the final answer "
+            "after the requested plan is complete. Reply in the user's language."
         )
     messages.append(
         ChatMessage(

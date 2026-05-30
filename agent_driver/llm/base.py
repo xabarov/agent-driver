@@ -49,8 +49,8 @@ def _parse_retry_after(header_value: str | None) -> float | None:
     except ValueError:
         pass
     try:
-        from email.utils import parsedate_to_datetime
         from datetime import datetime, timezone
+        from email.utils import parsedate_to_datetime
 
         when = parsedate_to_datetime(raw)
         if when is None:
@@ -257,6 +257,8 @@ class ProviderBase:
                             await asyncio.sleep(delay)
                             break  # break the inner stream-open retry loop, continue outer status loop
                         try:
+                            if response.status_code >= 400:
+                                await response.aread()
                             response.raise_for_status()
                             yield response.aiter_lines()
                             return

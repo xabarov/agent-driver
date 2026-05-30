@@ -27,13 +27,13 @@ import pytest
 
 from agent_driver.contracts import AgentRunInput, ToolCall
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.usage import UsageSummary
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmRequest,
     LlmResponse,
 )
 from agent_driver.llm.providers_impl.fake import FakeProvider
-from agent_driver.contracts.usage import UsageSummary
 from agent_driver.sdk import create_agent
 from agent_driver.tools import ToolSet
 
@@ -199,3 +199,33 @@ async def test_inner_loop_override_wins_over_caller_tool_choice() -> None:
     # ... but on the third (after two identical args), the inner-loop
     # safety rail forces "none" so the model has to finalize.
     assert provider.requests[2].tool_choice == "none"
+
+
+@pytest.mark.asyncio
+async def test_chat_mode_initial_tool_choice_only_applies_to_first_llm_call() -> None:
+    """Chat hosts use AgentRunInput.tool_choice as an initial nudge.
+
+    After the first tool result, the model should return to auto choice unless
+    a runtime guard sets an explicit override.
+    """
+    provider = _ForcedToolProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only("web_search"))
+
+    await agent.run(
+        AgentRunInput(
+            input="найди один источник",
+            run_id="run_tc_chat_initial_only",
+            agent_id="agent",
+            graph_preset="single_react",
+            max_steps=4,
+            max_tool_calls=3,
+            tool_choice={"type": "tool", "name": "web_search"},
+            app_metadata={"chat_mode": True},
+        )
+    )
+
+    assert provider.requests[0].tool_choice == {
+        "type": "tool",
+        "name": "web_search",
+    }
+    assert provider.requests[1].tool_choice is None

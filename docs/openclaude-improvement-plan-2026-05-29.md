@@ -28,6 +28,65 @@
   движок. Переиспользуемое поведение уходит в `agent_driver`; в demo остаются
   FastAPI/React wiring, локальные настройки, session UI и сценарии проверки.
 
+## Prompt Assembly Principle
+
+Следующий крупный шаг по prompt/runtime качеству: перейти от одного большого
+`react_chat_tool_policy.txt` с блоками вида "если доступна эта тулза..." к
+динамической сборке system prompt из короткого ядра и tool-aware фрагментов.
+
+Мотивация:
+
+- Модель должна видеть инструкции только для реально доступных в данном turn
+  инструментов. Нет `python` / `web_search` / `agent_tool` в effective tool
+  surface - нет соответствующего policy блока в prompt.
+- Tool-specific поведение должно жить ближе к tool definition:
+  `ToolManifest.description`, schema examples и небольшой prompt fragment для
+  cross-tool правил. Это совпадает с Anthropic guidance: description должна
+  объяснять, что делает tool, когда ее использовать, параметры и caveats
+  ([Anthropic Define tools](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools)).
+- OpenAI также описывает tool calling как передачу модели списка callable
+  tools в конкретном request; модель выбирает из данного списка, а не из
+  абстрактных возможностей приложения
+  ([OpenAI Function calling](https://developers.openai.com/api/docs/guides/function-calling)).
+- Большие tool surfaces ухудшают точность выбора и раздувают контекст.
+  Anthropic Tool Search прямо решает это on-demand загрузкой релевантных tools
+  и отмечает падение selection accuracy при десятках доступных tools
+  ([Anthropic Tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool)).
+- В Hermes полезная практика: сначала вычислить effective tool surface после
+  enabled/disabled/filter checks, затем строить tool schema/prompt только для
+  реально доступных возможностей. В OpenClaude похожий принцип: tool prompt
+  принадлежит конкретному tool, а deferred tools не шумят в начальном prompt.
+
+Рабочее правило: base chat policy отвечает за идентичность, язык, native tool
+calling, финальный ответ, clarification и общие recovery boundaries.
+Инструкции про web, Python execution, subagents, todo/progress planning и modal
+approval planning подключаются отдельными фрагментами только если tool реально
+попал в effective request tools после runtime policy filtering.
+
+Ожидаемый результат: prompt становится короче, меньше противоречит
+`tool_choice`, проще тестируется и лучше следует Python Zen: вместо сложного DAG
+мы делаем ясную модель "доступный инструмент -> его описание -> его небольшой
+policy fragment".
+
+Implementation slice:
+
+- [x] Ввести reusable effective tool surface helper, общий для request schema и
+  prompt assembly.
+- [x] Разрезать chat policy на base policy и tool-aware fragments:
+  repository, web, Python execution, subagents, todo checklist, approval
+  planning, clarification.
+- [x] Подключать Python addendum и todo guidance только когда соответствующий
+  tool реально остается в effective tool surface после allow/deny filtering.
+- [x] Добавить regression tests: denied/allowed tools исчезают не только из
+  `LlmRequest.tools`, но и из system prompt guidance.
+- [x] Phoenix/live replay: проверить, что chat demo не показывает модели
+  инструкции про disabled web tools и не предлагает недоступные tool paths.
+  Latest prompt-surface live replay:
+  `prompt-surface-no-web` -> `run_d566d7faef91`;
+  `prompt-surface-fetch-only` -> `run_658c229c86d8`.
+  `/trace-summary.prompt_surface` confirms no web fragments for no-web and
+  only `react_chat_tool_policy_web_fetch.txt` for fetch-only.
+
 ## Verification Loop
 
 Рабочий цикл:
@@ -44,6 +103,51 @@
 
 Для planning/search/final-answer/subagent/steering изменений обязательно
 добавлять либо provider/runtime regression, либо live probe criterion.
+
+## Chat Rendering / Citations Track
+
+Отдельный план дружелюбного chat UI зафиксирован в
+[chat-demo-markdown-citations-plan-2026-05-30.md](chat-demo-markdown-citations-plan-2026-05-30.md).
+
+Короткая цель: Markdown, math, code/Python blocks и citation cards должны
+стать штатной частью ответа, а не декоративным слоем поверх raw tool JSON.
+В reusable runtime слое нужен нормализованный `SourceEvidence` для `web_fetch`,
+`web_search` и ссылок из финального ответа; в demo остается рендеринг,
+streaming Markdown и source shelf. Это продолжает общий принцип: chat-demo
+чистый, agent-driver хранит переиспользуемый контракт.
+
+## Research Quality Track
+
+Отдельный план повышения качества research-ответов зафиксирован в
+[research-quality-improvement-plan-2026-05-31.md](research-quality-improvement-plan-2026-05-31.md).
+
+Короткая цель: research-report задачи должны проходить цикл
+`web_search -> web_fetch -> synthesis -> cited final`, а не завершаться после
+первичного списка поисковых кандидатов. Это особенно важно после сравнения
+`docs/test-examples/fork-join-queues/gpt-5.5`: прямой OpenRouter-ответ был
+лучше потому, что дошел до source-backed synthesis, а наш ответ честно
+остановился на "нашел кандидаты, но не проверил страницы".
+
+В духе Python Zen сначала делаем легкий `research_depth` contract,
+runtime-guard и prompt fragments; сложную исследовательскую DAG-оркестрацию
+добавляем только если Phoenix traces покажут, что простого цикла недостаточно.
+
+Глубокое расширение этого направления вынесено в
+[research-provider-quality-architecture-plan-2026-05-31.md](research-provider-quality-architecture-plan-2026-05-31.md):
+provider/model capabilities, bounded repair, unknown-tool guardrails,
+provider failure UX и live Phoenix gates. Это текущая рамка для решений, если
+качество research продолжает упираться в слой провайдеров или engine
+contracts, а не только в prompt.
+
+## Compaction Notification Track
+
+Отдельный план UX для процесса runtime-суммаризации/compaction зафиксирован в
+[chat-demo-compaction-notification-plan-2026-05-30.md](chat-demo-compaction-notification-plan-2026-05-30.md).
+
+Короткая цель: если агент сжимает старый контекст, пользователь должен видеть
+спокойное системное уведомление с честным статусом, outcome и debug metadata.
+Это не assistant message и не модальное окно; reusable lifecycle/trace contract
+должен жить в `agent_driver`, а chat-demo только визуализирует его.
 
 ## Closed Work
 
@@ -365,19 +469,22 @@
 - [x] Python execution всегда доступен в chat demo runtime surface вместе с
   bounded delegation и planning progress; Web Search/Web Fetch остаются
   пользовательскими переключателями.
-- [ ] Модель должна использовать `python` для:
+- [x] Модель должна использовать `python` для:
   - арифметики, счета символов/слов/строк, процентов, дат и единиц измерения;
   - статистики, вероятностей, комбинаторики, финансовых/табличных расчетов;
   - проверки результата, где LLM склонна ошибаться;
   - преобразования небольших структурированных данных, если это дешевле и
     надежнее ручного рассуждения.
-- [ ] Модель не должна использовать `python` для приветствий, простых
+- [x] Модель не должна использовать `python` для приветствий, простых
   переводов, мнений, обычного factual Q&A и задач, где tool latency явно
   дороже ответа.
-- [ ] После `python` tool call агент обязан дать человекочитаемый финал,
+- [x] После `python` tool call агент обязан дать человекочитаемый финал,
   опирающийся на результат execution, а не останавливаться на tool payload.
-- [ ] Policy error должен вести к переписыванию кода на allowed imports или к
+- [x] Policy error должен вести к переписыванию кода на allowed imports или к
   краткому объяснению ограничения, без повторения того же blocked import.
+  Runtime regression covers blocked `os` import -> recovery through allowed
+  `math`, and confirms policy errors do not trigger premature
+  `python_result_ready` force-final.
 
 ### Runtime / Prompt Slices
 
@@ -391,9 +498,12 @@
   ответ"; "не используй python для тривиального разговора".
 - [x] Slice 4: расширить `python_tool_system_addendum.txt` коротким
   decision guide и recovery rule: blocked import is policy, not missing package.
-- [ ] Slice 5: проверить, не нужен ли маленький runtime guard после успешного
+- [x] Slice 5: проверить, не нужен ли маленький runtime guard после успешного
   `python`: следующий LLM step при чистом расчетном запросе получает
   force-final reminder/tool_choice none, чтобы не уходить в лишние tools.
+  Implemented `python_reliability_request` runtime reminder and
+  `python_result_ready` force-final guard. Also fixed chat initial
+  `tool_choice` so it applies only to the first LLM call.
 
 ### Chat UI/UX
 
@@ -407,10 +517,10 @@
 - [x] В expandable details показывать:
   syntax-highlighted code, stdout, stderr/traceback, limits, allowed imports,
   raw payload для debug.
-- [ ] Для числовых результатов добавить аккуратные result chips:
+- [x] Для числовых результатов добавить аккуратные result chips:
   `result`, `rounded`, `exact` если поля можно достать из stdout/JSON без
   сложного парсинга.
-- [ ] Accessibility: карточка раскрывается клавиатурой, status читается screen
+- [x] Accessibility: карточка раскрывается клавиатурой, status читается screen
   reader, длинный output не ломает chat scroll/composer.
 
 ### Phoenix / Trace Criteria
@@ -423,7 +533,7 @@
 - [x] Добавить scenario verdict labels:
   `missed_python`, `python_no_final`, `python_policy_loop`,
   `unnecessary_python`, `python_result_ignored`.
-- [ ] Для live scenarios успех означает:
+- [x] Для live scenarios успех означает:
   tool surface содержит `python`;
   расчетные задачи реально вызывают `python`;
   финальный ответ совпадает с stdout/result;
@@ -438,15 +548,18 @@
   Ожидаем `python`, финал с кратким расчетом.
 - [x] `python-statistics`: среднее/медиана/стандартное отклонение по списку.
   Ожидаем `python`, желательно `statistics` или allowed scientific stack.
-- [ ] `python-combinatorics`: вероятность/число комбинаций.
+- [x] `python-combinatorics`: вероятность/число комбинаций.
   Ожидаем `python`, финал с формулой и результатом.
 - [x] `python-no-tool-simple`: приветствие или короткая factual задача.
   Ожидаем отсутствие `python`.
-- [ ] `web-plus-python`: найти свежие числа через web и посчитать производный
+- [x] `web-plus-python`: найти свежие числа через web и посчитать производный
   показатель через `python`. Ожидаем `web_search`/`web_fetch` + `python` +
   финальный синтез.
-- [ ] `python-policy-recovery`: попытка использовать blocked import в
+- [x] `python-policy-recovery`: попытка использовать blocked import в
   deterministic/fake provider path и проверить recovery text/UI error.
+  Implemented deterministic fake provider path plus runtime regression:
+  first call returns sandbox policy error, second call uses allowed `math`,
+  then final synthesis is forced only after successful Python output.
 
 ### Implementation Phases
 
@@ -454,10 +567,33 @@
   tool surface and prompt rendering.
 - [x] Phase B: frontend `PythonExecutionPanel`, deterministic DOM checks.
 - [x] Phase C: trace-summary verdicts and live probe scenario additions.
-- [ ] Phase D: Phoenix replay on 5-7 scenarios, prompt/runtime tuning by trace
+- [x] Phase D: Phoenix replay on 5-7 scenarios, prompt/runtime tuning by trace
   evidence.
-- [ ] Phase E: quality pass: `black`, `isort`, focused `pytest`, frontend
+  Latest replay after tuning:
+  `python-count-letters` `run_d9c903583571`;
+  `python-arithmetic` `run_c0414b14426c`;
+  `python-statistics` `run_ff1241653476`;
+  `python-combinatorics` `run_8f0adcb9e80e`;
+  `web-plus-python` `run_200031367b47`;
+  `simple-direct` `run_929fd792e31c`.
+  Trace evidence: Python is used for exact calculation/counting, simple-direct
+  uses no tools, and `python_result_ready` force-final prevents the previous
+  10-call Python loop.
+- [x] Phase E: quality pass: `black`, `isort`, focused `pytest`, frontend
   checks, Playwright live probe, meaningful `pylint` fixes for touched Python.
+  Current pass fixed new lint issues (line length, unused argument,
+  unnecessary comprehension, missing prompt helper docstrings). Remaining
+  `pylint` output is structural legacy noise in stage modules/tests, not
+  suppressed.
+
+### Planning Approval Resume Fix
+
+- [x] Fixed approved plan metadata shape: resume now stores the approval hash
+  inside `force_planning.approved_plan` instead of an unsupported top-level
+  `approved_content_hash`, so `PlanningPolicyInput` validates after approval.
+- [x] Kept public chat presets free of modal approval tools; deterministic
+  plan-approval/resume coverage uses the `dev` preset where `exit_plan_mode_v2`
+  is intentionally available.
 
 ## Completed Summary
 
@@ -557,7 +693,7 @@ Latest known good checks:
     `subagent-autonomous-delegation` `run_0be5842a4522`,
     `subagent-explicit-delegation` `run_501813483836`,
     `subagent-no-delegation-simple` `run_3534caaa18aa`;
-  - after making delegation always-on and combinable with web tools, live
+- after making delegation always-on and combinable with web tools, live
     probes passed:
     `web-search-final` `run_5f112a3ef6dd`,
     `subagent-autonomous-delegation` `run_a4378cc314d2`,
@@ -565,6 +701,16 @@ Latest known good checks:
     `subagent-no-delegation-simple` `run_83de9cb4f773`;
   - `/trace-summary` now reports subagent delegation verdict fields and the
     live run stayed `verdict=pass`.
+- Dynamic prompt/Python replay passed on the live dev stack:
+  `prompt-surface-no-web` `run_d566d7faef91`,
+  `prompt-surface-fetch-only` `run_658c229c86d8`,
+  `python-arithmetic` `run_c0414b14426c`,
+  `web-plus-python` `run_200031367b47`.
+- Focused checks after the latest slice:
+  runtime prompt/tool-policy suite passed, chat-demo backend
+  `test_run_trace_summary.py`/`test_tools.py`/`test_resume.py` passed,
+  frontend `ToolCallCard.test.tsx` passed, `black --check`,
+  `isort --check-only`, and `git diff --check` passed.
 
 Dev stack:
 

@@ -7,8 +7,17 @@ import {
   type AssistantMessageMetadata,
   type LlmCompletedPatch,
 } from "../lib/messageMetadata";
-import type { ParsedSubagentLifecycleEvent, ParsedToolState } from "../lib/events";
+import type {
+  ParsedCompactionNotice,
+  ParsedSubagentLifecycleEvent,
+  ParsedToolState,
+} from "../lib/events";
 import type { PlanningSnapshot } from "../lib/planning";
+import {
+  mergeSourceEvidence,
+  normalizeSourceEvidenceList,
+  type SourceEvidence,
+} from "../lib/sourceEvidence";
 import { stripTextFormToolCalls } from "../lib/stripToolCalls";
 import type { SessionDetailView } from "../types/api";
 
@@ -31,6 +40,7 @@ export interface ToolChatMessage {
   resultPreview?: string;
   risk?: string;
   durationMs?: number;
+  sources?: SourceEvidence[];
   subagent?: SubagentLifecycle;
 }
 
@@ -52,6 +62,18 @@ export interface SubagentChildRun {
   warning?: string;
 }
 
+export interface CompactionNotice {
+  id: string;
+  role: "compaction";
+  compactionId: string;
+  status: "running" | "done" | "failed";
+  mode?: string;
+  reason?: string;
+  failureKind?: string;
+  summarizedMessageCount?: number;
+  attempts?: number;
+}
+
 export type ChatMessage =
   | { id: string; role: "user"; content: string }
   | {
@@ -61,9 +83,11 @@ export type ChatMessage =
       pending?: boolean;
       runId?: string;
       metadata?: AssistantMessageMetadata;
+      sources?: SourceEvidence[];
       planningSnapshot?: PlanningSnapshot;
     }
-  | ToolChatMessage;
+  | ToolChatMessage
+  | CompactionNotice;
 
 export interface PendingInterrupt {
   runId: string;
@@ -101,8 +125,9 @@ function steeringControlsFromSession(detail: SessionDetailView): SteeringControl
     return [];
   }
   return rawControls
-    .filter((item): item is NonNullable<typeof rawControls>[number] =>
-      typeof item === "object" && item !== null,
+    .filter(
+      (item): item is NonNullable<typeof rawControls>[number] =>
+        typeof item === "object" && item !== null,
     )
     .map((item) => {
       const queueId = item.queue_id ?? item.queueId;
@@ -110,12 +135,10 @@ function steeringControlsFromSession(detail: SessionDetailView): SteeringControl
       const message =
         payload && typeof payload === "object" && typeof payload.message === "string"
           ? payload.message
-          : item.kind ?? "steering command";
+          : (item.kind ?? "steering command");
       const status = item.status;
       const normalizedStatus: SteeringControl["status"] =
-        status === "dequeued" ||
-        status === "applied" ||
-        status === "cancelled"
+        status === "dequeued" || status === "applied" || status === "cancelled"
           ? status
           : "queued";
       return {
@@ -127,7 +150,11 @@ function steeringControlsFromSession(detail: SessionDetailView): SteeringControl
     .filter((item) => item.queueId);
 }
 
-function insertAfterAssistant(messages: ChatMessage[], assistantId: string, item: ChatMessage): ChatMessage[] {
+function insertAfterAssistant(
+  messages: ChatMessage[],
+  assistantId: string,
+  item: ChatMessage,
+): ChatMessage[] {
   const index = messages.findIndex((message) => message.id === assistantId);
   if (index < 0) {
     return [...messages, item];
@@ -137,6 +164,116 @@ function insertAfterAssistant(messages: ChatMessage[], assistantId: string, item
     insertAt += 1;
   }
   return [...messages.slice(0, insertAt), item, ...messages.slice(insertAt)];
+}
+
+function sourceEvidenceFromRawMetadata(raw: unknown): SourceEvidence[] {
+  if (!raw || typeof raw !== "object") {
+    return [];
+  }
+  const record = raw as Record<string, unknown>;
+  return normalizeSourceEvidenceList(record.source_evidence ?? record.sourceEvidence);
+}
+
+function compactionNoticeFromRawMetadata(
+  raw: unknown,
+  fallbackId: string,
+): ParsedCompactionNotice | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  const rawCompaction = record.compaction;
+  if (!rawCompaction || typeof rawCompaction !== "object") {
+    return undefined;
+  }
+  const compaction = rawCompaction as Record<string, unknown>;
+  const rawStatus = compaction.status;
+  const status =
+    rawStatus === "failed" || rawStatus === "running" || rawStatus === "done"
+      ? rawStatus
+      : "done";
+  const summarized = compaction.summarized_message_count ?? compaction.summarizedMessageCount;
+  const attempts = compaction.attempts;
+  return {
+    compactionId:
+      typeof compaction.compaction_id === "string"
+        ? compaction.compaction_id
+        : typeof compaction.compactionId === "string"
+          ? compaction.compactionId
+          : fallbackId,
+    status,
+    mode: typeof compaction.mode === "string" ? compaction.mode : undefined,
+    reason: typeof compaction.reason === "string" ? compaction.reason : undefined,
+    failureKind:
+      typeof compaction.failure_kind === "string"
+        ? compaction.failure_kind
+        : typeof compaction.failureKind === "string"
+          ? compaction.failureKind
+          : undefined,
+    summarizedMessageCount:
+      typeof summarized === "number" && Number.isFinite(summarized)
+        ? summarized
+        : undefined,
+    attempts:
+      typeof attempts === "number" && Number.isFinite(attempts) ? attempts : undefined,
+  };
+}
+
+function attachSourcesToNearestAssistant(
+  messages: ChatMessage[],
+  toolCallId: string,
+  sources: SourceEvidence[],
+): ChatMessage[] {
+  if (!sources.length) {
+    return messages;
+  }
+  const toolIndex = messages.findIndex(
+    (message) => message.role === "tool" && message.toolCallId === toolCallId,
+  );
+  if (toolIndex < 0) {
+    return messages;
+  }
+  for (let index = toolIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant") {
+      continue;
+    }
+    return messages.map((item, itemIndex) =>
+      itemIndex === index && item.role === "assistant"
+        ? {
+            ...item,
+            sources: mergeSourceEvidence([...(item.sources ?? []), ...sources]),
+          }
+        : item,
+    );
+  }
+  return messages;
+}
+
+function sourcesForAssistantTurn(
+  messages: ChatMessage[],
+  assistantId: string,
+): SourceEvidence[] {
+  const assistantIndex = messages.findIndex(
+    (message) => message.id === assistantId && message.role === "assistant",
+  );
+  if (assistantIndex < 0) {
+    return [];
+  }
+  let start = assistantIndex - 1;
+  while (start >= 0 && messages[start]?.role !== "user") {
+    start -= 1;
+  }
+  const sources: SourceEvidence[] = [];
+  for (const message of messages.slice(start + 1)) {
+    if (message.role === "user") {
+      break;
+    }
+    if (message.role === "tool" && message.sources?.length) {
+      sources.push(...message.sources);
+    }
+  }
+  return mergeSourceEvidence(sources);
 }
 
 function updateLatestAgentTool(
@@ -217,6 +354,30 @@ function applySubagentPatch(
   return next;
 }
 
+function upsertCompactionNotice(
+  messages: ChatMessage[],
+  assistantId: string,
+  notice: ParsedCompactionNotice,
+): ChatMessage[] {
+  const existingIndex = messages.findIndex(
+    (message) =>
+      message.role === "compaction" && message.compactionId === notice.compactionId,
+  );
+  if (existingIndex >= 0) {
+    return messages.map((message, index) =>
+      index === existingIndex && message.role === "compaction"
+        ? { ...message, ...notice }
+        : message,
+    );
+  }
+  const item: CompactionNotice = {
+    id: createId("compaction"),
+    role: "compaction",
+    ...notice,
+  };
+  return insertAfterAssistant(messages, assistantId, item);
+}
+
 interface ChatState {
   messages: ChatMessage[];
   streaming: boolean;
@@ -236,6 +397,10 @@ interface ChatState {
     assistantId: string,
     event: ParsedSubagentLifecycleEvent,
   ) => void;
+  upsertCompactionNotice: (
+    assistantId: string,
+    notice: ParsedCompactionNotice,
+  ) => void;
   finishTurn: (assistantId: string) => void;
   setStreaming: (value: boolean) => void;
   setLastSeq: (seq: number) => void;
@@ -250,7 +415,9 @@ interface ChatState {
   setLastError: (message?: string) => void;
   setMessages: (messages: ChatMessage[]) => void;
   deleteMessage: (messageId: string) => void;
-  prepareRetry: (assistantId: string) => { userText: string; newAssistantId: string; retryFromRunId?: string } | null;
+  prepareRetry: (
+    assistantId: string,
+  ) => { userText: string; newAssistantId: string; retryFromRunId?: string } | null;
   loadSession: (detail: SessionDetailView) => void;
   reset: () => void;
 }
@@ -389,7 +556,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (CONTROL_TOOL_NAMES.has(tool.name)) {
         return state;
       }
-      if (state.messages.some((item) => item.role === "tool" && item.toolCallId === tool.toolCallId)) {
+      if (
+        state.messages.some(
+          (item) => item.role === "tool" && item.toolCallId === tool.toolCallId,
+        )
+      ) {
         return state;
       }
       const toolMessage: ToolChatMessage = {
@@ -403,28 +574,40 @@ export const useChatStore = create<ChatState>((set, get) => ({
         resultPreview: tool.resultPreview,
         risk: tool.risk,
         durationMs: tool.durationMs,
+        sources: tool.sources,
       };
-      return { messages: insertAfterAssistant(state.messages, assistantId, toolMessage) };
+      return {
+        messages: insertAfterAssistant(state.messages, assistantId, toolMessage),
+      };
     }),
   updateToolCompleted: (toolCallId, tool) =>
-    set((state) => ({
-      messages: state.messages.map((message) =>
+    set((state) => {
+      const sources = tool.sources ?? [];
+      const messages = state.messages.map((message) =>
         message.role === "tool" && message.toolCallId === toolCallId
           ? {
               ...message,
               status: tool.status,
               resultPreview: tool.resultPreview ?? message.resultPreview,
               durationMs: tool.durationMs ?? message.durationMs,
+              sources: mergeSourceEvidence([...(message.sources ?? []), ...sources]),
             }
           : message,
-      ),
-    })),
+      );
+      return {
+        messages: attachSourcesToNearestAssistant(messages, toolCallId, sources),
+      };
+    }),
   applySubagentLifecycle: (assistantId, event) =>
     set((state) => ({
       messages: updateLatestAgentTool(state.messages, assistantId, (message) => ({
         ...message,
         subagent: applySubagentPatch(message.subagent, event),
       })),
+    })),
+  upsertCompactionNotice: (assistantId, notice) =>
+    set((state) => ({
+      messages: upsertCompactionNotice(state.messages, assistantId, notice),
     })),
   finishTurn: (assistantId) => {
     set((state) => ({
@@ -435,8 +618,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         const rawContent = assistantRawContent.get(assistantId) ?? message.content;
         const content = rawContent ? stripTextFormToolCalls(rawContent) : rawContent;
+        const sources = sourcesForAssistantTurn(state.messages, assistantId);
         assistantRawContent.delete(assistantId);
-        return { ...message, pending: false, content };
+        return {
+          ...message,
+          pending: false,
+          content,
+          sources: mergeSourceEvidence([...(message.sources ?? []), ...sources]),
+        };
       }),
     }));
   },
@@ -516,7 +705,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             assistantRawContent.delete(message.id);
           }
         }
-        return { messages: [...state.messages.slice(0, index), ...state.messages.slice(end)] };
+        return {
+          messages: [...state.messages.slice(0, index), ...state.messages.slice(end)],
+        };
       }
       if (target.role === "assistant") {
         let end = index + 1;
@@ -524,7 +715,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           end += 1;
         }
         assistantRawContent.delete(target.id);
-        return { messages: [...state.messages.slice(0, index), ...state.messages.slice(end)] };
+        return {
+          messages: [...state.messages.slice(0, index), ...state.messages.slice(end)],
+        };
       }
       return { messages: state.messages.filter((message) => message.id !== messageId) };
     }),
@@ -581,36 +774,54 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     }
     let assistantRunIndex = 0;
-    const messages: ChatMessage[] = detail.transcript
-      .filter((item): item is SessionDetailView["transcript"][number] => isChatRole(item.role))
-      .map((item) => {
-        if (item.role === "assistant") {
-          const runId = detail.run_ids[assistantRunIndex];
-          assistantRunIndex += 1;
-          const fromRun =
-            runId && detail.metadata_by_run
-              ? normalizeMetadataFromApi(detail.metadata_by_run[runId])
-              : undefined;
-          const fromTranscript = normalizeMetadataFromApi(item.metadata ?? undefined);
-          const serverMetadata = fromTranscript ?? fromRun;
-          const localMetadata =
-            (runId ? priorByRunId.get(runId) : undefined) ??
-            priorAssistants[assistantRunIndex - 1]?.metadata;
-          return {
-            id: createId(item.role),
-            role: "assistant" as const,
-            content: stripTextFormToolCalls(item.content),
-            pending: false,
-            runId,
-            metadata: pickMetadata(serverMetadata, localMetadata),
-          };
+    const messages: ChatMessage[] = [];
+    for (const item of detail.transcript.filter(
+      (entry): entry is SessionDetailView["transcript"][number] =>
+        isChatRole(entry.role),
+    )) {
+      if (item.role === "assistant") {
+        const runId = detail.run_ids[assistantRunIndex];
+        assistantRunIndex += 1;
+        const runMetadata =
+          runId && detail.metadata_by_run ? detail.metadata_by_run[runId] : undefined;
+        const fromRun = runMetadata ? normalizeMetadataFromApi(runMetadata) : undefined;
+        const runSources = runMetadata ? sourceEvidenceFromRawMetadata(runMetadata) : [];
+        const fromTranscript = normalizeMetadataFromApi(item.metadata ?? undefined);
+        const transcriptSources = sourceEvidenceFromRawMetadata(item.metadata);
+        const serverMetadata = fromTranscript ?? fromRun;
+        const localMetadata =
+          (runId ? priorByRunId.get(runId) : undefined) ??
+          priorAssistants[assistantRunIndex - 1]?.metadata;
+        const sources = mergeSourceEvidence([...transcriptSources, ...runSources]);
+        const assistantId = createId(item.role);
+        messages.push({
+          id: assistantId,
+          role: "assistant",
+          content: stripTextFormToolCalls(item.content),
+          pending: false,
+          runId,
+          metadata: pickMetadata(serverMetadata, localMetadata),
+          sources,
+        });
+        const compactionNotice = compactionNoticeFromRawMetadata(
+          runMetadata ?? item.metadata,
+          `${runId ?? assistantId}:compaction`,
+        );
+        if (compactionNotice) {
+          messages.push({
+            id: createId("compaction"),
+            role: "compaction",
+            ...compactionNotice,
+          });
         }
-        return {
-          id: createId(item.role),
-          role: "user" as const,
-          content: item.content,
-        };
+        continue;
+      }
+      messages.push({
+        id: createId(item.role),
+        role: "user",
+        content: item.content,
       });
+    }
     assistantRawContent.clear();
     set({
       streaming: false,

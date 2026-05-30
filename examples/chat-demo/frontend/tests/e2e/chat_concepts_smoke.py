@@ -494,6 +494,17 @@ def run_web_search_final_answer(page: Page) -> None:
                                 "Found sources about Leo Fender and the 1954 Stratocaster."
                             ),
                             "duration_ms": 120,
+                            "sources": [
+                                {
+                                    "id": "web_search:web_1:1",
+                                    "url": "https://example.com/stratocaster",
+                                    "canonical_url": "https://example.com/stratocaster",
+                                    "source_type": "web_search",
+                                    "title": "Stratocaster history",
+                                    "excerpt": "Leo Fender introduced the model in 1954.",
+                                    "rank": 1,
+                                }
+                            ],
                         }
                     ]
                 },
@@ -529,10 +540,18 @@ def run_web_search_final_answer(page: Page) -> None:
     send_chat_message(page, "найди в интернете краткую историю Fender Stratocaster")
     expect(page.get_by_text("web_search")).to_be_visible(timeout=5000)
     expect(page.get_by_text("done")).to_be_visible()
-    expect(page.get_by_text("query: Fender Stratocaster history")).to_be_visible()
+    expect(page.get_by_text("Query")).to_be_visible()
+    expect(page.get_by_text("Fender Stratocaster history")).to_be_visible()
     expect(page.get_by_text('"query"')).not_to_be_visible(timeout=1000)
     expect(page.get_by_text("Found sources about Leo Fender")).to_be_visible()
     expect(page.get_by_text("Fender Stratocaster стала важной моделью")).to_be_visible()
+    expect(page.get_by_label("Sources")).to_be_visible()
+    expect(
+        page.get_by_label("Sources").get_by_text("Stratocaster history", exact=True)
+    ).to_be_visible()
+    expect(
+        page.get_by_label("Sources").get_by_text("search", exact=True)
+    ).to_be_visible()
     expect_trace_summary(
         page,
         required_tools=["web_search"],
@@ -927,6 +946,17 @@ def run_plan_then_web_then_answer(page: Page) -> None:
                             "tool_call_id": "web_plan_1",
                             "status": "ok",
                             "result_summary": "Found 5 sources about Fender history.",
+                            "sources": [
+                                {
+                                    "id": "web_search:web_plan_1:1",
+                                    "url": "https://example.com/fender-history",
+                                    "canonical_url": "https://example.com/fender-history",
+                                    "source_type": "web_search",
+                                    "title": "Fender history source",
+                                    "excerpt": "A compact source on Fender history.",
+                                    "rank": 1,
+                                }
+                            ],
                         }
                     ]
                 },
@@ -963,10 +993,15 @@ def run_plan_then_web_then_answer(page: Page) -> None:
     send_chat_message(page, "составь план и найди факты о Fender")
     expect(page.get_by_text("Найти источники")).to_be_visible(timeout=5000)
     expect(page.get_by_text("web_search")).to_be_visible()
-    expect(page.get_by_text("query: Fender Stratocaster history")).to_be_visible()
+    expect(page.get_by_text("Query")).to_be_visible()
+    expect(page.get_by_text("Fender Stratocaster history")).to_be_visible()
     expect(page.get_by_text('"query"')).not_to_be_visible(timeout=1000)
     expect(page.get_by_text("Found 5 sources about Fender history")).to_be_visible()
     expect(page.get_by_text("По найденным источникам")).to_be_visible()
+    expect(page.get_by_label("Sources")).to_be_visible()
+    expect(
+        page.get_by_label("Sources").get_by_text("Fender history source", exact=True)
+    ).to_be_visible()
     expect_trace_summary(
         page,
         required_tools=["todo_write", "web_search"],
@@ -975,16 +1010,439 @@ def run_plan_then_web_then_answer(page: Page) -> None:
     page.screenshot(path=str(ARTIFACT_DIR / "plan-web-answer.png"), full_page=True)
 
 
+def run_markdown_math(page: Page) -> None:
+    """Math in assistant prose renders as KaTeX without tool UI."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "token_delta",
+                {"delta_text": ("Вероятность: $$P(X > 3) = e^{-2.35 \\cdot 3}$$")},
+            ),
+            sse_event(3, "run_completed"),
+        ]
+    )
+
+    route_trace_summary(page, trace_summary_payload())
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    send_chat_message(page, "посчитай вероятность x > 3")
+    expect(page.locator(".katex")).to_be_visible(timeout=5000)
+    expect(page.get_by_text("$$")).not_to_be_visible(timeout=1000)
+    expect(page.locator("button[aria-label*='tool call']")).to_have_count(0)
+    expect_trace_summary(page, required_tools=[])
+    page.screenshot(path=str(ARTIFACT_DIR / "markdown-math.png"), full_page=True)
+
+
+def run_markdown_code_python(page: Page) -> None:
+    """Python fenced code renders with header, copy button, and containment."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "token_delta",
+                {
+                    "delta_text": (
+                        "```python\n" "def add(a, b):\n" "    return a + b\n" "```\n"
+                    )
+                },
+            ),
+            sse_event(3, "run_completed"),
+        ]
+    )
+
+    route_trace_summary(page, trace_summary_payload())
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    send_chat_message(page, "покажи пример Python функции")
+    expect(page.get_by_text("Python", exact=True)).to_be_visible(timeout=5000)
+    expect(page.get_by_text("Copy", exact=True)).to_be_visible()
+    expect(page.locator("pre.hljs-block")).to_be_visible()
+    expect_trace_summary(page, required_tools=[])
+    page.screenshot(path=str(ARTIFACT_DIR / "markdown-code-python.png"), full_page=True)
+
+
+def run_python_tool_answer(page: Page) -> None:
+    """Exact arithmetic shows Python execution and a Markdown final answer."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "tool_call_started",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "python",
+                            "tool_call_id": "py_1",
+                            "status": "running",
+                            "args": {"code": "print(17 * 23 + 11)"},
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                3,
+                "tool_call_completed",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "python",
+                            "tool_call_id": "py_1",
+                            "status": "ok",
+                            "result_summary": "402",
+                            "duration_ms": 32,
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                4,
+                "token_delta",
+                {"delta_text": "Точный результат: **402**."},
+            ),
+            sse_event(5, "run_completed"),
+        ]
+    )
+
+    route_trace_summary(page, trace_summary_payload(tool_names=["python"]))
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    send_chat_message(page, "посчитай точно 17 * 23 + 11")
+    expect(page.get_by_text("Python calculation")).to_be_visible(timeout=5000)
+    expect(page.locator("strong").filter(has_text="402")).to_be_visible()
+    expect_trace_summary(page, required_tools=["python"])
+    page.screenshot(path=str(ARTIFACT_DIR / "python-tool-answer.png"), full_page=True)
+
+
+def run_web_fetch_sources(page: Page) -> None:
+    """Fetched pages appear as source cards under the final answer."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "tool_call_started",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "tool_call_id": "fetch_1",
+                            "status": "running",
+                            "args": {"url": "https://example.com/fender"},
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                3,
+                "tool_call_completed",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "tool_call_id": "fetch_1",
+                            "status": "ok",
+                            "result_summary": "Fetched page about Fender.",
+                            "sources": [
+                                {
+                                    "id": "web_fetch:fetch_1:1",
+                                    "url": "https://example.com/fender",
+                                    "canonical_url": "https://example.com/fender",
+                                    "source_type": "web_fetch",
+                                    "title": "Fetched Fender page",
+                                    "excerpt": "A fetched page excerpt.",
+                                    "rank": 1,
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ),
+            sse_event(4, "token_delta", {"delta_text": "Краткий ответ по источнику."}),
+            sse_event(5, "run_completed"),
+        ]
+    )
+
+    route_trace_summary(
+        page,
+        trace_summary_payload(
+            tool_names=["web_fetch"],
+            research_required=True,
+            research_tools=["web_fetch"],
+        ),
+    )
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    send_chat_message(page, "прочитай страницу и дай вывод")
+    expect(page.get_by_text("Web fetch")).to_be_visible(timeout=5000)
+    expect(page.get_by_label("Sources")).to_be_visible()
+    expect(
+        page.get_by_label("Sources").get_by_text("Fetched Fender page")
+    ).to_be_visible()
+    expect(
+        page.get_by_label("Sources").get_by_text("fetched", exact=True)
+    ).to_be_visible()
+    expect_trace_summary(page, required_tools=["web_fetch"], required_research=True)
+    page.screenshot(path=str(ARTIFACT_DIR / "web-fetch-sources.png"), full_page=True)
+
+
+def run_assistant_link_sources(page: Page) -> None:
+    """Assistant Markdown links create source cards even without web tools."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "token_delta",
+                {
+                    "delta_text": (
+                        "См. [документацию](https://example.com/docs) для деталей."
+                    )
+                },
+            ),
+            sse_event(3, "run_completed"),
+        ]
+    )
+
+    route_trace_summary(page, trace_summary_payload())
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    send_chat_message(page, "ответь со ссылкой")
+    expect(page.get_by_label("Sources")).to_be_visible(timeout=5000)
+    expect(page.get_by_label("Sources").get_by_text("документацию")).to_be_visible()
+    expect(
+        page.get_by_label("Sources").get_by_text("linked", exact=True)
+    ).to_be_visible()
+    expect_trace_summary(page, required_tools=[])
+    page.screenshot(
+        path=str(ARTIFACT_DIR / "assistant-link-sources.png"), full_page=True
+    )
+
+
+def run_streaming_partial_fence(page: Page) -> None:
+    """Unfinished streaming fences stay plain and do not create broken code UI."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "token_delta",
+                {"delta_text": "Intro\n\n```python\nprint('still streaming')"},
+            ),
+        ]
+    )
+
+    route_trace_summary(
+        page,
+        trace_summary_payload(
+            verdict="pass",
+            terminal_event=None,
+            failures={"missing_terminal_event": False},
+        ),
+    )
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    send_chat_message(page, "стримь незакрытый код")
+    expect(page.get_by_text("Intro")).to_be_visible(timeout=5000)
+    expect(page.get_by_text("```python")).to_be_visible()
+    expect(page.get_by_text("Writing")).to_be_visible()
+    expect(page.get_by_text("Python", exact=True)).not_to_be_visible(timeout=1000)
+    expect(page.get_by_text("Copy", exact=True)).not_to_be_visible(timeout=1000)
+    page.screenshot(
+        path=str(ARTIFACT_DIR / "streaming-partial-fence.png"), full_page=True
+    )
+
+
+def run_xss_markdown(page: Page) -> None:
+    """Malicious Markdown remains inert in the rendered chat."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "token_delta",
+                {
+                    "delta_text": (
+                        "<script>window.__chat_demo_xss = true</script>\n\n"
+                        "[bad](javascript:alert(1)) safe text"
+                    )
+                },
+            ),
+            sse_event(3, "run_completed"),
+        ]
+    )
+
+    route_trace_summary(page, trace_summary_payload())
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    send_chat_message(page, "проверь xss markdown")
+    expect(page.get_by_text("bad")).to_be_visible(timeout=5000)
+    expect(page.get_by_role("link", name="bad")).not_to_be_visible(timeout=1000)
+    assert page.evaluate("() => window.__chat_demo_xss === true") is False
+    expect_trace_summary(page, required_tools=[])
+    page.screenshot(path=str(ARTIFACT_DIR / "xss-markdown.png"), full_page=True)
+
+
+def run_compaction_start_success(page: Page) -> None:
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "memory_compaction_started",
+                {
+                    "compaction_id": "cmp_success",
+                    "mode": "partial",
+                    "reason": "token_pressure",
+                },
+            ),
+            sse_event(
+                3, "token_delta", {"delta_text": "Continuing after memory work."}
+            ),
+            sse_event(
+                4,
+                "memory_compacted",
+                {
+                    "compaction_id": "cmp_success",
+                    "mode": "partial",
+                    "outcome": "success",
+                    "summarized_message_count": 7,
+                },
+            ),
+            sse_event(5, "run_completed"),
+        ]
+    )
+
+    route_trace_summary(page, trace_summary_payload())
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    send_chat_message(page, "trigger compaction")
+    expect(page.get_by_text("Conversation memory compacted")).to_be_visible(
+        timeout=5000
+    )
+    expect(
+        page.get_by_text("Older context was summarized across 7 messages.")
+    ).to_be_visible()
+    expect(page.get_by_text("Continuing after memory work.")).to_be_visible()
+    page.screenshot(
+        path=str(ARTIFACT_DIR / "compaction-start-success.png"), full_page=True
+    )
+
+
+def run_compaction_failed_warning(page: Page) -> None:
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "memory_compaction_started",
+                {
+                    "compaction_id": "cmp_failed",
+                    "mode": "llm_full",
+                    "reason": "token_pressure",
+                },
+            ),
+            sse_event(
+                3,
+                "memory_compacted",
+                {
+                    "compaction_id": "cmp_failed",
+                    "mode": "llm_full",
+                    "outcome": "failure",
+                    "failure_kind": "llm_timeout",
+                },
+            ),
+            sse_event(4, "token_delta", {"delta_text": "I can still continue."}),
+            sse_event(5, "run_completed"),
+        ]
+    )
+
+    route_trace_summary(page, trace_summary_payload())
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    send_chat_message(page, "trigger failed compaction")
+    expect(page.get_by_text("Memory compaction needs attention")).to_be_visible(
+        timeout=5000
+    )
+    expect(
+        page.get_by_text("The run continued, but compaction failed: llm_timeout.")
+    ).to_be_visible()
+    expect(page.get_by_text("I can still continue.")).to_be_visible()
+    page.screenshot(
+        path=str(ARTIFACT_DIR / "compaction-failed-warning.png"), full_page=True
+    )
+
+
+def run_compaction_skipped_hidden(page: Page) -> None:
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "memory_compacted",
+                {
+                    "compaction_id": "cmp_skipped",
+                    "mode": "none",
+                    "outcome": "skipped",
+                },
+            ),
+            sse_event(3, "token_delta", {"delta_text": "No compaction was needed."}),
+            sse_event(4, "run_completed"),
+        ]
+    )
+
+    route_trace_summary(page, trace_summary_payload())
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    send_chat_message(page, "skip compaction")
+    expect(page.get_by_text("No compaction was needed.")).to_be_visible(timeout=5000)
+    expect(page.get_by_text("Conversation memory compacted")).not_to_be_visible()
+    expect(page.get_by_text("Compacting conversation memory")).not_to_be_visible()
+    page.screenshot(
+        path=str(ARTIFACT_DIR / "compaction-skipped-hidden.png"), full_page=True
+    )
+
+
 SCENARIOS = {
+    "assistant-link-sources": run_assistant_link_sources,
     "ask-question-denied": run_ask_question_denied_on_deliverable,
     "clarification": run_clarification_regression,
+    "compaction-failed-warning": run_compaction_failed_warning,
+    "compaction-skipped-hidden": run_compaction_skipped_hidden,
+    "compaction-start-success": run_compaction_start_success,
     "denied-tool": run_denied_tool_regression,
     "deliverable-no-replan": run_deliverable_no_replan,
+    "markdown-code-python": run_markdown_code_python,
+    "markdown-math": run_markdown_math,
     "plan-approval": run_plan_approval_regression,
     "plan-web-answer": run_plan_then_web_then_answer,
+    "python-tool-answer": run_python_tool_answer,
     "simple-direct": run_simple_direct_answer,
+    "streaming-partial-fence": run_streaming_partial_fence,
     "subagent-final": run_subagent_final_answer,
+    "web-fetch-sources": run_web_fetch_sources,
     "web-search-final": run_web_search_final_answer,
+    "xss-markdown": run_xss_markdown,
 }
 
 

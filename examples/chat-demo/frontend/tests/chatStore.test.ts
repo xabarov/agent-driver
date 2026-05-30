@@ -76,6 +76,67 @@ describe("chatStore", () => {
     expect(assistant?.role === "assistant" && assistant.pending).toBe(false);
   });
 
+  test("upserts compaction notices by compaction id", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("long task");
+    useChatStore.getState().upsertCompactionNotice(assistantId, {
+      compactionId: "compact_1",
+      status: "running",
+      mode: "partial",
+    });
+    useChatStore.getState().upsertCompactionNotice(assistantId, {
+      compactionId: "compact_1",
+      status: "done",
+      mode: "partial",
+      summarizedMessageCount: 12,
+    });
+
+    const notices = useChatStore
+      .getState()
+      .messages.filter((item) => item.role === "compaction");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({
+      compactionId: "compact_1",
+      status: "done",
+      summarizedMessageCount: 12,
+    });
+  });
+
+  test("loadSession restores persisted compaction notice", () => {
+    useChatStore.getState().loadSession({
+      session_id: "session_abc123",
+      thread_id: "thread_abc123",
+      title: "Session title",
+      run_ids: ["run_1"],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:01:00Z",
+      transcript: [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "world" },
+      ],
+      metadata_by_run: {
+        run_1: {
+          compaction: {
+            compaction_id: "compact_1",
+            status: "done",
+            mode: "partial",
+            summarized_message_count: 5,
+          },
+        },
+      },
+    });
+
+    expect(useChatStore.getState().messages).toEqual([
+      expect.objectContaining({ role: "user", content: "hello" }),
+      expect.objectContaining({ role: "assistant", content: "world" }),
+      expect.objectContaining({
+        role: "compaction",
+        compactionId: "compact_1",
+        status: "done",
+        summarizedMessageCount: 5,
+      }),
+    ]);
+  });
+
   test("tracks steering control lifecycle", () => {
     useChatStore.getState().addSteeringControl({
       queueId: "cmd_1",
@@ -172,6 +233,49 @@ describe("chatStore", () => {
     ]);
   });
 
+  test("loadSession restores source evidence from run metadata", () => {
+    useChatStore.getState().loadSession({
+      session_id: "session_abc123",
+      thread_id: "thread_abc123",
+      title: "Session title",
+      run_ids: ["run_1"],
+      created_at: "2026-05-20T00:00:00Z",
+      updated_at: "2026-05-20T00:01:00Z",
+      transcript: [
+        { role: "user", content: "hello" },
+        { role: "assistant", content: "world" },
+      ],
+      metadata_by_run: {
+        run_1: {
+          source_evidence: [
+            {
+              id: "web_fetch:call_1:1",
+              url: "https://example.com/a",
+              canonical_url: "https://example.com/a",
+              source_type: "web_fetch",
+              title: "Fetched page",
+              tool_call_id: "call_1",
+              rank: 1,
+            },
+          ],
+        },
+      },
+    });
+
+    const assistant = useChatStore
+      .getState()
+      .messages.find((message) => message.role === "assistant");
+    expect(assistant?.role).toBe("assistant");
+    if (assistant?.role === "assistant") {
+      expect(assistant.sources).toHaveLength(1);
+      expect(assistant.sources?.[0]).toMatchObject({
+        sourceType: "web_fetch",
+        title: "Fetched page",
+        toolCallId: "call_1",
+      });
+    }
+  });
+
   test("deleteMessage removes assistant turn including tools", () => {
     const assistantId = useChatStore.getState().beginUserTurn("hi");
     useChatStore.getState().appendToolStarted(assistantId, {
@@ -186,7 +290,10 @@ describe("chatStore", () => {
       useChatStore.getState().deleteMessage(assistant.id);
     }
     expect(useChatStore.getState().messages).toHaveLength(1);
-    expect(useChatStore.getState().messages[0]).toMatchObject({ role: "user", content: "hi" });
+    expect(useChatStore.getState().messages[0]).toMatchObject({
+      role: "user",
+      content: "hi",
+    });
   });
 
   test("appendAssistantMetadata merges usage across LLM steps", () => {
@@ -205,7 +312,9 @@ describe("chatStore", () => {
       durationMs: 500,
       costUsd: 0.002,
     });
-    const assistant = useChatStore.getState().messages.find((item) => item.id === assistantId);
+    const assistant = useChatStore
+      .getState()
+      .messages.find((item) => item.id === assistantId);
     expect(assistant?.role).toBe("assistant");
     if (assistant?.role === "assistant") {
       expect(assistant.metadata?.promptTokens).toBe(15);
@@ -228,14 +337,20 @@ describe("chatStore", () => {
     });
     const messages = useChatStore.getState().messages;
     expect(messages).toHaveLength(2);
-    expect(messages[1]).toMatchObject({ role: "assistant", content: "", pending: true });
+    expect(messages[1]).toMatchObject({
+      role: "assistant",
+      content: "",
+      pending: true,
+    });
     expect(useChatStore.getState().lastSeq).toBe(0);
   });
 
   test("setPlanningSnapshot updates assistant in place", () => {
     const assistantId = useChatStore.getState().beginUserTurn("plan");
     useChatStore.getState().setPlanningSnapshot(assistantId, sampleSnapshot);
-    const assistant = useChatStore.getState().messages.find((item) => item.id === assistantId);
+    const assistant = useChatStore
+      .getState()
+      .messages.find((item) => item.id === assistantId);
     expect(assistant?.role).toBe("assistant");
     if (assistant?.role === "assistant") {
       expect(assistant.planningSnapshot?.total).toBe(1);
@@ -248,7 +363,9 @@ describe("chatStore", () => {
     useChatStore.getState().setPlanningSnapshot(assistantId, sampleSnapshot);
     useChatStore.getState().tombstoneAssistant(assistantId);
 
-    const assistant = useChatStore.getState().messages.find((item) => item.id === assistantId);
+    const assistant = useChatStore
+      .getState()
+      .messages.find((item) => item.id === assistantId);
     expect(assistant?.role).toBe("assistant");
     if (assistant?.role === "assistant") {
       expect(assistant.content).toBe("");
@@ -290,9 +407,7 @@ describe("chatStore", () => {
       ]),
     );
     expect(
-      messages.some(
-        (item) => item.role === "tool" && item.toolCallId === "running_1",
-      ),
+      messages.some((item) => item.role === "tool" && item.toolCallId === "running_1"),
     ).toBe(false);
   });
 
@@ -337,7 +452,9 @@ describe("chatStore", () => {
       name: "file_write",
       status: "running",
     });
-    const tools = useChatStore.getState().messages.filter((item) => item.role === "tool");
+    const tools = useChatStore
+      .getState()
+      .messages.filter((item) => item.role === "tool");
     expect(tools).toHaveLength(1);
     expect(tools[0]).toMatchObject({ name: "file_write" });
   });
@@ -350,7 +467,9 @@ describe("chatStore", () => {
       status: "running",
     });
 
-    const tools = useChatStore.getState().messages.filter((item) => item.role === "tool");
+    const tools = useChatStore
+      .getState()
+      .messages.filter((item) => item.role === "tool");
     expect(tools).toHaveLength(0);
   });
 
@@ -370,6 +489,81 @@ describe("chatStore", () => {
       name: "web_search",
       status: "running",
     });
+  });
+
+  test("updateToolCompleted attaches web sources to tool and assistant", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("source");
+    useChatStore.getState().appendToolStarted(assistantId, {
+      toolCallId: "call_web",
+      name: "web_fetch",
+      status: "running",
+    });
+    useChatStore.getState().updateToolCompleted("call_web", {
+      toolCallId: "call_web",
+      name: "web_fetch",
+      status: "done",
+      sources: [
+        {
+          id: "web_fetch:call_web:1",
+          url: "https://example.com/source",
+          canonicalUrl: "https://example.com/source",
+          sourceType: "web_fetch",
+          title: "Source title",
+          rank: 1,
+        },
+      ],
+    });
+
+    const messages = useChatStore.getState().messages;
+    const assistant = messages.find((message) => message.id === assistantId);
+    const tool = messages.find(
+      (message) => message.role === "tool" && message.toolCallId === "call_web",
+    );
+    expect(assistant?.role).toBe("assistant");
+    if (assistant?.role === "assistant") {
+      expect(assistant.sources?.[0]?.title).toBe("Source title");
+    }
+    expect(tool?.role).toBe("tool");
+    if (tool?.role === "tool") {
+      expect(tool.sources?.[0]?.sourceType).toBe("web_fetch");
+    }
+  });
+
+  test("finishTurn keeps tool-derived sources on final assistant answer", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("source final");
+    useChatStore.getState().appendToolStarted(assistantId, {
+      toolCallId: "call_web",
+      name: "web_fetch",
+      status: "running",
+    });
+    useChatStore.getState().updateToolCompleted("call_web", {
+      toolCallId: "call_web",
+      name: "web_fetch",
+      status: "done",
+      sources: [
+        {
+          id: "web_fetch:call_web:1",
+          url: "https://example.com/source",
+          canonicalUrl: "https://example.com/source",
+          sourceType: "web_fetch",
+          title: "Source title",
+          rank: 1,
+        },
+      ],
+    });
+    useChatStore.getState().appendDelta(assistantId, "Final answer without links.");
+    useChatStore.getState().finishTurn(assistantId);
+
+    const assistant = useChatStore
+      .getState()
+      .messages.find((message) => message.id === assistantId);
+    expect(assistant?.role).toBe("assistant");
+    if (assistant?.role === "assistant") {
+      expect(assistant.sources?.[0]).toMatchObject({
+        sourceType: "web_fetch",
+        title: "Source title",
+      });
+    }
   });
 
   test("applySubagentLifecycle attaches child status to latest agent tool", () => {
@@ -433,14 +627,32 @@ describe("parseToolStatesFromEvent", () => {
             tool_name: "read_file",
             tool_call_id: "call_a",
             args: { path: "README.md" },
+            sources: [
+              {
+                id: "web_search:call_a:1",
+                url: "https://example.com/a",
+                canonical_url: "https://example.com/a",
+                source_type: "web_search",
+                title: "Example",
+                rank: 1,
+              },
+            ],
           },
         ],
       },
     };
     const tools = parseToolStatesFromEvent(event);
     expect(tools).toHaveLength(1);
-    expect(tools[0]).toMatchObject({ name: "read_file", toolCallId: "call_a", status: "running" });
+    expect(tools[0]).toMatchObject({
+      name: "read_file",
+      toolCallId: "call_a",
+      status: "running",
+    });
     expect(tools[0].argsSummary).toBe("path: README.md");
+    expect(tools[0].sources?.[0]).toMatchObject({
+      canonicalUrl: "https://example.com/a",
+      sourceType: "web_search",
+    });
   });
 
   test("parses subagent lifecycle events", () => {

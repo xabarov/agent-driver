@@ -28,6 +28,7 @@ BASE_URL = os.environ.get("CHAT_DEMO_URL", "http://localhost:5174")
 ARTIFACT_DIR = Path(
     os.environ.get("CHAT_DEMO_LIVE_ARTIFACT_DIR", "/tmp/chat-demo-live")
 )
+MODEL_OVERRIDE = os.environ.get("CHAT_DEMO_LIVE_MODEL")
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,9 +42,15 @@ class LiveScenario:
     tool_preset: str | None = None
     requires_subagent: bool = False
     requires_parent_synthesis: bool = False
+    required_prompt_fragments: tuple[str, ...] = ()
+    forbidden_prompt_fragments: tuple[str, ...] = ()
     max_planning_tool_calls: int | None = None
     steering_message: str | None = None
     requires_steering: bool = False
+    requires_compaction: bool = False
+    min_research_fetch_count: int | None = None
+    min_research_domain_count: int | None = None
+    timeout_ms: int = 180000
     forbidden_failures: tuple[str, ...] = (
         "stuck_on_interrupt",
         "missing_terminal_event",
@@ -64,6 +71,10 @@ class LiveScenario:
         "python_policy_loop",
         "unnecessary_python",
         "python_result_ignored",
+        "search_only_research_report",
+        "insufficient_research_source_diversity",
+        "final_missing_source_links",
+        "plan_todos_incomplete_on_final",
     )
     requires_research: bool | None = None
 
@@ -73,6 +84,26 @@ SCENARIOS: dict[str, LiveScenario] = {
         name="simple-direct",
         prompt="привет, ответь одной короткой фразой",
         forbidden_tools=("python", "agent_tool"),
+        requires_research=False,
+    ),
+    "prompt-surface-no-web": LiveScenario(
+        name="prompt-surface-no-web",
+        prompt="привет, ответь одной короткой фразой",
+        forbidden_tools=("web_search", "web_fetch", "agent_tool"),
+        forbidden_prompt_fragments=(
+            "react_chat_tool_policy_web_search.txt",
+            "react_chat_tool_policy_web_fetch.txt",
+        ),
+        tool_preset="off",
+        requires_research=False,
+    ),
+    "prompt-surface-fetch-only": LiveScenario(
+        name="prompt-surface-fetch-only",
+        prompt="привет, ответь одной короткой фразой",
+        forbidden_tools=("web_search", "web_fetch", "agent_tool"),
+        required_prompt_fragments=("react_chat_tool_policy_web_fetch.txt",),
+        forbidden_prompt_fragments=("react_chat_tool_policy_web_search.txt",),
+        tool_preset="web_fetch",
         requires_research=False,
     ),
     "python-count-letters": LiveScenario(
@@ -99,6 +130,28 @@ SCENARIOS: dict[str, LiveScenario] = {
         max_planning_tool_calls=0,
         requires_research=False,
     ),
+    "python-combinatorics": LiveScenario(
+        name="python-combinatorics",
+        prompt=(
+            "Посчитай точно: сколько существует способов выбрать 5 карт "
+            "из колоды 52 карты? Используй расчет."
+        ),
+        required_tools=("python",),
+        forbidden_tools=("agent_tool", "web_search", "web_fetch"),
+        max_planning_tool_calls=0,
+        requires_research=False,
+    ),
+    "web-plus-python": LiveScenario(
+        name="web-plus-python",
+        prompt=(
+            "Найди в интернете текущую численность населения США и Канады, "
+            "а затем через расчет скажи, во сколько раз население США больше. "
+            "Дай короткий ответ со ссылкой."
+        ),
+        required_tools=("web_search", "python"),
+        forbidden_tools=("agent_tool",),
+        requires_research=True,
+    ),
     "research-report": LiveScenario(
         name="research-report",
         prompt=(
@@ -106,6 +159,36 @@ SCENARIOS: dict[str, LiveScenario] = {
             "и дай краткий итог со ссылкой"
         ),
         required_tools=("web_search",),
+        requires_research=True,
+    ),
+    "research-report-requires-fetch": LiveScenario(
+        name="research-report-requires-fetch",
+        prompt=(
+            "составь todo лист и иди по нему. Мне нужно поискать информацию "
+            "в интернете о fork-join моделях массового обслуживания и их "
+            "применении для расчета компьютерных сетей"
+        ),
+        required_tools=("web_search", "web_fetch"),
+        required_prompt_fragments=(
+            "react_chat_tool_policy_research_discipline.txt",
+            "react_chat_tool_policy_web_search.txt",
+            "react_chat_tool_policy_web_fetch.txt",
+        ),
+        min_research_fetch_count=2,
+        min_research_domain_count=2,
+        timeout_ms=360000,
+        requires_research=True,
+    ),
+    "research-compare-frameworks": LiveScenario(
+        name="research-compare-frameworks",
+        prompt=(
+            "сравни FastAPI и Django для нового API-сервиса, найди источники "
+            "в интернете и дай короткий вывод со ссылками"
+        ),
+        required_tools=("web_search", "web_fetch"),
+        min_research_fetch_count=2,
+        min_research_domain_count=2,
+        timeout_ms=300000,
         requires_research=True,
     ),
     "plan-web-answer": LiveScenario(
@@ -233,6 +316,13 @@ SCENARIOS: dict[str, LiveScenario] = {
         requires_steering=True,
         requires_research=True,
     ),
+    "compaction-notice": LiveScenario(
+        name="compaction-notice",
+        prompt="trigger synthetic compaction notice",
+        requires_compaction=True,
+        forbidden_tools=("web_search", "web_fetch", "agent_tool", "python"),
+        requires_research=False,
+    ),
 }
 
 
@@ -337,6 +427,18 @@ def assert_trace_acceptance(
     for tool_name in scenario.forbidden_tools:
         if tool_name in tools:
             failures.append(f"forbidden tool used: {tool_name}")
+    prompt_surface = summary.get("prompt_surface") or {}
+    prompt_fragments = set(
+        prompt_surface.get("prompt_fragments", [])
+        if isinstance(prompt_surface, dict)
+        else []
+    )
+    for fragment in scenario.required_prompt_fragments:
+        if fragment not in prompt_fragments:
+            failures.append(f"required prompt fragment missing: {fragment}")
+    for fragment in scenario.forbidden_prompt_fragments:
+        if fragment in prompt_fragments:
+            failures.append(f"forbidden prompt fragment present: {fragment}")
     if scenario.requires_subagent:
         subagents = summary.get("subagents") or {}
         if not isinstance(subagents, dict):
@@ -376,12 +478,42 @@ def assert_trace_acceptance(
                 failures.append("steering command was not dequeued")
             if controls.get("applied", 0) < 1:
                 failures.append("steering command was not applied")
+    if scenario.requires_compaction:
+        compaction = summary.get("compaction") or {}
+        if not isinstance(compaction, dict):
+            failures.append("compaction summary missing")
+        elif compaction.get("successful", 0) < 1:
+            failures.append("compaction did not complete successfully")
     if summary.get("probe_timeout") is True:
         failures.append("probe timed out before terminal event")
     if scenario.requires_research is not None:
         required = summary.get("research", {}).get("required")
         if required is not scenario.requires_research:
             failures.append(f"research.required={required!r}")
+    research = summary.get("research") or {}
+    if scenario.min_research_fetch_count is not None:
+        fetch_count = (
+            research.get("fetch_count") if isinstance(research, dict) else None
+        )
+        if (
+            not isinstance(fetch_count, int)
+            or fetch_count < scenario.min_research_fetch_count
+        ):
+            failures.append(
+                "research.fetch_count below minimum: "
+                f"{fetch_count!r} < {scenario.min_research_fetch_count}"
+            )
+    if scenario.min_research_domain_count is not None:
+        domains = research.get("unique_domains") if isinstance(research, dict) else None
+        domain_count = len(domains) if isinstance(domains, list) else None
+        if (
+            not isinstance(domain_count, int)
+            or domain_count < scenario.min_research_domain_count
+        ):
+            failures.append(
+                "research.unique_domains below minimum: "
+                f"{domain_count!r} < {scenario.min_research_domain_count}"
+            )
     if summary.get("verdict") != "pass":
         failures.append(f"summary verdict is {summary.get('verdict')!r}")
     return failures
@@ -445,6 +577,7 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
                 {
                     **json.loads(route.request.post_data or "{}"),
                     "scenario_id": scenario.name,
+                    **({"model": MODEL_OVERRIDE} if MODEL_OVERRIDE else {}),
                     **(
                         {"tool_preset": scenario.tool_preset}
                         if scenario.tool_preset
@@ -458,7 +591,7 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
     run_id = send_message_and_capture_run_id(page, scenario.prompt)
     if scenario.steering_message:
         queue_steering_message(page, run_id, scenario.steering_message)
-    summary = wait_until_run_idle(page, run_id=run_id, timeout_ms=180000)
+    summary = wait_until_run_idle(page, run_id=run_id, timeout_ms=scenario.timeout_ms)
     failures = assert_trace_acceptance(scenario, summary)
     write_scenario_artifacts(
         page=page,

@@ -76,6 +76,33 @@ def _session_record_for_run(bundle: AgentBundle, run_id: str):
     return None
 
 
+def _run_failed_message(events: list[dict[str, object]]) -> str:
+    for event in reversed(events):
+        if event.get("event") != "run_failed":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            break
+        status_code = data.get("status_code")
+        message = data.get("message")
+        reason = data.get("reason")
+        detail = message if isinstance(message, str) and message.strip() else reason
+        if status_code == 402:
+            suffix = (
+                detail
+                if isinstance(detail, str) and detail.strip()
+                else "Check OpenRouter credits, model availability, or choose another model."
+            )
+            return f"**Run failed**\n\nProvider rejected the request with HTTP 402. {suffix}"
+        if isinstance(status_code, int):
+            suffix = f" {detail}" if isinstance(detail, str) and detail.strip() else ""
+            return f"**Run failed**\n\nProvider rejected the request with HTTP {status_code}.{suffix}"
+        if isinstance(detail, str) and detail.strip():
+            return f"**Run failed**\n\n{detail.strip()}"
+        break
+    return "**Run failed**\n\nThe model provider rejected or interrupted the request."
+
+
 def _turn_text_for_run(
     record: object | None,
     run_id: str,
@@ -327,11 +354,12 @@ async def chat_messages(
 
     def _persist_assistant(assistant_text: str, _terminal_event: str | None) -> None:
         next_transcript = list(transcript)
+        events = replay_events_for_run(bundle, run_id)
         if _terminal_event == "run_completed" and assistant_text.strip():
             next_transcript.append(("assistant", assistant_text))
-        run_metadata = aggregate_metadata_from_events(
-            replay_events_for_run(bundle, run_id),
-        )
+        elif _terminal_event == "run_failed":
+            next_transcript.append(("assistant", _run_failed_message(events)))
+        run_metadata = aggregate_metadata_from_events(events)
         metadata_patch = {run_id: run_metadata} if run_metadata else None
         bundle.session_store.upsert(
             session_id=session_id,

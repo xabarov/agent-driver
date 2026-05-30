@@ -60,8 +60,24 @@ export interface AssistantMessageMetadataView {
   model?: string;
   provider?: string;
   estimated?: boolean;
+  source_evidence?: unknown[];
+  sourceEvidence?: unknown[];
   steering_controls?: SteeringControlView[];
   steeringControls?: SteeringControlView[];
+  compaction?: CompactionNoticeView;
+}
+
+export interface CompactionNoticeView {
+  compaction_id?: string;
+  compactionId?: string;
+  status?: string;
+  mode?: string;
+  reason?: string;
+  failure_kind?: string;
+  failureKind?: string;
+  summarized_message_count?: number;
+  summarizedMessageCount?: number;
+  attempts?: number;
 }
 
 export interface SteeringControlView {
@@ -152,6 +168,22 @@ export interface ChatControlResponse {
 export interface ReplayResponse {
   run_id: string;
   events: Array<Record<string, unknown>>;
+}
+
+export interface RunTraceSummaryResponse {
+  run_id: string;
+  verdict: string;
+  terminal_event?: string | null;
+  compaction?: {
+    attempts?: number;
+    started?: number;
+    successful?: number;
+    failed?: number;
+    skipped?: number;
+    modes?: string[];
+    circuit_breaker_open?: boolean;
+    latest?: Record<string, unknown> | null;
+  };
 }
 
 export interface ModelView {

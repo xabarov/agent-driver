@@ -1,7 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
-import { fetchReplay } from "../lib/api";
+import { fetchReplay, fetchRunTraceSummary } from "../lib/api";
 import {
   eventsToMessages,
   parseSteeringEvents,
@@ -21,6 +21,11 @@ export function ReplayPage() {
     queryFn: () => fetchReplay(sessionId, runId),
     enabled: Boolean(sessionId && runId),
   });
+  const traceSummary = useQuery({
+    queryKey: ["trace-summary", runId],
+    queryFn: () => fetchRunTraceSummary(runId),
+    enabled: Boolean(runId),
+  });
 
   const messages =
     replay.data?.events.map(
@@ -28,6 +33,8 @@ export function ReplayPage() {
     ) ?? [];
   const rendered = eventsToMessages(messages);
   const steeringEvents = parseSteeringEvents(messages);
+  const compaction = traceSummary.data?.compaction;
+  const compactionAttempts = compaction?.attempts ?? 0;
 
   return (
     <Card className="h-full rounded-lg">
@@ -71,6 +78,30 @@ export function ReplayPage() {
                   <span className="font-mono">{event.queueId}</span>
                 </div>
               ))}
+            </div>
+          </div>
+        ) : null}
+        {compaction && compactionAttempts > 0 ? (
+          <div className="rounded-lg border border-border bg-muted/30 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-medium">Compaction summary</h3>
+              <Badge variant="outline">{compactionAttempts} attempts</Badge>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <Badge variant="secondary">started {compaction.started ?? 0}</Badge>
+              <Badge variant="secondary">success {compaction.successful ?? 0}</Badge>
+              <Badge variant="secondary">failed {compaction.failed ?? 0}</Badge>
+              <Badge variant="secondary">skipped {compaction.skipped ?? 0}</Badge>
+              {compaction.modes?.map((mode) => (
+                <Badge key={mode} variant="outline">
+                  {mode}
+                </Badge>
+              ))}
+              {compaction.circuit_breaker_open ? (
+                <Badge variant="secondary" className="bg-amber-500/15 text-amber-700">
+                  circuit breaker
+                </Badge>
+              ) : null}
             </div>
           </div>
         ) : null}

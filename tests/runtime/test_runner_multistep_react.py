@@ -8,7 +8,7 @@ import pytest
 
 from agent_driver.contracts import AgentRunInput, ToolCall, ToolPolicyInput
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.contracts.tools import ToolResultEnvelope
+from agent_driver.contracts.tools import ToolManifest, ToolResultEnvelope
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmRequest,
@@ -17,9 +17,10 @@ from agent_driver.llm.contracts import (
 )
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime.single_agent.tool_stage import _update_zero_result_policy
+from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.runtime.tools import ToolExecutionResult
 from agent_driver.sdk import create_agent
-from agent_driver.tools import ToolSet
+from agent_driver.tools import ToolRegistry, ToolSet
 
 
 class _ThreeTurnProvider(FakeProvider):
@@ -294,6 +295,127 @@ class _ForceFinalProgressProvider(FakeProvider):
         )
 
 
+class _PrematureTodoFinalProvider(FakeProvider):
+    """Provider that tries to stop while session todos are still open."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=UsageSummary(model_provider="todo", model_name="test-model"),
+                provider="todo",
+                model="test-model",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="todo_write",
+                            tool_call_id="todo_start",
+                            args={
+                                "todos": [
+                                    {
+                                        "id": "search",
+                                        "content": "Search fork-join sources",
+                                        "status": "in_progress",
+                                    },
+                                    {
+                                        "id": "apply",
+                                        "content": "Explain network applications",
+                                        "status": "pending",
+                                    },
+                                ]
+                            },
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+        if len(self.requests) == 2:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=UsageSummary(model_provider="todo", model_name="test-model"),
+                provider="todo",
+                model="test-model",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="web_search",
+                            tool_call_id="web_fork_join",
+                            args={
+                                "query": "fork join queueing models computer networks",
+                                "mock_results": [
+                                    {
+                                        "title": "Fork join queues",
+                                        "url": "https://example.com/fork-join",
+                                        "snippet": "network systems",
+                                    }
+                                ],
+                            },
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+        if len(self.requests) == 3:
+            return LlmResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content="Нашел один источник и поэтому сразу отвечаю.",
+                ),
+                finish_reason=LlmFinishReason.STOP,
+                usage=UsageSummary(model_provider="todo", model_name="test-model"),
+                provider="todo",
+                model="test-model",
+                metadata={},
+            )
+        if len(self.requests) == 4:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=UsageSummary(model_provider="todo", model_name="test-model"),
+                provider="todo",
+                model="test-model",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="todo_write",
+                            tool_call_id="todo_done",
+                            args={
+                                "merge": True,
+                                "todos": [
+                                    {
+                                        "id": "search",
+                                        "content": "Search fork-join sources",
+                                        "status": "completed",
+                                    },
+                                    {
+                                        "id": "apply",
+                                        "content": "Explain network applications",
+                                        "status": "completed",
+                                    },
+                                ],
+                            },
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(
+                role="assistant",
+                content="Финальный ответ после закрытия всех пунктов.",
+            ),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="todo", model_name="test-model"),
+            provider="todo",
+            model="test-model",
+            metadata={},
+        )
+
+
 class _ResearchRequirementProvider(FakeProvider):
     """Provider that first tries to answer a research request without tools."""
 
@@ -348,6 +470,57 @@ class _ResearchRequirementProvider(FakeProvider):
             provider="research",
             model="test-model",
             metadata={},
+        )
+
+
+class _PythonPolicyRecoveryProvider(FakeProvider):
+    """Provider that retries with allowed imports after a python policy error."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        call_index = len(self.requests)
+        if call_index == 1:
+            tool_calls = [
+                ToolCall(
+                    tool_name="python",
+                    tool_call_id="python_policy_block",
+                    args={"code": "import os\nprint(os.getcwd())"},
+                ).model_dump(mode="json")
+            ]
+        elif call_index == 2:
+            tool_calls = [
+                ToolCall(
+                    tool_name="python",
+                    tool_call_id="python_policy_recover",
+                    args={"code": "import math\nprint(math.comb(5, 2))"},
+                ).model_dump(mode="json")
+            ]
+        else:
+            return LlmResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content=(
+                        "Импорт os был заблокирован политикой sandbox; "
+                        "повторный расчет через math дал 10."
+                    ),
+                ),
+                finish_reason=LlmFinishReason.STOP,
+                usage=UsageSummary(model_provider="python", model_name="test-model"),
+                provider="python",
+                model="test-model",
+                metadata={},
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content=""),
+            finish_reason=LlmFinishReason.TOOL_CALLS,
+            usage=UsageSummary(model_provider="python", model_name="test-model"),
+            provider="python",
+            model="test-model",
+            metadata={"planned_tool_calls": tool_calls},
         )
 
 
@@ -499,6 +672,40 @@ async def test_force_final_still_continues_after_progress_only_text() -> None:
 
 
 @pytest.mark.asyncio
+async def test_react_loop_continues_after_premature_final_with_unfinished_todos() -> (
+    None
+):
+    provider = _PrematureTodoFinalProvider()
+    agent = create_agent(
+        provider=provider, tools=ToolSet.only("todo_write", "web_search")
+    )
+    output = await agent.run(
+        AgentRunInput(
+            input=(
+                "составь todo лист и иди по нему. Найди информацию о fork-join "
+                "моделях и применении в компьютерных сетях"
+            ),
+            run_id="run_premature_todo_final",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(
+                metadata={
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                    }
+                }
+            ),
+            max_steps=10,
+            max_tool_calls=6,
+        )
+    )
+    assert output.answer == "Финальный ответ после закрытия всех пунктов."
+    assert len(provider.requests) == 5
+    assert "checklist still has pending" in provider.requests[3].messages[-1].content
+
+
+@pytest.mark.asyncio
 async def test_research_contract_continues_when_final_answer_has_no_web_results() -> (
     None
 ):
@@ -526,6 +733,77 @@ async def test_research_contract_continues_when_final_answer_has_no_web_results(
     assert output.answer == "Финал после поиска."
     assert len(provider.requests) == 3
     assert "no web/data tool results" in provider.requests[1].messages[-1].content
+
+
+@pytest.mark.asyncio
+async def test_python_policy_error_does_not_force_final_before_recovery() -> None:
+    """Policy errors should nudge a retry, not masquerade as a successful result."""
+    provider = _PythonPolicyRecoveryProvider()
+    registry = ToolRegistry()
+    python_calls: list[str] = []
+
+    async def fake_python(args: dict[str, object]) -> dict[str, object]:
+        code = str(args.get("code") or "")
+        python_calls.append(code)
+        if "import os" in code:
+            return {
+                "summary": "python policy: imports blocked by sandbox (os)",
+                "error_kind": "policy",
+                "allowed_imports": ["math", "statistics"],
+                "remediation": "Use allowed imports only: math, statistics",
+            }
+        return {
+            "summary": "python result: 10",
+            "stdout": "10\n",
+            "result": 10,
+        }
+
+    registry.register(
+        ToolManifest(
+            name="python",
+            description="Execute safe Python snippets for deterministic calculations.",
+            args_schema={
+                "type": "object",
+                "properties": {"code": {"type": "string"}},
+                "required": ["code"],
+                "additionalProperties": True,
+            },
+        ),
+        fake_python,
+    )
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.only("python"),
+        config=RunnerConfig(tool_registry=registry),
+    )
+    output = await agent.run(
+        AgentRunInput(
+            input="Посчитай math.comb(5, 2) через python",
+            run_id="run_python_policy_recovery",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(
+                metadata={"python_reliability_request": {"enabled": True}}
+            ),
+            max_steps=8,
+            max_tool_calls=4,
+        )
+    )
+
+    assert output.answer == (
+        "Импорт os был заблокирован политикой sandbox; "
+        "повторный расчет через math дал 10."
+    )
+    assert python_calls == [
+        "import os\nprint(os.getcwd())",
+        "import math\nprint(math.comb(5, 2))",
+    ]
+    assert len(provider.requests) == 3
+    assert provider.requests[1].tool_choice in (None, "auto")
+    assert "Python import was blocked by sandbox policy" in (
+        provider.requests[1].messages[-1].content
+    )
+    assert provider.requests[2].tool_choice == "none"
 
 
 def test_upstream_web_search_error_does_not_trigger_zero_result_force_final() -> None:

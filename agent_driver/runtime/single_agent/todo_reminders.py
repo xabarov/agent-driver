@@ -54,6 +54,27 @@ def active_in_progress_todo(state: PlanningState) -> tuple[str, str] | None:
     return active[0]
 
 
+def unfinished_todos(state: PlanningState) -> list[tuple[str, str, PlanningTodoStatus]]:
+    """Return todos that still require work before a planned run can finish."""
+    return [
+        (item.todo_id, item.content, item.status)
+        for item in state.todos
+        if item.status
+        in {
+            PlanningTodoStatus.PENDING,
+            PlanningTodoStatus.IN_PROGRESS,
+        }
+    ]
+
+
+def has_unfinished_todos(context: RunContext) -> bool:
+    """Return whether persisted planning state still has open work."""
+    state = planning_state_from_metadata(context)
+    if state is None:
+        return False
+    return bool(unfinished_todos(state))
+
+
 def format_todo_list_reminder(state: PlanningState) -> str:
     lines = ["Reminder: active session plan (update via todo_write merge=true):"]
     for item in state.todos:
@@ -97,9 +118,7 @@ def append_todo_progress_hint_after_substantive_tool(
     messages: list[ChatMessage],
 ) -> None:
     """Nudge the model to close the active step after substantive tool success."""
-    if any(
-        envelope.call.tool_name == "todo_write" for envelope in result.envelopes
-    ):
+    if any(envelope.call.tool_name == "todo_write" for envelope in result.envelopes):
         return
     state = planning_state_from_metadata(context)
     if state is None:
@@ -146,4 +165,6 @@ __all__ = [
     "maybe_append_todo_reminder_to_protocol",
     "planning_state_from_metadata",
     "reset_todo_write_loop_counters",
+    "has_unfinished_todos",
+    "unfinished_todos",
 ]

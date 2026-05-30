@@ -52,6 +52,41 @@ function mockApi() {
   });
 }
 
+function mockLargeModelCatalog() {
+  vi.spyOn(api, "fetchProviders").mockResolvedValue({
+    name: "openrouter",
+    model: "provider-000/model",
+    base_url: "https://openrouter.ai/api/v1",
+    status: {
+      provider_name: "openrouter",
+      provider_kind: "openai_compatible",
+      healthy: true,
+      configured: true,
+      latency_ms: 42,
+      avg_latency_ms: 42,
+      request_count: 1,
+      error_count: 0,
+    },
+  });
+  vi.spyOn(api, "fetchModels").mockResolvedValue({
+    provider: "openrouter",
+    models: [
+      ...Array.from({ length: 120 }, (_, index) => ({
+        id: `provider-${String(index).padStart(3, "0")}/model`,
+        name: `Provider Model ${index}`,
+        description: null,
+        context_length: null,
+      })),
+      {
+        id: "xai/grok-4",
+        name: "Grok 4",
+        description: null,
+        context_length: 256000,
+      },
+    ],
+  });
+}
+
 async function openPicker(name: RegExp) {
   const trigger = await screen.findByRole("button", { name });
   fireEvent.pointerDown(trigger);
@@ -103,5 +138,15 @@ describe("ModelPicker", () => {
 
     expect(await screen.findByText("Recent")).toBeInTheDocument();
     expect(screen.getByText("GPT 4.1 Mini")).toBeInTheDocument();
+  });
+
+  it("does not truncate provider catalogs after the first page of models", async () => {
+    mockLargeModelCatalog();
+    renderWithClient(<ModelPicker />);
+
+    await openPicker(/provider-000\/model/i);
+
+    expect(await screen.findByText("Grok 4")).toBeInTheDocument();
+    expect(screen.getByText("xai/grok-4")).toBeInTheDocument();
   });
 });

@@ -163,6 +163,58 @@ async def test_governed_executor_unknown_tool_without_fuzzy_match() -> None:
 
 
 @pytest.mark.asyncio
+async def test_governed_executor_normalizes_read_url_alias_to_web_fetch() -> None:
+    """Common browser-style URL tool aliases should execute as web_fetch."""
+    registry = ToolRegistry()
+
+    async def _web_fetch(args):
+        return {"summary": f"fetched {args['url']}", "url": args["url"]}
+
+    registry.register(
+        ToolManifest(
+            name="web_fetch",
+            description="Fetch URL",
+            risk=ToolRisk.MEDIUM,
+            side_effect=SideEffectClass.EXTERNAL_ACTION,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _web_fetch,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="open url",
+        run_id="run_read_url_alias",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[
+                ToolCall(
+                    tool_name="read_url",
+                    tool_call_id="call_read",
+                    args={"url": "https://example.com"},
+                )
+            ]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert result.interrupt is None
+    assert result.envelopes[0].call.tool_name == "web_fetch"
+    assert result.envelopes[0].call.tool_call_id == "call_read"
+    assert result.envelopes[0].call.metadata["original_tool_name"] == "read_url"
+    assert result.traces[0].tool_name == "web_fetch"
+    assert result.envelopes[0].structured_output == {
+        "summary": "fetched https://example.com",
+        "url": "https://example.com",
+    }
+
+
+@pytest.mark.asyncio
 async def test_governed_executor_bounds_structured_output_lists() -> None:
     """Executor should cap oversized structured outputs and expose omitted_count."""
     registry = ToolRegistry()
@@ -488,7 +540,9 @@ async def test_governed_executor_planned_tool_hint_can_enforce_planning() -> Non
 
 
 @pytest.mark.asyncio
-async def test_governed_executor_force_planning_blocks_agent_tool_spawn_request() -> None:
+async def test_governed_executor_force_planning_blocks_agent_tool_spawn_request() -> (
+    None
+):
     """Subagent spawn requests should require approved planning under the gate."""
     registry = ToolRegistry()
     register_agent_tools(registry)

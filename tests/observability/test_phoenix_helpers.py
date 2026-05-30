@@ -143,3 +143,23 @@ def test_runtime_event_otel_attributes_compacts_runtime_data() -> None:
     assert attrs["continuation_reason"] == "text_form_tool_call"
     assert "web_search" in str(attrs["tool_choice.effective"])
     assert runtime_event_otel_attributes("token_delta", {"text": "x"}) is None
+
+
+def test_runtime_event_otel_attributes_includes_compaction_tags() -> None:
+    attrs = runtime_event_otel_attributes(
+        "memory_compacted",
+        {
+            "compaction_id": "cmp_1",
+            "mode": "partial",
+            "outcome": "success",
+            "summarized_message_count": 6,
+            "compaction_state": {"circuit_breaker_open": False},
+        },
+    )
+
+    assert attrs is not None
+    assert attrs["compaction.id"] == "cmp_1"
+    assert attrs["compaction.mode"] == "partial"
+    assert attrs["compaction.outcome"] == "success"
+    assert attrs["compaction.summarized_message_count"] == 6
+    assert attrs["compaction.circuit_breaker_open"] is False

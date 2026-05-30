@@ -16,6 +16,7 @@ from agent_driver.contracts.interrupts import (
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolCall, ToolResultEnvelope
 from agent_driver.llm.contracts import LlmResponse
+from agent_driver.runtime.planning_policy import tool_policy_with_planned_tool_hint
 from agent_driver.runtime.tool_gate import (
     ToolGate,
     ToolGateAllow,
@@ -24,7 +25,6 @@ from agent_driver.runtime.tool_gate import (
     ToolGateDeny,
     ToolGateResult,
 )
-from agent_driver.runtime.planning_policy import tool_policy_with_planned_tool_hint
 from agent_driver.tools.executor.allowed import execute_allowed_path
 from agent_driver.tools.executor.blocks import append_blocked_call
 from agent_driver.tools.executor.partition import (
@@ -55,6 +55,47 @@ logger = logging.getLogger(__name__)
 # read-only fan-out (e.g. 30 file_reads). Mirrors openclaude
 # ``CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY``.
 DEFAULT_CONCURRENCY_LIMIT = 8
+_TOOL_ALIASES: dict[str, str] = {
+    "fetch_url": "web_fetch",
+    "open_url": "web_fetch",
+    "read_url": "web_fetch",
+    "read_webpage": "web_fetch",
+}
+_URL_ARG_ALIASES = ("url", "uri", "href")
+
+
+def _normalize_tool_alias(
+    call: ToolCall, *, available_tool_names: tuple[str, ...]
+) -> ToolCall:
+    """Map common model-emitted tool synonyms onto registered tool names.
+
+    Open-weight models sometimes call browser-like tools such as
+    ``read_url`` after a web search. The engine's reusable contract is
+    ``web_fetch``; normalizing the small alias set here keeps prompts
+    clean and prevents a recoverable naming mismatch from becoming a
+    denied tool turn.
+    """
+    target_name = _TOOL_ALIASES.get(call.tool_name)
+    if target_name is None or target_name not in available_tool_names:
+        return call
+    args = dict(call.args)
+    if "url" not in args:
+        for key in _URL_ARG_ALIASES:
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                args["url"] = value
+                break
+    return call.model_copy(
+        update={
+            "tool_name": target_name,
+            "args": args,
+            "metadata": {
+                **call.metadata,
+                "original_tool_name": call.tool_name,
+                "tool_alias_normalized": True,
+            },
+        }
+    )
 
 
 def _match_run_approved_prompts(
@@ -70,7 +111,11 @@ def _match_run_approved_prompts(
     in parsing are swallowed (logged at WARNING) so a malformed entry
     can't make policy decisions unsafe (default = INTERRUPT preserved).
     """
-    raw = run_input.app_metadata.get("approved_prompts") if run_input.app_metadata else None
+    raw = (
+        run_input.app_metadata.get("approved_prompts")
+        if run_input.app_metadata
+        else None
+    )
     if not isinstance(raw, list) or not raw:
         return None
     approved: list[AllowedPrompt] = []
@@ -100,8 +145,7 @@ def _read_concurrency_limit_env() -> int:
         value = int(raw)
     except ValueError:
         logger.warning(
-            "AGENT_DRIVER_TOOL_CONCURRENCY=%r is not an integer; "
-            "falling back to %d",
+            "AGENT_DRIVER_TOOL_CONCURRENCY=%r is not an integer; " "falling back to %d",
             raw,
             DEFAULT_CONCURRENCY_LIMIT,
         )
@@ -194,7 +238,11 @@ class GovernedToolExecutor:
         (operator approval). See :mod:`agent_driver.runtime.tool_gate`.
         """
         result = GovernedExecutionResult()
-        planned_calls = extract_planned_tool_calls(llm_response)
+        available_tool_names = tuple(self._registry.list_names())
+        planned_calls = [
+            _normalize_tool_alias(call, available_tool_names=available_tool_names)
+            for call in extract_planned_tool_calls(llm_response)
+        ]
         # Phase 11 H15 — apply pre_tool_use hook chain BEFORE partition
         # so concurrency-safety decisions see the transformed call.
         # Hook errors are isolated; on any exception the original call
@@ -433,8 +481,7 @@ class GovernedToolExecutor:
                 continue
             except Exception:
                 logger.warning(
-                    "tool_hook %r raised in pre_tool_use; preserving "
-                    "previous call",
+                    "tool_hook %r raised in pre_tool_use; preserving " "previous call",
                     getattr(hook, "name", type(hook).__name__),
                     exc_info=True,
                 )
@@ -669,10 +716,7 @@ class GovernedToolExecutor:
         # Allow / Deny / Ask. Errors are caught and treated as Deny
         # (fail-closed) so a malformed gate can't silently bypass
         # operator-level checks.
-        if (
-            policy.decision == ToolPolicyDecision.ALLOW
-            and spec.tool_gate is not None
-        ):
+        if policy.decision == ToolPolicyDecision.ALLOW and spec.tool_gate is not None:
             policy = await self._apply_tool_gate(
                 gate=spec.tool_gate,
                 policy=policy,

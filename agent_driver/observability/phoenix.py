@@ -206,6 +206,25 @@ def runtime_event_otel_attributes(
             attrs["planning.total"] = total
         if isinstance(current, str):
             attrs["planning.in_progress_id"] = current
+    if event_name in {"memory_compaction_started", "memory_compacted"}:
+        for source, target in (
+            ("compaction_id", "compaction.id"),
+            ("mode", "compaction.mode"),
+            ("outcome", "compaction.outcome"),
+            ("reason", "compaction.reason"),
+            ("failure_kind", "compaction.failure_kind"),
+        ):
+            value = data.get(source)
+            if isinstance(value, str):
+                attrs[target] = value
+        summarized_count = data.get("summarized_message_count")
+        if isinstance(summarized_count, int):
+            attrs["compaction.summarized_message_count"] = summarized_count
+        compaction_state = data.get("compaction_state")
+        if isinstance(compaction_state, dict):
+            circuit_open = compaction_state.get("circuit_breaker_open")
+            if isinstance(circuit_open, bool):
+                attrs["compaction.circuit_breaker_open"] = circuit_open
     return attrs
 
 

@@ -25,8 +25,10 @@ from agent_driver.runtime.control import (
     SqliteCommandQueueStore,
 )
 from agent_driver.runtime.single_agent.config_sections import (
+    CompactionSettings,
     PythonToolSettings,
     SubagentSettings,
+    TrimmingSettings,
 )
 from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
@@ -165,8 +167,23 @@ def create_agent_bundle(
         runtime_store_config.kind,
         runtime_store_config.sqlite_path,
     )
+    synthetic_compaction_probe = settings.fake_scenario == "compaction_notice"
     runner_config = RunnerConfig(
         cancellation_probe=cancellation_probe,
+        trimming=(
+            TrimmingSettings(
+                token_warning_threshold=1,
+                token_compact_threshold=1,
+                token_blocking_threshold=1_000_000,
+            )
+            if synthetic_compaction_probe
+            else TrimmingSettings()
+        ),
+        compaction=CompactionSettings(
+            enable_compaction=synthetic_compaction_probe,
+            enable_llm_compaction=False,
+            enable_session_memory_compaction=False,
+        ),
         python_tool=PythonToolSettings(
             enabled=True,
             backend="local",

@@ -11,12 +11,15 @@ from agent_driver.code_agent.tool_surface import (
     render_callable_tool_docs,
 )
 from agent_driver.context import trim_context
-from agent_driver.context.token_pressure import TokenPressureInput, estimate_token_pressure
+from agent_driver.context.token_pressure import (
+    TokenPressureInput,
+    estimate_token_pressure,
+)
 from agent_driver.contracts.context import ContextBudget
 from agent_driver.contracts.enums import AgentProfile
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.contracts.tools import ToolManifest
 from agent_driver.contracts.runtime import AgentRunInput
+from agent_driver.contracts.tools import ToolManifest
 from agent_driver.llm.contracts import LlmRequest
 from agent_driver.runtime.single_agent.protocol_validate import (
     validate_and_repair_protocol_messages,
@@ -124,22 +127,47 @@ def _request_tools_from_registry(
     runtime check sees data the schema layer doesn't (current call count,
     risk threshold).
     """
-    if registry is None:
+    names = effective_tool_names_from_registry(
+        registry,
+        allowed=allowed,
+        denied=denied,
+    )
+    if not names:
         return []
+    allowed_names = set(names)
     rows = getattr(registry, "list_registered", None)
     if not callable(rows):
         return []
+    schemas: list[dict[str, Any]] = []
+    for item in rows():
+        if item.manifest.name in allowed_names:
+            schemas.append(_tool_schema_from_manifest(item.manifest))
+    return schemas
+
+
+def effective_tool_names_from_registry(
+    registry: Any | None,
+    *,
+    allowed: tuple[str, ...] | None = None,
+    denied: tuple[str, ...] | None = None,
+) -> tuple[str, ...]:
+    """Return model-visible tool names after request-level allow/deny filters."""
+    if registry is None:
+        return tuple()
+    rows = getattr(registry, "list_registered", None)
+    if not callable(rows):
+        return tuple()
     allowed_set = set(allowed) if allowed is not None else None
     denied_set = set(denied) if denied else set()
-    schemas: list[dict[str, Any]] = []
+    names: list[str] = []
     for item in rows():
         name = item.manifest.name
         if name in denied_set:
             continue
         if allowed_set is not None and name not in allowed_set:
             continue
-        schemas.append(_tool_schema_from_manifest(item.manifest))
-    return schemas
+        names.append(name)
+    return tuple(names)
 
 
 def build_single_agent_llm_request(
@@ -199,7 +227,9 @@ def build_single_agent_llm_request(
         )
         prompt = code_prompt_render.rendered_text
     if ctx.system_instruction and ctx.system_instruction.strip():
-        has_system = any(str(item.get("role", "")) == "system" for item in prompt_messages)
+        has_system = any(
+            str(item.get("role", "")) == "system" for item in prompt_messages
+        )
         if not has_system:
             prompt_messages = [
                 {"role": "system", "content": ctx.system_instruction.strip()}

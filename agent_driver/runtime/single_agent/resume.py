@@ -84,8 +84,7 @@ def _mark_force_planning_approved(
         force_planning["approved"] = True
         if plan_id:
             force_planning["approved_plan_id"] = plan_id
-        if content_hash:
-            force_planning["approved_content_hash"] = content_hash
+        force_planning["approved_plan"] = approved_plan
         policy_metadata["force_planning"] = force_planning
         context.run_input = context.run_input.model_copy(
             update={

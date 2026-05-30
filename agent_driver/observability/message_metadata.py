@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
+from agent_driver.observability.source_evidence import merge_source_evidence
 from agent_driver.runtime.planning_check import PLANNING_TOOL_NAMES
 
 
@@ -134,6 +136,91 @@ def _planning_verdict(events: list[dict[str, object]]) -> str | None:
     return "engaged" if saw_data else "fabricated"
 
 
+def _compaction_metadata(events: list[dict[str, object]]) -> dict[str, Any] | None:
+    started: list[dict[str, Any]] = []
+    completed: list[dict[str, Any]] = []
+    for event in events:
+        event_name = str(event.get("event"))
+        if event_name not in {"memory_compaction_started", "memory_compacted"}:
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        if event_name == "memory_compaction_started":
+            started.append(dict(data))
+        else:
+            completed.append(dict(data))
+
+    visible_completed = [
+        item for item in completed if item.get("outcome") in {"success", "failure"}
+    ]
+    if not started and not visible_completed:
+        return None
+
+    latest = (visible_completed or started)[-1]
+    status = "running"
+    if latest in visible_completed:
+        status = "failed" if latest.get("outcome") == "failure" else "done"
+
+    metadata: dict[str, Any] = {
+        "status": status,
+        "attempts": max(len(started), len(visible_completed)),
+    }
+    for key in (
+        "compaction_id",
+        "mode",
+        "reason",
+        "failure_kind",
+        "summarized_message_count",
+    ):
+        value = latest.get(key)
+        if value is not None:
+            metadata[key] = value
+    return metadata
+
+
+def _source_evidence_metadata(events: list[dict[str, object]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for event in events:
+        if str(event.get("event")) != "tool_call_completed":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        tools = data.get("tools")
+        if isinstance(tools, list):
+            for tool in tools:
+                if not isinstance(tool, dict):
+                    continue
+                if _tool_source_evidence_failed(tool):
+                    continue
+                sources = tool.get("sources")
+                if isinstance(sources, list):
+                    records.extend(
+                        dict(item) for item in sources if isinstance(item, dict)
+                    )
+            continue
+        sources = data.get("sources")
+        if isinstance(sources, list) and not _tool_source_evidence_failed(data):
+            records.extend(dict(item) for item in sources if isinstance(item, dict))
+    return merge_source_evidence(records)
+
+
+def _tool_source_evidence_failed(tool: dict[str, Any]) -> bool:
+    status = str(tool.get("status") or "").lower()
+    if status in {"failed", "error", "denied", "timed_out", "timeout"}:
+        return True
+    status_code = tool.get("status_code")
+    if isinstance(status_code, int) and not isinstance(status_code, bool):
+        return status_code >= 400
+    if tool.get("error_code") or tool.get("error"):
+        return True
+    summary = tool.get("result_summary")
+    if isinstance(summary, str) and re.search(r"\bHTTP\s+[45]\d\d\b", summary):
+        return True
+    return False
+
+
 def aggregate_message_metadata_from_events(
     events: list[dict[str, object]],
 ) -> dict[str, Any]:
@@ -150,6 +237,14 @@ def aggregate_message_metadata_from_events(
     if verdict is not None:
         metadata = metadata or {}
         metadata["planningExecuted"] = verdict
+    compaction = _compaction_metadata(events)
+    if compaction is not None:
+        metadata = metadata or {}
+        metadata["compaction"] = compaction
+    source_evidence = _source_evidence_metadata(events)
+    if source_evidence:
+        metadata = metadata or {}
+        metadata["source_evidence"] = source_evidence
     return metadata or {}
 
 

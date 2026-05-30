@@ -41,6 +41,37 @@ class CompactionStageHost(Protocol):
     def _emit(self, event: EventSpec) -> None: ...
 
 
+def _emit_compaction_started(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    decision: CompactionDecision,
+    compaction_id: str,
+    token_pressure_state: str,
+    orchestrator: CompactionOrchestrator,
+) -> None:
+    """Emit the start of an eligible compaction attempt.
+
+    `memory_compacted` remains the canonical terminal outcome event. This
+    lifecycle event exists so host UIs can show a non-intrusive "context is
+    being summarized" status while LLM/full compaction is still running.
+    """
+    host._emit(
+        EventSpec(
+            run_id=context.run_id,
+            attempt_id=context.attempt_id,
+            event_type=RuntimeEventType.MEMORY_COMPACTION_STARTED,
+            payload={
+                "compaction_id": compaction_id,
+                "mode": decision.mode.value,
+                "reason": "token_pressure",
+                "token_pressure_state": token_pressure_state,
+                "compaction_state": orchestrator.state_snapshot(),
+            },
+        )
+    )
+
+
 def _emit_compaction_outcome(
     host: CompactionStageHost,
     *,
@@ -153,6 +184,14 @@ async def apply_compaction_if_eligible(
     )
     compaction_id = orchestrator.start_attempt()
     context.metadata["active_compaction_id"] = compaction_id
+    _emit_compaction_started(
+        host,
+        context=context,
+        decision=decision,
+        compaction_id=compaction_id,
+        token_pressure_state=token_pressure_state,
+        orchestrator=orchestrator,
+    )
     attempted_llm_full = False
     if decision.mode.value == "session_memory" and session_memory is not None:
         if await _apply_session_memory_compaction(
@@ -537,4 +576,8 @@ def _result_from_payload(payload: dict[str, Any]):
     )
 
 
-__all__ = ["CompactionStageHost", "apply_compaction_if_eligible"]
+__all__ = [
+    "CompactionStageHost",
+    "_emit_compaction_started",
+    "apply_compaction_if_eligible",
+]

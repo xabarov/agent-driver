@@ -1,10 +1,16 @@
 import { AlertTriangle, Bot, User } from "lucide-react";
 
 import { cn } from "../../lib/cn";
-import { MarkdownRenderer } from "../../lib/markdown";
+import { MarkdownRenderer, StreamingMarkdownRenderer } from "../../lib/markdown";
+import {
+  extractAssistantLinkSources,
+  mergeSourceEvidence,
+} from "../../lib/sourceEvidence";
 import type { ChatMessage } from "../../store/chatStore";
 import { useChatStore } from "../../store/chatStore";
 import { AssistantStreaming } from "./AssistantStreaming";
+import { CitationShelf } from "./CitationShelf";
+import { CompactionNoticeCard } from "./CompactionNoticeCard";
 import { MessageActions } from "./MessageActions";
 import { PlanningCard } from "./PlanningCard";
 import { ToolCallCard } from "./ToolCallCard";
@@ -20,6 +26,9 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
 
   if (message.role === "tool") {
     return <ToolCallCard message={message} />;
+  }
+  if (message.role === "compaction") {
+    return <CompactionNoticeCard message={message} />;
   }
 
   if (message.role === "user") {
@@ -56,6 +65,10 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
   // assistant bubble for that case only.
   const planningFabricated =
     !message.pending && message.metadata?.planningExecuted === "fabricated";
+  const sources = mergeSourceEvidence([
+    ...(message.sources ?? []),
+    ...(message.content ? extractAssistantLinkSources(message.content) : []),
+  ]);
 
   return (
     <div className="group flex gap-2.5 outline-none" tabIndex={-1}>
@@ -74,9 +87,9 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
           >
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <span>
-              The agent wrote a plan but never invoked a data tool to execute
-              it — the answer below is likely fabricated. Try re-asking with
-              an explicit instruction to use the tools.
+              The agent wrote a plan but never invoked a data tool to execute it — the
+              answer below is likely fabricated. Try re-asking with an explicit
+              instruction to use the tools.
             </span>
           </div>
         ) : null}
@@ -87,16 +100,19 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
             "dark:border-border/80 dark:shadow-none",
           )}
         >
-          {message.content ? (
-            message.pending ? (
-              <div className="whitespace-pre-wrap">{message.content}</div>
-            ) : (
-              <MarkdownRenderer content={message.content} />
-            )
+          {message.content && message.pending ? (
+            <StreamingMarkdownRenderer content={message.content} />
+          ) : null}
+          {message.content && !message.pending ? (
+            <MarkdownRenderer content={message.content} />
           ) : null}
           {message.planningSnapshot ? (
-            <PlanningCard snapshot={message.planningSnapshot} streaming={message.pending} />
+            <PlanningCard
+              snapshot={message.planningSnapshot}
+              streaming={message.pending}
+            />
           ) : null}
+          {!message.pending ? <CitationShelf sources={sources} /> : null}
           {message.pending ? <AssistantStreaming /> : null}
         </div>
         {showActions ? (

@@ -38,9 +38,17 @@ interface MessageListProps {
 export function MessageList({ messages, onRetryAssistant }: MessageListProps) {
   const streaming = useChatStore((state) => state.streaming);
   const viewportRef = useChatScroll(messages, streaming);
+  const compactionRunning = messages.some(
+    (message) => message.role === "compaction" && message.status === "running",
+  );
 
   return (
-    <div ref={viewportRef} className="h-full overflow-y-auto px-1 pr-3">
+    <div
+      ref={viewportRef}
+      aria-busy={compactionRunning}
+      aria-live={compactionRunning ? "polite" : undefined}
+      className="chat-scrollbar h-full overflow-y-auto overflow-x-hidden px-1 pr-2"
+    >
       <div className="mx-auto max-w-5xl space-y-5 pb-3 pt-1">
         {messages
           .filter((message) => shouldRenderMessage(message, messages))

@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import urlparse
 
+from agent_driver.runtime.chat_policy import is_python_reliability_request
 from agent_driver.runtime.planning_check import PLANNING_TOOL_NAMES
+from agent_driver.runtime.research_evidence import (
+    RESEARCH_DEPTH_SOURCE_VERIFIED,
+    SOURCE_VERIFIED_DOMAINS,
+    SOURCE_VERIFIED_FETCHES,
+    classify_research_depth,
+)
 from agent_driver.runtime.single_agent.continuation import analyze_continuation_intent
 
 _RESEARCH_TOOLS = frozenset({"web_search", "web_fetch"})
@@ -30,8 +39,17 @@ def summarize_run_trace(
         task_contract=task_contract,
         user_prompt=user_prompt,
     )
+    research = _research_summary(
+        events,
+        tool_names=tool_names,
+        requires_research=requires_research,
+        user_prompt=user_prompt,
+        assistant_text=text,
+        task_contract=task_contract,
+    )
     planning = _planning_summary(events, tool_names)
     llm_calls = _llm_call_summary(events)
+    prompt_surface = _prompt_surface_summary(events)
     runtime_markers = _runtime_markers(events)
     subagents = _subagent_summary(
         events,
@@ -49,6 +67,9 @@ def summarize_run_trace(
         continuation_reason=continuation.reason,
     )
     controls = _control_summary(events)
+    compaction = _compaction_summary(events)
+    provider_rejected = _provider_rejected(events)
+    unknown_tools = _unknown_tool_summary(events)
 
     failures: dict[str, bool] = {
         "stuck_on_interrupt": bool(interrupt_reasons) and terminal_event is None,
@@ -58,15 +79,24 @@ def summarize_run_trace(
             requires_research
             and not any(name in _RESEARCH_TOOLS for name in tool_names)
         ),
+        "search_only_research_report": research["fetch_required_but_missing"],
+        "insufficient_research_source_diversity": research[
+            "insufficient_source_diversity"
+        ],
+        "final_missing_source_links": research["final_missing_source_links"],
         "progress_only_final": continuation.reason == "continuation_signal",
         "text_form_tool_call": continuation.reason == "text_form_tool_call",
         "fabricated_planning": planning["verdict"] == "fabricated"
+        and not provider_rejected
         and _planning_execution_expected(
             requires_research=requires_research,
             user_prompt=user_prompt,
             assistant_text=text,
         ),
         "repeated_approval_planning": planning["approval_cycles"] > 1,
+        "plan_todos_incomplete_on_final": (
+            terminal_event == "run_completed" and _planning_todos_incomplete(planning)
+        ),
         "extra_ask_user_question": _extra_ask_user_question(
             tool_names=tool_names,
             requires_research=requires_research,
@@ -103,6 +133,7 @@ def summarize_run_trace(
             and python["python_result_observed"]
             and not python["final_after_python"]
         ),
+        "unknown_tool_call": unknown_tools["count"] > 0,
     }
     notes = _notes(
         failures=failures,
@@ -115,17 +146,22 @@ def summarize_run_trace(
         "terminal_event": terminal_event,
         "llm_calls": llm_calls["completed"],
         "llm": llm_calls,
+        "prompt_surface": prompt_surface,
         "tool_calls": len(tool_names),
         "tool_names": tool_names,
         "runtime_markers": runtime_markers,
         "research": {
             "required": requires_research,
             "tools_used": [name for name in tool_names if name in _RESEARCH_TOOLS],
+            **research,
         },
         "python": python,
         "planning": planning,
         "subagents": subagents,
         "controls": controls,
+        "compaction": compaction,
+        "unknown_tools": unknown_tools,
+        "provider_rejected": provider_rejected,
         "interrupts": interrupt_reasons,
         "continuation_reason": continuation.reason,
         "failures": failures,
@@ -135,6 +171,66 @@ def summarize_run_trace(
 
 def _count_events(events: list[dict[str, object]], event_name: str) -> int:
     return sum(1 for event in events if event.get("event") == event_name)
+
+
+def _provider_rejected(events: list[dict[str, object]]) -> bool:
+    return any(event.get("event") == "llm_request_rejected" for event in events)
+
+
+def _compaction_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    compaction_events = [
+        event
+        for event in events
+        if event.get("event") in {"memory_compaction_started", "memory_compacted"}
+    ]
+    started = [
+        event
+        for event in compaction_events
+        if event.get("event") == "memory_compaction_started"
+    ]
+    outcomes = [
+        _event_data(event)
+        for event in compaction_events
+        if event.get("event") == "memory_compacted"
+    ]
+    outcome_counts = {
+        "successful": sum(
+            1 for data in outcomes if data.get("outcome") == "successful"
+        ),
+        "failed": sum(1 for data in outcomes if data.get("outcome") == "failed"),
+        "skipped": sum(1 for data in outcomes if data.get("outcome") == "skipped"),
+    }
+    modes: list[str] = []
+    for event in compaction_events:
+        mode = _event_data(event).get("mode")
+        if isinstance(mode, str) and mode and mode not in modes:
+            modes.append(mode)
+    latest_data = _event_data(compaction_events[-1]) if compaction_events else {}
+    latest_state = latest_data.get("compaction_state")
+    latest = None
+    if compaction_events:
+        latest = {
+            "event": compaction_events[-1].get("event"),
+            "outcome": latest_data.get("outcome"),
+            "mode": latest_data.get("mode"),
+            "compaction_id": latest_data.get("compaction_id"),
+            "failure_kind": latest_data.get("failure_kind"),
+            "summarized_message_count": latest_data.get("summarized_message_count"),
+        }
+    return {
+        "attempts": max(
+            len(started), outcome_counts["successful"] + outcome_counts["failed"]
+        ),
+        "started": len(started),
+        **outcome_counts,
+        "modes": modes,
+        "circuit_breaker_open": (
+            latest_state.get("circuit_breaker_open")
+            if isinstance(latest_state, dict)
+            else False
+        ),
+        "latest": latest,
+    }
 
 
 def _last_event_name(
@@ -151,6 +247,16 @@ def _last_event_name(
 def _event_data(event: dict[str, object]) -> dict[str, Any]:
     data = event.get("data")
     return data if isinstance(data, dict) else {}
+
+
+def _event_tools(data: dict[str, Any]) -> list[dict[str, Any]]:
+    tools = data.get("tools")
+    if isinstance(tools, list):
+        return [tool for tool in tools if isinstance(tool, dict)]
+    direct = data.get("tool_name")
+    if isinstance(direct, str) and direct:
+        return [data]
+    return []
 
 
 def _tool_names(events: list[dict[str, object]]) -> list[str]:
@@ -267,6 +373,129 @@ def _requires_research(
     )
 
 
+def _research_summary(
+    events: list[dict[str, object]],
+    *,
+    tool_names: list[str],
+    requires_research: bool,
+    user_prompt: str | None,
+    assistant_text: str,
+    task_contract: dict[str, Any] | None,
+) -> dict[str, Any]:
+    depth = _research_depth(
+        task_contract=task_contract,
+        user_prompt=user_prompt,
+        requires_research=requires_research,
+    )
+    search_count = tool_names.count("web_search")
+    fetch_payloads = [
+        payload
+        for payload in _tool_payloads(events, "web_fetch")
+        if _tool_payload_succeeded(payload)
+    ]
+    fetch_count = len(fetch_payloads)
+    domains = _unique_domains(fetch_payloads)
+    final_has_source_links = _has_source_links(assistant_text)
+    fetch_required_but_missing = (
+        depth == RESEARCH_DEPTH_SOURCE_VERIFIED
+        and search_count > 0
+        and fetch_count < SOURCE_VERIFIED_FETCHES
+    )
+    insufficient_source_diversity = (
+        depth == RESEARCH_DEPTH_SOURCE_VERIFIED
+        and fetch_count >= SOURCE_VERIFIED_FETCHES
+        and len(domains) < SOURCE_VERIFIED_DOMAINS
+    )
+    final_missing_source_links = (
+        depth == RESEARCH_DEPTH_SOURCE_VERIFIED
+        and fetch_count >= SOURCE_VERIFIED_FETCHES
+        and len(domains) >= SOURCE_VERIFIED_DOMAINS
+        and not final_has_source_links
+    )
+    return {
+        "depth": depth,
+        "search_count": search_count,
+        "fetch_count": fetch_count,
+        "required_fetch_count": (
+            SOURCE_VERIFIED_FETCHES
+            if depth == RESEARCH_DEPTH_SOURCE_VERIFIED
+            else (1 if requires_research else 0)
+        ),
+        "fetch_required_but_missing": fetch_required_but_missing,
+        "insufficient_source_diversity": insufficient_source_diversity,
+        "unique_domains": domains,
+        "final_has_source_links": final_has_source_links,
+        "final_missing_source_links": final_missing_source_links,
+    }
+
+
+def _research_depth(
+    *,
+    task_contract: dict[str, Any] | None,
+    user_prompt: str | None,
+    requires_research: bool,
+) -> str:
+    if isinstance(task_contract, dict):
+        depth = task_contract.get("research_depth")
+        if isinstance(depth, str) and depth:
+            return depth
+    return classify_research_depth(
+        user_prompt or "",
+        requires_research=requires_research,
+        plan_only=_is_plan_only_prompt(" ".join((user_prompt or "").lower().split())),
+    )
+
+
+def _unique_domains(payloads: list[dict[str, Any]]) -> list[str]:
+    domains: list[str] = []
+    for payload in payloads:
+        url = _payload_url(payload)
+        if not url:
+            continue
+        domain = urlparse(url).netloc.lower()
+        if domain.startswith("www."):
+            domain = domain[4:]
+        if domain and domain not in domains:
+            domains.append(domain)
+    return domains
+
+
+def _payload_url(payload: dict[str, Any]) -> str | None:
+    args = payload.get("args")
+    if isinstance(args, dict):
+        url = args.get("url")
+        if isinstance(url, str) and url:
+            return url
+    url = payload.get("url")
+    if isinstance(url, str) and url:
+        return url
+    return None
+
+
+def _tool_payload_succeeded(payload: dict[str, Any]) -> bool:
+    status = str(payload.get("status") or "").lower()
+    if status in {"failed", "error", "denied", "timed_out", "timeout"}:
+        return False
+    status_code = payload.get("status_code")
+    if isinstance(status_code, int) and not isinstance(status_code, bool):
+        return status_code < 400
+    if payload.get("error_code") or payload.get("error"):
+        return False
+    summary = str(payload.get("result_summary") or "").lower()
+    if re.search(r"\bhttp\s+[45]\d\d\b", summary):
+        return False
+    if any(
+        marker in summary
+        for marker in ("failed:", "blocked by upstream", "unsupported content type")
+    ):
+        return False
+    return True
+
+
+def _has_source_links(text: str) -> bool:
+    return bool(re.search(r"https?://|\[[^\]]+\]\(https?://", text))
+
+
 def _is_plan_only_prompt(text: str) -> bool:
     return any(
         marker in text
@@ -340,6 +569,63 @@ def _llm_call_summary(events: list[dict[str, object]]) -> dict[str, Any]:
     }
 
 
+def _prompt_surface_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    effective_tool_names: list[str] = []
+    prompt_fragments: list[str] = []
+    for event in events:
+        if event.get("event") != "llm_call_completed":
+            continue
+        data = _event_data(event)
+        tools = data.get("effective_tool_names")
+        if isinstance(tools, list):
+            effective_tool_names.extend(
+                item for item in tools if isinstance(item, str) and item
+            )
+        fragments = data.get("prompt_fragments")
+        if isinstance(fragments, list):
+            prompt_fragments.extend(
+                item for item in fragments if isinstance(item, str) and item
+            )
+    return {
+        "effective_tool_names": _dedupe_preserve_order(effective_tool_names),
+        "prompt_fragments": _dedupe_preserve_order(prompt_fragments),
+    }
+
+
+def _unknown_tool_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    names: list[str] = []
+    suggestions: list[str] = []
+    for event in events:
+        if event.get("event") != "tool_call_completed":
+            continue
+        data = _event_data(event)
+        for tool in _event_tools(data):
+            if str(tool.get("error_code") or "") != "tool_not_registered":
+                continue
+            name = tool.get("tool_name")
+            if isinstance(name, str) and name:
+                names.append(name)
+            summary = tool.get("result_summary")
+            if isinstance(summary, str) and summary:
+                suggestions.append(summary)
+    return {
+        "count": len(names),
+        "names": _dedupe_preserve_order(names),
+        "suggestions": suggestions[:3],
+    }
+
+
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
 def _subagent_summary(
     events: list[dict[str, object]],
     *,
@@ -388,6 +674,17 @@ def _subagent_summary(
         "statuses": statuses,
         "join_states": join_states,
     }
+
+
+def _planning_todos_incomplete(planning: dict[str, Any]) -> bool:
+    latest = planning.get("latest_snapshot")
+    if not isinstance(latest, dict):
+        return False
+    completed = latest.get("completed")
+    total = latest.get("total")
+    if not isinstance(completed, int) or not isinstance(total, int):
+        return False
+    return total > 0 and completed < total
 
 
 def _python_summary(
@@ -446,49 +743,7 @@ def _python_summary(
 
 
 def _python_expected(user_prompt: str | None) -> bool:
-    text = " ".join((user_prompt or "").lower().split())
-    if not text:
-        return False
-    if any(
-        marker in text
-        for marker in (
-            "не используй python",
-            "без python",
-            "without python",
-            "do not use python",
-        )
-    ):
-        return False
-    return any(
-        marker in text
-        for marker in (
-            "посчитай",
-            "вычисли",
-            "сколько",
-            "счет",
-            "счёт",
-            "букв",
-            "символ",
-            "процент",
-            "средн",
-            "медиан",
-            "стандартн",
-            "статист",
-            "вероятност",
-            "комбинац",
-            "calculate",
-            "compute",
-            "count",
-            "how many",
-            "percent",
-            "average",
-            "mean",
-            "median",
-            "standard deviation",
-            "probability",
-            "combinatorics",
-        )
-    )
+    return is_python_reliability_request(user_prompt or "")
 
 
 def _delegation_requested(user_prompt: str | None) -> bool:
@@ -714,6 +969,22 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "missing_required_research_evidence",
         "Research was required, but no web_search/web_fetch tool call is visible.",
+    ),
+    (
+        "search_only_research_report",
+        "Report-like research stopped after search results without enough fetched sources.",
+    ),
+    (
+        "insufficient_research_source_diversity",
+        "Report-like research fetched sources but did not cover enough distinct domains.",
+    ),
+    (
+        "final_missing_source_links",
+        "Source-verified research produced a final answer without concrete source links.",
+    ),
+    (
+        "plan_todos_incomplete_on_final",
+        "Run completed while the visible plan still had unfinished checklist items.",
     ),
     (
         "progress_only_final",

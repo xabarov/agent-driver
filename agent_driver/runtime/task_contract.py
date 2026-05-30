@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_driver.runtime.research_evidence import (
+    RESEARCH_DEPTH_NONE,
+    classify_research_depth,
+)
+
 _DELIVERABLE_MARKERS = (
     "не план",
     "напиши",
@@ -85,6 +90,7 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
         return {
             "kind": "plan",
             "requires_research": False,
+            "research_depth": RESEARCH_DEPTH_NONE,
             "goal": text,
             "approach": (
                 "Create a concise checklist/plan for the requested work without "
@@ -102,6 +108,10 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
         }
     if any(marker in lowered for marker in _DELIVERABLE_MARKERS):
         requires_research = _requires_research(lowered)
+        research_depth = classify_research_depth(
+            lowered,
+            requires_research=requires_research,
+        )
         criteria = [
             "Final response contains the requested deliverable, not another plan.",
             "Reasonable assumptions are stated briefly when details are missing.",
@@ -121,6 +131,7 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
         return {
             "kind": "deliverable",
             "requires_research": requires_research,
+            "research_depth": research_depth,
             "goal": text,
             "approach": (
                 "Use existing context plus only the tools needed for missing "
@@ -133,9 +144,11 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
             ],
         }
     if _requires_research(lowered):
+        research_depth = classify_research_depth(lowered, requires_research=True)
         return {
             "kind": "research",
             "requires_research": True,
+            "research_depth": research_depth,
             "goal": text,
             "approach": (
                 "Gather evidence with data tools, verify enough context, then "
@@ -194,6 +207,12 @@ def render_task_contract_reminder(contract: dict[str, Any]) -> str | None:
         parts.append(
             "Research requirement: user explicitly asked for internet/search/source "
             "work; use available web/data tools before the final answer."
+        )
+    if contract.get("research_depth") == "source_verified_report":
+        parts.append(
+            "Research depth: source_verified_report. Treat search results as "
+            "candidates; fetch/open concrete URLs before final synthesis when "
+            "web_fetch is available."
         )
     if criteria:
         parts.append("Acceptance criteria: " + "; ".join(criteria[:4]))

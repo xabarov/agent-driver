@@ -1,22 +1,34 @@
 from __future__ import annotations
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-
-from agent_driver.contracts import AgentRunInput, ChatMessage
-from agent_driver.contracts.enums import ApprovalMode, ResumeAction, SideEffectClass, ToolRisk
-from agent_driver.contracts.tools import ToolCall, ToolManifest
-from agent_driver.llm.contracts import LlmFinishReason
-from agent_driver.llm.contracts import LlmRequest, LlmResponse, UsageSummary
-from agent_driver.llm.providers_impl.fake import FakeProvider
-from agent_driver.runtime import create_runtime_store_bundle, runtime_store_config_from_env
-from agent_driver.runtime.single_agent.types import RunnerConfig
-from agent_driver.sdk import create_agent
-from agent_driver.tools import ToolRegistry, ToolSet
-
 from app.deps import reset_dependency_caches
 from app.main import create_app
 from app.services.agent_factory import AgentBundle
+from httpx import ASGITransport, AsyncClient
+
+from agent_driver.contracts import AgentRunInput, ChatMessage
+from agent_driver.contracts.enums import (
+    ApprovalMode,
+    ResumeAction,
+    SideEffectClass,
+    ToolRisk,
+)
+from agent_driver.contracts.tools import ToolCall, ToolManifest
+from agent_driver.llm.contracts import (
+    LlmFinishReason,
+    LlmRequest,
+    LlmResponse,
+    UsageSummary,
+)
+from agent_driver.llm.providers_impl.fake import FakeProvider
+from agent_driver.runtime import (
+    create_runtime_store_bundle,
+    runtime_store_config_from_env,
+)
+from agent_driver.runtime.control import InMemoryCommandQueueStore
+from agent_driver.runtime.single_agent.types import RunnerConfig
+from agent_driver.sdk import create_agent
+from agent_driver.tools import ToolRegistry, ToolSet
 
 
 class _InterruptThenStop(FakeProvider):
@@ -54,7 +66,7 @@ class _InterruptThenStop(FakeProvider):
 def _interrupt_bundle(tmp_path, monkeypatch) -> AgentBundle:
     monkeypatch.setenv("AGENT_DRIVER_PROVIDER", "fake")
     monkeypatch.setenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "memory")
-    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "web")
+    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "dev")
     monkeypatch.setenv("CHAT_DEMO_SESSIONS_PATH", str(tmp_path / "sessions.json"))
     reset_dependency_caches()
     settings = __import__("app.deps", fromlist=["get_settings"]).get_settings()
@@ -83,15 +95,19 @@ def _interrupt_bundle(tmp_path, monkeypatch) -> AgentBundle:
         checkpoint_store=runtime_store_bundle.checkpoint_store,
         event_log=runtime_store_bundle.event_log,
     )
-    from agent_driver.cli.sessions import SessionStore
     from pathlib import Path
 
+    from agent_driver.cli.sessions import SessionStore
+
     registry = agent.runner.config.tool_registry
-    manifests = tuple(item.manifest for item in registry.list_registered()) if registry else ()
+    manifests = (
+        tuple(item.manifest for item in registry.list_registered()) if registry else ()
+    )
     return AgentBundle(
         agent=agent,
         event_log=runtime_store_bundle.event_log,
         checkpoint_store=runtime_store_bundle.checkpoint_store,
+        command_queue_store=InMemoryCommandQueueStore(),
         session_store=SessionStore(path=Path(settings.sessions_path)),
         manifests=manifests,
         store_kind="memory",
@@ -148,7 +164,7 @@ async def test_fake_plan_approval_scenario_streams_interrupt_and_resume(
     monkeypatch.setenv("AGENT_DRIVER_PROVIDER", "fake")
     monkeypatch.setenv("CHAT_DEMO_FAKE_SCENARIO", "plan_approval")
     monkeypatch.setenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "memory")
-    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "web")
+    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "dev")
     monkeypatch.setenv("CHAT_DEMO_SESSIONS_PATH", str(tmp_path / "sessions.json"))
     reset_dependency_caches()
     application = create_app()
@@ -162,7 +178,7 @@ async def test_fake_plan_approval_scenario_streams_interrupt_and_resume(
             "/api/chat/messages",
             json={
                 "message": "please plan this change",
-                "tool_preset": "web",
+                "tool_preset": "dev",
                 "force_planning": True,
             },
         ) as stream_response:
@@ -178,7 +194,7 @@ async def test_fake_plan_approval_scenario_streams_interrupt_and_resume(
         assert "interrupt_requested" in events
         from app.deps import get_agent_bundle_for_request
 
-        checkpoint = get_agent_bundle_for_request("web").checkpoint_store.latest(run_id)
+        checkpoint = get_agent_bundle_for_request("dev").checkpoint_store.latest(run_id)
         assert checkpoint is not None
         policy_metadata = checkpoint.state.run_input.tool_policy.metadata
         assert policy_metadata["force_planning"]["enabled"] is True

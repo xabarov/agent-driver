@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from app.services.run_trace_summary import summarize_run_trace
 
+from agent_driver.observability.message_metadata import (
+    aggregate_message_metadata_from_events,
+)
+
 
 def _completed_tool(name: str) -> dict[str, object]:
     return {
@@ -61,6 +65,356 @@ def test_trace_summary_passes_research_with_web_tool() -> None:
     assert summary["research"]["tools_used"] == ["web_search"]
 
 
+def test_trace_summary_flags_search_only_report_research() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt=(
+            "составь todo лист и иди по нему. Мне нужно поискать информацию "
+            "в интернете о fork-join моделях массового обслуживания"
+        ),
+        assistant_text="Краткий обзор без проверки страниц.",
+        events=[
+            _completed_tool("web_search"),
+            {"event": "llm_call_completed", "data": {}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["research"]["depth"] == "source_verified_report"
+    assert summary["research"]["fetch_required_but_missing"] is True
+    assert summary["failures"]["search_only_research_report"] is True
+
+
+def test_trace_summary_passes_report_research_with_fetched_sources() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="напиши подробный отчет по найденным источникам",
+        assistant_text=(
+            "Итог по двум источникам: "
+            "[A](https://example.com/a), [B](https://example.org/b)."
+        ),
+        events=[
+            _completed_tool("web_search"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.com/a"},
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.org/b"},
+                        }
+                    ],
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "pass"
+    assert summary["research"]["fetch_count"] == 2
+    assert summary["research"]["unique_domains"] == ["example.com", "example.org"]
+    assert summary["research"]["final_has_source_links"] is True
+    assert summary["research"]["final_missing_source_links"] is False
+
+
+def test_trace_summary_marks_missing_final_links_as_research_diagnostic() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="напиши подробный отчет по найденным источникам",
+        assistant_text="Итог по двум источникам без встроенных ссылок.",
+        events=[
+            _completed_tool("web_search"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.com/a"},
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.org/b"},
+                        }
+                    ],
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["research"]["final_has_source_links"] is False
+    assert summary["research"]["final_missing_source_links"] is True
+    assert summary["failures"]["final_missing_source_links"] is True
+
+
+def test_trace_summary_ignores_blocked_fetches_for_research_depth() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="напиши подробный отчет по найденным источникам",
+        assistant_text="Итог с [источником](https://example.com/a).",
+        events=[
+            _completed_tool("web_search"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.com/a"},
+                        },
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "result_summary": "web_fetch blocked by upstream HTTP 403",
+                            "args": {"url": "https://blocked.example/b"},
+                        },
+                    ],
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research"]["fetch_count"] == 1
+    assert summary["research"]["unique_domains"] == ["example.com"]
+    assert summary["failures"]["search_only_research_report"] is True
+
+
+def test_message_metadata_collects_tool_source_evidence() -> None:
+    metadata = aggregate_message_metadata_from_events(
+        [
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_search",
+                            "sources": [
+                                {
+                                    "id": "web_search:call_search:1",
+                                    "url": "https://example.com/source",
+                                    "canonical_url": "https://example.com/source",
+                                    "source_type": "web_search",
+                                    "title": "Search hit",
+                                    "rank": 1,
+                                }
+                            ],
+                        },
+                        {
+                            "tool_name": "web_fetch",
+                            "sources": [
+                                {
+                                    "id": "web_fetch:call_fetch:1",
+                                    "url": "https://example.com/source",
+                                    "canonical_url": "https://example.com/source",
+                                    "source_type": "web_fetch",
+                                    "title": "Fetched source",
+                                    "rank": 1,
+                                }
+                            ],
+                        },
+                    ]
+                },
+            },
+        ]
+    )
+
+    assert metadata["source_evidence"] == [
+        {
+            "id": "web_fetch:call_fetch:1",
+            "url": "https://example.com/source",
+            "canonical_url": "https://example.com/source",
+            "source_type": "web_fetch",
+            "title": "Fetched source",
+            "rank": 1,
+        }
+    ]
+
+
+def test_message_metadata_ignores_failed_tool_source_evidence() -> None:
+    metadata = aggregate_message_metadata_from_events(
+        [
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "result_summary": "web_fetch blocked by upstream HTTP 403",
+                            "sources": [
+                                {
+                                    "id": "web_fetch:call_fetch:1",
+                                    "url": "https://example.com/blocked",
+                                    "canonical_url": "https://example.com/blocked",
+                                    "source_type": "web_fetch",
+                                    "title": "Blocked source",
+                                    "rank": 1,
+                                }
+                            ],
+                        }
+                    ]
+                },
+            },
+        ]
+    )
+
+    assert "source_evidence" not in metadata
+
+
+def test_trace_summary_flags_insufficient_report_source_diversity() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="напиши подробный отчет по найденным источникам",
+        assistant_text="Итог по двум страницам одного сайта.",
+        events=[
+            _completed_tool("web_search"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.com/a"},
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.com/b"},
+                        }
+                    ],
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["research"]["insufficient_source_diversity"] is True
+    assert summary["failures"]["insufficient_research_source_diversity"] is True
+
+
+def test_trace_summary_reports_effective_prompt_surface() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="привет",
+        assistant_text="Привет!",
+        events=[
+            {
+                "event": "llm_call_completed",
+                "data": {
+                    "effective_tool_names": ["python", "agent_tool"],
+                    "prompt_fragments": [
+                        "react_chat_tool_policy_python.txt",
+                        "react_chat_tool_policy_subagents.txt",
+                    ],
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["prompt_surface"] == {
+        "effective_tool_names": ["python", "agent_tool"],
+        "prompt_fragments": [
+            "react_chat_tool_policy_python.txt",
+            "react_chat_tool_policy_subagents.txt",
+        ],
+    }
+
+
+def test_trace_summary_flags_unknown_tool_calls() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="исследуй тему",
+        assistant_text="Итог.",
+        events=[
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "thought",
+                            "status": "denied",
+                            "error_code": "tool_not_registered",
+                            "result_summary": "Tool 'thought' is not registered.",
+                        }
+                    ]
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["unknown_tools"]["names"] == ["thought"]
+    assert summary["failures"]["unknown_tool_call"] is True
+
+
+def test_trace_summary_flags_incomplete_plan_on_final() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="составь todo и иди по нему",
+        assistant_text="Итоговый ответ.",
+        events=[
+            {
+                "event": "tool_call_completed",
+                "data": {"tools": [{"tool_name": "todo_write", "status": "completed"}]},
+            },
+            {
+                "event": "run_completed",
+                "data": {
+                    "planning_snapshot": {
+                        "todos": [
+                            {"id": "a", "content": "A", "status": "completed"},
+                            {"id": "b", "content": "B", "status": "pending"},
+                        ],
+                        "completed": 1,
+                        "total": 2,
+                    }
+                },
+            },
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["failures"]["plan_todos_incomplete_on_final"] is True
+
+
 def test_trace_summary_flags_progress_only_final() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
@@ -99,6 +453,24 @@ def test_trace_summary_flags_fabricated_planning() -> None:
     assert summary["verdict"] == "fail"
     assert summary["planning"]["verdict"] == "fabricated"
     assert summary["failures"]["fabricated_planning"] is True
+
+
+def test_trace_summary_separates_provider_failure_after_planning() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Составь план и выполни поиск",
+        assistant_text="Run failed",
+        events=[
+            _completed_tool("todo_write"),
+            {"event": "llm_request_rejected", "data": {"status_code": 429}},
+            {"event": "run_failed", "data": {"status_code": 429}},
+        ],
+    )
+
+    assert summary["provider_rejected"] is True
+    assert summary["planning"]["verdict"] == "fabricated"
+    assert summary["failures"]["run_failed_or_cancelled"] is True
+    assert summary["failures"]["fabricated_planning"] is False
 
 
 def test_trace_summary_allows_resolved_clarification_interrupt() -> None:
@@ -171,6 +543,27 @@ def test_trace_summary_requires_python_for_calculation_prompt() -> None:
     assert summary["failures"]["missed_python"] is True
 
 
+def test_trace_summary_does_not_require_python_for_research_about_calculation_domain() -> (
+    None
+):
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt=(
+            "Найди информацию о fork-join моделях массового обслуживания "
+            "и их применении для расчета компьютерных сетей"
+        ),
+        assistant_text="Краткий обзор.",
+        events=[
+            _completed_tool("web_search"),
+            {"event": "llm_call_completed", "data": {}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["python"]["python_expected"] is False
+    assert summary["failures"]["missed_python"] is False
+
+
 def test_trace_summary_passes_python_calculation_with_final_answer() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
@@ -204,3 +597,84 @@ def test_trace_summary_flags_repeated_python_policy_errors() -> None:
     assert summary["verdict"] == "fail"
     assert summary["python"]["python_policy_errors"] == 2
     assert summary["failures"]["python_policy_loop"] is True
+
+
+def test_trace_summary_reports_compaction_lifecycle() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="продолжай длинную задачу",
+        assistant_text="Продолжаю после сжатия контекста.",
+        events=[
+            {
+                "event": "memory_compaction_started",
+                "data": {
+                    "compaction_id": "cmp_1",
+                    "mode": "partial",
+                    "token_pressure_state": "blocking",
+                },
+            },
+            {
+                "event": "memory_compacted",
+                "data": {
+                    "outcome": "successful",
+                    "mode": "partial",
+                    "compaction_id": "cmp_1",
+                    "summarized_message_count": 8,
+                    "compaction_state": {"circuit_breaker_open": False},
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "pass"
+    assert summary["compaction"]["attempts"] == 1
+    assert summary["compaction"]["started"] == 1
+    assert summary["compaction"]["successful"] == 1
+    assert summary["compaction"]["failed"] == 0
+    assert summary["compaction"]["skipped"] == 0
+    assert summary["compaction"]["modes"] == ["partial"]
+    assert summary["compaction"]["latest"]["summarized_message_count"] == 8
+
+
+def test_trace_summary_reports_compaction_skipped_and_failed() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="продолжай",
+        assistant_text="Ответ.",
+        events=[
+            {
+                "event": "memory_compacted",
+                "data": {
+                    "outcome": "skipped",
+                    "mode": "none",
+                    "skip_reason": "not_eligible",
+                    "compaction_state": {"circuit_breaker_open": False},
+                },
+            },
+            {
+                "event": "memory_compaction_started",
+                "data": {"compaction_id": "cmp_2", "mode": "llm_full"},
+            },
+            {
+                "event": "memory_compacted",
+                "data": {
+                    "outcome": "failed",
+                    "mode": "llm_full",
+                    "compaction_id": "cmp_2",
+                    "failure_kind": "llm_compaction_failed",
+                    "compaction_state": {"circuit_breaker_open": True},
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["compaction"]["attempts"] == 1
+    assert summary["compaction"]["started"] == 1
+    assert summary["compaction"]["successful"] == 0
+    assert summary["compaction"]["failed"] == 1
+    assert summary["compaction"]["skipped"] == 1
+    assert summary["compaction"]["modes"] == ["none", "llm_full"]
+    assert summary["compaction"]["circuit_breaker_open"] is True
+    assert summary["compaction"]["latest"]["failure_kind"] == "llm_compaction_failed"

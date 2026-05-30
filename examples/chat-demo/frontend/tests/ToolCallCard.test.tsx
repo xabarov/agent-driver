@@ -40,7 +40,9 @@ describe("ToolCallCard", () => {
     );
     expect(screen.getByText("file_write")).toBeInTheDocument();
     expect(screen.getByText("denied")).toBeInTheDocument();
-    expect(screen.getByText("force planning requires an approved plan")).toBeInTheDocument();
+    expect(
+      screen.getByText("force planning requires an approved plan"),
+    ).toBeInTheDocument();
   });
 
   test("renders agent tool as delegated work panel", () => {
@@ -88,7 +90,9 @@ describe("ToolCallCard", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /inspect delegated subagent work/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /inspect delegated subagent work/i }),
+    );
 
     expect(screen.getByText("Child brief")).toBeInTheDocument();
     expect(screen.getByText("Return 3 verified facts.")).toBeInTheDocument();
@@ -114,9 +118,12 @@ describe("ToolCallCard", () => {
       />,
     );
 
+    expect(screen.getByLabelText("Python execution")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Python execution done");
     expect(screen.getByText("Python calculation")).toBeInTheDocument();
     expect(screen.getByText("done")).toBeInTheDocument();
-    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getAllByText("3").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Python result summary")).toHaveTextContent("exact");
     expect(screen.getByText("from collections import Counter")).toBeInTheDocument();
     expect(screen.queryByText("Debug payload")).not.toBeInTheDocument();
 
@@ -127,6 +134,56 @@ describe("ToolCallCard", () => {
     expect(screen.getByText("Sandboxed Python")).toBeInTheDocument();
     expect(screen.getByText("calc_1")).toBeInTheDocument();
     expect(screen.getByText("Debug payload")).toBeInTheDocument();
+  });
+
+  test("renders python policy errors without raw JSON scroll", () => {
+    render(
+      <ToolCallCard
+        message={{
+          id: "tool_1",
+          role: "tool",
+          toolCallId: "call_1",
+          name: "python",
+          status: "failed",
+          args: {
+            code: "import os\nprint(os.getcwd())",
+            session_id: "policy_recovery_demo",
+          },
+          resultPreview:
+            "python policy: imports blocked by sandbox (os). Use allowed imports only.",
+          durationMs: 17,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Python calculation")).toBeInTheDocument();
+    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText(/imports blocked by sandbox/)).toBeInTheDocument();
+    expect(screen.getByText("Code")).toBeInTheDocument();
+    expect(screen.queryByText('"code"')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Python result summary")).not.toBeInTheDocument();
+  });
+
+  test("renders rounded python result chips for approximate numeric output", () => {
+    render(
+      <ToolCallCard
+        message={{
+          id: "tool_1",
+          role: "tool",
+          toolCallId: "call_1",
+          name: "python",
+          status: "done",
+          args: {
+            code: "import math\nprint(math.exp(-7.05))",
+          },
+          resultPreview: "result: ≈0.0008674",
+        }}
+      />,
+    );
+
+    const summary = screen.getByLabelText("Python result summary");
+    expect(summary).toHaveTextContent("rounded");
+    expect(summary).toHaveTextContent("≈0.0008674");
   });
 
   test("shows subagent child lifecycle rows", () => {
@@ -165,13 +222,15 @@ describe("ToolCallCard", () => {
     expect(screen.getByText("run_child")).toBeInTheDocument();
     expect(screen.getByText("candidate A is safer")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /inspect delegated subagent work/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /inspect delegated subagent work/i }),
+    );
     expect(screen.getByText("Child results")).toBeInTheDocument();
     expect(screen.getByText("Used tools")).toBeInTheDocument();
     expect(screen.getByText("memory")).toBeInTheDocument();
   });
 
-  test("wraps tool details behind a collapsible input section", () => {
+  test("renders web search as an evidence panel with debug payload collapsed", () => {
     render(
       <ToolCallCard
         message={{
@@ -185,13 +244,63 @@ describe("ToolCallCard", () => {
         }}
       />,
     );
-    expect(screen.getByText("query: Fender history")).toBeInTheDocument();
-    expect(screen.queryByText("Input")).not.toBeInTheDocument();
+    expect(screen.getByText("Web search")).toBeInTheDocument();
+    expect(screen.getByText("web_search")).toBeInTheDocument();
+    expect(screen.getByText("Fender history")).toBeInTheDocument();
+    expect(screen.queryByText("Debug payload")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /expand tool call web_search/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /inspect web search evidence/i }),
+    );
 
-    expect(screen.getByText("Input")).toBeInTheDocument();
-    expect(within(screen.getByText("Input").parentElement!).getByText(/Fender history/)).toBeInTheDocument();
+    expect(screen.getByText("Debug payload")).toBeInTheDocument();
+    expect(
+      within(screen.getByText("Debug payload").parentElement!).getByText(
+        /Fender history/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  test("renders web fetch as a page evidence panel", () => {
+    render(
+      <ToolCallCard
+        message={{
+          id: "tool_1",
+          role: "tool",
+          toolCallId: "call_1",
+          name: "web_fetch",
+          status: "done",
+          args: { url: "https://example.com/fender" },
+          resultPreview: "Fetched page about Fender history.",
+          sources: [
+            {
+              id: "web_fetch:call_1:1",
+              url: "https://example.com/fender",
+              canonicalUrl: "https://example.com/fender",
+              sourceType: "web_fetch",
+              title: "Fender page",
+              domain: "example.com",
+              rank: 1,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Web fetch")).toBeInTheDocument();
+    expect(screen.getByText("web_fetch")).toBeInTheDocument();
+    expect(screen.getAllByText("example.com").length).toBeGreaterThan(0);
+    expect(screen.getByText("Fetched page about Fender history.")).toBeInTheDocument();
+    expect(screen.queryByText("Debug payload")).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /inspect web fetch evidence/i }),
+    );
+
+    expect(screen.getByLabelText("Sources")).toBeInTheDocument();
+    expect(screen.getByText("Fender page")).toBeInTheDocument();
+    expect(screen.getByText("fetched")).toBeInTheDocument();
+    expect(screen.getByText("Debug payload")).toBeInTheDocument();
   });
 
   test("collapses details when a running tool completes", () => {
@@ -208,7 +317,7 @@ describe("ToolCallCard", () => {
         }}
       />,
     );
-    expect(screen.getByText("Input")).toBeInTheDocument();
+    expect(screen.getByText("Debug payload")).toBeInTheDocument();
 
     rerender(
       <ToolCallCard
@@ -225,7 +334,7 @@ describe("ToolCallCard", () => {
       />,
     );
 
-    expect(screen.queryByText("Input")).not.toBeInTheDocument();
+    expect(screen.queryByText("Debug payload")).not.toBeInTheDocument();
     expect(screen.getByText("6 results")).toBeInTheDocument();
   });
 });

@@ -21,13 +21,45 @@ _DELIVERABLE_MARKERS = (
     "not a plan",
 )
 
-_WEB_TOOL_PRESETS = frozenset({"web_search", "web", "safe", "workspace", "dev", "all"})
+_PYTHON_RELIABILITY_MARKERS = (
+    "сколько",
+    "посчитай",
+    "вычисли",
+    "рассчитай",
+    "проверь точно",
+    "точно",
+    "процент",
+    "среднее",
+    "медиан",
+    "вероятност",
+    "комбинац",
+    "combination",
+    "combinatorics",
+    "probability",
+    "calculate",
+    "compute",
+    "exact",
+    "count",
+    "average",
+    "median",
+)
+_PYTHON_RELIABILITY_SYMBOLS = frozenset("0123456789*/%=+")
 
 
 def is_deliverable_request(message: str) -> bool:
     """Return true when the user asks for the final artifact, not another plan."""
     text = " ".join(message.lower().split())
     return any(marker in text for marker in _DELIVERABLE_MARKERS)
+
+
+def is_python_reliability_request(message: str) -> bool:
+    """Return true when exact calculation/counting should use python."""
+    text = " ".join(message.lower().split())
+    if not text:
+        return False
+    if any(marker in text for marker in _PYTHON_RELIABILITY_MARKERS):
+        return True
+    return any(symbol in text for symbol in _PYTHON_RELIABILITY_SYMBOLS)
 
 
 def build_chat_tool_policy(
@@ -43,6 +75,11 @@ def build_chat_tool_policy(
     task_contract = build_chat_task_contract(message)
     if task_contract is not None:
         metadata["task_contract"] = task_contract
+    if is_python_reliability_request(message):
+        metadata["python_reliability_request"] = {
+            "enabled": True,
+            "reason": "exact calculation/counting is more reliable through python",
+        }
     contract_kind = (
         str(task_contract.get("kind"))
         if isinstance(task_contract, dict) and task_contract.get("kind")
@@ -84,14 +121,13 @@ def initial_tool_choice_for_chat(
     policy: ToolPolicyInput,
     preset: str,
 ) -> str | dict[str, object] | None:
-    """Force a first web search when the user explicitly asked for research."""
-    task_contract = policy.metadata.get("task_contract")
-    if not isinstance(task_contract, dict):
-        return None
-    if task_contract.get("requires_research") is not True:
-        return None
-    if preset in _WEB_TOOL_PRESETS:
-        return {"type": "tool", "name": "web_search"}
+    """Return an optional initial tool choice for chat runs.
+
+    Research is steered through task contracts and prompt fragments instead of
+    a forced provider-level tool_choice. Some OpenRouter routes reject named
+    forced tool choices even when normal auto tool use is supported.
+    """
+    _ = policy, preset
     return None
 
 
@@ -99,4 +135,5 @@ __all__ = [
     "build_chat_tool_policy",
     "initial_tool_choice_for_chat",
     "is_deliverable_request",
+    "is_python_reliability_request",
 ]

@@ -400,6 +400,8 @@ def normalize_openai_stream_chunk(
         metadata["planned_tool_calls"] = planned_tool_calls
     if parse_errors:
         metadata["tool_call_parse_errors"] = parse_errors
+    if isinstance(delta, dict) and delta.get("tool_calls"):
+        metadata["stream_tool_call_delta"] = True
     return LlmStreamEvent(
         event="delta",
         delta_text=text,
@@ -437,6 +439,7 @@ class OpenAICompatibleProvider(ProviderBase):
         self._api_key = config.api_key or ""
         self._model = config.model
         self._timeout_s = config.timeout_s
+        self._max_tokens_default = config.max_tokens_default
         self._extra_body: dict[str, Any] = dict(config.extra_body or {})
 
     @dataclass(slots=True)
@@ -448,6 +451,7 @@ class OpenAICompatibleProvider(ProviderBase):
         api_key: str | None
         model: str
         timeout_s: float = 30.0
+        max_tokens_default: int | None = 4096
         cost_per_1k_tokens: float = 0.0
         http_client_config: HttpClientConfig | None = None
         # Vendor-specific extra fields merged into every chat/completions
@@ -507,10 +511,17 @@ class OpenAICompatibleProvider(ProviderBase):
         payload = {
             "model": request.model or self._model,
             "messages": messages_payload,
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
             "stream": stream,
         }
+        max_tokens = (
+            request.max_tokens
+            if request.max_tokens is not None
+            else self._max_tokens_default
+        )
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if request.temperature is not None:
+            payload["temperature"] = request.temperature
         if request.tools:
             payload["tools"] = request.tools
             payload["tool_choice"] = _normalize_tool_choice_for_openai(

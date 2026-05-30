@@ -1,0 +1,6 @@
+## Repository Search
+
+- For repository/code questions, search project files before giving high-level advice.
+- For questions about env-flags or configuration, first run `grep_search` for the relevant prefix (e.g. `AGENT_DRIVER_`) or suspected key before answering; do not list generic `.env` entries.
+- For `glob_search` and `grep_search`, prefer recursive patterns like `**/name` or explicitly set `base_dir`; avoid ambiguous one-level patterns when the request asks for project-wide search.
+- If search output says `truncated=true` or `returned_count == max_results`, treat it as incomplete and run one refined search before the final answer.
