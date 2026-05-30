@@ -33,6 +33,18 @@ _RESEARCH_MARKERS = (
     "source",
 )
 
+_NO_RESEARCH_MARKERS = (
+    "без поиска",
+    "без интернета",
+    "не ищи",
+    "не используй интернет",
+    "по памяти",
+    "no search",
+    "without search",
+    "without web",
+    "do not search",
+)
+
 _IMPLEMENTATION_MARKERS = (
     "реализ",
     "исправ",
@@ -89,7 +101,7 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
             ],
         }
     if any(marker in lowered for marker in _DELIVERABLE_MARKERS):
-        requires_research = any(marker in lowered for marker in _RESEARCH_MARKERS)
+        requires_research = _requires_research(lowered)
         criteria = [
             "Final response contains the requested deliverable, not another plan.",
             "Reasonable assumptions are stated briefly when details are missing.",
@@ -120,7 +132,7 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
                 "Asking for plan approval for research or writing deliverables.",
             ],
         }
-    if any(marker in lowered for marker in _RESEARCH_MARKERS):
+    if _requires_research(lowered):
         return {
             "kind": "research",
             "requires_research": True,
@@ -198,6 +210,12 @@ def _string_list(value: object) -> list[str]:
 
 def _is_plan_only_request(text: str) -> bool:
     return any(marker in text for marker in _PLAN_ONLY_MARKERS)
+
+
+def _requires_research(text: str) -> bool:
+    if any(marker in text for marker in _NO_RESEARCH_MARKERS):
+        return False
+    return any(marker in text for marker in _RESEARCH_MARKERS)
 
 
 __all__ = ["build_chat_task_contract", "render_task_contract_reminder"]

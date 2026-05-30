@@ -37,6 +37,10 @@ class LiveScenario:
     name: str
     prompt: str
     required_tools: tuple[str, ...] = ()
+    tool_preset: str | None = None
+    requires_subagent: bool = False
+    steering_message: str | None = None
+    requires_steering: bool = False
     forbidden_failures: tuple[str, ...] = (
         "stuck_on_interrupt",
         "missing_terminal_event",
@@ -127,6 +131,31 @@ SCENARIOS: dict[str, LiveScenario] = {
         required_tools=("web_search",),
         requires_research=True,
     ),
+    "subagent-synthesis": LiveScenario(
+        name="subagent-synthesis",
+        prompt=(
+            "Поручи субагенту кратко собрать по памяти 3 факта о Fender Jazzmaster, "
+            "а затем сам дай итог в 2 предложения. Без поиска в интернете."
+        ),
+        required_tools=("agent_tool",),
+        tool_preset="agents",
+        requires_subagent=True,
+        requires_research=False,
+    ),
+    "steering-mid-run": LiveScenario(
+        name="steering-mid-run",
+        prompt=(
+            "Найди в интернете один источник про историю Fender Jazzmaster "
+            "и дай краткий итог."
+        ),
+        required_tools=("web_search",),
+        steering_message=(
+            "Уточнение во время работы: в финальном ответе добавь короткую "
+            "фразу 'учтено steering'."
+        ),
+        requires_steering=True,
+        requires_research=True,
+    ),
 }
 
 
@@ -160,6 +189,27 @@ def fetch_trace_summary(page: Page, run_id: str) -> dict[str, Any]:
             return await response.json();
         }""",
         run_id,
+    )
+
+
+def queue_steering_message(page: Page, run_id: str, message: str) -> dict[str, Any]:
+    return page.evaluate(
+        """async ({runId, message}) => {
+            const response = await fetch(`/api/chat/runs/${runId}/control`, {
+                method: "POST",
+                headers: {"content-type": "application/json"},
+                body: JSON.stringify({
+                    kind: "enqueue_user_message",
+                    priority: "next",
+                    payload: {message}
+                })
+            });
+            if (!response.ok) {
+                throw new Error(`control request failed: ${response.status}`);
+            }
+            return await response.json();
+        }""",
+        {"runId": run_id, "message": message},
     )
 
 
@@ -207,6 +257,26 @@ def assert_trace_acceptance(
     for tool_name in scenario.required_tools:
         if tool_name not in tools:
             failures.append(f"required tool missing: {tool_name}")
+    if scenario.requires_subagent:
+        subagents = summary.get("subagents") or {}
+        if not isinstance(subagents, dict):
+            failures.append("subagent summary missing")
+        else:
+            if subagents.get("runs_completed", 0) < 1:
+                failures.append("subagent run did not complete")
+            if subagents.get("groups_joined", 0) < 1:
+                failures.append("subagent group did not join")
+    if scenario.requires_steering:
+        controls = summary.get("controls") or {}
+        if not isinstance(controls, dict):
+            failures.append("control summary missing")
+        else:
+            if controls.get("queued", 0) < 1:
+                failures.append("steering command was not queued")
+            if controls.get("dequeued", 0) < 1:
+                failures.append("steering command was not dequeued")
+            if controls.get("applied", 0) < 1:
+                failures.append("steering command was not applied")
     if summary.get("probe_timeout") is True:
         failures.append("probe timed out before terminal event")
     if scenario.requires_research is not None:
@@ -276,12 +346,19 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
                 {
                     **json.loads(route.request.post_data or "{}"),
                     "scenario_id": scenario.name,
+                    **(
+                        {"tool_preset": scenario.tool_preset}
+                        if scenario.tool_preset
+                        else {}
+                    ),
                 },
                 ensure_ascii=False,
             )
         ),
     )
     run_id = send_message_and_capture_run_id(page, scenario.prompt)
+    if scenario.steering_message:
+        queue_steering_message(page, run_id, scenario.steering_message)
     summary = wait_until_run_idle(page, run_id=run_id, timeout_ms=180000)
     failures = assert_trace_acceptance(scenario, summary)
     write_scenario_artifacts(

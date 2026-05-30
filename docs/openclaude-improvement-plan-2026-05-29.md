@@ -92,9 +92,9 @@
   и не пишет deliverable.
 - [x] `clarification-only-when-blocked`: уточнение только для реально
   блокирующего user-owned решения.
-- [ ] `subagent-synthesis` live: `agent_tool` порождает детей, parent получает
+- [x] `subagent-synthesis` live: `agent_tool` порождает детей, parent получает
   результаты и выдает синтез.
-- [ ] `steering-mid-run` live: steering применяется на ближайшей границе,
+- [x] `steering-mid-run` live: steering применяется на ближайшей границе,
   отображается в UI и виден в trace.
 
 ### Subagents / Steering Next Layer
@@ -159,6 +159,9 @@
 - `/api/chat/runs/{run_id}/trace-summary` является быстрым debug verdict:
   terminal event, LLM calls, tool names, research evidence, planning verdict,
   interrupts, progress-only final, text-form tool calls.
+- Live trace summary должен уважать explicit negative constraints:
+  "без поиска", "без интернета", "по памяти" отключают research-required даже
+  при наличии слов "поиск/интернет" в тексте.
 - Runtime/Phoenix spans включают normalized tags:
   `task_contract.kind`, `task_contract.requires_research`,
   `tool_choice.effective`, `force_final_reason`, `continuation_reason`,
@@ -258,6 +261,12 @@ Latest known good checks:
 - latest 6-scenario live probe passed with run ids:
   `run_939d0ad932ed`, `run_c3a4befd49bc`, `run_1fd22ffa5f16`,
   `run_50dce1de0945`, `run_8bf476954a92`, `run_f62af2122f04`.
+- `subagent-synthesis` live passed with `run_0aec5f474a23`:
+  `agent_tool` used, one subagent completed, group joined, final answer
+  produced without unwanted research.
+- `steering-mid-run` live passed with `run_7e50e962c1b8`:
+  `enqueue_user_message` was queued, dequeued, applied, and final answer kept
+  required web-search evidence.
 - latest 7-scenario live probe passed with run ids:
   `run_b4b5a25caf59`, `run_1305757bddea`, `run_14d441eb6cae`,
   `run_af1b198eb3fa`, `run_b662ac776ff2`, `run_bf797fbf2048`,

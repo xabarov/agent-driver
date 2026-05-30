@@ -165,7 +165,15 @@ def test_chat_tool_policy_denies_web_tools_for_plan_only() -> None:
 
 def test_public_chat_presets_exclude_modal_plan_approval_tools() -> None:
     """Public chat can show live todo progress without plan approval loops."""
-    for preset in ("off", "web_search", "web_fetch", "web", "safe", "workspace"):
+    for preset in (
+        "off",
+        "web_search",
+        "web_fetch",
+        "web",
+        "agents",
+        "safe",
+        "workspace",
+    ):
         config = _tool_config_from_preset(preset)
         selected = set(config.tools) | set(config.tool_packs)
         assert "planning_progress" in selected
@@ -173,3 +181,12 @@ def test_public_chat_presets_exclude_modal_plan_approval_tools() -> None:
 
     dev_config = _tool_config_from_preset("dev")
     assert "planning" in set(dev_config.tool_packs)
+
+
+def test_agents_preset_exposes_agent_tool_without_dangerous_tools() -> None:
+    config = _tool_config_from_preset("agents")
+
+    assert config.tools == ("agent_tool",)
+    assert "shell" not in config.tool_packs
+    assert "filesystem_write" not in config.tool_packs
+    assert config.allow_dangerous_tools is False

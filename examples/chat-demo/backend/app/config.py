@@ -13,6 +13,7 @@ ToolPreset = Literal[
     "web_search",
     "web_fetch",
     "web",
+    "agents",
     # Legacy/internal presets remain accepted for backend scenarios and older clients.
     "safe",
     "workspace",
@@ -97,6 +98,14 @@ class Settings(BaseSettings):
     deadline_seconds: float = Field(
         default=600.0,
         validation_alias=AliasChoices("CHAT_DEMO_DEADLINE_SECONDS"),
+    )
+    enable_subagents: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("CHAT_DEMO_ENABLE_SUBAGENTS"),
+    )
+    max_child_runs: int = Field(
+        default=3,
+        validation_alias=AliasChoices("CHAT_DEMO_MAX_CHILD_RUNS"),
     )
     stream_poll_interval_ms: int = Field(
         default=20,

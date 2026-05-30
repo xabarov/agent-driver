@@ -119,7 +119,7 @@ Open `http://127.0.0.1:8000` (UI + API on one port).
 
 - Store file: `CHAT_DEMO_SESSIONS_PATH` (default `./.agent-driver/sessions.json`)
 - Routes: `/sessions/new`, `/sessions/<session_id>`, `/sessions/<session_id>/replay/<run_id>`
-- Web tool presets: `off`, `web_search`, `web_fetch`, `web`. Planning tools are hidden from UI and always available to the agent.
+- Web tool presets: `off`, `web_search`, `web_fetch`, `web`. The backend also has an `agents` preset for live subagent probes. Planning tools are hidden from UI and always available to the agent.
 - Runtime event log: `AGENT_DRIVER_RUNTIME_STORE_KIND=sqlite` recommended for HITL/replay durability
 
 ## Environment
@@ -129,6 +129,7 @@ See [`.env.example`](.env.example). Key variables:
 - `AGENT_DRIVER_PROVIDER` — `fake` (default), `openrouter`, `vllm`, `ollama`
 - `CHAT_DEMO_TOOL_PRESET` — default tool surface when UI does not override
 - `CHAT_DEMO_DEADLINE_SECONDS` — run wall-clock limit; default `600` for longer research/write tasks
+- `CHAT_DEMO_ENABLE_SUBAGENTS` / `CHAT_DEMO_MAX_CHILD_RUNS` — enables bounded child-run execution for the `agents` preset and subagent scenarios
 - `CHAT_DEMO_LLM_STREAM_IDLE_TIMEOUT_SECONDS` — fail a provider stream that stops emitting events; default `60`
 - `AGENT_DRIVER_RUNTIME_STORE_KIND` — `memory` (fast tests) or `sqlite` (HITL + replay)
 - `CHAT_DEMO_TRACING_ENABLED` — enables Phoenix/OpenTelemetry tracing in the Docker dev stack

@@ -32,6 +32,8 @@ def summarize_run_trace(
     planning = _planning_summary(events, tool_names)
     llm_calls = _llm_call_summary(events)
     runtime_markers = _runtime_markers(events)
+    subagents = _subagent_summary(events)
+    controls = _control_summary(events)
 
     failures: dict[str, bool] = {
         "stuck_on_interrupt": bool(interrupt_reasons) and terminal_event is None,
@@ -76,6 +78,8 @@ def summarize_run_trace(
             "tools_used": [name for name in tool_names if name in _RESEARCH_TOOLS],
         },
         "planning": planning,
+        "subagents": subagents,
+        "controls": controls,
         "interrupts": interrupt_reasons,
         "continuation_reason": continuation.reason,
         "failures": failures,
@@ -156,12 +160,27 @@ def _requires_research(
     task_contract: dict[str, Any] | None,
     user_prompt: str | None,
 ) -> bool:
+    text = " ".join((user_prompt or "").lower().split())
+    if any(
+        marker in text
+        for marker in (
+            "без поиска",
+            "без интернета",
+            "не ищи",
+            "не используй интернет",
+            "по памяти",
+            "no search",
+            "without search",
+            "without web",
+            "do not search",
+        )
+    ):
+        return False
     if (
         isinstance(task_contract, dict)
         and task_contract.get("requires_research") is True
     ):
         return True
-    text = " ".join((user_prompt or "").lower().split())
     if _is_plan_only_prompt(text):
         return False
     return any(
@@ -248,6 +267,54 @@ def _llm_call_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         "tool_choice_effective": tool_choices,
         "force_final_reasons": force_final_reasons,
         "continuation_reasons": continuation_reasons,
+    }
+
+
+def _subagent_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    statuses: list[str] = []
+    join_states: list[str] = []
+    for event in events:
+        data = _event_data(event)
+        if event.get("event") == "subagent_completed":
+            status = data.get("status")
+            if isinstance(status, str) and status:
+                statuses.append(status)
+        if event.get("event") in {"subagent_group_joined", "subagent_group_failed"}:
+            join_state = data.get("join_state")
+            if isinstance(join_state, str) and join_state:
+                join_states.append(join_state)
+    return {
+        "groups_started": _count_events(events, "subagent_group_started"),
+        "groups_joined": _count_events(events, "subagent_group_joined"),
+        "groups_failed": _count_events(events, "subagent_group_failed"),
+        "runs_started": _count_events(events, "subagent_started"),
+        "runs_completed": _count_events(events, "subagent_completed"),
+        "statuses": statuses,
+        "join_states": join_states,
+    }
+
+
+def _control_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    kinds: list[str] = []
+    for event in events:
+        if event.get("event") not in {
+            "control_requested",
+            "command_queued",
+            "command_dequeued",
+            "control_applied",
+            "command_cancelled",
+        }:
+            continue
+        kind = _event_data(event).get("kind")
+        if isinstance(kind, str) and kind:
+            kinds.append(kind)
+    return {
+        "requested": _count_events(events, "control_requested"),
+        "queued": _count_events(events, "command_queued"),
+        "dequeued": _count_events(events, "command_dequeued"),
+        "applied": _count_events(events, "control_applied"),
+        "cancelled": _count_events(events, "command_cancelled"),
+        "kinds": kinds,
     }
 
 

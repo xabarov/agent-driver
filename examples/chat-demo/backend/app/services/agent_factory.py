@@ -23,6 +23,7 @@ from agent_driver.runtime.control import (
     InMemoryCommandQueueStore,
     SqliteCommandQueueStore,
 )
+from agent_driver.runtime.single_agent.config_sections import SubagentSettings
 from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.sdk import Agent, create_agent
@@ -92,6 +93,12 @@ def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
             tools_mode="default",
             tool_packs=("web", "planning_progress"),
         )
+    if preset == "agents":
+        return CliToolConfig(
+            tools_mode="default",
+            tools=("agent_tool",),
+            tool_packs=("planning_progress",),
+        )
     if preset == "workspace":
         return CliToolConfig(
             tools_mode="default",
@@ -146,7 +153,13 @@ def create_agent_bundle(
         runtime_store_config.kind,
         runtime_store_config.sqlite_path,
     )
-    runner_config = RunnerConfig(cancellation_probe=cancellation_probe)
+    runner_config = RunnerConfig(
+        cancellation_probe=cancellation_probe,
+        subagents=SubagentSettings(
+            enable_subagents=settings.enable_subagents,
+            max_child_runs=settings.max_child_runs,
+        ),
+    )
     agent = create_agent(
         provider=provider,
         tools=toolset,

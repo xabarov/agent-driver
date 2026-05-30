@@ -223,3 +223,70 @@ def test_trace_summary_collects_runtime_markers() -> None:
     assert summary["llm"]["force_final_reasons"] == ["deliverable_request"]
     assert summary["llm"]["continuation_reasons"] == ["progress_only_final"]
     assert summary["runtime_markers"]["force_final_reasons"] == ["deliverable_request"]
+
+
+def test_trace_summary_collects_subagent_markers() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Поручи часть работы субагенту и дай итог",
+        assistant_text="Итог с учетом ответа субагента.",
+        events=[
+            _completed_tool("agent_tool"),
+            {"event": "subagent_group_started", "data": {"group_id": "group_1"}},
+            {"event": "subagent_started", "data": {"task_id": "task_1"}},
+            {
+                "event": "subagent_completed",
+                "data": {"task_id": "task_1", "status": "completed"},
+            },
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "group_1", "join_state": "done"},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["subagents"]["groups_started"] == 1
+    assert summary["subagents"]["runs_completed"] == 1
+    assert summary["subagents"]["join_states"] == ["done"]
+    assert summary["verdict"] == "pass"
+
+
+def test_trace_summary_respects_no_search_instruction() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Собери по памяти факты о Fender, без поиска в интернете",
+        assistant_text="Итог по памяти.",
+        task_contract={
+            "kind": "research",
+            "requires_research": True,
+        },
+        events=[{"event": "run_completed", "data": {}}],
+    )
+
+    assert summary["research"]["required"] is False
+    assert summary["failures"]["missing_required_research_evidence"] is False
+    assert summary["verdict"] == "pass"
+
+
+def test_trace_summary_collects_control_markers() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Найди источник",
+        assistant_text="Итог.",
+        events=[
+            {
+                "event": "control_requested",
+                "data": {"kind": "enqueue_user_message"},
+            },
+            {"event": "command_queued", "data": {"kind": "enqueue_user_message"}},
+            {"event": "command_dequeued", "data": {"kind": "enqueue_user_message"}},
+            {"event": "control_applied", "data": {"kind": "enqueue_user_message"}},
+            _completed_tool("web_search"),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["controls"]["queued"] == 1
+    assert summary["controls"]["dequeued"] == 1
+    assert summary["controls"]["applied"] == 1
