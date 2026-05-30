@@ -445,8 +445,8 @@ when a slice is implemented, tested, committed, or intentionally deferred.
   `/tmp/agent-driver-chat-demo-force-planning-block-current.png`.
 - [x] Decide and document chat-demo default mode:
   `prompt_only` or `required_for_writes`.
-  Documented in `docs/architecture/force-planning.md`: keep
-  `required_for_writes` when force planning is enabled.
+  Current summary lives in [Planning and control](planning-and-control.md):
+  keep `required_for_writes` when force planning is enabled.
 
 ### Phase 3: Steering Contracts And Queue
 
@@ -591,9 +591,9 @@ when a slice is implemented, tested, committed, or intentionally deferred.
 ### Documentation And Recipes
 
 - [x] Update `docs/roadmap.md` with a pointer to this plan.
-- [x] Add `docs/architecture/force-planning.md`.
-- [x] Add `docs/architecture/steering-control-plane.md`.
-- [x] Extend `docs/architecture/multi-agent-orchestration.md`.
+- [x] Fold force-planning, steering, and subagent summaries into the current
+  short docs: [Planning and control](planning-and-control.md),
+  [Runtime overview](runtime.md), and [Chat demo](chat-demo.md).
 - [x] Add SDK recipes for plan approval, mid-run steering, child continuation,
   and stopping a child.
 
@@ -1124,14 +1124,11 @@ Exit criteria:
 
 - Done: `docs/roadmap.md` points to this plan from the cross-phase
   OpenClaude improvement workstream note.
-- Done: `docs/architecture/force-planning.md` records the policy input,
-  adaptive hint behavior, gate semantics, approval flow, chat-demo default,
-  tests, and remaining work.
-- Done: `docs/architecture/steering-control-plane.md` records the current
-  control contracts, queue semantics, runtime boundary, events, SDK surface,
-  chat-demo adapter, and remaining work.
-- Extend `docs/architecture/multi-agent-orchestration.md` with mailbox,
-  background execution and native `agent_tool` semantics.
+- Done: [Planning and control](planning-and-control.md) records policy
+  boundaries, mode reminders, clarification, steering, and subagent behavior.
+- Done: [Runtime overview](runtime.md) records the runtime boundary, tool loop,
+  stores, events, and replay concepts.
+- Done: [Chat demo](chat-demo.md) records Phoenix tracing and concept checks.
 - Add SDK recipes for:
   plan approval;
   mid-run steering;

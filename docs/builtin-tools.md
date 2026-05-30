@@ -135,10 +135,14 @@ id/content/status и не допускает больше одного `in_progr
 
 Промпт chat-mode просит модель при запросе «составь план» сначала вызвать `todo_write`; чеклист виден только в панели plan — в prose не дублировать полный список. Статусы обновлять через `merge=true` сразу после каждого шага (`completed` → следующий `in_progress`). Runtime периодически напоминает модели о незакрытых шагах после содержательных tools (`web_fetch`, поиск, чтение файлов).
 
-`ask_user_question` формирует structured clarification interrupt с prompt,
-choices и `allow_multiple`. Полезен, когда выполнение заблокировано выбором
-пользователя. Инструмент не вызывает внешний side effect сам по себе, а возвращает
-payload с reason `clarification_required` для runtime/UI.
+`ask_user_question` формирует structured clarification interrupt. Старый формат
+`prompt` + `choices` сохранен для совместимости, а текущий предпочтительный
+формат добавляет `questions`: 1-4 коротких вопроса с уникальными headers,
+optional preview и 2-4 уникальными вариантами ответа. Полезен только когда
+выполнение реально заблокировано пользовательским решением. Инструмент не
+является plan approval и не должен использоваться, чтобы избежать выдачи
+запрошенного deliverable. Он не вызывает внешний side effect сам по себе, а
+возвращает payload с reason `clarification_required` для runtime/UI.
 
 `enter_plan_mode` и `exit_plan_mode_v2` меняют metadata planning state между
 режимами `plan` и `agent`. Они полезны, когда runtime поддерживает явное

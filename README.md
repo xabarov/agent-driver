@@ -94,11 +94,13 @@ AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests
 ## Documentation map
 
 - Main docs index: `docs/README.md`
-- Architecture and extraction overview:
-  `docs/agent-driver-analysis-2026-05-18.md`
+- Runtime overview: `docs/runtime.md`
+- Planning and control: `docs/planning-and-control.md`
+- Chat demo: `docs/chat-demo.md`
+- Testing: `docs/testing.md`
 - Built-in tools overview: `docs/builtin-tools.md`
 - Implementation roadmap: `docs/roadmap.md`
-- Refactor and quality backlog: `docs/refactor/README.md`
+- OpenClaude improvement plan: `docs/openclaude-improvement-plan-2026-05-29.md`
 
 ## Project status
 

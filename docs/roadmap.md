@@ -1,15 +1,18 @@
 # Agent Driver Implementation Roadmap
 
+This is a historical implementation roadmap. For the current documentation
+index, use [Agent Driver Docs](README.md). Old exploratory architecture files
+were removed during docs cleanup, so stale deep-dive references below are kept
+only as implementation notes when they describe already-landed work.
+
 This roadmap updates the initial MVP order after reviewing current agent-runtime best practices. The main change: durable execution, interrupts, guardrails, and evaluation move earlier. Subagents and context compaction remain important, but they should sit on a reliable runtime foundation.
 
-Additional smolagents review: keep the durable-first order, but make agent profiles, prompt templates, model-facing tool contracts, planning steps, and CodeAgent-style execution explicit instead of implicit in one generic ReAct loop. See [Smolagents lessons for agent profiles, prompts, and tools](architecture/smolagents-lessons.md).
+Additional smolagents review: keep the durable-first order, but make agent profiles, prompt templates, model-facing tool contracts, planning steps, and CodeAgent-style execution explicit instead of implicit in one generic ReAct loop.
 
 Additional OpenClaude context review: treat context engineering as a layered runtime system, not a single "summarize the chat" feature. The strongest pattern is a five-layer stack: cheap deterministic tool-result microcompaction; background session-memory extraction; session-memory-based compaction that can skip an LLM summary; full LLM compaction with no-tool isolation, PTL retries, and structured prompt output; and partial/reactive compaction plus post-compact cleanup. Phases 6, 8, and 9 below should implement this stack incrementally.
 
-Verification policy reference: all tool/runtime/context feature work must follow
-[Testing and live trace policy](architecture/testing-and-live-trace-policy.md)
-before merge (offline + live + trace-review gates).
-Execution reference: [Test plan and coverage matrix](architecture/test-plan-and-matrix.md).
+Verification policy reference: all tool/runtime/context feature work should
+follow the current [Testing](testing.md) guidance before merge.
 
 Additional SDK/SSE/CLI analysis update: the runtime already has durable typed
 events and provider-level streaming primitives, but external usage is still
@@ -50,7 +53,7 @@ Cursor: see `.cursor/rules/repo-structure.mdc` for agent guidance on layout.
 
 ## Phase 0: Repository Bootstrap
 
-Contract reference: [Phase 0 contracts spec](specs/phase-0-contracts.md).
+Contract reference: current contracts live under `agent_driver/contracts`.
 
 - Create Python package skeleton.
 - Add `pyproject.toml`, lint/format/test configuration.
@@ -169,7 +172,8 @@ Exit criteria:
     and `agent_driver.adapters.project_warning_event` recognizes the
     new `kind="tool_choice_antipattern"` so SSE consumers get one
     stable warning vocabulary;
-  - documented in `docs/architecture/tool-choice-policy.md`.
+  - historical note: this was originally documented in the removed
+    `tool-choice-policy` deep dive.
 - Add guardrail pipeline:
   - input;
   - prompt/context;
@@ -424,7 +428,8 @@ Exit criteria:
   - `agent_driver.sdk.interrupt_to_stream_event(interrupt, ...)` projects
     an `InterruptRequest` into a transport-neutral dict that hosts wrap
     in their own SSE/WebSocket envelope (e.g. `plan.proposed`);
-  - documented in `docs/architecture/hitl-host-mapping.md`.
+  - historical note: this was originally documented in the removed HITL host
+    mapping deep dive.
 
 Exit criteria:
 
@@ -458,8 +463,7 @@ Implementation notes from first cut:
   exporter. The resolver receives `(TraceSpan, TraceExport)` and returns a
   `dict[str, str | int | float | bool]`; non-primitive values and
   non-string keys are silently dropped, raising/non-dict returns are
-  isolated and reported via `TraceSinkResult.metadata`. Documented in
-  `docs/architecture/observability-attribute-hooks.md`.
+  isolated and reported via `TraceSinkResult.metadata`.
 - Add deterministic evaluators:
   - event schema;
   - terminal state;
@@ -476,7 +480,7 @@ Implementation notes from first cut:
   - deterministic needle-fact fixtures;
   - recall/hallucination/provenance/budget-efficiency scoring;
   - optional OpenRouter-backed live recall smoke.
-  See [Test Plan and Coverage Matrix](architecture/test-plan-and-matrix.md#context-quality-matrix).
+  Track current verification in [Testing](testing.md).
 
 Exit criteria:
 
@@ -544,8 +548,8 @@ Implementation notes from integration pass:
   enabling replay/compaction separation from ordinary chat/tool observations;
 - LLM request assembly now applies deterministic context trimming and supports
   bounded observation previews before model completion.
-- context-quality work is tracked in
-  [Test Plan and Coverage Matrix](architecture/test-plan-and-matrix.md#context-quality-matrix);
+- context-quality work is tracked through the current [Testing](testing.md)
+  guidance;
   Phase 6 should be treated as deterministic context hygiene until those
   retention tests measure semantic summarization quality.
 
@@ -591,8 +595,8 @@ Implementation notes from first cut:
   `ToolManifest` and reused by code-agent execution path;
 - side-effecting tools in code-agent flow route through approval interrupts using
   existing policy interrupt payloads.
-- planned follow-up backlog after first cut:
-  [Phase 7 follow-ups from smolagents](architecture/phase7-smolagents-followups.md).
+- planned follow-up backlog after first cut was captured in the historical
+  smolagents follow-up notes, now removed during docs cleanup.
 
 Implementation notes from follow-up pass (`7.2`-`7.4`):
 
@@ -684,8 +688,7 @@ Implementation notes from follow-up pass (7.3/7.4):
     `kind="compaction_circuit_breaker"` /
     `signal_id="compaction_circuit_breaker_open"` on the closed→open
     transition; both projections recognized by
-    `agent_driver.adapters.project_warning_event`; documented in
-    `docs/architecture/warning-events.md`).
+    `agent_driver.adapters.project_warning_event`).
 
 Exit criteria:
 
@@ -814,7 +817,8 @@ Exit criteria:
     projection or `None` for non-warning / unknown-kind events;
   - keep the human-facing vocabulary (warning ids, copy, suggestions) in the
     host application, not in the runtime;
-  - documented in `docs/architecture/warning-events.md`.
+  - historical note: warning event vocabulary was originally documented in a
+    removed architecture deep dive.
 - Add CLI adapter baseline with smolagents-style step visibility:
   - `console_scripts` entrypoint and optional `[cli]` extras;
   - commands: `run`, `replay`, `tail`, `tree`;
@@ -877,9 +881,8 @@ Implementation notes from hardening pass:
     and run inspection from CLI;
   - **10.5 product parity backlog:** add provider/config/export/doctor
     workflows inspired by OpenClaude boundaries, without porting its Ink stack.
-- See [`architecture/custom-cli-roadmap.md`](architecture/custom-cli-roadmap.md)
-  for the OpenClaude audit, boundary decisions, and CLI-specific acceptance
-  checkpoints.
+- Historical note: the OpenClaude CLI audit and CLI-specific acceptance
+  checkpoints were part of the removed custom CLI deep dive.
 - Phase 10.2 follow-up now starts landing:
   - `Agent.stream(...)` emits incrementally by polling durable event log while
     run execution is still in progress, instead of waiting for full output;
