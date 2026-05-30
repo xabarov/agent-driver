@@ -67,12 +67,14 @@
   LLM calls, tool calls, selected tools, effective `tool_choice`, safe runtime
   reminders, text-form tool calls, progress-only final, missing required tool
   evidence, repeated planning, extra `ask_user_question`.
-- [ ] Сохранять последний failed live scenario artifact в `/tmp`: screenshot,
+- [x] Сохранять последний failed live scenario artifact в `/tmp`: screenshot,
   transcript excerpt, trace summary JSON.
-- [ ] Документировать known bad patterns: repeated planning, progress-only
+- [x] Документировать known bad patterns: repeated planning, progress-only
   final, fake citations without tool evidence, raw JSON in chat, stuck
   clarification.
-- [ ] Добить минимум 5 live Phoenix-backed scenarios на текущей default model.
+- [x] Добить минимум 5 live Phoenix-backed scenarios на текущей default model.
+  Latest `--all` passed on 2026-05-30 with `plan-only`, `plan-web-answer`,
+  `research-report`, `simple-direct`, and `web-search-final`.
 
 ### Core Scenario Set
 
@@ -85,7 +87,7 @@
 - [x] `plan-approval`: deterministic approval card/resume path.
 - [x] `subagent-final`: deterministic subagent synthesis UI path.
 - [x] `deliverable-no-replan`: explicit deliverable не рестартует planning loop.
-- [ ] `plan-only`: пользователь просит только план; агент показывает checklist
+- [x] `plan-only`: пользователь просит только план; агент показывает checklist
   и не пишет deliverable.
 - [ ] `clarification-only-when-blocked`: уточнение только для реально
   блокирующего user-owned решения.
@@ -160,6 +162,21 @@
   `task_contract.kind`, `task_contract.requires_research`,
   `tool_choice.effective`, `force_final_reason`, `continuation_reason`,
   `agent_driver.scenario`.
+
+## Known Bad Patterns
+
+- Repeated approval planning: one run enters and exits modal planning more
+  than once instead of executing the accepted plan.
+- Progress-only final: the assistant ends with "I will now continue/write..." or
+  an equivalent status update, but does not provide the requested answer.
+- Fake research evidence: the final text cites or names sources without
+  matching `web_search`/`web_fetch` trace evidence when research was required.
+- Raw tool JSON in chat: provider emits textual tool-call JSON or
+  `<tool_call>` markup instead of native tool calls.
+- Stuck clarification: `ask_user_question` pauses the run, but resume/submit
+  does not lead to a terminal answer.
+- Extra clarification: `ask_user_question` is used for research or deliverable
+  tasks where reasonable assumptions should be enough.
 
 ## Neighbor Project Findings
 

@@ -148,6 +148,22 @@ def test_trace_summary_allows_plan_only_without_data_tools() -> None:
     assert summary["verdict"] == "pass"
 
 
+def test_trace_summary_does_not_require_research_for_plan_only_search_plan() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="составь только план поиска информации по истории Fender, без реферата",
+        assistant_text="План готов.",
+        events=[
+            _completed_tool("todo_write"),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research"]["required"] is False
+    assert summary["failures"]["missing_required_research_evidence"] is False
+    assert summary["verdict"] == "pass"
+
+
 def test_trace_summary_flags_repeated_approval_planning() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

@@ -44,6 +44,19 @@ _IMPLEMENTATION_MARKERS = (
     "change",
 )
 
+_PLAN_ONLY_MARKERS = (
+    "только план",
+    "только план работ",
+    "только план поиска",
+    "без реферата",
+    "без черновика",
+    "plan only",
+    "only plan",
+    "just the plan",
+    "no report",
+    "without writing",
+)
+
 
 def build_chat_task_contract(message: str) -> dict[str, Any] | None:
     """Return a compact task contract for complex chat turns.
@@ -56,6 +69,25 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
     if not text:
         return None
     lowered = text.lower()
+    if _is_plan_only_request(lowered):
+        return {
+            "kind": "plan",
+            "requires_research": False,
+            "goal": text,
+            "approach": (
+                "Create a concise checklist/plan for the requested work without "
+                "executing research or writing the deliverable."
+            ),
+            "acceptance_criteria": [
+                "Uses the visible checklist when a multi-step plan is useful.",
+                "Does not perform web/data research unless the user asks to execute.",
+                "Does not write the deliverable that was explicitly excluded.",
+            ],
+            "out_of_scope": [
+                "Starting the research/search phase.",
+                "Writing the report/draft instead of the plan.",
+            ],
+        }
     if any(marker in lowered for marker in _DELIVERABLE_MARKERS):
         requires_research = any(marker in lowered for marker in _RESEARCH_MARKERS)
         criteria = [
@@ -162,6 +194,10 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _is_plan_only_request(text: str) -> bool:
+    return any(marker in text for marker in _PLAN_ONLY_MARKERS)
 
 
 __all__ = ["build_chat_task_contract", "render_task_contract_reminder"]

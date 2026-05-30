@@ -162,6 +162,8 @@ def _requires_research(
     ):
         return True
     text = " ".join((user_prompt or "").lower().split())
+    if _is_plan_only_prompt(text):
+        return False
     return any(
         marker in text
         for marker in (
@@ -172,6 +174,23 @@ def _requires_research(
             "research",
             "search",
             "source",
+        )
+    )
+
+
+def _is_plan_only_prompt(text: str) -> bool:
+    return any(
+        marker in text
+        for marker in (
+            "только план",
+            "только план поиска",
+            "без реферата",
+            "без черновика",
+            "plan only",
+            "only plan",
+            "just the plan",
+            "no report",
+            "without writing",
         )
     )
 

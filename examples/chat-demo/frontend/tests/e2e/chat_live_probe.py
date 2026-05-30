@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,8 @@ class LiveScenario:
         "progress_only_final",
         "text_form_tool_call",
         "fabricated_planning",
+        "repeated_approval_planning",
+        "extra_ask_user_question",
     )
     requires_research: bool | None = None
 
@@ -70,6 +73,31 @@ SCENARIOS: dict[str, LiveScenario] = {
         ),
         required_tools=("web_search",),
         requires_research=True,
+    ),
+    "web-search-final": LiveScenario(
+        name="web-search-final",
+        prompt=(
+            "найди в интернете один свежий источник про Python 3.13 "
+            "и дай короткий итог со ссылкой"
+        ),
+        required_tools=("web_search",),
+        requires_research=True,
+    ),
+    "plan-only": LiveScenario(
+        name="plan-only",
+        prompt="составь только план поиска информации по истории Fender, без реферата",
+        required_tools=("todo_write",),
+        forbidden_failures=(
+            "stuck_on_interrupt",
+            "missing_terminal_event",
+            "run_failed_or_cancelled",
+            "missing_required_research_evidence",
+            "progress_only_final",
+            "text_form_tool_call",
+            "repeated_approval_planning",
+            "extra_ask_user_question",
+        ),
+        requires_research=False,
     ),
 }
 
@@ -127,7 +155,16 @@ def wait_until_run_idle(
             ).to_be_visible(timeout=15000)
             return latest
         page.wait_for_timeout(1000)
-    raise AssertionError(f"run did not finish before timeout: {latest}")
+    if latest is None:
+        latest = {
+            "run_id": run_id,
+            "verdict": "fail",
+            "terminal_event": None,
+            "failures": {"missing_terminal_event": True},
+            "notes": ["Live probe timed out before trace summary was available."],
+        }
+    latest["probe_timeout"] = True
+    return latest
 
 
 def assert_trace_acceptance(
@@ -142,6 +179,8 @@ def assert_trace_acceptance(
     for tool_name in scenario.required_tools:
         if tool_name not in tools:
             failures.append(f"required tool missing: {tool_name}")
+    if summary.get("probe_timeout") is True:
+        failures.append("probe timed out before terminal event")
     if scenario.requires_research is not None:
         required = summary.get("research", {}).get("required")
         if required is not scenario.requires_research:
@@ -149,6 +188,55 @@ def assert_trace_acceptance(
     if summary.get("verdict") != "pass":
         failures.append(f"summary verdict is {summary.get('verdict')!r}")
     return failures
+
+
+def transcript_excerpt(page: Page, *, max_chars: int = 6000) -> str:
+    """Return a bounded visible transcript excerpt for failed live probes."""
+    text = page.locator("main").inner_text(timeout=5000)
+    compact = "\n".join(line.strip() for line in text.splitlines() if line.strip())
+    if len(compact) <= max_chars:
+        return compact
+    return compact[-max_chars:]
+
+
+def write_scenario_artifacts(
+    *,
+    page: Page,
+    scenario: LiveScenario,
+    summary: dict[str, Any],
+    failures: list[str],
+) -> Path:
+    """Persist enough context to debug a live scenario without reopening the UI."""
+    artifact_base = ARTIFACT_DIR / scenario.name
+    artifact_base.mkdir(parents=True, exist_ok=True)
+    (artifact_base / "trace-summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (artifact_base / "scenario.json").write_text(
+        json.dumps(
+            {
+                "name": scenario.name,
+                "prompt": scenario.prompt,
+                "failures": failures,
+                "run_id": summary.get("run_id"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (artifact_base / "transcript-excerpt.txt").write_text(
+        transcript_excerpt(page),
+        encoding="utf-8",
+    )
+    page.screenshot(path=str(artifact_base / "screenshot.png"), full_page=True)
+    if failures:
+        latest_failed = ARTIFACT_DIR / "latest-failed"
+        if latest_failed.exists():
+            shutil.rmtree(latest_failed)
+        shutil.copytree(artifact_base, latest_failed)
+    return artifact_base
 
 
 def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
@@ -168,21 +256,12 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
     run_id = send_message_and_capture_run_id(page, scenario.prompt)
     summary = wait_until_run_idle(page, run_id=run_id, timeout_ms=180000)
     failures = assert_trace_acceptance(scenario, summary)
-    artifact_base = ARTIFACT_DIR / scenario.name
-    artifact_base.mkdir(parents=True, exist_ok=True)
-    (artifact_base / "trace-summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    write_scenario_artifacts(
+        page=page,
+        scenario=scenario,
+        summary=summary,
+        failures=failures,
     )
-    (artifact_base / "scenario.json").write_text(
-        json.dumps(
-            {"name": scenario.name, "prompt": scenario.prompt, "failures": failures},
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    page.screenshot(path=str(artifact_base / "screenshot.png"), full_page=True)
     if failures:
         raise AssertionError("; ".join(failures))
     return summary
@@ -196,6 +275,11 @@ def parse_args() -> argparse.Namespace:
         choices=sorted(SCENARIOS),
         help="Scenario to run. Defaults to simple-direct.",
     )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Run all live scenarios.",
+    )
     parser.add_argument("--headed", action="store_true", help="Run Chromium headed.")
     return parser.parse_args()
 
@@ -203,7 +287,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    scenario_names = args.scenario or ["simple-direct"]
+    scenario_names = (
+        sorted(SCENARIOS) if args.all else args.scenario or ["simple-direct"]
+    )
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=args.headed is False)
         try:

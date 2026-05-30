@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from app.api.chat import _chat_tool_policy, _initial_tool_choice_for_chat
+from app.api.chat import _chat_tool_policy
 from app.config import Settings
 from app.schemas.chat import ChatMessageRequest
 from app.services.agent_factory import _tool_config_from_preset
+
+from agent_driver.runtime.chat_policy import initial_tool_choice_for_chat
 
 
 async def test_tools_default_preset(client) -> None:
@@ -123,11 +125,25 @@ def test_initial_tool_choice_forces_web_search_for_research_deliverable() -> Non
         ),
         settings=Settings(),
     )
-    assert _initial_tool_choice_for_chat(policy=policy, preset="web") == {
+    assert initial_tool_choice_for_chat(policy=policy, preset="web") == {
         "type": "tool",
         "name": "web_search",
     }
-    assert _initial_tool_choice_for_chat(policy=policy, preset="off") is None
+    assert initial_tool_choice_for_chat(policy=policy, preset="off") is None
+
+
+def test_chat_tool_policy_denies_web_tools_for_plan_only() -> None:
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="составь только план поиска информации по истории Fender, без реферата",
+        ),
+        settings=Settings(),
+    )
+
+    assert policy.metadata["task_contract"]["kind"] == "plan"
+    assert policy.metadata["plan_only_request"]["enabled"] is True
+    assert set(policy.denied_tools or ()) == {"web_search", "web_fetch"}
+    assert initial_tool_choice_for_chat(policy=policy, preset="web") is None
 
 
 def test_public_chat_presets_exclude_modal_plan_approval_tools() -> None:

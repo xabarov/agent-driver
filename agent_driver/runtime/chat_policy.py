@@ -59,6 +59,12 @@ def build_chat_tool_policy(
             "enter_plan_mode",
             "exit_plan_mode_v2",
         ]
+    elif contract_kind == "plan":
+        metadata["plan_only_request"] = {
+            "enabled": True,
+            "reason": "user asked for a plan without executing the work",
+        }
+        denied_tools = ["web_search", "web_fetch"]
     if force_planning:
         metadata["force_planning"] = {
             "enabled": True,

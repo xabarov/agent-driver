@@ -53,3 +53,15 @@ def test_initial_tool_choice_for_research_requires_web_preset() -> None:
         )
         is None
     )
+
+
+def test_initial_tool_choice_does_not_force_web_for_plan_only() -> None:
+    policy = build_chat_tool_policy(
+        "составь только план поиска информации по истории Fender, без реферата"
+    )
+
+    assert policy.metadata["task_contract"]["kind"] == "plan"
+    assert policy.metadata["task_contract"]["requires_research"] is False
+    assert policy.metadata["plan_only_request"]["enabled"] is True
+    assert policy.denied_tools == ["web_search", "web_fetch"]
+    assert initial_tool_choice_for_chat(policy=policy, preset="web") is None

@@ -48,5 +48,16 @@ def test_research_contract_is_lightweight() -> None:
     assert "Uses data tools" in contract["acceptance_criteria"][0]
 
 
+def test_plan_only_contract_does_not_force_research() -> None:
+    contract = build_chat_task_contract(
+        "составь только план поиска информации по истории Fender, без реферата"
+    )
+
+    assert contract is not None
+    assert contract["kind"] == "plan"
+    assert contract["requires_research"] is False
+    assert "Does not perform web/data research" in contract["acceptance_criteria"][1]
+
+
 def test_simple_chat_has_no_contract() -> None:
     assert build_chat_task_contract("привет") is None
