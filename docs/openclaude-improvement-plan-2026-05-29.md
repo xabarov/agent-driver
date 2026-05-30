@@ -45,7 +45,7 @@
 Для planning/search/final-answer/subagent/steering изменений обязательно
 добавлять либо provider/runtime regression, либо live probe criterion.
 
-## Current Open Work
+## Closed Work
 
 ### Prompt And Runtime Policy
 

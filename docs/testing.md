@@ -51,6 +51,20 @@ Useful single scenarios:
 When the issue is nondeterministic or model-dependent, reproduce it with the
 live provider and inspect Phoenix traces.
 
+For live model-dependent chat behavior, use the Phoenix-backed probe. It starts
+real chat runs, captures `x-run-id`, fetches
+`/api/chat/runs/{run_id}/trace-summary`, and stores failed artifacts under
+`/tmp/chat-demo-live`:
+
+```bash
+CHAT_DEMO_URL=http://localhost:5174 \
+  .venv/bin/python examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --all
+```
+
+The current suite covers direct answers, web research, plan-only behavior,
+deliverable-no-replan, clarification avoidance, web-search final answers,
+subagent synthesis, and mid-run steering.
+
 ## Live Provider Checks
 
 Live tests are opt-in and should load secrets from `.env` without printing

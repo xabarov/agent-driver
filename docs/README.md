@@ -17,12 +17,13 @@ and tied to code that exists in the repository.
 - [Testing](testing.md) - focused unit tests, quality pass, live checks, and
   Playwright smoke scenarios.
 
-## Active Work Plans
+## Plans And Status
 
 - [OpenClaude improvement plan](openclaude-improvement-plan-2026-05-29.md) -
-  force planning, steerability, subagents, Phoenix findings, and current
-  best-of-both backlog.
-- [Roadmap](roadmap.md) - short current direction and quality bar.
+  closed force-planning, steerability, subagents, Phoenix findings, and
+  best-of-both decisions from the OpenClaude/Hermes workstream.
+- [Roadmap](roadmap.md) - short current direction, verification loop, and
+  quality bar.
 
 ## Recipes And Patterns
 

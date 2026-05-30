@@ -29,9 +29,11 @@ chat applications:
    Prefer prompt guidance, structured contracts, and small runtime guards before
    adding heavy DAG/workflow machinery.
 
-3. Close the OpenClaude/Hermes-inspired workstream.
-   The active execution board is
+3. Keep the OpenClaude/Hermes workstream closed unless traces justify reopening.
+   The closed decision log is
    [OpenClaude improvement plan](openclaude-improvement-plan-2026-05-29.md).
+   New DAG/blueprint machinery should require a fresh Phoenix-backed
+   regression, not just architectural appetite.
 
 4. Keep the chat demo as the integration gate.
    User-visible concepts should be checked in the real UI and, when behavior is

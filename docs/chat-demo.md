@@ -110,6 +110,19 @@ the deterministic scenario: direct answers should not create tools, deliverable
 turns should not pause on clarification, and subagent runs should end with a
 coordinator synthesis rather than worker-only progress.
 
+Live Phoenix-backed concept probe:
+
+```bash
+CHAT_DEMO_URL=http://localhost:5174 \
+  .venv/bin/python examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --all
+```
+
+This probe records screenshots, transcript excerpts, and trace summaries under
+`/tmp/chat-demo-live`. The current suite checks direct chat, web research,
+plan-only, deliverable-no-replan, clarification-only-when-blocked,
+web-search-final, subagent synthesis, and steering at the next runtime
+boundary.
+
 ## UI Smoke Checks
 
 Run browser UI smoke checks against a running frontend:
