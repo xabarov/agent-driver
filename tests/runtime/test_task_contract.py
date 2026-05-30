@@ -24,6 +24,23 @@ def test_deliverable_contract_discourages_replanning() -> None:
     assert "Out of scope" in reminder
 
 
+def test_deliverable_contract_preserves_research_requirement() -> None:
+    contract = build_chat_task_contract(
+        "составь план поиска информации в интернете и написания реферата"
+    )
+    assert contract is not None
+    assert contract["kind"] == "deliverable"
+    assert contract["requires_research"] is True
+    assert any(
+        "use available web/data tools" in item
+        for item in contract["acceptance_criteria"]
+    )
+
+    reminder = render_task_contract_reminder(contract)
+    assert reminder is not None
+    assert "Research requirement" in reminder
+
+
 def test_research_contract_is_lightweight() -> None:
     contract = build_chat_task_contract("найди в интернете свежие источники")
     assert contract is not None

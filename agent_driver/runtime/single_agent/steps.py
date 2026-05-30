@@ -6,13 +6,17 @@ from agent_driver.code_agent.profile import run_code_agent_stage
 from agent_driver.context import CompactionOrchestrator
 from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
 from agent_driver.llm.contracts import LlmResponse
-from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.control.dispatcher import drain_step_boundary_controls
-from agent_driver.runtime.single_agent.compaction_stage import apply_compaction_if_eligible
+from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.single_agent.compaction_stage import (
+    apply_compaction_if_eligible,
+)
 from agent_driver.runtime.single_agent.continuation import analyze_continuation_intent
 from agent_driver.runtime.single_agent.llm_step import execute_llm_call_step
 from agent_driver.runtime.single_agent.step_planning import build_planning_snapshot
-from agent_driver.runtime.single_agent.subagent_stage import maybe_execute_subagent_group
+from agent_driver.runtime.single_agent.subagent_stage import (
+    maybe_execute_subagent_group,
+)
 from agent_driver.runtime.single_agent.tool_stage import execute_tool_stage_step
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
@@ -71,9 +75,7 @@ class SingleAgentStepMixin:
         # the new contract documented in ``runtime/tools.py`` allows
         # ``tool_gate`` but we don't force it on the wire when None.
         gate_kwargs = (
-            {"tool_gate": context.tool_gate}
-            if context.tool_gate is not None
-            else {}
+            {"tool_gate": context.tool_gate} if context.tool_gate is not None else {}
         )
         if isinstance(approved_call, dict):
             request = context.llm_response.model_copy(
@@ -103,7 +105,9 @@ class SingleAgentStepMixin:
         if not isinstance(existing_results, list):
             existing_results = []
         existing_trace.extend(trace.model_dump(mode="json") for trace in result.traces)
-        existing_results.extend(item.model_dump(mode="json") for item in result.envelopes)
+        existing_results.extend(
+            item.model_dump(mode="json") for item in result.envelopes
+        )
         context.metadata["tool_trace"] = existing_trace
         context.metadata["tool_results"] = existing_results
 
@@ -183,7 +187,9 @@ class SingleAgentStepMixin:
         )
         completed_payload: dict[str, object] = {"finish_reason": finish_reason}
         if context.llm_response is not None and context.llm_response.usage is not None:
-            completed_payload["usage"] = context.llm_response.usage.model_dump(mode="json")
+            completed_payload["usage"] = context.llm_response.usage.model_dump(
+                mode="json"
+            )
         snapshot = build_planning_snapshot(context)
         if snapshot is not None:
             completed_payload["planning_snapshot"] = snapshot
@@ -244,10 +250,10 @@ class SingleAgentStepMixin:
         raise RuntimeExecutionError(f"Unknown step '{context.step_name}'")
 
 
-def _maybe_build_continuation_transition(context: RunContext) -> RuntimeStepResult | None:
+def _maybe_build_continuation_transition(
+    context: RunContext,
+) -> RuntimeStepResult | None:
     """Continue when final text itself says there is a next step."""
-    if context.metadata.get("force_final_answer") is True:
-        return None
     count = int(context.metadata.get("continuation_nudge_count", 0))
     if count >= 2:
         return None
@@ -255,6 +261,10 @@ def _maybe_build_continuation_transition(context: RunContext) -> RuntimeStepResu
         return None
     text = context.llm_response.message.content or ""
     intent = analyze_continuation_intent(text)
+    if not intent.should_continue and _research_requirement_missing(context):
+        from agent_driver.runtime.single_agent.continuation import ContinuationIntent
+
+        intent = ContinuationIntent(True, "research_requirement_missing")
     if not intent.should_continue:
         return None
     from agent_driver.contracts.enums import ChatRole
@@ -265,25 +275,65 @@ def _maybe_build_continuation_transition(context: RunContext) -> RuntimeStepResu
     if isinstance(protocol, list):
         messages = [item for item in protocol if isinstance(item, dict)]
     else:
-        messages = [message.model_dump(mode="json") for message in context.run_input.messages]
+        messages = [
+            message.model_dump(mode="json") for message in context.run_input.messages
+        ]
         if not messages:
-            messages = [{"role": ChatRole.USER.value, "content": context.run_input.input or ""}]
+            messages = [
+                {"role": ChatRole.USER.value, "content": context.run_input.input or ""}
+            ]
     messages.append(
         ChatMessage(role=ChatRole.ASSISTANT, content=text).model_dump(mode="json")
     )
+    nudge = (
+        "Continue with the task. If you were about to proceed to the next "
+        "step, do it now instead of only reporting progress. Reply in the "
+        "user's language."
+    )
+    if intent.reason == "text_form_tool_call":
+        nudge = (
+            "The previous assistant message printed a tool call as text. Do not "
+            "print JSON or <tool_call> blocks. If a tool is needed, call it using "
+            "native function/tool-calling now; otherwise answer the user directly "
+            "in the user's language."
+        )
+    elif intent.reason == "research_requirement_missing":
+        nudge = (
+            "The user explicitly requested internet/search/source research, but "
+            "there are no web/data tool results in the context. Use native "
+            "web_search/web_fetch tool calls now before giving the final answer."
+        )
     messages.append(
         ChatMessage(
             role=ChatRole.USER,
-            content=(
-                "Continue with the task. If you were about to proceed to the next "
-                "step, do it now instead of only reporting progress."
-            ),
+            content=nudge,
         ).model_dump(mode="json")
     )
     context.metadata["protocol_messages"] = messages
     context.metadata["continuation_nudge_count"] = count + 1
     context.metadata["continuation_nudge_reason"] = intent.reason
     return RuntimeStepResult(next_step="llm_call")
+
+
+def _research_requirement_missing(context: RunContext) -> bool:
+    """Return whether a research contract is about to finish without evidence."""
+    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
+    if not isinstance(task_contract, dict):
+        return False
+    if task_contract.get("requires_research") is not True:
+        return False
+    results = context.metadata.get("tool_results")
+    if not isinstance(results, list):
+        return True
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        if call.get("tool_name") in {"web_search", "web_fetch"}:
+            return False
+    return True
 
 
 __all__ = ["SingleAgentStepMixin"]

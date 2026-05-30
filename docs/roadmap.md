@@ -48,8 +48,8 @@ chat applications:
   explicit note explaining why it was not needed.
 - End-of-phase quality work should include real refactoring with `pylint` over
   touched runtime/domain modules, not broad warning suppression.
-- If a live design issue is found outside the current slice, record it in
-  [Chat demo design improvement plan](chat-demo-design-improvement-plan-2026-05-29.md).
+- If a live design issue is found outside the current slice, record it as a
+  short dated note in [Chat demo](chat-demo.md).
 
 ## Current Docs Map
 

@@ -356,7 +356,7 @@ describe("chatStore", () => {
       toolCallId: "call_1",
       name: "web_search",
       status: "running",
-      argsSummary: '{"query":"test"}',
+      argsSummary: "query: test",
     });
     const messages = useChatStore.getState().messages;
     expect(messages).toHaveLength(3);
@@ -392,5 +392,6 @@ describe("parseToolStatesFromEvent", () => {
     const tools = parseToolStatesFromEvent(event);
     expect(tools).toHaveLength(1);
     expect(tools[0]).toMatchObject({ name: "read_file", toolCallId: "call_a", status: "running" });
+    expect(tools[0].argsSummary).toBe("path: README.md");
   });
 });

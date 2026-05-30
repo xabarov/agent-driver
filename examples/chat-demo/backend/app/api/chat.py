@@ -3,24 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterable
 import uuid
-
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
-
-from agent_driver.adapters import parse_after_seq, render_sse_line
-from agent_driver.contracts import (
-    AgentRunInput,
-    ChatMessage,
-    ControlRequest,
-    ToolPolicyInput,
-)
-from agent_driver.contracts.enums import ChatRole, ResumeAction
-from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
-from agent_driver.runtime.planning_policy import classify_planning_hint
-from agent_driver.runtime.stream import backfill_stream_events, project_runtime_events
-from agent_driver.runtime.task_contract import build_chat_task_contract
+from collections.abc import AsyncIterator
 
 from app.config import Settings, ToolPreset
 from app.deps import (
@@ -40,8 +24,33 @@ from app.schemas.chat import (
 )
 from app.services.agent_factory import AgentBundle
 from app.services.message_metadata import aggregate_metadata_from_events
+from app.services.run_trace_summary import summarize_run_trace
 from app.sse_relay import ensure_run_task, relay_and_capture
 from app.workspace import build_chat_app_metadata, merge_resume_app_metadata
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+
+from agent_driver.adapters import parse_after_seq, render_sse_line
+from agent_driver.context import (
+    filter_client_requests_for_runs,
+    record_mapping_dict,
+    transcript_to_messages,
+    truncate_transcript_for_retry,
+    turn_text_for_run,
+)
+from agent_driver.contracts import (
+    AgentRunInput,
+    ControlRequest,
+    ToolPolicyInput,
+)
+from agent_driver.contracts.enums import ResumeAction
+from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
+from agent_driver.runtime.chat_policy import (
+    build_chat_tool_policy,
+    initial_tool_choice_for_chat,
+)
+from agent_driver.runtime.stream import backfill_stream_events, project_runtime_events
+from agent_driver.runtime.task_contract import build_chat_task_contract
 
 router = APIRouter(tags=["chat"])
 _TERMINAL_EVENTS = {
@@ -52,66 +61,12 @@ _TERMINAL_EVENTS = {
 }
 
 
-def _transcript_to_messages(transcript: Iterable[tuple[str, str]]) -> list[ChatMessage]:
-    messages: list[ChatMessage] = []
-    for role, content in transcript:
-        if not content.strip():
-            continue
-        if role == "user":
-            messages.append(ChatMessage(role=ChatRole.USER, content=content))
-        elif role == "assistant":
-            messages.append(ChatMessage(role=ChatRole.ASSISTANT, content=content))
-        elif role == "system":
-            messages.append(ChatMessage(role=ChatRole.SYSTEM, content=content))
-    return messages
-
-
-def _truncate_for_retry(
-    *,
-    transcript: list[tuple[str, str]],
-    run_ids: list[str],
-    retry_from_run_id: str | None,
-) -> tuple[list[tuple[str, str]], list[str]]:
-    """Drop the retried run and everything after it from persisted chat history."""
-    if not retry_from_run_id:
-        return transcript, run_ids
-    try:
-        run_index = run_ids.index(retry_from_run_id)
-    except ValueError:
-        return transcript, run_ids
-
-    user_seen = 0
-    cut_index = len(transcript)
-    for index, (role, _content) in enumerate(transcript):
-        if role != "user":
-            continue
-        if user_seen == run_index:
-            cut_index = index
-            break
-        user_seen += 1
-    return transcript[:cut_index], run_ids[:run_index]
-
-
 def _client_requests_dict(record: object | None) -> dict[str, dict[str, object]]:
-    rows = getattr(record, "client_requests", ()) if record is not None else ()
-    return {str(key): dict(value) for key, value in rows}
+    return record_mapping_dict(record, "client_requests")
 
 
 def _metadata_by_run_dict(record: object | None) -> dict[str, dict[str, object]]:
-    rows = getattr(record, "metadata_by_run", ()) if record is not None else ()
-    return {str(key): dict(value) for key, value in rows}
-
-
-def _filter_client_requests_for_runs(
-    client_requests: dict[str, dict[str, object]],
-    run_ids: list[str],
-) -> dict[str, dict[str, object]]:
-    allowed = set(run_ids)
-    return {
-        key: value
-        for key, value in client_requests.items()
-        if isinstance(value.get("run_id"), str) and value["run_id"] in allowed
-    }
+    return record_mapping_dict(record, "metadata_by_run")
 
 
 def _session_record_for_run(bundle: AgentBundle, run_id: str):
@@ -119,6 +74,19 @@ def _session_record_for_run(bundle: AgentBundle, run_id: str):
         if run_id in record.run_ids:
             return record
     return None
+
+
+def _turn_text_for_run(
+    record: object | None,
+    run_id: str,
+) -> tuple[str | None, str | None]:
+    if record is None:
+        return None, None
+    return turn_text_for_run(
+        transcript=getattr(record, "transcript", ()),
+        run_ids=getattr(record, "run_ids", ()),
+        run_id=run_id,
+    )
 
 
 def _persist_steering_history(
@@ -140,9 +108,7 @@ def _persist_steering_history(
     existing_controls = run_metadata.get("steering_controls")
     controls: list[dict[str, object]] = []
     if isinstance(existing_controls, list):
-        controls = [
-            dict(item) for item in existing_controls if isinstance(item, dict)
-        ]
+        controls = [dict(item) for item in existing_controls if isinstance(item, dict)]
     entry: dict[str, object] = {
         "queue_id": queue_id,
         "status": status,
@@ -256,54 +222,19 @@ def _interrupt_from_checkpoint(bundle: AgentBundle, run_id: str) -> InterruptReq
     return interrupt
 
 
-def _is_deliverable_request(message: str) -> bool:
-    text = " ".join(message.lower().split())
-    markers = (
-        "не план",
-        "напиши реферат",
-        "напиши черновик",
-        "связный черновик",
-        "финальный ответ",
-        "итоговый ответ",
-        "write the report",
-        "write a report",
-        "draft the report",
-        "draft an essay",
-        "final answer",
-        "not a plan",
-    )
-    return any(marker in text for marker in markers)
-
-
-def _chat_tool_policy(*, body: ChatMessageRequest, settings: Settings) -> ToolPolicyInput:
+def _chat_tool_policy(
+    *, body: ChatMessageRequest, settings: Settings
+) -> ToolPolicyInput:
     force_planning = (
         body.force_planning
         if body.force_planning is not None
         else settings.force_planning
     )
-    metadata: dict[str, object] = {}
-    hint = classify_planning_hint(body.message)
-    metadata["planning_hint"] = hint.model_dump(mode="json")
-    task_contract = build_chat_task_contract(body.message)
-    if task_contract is not None:
-        metadata["task_contract"] = task_contract
-    denied_tools: list[str] | None = None
-    if _is_deliverable_request(body.message):
-        metadata["deliverable_request"] = {
-            "enabled": True,
-            "reason": "user asked to produce the deliverable now",
-        }
-        denied_tools = [
-            "ask_user_question",
-            "enter_plan_mode",
-            "exit_plan_mode_v2",
-        ]
-    if force_planning:
-        metadata["force_planning"] = {
-            "enabled": True,
-            "mode": settings.force_planning_mode,
-        }
-    return ToolPolicyInput(metadata=metadata, denied_tools=denied_tools)
+    return build_chat_tool_policy(
+        body.message,
+        force_planning=force_planning,
+        force_planning_mode=settings.force_planning_mode,
+    )
 
 
 @router.post("/chat/messages")
@@ -351,12 +282,12 @@ async def chat_messages(
                     "X-Run-Id": existing_run_id,
                 },
             )
-    transcript, run_ids = _truncate_for_retry(
+    transcript, run_ids = truncate_transcript_for_retry(
         transcript=transcript,
         run_ids=run_ids,
         retry_from_run_id=body.retry_from_run_id,
     )
-    client_requests = _filter_client_requests_for_runs(client_requests, run_ids)
+    client_requests = filter_client_requests_for_runs(client_requests, run_ids)
 
     transcript.append(("user", body.message))
     run_id = f"run_{uuid.uuid4().hex[:12]}"
@@ -373,9 +304,10 @@ async def chat_messages(
         transcript=transcript,
         client_requests=client_requests,
     )
+    tool_policy = _chat_tool_policy(body=body, settings=settings)
     run_input = AgentRunInput(
         input=body.message,
-        messages=_transcript_to_messages(transcript),
+        messages=transcript_to_messages(transcript),
         run_id=run_id,
         thread_id=thread_id,
         agent_id="chat-demo-agent",
@@ -384,7 +316,8 @@ async def chat_messages(
         max_steps=settings.max_steps,
         max_tool_calls=settings.max_tool_calls,
         deadline_seconds=settings.deadline_seconds,
-        tool_policy=_chat_tool_policy(body=body, settings=settings),
+        tool_policy=tool_policy,
+        tool_choice=initial_tool_choice_for_chat(policy=tool_policy, preset=preset),
         app_metadata=build_chat_app_metadata(settings, session_id),
     )
 
@@ -446,6 +379,31 @@ def get_run_interrupt(
         description=interrupt.description,
         proposed_action=dict(interrupt.proposed_action),
         allowed_actions=[action.value for action in interrupt.allowed_actions],
+    )
+
+
+@router.get("/chat/runs/{run_id}/trace-summary")
+def get_run_trace_summary(
+    run_id: str,
+    bundle: AgentBundle = Depends(get_agent_bundle),
+) -> dict[str, object]:
+    """Return compact scenario diagnostics for one run."""
+    events = replay_events_for_run(bundle, run_id)
+    if not events:
+        raise HTTPException(status_code=404, detail="run not found")
+    record = _session_record_for_run(bundle, run_id)
+    user_prompt, assistant_text = _turn_text_for_run(record, run_id)
+    task_contract = (
+        build_chat_task_contract(user_prompt)
+        if isinstance(user_prompt, str) and user_prompt.strip()
+        else None
+    )
+    return summarize_run_trace(
+        run_id=run_id,
+        events=events,
+        user_prompt=user_prompt,
+        assistant_text=assistant_text,
+        task_contract=task_contract,
     )
 
 

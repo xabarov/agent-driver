@@ -112,16 +112,51 @@ export function isInterruptEvent(event: RunStreamEvent<Record<string, unknown>>)
   return event.event === "interrupt_requested" || event.event === "run_paused";
 }
 
+function summarizePrimitive(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return undefined;
+}
+
 function summarizeArgs(args: unknown): string | undefined {
-  if (!args || typeof args !== "object") {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
     return undefined;
   }
-  try {
-    const text = JSON.stringify(args);
-    return text.length > 120 ? `${text.slice(0, 120)}...` : text;
-  } catch {
-    return undefined;
+
+  const record = args as Record<string, unknown>;
+  const preferred: Array<[string, string]> = [
+    ["query", "query"],
+    ["url", "url"],
+    ["path", "path"],
+    ["pattern", "pattern"],
+    ["max_results", "max results"],
+    ["max_chars", "max chars"],
+  ];
+  const parts = preferred
+    .map(([key, label]) => {
+      const value = summarizePrimitive(record[key]);
+      return value ? `${label}: ${value}` : undefined;
+    })
+    .filter((value): value is string => Boolean(value));
+
+  if (!parts.length) {
+    for (const [key, rawValue] of Object.entries(record)) {
+      const value = summarizePrimitive(rawValue);
+      if (value) {
+        parts.push(`${key}: ${value}`);
+      }
+      if (parts.length >= 3) {
+        break;
+      }
+    }
   }
+
+  const text = parts.join(" · ");
+  return text.length > 160 ? `${text.slice(0, 157)}...` : text || undefined;
 }
 
 function toolStateKey(tool: Record<string, unknown>, index: number): string {

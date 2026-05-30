@@ -109,6 +109,81 @@ class _ContinuationProvider(FakeProvider):
         )
 
 
+class _RussianProgressProvider(FakeProvider):
+    """Provider that stops after a Russian progress update from the chat demo."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return LlmResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content=(
+                        "Информация о гитарах Fender собрана: изучена история "
+                        "компании, основные модели и их особенности. Теперь работаю "
+                        "над следующим шагом — структурирую найденную информацию "
+                        "для дальнейшего написания реферата."
+                    ),
+                ),
+                finish_reason=LlmFinishReason.STOP,
+                usage=UsageSummary(
+                    model_provider="continuation", model_name="test-model"
+                ),
+                provider="continuation",
+                model="test-model",
+                metadata={},
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="Вот готовый реферат."),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="continuation", model_name="test-model"),
+            provider="continuation",
+            model="test-model",
+            metadata={},
+        )
+
+
+class _TextFormToolCallProvider(FakeProvider):
+    """Provider that incorrectly prints a tool call instead of using native tools."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return LlmResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content=(
+                        '{"name": "todo_update", "arguments": '
+                        '{"todo_id": "research", "status": "in_progress"}} '
+                        "</tool_call>"
+                    ),
+                ),
+                finish_reason=LlmFinishReason.STOP,
+                usage=UsageSummary(
+                    model_provider="continuation", model_name="test-model"
+                ),
+                provider="continuation",
+                model="test-model",
+                metadata={},
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="Вот готовый ответ."),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="continuation", model_name="test-model"),
+            provider="continuation",
+            model="test-model",
+            metadata={},
+        )
+
+
 class _DeliverablePlanOnlyProvider(FakeProvider):
     """Provider that tries to keep planning after a deliverable request."""
 
@@ -150,6 +225,127 @@ class _DeliverablePlanOnlyProvider(FakeProvider):
             finish_reason=LlmFinishReason.STOP,
             usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
             provider="deliverable",
+            model="test-model",
+            metadata={},
+        )
+
+
+class _ForceFinalProgressProvider(FakeProvider):
+    """Provider that reports another step even after force-final is active."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=UsageSummary(
+                    model_provider="deliverable", model_name="test-model"
+                ),
+                provider="deliverable",
+                model="test-model",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="web_search",
+                            tool_call_id="web_deliverable",
+                            args={
+                                "query": "Fender history",
+                                "mock_results": [
+                                    {
+                                        "title": "Fender",
+                                        "url": "https://example.com/fender",
+                                        "snippet": "history",
+                                    }
+                                ],
+                            },
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+        if len(self.requests) == 2:
+            return LlmResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content=(
+                        "Собрана информация о Fender. Следующим шагом будет "
+                        "написание короткого реферата."
+                    ),
+                ),
+                finish_reason=LlmFinishReason.STOP,
+                usage=UsageSummary(
+                    model_provider="deliverable", model_name="test-model"
+                ),
+                provider="deliverable",
+                model="test-model",
+                metadata={},
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="Вот короткий реферат."),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+            provider="deliverable",
+            model="test-model",
+            metadata={},
+        )
+
+
+class _ResearchRequirementProvider(FakeProvider):
+    """Provider that first tries to answer a research request without tools."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return LlmResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content="Короткий реферат без фактического поиска.",
+                ),
+                finish_reason=LlmFinishReason.STOP,
+                usage=UsageSummary(model_provider="research", model_name="test-model"),
+                provider="research",
+                model="test-model",
+                metadata={},
+            )
+        if len(self.requests) == 2:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=UsageSummary(model_provider="research", model_name="test-model"),
+                provider="research",
+                model="test-model",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="web_search",
+                            tool_call_id="web_required",
+                            args={
+                                "query": "Fender history",
+                                "mock_results": [
+                                    {
+                                        "title": "Fender",
+                                        "url": "https://example.com/fender",
+                                        "snippet": "history",
+                                    }
+                                ],
+                            },
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="Финал после поиска."),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="research", model_name="test-model"),
+            provider="research",
             model="test-model",
             metadata={},
         )
@@ -216,6 +412,44 @@ async def test_react_loop_continues_after_progress_only_final_text() -> None:
 
 
 @pytest.mark.asyncio
+async def test_react_loop_continues_after_russian_progress_only_text() -> None:
+    provider = _RussianProgressProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only())
+    output = await agent.run(
+        AgentRunInput(
+            input="напиши реферат по истории Fender",
+            run_id="run_russian_continuation_nudge",
+            agent_id="agent",
+            graph_preset="single_react",
+            max_steps=8,
+            max_tool_calls=2,
+        )
+    )
+    assert output.answer == "Вот готовый реферат."
+    assert len(provider.requests) == 2
+    assert "Continue with the task" in provider.requests[1].messages[-1].content
+
+
+@pytest.mark.asyncio
+async def test_react_loop_recovers_from_text_form_tool_call_answer() -> None:
+    provider = _TextFormToolCallProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only())
+    output = await agent.run(
+        AgentRunInput(
+            input="составь план и ответ",
+            run_id="run_text_form_tool_call_nudge",
+            agent_id="agent",
+            graph_preset="single_react",
+            max_steps=8,
+            max_tool_calls=2,
+        )
+    )
+    assert output.answer == "Вот готовый ответ."
+    assert len(provider.requests) == 2
+    assert "printed a tool call as text" in provider.requests[1].messages[-1].content
+
+
+@pytest.mark.asyncio
 async def test_deliverable_request_forces_final_after_plan_only_tool() -> None:
     """A deliverable turn should not continue planning after todo_write."""
     provider = _DeliverablePlanOnlyProvider()
@@ -239,6 +473,59 @@ async def test_deliverable_request_forces_final_after_plan_only_tool() -> None:
     assert (
         "Produce the requested deliverable" in provider.requests[1].messages[-1].content
     )
+
+
+@pytest.mark.asyncio
+async def test_force_final_still_continues_after_progress_only_text() -> None:
+    provider = _ForceFinalProgressProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only("web_search"))
+    output = await agent.run(
+        AgentRunInput(
+            input="напиши короткий реферат по Fender",
+            run_id="run_force_final_progress_nudge",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(
+                metadata={"deliverable_request": {"enabled": True}}
+            ),
+            max_steps=10,
+            max_tool_calls=4,
+        )
+    )
+    assert output.answer == "Вот короткий реферат."
+    assert len(provider.requests) == 3
+    assert provider.requests[1].tool_choice == "none"
+    assert provider.requests[2].tool_choice == "none"
+
+
+@pytest.mark.asyncio
+async def test_research_contract_continues_when_final_answer_has_no_web_results() -> (
+    None
+):
+    provider = _ResearchRequirementProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only("web_search"))
+    output = await agent.run(
+        AgentRunInput(
+            input="составь план поиска в интернете и написания реферата",
+            run_id="run_research_requirement_missing",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(
+                metadata={
+                    "task_contract": {
+                        "kind": "deliverable",
+                        "requires_research": True,
+                        "goal": "составь план поиска в интернете и написания реферата",
+                    }
+                }
+            ),
+            max_steps=10,
+            max_tool_calls=4,
+        )
+    )
+    assert output.answer == "Финал после поиска."
+    assert len(provider.requests) == 3
+    assert "no web/data tool results" in provider.requests[1].messages[-1].content
 
 
 def test_upstream_web_search_error_does_not_trigger_zero_result_force_final() -> None:

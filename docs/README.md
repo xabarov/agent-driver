@@ -22,8 +22,6 @@ and tied to code that exists in the repository.
 - [OpenClaude improvement plan](openclaude-improvement-plan-2026-05-29.md) -
   force planning, steerability, subagents, Phoenix findings, and current
   best-of-both backlog.
-- [Chat demo design improvement plan](chat-demo-design-improvement-plan-2026-05-29.md)
-  - UI/product issues discovered while testing the demo.
 - [Roadmap](roadmap.md) - short current direction and quality bar.
 
 ## Recipes And Patterns
@@ -40,7 +38,7 @@ and tied to code that exists in the repository.
 - Prefer one short page per current concept.
 - Do not link to deleted historical docs.
 - If a behavior is visible in the chat demo, include how to verify it.
-- If a design problem is discovered in UI testing, add it to the chat-demo
-  design plan instead of hiding it in a generic backlog.
+- If a design problem is discovered in UI testing, add a short dated note to
+  [Chat demo](chat-demo.md) instead of hiding it in a generic backlog.
 - At phase boundaries, record the focused tests, Playwright checks, and any
   `pylint` refactoring pass that were actually run.

@@ -331,7 +331,7 @@ def test_deliverable_request_forces_final_answer_after_data_tool() -> None:
     assert _should_force_final_answer(context) is True
 
 
-def test_deliverable_request_does_not_force_after_progress_only_tool() -> None:
+def test_deliverable_request_forces_after_progress_only_tool() -> None:
     context = SimpleNamespace(
         tool_calls=1,
         llm_step_count=1,
@@ -353,4 +353,4 @@ def test_deliverable_request_does_not_force_after_progress_only_tool() -> None:
             ]
         },
     )
-    assert _should_force_final_answer(context) is False
+    assert _should_force_final_answer(context) is True

@@ -14,15 +14,16 @@ from agent_driver.contracts.enums import (
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmFinishReason
 from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
+from agent_driver.prompts import force_final_answer_tool_message
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.single_agent.pending import (
     pending_interrupt_from_execution_result,
     serialize_pending_interrupt,
 )
+from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.step_observations import (
     build_observations_from_tool_result,
 )
-from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.step_planning import (
     apply_planning_updates_from_envelopes,
     build_planning_snapshot,
@@ -32,7 +33,6 @@ from agent_driver.runtime.single_agent.todo_reminders import (
     append_todo_progress_hint_after_substantive_tool,
     increment_tool_loops_since_todo_write,
 )
-from agent_driver.prompts import force_final_answer_tool_message
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
     RunContext,
@@ -57,14 +57,20 @@ class ToolStageHost(Protocol):
     def _store_tool_stage_outputs(
         self, context: RunContext, result: ToolExecutionResult
     ) -> None: ...
-    def _build_paused_output(self, context: RunContext, result: ToolExecutionResult) -> Any: ...
+    def _build_paused_output(
+        self, context: RunContext, result: ToolExecutionResult
+    ) -> Any: ...
     def _emit(self, event: EventSpec) -> None: ...
-    def _save_checkpoint(self, context: RunContext, *, latest_output: Any, node_id: str) -> Any: ...
+    def _save_checkpoint(
+        self, context: RunContext, *, latest_output: Any, node_id: str
+    ) -> Any: ...
     def _maybe_fail_after_step(self, step_name: str) -> None: ...
     async def _maybe_execute_subagent_group(self, context: RunContext) -> None: ...
 
 
-async def execute_tool_stage_step(host: ToolStageHost, context: RunContext) -> RuntimeStepResult:
+async def execute_tool_stage_step(
+    host: ToolStageHost, context: RunContext
+) -> RuntimeStepResult:
     """Execute tool stage and route to interrupt, code-agent loop, or finalize."""
     _emit_tool_started_if_needed(host, context)
     result = await host._tool_result_with_approved_override(context)
@@ -201,7 +207,9 @@ def _apply_agent_tool_spawn_requests(
         description = str(request.get("description") or task or "subagent task").strip()
         if not task:
             continue
-        request_id = str(request.get("request_id") or envelope.call.tool_call_id).strip()
+        request_id = str(
+            request.get("request_id") or envelope.call.tool_call_id
+        ).strip()
         task_id = request_id or f"task_{len(tasks) + 1}"
         idempotency_key = request.get("idempotency_key")
         tasks.append(
@@ -405,7 +413,9 @@ def _emit_tool_completed_if_needed(
 ) -> None:
     if not result.traces:
         return
-    planned_calls = extract_planned_tool_calls(context.llm_response) if context.llm_response else []
+    planned_calls = (
+        extract_planned_tool_calls(context.llm_response) if context.llm_response else []
+    )
     args_by_call_id = {
         call.tool_call_id: call.args
         for call in planned_calls
@@ -418,18 +428,14 @@ def _emit_tool_completed_if_needed(
         preview_paths: list[str] = []
         structured = envelope.structured_output
         if isinstance(structured, dict):
-            if (
-                envelope.call.tool_name == "glob_search"
-                and isinstance(structured.get("results"), list)
+            if envelope.call.tool_name == "glob_search" and isinstance(
+                structured.get("results"), list
             ):
                 preview_paths = [
-                    str(item)
-                    for item in structured["results"]
-                    if isinstance(item, str)
+                    str(item) for item in structured["results"] if isinstance(item, str)
                 ][:5]
-            elif (
-                envelope.call.tool_name == "web_search"
-                and isinstance(structured.get("result_preview_urls"), list)
+            elif envelope.call.tool_name == "web_search" and isinstance(
+                structured.get("result_preview_urls"), list
             ):
                 preview_paths = [
                     str(item)
@@ -448,9 +454,11 @@ def _emit_tool_completed_if_needed(
         row: dict[str, object] = {
             "tool_name": trace.tool_name,
             "tool_call_id": trace.tool_call_id,
-            "args": args_by_call_id.get(trace.tool_call_id)
-            if isinstance(trace.tool_call_id, str) and trace.tool_call_id
-            else (fallback_args[index] if index < len(fallback_args) else {}),
+            "args": (
+                args_by_call_id.get(trace.tool_call_id)
+                if isinstance(trace.tool_call_id, str) and trace.tool_call_id
+                else (fallback_args[index] if index < len(fallback_args) else {})
+            ),
             "status": trace.status.value,
             "result_summary": trace.result_summary,
             "error_code": trace.error_code,
@@ -513,7 +521,9 @@ def _emit_tool_started_if_needed(host: ToolStageHost, context: RunContext) -> No
     )
 
 
-def _update_tool_protocol_messages(context: RunContext, result: ToolExecutionResult) -> None:
+def _update_tool_protocol_messages(
+    context: RunContext, result: ToolExecutionResult
+) -> None:
     response = context.llm_response
     if response is None:
         return
@@ -678,7 +688,9 @@ def _append_tool_call_parse_error_feedback(
         return
 
     # Dedup — don't loop on the same parse-error fingerprint turn after turn.
-    seen_keys: set[str] = set(context.metadata.get("parse_error_feedback_sent_keys") or [])
+    seen_keys: set[str] = set(
+        context.metadata.get("parse_error_feedback_sent_keys") or []
+    )
     new_keys: list[str] = []
     new_errors: list[dict[str, Any]] = []
     for err in parse_errors:
@@ -801,7 +813,9 @@ def _append_web_fetch_duplicate_guard(
     context: RunContext, result: ToolExecutionResult, messages: list[ChatMessage]
 ) -> None:
     """Discourage repeated web_fetch when prior fetch already returned usable text."""
-    saw_fetch = any(envelope.call.tool_name == "web_fetch" for envelope in result.envelopes)
+    saw_fetch = any(
+        envelope.call.tool_name == "web_fetch" for envelope in result.envelopes
+    )
     if not saw_fetch:
         return
     prior_fetch_total = int(context.metadata.get("web_fetch_calls_total", 0))
@@ -960,7 +974,9 @@ def _load_protocol_messages(context: RunContext) -> list[ChatMessage]:
     return [ChatMessage(role=ChatRole.USER, content=context.run_input.input or "")]
 
 
-def _update_zero_result_policy(context: RunContext, result: ToolExecutionResult) -> None:
+def _update_zero_result_policy(
+    context: RunContext, result: ToolExecutionResult
+) -> None:
     zero_streak = int(context.metadata.get("web_search_zero_streak", 0))
     saw_web_search = False
     for envelope in result.envelopes:
@@ -1036,12 +1052,14 @@ def _should_force_final_answer(context: RunContext) -> bool:
     zero_streak = int(context.metadata.get("web_search_zero_streak", 0))
     zero_results_triggered = zero_streak >= 1
     deliverable_requested = _deliverable_request_should_force_final(context)
+    research_satisfied = _research_request_should_force_final(context)
     return (
         near_tool_budget
         or near_step_budget
         or loop_detected
         or zero_results_triggered
         or deliverable_requested
+        or research_satisfied
     )
 
 
@@ -1073,6 +1091,28 @@ def _deliverable_request_should_force_final(context: RunContext) -> bool:
         if tool_name not in _PROGRESS_ONLY_TOOL_NAMES:
             return True
         if tool_name in {"todo_write", "planning_state_update"}:
+            return True
+    return False
+
+
+def _research_request_should_force_final(context: RunContext) -> bool:
+    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
+    if not isinstance(task_contract, dict):
+        return False
+    if task_contract.get("kind") != "research":
+        return False
+    if task_contract.get("requires_research") is not True:
+        return False
+    tool_results = context.metadata.get("tool_results")
+    if not isinstance(tool_results, list):
+        return False
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        if call.get("tool_name") in {"web_search", "web_fetch"}:
             return True
     return False
 

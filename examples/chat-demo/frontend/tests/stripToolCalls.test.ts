@@ -19,4 +19,10 @@ describe("stripTextFormToolCalls", () => {
     const raw = 'Visible text\n<tool_call>{"name":"todo_write"';
     expect(stripTextFormToolCalls(raw)).toBe("Visible text");
   });
+
+  test("removes orphan tool call json with only a closing tag", () => {
+    const raw =
+      'Before\n{"name":"todo_update","arguments":{"todo_id":"research","status":"in_progress"}} </tool_call>\nAfter';
+    expect(stripTextFormToolCalls(raw)).toBe("Before\nAfter");
+  });
 });

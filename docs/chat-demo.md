@@ -26,6 +26,46 @@ scenarios. Public web presets expose web search/fetch plus live planning
 progress. Filesystem/shell controls and raw approval planning are not part of
 the public web surface.
 
+## Design Baseline
+
+The chat demo UI follows a restrained "agent operations console" direction:
+dense, quiet, highly legible, and focused on runtime inspection rather than
+marketing-style presentation.
+
+Current product/design rules:
+
+- The public Tools UI exposes only **Web Search** and **Web Fetch**. Local
+  filesystem, shell, glob, grep, and raw planning tools are not user-facing
+  web controls.
+- Planning is agent-controlled. The agent may use planning when a task needs
+  it, while simple direct answers should stay direct. Planning outcomes,
+  approvals, denials, and snapshots should be visible as runtime outcomes, not
+  as manual tool handles.
+- The header should keep provider health, selected model, current run context,
+  and token metadata compact. Token metadata appears only after assistant usage
+  data exists.
+- Assistant output must remain readable in light and dark themes. Markdown,
+  code blocks, planning snapshots, tool cards, and policy-denied tool feedback
+  are part of the regression surface.
+- Mobile keeps the sidebar hidden by default, the header compact, and the
+  composer pinned above safe-area padding. The sidebar has its own mobile close
+  control because the open sidebar layer covers the page header.
+- The dependency baseline is enough for the current chat UI: React, Tailwind
+  v4, Radix primitives, lucide icons, typography, markdown, and syntax
+  highlighting. Avoid broad UI frameworks and generic chat UI frameworks.
+  Consider focused additions only for concrete pressure: `cmdk` for command
+  palette search, `@tanstack/react-virtual` for large lists,
+  `react-resizable-panels` for a split run inspector, or a toast library for
+  durable copy/error feedback.
+
+Design guardrails:
+
+- Prefer local component refinements, component tests, and Playwright checks
+  before adding visual dependencies.
+- Keep icon-only controls accessible with clear labels/tooltips.
+- Respect `prefers-reduced-motion` for transitions and streaming indicators.
+- Treat the chat demo as the product integration gate for new runtime states.
+
 ## Phoenix Tracing
 
 The dev compose includes Phoenix tracing for backend spans. The backend exports
@@ -70,9 +110,19 @@ the deterministic scenario: direct answers should not create tools, deliverable
 turns should not pause on clarification, and subagent runs should end with a
 coordinator synthesis rather than worker-only progress.
 
-## Design Backlog
+## UI Smoke Checks
+
+Run browser UI smoke checks against a running frontend:
+
+```bash
+CHAT_DEMO_URL=http://localhost:5174 \
+  python3 examples/chat-demo/frontend/tests/e2e/chat_demo_smoke.py
+```
+
+The smoke covers empty state, sidebar search, model search, tools picker,
+mobile sidebar open/close, keyboard reachability, and desktop/mobile/tablet/wide
+layout invariants.
 
 If a live run reveals a product/UI problem that is not part of the current
-runtime slice, record it in:
-
-- `docs/chat-demo-design-improvement-plan-2026-05-29.md`
+runtime slice, record it in this page under a short dated backlog note rather
+than creating a long phase plan.

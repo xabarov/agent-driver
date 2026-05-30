@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -50,6 +50,12 @@ export function ToolCallCard({ message }: ToolCallCardProps) {
   );
   const Icon = message.status === "denied" ? ShieldAlert : toolIcon(message.name);
 
+  useEffect(() => {
+    if (message.status === "done") {
+      setOpen(false);
+    }
+  }, [message.status]);
+
   return (
     <div className="ml-9 max-w-[min(100%,58rem)] rounded-lg border border-border/80 bg-card/70 p-3 text-sm shadow-sm shadow-black/5 dark:bg-muted/20 dark:shadow-none">
       <button
@@ -78,22 +84,34 @@ export function ToolCallCard({ message }: ToolCallCardProps) {
         ) : null}
       </button>
       {message.argsSummary ? (
-        <p className="mt-2 truncate text-xs text-muted-foreground">{message.argsSummary}</p>
+        <p className="mt-2 break-words text-xs text-muted-foreground">{message.argsSummary}</p>
       ) : null}
       {message.resultPreview && !open ? (
-        <p className="mt-2 truncate text-xs text-foreground/80">{message.resultPreview}</p>
+        <p className="mt-2 line-clamp-2 break-words text-xs text-foreground/80">
+          {message.resultPreview}
+        </p>
       ) : null}
       {open ? (
         <div className="mt-3 space-y-2">
           {message.args ? (
-            <pre className="overflow-x-auto rounded-md border bg-background/80 p-2 text-xs text-foreground">
-              {JSON.stringify(message.args, null, 2)}
-            </pre>
+            <div className="rounded-md border bg-background/80 p-2 text-xs text-foreground">
+              <div className="mb-1 text-[0.65rem] font-semibold uppercase text-muted-foreground">
+                Input
+              </div>
+              <pre className="whitespace-pre-wrap break-words font-mono">
+                {JSON.stringify(message.args, null, 2)}
+              </pre>
+            </div>
           ) : null}
           {message.resultPreview ? (
-            <pre className="overflow-x-auto rounded-md border bg-background/80 p-2 text-xs text-foreground">
-              {message.resultPreview}
-            </pre>
+            <div className="rounded-md border bg-background/80 p-2 text-xs text-foreground">
+              <div className="mb-1 text-[0.65rem] font-semibold uppercase text-muted-foreground">
+                Result
+              </div>
+              <pre className="whitespace-pre-wrap break-words font-sans">
+                {message.resultPreview}
+              </pre>
+            </div>
           ) : null}
         </div>
       ) : null}

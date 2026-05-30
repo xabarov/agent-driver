@@ -59,6 +59,50 @@ def parse_after_seq(last_event_id: str | None, *, run_id: str) -> int | None:
         return None
 
 
+def parse_sse_data_payload(frame: str) -> dict[str, object] | None:
+    """Parse the JSON ``data:`` payload from one SSE frame."""
+    for line in frame.splitlines():
+        if not line.startswith("data: "):
+            continue
+        try:
+            payload = json.loads(line[6:])
+        except json.JSONDecodeError:
+            return None
+        if isinstance(payload, dict):
+            return payload
+        return None
+    return None
+
+
+class AssistantTextCapture:
+    """Capture finalized assistant text from normalized stream events."""
+
+    def __init__(self) -> None:
+        self._parts: list[str] = []
+
+    @property
+    def text(self) -> str:
+        """Return current captured assistant text."""
+        return "".join(self._parts)
+
+    def apply(self, *, event_name: str, data: object) -> None:
+        """Update captured text from one stream event."""
+        if not isinstance(data, dict):
+            return
+        if event_name == "token_delta":
+            delta = data.get("delta_text")
+            if isinstance(delta, str) and delta:
+                self._parts.append(delta)
+            return
+        if event_name in {"assistant_message_completed", "assistant_message_replaced"}:
+            content = data.get("content")
+            if isinstance(content, str):
+                self._parts[:] = [content]
+            return
+        if event_name == "assistant_message_tombstoned":
+            self._parts.clear()
+
+
 class StreamAgent(Protocol):
     """Protocol for SDK agent stream method used by adapters."""
 
@@ -87,4 +131,11 @@ async def sse_event_stream(
         yield render_sse_line(event)
 
 
-__all__ = ["parse_after_seq", "render_sse_line", "sse_event_stream", "to_sse_envelope"]
+__all__ = [
+    "AssistantTextCapture",
+    "parse_after_seq",
+    "parse_sse_data_payload",
+    "render_sse_line",
+    "sse_event_stream",
+    "to_sse_envelope",
+]

@@ -24,6 +24,230 @@
 механику без потери наблюдаемого качества, применяем упрощение и фиксируем
 причину в плане.
 
+Chat demo держим чистым: это витрина и проверочный стенд, а не второй движок.
+Все полезное, переиспользуемое или влияющее на поведение агента выносим в
+`agent_driver`; в demo оставляем только FastAPI/React wiring, локальные
+настройки, session UI и сценарии проверки.
+
+## Verification Methodology
+
+Сценарий считается успешным только если закрыты три слоя проверки:
+
+- runtime contract/unit test: фиксирует конкретный сбой модели или runtime
+  transition, например progress-only ответ `Теперь работаю над следующим
+  шагом...` должен автоматически продолжаться до финального ответа;
+- deterministic Playwright scenario: через настоящий React UI проверяет 5-7
+  пользовательских действий и видимые критерии успеха без зависимости от
+  провайдера;
+- live chat probe when behavior is model-dependent: запускается на текущем
+  dev stack, ждёт исчезновения `Stop generation` и `Writing`, затем проверяет,
+  что ответ не оборвался на плане/следующем шаге, tool cards не показывают raw
+  JSON по умолчанию, а финальный текст соответствует задаче.
+
+Текущий вывод: старые UI-smoke тесты были полезны, но недостаточны для
+проверки живой модели. Поэтому после каждого исправления planning/search/final
+answer добавляем либо provider-level regression, либо live probe criterion.
+
+## Quality Improvement Plan, 2026-05-30
+
+Цель следующего цикла: повысить качество поведения модели не через усложнение
+runtime как самоцель, а через короткую петлю наблюдаемости:
+
+`chat scenario -> Phoenix trace -> prompt/runtime hypothesis -> focused patch -> replay`.
+
+### Q1. Prompt Research From Neighbor Projects
+
+- [ ] Провести focused read system-prompt и tool-prompt зон OpenClaude
+  (частично выполнено, findings ниже):
+  - `src/tools/EnterPlanModeTool/*`
+  - `src/tools/ExitPlanModeTool/*`
+  - `src/tools/AskUserQuestionTool/*`
+  - `src/tools/TodoWriteTool/*`
+  - `src/utils/messages.ts`
+  - `src/utils/attachments.ts`
+  - `src/hooks/toolPermission/*`
+  - `src/utils/model/agent.ts`
+- [ ] Провести focused read Hermes Agent prompt/runtime зон
+  (частично выполнено, findings ниже):
+  - `agent/prompt_builder.py`
+  - `agent/context_compressor.py`
+  - `agent/skill_commands.py`
+  - `hermes_cli/default_soul.py`
+  - `hermes_cli/profiles.py`
+  - `hermes_cli/kanban_specify.py`
+  - `hermes_cli/kanban_decompose.py`
+  - `hermes_cli/kanban_swarm.py`
+  - `hermes_cli/hooks.py`
+  - `hermes_cli/gateway.py`
+- [ ] Составить короткую матрицу переносимых практик:
+  - какие правила должны жить в base system prompt;
+  - какие правила должны быть runtime reminders/attachments;
+  - какие должны быть tool schema descriptions;
+  - какие должны быть guards/evals, а не промпты.
+- [ ] Перенести только практики с явной пользой для наших сценариев. Не
+  копировать большие промпты целиком.
+
+Текущие findings:
+
+- OpenClaude полезен строгими tool prompt boundaries: `AskUserQuestion` только
+  для реально блокирующих user-owned решений, не для approval плана;
+  `TodoWrite` держит один active step и закрывает задачи только после проверки;
+  `ExitPlanMode` отделяет готовый approval plan от обычного research/progress.
+- Hermes Agent полезен простотой: явный active task, resolved/pending
+  questions в compressed context, маленький specify contract
+  `Goal/Approach/Acceptance/Out of scope`, verifier/synthesizer как отдельный
+  gate только там, где параллельность реально нужна.
+- Для `agent-driver` это означает: сначала prompts + task contract + runtime
+  guards + trace verdict, и только при повторных trace-сбоях усложнять
+  orchestration.
+
+### Q2. Phoenix-Led Scenario Harness
+
+- [x] Добавить первый backend debug endpoint для trace verdict без ручного
+  клика по Phoenix:
+  - `GET /api/chat/runs/{run_id}/trace-summary`;
+  - summary считает terminal event, LLM calls, tool names, research evidence,
+    planning verdict, interrupts, progress-only final и plain-text tool calls.
+- [x] Добавить живой runner сценариев поверх chat-demo, который сохраняет:
+  - `session_id`, `run_id`, user prompt, final visible transcript;
+  - наличие/отсутствие `Writing` и `Stop generation`;
+  - видимые tool cards и их статусы;
+  - Phoenix trace URL или trace id;
+  - verdict по сценарию.
+  Первый вариант: `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py`
+  сохраняет `run_id`, prompt, screenshot и trace-summary JSON; Phoenix URL/trace
+  id остается следующим шагом после добавления trace id в spans/API.
+- [ ] Добавить Phoenix trace extractor для run id:
+  - LLM call count, tool call count, selected tool names;
+  - `tool_choice` на каждом LLM call;
+  - system/runtime reminders в безопасно усеченном виде;
+  - признаки failure: text-form tool call, progress-only final, missing required
+    tool evidence, повторный план, лишний `ask_user_question`.
+- [x] Для каждого scenario хранить acceptance criteria в коде теста, а не
+  только в человеческом описании.
+- [x] Считать scenario успешным только если UI verdict и trace verdict оба
+  зелёные.
+  `chat_concepts_smoke.py` теперь дергает `/trace-summary` из браузера, а
+  `chat_live_probe.py` применяет trace acceptance criteria к живому run.
+
+### Q3. Core Scenario Set
+
+- [ ] `simple-direct`: простой вопрос без планирования, tools и interrupts.
+- [ ] `plan-only`: пользователь просит только план; агент показывает checklist
+  и не пытается писать deliverable.
+- [ ] `research-report`: пользователь просит поиск в интернете + реферат; агент
+  обязан использовать `web_search`/`web_fetch`, не завершаться на плане и выдать
+  финальный текст.
+- [ ] `deliverable-no-replan`: после уже существующего плана пользователь
+  просит готовый текст; агент не рестартует planning loop.
+- [ ] `clarification-only-when-blocked`: уточняющий вопрос появляется только
+  для действительно блокирующего user-owned решения, submit работает.
+- [ ] `subagent-synthesis`: `agent_tool` порождает дочерних исполнителей, parent
+  получает результаты и выдает синтез, а не только статус.
+- [ ] `steering-mid-run`: user steering применяется на ближайшей границе,
+  отображается в UI и виден в trace.
+- [ ] `bad-tool-text-recovery`: модель печатает JSON/`</tool_call>` текстом;
+  runtime не принимает это как финал, UI не показывает мусор.
+
+### Q4. Prompt/Runtime Improvements To Try First
+
+- [ ] Переписать `react_chat_tool_policy.txt` в более модульную форму:
+  identity, language, tool calling, planning boundaries, research boundaries,
+  deliverable boundaries, ask-question boundaries.
+- [ ] Вынести volatile reminders из base prompt в runtime attachments:
+  active task contract, force-final, research-required, existing checklist,
+  approved plan state, steering command.
+- [ ] Сделать `ask_user_question` schema/prompt ближе к OpenClaude:
+  1-4 short questions, explicit choices, no plan approval through questions,
+  no clarification for deliverables unless blocked.
+- [x] Усилить tool-calling contract для OpenRouter/Qwen:
+  never print JSON tool calls; if a tool is required, use native tool call; if
+  provider ignores forced `tool_choice`, runtime must detect and retry once with
+  a stronger reminder.
+- [x] Для research-required задач проверять не только наличие URL в ответе, а
+  наличие реального tool evidence в trace.
+- [ ] Для deliverable задач отделить "progress checklist" от "final answer":
+  checklist может существовать, но финал должен закрывать acceptance criteria.
+
+### Q5. Observability And Debuggability
+
+- [x] Добавить компактный trace summary в chat-demo dev UI или debug endpoint:
+  run id, model, LLM calls, tools, interrupts, continuation nudges, forced-final
+  reasons.
+- [x] Перенести Phoenix/OpenTelemetry lifecycle из chat-demo в
+  `agent_driver.observability`, чтобы demo переиспользовал библиотечный слой:
+  `PhoenixTracingConfig`, `setup_phoenix_tracing`, `start_otel_span`,
+  `trace_otel_event_span`.
+- [x] Перенести reusable metadata/stream helpers из chat-demo в `agent_driver`:
+  - `agent_driver.observability.aggregate_message_metadata_from_events` и
+    `merge_message_metadata` вместо demo-local token/planning aggregation;
+  - `agent_driver.observability.summarize_run_trace` вместо demo-local quality
+    verdict logic для `/trace-summary`;
+  - `agent_driver.adapters.AssistantTextCapture` и `parse_sse_data_payload`
+    вместо ручного SSE parsing / assistant text capture в demo relay.
+- [x] Перенести reusable transcript/run mapping helpers из chat-demo в
+  `agent_driver.context.transcript`: `transcript_to_messages`,
+  `truncate_transcript_for_retry`, `turn_text_for_run`,
+  `filter_client_requests_for_runs`.
+- [x] Перенести reusable chat policy из demo endpoint в
+  `agent_driver.runtime.chat_policy`: task contract metadata, deliverable
+  no-replan deny list, force-planning metadata и initial web-search choice для
+  research-required задач.
+- [x] Укрепить OpenAI-compatible provider для OpenRouter/Qwen:
+  - text-form tool calls, разбитые по streaming chunks, парсятся по
+    накопленному тексту;
+  - если forced `tool_choice` возвращает только текстовый фрагмент arguments,
+    runtime восстанавливает `ToolCall` по известному имени tool;
+  - если runtime уже выставил `tool_choice=none`, text-form tool calls не
+    превращаются обратно в tool execution loop.
+- [x] Добавить runtime guard для pure research contracts: после первого
+  реального `web_search`/`web_fetch` включается force-final режим, чтобы модель
+  переходила к синтезу, а не бесконечно продолжала web tools.
+- [ ] В Phoenix spans добавить normalized tags:
+  `agent_driver.scenario`, `task_contract.kind`,
+  `task_contract.requires_research`, `force_final_reason`,
+  `continuation_reason`, `tool_choice_effective`.
+  Частично сделано: chat-demo run span уже пишет `task_contract.kind`,
+  `task_contract.requires_research` и `tool_choice.effective`; следующие
+  теги требуют протянуть причины force-final/continuation из runtime events.
+
+### Demo Boundary Notes
+
+Что после ревизии сознательно оставляем в chat-demo:
+
+- FastAPI route composition, session title/view models and browser-specific
+  schemas: это host/UI contract, не engine API.
+- `sse_relay.ensure_run_task` registry: связан с lifecycle HTTP stream,
+  reconnect semantics, local `on_finish` transcript persistence и
+  cancellation context; в `agent_driver.adapters` вынесены только чистые
+  helpers.
+- `workspace.py` sample project and per-session web-demo sandbox paths:
+  полезно для demo, но не должно становиться глобальной политикой движка.
+- `run_cancel.py` пока остается host adapter поверх `RunnerConfig`
+  `cancellation_probe`; в движке уже есть более общий `RunAbortHandle`, а
+  отдельная миграция cancellation в chat-demo должна быть небольшим
+  последующим refactor, не частью текущего observability выноса.
+- Chat task-policy decisions теперь не живут в route handler: demo только
+  подставляет settings/body, а reusable policy находится в engine runtime.
+- [ ] Сохранять последний failed live scenario artifact в `/tmp`:
+  screenshot, transcript excerpt, trace summary JSON.
+- [ ] Документировать known bad patterns: repeated planning, progress-only
+  final, fake citations without tool evidence, raw JSON in chat, stuck
+  clarification.
+
+### Q6. Phase Exit Criteria
+
+- [x] Все deterministic Playwright scenarios зелёные.
+  Проверено 2026-05-30: все сценарии `chat_concepts_smoke.py` прошли на
+  `localhost:5174`.
+- [ ] Минимум 5 live Phoenix-backed scenarios зелёные на текущем default model.
+- [ ] Для каждого исправленного failure есть provider-level или runtime unit
+  regression.
+- [ ] `black`, `isort`, focused `pytest`, frontend Vitest и relevant Playwright
+  smoke пройдены.
+- [ ] Перед коммитом отдельно проверить git status и не трогать unrelated
+  generated/delete артефакты.
+
 ## Executive Summary
 
 `agent-driver` уже содержит сильный фундамент: durable runtime, typed events,
@@ -118,9 +342,9 @@ Current completed slices:
   required hint from side-effecting tools, `agent_tool`, or expected step count;
   hosts can opt into enforcement with `planning_hint_enforce=true`.
 - Re-ran a current force-planning browser smoke against chat-demo with fake
-  provider. Backend replay includes the denied `file_write` and remediation,
-  but the live UI did not render the denied tool card; tracked as a design
-  regression in `docs/chat-demo-design-improvement-plan-2026-05-29.md`.
+  provider. Backend replay includes the denied `file_write` and remediation;
+  the related live UI regression was folded into the chat demo design baseline
+  and smoke checks in `docs/chat-demo.md`.
 - Started Phase 3 with transport-neutral steering contracts and an in-memory
   command queue store covering priority ordering, FIFO, cancellation, applied
   state, dedupe keys, and route filters.
@@ -441,6 +665,17 @@ Best-of-both plan for `agent-driver`:
   - trace inspection showed `chat.session_id` was empty on root spans, so
     chat-demo now includes `session_id` in run `app_metadata` for cleaner
     Phoenix filtering.
+- Live Phoenix check, 2026-05-30, later pass:
+  - `research-report` initially failed because Qwen/OpenRouter streamed forced
+    tool arguments as text (`0.5, "query": ... </tool_call>`) and the run
+    looped through text-form tool calls;
+  - fixes added provider fallback for split/forced text-form tool calls,
+    research `requires_research=True`, and force-final after research evidence;
+  - `research-report` now passes against `localhost:5174` with
+    `run_16b2796ea7f0`, `tool_names=['web_search', 'web_search']`, terminal
+    `run_completed`, and no trace-summary failure flags;
+  - `simple-direct` rechecked after the provider/runtime fixes with
+    `run_82c3ff4d12fc`, no tools, terminal `run_completed`.
 - Root `.venv` has backend/frontend test dependencies installed for local
   checks; the stale `examples/chat-demo/backend/.venv` is no longer used.
 - Frontend unit tests pass.

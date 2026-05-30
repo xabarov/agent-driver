@@ -59,6 +59,92 @@ def fulfill_json(route: Route, payload: dict[str, Any]) -> None:
     )
 
 
+def trace_summary_payload(
+    *,
+    verdict: str = "pass",
+    terminal_event: str | None = "run_completed",
+    tool_names: list[str] | None = None,
+    interrupts: list[str] | None = None,
+    research_required: bool = False,
+    research_tools: list[str] | None = None,
+    planning_verdict: str | None = None,
+    failures: dict[str, bool] | None = None,
+) -> dict[str, Any]:
+    flags = {
+        "stuck_on_interrupt": False,
+        "missing_terminal_event": False,
+        "run_failed_or_cancelled": False,
+        "missing_required_research_evidence": False,
+        "progress_only_final": False,
+        "text_form_tool_call": False,
+        "fabricated_planning": False,
+    }
+    flags.update(failures or {})
+    names = tool_names or []
+    return {
+        "run_id": "run_test",
+        "verdict": verdict,
+        "terminal_event": terminal_event,
+        "llm_calls": 1,
+        "tool_calls": len(names),
+        "tool_names": names,
+        "research": {
+            "required": research_required,
+            "tools_used": research_tools or [],
+        },
+        "planning": {
+            "verdict": planning_verdict,
+            "planning_tool_calls": sum(
+                1 for name in names if name in {"todo_write", "planning_state_update"}
+            ),
+            "data_tool_calls": sum(
+                1
+                for name in names
+                if name not in {"todo_write", "planning_state_update"}
+            ),
+            "snapshots": 1 if planning_verdict else 0,
+            "latest_snapshot": None,
+        },
+        "interrupts": interrupts or [],
+        "continuation_reason": None,
+        "failures": flags,
+        "notes": [],
+    }
+
+
+def route_trace_summary(page: Page, payload: dict[str, Any]) -> None:
+    page.route(
+        "**/api/chat/runs/run_test/trace-summary",
+        lambda route: fulfill_json(route, payload),
+    )
+
+
+def expect_trace_summary(
+    page: Page,
+    *,
+    verdict: str = "pass",
+    required_tools: list[str] | None = None,
+    expected_interrupts: list[str] | None = None,
+    required_research: bool | None = None,
+) -> None:
+    payload = page.evaluate("""async () => {
+            const response = await fetch('/api/chat/runs/run_test/trace-summary');
+            if (!response.ok) {
+                throw new Error(`trace summary failed: ${response.status}`);
+            }
+            return await response.json();
+        }""")
+    assert payload["verdict"] == verdict
+    for key, enabled in payload["failures"].items():
+        assert not enabled, f"unexpected trace failure {key}: {payload}"
+    for tool_name in required_tools or []:
+        assert tool_name in payload["tool_names"], payload
+    if expected_interrupts is not None:
+        assert payload["interrupts"] == expected_interrupts, payload
+    if required_research is not None:
+        assert payload["research"]["required"] is required_research, payload
+
+
 def setup_minimal_api_routes(page: Page) -> None:
     """Keep shell queries deterministic while preserving the real UI bundle."""
 
@@ -164,6 +250,14 @@ def run_clarification_regression(page: Page) -> None:
         ]
     )
 
+    route_trace_summary(
+        page,
+        trace_summary_payload(
+            tool_names=["todo_write", "ask_user_question"],
+            interrupts=["clarification_required"],
+            planning_verdict="engaged",
+        ),
+    )
     page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
     page.route(
         "**/api/chat/runs/run_test/interrupt",
@@ -212,6 +306,11 @@ def run_clarification_regression(page: Page) -> None:
     expect(
         page.get_by_role("heading", name="Clarification required")
     ).not_to_be_visible()
+    expect_trace_summary(
+        page,
+        required_tools=["todo_write", "ask_user_question"],
+        expected_interrupts=["clarification_required"],
+    )
     page.screenshot(
         path=str(ARTIFACT_DIR / "clarification-regression.png"),
         full_page=True,
@@ -230,6 +329,12 @@ def run_plan_approval_regression(page: Page) -> None:
         ]
     )
 
+    route_trace_summary(
+        page,
+        trace_summary_payload(
+            interrupts=["plan_approval_required"],
+        ),
+    )
     page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
     page.route(
         "**/api/chat/runs/run_test/interrupt",
@@ -281,6 +386,7 @@ def run_plan_approval_regression(page: Page) -> None:
     assert resume_payloads, "plan edit resume endpoint was not called"
     assert resume_payloads[0]["action"] == "edit"
     assert resume_payloads[0]["edited_tool_args"]["content"].endswith("Проверить UI")
+    expect_trace_summary(page, expected_interrupts=["plan_approval_required"])
     page.screenshot(
         path=str(ARTIFACT_DIR / "plan-approval-regression.png"),
         full_page=True,
@@ -335,6 +441,10 @@ def run_denied_tool_regression(page: Page) -> None:
         ]
     )
 
+    route_trace_summary(
+        page,
+        trace_summary_payload(tool_names=["file_write"]),
+    )
     page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
     open_new_chat(page)
 
@@ -344,6 +454,7 @@ def run_denied_tool_regression(page: Page) -> None:
     expect(page.get_by_text("denied")).to_be_visible()
     expect(page.get_by_text("force planning requires an approved plan")).to_be_visible()
     expect(page.get_by_text("Запись заблокирована политикой")).to_be_visible()
+    expect_trace_summary(page, required_tools=["file_write"])
     page.screenshot(
         path=str(ARTIFACT_DIR / "denied-tool-regression.png"),
         full_page=True,
@@ -402,6 +513,14 @@ def run_web_search_final_answer(page: Page) -> None:
         ]
     )
 
+    route_trace_summary(
+        page,
+        trace_summary_payload(
+            tool_names=["web_search"],
+            research_required=True,
+            research_tools=["web_search"],
+        ),
+    )
     page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
     open_new_chat(page)
 
@@ -410,8 +529,15 @@ def run_web_search_final_answer(page: Page) -> None:
     send_chat_message(page, "найди в интернете краткую историю Fender Stratocaster")
     expect(page.get_by_text("web_search")).to_be_visible(timeout=5000)
     expect(page.get_by_text("done")).to_be_visible()
+    expect(page.get_by_text("query: Fender Stratocaster history")).to_be_visible()
+    expect(page.get_by_text('"query"')).not_to_be_visible(timeout=1000)
     expect(page.get_by_text("Found sources about Leo Fender")).to_be_visible()
     expect(page.get_by_text("Fender Stratocaster стала важной моделью")).to_be_visible()
+    expect_trace_summary(
+        page,
+        required_tools=["web_search"],
+        required_research=True,
+    )
     page.screenshot(path=str(ARTIFACT_DIR / "web-search-final.png"), full_page=True)
 
 
@@ -471,6 +597,10 @@ def run_subagent_final_answer(page: Page) -> None:
         ]
     )
 
+    route_trace_summary(
+        page,
+        trace_summary_payload(tool_names=["agent_tool"]),
+    )
     page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
     open_new_chat(page)
 
@@ -480,6 +610,7 @@ def run_subagent_final_answer(page: Page) -> None:
     expect(page.get_by_text("agent_tool")).to_be_visible(timeout=5000)
     expect(page.get_by_text("2 subagents completed")).to_be_visible()
     expect(page.get_by_text("Субагенты собрали историю")).to_be_visible()
+    expect_trace_summary(page, required_tools=["agent_tool"])
     page.screenshot(path=str(ARTIFACT_DIR / "subagent-final.png"), full_page=True)
 
 
@@ -496,6 +627,7 @@ def run_simple_direct_answer(page: Page) -> None:
         ]
     )
 
+    route_trace_summary(page, trace_summary_payload())
     page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
     open_new_chat(page)
 
@@ -513,6 +645,7 @@ def run_simple_direct_answer(page: Page) -> None:
     expect(
         page.get_by_role("heading", name="Plan approval required")
     ).not_to_be_visible()
+    expect_trace_summary(page, required_tools=[])
     page.screenshot(path=str(ARTIFACT_DIR / "simple-direct-answer.png"), full_page=True)
 
 
@@ -580,6 +713,10 @@ def run_ask_question_denied_on_deliverable(page: Page) -> None:
         ]
     )
 
+    route_trace_summary(
+        page,
+        trace_summary_payload(tool_names=["ask_user_question"]),
+    )
     page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
     open_new_chat(page)
 
@@ -594,6 +731,7 @@ def run_ask_question_denied_on_deliverable(page: Page) -> None:
     ).not_to_be_visible()
     expect(page.get_by_text("ask_user_question")).not_to_be_visible(timeout=1000)
     expect(page.get_by_role("textbox", name="Message the assistant…")).to_be_enabled()
+    expect_trace_summary(page, required_tools=["ask_user_question"])
     page.screenshot(
         path=str(ARTIFACT_DIR / "ask-question-denied-deliverable.png"),
         full_page=True,
@@ -654,6 +792,13 @@ def run_deliverable_no_replan(page: Page) -> None:
         ]
     )
 
+    route_trace_summary(
+        page,
+        trace_summary_payload(
+            tool_names=["todo_write"],
+            planning_verdict="fabricated",
+        ),
+    )
     page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
     open_new_chat(page)
 
@@ -668,6 +813,7 @@ def run_deliverable_no_replan(page: Page) -> None:
     expect(
         page.get_by_role("heading", name="Plan approval required")
     ).not_to_be_visible()
+    expect_trace_summary(page, required_tools=["todo_write"])
     page.screenshot(
         path=str(ARTIFACT_DIR / "deliverable-no-replan.png"), full_page=True
     )
@@ -758,6 +904,15 @@ def run_plan_then_web_then_answer(page: Page) -> None:
         ]
     )
 
+    route_trace_summary(
+        page,
+        trace_summary_payload(
+            tool_names=["todo_write", "web_search"],
+            research_required=True,
+            research_tools=["web_search"],
+            planning_verdict="engaged",
+        ),
+    )
     page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
     open_new_chat(page)
 
@@ -766,8 +921,15 @@ def run_plan_then_web_then_answer(page: Page) -> None:
     send_chat_message(page, "составь план и найди факты о Fender")
     expect(page.get_by_text("Найти источники")).to_be_visible(timeout=5000)
     expect(page.get_by_text("web_search")).to_be_visible()
+    expect(page.get_by_text("query: Fender Stratocaster history")).to_be_visible()
+    expect(page.get_by_text('"query"')).not_to_be_visible(timeout=1000)
     expect(page.get_by_text("Found 5 sources about Fender history")).to_be_visible()
     expect(page.get_by_text("По найденным источникам")).to_be_visible()
+    expect_trace_summary(
+        page,
+        required_tools=["todo_write", "web_search"],
+        required_research=True,
+    )
     page.screenshot(path=str(ARTIFACT_DIR / "plan-web-answer.png"), full_page=True)
 
 

@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 
 from app.observability import start_run_span, trace_runtime_event
 from app.run_cancel import clear_cancel, reset_active_run, set_active_run
 
-from agent_driver.adapters import sse_event_stream
+from agent_driver.adapters import (
+    AssistantTextCapture,
+    parse_sse_data_payload,
+    sse_event_stream,
+)
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.runtime.storage import RuntimeEventLog
 from agent_driver.sdk import Agent
@@ -24,42 +27,6 @@ _TERMINAL_EVENTS = {
     "run_cancelled",
 }
 _ACTIVE_RUN_TASKS: dict[str, asyncio.Task[None]] = {}
-
-
-def _parse_sse_payload(frame: str) -> dict[str, object] | None:
-    for line in frame.splitlines():
-        if not line.startswith("data: "):
-            continue
-        try:
-            payload = json.loads(line[6:])
-        except json.JSONDecodeError:
-            return None
-        if isinstance(payload, dict):
-            return payload
-        return None
-    return None
-
-
-def _capture_assistant_event(
-    *,
-    event_name: str,
-    data: object,
-    parts: list[str],
-) -> None:
-    if not isinstance(data, dict):
-        return
-    if event_name == "token_delta":
-        delta = data.get("delta_text")
-        if isinstance(delta, str) and delta:
-            parts.append(delta)
-        return
-    if event_name in {"assistant_message_completed", "assistant_message_replaced"}:
-        content = data.get("content")
-        if isinstance(content, str):
-            parts[:] = [content]
-        return
-    if event_name == "assistant_message_tombstoned":
-        parts.clear()
 
 
 def _has_terminal_event(event_log: RuntimeEventLog, run_id: str) -> bool:
@@ -106,7 +73,7 @@ async def _drive_run(
     event_log: RuntimeEventLog,
     on_finish: OnFinish | None,
 ) -> None:
-    parts: list[str] = []
+    capture = AssistantTextCapture()
     terminal_event: TerminalEvent = None
     persisted = False
     run_id = run_input.run_id or ""
@@ -115,15 +82,11 @@ async def _drive_run(
         with start_run_span(run_input):
             async for event in agent.stream(run_input):
                 trace_runtime_event(event.event, event.data)
-                _capture_assistant_event(
-                    event_name=event.event,
-                    data=event.data,
-                    parts=parts,
-                )
+                capture.apply(event_name=event.event, data=event.data)
                 if event.event in _TERMINAL_EVENTS:
                     terminal_event = event.event
                     if on_finish is not None and not persisted:
-                        on_finish("".join(parts), terminal_event)
+                        on_finish(capture.text, terminal_event)
                         persisted = True
     finally:
         reset_active_run(token)
@@ -134,7 +97,7 @@ async def _drive_run(
                 if event.type.value in _TERMINAL_EVENTS:
                     terminal_event = event.type.value
         if on_finish is not None and not persisted:
-            on_finish("".join(parts), terminal_event)
+            on_finish(capture.text, terminal_event)
 
 
 async def relay_and_capture(
@@ -147,7 +110,7 @@ async def relay_and_capture(
     keepalive_seconds: float | None = None,
 ) -> AsyncIterator[str]:
     """Relay SSE frames and capture finalized assistant text when present."""
-    parts: list[str] = []
+    capture = AssistantTextCapture()
     terminal_event: TerminalEvent = None
     persisted = False
     run_id = run_input.run_id or ""
@@ -180,20 +143,16 @@ async def relay_and_capture(
                     except StopAsyncIteration:
                         break
                     pending = None
-                    payload = _parse_sse_payload(frame)
+                    payload = parse_sse_data_payload(frame)
                     if payload is not None:
                         event_name = str(payload.get("event", ""))
                         data = payload.get("data")
                         trace_runtime_event(event_name, data)
-                        _capture_assistant_event(
-                            event_name=event_name,
-                            data=data,
-                            parts=parts,
-                        )
+                        capture.apply(event_name=event_name, data=data)
                         if event_name in _TERMINAL_EVENTS:
                             terminal_event = event_name
                             if on_finish is not None and not persisted:
-                                on_finish("".join(parts), terminal_event)
+                                on_finish(capture.text, terminal_event)
                                 persisted = True
                     yield frame
             finally:
@@ -209,4 +168,4 @@ async def relay_and_capture(
         if run_id:
             clear_cancel(run_id)
     if on_finish is not None and not persisted:
-        on_finish("".join(parts), terminal_event)
+        on_finish(capture.text, terminal_event)

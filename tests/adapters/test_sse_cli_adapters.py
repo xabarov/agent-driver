@@ -8,18 +8,25 @@ from collections.abc import AsyncIterator
 import pytest
 
 from agent_driver.adapters import (
+    AssistantTextCapture,
     cli_follow_lines,
     cli_replay_lines,
     cli_run_lines,
     cli_tail_lines,
     cli_tree_lines,
     parse_after_seq,
+    parse_sse_data_payload,
     render_cli_line,
     render_sse_line,
     sse_event_stream,
     to_sse_envelope,
 )
-from agent_driver.contracts import AgentRunInput, RunStreamEvent, RuntimeEventType, new_runtime_event
+from agent_driver.contracts import (
+    AgentRunInput,
+    RunStreamEvent,
+    RuntimeEventType,
+    new_runtime_event,
+)
 from agent_driver.runtime.events import InMemoryEventLog
 
 
@@ -45,7 +52,7 @@ def test_to_sse_envelope_has_event_id_and_json_data() -> None:
     assert envelope["event"] == "token_delta"
     assert envelope["id"] == "run_1:2"
     assert envelope["retry"] == "1500"
-    assert "\"delta_text\": \"hi\"" in envelope["data"]
+    assert '"delta_text": "hi"' in envelope["data"]
 
 
 def test_render_sse_and_cli_lines_are_deterministic() -> None:
@@ -64,6 +71,27 @@ def test_parse_after_seq_for_last_event_id() -> None:
     assert parse_after_seq("run_1:9", run_id="run_1") == 9
     assert parse_after_seq("run_2:9", run_id="run_1") is None
     assert parse_after_seq("bad", run_id="run_1") is None
+
+
+def test_parse_sse_data_payload_returns_json_dict() -> None:
+    payload = parse_sse_data_payload(render_sse_line(_sample_event()))
+
+    assert payload is not None
+    assert payload["event"] == "token_delta"
+    assert payload["data"] == {"delta_text": "hi"}
+
+
+def test_assistant_text_capture_handles_replacement_and_tombstone() -> None:
+    capture = AssistantTextCapture()
+
+    capture.apply(event_name="token_delta", data={"delta_text": "partial"})
+    assert capture.text == "partial"
+    capture.apply(event_name="assistant_message_completed", data={"content": "final"})
+    assert capture.text == "final"
+    capture.apply(event_name="assistant_message_tombstoned", data={})
+    assert capture.text == ""
+    capture.apply(event_name="token_delta", data={"delta_text": "after"})
+    assert capture.text == "after"
 
 
 class _StaticAgent:

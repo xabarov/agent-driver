@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -11,13 +12,8 @@ from typing import Any
 
 import httpx
 
-from agent_driver.llm.payload_debug import (
-    debug_llm_payload_enabled,
-    format_payload_debug_line,
-)
-
-from agent_driver.contracts.tools import ToolCall
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.tools import ToolCall
 from agent_driver.contracts.usage import UsageSummary
 from agent_driver.llm.base import HttpClientConfig, ProviderBase, StreamRequest
 from agent_driver.llm.contracts import (
@@ -27,6 +23,10 @@ from agent_driver.llm.contracts import (
     LlmResponse,
     LlmStreamEvent,
     ProviderStatus,
+)
+from agent_driver.llm.payload_debug import (
+    debug_llm_payload_enabled,
+    format_payload_debug_line,
 )
 from agent_driver.llm.tool_call_parser import extract_text_form_tool_calls
 
@@ -221,6 +221,73 @@ def _planned_tool_calls_from_openai(
     return planned, parse_errors
 
 
+def _forced_tool_choice_name(tool_choice: object) -> str | None:
+    if not isinstance(tool_choice, dict):
+        return None
+    if tool_choice.get("type") != "tool":
+        return None
+    name = tool_choice.get("name")
+    return name if isinstance(name, str) and name.strip() else None
+
+
+def _planned_tool_call_from_forced_text(
+    *,
+    tool_name: str | None,
+    text: str,
+) -> list[dict[str, Any]]:
+    if not tool_name:
+        return []
+    args = _parse_forced_tool_args_fragment(text)
+    if args is None:
+        return []
+    call = ToolCall(
+        tool_name=tool_name,
+        args=args,
+        metadata={"text_form_source": "forced_tool_choice_text"},
+    )
+    return [call.model_dump(mode="json")]
+
+
+def _suppress_text_form_tool_calls_when_tools_disabled(
+    event: LlmStreamEvent,
+    *,
+    tool_choice: object,
+) -> LlmStreamEvent:
+    if tool_choice != "none":
+        return event
+    if event.metadata.get("text_form_tool_calls_parsed") is not True:
+        return event
+    metadata = dict(event.metadata)
+    metadata.pop("planned_tool_calls", None)
+    metadata.pop("tool_call_parse_errors", None)
+    metadata["text_form_tool_calls_suppressed"] = True
+    return event.model_copy(update={"metadata": metadata})
+
+
+def _parse_forced_tool_args_fragment(text: str) -> dict[str, Any] | None:
+    clean = re.sub(r"</?tool_call>", "", text, flags=re.IGNORECASE).strip()
+    if not clean:
+        return None
+    candidates = [clean]
+    key_match = re.search(r'"[A-Za-z_][A-Za-z0-9_]*"\s*:', clean)
+    if key_match is not None:
+        candidate = "{" + clean[key_match.start() :]
+        closing = candidate.rfind("}")
+        if closing >= 0:
+            candidate = candidate[: closing + 1]
+        else:
+            candidate = f"{candidate}}}"
+        candidates.append(candidate)
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
 def normalize_openai_completion_payload(
     payload: dict[str, Any],
     *,
@@ -395,7 +462,9 @@ class OpenAICompatibleProvider(ProviderBase):
                 )
             row: dict[str, Any] = {
                 "role": message.role.value,
-                "content": content_blocks if content_blocks is not None else message.content,
+                "content": (
+                    content_blocks if content_blocks is not None else message.content
+                ),
             }
             if message.name:
                 row["name"] = message.name
@@ -506,6 +575,8 @@ class OpenAICompatibleProvider(ProviderBase):
         )
         async with self.stream_client_with_telemetry(stream_request) as lines:
             pending_tool_calls: dict[int, dict[str, Any]] = {}
+            text_chunks: list[str] = []
+            forced_tool_name = _forced_tool_choice_name(request.tool_choice)
             async for line in lines:
                 if not line or not line.startswith("data: "):
                     continue
@@ -516,6 +587,9 @@ class OpenAICompatibleProvider(ProviderBase):
                 choice = _first_choice(payload)
                 delta = choice.get("delta")
                 if isinstance(delta, dict):
+                    content = delta.get("content")
+                    if isinstance(content, str) and content:
+                        text_chunks.append(content)
                     for entry in delta.get("tool_calls", []) or []:
                         if not isinstance(entry, dict):
                             continue
@@ -526,7 +600,10 @@ class OpenAICompatibleProvider(ProviderBase):
                         function = entry.get("function")
                         state = pending_tool_calls.setdefault(
                             index,
-                            {"id": entry.get("id"), "function": {"name": "", "arguments": ""}},
+                            {
+                                "id": entry.get("id"),
+                                "function": {"name": "", "arguments": ""},
+                            },
                         )
                         if isinstance(entry.get("id"), str) and entry.get("id"):
                             state["id"] = entry["id"]
@@ -535,26 +612,51 @@ class OpenAICompatibleProvider(ProviderBase):
                                 "function", {"name": "", "arguments": ""}
                             )
                             if isinstance(function.get("name"), str):
-                                state_fn["name"] = f"{state_fn.get('name', '')}{function['name']}"
+                                state_fn["name"] = (
+                                    f"{state_fn.get('name', '')}{function['name']}"
+                                )
                             if isinstance(function.get("arguments"), str):
                                 state_fn["arguments"] = (
                                     f"{state_fn.get('arguments', '')}{function['arguments']}"
                                 )
-                yield normalize_openai_stream_chunk(
+                event = normalize_openai_stream_chunk(
                     payload,
                     provider_name=self.name,
                     fallback_model=str(request.model or self._model),
                     cost_per_1k_tokens=float(self.status.cost_per_1k_tokens or 0.0),
                 )
+                yield _suppress_text_form_tool_calls_when_tools_disabled(
+                    event,
+                    tool_choice=request.tool_choice,
+                )
             if pending_tool_calls:
-                flattened = [pending_tool_calls[idx] for idx in sorted(pending_tool_calls)]
-                planned_tool_calls, parse_errors = _planned_tool_calls_from_openai(flattened)
+                flattened = [
+                    pending_tool_calls[idx] for idx in sorted(pending_tool_calls)
+                ]
+                planned_tool_calls, parse_errors = _planned_tool_calls_from_openai(
+                    flattened
+                )
                 if planned_tool_calls or parse_errors:
                     metadata: dict[str, Any] = {}
                     if planned_tool_calls:
                         metadata["planned_tool_calls"] = planned_tool_calls
                     if parse_errors:
                         metadata["tool_call_parse_errors"] = parse_errors
+                    yield LlmStreamEvent(event="tool_calls", metadata=metadata)
+            elif text_chunks and request.tool_choice != "none":
+                text = "".join(text_chunks)
+                text_planned, text_errors = extract_text_form_tool_calls(text)
+                if not text_planned:
+                    text_planned = _planned_tool_call_from_forced_text(
+                        tool_name=forced_tool_name,
+                        text=text,
+                    )
+                if text_planned or text_errors:
+                    metadata = {"text_form_tool_calls_parsed": True}
+                    if text_planned:
+                        metadata["planned_tool_calls"] = text_planned
+                    if text_errors:
+                        metadata["tool_call_parse_errors"] = text_errors
                     yield LlmStreamEvent(event="tool_calls", metadata=metadata)
 
 

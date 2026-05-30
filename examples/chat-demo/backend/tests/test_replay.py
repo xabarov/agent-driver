@@ -66,3 +66,27 @@ async def test_session_replay_includes_steering_events(client) -> None:
     event_names = [item["event"] for item in payload["events"]]
     assert "control_requested" in event_names
     assert "command_queued" in event_names
+
+
+async def test_run_trace_summary_returns_scenario_verdict(client) -> None:
+    run_id: str | None = None
+    async with client.stream(
+        "POST",
+        "/api/chat/messages",
+        json={"message": "hello trace summary"},
+    ) as response:
+        assert response.status_code == 200
+        run_id = response.headers.get("x-run-id")
+        async for line in response.aiter_lines():
+            if line == "event: run_completed":
+                break
+
+    assert run_id is not None
+    summary = await client.get(f"/api/chat/runs/{run_id}/trace-summary")
+
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["run_id"] == run_id
+    assert payload["terminal_event"] == "run_completed"
+    assert payload["verdict"] in {"pass", "fail"}
+    assert "failures" in payload

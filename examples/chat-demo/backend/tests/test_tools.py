@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.api.chat import _chat_tool_policy
+from app.api.chat import _chat_tool_policy, _initial_tool_choice_for_chat
 from app.config import Settings
 from app.schemas.chat import ChatMessageRequest
 from app.services.agent_factory import _tool_config_from_preset
@@ -101,6 +101,33 @@ def test_chat_tool_policy_denies_clarification_tools_for_deliverable_request() -
         "enter_plan_mode",
         "exit_plan_mode_v2",
     }
+
+
+def test_chat_tool_policy_treats_report_contract_as_deliverable_request() -> None:
+    """Task contract and hard deliverable policy should not disagree."""
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="составь план поиска информации и написания реферата по Fender",
+        ),
+        settings=Settings(),
+    )
+    assert policy.metadata["task_contract"]["kind"] == "deliverable"
+    assert policy.metadata["deliverable_request"]["enabled"] is True
+    assert "ask_user_question" in set(policy.denied_tools or ())
+
+
+def test_initial_tool_choice_forces_web_search_for_research_deliverable() -> None:
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="составь план поиска в интернете и написания реферата"
+        ),
+        settings=Settings(),
+    )
+    assert _initial_tool_choice_for_chat(policy=policy, preset="web") == {
+        "type": "tool",
+        "name": "web_search",
+    }
+    assert _initial_tool_choice_for_chat(policy=policy, preset="off") is None
 
 
 def test_public_chat_presets_exclude_modal_plan_approval_tools() -> None:

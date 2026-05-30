@@ -57,21 +57,32 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
         return None
     lowered = text.lower()
     if any(marker in lowered for marker in _DELIVERABLE_MARKERS):
+        requires_research = any(marker in lowered for marker in _RESEARCH_MARKERS)
+        criteria = [
+            "Final response contains the requested deliverable, not another plan.",
+            "Reasonable assumptions are stated briefly when details are missing.",
+            (
+                "Clarifying questions are used only for truly blocking "
+                "user-owned decisions."
+            ),
+        ]
+        if requires_research:
+            criteria.insert(
+                1,
+                (
+                    "Because the goal asks for internet/search/source work, "
+                    "use available web/data tools before the final answer."
+                ),
+            )
         return {
             "kind": "deliverable",
+            "requires_research": requires_research,
             "goal": text,
             "approach": (
                 "Use existing context plus only the tools needed for missing "
                 "facts, then deliver the requested answer in this turn."
             ),
-            "acceptance_criteria": [
-                "Final response contains the requested deliverable, not another plan.",
-                "Reasonable assumptions are stated briefly when details are missing.",
-                (
-                    "Clarifying questions are used only for truly blocking "
-                    "user-owned decisions."
-                ),
-            ],
+            "acceptance_criteria": criteria,
             "out_of_scope": [
                 "Restarting the plan/checklist instead of answering.",
                 "Asking for plan approval for research or writing deliverables.",
@@ -80,6 +91,7 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
     if any(marker in lowered for marker in _RESEARCH_MARKERS):
         return {
             "kind": "research",
+            "requires_research": True,
             "goal": text,
             "approach": (
                 "Gather evidence with data tools, verify enough context, then "
@@ -134,6 +146,11 @@ def render_task_contract_reminder(contract: dict[str, Any]) -> str | None:
     ]
     if approach:
         parts.append(f"Approach: {approach}")
+    if contract.get("requires_research") is True:
+        parts.append(
+            "Research requirement: user explicitly asked for internet/search/source "
+            "work; use available web/data tools before the final answer."
+        )
     if criteria:
         parts.append("Acceptance criteria: " + "; ".join(criteria[:4]))
     if out_of_scope:

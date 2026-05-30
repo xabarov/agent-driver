@@ -109,6 +109,18 @@ describe("eventsToMessages", () => {
     ]);
     expect(messages).toEqual([]);
   });
+
+  it("does not render text-form tool call json as assistant content", () => {
+    const messages = eventsToMessages([
+      ev("run_started", 1),
+      ev("token_delta", 2, {
+        delta_text:
+          '{"name":"todo_update","arguments":{"todo_id":"research","status":"in_progress"}} </tool_call>',
+      }),
+      ev("run_completed", 3),
+    ]);
+    expect(messages).toEqual([]);
+  });
 });
 
 describe("parseSteeringEvents", () => {

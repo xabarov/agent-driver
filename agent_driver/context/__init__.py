@@ -21,10 +21,10 @@ from agent_driver.context.compaction import (
     evaluate_session_memory_freshness,
     extract_session_memory,
     load_session_memory,
+    ptl_retry_drop_oldest_groups,
     run_full_llm_compaction,
     sanitize_compaction_text,
     save_session_memory,
-    ptl_retry_drop_oldest_groups,
 )
 from agent_driver.context.microcompaction import microcompact_observations
 from agent_driver.context.observations import (
@@ -47,7 +47,18 @@ from agent_driver.context.sessions import (
     SessionStore,
     SqliteSessionStore,
 )
-from agent_driver.context.token_pressure import TokenPressureInput, estimate_token_pressure
+from agent_driver.context.token_pressure import (
+    TokenPressureInput,
+    estimate_token_pressure,
+)
+from agent_driver.context.transcript import (
+    Transcript,
+    filter_client_requests_for_runs,
+    record_mapping_dict,
+    transcript_to_messages,
+    truncate_transcript_for_retry,
+    turn_text_for_run,
+)
 from agent_driver.context.trimming import trim_context
 
 __all__ = [
@@ -90,5 +101,11 @@ __all__ = [
     "microcompact_observations",
     "TokenPressureInput",
     "estimate_token_pressure",
+    "Transcript",
+    "filter_client_requests_for_runs",
+    "record_mapping_dict",
+    "transcript_to_messages",
+    "truncate_transcript_for_retry",
+    "turn_text_for_run",
     "trim_context",
 ]
