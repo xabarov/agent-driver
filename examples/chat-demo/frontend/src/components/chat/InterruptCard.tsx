@@ -28,6 +28,20 @@ interface PlanApprovalView {
   path?: string | null;
 }
 
+interface ClarificationChoice {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+interface ClarificationQuestion {
+  id: string;
+  header: string;
+  question: string;
+  preview?: string;
+  choices: ClarificationChoice[];
+}
+
 function getPlanApproval(interrupt: PendingInterrupt): PlanApprovalView | null {
   const proposed = interrupt.proposedAction;
   const payload = proposed?.plan_approval;
@@ -37,9 +51,33 @@ function getPlanApproval(interrupt: PendingInterrupt): PlanApprovalView | null {
   return payload as PlanApprovalView;
 }
 
+function getClarificationQuestions(
+  interrupt: PendingInterrupt,
+): ClarificationQuestion[] {
+  const raw = interrupt.proposedAction?.questions;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((item): item is ClarificationQuestion => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      return false;
+    }
+    const candidate = item as Partial<ClarificationQuestion>;
+    return (
+      typeof candidate.id === "string" &&
+      typeof candidate.header === "string" &&
+      typeof candidate.question === "string" &&
+      Array.isArray(candidate.choices)
+    );
+  });
+}
+
 export function InterruptCard({ interrupt, onAction }: InterruptCardProps) {
   const planApproval = getPlanApproval(interrupt);
   const isClarification = interrupt.reason === "clarification_required";
+  const clarificationQuestions = isClarification
+    ? getClarificationQuestions(interrupt)
+    : [];
   const heading = planApproval
     ? "Plan approval required"
     : isClarification
@@ -192,6 +230,46 @@ export function InterruptCard({ interrupt, onAction }: InterruptCardProps) {
       ) : null}
       {allows(interrupt, "clarify") ? (
         <div className="mt-3 space-y-2">
+          {clarificationQuestions.length ? (
+            <div className="space-y-3 rounded-md border bg-background/60 p-3">
+              {clarificationQuestions.map((question) => (
+                <div key={question.id} className="space-y-2">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-muted-foreground">
+                      {question.header}
+                    </p>
+                    <p className="text-sm">{question.question}</p>
+                    {question.preview ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {question.preview}
+                      </p>
+                    ) : null}
+                  </div>
+                  {question.choices.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {question.choices.map((choice) => (
+                        <Button
+                          key={choice.id}
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            const prefix =
+                              clarificationQuestions.length > 1
+                                ? `${question.header}: `
+                                : "";
+                            setClarifyMessage(`${prefix}${choice.label}`);
+                          }}
+                        >
+                          {choice.label}
+                        </Button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
           <label
             className="block text-xs font-medium text-muted-foreground"
             htmlFor={clarifyId}

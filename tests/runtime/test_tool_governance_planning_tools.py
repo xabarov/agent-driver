@@ -4,10 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from agent_driver.contracts import AgentRunInput, ToolCall, ToolPolicyInput, ToolPolicyMode
+from agent_driver.contracts import (
+    AgentRunInput,
+    ToolCall,
+    ToolPolicyInput,
+    ToolPolicyMode,
+)
 from agent_driver.llm.providers_impl.fake import FakeProvider
-from agent_driver.tools import GovernedToolExecutor, ToolRegistry
-from agent_driver.tools import register_builtin_tools, register_planning_tool
+from agent_driver.tools import (
+    GovernedToolExecutor,
+    ToolRegistry,
+    register_builtin_tools,
+    register_planning_tool,
+)
 from tests.runtime.conftest import llm_request_with_planned_calls
 
 
@@ -71,7 +80,10 @@ async def test_governed_executor_interrupts_for_ask_user_question() -> None:
                     tool_name="ask_user_question",
                     args={
                         "prompt": "Choose path",
-                        "choices": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+                        "choices": [
+                            {"id": "a", "label": "A"},
+                            {"id": "b", "label": "B"},
+                        ],
                     },
                 )
             ]
@@ -80,6 +92,7 @@ async def test_governed_executor_interrupts_for_ask_user_question() -> None:
     result = await executor.execute(run_input, response)
     assert result.interrupt is not None
     assert result.interrupt.reason.value == "clarification_required"
+    assert result.interrupt.proposed_action["questions"][0]["question"] == "Choose path"
     assert result.envelopes[0].decision.value == "interrupt"
 
 

@@ -58,6 +58,44 @@ describe("InterruptCard", () => {
     });
   });
 
+  it("renders structured clarification choices into the response box", () => {
+    const onAction = vi.fn();
+    render(
+      <InterruptCard
+        interrupt={{
+          ...base,
+          reason: "clarification_required",
+          title: "User clarification required",
+          proposedAction: {
+            questions: [
+              {
+                id: "scope",
+                header: "Scope",
+                question: "Which report scope should I use?",
+                preview: "This changes the source set.",
+                choices: [
+                  { id: "history", label: "Company history" },
+                  { id: "models", label: "Model overview" },
+                ],
+              },
+            ],
+          },
+          allowedActions: ["clarify", "cancel"],
+        }}
+        onAction={onAction}
+      />,
+    );
+
+    expect(screen.getByText("Scope")).toBeInTheDocument();
+    expect(screen.getByText("Which report scope should I use?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Company history" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send clarification" }));
+    expect(onAction).toHaveBeenCalledWith({
+      action: "clarify",
+      message: "Company history",
+    });
+  });
+
   it("renders plan approval payload and submits edited plan content", () => {
     const onAction = vi.fn();
     render(

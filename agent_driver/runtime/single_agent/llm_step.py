@@ -528,39 +528,7 @@ def _react_system_instruction(host: LlmStepHost, context: RunContext) -> str | N
     if isinstance(workspace_cwd, str) and workspace_cwd.strip():
         lines.append(f"Workspace cwd: {workspace_cwd.strip()}")
     if context.run_input.app_metadata.get("chat_mode") is True:
-        planning_payload = context.metadata.get("planning_state")
-        if isinstance(planning_payload, dict):
-            todos = planning_payload.get("todos")
-            if isinstance(todos, list) and todos:
-                current_input = str(context.run_input.input or "").lower()
-                deliverable_requested = any(
-                    marker in current_input
-                    for marker in (
-                        "write",
-                        "draft",
-                        "final",
-                        "deliverable",
-                        "напиши",
-                        "черновик",
-                        "итог",
-                        "финал",
-                        "не план",
-                    )
-                )
-                if deliverable_requested:
-                    lines.append(
-                        "Session plan is active, but the current user asks for the "
-                        "deliverable now. Use existing context and produce the "
-                        "requested final answer in this turn; update todos only if "
-                        "needed, and do not restart planning, ask another "
-                        "clarification, or ask for plan approval."
-                    )
-                else:
-                    lines.append(
-                        "Session plan is active: follow existing todos, update statuses "
-                        "with todo_write (merge=true) as each step completes, and do "
-                        "not restate the full plan checklist in chat."
-                    )
+        lines.extend(_chat_mode_runtime_reminders(context))
         planning_hint = context.run_input.tool_policy.metadata.get("planning_hint")
         if isinstance(planning_hint, dict):
             level = str(planning_hint.get("level") or "")
@@ -578,6 +546,82 @@ def _react_system_instruction(host: LlmStepHost, context: RunContext) -> str | N
                     "exit_plan_mode_v2 with concrete plan content."
                 )
     return "\n".join(lines)
+
+
+def _chat_mode_runtime_reminders(context: RunContext) -> list[str]:
+    """Return compact mode reminders for the chat ReAct prompt."""
+    reminders: list[str] = []
+    planning_payload = context.metadata.get("planning_state")
+    deliverable_requested = _current_turn_requests_deliverable(context)
+    deliverable_policy = context.run_input.tool_policy.metadata.get(
+        "deliverable_request"
+    )
+    if (
+        isinstance(deliverable_policy, dict)
+        and deliverable_policy.get("enabled") is True
+    ):
+        reminders.append(
+            "Runtime reminder: deliverable_request_active. The user asked for the "
+            "answer/draft now; use tools only if needed for missing facts, then "
+            "produce the final deliverable. Do not ask for plan approval or another "
+            "clarification unless a safety requirement blocks progress."
+        )
+    if context.metadata.get("approved_plan"):
+        reminders.append(
+            "Runtime reminder: planning_mode_exit. An approval plan has already "
+            "been accepted for this run; continue execution instead of creating "
+            "another approval plan."
+        )
+    if not isinstance(planning_payload, dict):
+        return reminders
+    todos = planning_payload.get("todos")
+    planning_metadata = planning_payload.get("metadata")
+    planning_mode = (
+        planning_metadata.get("planning_mode")
+        if isinstance(planning_metadata, dict)
+        else None
+    )
+    if planning_mode == "plan":
+        reminders.append(
+            "Runtime reminder: planning_mode_active. Stay read-only, inspect and "
+            "reason, ask only blocking questions, then call exit_plan_mode_v2 with "
+            "a concrete approval-ready plan before side-effecting execution."
+        )
+    if isinstance(todos, list) and todos:
+        if deliverable_requested:
+            reminders.append(
+                "Runtime reminder: deliverable_request_active_with_plan. A session "
+                "checklist exists, but the current turn asks for the deliverable. "
+                "Use existing context and produce the requested final answer in "
+                "this turn; update todos only if needed, and do not restart "
+                "planning, ask another clarification, or ask for plan approval."
+            )
+        else:
+            reminders.append(
+                "Runtime reminder: planning_mode_sparse. Session todos are active: "
+                "follow existing todos, update statuses with todo_write "
+                "(merge=true) as each step completes, and do not restate the full "
+                "plan checklist in chat."
+            )
+    return reminders
+
+
+def _current_turn_requests_deliverable(context: RunContext) -> bool:
+    current_input = str(context.run_input.input or "").lower()
+    return any(
+        marker in current_input
+        for marker in (
+            "write",
+            "draft",
+            "final",
+            "deliverable",
+            "напиши",
+            "черновик",
+            "итог",
+            "финал",
+            "не план",
+        )
+    )
 
 
 __all__ = ["LlmStepHost", "execute_llm_call_step"]

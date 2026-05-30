@@ -5,20 +5,28 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agent_driver.contracts.context import PlanApprovalPayload
 from agent_driver.contracts.enums import (
     GuardrailDecision,
     InterruptReason,
     ResumeAction,
     ToolPolicyDecision,
 )
-from agent_driver.contracts.context import PlanApprovalPayload
 from agent_driver.contracts.interrupts import InterruptRequest
 from agent_driver.contracts.tools import ToolError, ToolResultEnvelope
+from agent_driver.tools.context import (
+    tool_call_context_scope,
+    tool_progress_scope,
+)
 from agent_driver.tools.executor.blocks import append_blocked_call
 from agent_driver.tools.executor.specs import (
     AllowedSpec,
     BlockSpec,
     merge_guardrail_decisions,
+)
+from agent_driver.tools.executor.spill import (
+    should_spill_payload,
+    spill_payload_to_artifact,
 )
 from agent_driver.tools.executor.trace import (
     build_tool_trace,
@@ -26,14 +34,6 @@ from agent_driver.tools.executor.trace import (
     trace_spec_denied,
 )
 from agent_driver.tools.guardrails import GuardrailPipeline, enforce_output_budget
-from agent_driver.tools.context import (
-    tool_call_context_scope,
-    tool_progress_scope,
-)
-from agent_driver.tools.executor.spill import (
-    should_spill_payload,
-    spill_payload_to_artifact,
-)
 
 
 def _bounded_structured_output(
@@ -170,10 +170,13 @@ async def execute_allowed_path(
                 progress=progress,
             )
 
-        with tool_call_context_scope(
-            run_id=str(spec.run_metadata.get("run_id") or ""),
-            thread_id=str(spec.run_metadata.get("thread_id") or ""),
-        ), tool_progress_scope(_record_progress):
+        with (
+            tool_call_context_scope(
+                run_id=str(spec.run_metadata.get("run_id") or ""),
+                thread_id=str(spec.run_metadata.get("thread_id") or ""),
+            ),
+            tool_progress_scope(_record_progress),
+        ):
             raw = await spec.registered.handler(spec.call.args)
         raw_guard = await guardrails.on_tool_result(
             {"tool_name": spec.call.tool_name, "result": raw}
@@ -195,9 +198,8 @@ async def execute_allowed_path(
             raw = _planning_update_payload(raw if isinstance(raw, dict) else {})
         if spec.call.tool_name == "ask_user_question":
             return _append_clarification_interrupt(spec=spec, raw=raw)
-        if (
-            spec.call.tool_name == "exit_plan_mode_v2"
-            and not spec.call.metadata.get("approved_interrupt_id")
+        if spec.call.tool_name == "exit_plan_mode_v2" and not spec.call.metadata.get(
+            "approved_interrupt_id"
         ):
             return _append_plan_approval_interrupt(spec=spec, raw=raw)
         # Phase 12 H18 — disk-spill for oversized handler outputs.
@@ -302,6 +304,9 @@ def _append_clarification_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) -
     choices = raw.get("choices")
     if not isinstance(choices, list):
         choices = []
+    questions = raw.get("questions")
+    if not isinstance(questions, list):
+        questions = []
     allow_multiple = bool(raw.get("allow_multiple", False))
     run_id, attempt_id = _interrupt_identifiers(spec)
     interrupt = InterruptRequest(
@@ -318,6 +323,7 @@ def _append_clarification_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) -
             "args": spec.call.args,
             "prompt": prompt,
             "choices": choices,
+            "questions": questions,
             "allow_multiple": allow_multiple,
         },
         allowed_actions=[
@@ -360,16 +366,14 @@ def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
         return False
     run_id, attempt_id = _interrupt_identifiers(spec)
     plan_payload = PlanApprovalPayload(
-        plan_id=str(plan_raw.get("plan_id") or f"plan_{spec.call.tool_call_id or spec.index}"),
+        plan_id=str(
+            plan_raw.get("plan_id") or f"plan_{spec.call.tool_call_id or spec.index}"
+        ),
         run_id=run_id,
         agent_id=str(spec.run_metadata.get("agent_id") or "agent"),
         content=content,
         content_hash=str(plan_raw.get("content_hash") or ""),
-        path=(
-            str(plan_raw.get("path"))
-            if plan_raw.get("path") is not None
-            else None
-        ),
+        path=(str(plan_raw.get("path")) if plan_raw.get("path") is not None else None),
         metadata={
             "source_tool": spec.call.tool_name,
             **spec.run_metadata,

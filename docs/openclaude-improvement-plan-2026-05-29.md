@@ -10,6 +10,20 @@
 - steerability: возможность направлять модель во время диалога и выполнения;
 - subagents: управляемые дочерние агенты, команды и параллельная оркестрация.
 
+## Development Philosophy
+
+Работу над движком ведем в духе Python Zen: простота и читаемость важнее
+сложной механики ради механики. Если проблему можно надежно решить элегантной
+связкой "модель + промпт + небольшой runtime guard", выбираем этот путь до
+построения сложных DAG, workflow engine или многоуровневых state machines.
+
+Сложную оркестрацию добавляем только по явным сигналам: повторяемые сбои в
+трассах, невозможность проверить поведение тестами, реальные требования к
+параллельности, durability, human approval или восстановлению после ошибок.
+Если в ходе работы находится решение, которое упрощает уже добавленную
+механику без потери наблюдаемого качества, применяем упрощение и фиксируем
+причину в плане.
+
 ## Executive Summary
 
 `agent-driver` уже содержит сильный фундамент: durable runtime, typed events,
@@ -306,14 +320,18 @@ Best-of-both plan for `agent-driver`:
 - [x] Add a first version of the deliverable final-answer gate after substantive
   data tools, matching AgentHeroes' "node output must materialize into state"
   idea rather than allowing endless progress narration.
-- [ ] Add OpenClaude-style mode attachments:
+- [x] Add OpenClaude-style mode attachments:
   `planning_mode_active`, `planning_mode_sparse`, `planning_mode_exit`, and
   `deliverable_request_active`, injected as structured runtime reminders rather
   than one-off prompt strings.
-- [ ] Replace single-string `ask_user_question` with a structured question
+- [x] Replace single-string `ask_user_question` with a structured question
   contract: 1-4 questions, headers, 2-4 options, optional "Other", optional
   preview, uniqueness validation, and a response payload that maps question to
   answer.
+  Current implementation keeps old `prompt`/`choices` compatibility, adds the
+  structured `questions` payload, validates bounds/uniqueness, and renders
+  option buttons plus the freeform "Other" path in chat-demo while resuming
+  through the existing clarification message path.
 - [ ] Add an `AskUserQuestion` policy classifier: allow only for
   user-owned decisions or truly blocking missing information; deny when the
   current turn asks for a final deliverable and enough context exists.

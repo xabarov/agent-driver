@@ -52,6 +52,78 @@ async def test_ask_user_question_returns_interrupt_payload_shape() -> None:
     assert out["interrupt_reason"] == "clarification_required"
     assert out["prompt"] == "Choose mode"
     assert len(out["choices"]) == 2
+    assert out["questions"] == [
+        {
+            "id": "q1",
+            "header": "Clarify",
+            "question": "Choose mode",
+            "choices": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ask_user_question_validates_structured_questions() -> None:
+    """Structured clarification should be bounded and preserve option metadata."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    tool = registry.get("ask_user_question")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "prompt": "Pick report scope",
+            "questions": [
+                {
+                    "id": "scope",
+                    "header": "Scope",
+                    "question": "Which scope should I use?",
+                    "preview": "This affects source selection.",
+                    "choices": [
+                        {
+                            "id": "history",
+                            "label": "Company history",
+                            "description": "Focus on Fender timeline.",
+                        },
+                        {"id": "models", "label": "Model overview"},
+                    ],
+                }
+            ],
+        }
+    )
+    assert out["choices"] == [
+        {"id": "history", "label": "Company history"},
+        {"id": "models", "label": "Model overview"},
+    ]
+    assert out["questions"][0]["header"] == "Scope"
+    assert out["questions"][0]["choices"][0]["description"] == (
+        "Focus on Fender timeline."
+    )
+
+
+@pytest.mark.asyncio
+async def test_ask_user_question_rejects_unbounded_question_sets() -> None:
+    """Clarification should stay short enough for a human to answer."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    tool = registry.get("ask_user_question")
+    assert tool is not None
+    with pytest.raises(ValueError, match="questions must contain 1-4 items"):
+        await tool.handler(
+            {
+                "prompt": "Too many",
+                "questions": [
+                    {
+                        "header": f"Q{index}",
+                        "question": "Pick one",
+                        "choices": [
+                            {"id": "a", "label": "A"},
+                            {"id": "b", "label": "B"},
+                        ],
+                    }
+                    for index in range(5)
+                ],
+            }
+        )
 
 
 @pytest.mark.asyncio
@@ -99,7 +171,11 @@ def test_apply_planning_state_tool_update_merges_status_without_content() -> Non
         planning_state_init("run_plan_merge"),
         {
             "todo_items": [
-                {"id": "research", "content": "Research topic", "status": "in_progress"},
+                {
+                    "id": "research",
+                    "content": "Research topic",
+                    "status": "in_progress",
+                },
                 {"id": "outline", "content": "Create outline", "status": "pending"},
             ],
             "todo_merge": False,
