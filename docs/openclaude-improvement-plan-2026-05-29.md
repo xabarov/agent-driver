@@ -254,7 +254,7 @@ Current demo-gate status:
   - [x] Re-run the Fender report scenario after the final-answer guard and
     verify the final turn reaches a draft instead of another progress update.
 
-## OpenClaude / AgentHeroes Research Addendum, 2026-05-30
+## OpenClaude / Hermes Agent Research Addendum, 2026-05-30
 
 Local sources reviewed:
 
@@ -266,10 +266,20 @@ Local sources reviewed:
 - `/home/roman/pyprojects/ML/openclaude/src/tools/TodoWriteTool/prompt.ts`
 - `/home/roman/pyprojects/ML/openclaude/src/utils/messages.ts`
 - `/home/roman/pyprojects/ML/openclaude/src/utils/attachments.ts`
-- `/home/roman/pyprojects/ML/agentheroes/packages/shared/agents/agent.flow.ts`
-- `/home/roman/pyprojects/ML/agentheroes/packages/backend/agents/agent.workflow.builder.ts`
-- `/home/roman/pyprojects/ML/agentheroes/packages/backend/agents/agent.process.service.ts`
-- `/home/roman/pyprojects/ML/agentheroes/packages/backend/generations/util/enhance.prompt.ts`
+- `/home/roman/pyprojects/ML/hermes-agent/hermes_cli/kanban_specify.py`
+- `/home/roman/pyprojects/ML/hermes-agent/hermes_cli/kanban_decompose.py`
+- `/home/roman/pyprojects/ML/hermes-agent/hermes_cli/kanban_swarm.py`
+- `/home/roman/pyprojects/ML/hermes-agent/hermes_cli/default_soul.py`
+- `/home/roman/pyprojects/ML/hermes-agent/hermes_cli/profiles.py`
+- `/home/roman/pyprojects/ML/hermes-agent/hermes_cli/profile_describer.py`
+- `/home/roman/pyprojects/ML/hermes-agent/agent/prompt_builder.py`
+- `/home/roman/pyprojects/ML/hermes-agent/agent/context_compressor.py`
+- `/home/roman/pyprojects/ML/hermes-agent/agent/onboarding.py`
+- `/home/roman/pyprojects/ML/hermes-agent/agent/shell_hooks.py`
+- `/home/roman/pyprojects/ML/hermes-agent/hermes_cli/plugins.py`
+- `/home/roman/pyprojects/ML/hermes-agent/gateway/run.py`
+- `/home/roman/pyprojects/ML/hermes-agent/gateway/platforms/base.py`
+- `/home/roman/pyprojects/ML/hermes-agent/toolsets.py`
 
 Findings from OpenClaude:
 
@@ -296,17 +306,44 @@ Findings from OpenClaude:
 - Plan artifacts are file-backed and durable, with session slug recovery and
   plan-mode exit attachments that tell the model it can now implement.
 
-Findings from AgentHeroes:
+Findings from Hermes Agent:
 
-- Work is represented as an explicit typed workflow tree (`Trigger -> Third
-  Party -> Generate Image -> Generate Video -> Publish`) with `dependsOn`
-  constraints and `multiple` flags.
-- Execution merges each node output into a shared `State`, so downstream steps
-  consume structured state instead of reinterpreting the conversation.
-- Each node emits progress via an event stream and retries locally up to three
-  times before surfacing a node-level error.
-- Structured-output usage (`model.withStructuredOutput`) is applied at prompt
-  enhancement boundaries to turn fuzzy input into typed prompt artifacts.
+- Hermes keeps the base persona small (`default_soul.py`) and moves behavior
+  into focused runtime blocks: tool-use enforcement, kanban worker guidance,
+  mode hints, and platform/session context. This matches our Python-Zen rule:
+  prefer model + prompt contracts before adding heavy orchestration.
+- `kanban_specify.py` turns a vague user task into a concrete task spec with
+  `Goal`, `Approach`, `Acceptance criteria`, and `Out of scope`. It is one LLM
+  pass, lenient about JSON fences, returns expected failures as outcomes, and
+  falls back to the original title/body instead of breaking the workflow.
+- `kanban_decompose.py` creates a small dependency graph only when useful:
+  usually 2-6 self-contained child tasks, `parents` as same-list dependency
+  indexes, profile routing by role description, and fallback assignees so no
+  child task is stranded.
+- `kanban_swarm.py` builds worker -> verifier -> synthesizer topology on top
+  of the existing kanban primitives. The root task is a shared blackboard/audit
+  anchor, workers write structured handoffs, the verifier gates with explicit
+  pass/block metadata, and the synthesizer starts only after the gate passes.
+- Kanban worker prompts are strict about lifecycle: heartbeat on long work,
+  block on genuine ambiguity, complete only with structured summary/metadata,
+  and create follow-up tasks instead of scope-creeping. Headless workers must
+  block rather than call `clarify`.
+- Gateway steerability is explicit and non-destructive: `/steer <prompt>` or
+  `busy_input_mode=steer` injects user direction after the next tool call; if
+  the agent is not ready or cannot steer, Hermes falls back to queue semantics.
+- Busy input has clear modes (`interrupt`, `queue`, `steer`) and one-time
+  onboarding hints, so users understand whether their message interrupted a
+  run, queued a follow-up, or steered the current run.
+- Hooks/plugins provide thin policy extension points: `pre_tool_call` can veto
+  with a block message, `pre_llm_call` can inject context, and result/output
+  transforms are centralized. This is useful for policy and observability
+  without embedding every rule into the core loop.
+- Context compression is protective rather than eager: prune old tool results,
+  preserve head and recent tail, clean orphan tool-call/result pairs, support
+  focused compression, and back off after ineffective compression attempts.
+- Profiles isolate config, env, memory, sessions, skills, logs, plans,
+  workspace, and home directories. For `agent-driver` this is a later-stage
+  subagent isolation option, not something to pull into the first pass.
 
 Best-of-both plan for `agent-driver`:
 
@@ -318,8 +355,8 @@ Best-of-both plan for `agent-driver`:
   `produce_deliverable`, with clarification and approval tools denied unless a
   runtime safety gate requires them.
 - [x] Add a first version of the deliverable final-answer gate after substantive
-  data tools, matching AgentHeroes' "node output must materialize into state"
-  idea rather than allowing endless progress narration.
+  data tools, matching the Hermes verifier/synthesizer idea that work must
+  materialize into a concrete output before the run is allowed to wander again.
 - [x] Add OpenClaude-style mode attachments:
   `planning_mode_active`, `planning_mode_sparse`, `planning_mode_exit`, and
   `deliverable_request_active`, injected as structured runtime reminders rather
@@ -335,9 +372,26 @@ Best-of-both plan for `agent-driver`:
 - [ ] Add an `AskUserQuestion` policy classifier: allow only for
   user-owned decisions or truly blocking missing information; deny when the
   current turn asks for a final deliverable and enough context exists.
-- [ ] Add an AgentHeroes-style execution blueprint for long research/writing
-  chat tasks: typed phases, required outputs per phase, state handoff, progress
-  events, retry/error policy, and a final deliverable gate.
+- [ ] Add a Hermes-style "specifier" preflight for vague complex tasks:
+  produce a compact `Goal / Approach / Acceptance criteria / Out of scope`
+  contract before planning/decomposition. Keep it one-shot, optional, and
+  lenient on parse failure.
+- [ ] Add a Hermes-style execution blueprint for long research/writing and
+  implementation chat tasks: small typed phases, self-contained worker specs,
+  required handoff outputs per phase, verifier gate, synthesizer final answer,
+  and explicit block/retry/error policy. Use this only when Phoenix traces show
+  the plain prompt+tool loop keeps re-planning or losing the deliverable.
+- [ ] Extend steerability semantics with a Hermes-like boundary: user messages
+  during a running chat turn should be represented as `interrupt`, `queue`, or
+  `steer after next tool result`, with deterministic UI affordances and trace
+  labels for each path.
+- [ ] Add policy hook points inspired by Hermes plugins: a narrow
+  `pre_tool_call` veto/context hook and a `post_tool_result` transform hook,
+  implemented as optional runtime callbacks before considering a larger plugin
+  system.
+- [ ] Add a compression/compaction note for later phases: preserve active task
+  contracts, recent tail, and tool-call/result integrity; back off if
+  compression is ineffective rather than repeatedly rewriting context.
 - [ ] Add Phoenix-backed regression scenarios for:
   plan -> clarification -> answer, research -> deliverable, implementation
   plan approval, subagent final synthesis, and ask-question denial on
