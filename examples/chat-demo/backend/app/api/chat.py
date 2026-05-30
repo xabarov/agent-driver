@@ -318,7 +318,11 @@ async def chat_messages(
         deadline_seconds=settings.deadline_seconds,
         tool_policy=tool_policy,
         tool_choice=initial_tool_choice_for_chat(policy=tool_policy, preset=preset),
-        app_metadata=build_chat_app_metadata(settings, session_id),
+        app_metadata=build_chat_app_metadata(
+            settings,
+            session_id,
+            scenario_id=body.scenario_id,
+        ),
     )
 
     def _persist_assistant(assistant_text: str, _terminal_event: str | None) -> None:

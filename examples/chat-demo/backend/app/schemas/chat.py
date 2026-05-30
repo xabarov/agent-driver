@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+from app.config import ToolPreset
 from pydantic import BaseModel, Field
 
 from agent_driver.contracts import ControlKind, ControlPriority
-
-from app.config import ToolPreset
 
 
 class ChatMessageRequest(BaseModel):
@@ -19,6 +18,7 @@ class ChatMessageRequest(BaseModel):
     model: str | None = None
     retry_from_run_id: str | None = None
     client_request_id: str | None = None
+    scenario_id: str | None = None
 
 
 class ResumeRequest(BaseModel):

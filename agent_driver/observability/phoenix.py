@@ -172,6 +172,14 @@ def runtime_event_otel_attributes(
     finish_reason = data.get("finish_reason")
     if isinstance(finish_reason, str):
         attrs["runtime.finish_reason"] = finish_reason
+    force_final_reason = data.get("force_final_reason")
+    if isinstance(force_final_reason, str):
+        attrs["force_final_reason"] = force_final_reason
+    continuation_reason = data.get("continuation_reason")
+    if isinstance(continuation_reason, str):
+        attrs["continuation_reason"] = continuation_reason
+    if "tool_choice_effective" in data:
+        attrs["tool_choice.effective"] = safe_json(data.get("tool_choice_effective"))
     tools = data.get("tools")
     if isinstance(tools, list):
         attrs["tool.names"] = ",".join(_names_from_dict_items(tools, "tool_name"))

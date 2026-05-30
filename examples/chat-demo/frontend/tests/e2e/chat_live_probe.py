@@ -153,6 +153,18 @@ def assert_trace_acceptance(
 
 def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
     open_new_chat(page)
+    page.route(
+        "**/api/chat/messages",
+        lambda route: route.continue_(
+            post_data=json.dumps(
+                {
+                    **json.loads(route.request.post_data or "{}"),
+                    "scenario_id": scenario.name,
+                },
+                ensure_ascii=False,
+            )
+        ),
+    )
     run_id = send_message_and_capture_run_id(page, scenario.prompt)
     summary = wait_until_run_idle(page, run_id=run_id, timeout_ms=180000)
     failures = assert_trace_acceptance(scenario, summary)

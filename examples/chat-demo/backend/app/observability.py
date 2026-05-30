@@ -43,6 +43,7 @@ def run_attributes(run_input: AgentRunInput) -> dict[str, object]:
         app_metadata_attributes={
             "session_id": "chat.session_id",
             "chat_mode": "chat.mode",
+            "scenario_id": "agent_driver.scenario",
         },
     )
 

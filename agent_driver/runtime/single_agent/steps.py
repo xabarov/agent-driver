@@ -186,6 +186,12 @@ class SingleAgentStepMixin:
             else "unknown"
         )
         completed_payload: dict[str, object] = {"finish_reason": finish_reason}
+        force_final_reason = context.metadata.get("force_final_answer_reason")
+        if isinstance(force_final_reason, str) and force_final_reason:
+            completed_payload["force_final_reason"] = force_final_reason
+        continuation_reason = context.metadata.get("continuation_nudge_reason")
+        if isinstance(continuation_reason, str) and continuation_reason:
+            completed_payload["continuation_reason"] = continuation_reason
         if context.llm_response is not None and context.llm_response.usage is not None:
             completed_payload["usage"] = context.llm_response.usage.model_dump(
                 mode="json"

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_driver.cli.sessions import SessionStore
-
 from app.config import Settings
 from app.schemas.meta import WorkspaceStatusView
+
+from agent_driver.cli.sessions import SessionStore
 
 _CHAT_DEMO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -51,7 +51,11 @@ def workspace_status(
     root = session_workspace or workspace_root
     return WorkspaceStatusView(
         root=str(root),
-        sessionId=session_id.strip() if isinstance(session_id, str) and session_id.strip() else None,
+        sessionId=(
+            session_id.strip()
+            if isinstance(session_id, str) and session_id.strip()
+            else None
+        ),
         exists=root.is_dir(),
         fileCount=_count_workspace_files(root),
         sampleAvailable=session_workspace is not None,
@@ -110,15 +114,23 @@ def find_session_id_for_run(store: SessionStore, run_id: str) -> str | None:
     return None
 
 
-def build_chat_app_metadata(settings: Settings, session_id: str) -> dict[str, object]:
+def build_chat_app_metadata(
+    settings: Settings,
+    session_id: str,
+    *,
+    scenario_id: str | None = None,
+) -> dict[str, object]:
     """Metadata passed into AgentRunInput for chat-demo runs."""
-    return {
+    metadata: dict[str, object] = {
         "stream_poll_interval_ms": settings.stream_poll_interval_ms,
         "llm_stream_idle_timeout_seconds": settings.llm_stream_idle_timeout_seconds,
         "chat_mode": True,
         "session_id": session_id,
         "workspace_cwd": str(resolve_session_workspace(settings, session_id)),
     }
+    if isinstance(scenario_id, str) and scenario_id.strip():
+        metadata["scenario_id"] = scenario_id.strip()
+    return metadata
 
 
 def merge_resume_app_metadata(

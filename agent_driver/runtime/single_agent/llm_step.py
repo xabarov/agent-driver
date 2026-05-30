@@ -109,7 +109,16 @@ async def execute_llm_call_step(
         host,
         context,
         event_type=RuntimeEventType.LLM_CALL_STARTED,
-        payload={"provider": host._deps.provider.name},
+        payload={
+            "provider": host._deps.provider.name,
+            "tool_choice_effective": (
+                context.metadata.get("tool_choice_override")
+                if context.metadata.get("tool_choice_override") is not None
+                else context.run_input.tool_choice
+            ),
+            "force_final_reason": context.metadata.get("force_final_answer_reason"),
+            "continuation_reason": context.metadata.get("continuation_nudge_reason"),
+        },
     )
     context.metadata["llm_call_started_monotonic"] = time.monotonic()
     clarification = context.metadata.get("clarification")

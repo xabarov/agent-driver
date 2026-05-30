@@ -125,6 +125,9 @@ def test_runtime_event_otel_attributes_compacts_runtime_data() -> None:
                 "total": 3,
                 "in_progress_id": "step-2",
             },
+            "force_final_reason": "runtime_guardrail",
+            "continuation_reason": "text_form_tool_call",
+            "tool_choice_effective": {"type": "tool", "name": "web_search"},
         },
     )
 
@@ -136,4 +139,7 @@ def test_runtime_event_otel_attributes_compacts_runtime_data() -> None:
     assert attrs["llm.usage.total_tokens"] == 30
     assert attrs["planning.completed"] == 1
     assert attrs["planning.in_progress_id"] == "step-2"
+    assert attrs["force_final_reason"] == "runtime_guardrail"
+    assert attrs["continuation_reason"] == "text_form_tool_call"
+    assert "web_search" in str(attrs["tool_choice.effective"])
     assert runtime_event_otel_attributes("token_delta", {"text": "x"}) is None
