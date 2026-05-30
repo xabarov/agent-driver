@@ -16,8 +16,9 @@ describe("ToolsPicker", () => {
     expect(screen.getByText("Web Search")).toBeInTheDocument();
     expect(screen.getByText("Web Fetch")).toBeInTheDocument();
     expect(screen.getByText("Delegation")).toBeInTheDocument();
-    expect(screen.getByText("Auto")).toBeInTheDocument();
-    expect(screen.getByText(/agent can use planning and delegation/i)).toBeInTheDocument();
+    expect(screen.getByText("Python")).toBeInTheDocument();
+    expect(screen.getAllByText("Auto")).toHaveLength(2);
+    expect(screen.getByText(/planning, delegation, and Python/i)).toBeInTheDocument();
     expect(screen.queryByText(/todo_write/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/grep/i)).not.toBeInTheDocument();
   });
@@ -44,10 +45,11 @@ describe("ToolsPicker", () => {
     });
   });
 
-  it("keeps delegation as an always-on status, not a user toggle", () => {
+  it("keeps agent-owned capabilities as always-on statuses, not user toggles", () => {
     render(<ToolsPicker />);
     expect(screen.getAllByRole("checkbox")).toHaveLength(2);
     expect(screen.getByText("Delegation")).toBeInTheDocument();
+    expect(screen.getByText("Python")).toBeInTheDocument();
     expect(useSettingsStore.getState().toolPreset).toBe("web");
   });
 

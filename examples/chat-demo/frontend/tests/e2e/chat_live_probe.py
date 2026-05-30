@@ -59,6 +59,11 @@ class LiveScenario:
         "subagent_no_final",
         "child_result_not_used",
         "child_prompt_not_bounded",
+        "missed_python",
+        "python_no_final",
+        "python_policy_loop",
+        "unnecessary_python",
+        "python_result_ignored",
     )
     requires_research: bool | None = None
 
@@ -66,7 +71,33 @@ class LiveScenario:
 SCENARIOS: dict[str, LiveScenario] = {
     "simple-direct": LiveScenario(
         name="simple-direct",
-        prompt="сколько r в слове strawberry?",
+        prompt="привет, ответь одной короткой фразой",
+        forbidden_tools=("python", "agent_tool"),
+        requires_research=False,
+    ),
+    "python-count-letters": LiveScenario(
+        name="python-count-letters",
+        prompt="Сколько букв r в strawberry? Проверь точно.",
+        required_tools=("python",),
+        forbidden_tools=("agent_tool", "web_search", "web_fetch"),
+        max_planning_tool_calls=0,
+        requires_research=False,
+    ),
+    "python-arithmetic": LiveScenario(
+        name="python-arithmetic",
+        prompt="Посчитай точно: 17 * 23 + 19% от 350, округли до двух знаков.",
+        required_tools=("python",),
+        forbidden_tools=("agent_tool", "web_search", "web_fetch"),
+        max_planning_tool_calls=0,
+        requires_research=False,
+    ),
+    "python-statistics": LiveScenario(
+        name="python-statistics",
+        prompt="Вычисли среднее и медиану для чисел 4, 9, 15, 16, 23, 42.",
+        required_tools=("python",),
+        forbidden_tools=("agent_tool", "web_search", "web_fetch"),
+        max_planning_tool_calls=0,
+        requires_research=False,
     ),
     "research-report": LiveScenario(
         name="research-report",
@@ -183,6 +214,7 @@ SCENARIOS: dict[str, LiveScenario] = {
     "subagent-no-delegation-simple": LiveScenario(
         name="subagent-no-delegation-simple",
         prompt="сколько r в слове strawberry?",
+        required_tools=("python",),
         forbidden_tools=("agent_tool",),
         tool_preset="web",
         requires_research=False,

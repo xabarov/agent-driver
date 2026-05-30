@@ -14,6 +14,21 @@ def _completed_tool(name: str) -> dict[str, object]:
     }
 
 
+def _completed_python(result: str = "3") -> dict[str, object]:
+    return {
+        "event": "tool_call_completed",
+        "data": {
+            "tools": [
+                {
+                    "tool_name": "python",
+                    "status": "completed",
+                    "result_summary": result,
+                }
+            ],
+        },
+    }
+
+
 def test_trace_summary_flags_missing_research_tool() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
@@ -137,3 +152,55 @@ def test_trace_summary_allows_plan_only_without_data_tools() -> None:
     assert summary["planning"]["verdict"] == "fabricated"
     assert summary["failures"]["fabricated_planning"] is False
     assert summary["verdict"] == "pass"
+
+
+def test_trace_summary_requires_python_for_calculation_prompt() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Сколько букв r в strawberry? Проверь точно.",
+        assistant_text="В слове strawberry три буквы r.",
+        events=[
+            {"event": "llm_call_completed", "data": {}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["python"]["python_expected"] is True
+    assert summary["python"]["missed_python_for_calculation"] is True
+    assert summary["failures"]["missed_python"] is True
+
+
+def test_trace_summary_passes_python_calculation_with_final_answer() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Сколько букв r в strawberry? Проверь точно.",
+        assistant_text="В слове strawberry 3 буквы r.",
+        events=[
+            _completed_python("3"),
+            {"event": "llm_call_completed", "data": {}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "pass"
+    assert summary["python"]["python_tool_used"] is True
+    assert summary["python"]["python_result_observed"] is True
+    assert summary["python"]["final_after_python"] is True
+
+
+def test_trace_summary_flags_repeated_python_policy_errors() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Посчитай статистику",
+        assistant_text="Не удалось из-за политики sandbox.",
+        events=[
+            _completed_python("python policy: imports blocked by sandbox (os)"),
+            _completed_python("unauthorized import 'os'"),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["python"]["python_policy_errors"] == 2
+    assert summary["failures"]["python_policy_loop"] is True

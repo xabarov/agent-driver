@@ -17,8 +17,8 @@ export function useToolsForPreset(preset: ToolPreset, sessionId?: string) {
 }
 
 export const PRESET_HINTS: Record<ToolPreset, string> = {
-  off: "Web tools disabled. Delegation and planning stay available to the agent.",
-  web_search: "Search the web for current information.",
-  web_fetch: "Fetch and read content from URLs.",
-  web: "Search the web and fetch URL content.",
+  off: "Web tools disabled. Planning, delegation, and Python stay available to the agent.",
+  web_search: "Search the web for current information. Python remains available for exact calculations.",
+  web_fetch: "Fetch and read content from URLs. Python remains available for exact calculations.",
+  web: "Search the web and fetch URL content. Python remains available for exact calculations.",
 };

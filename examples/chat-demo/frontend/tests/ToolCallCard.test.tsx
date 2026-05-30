@@ -95,6 +95,40 @@ describe("ToolCallCard", () => {
     expect(screen.getByText("Debug payload")).toBeInTheDocument();
   });
 
+  test("renders python execution as a focused calculation panel", () => {
+    render(
+      <ToolCallCard
+        message={{
+          id: "tool_1",
+          role: "tool",
+          toolCallId: "call_1",
+          name: "python",
+          status: "done",
+          args: {
+            code: "from collections import Counter\nprint(Counter('strawberry')['r'])",
+            session_id: "calc_1",
+          },
+          resultPreview: "3",
+          durationMs: 42,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Python calculation")).toBeInTheDocument();
+    expect(screen.getByText("done")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("from collections import Counter")).toBeInTheDocument();
+    expect(screen.queryByText("Debug payload")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /expand python execution/i }));
+
+    expect(screen.getByText("Code")).toBeInTheDocument();
+    expect(screen.getAllByText(/Counter\('strawberry'\)/)).toHaveLength(2);
+    expect(screen.getByText("Sandboxed Python")).toBeInTheDocument();
+    expect(screen.getByText("calc_1")).toBeInTheDocument();
+    expect(screen.getByText("Debug payload")).toBeInTheDocument();
+  });
+
   test("shows subagent child lifecycle rows", () => {
     render(
       <ToolCallCard

@@ -13,7 +13,7 @@ async def test_tools_default_preset(client) -> None:
     assert response.status_code == 200
     payload = response.json()
     names = {item["name"] for item in payload["tools"]}
-    assert names == {"agent_tool", "web_fetch", "web_search"}
+    assert names == {"agent_tool", "python", "web_fetch", "web_search"}
     assert "read_file" not in names
     assert "bash" not in names
     assert payload["workspace"]["mode"] == "session"
@@ -24,28 +24,28 @@ async def test_tools_off_preset_query(client) -> None:
     assert response.status_code == 200
     payload = response.json()
     names = {item["name"] for item in payload["tools"]}
-    assert names == {"agent_tool"}
+    assert names == {"agent_tool", "python"}
 
 
 async def test_tools_web_search_preset_only_shows_search(client) -> None:
     response = await client.get("/api/tools", params={"preset": "web_search"})
     assert response.status_code == 200
     names = {item["name"] for item in response.json()["tools"]}
-    assert names == {"agent_tool", "web_search"}
+    assert names == {"agent_tool", "python", "web_search"}
 
 
 async def test_tools_web_fetch_preset_only_shows_fetch(client) -> None:
     response = await client.get("/api/tools", params={"preset": "web_fetch"})
     assert response.status_code == 200
     names = {item["name"] for item in response.json()["tools"]}
-    assert names == {"agent_tool", "web_fetch"}
+    assert names == {"agent_tool", "python", "web_fetch"}
 
 
 async def test_tools_agents_preset_shows_agent_tool(client) -> None:
     response = await client.get("/api/tools", params={"preset": "agents"})
     assert response.status_code == 200
     names = {item["name"] for item in response.json()["tools"]}
-    assert names == {"agent_tool"}
+    assert names == {"agent_tool", "python"}
 
 
 async def test_tools_legacy_dev_preset_still_hides_filesystem_from_public_endpoint(
@@ -197,6 +197,7 @@ def test_public_chat_presets_include_agent_tool_without_dangerous_tools() -> Non
     for preset in ("off", "web_search", "web_fetch", "web", "agents"):
         config = _tool_config_from_preset(preset)
         assert "agent_tool" in set(config.tools)
+        assert config.enable_python is True
         assert "shell" not in config.tool_packs
         assert "filesystem_write" not in config.tool_packs
         assert config.allow_dangerous_tools is False

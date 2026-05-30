@@ -10,7 +10,7 @@ from fastapi import APIRouter
 
 router = APIRouter(tags=["meta"])
 
-PUBLIC_TOOL_NAMES = {"agent_tool", "web_fetch", "web_search"}
+PUBLIC_TOOL_NAMES = {"agent_tool", "python", "web_fetch", "web_search"}
 
 
 @router.get("/tools", response_model=ToolsResponse)

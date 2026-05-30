@@ -1,4 +1,4 @@
-import { Bot, Globe, Link2, Search } from "lucide-react";
+import { Bot, Calculator, Globe, Link2, Search } from "lucide-react";
 
 import { PRESET_HINTS } from "../../lib/tools";
 import {
@@ -129,10 +129,16 @@ export function ToolsPicker({ disabled, compact, onPresetChange }: ToolsPickerPr
           title="Delegation"
           description="The agent can spawn bounded child agents when the task warrants it."
         />
+        <CapabilityRow
+          icon={Calculator}
+          title="Python"
+          description="The agent can run sandboxed calculations when exact computation helps."
+        />
       </div>
       <p className="text-xs leading-5 text-muted-foreground">
-        The agent can use planning and delegation when a task needs them. Web access is the
-        user-controlled capability here. Local file and shell tools are not exposed in this web demo.
+        The agent can use planning, delegation, and Python when a task needs them. Web access
+        is the user-controlled capability here. Local file and shell tools are not exposed in
+        this web demo.
       </p>
     </div>
   );

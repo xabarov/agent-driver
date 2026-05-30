@@ -13,6 +13,7 @@ from app.services.fake_scenarios import build_fake_scenario_provider
 from agent_driver.cli.providers import CliProviderConfig, build_cli_provider
 from agent_driver.cli.sessions import SessionStore
 from agent_driver.cli.tools import CliToolConfig, build_cli_toolset
+from agent_driver.code_agent.contracts import CodeAgentLimits
 from agent_driver.contracts.tools import ToolManifest
 from agent_driver.runtime import (
     create_runtime_store_bundle,
@@ -23,7 +24,10 @@ from agent_driver.runtime.control import (
     InMemoryCommandQueueStore,
     SqliteCommandQueueStore,
 )
-from agent_driver.runtime.single_agent.config_sections import SubagentSettings
+from agent_driver.runtime.single_agent.config_sections import (
+    PythonToolSettings,
+    SubagentSettings,
+)
 from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.sdk import Agent, create_agent
@@ -76,35 +80,41 @@ def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
             tools_mode="default",
             tools=("agent_tool",),
             tool_packs=("planning_progress",),
+            enable_python=True,
         )
     if preset == "web_search":
         return CliToolConfig(
             tools_mode="default",
             tools=("agent_tool", "web_search"),
             tool_packs=("planning_progress",),
+            enable_python=True,
         )
     if preset == "web_fetch":
         return CliToolConfig(
             tools_mode="default",
             tools=("agent_tool", "web_fetch"),
             tool_packs=("planning_progress",),
+            enable_python=True,
         )
     if preset in {"web", "safe"}:
         return CliToolConfig(
             tools_mode="default",
             tools=("agent_tool",),
             tool_packs=("web", "planning_progress"),
+            enable_python=True,
         )
     if preset == "agents":
         return CliToolConfig(
             tools_mode="default",
             tools=("agent_tool",),
             tool_packs=("planning_progress",),
+            enable_python=True,
         )
     if preset == "workspace":
         return CliToolConfig(
             tools_mode="default",
             tool_packs=("web", "planning_progress", "filesystem_read"),
+            enable_python=True,
         )
     if preset == "dev":
         return CliToolConfig(
@@ -157,6 +167,12 @@ def create_agent_bundle(
     )
     runner_config = RunnerConfig(
         cancellation_probe=cancellation_probe,
+        python_tool=PythonToolSettings(
+            enabled=True,
+            backend="local",
+            allow_overlay=False,
+            limits=CodeAgentLimits(max_exec_ms=3_000, max_output_chars=2_000),
+        ),
         subagents=SubagentSettings(
             enable_subagents=True,
             max_child_runs=settings.max_child_runs,

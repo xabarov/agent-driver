@@ -177,6 +177,9 @@ def test_react_system_prompt_includes_python_addendum_when_tool_enabled() -> Non
     assert "Allowed imports: math, re" in instruction
     assert "Limits: exec <=" in instruction
     assert "Sessions are persistent per session_id" in instruction
+    assert "Decision guide:" in instruction
+    assert "exact arithmetic" in instruction
+    assert "synthesize a concise final answer" in instruction
     assert "scipy" in instruction
     assert "numpy" in instruction
     assert (

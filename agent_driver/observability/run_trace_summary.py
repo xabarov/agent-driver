@@ -8,6 +8,7 @@ from agent_driver.runtime.planning_check import PLANNING_TOOL_NAMES
 from agent_driver.runtime.single_agent.continuation import analyze_continuation_intent
 
 _RESEARCH_TOOLS = frozenset({"web_search", "web_fetch"})
+_PYTHON_TOOL = "python"
 _TERMINAL_EVENTS = frozenset({"run_completed", "run_failed", "run_cancelled"})
 
 
@@ -37,6 +38,14 @@ def summarize_run_trace(
         tool_names=tool_names,
         user_prompt=user_prompt,
         assistant_text=text,
+        continuation_reason=continuation.reason,
+    )
+    python = _python_summary(
+        events,
+        tool_names=tool_names,
+        user_prompt=user_prompt,
+        assistant_text=text,
+        terminal_event=terminal_event,
         continuation_reason=continuation.reason,
     )
     controls = _control_summary(events)
@@ -79,6 +88,21 @@ def summarize_run_trace(
         "child_prompt_not_bounded": (
             subagents["agent_tool_used"] and _agent_tool_prompt_unbounded(events)
         ),
+        "missed_python": (python["python_expected"] and not python["python_tool_used"]),
+        "python_no_final": (
+            python["python_tool_used"] and not python["final_after_python"]
+        ),
+        "python_policy_loop": python["python_policy_errors"] > 1,
+        "unnecessary_python": (
+            python["python_tool_used"]
+            and not python["python_expected"]
+            and _simple_prompt(user_prompt)
+        ),
+        "python_result_ignored": (
+            python["python_tool_used"]
+            and python["python_result_observed"]
+            and not python["final_after_python"]
+        ),
     }
     notes = _notes(
         failures=failures,
@@ -98,6 +122,7 @@ def summarize_run_trace(
             "required": requires_research,
             "tools_used": [name for name in tool_names if name in _RESEARCH_TOOLS],
         },
+        "python": python,
         "planning": planning,
         "subagents": subagents,
         "controls": controls,
@@ -148,6 +173,30 @@ def _tool_names(events: list[dict[str, object]]) -> list[str]:
             if isinstance(tool_name, str) and tool_name:
                 names.append(tool_name)
     return names
+
+
+def _tool_payloads(
+    events: list[dict[str, object]],
+    tool_name: str,
+) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") not in {"tool_call_started", "tool_call_completed"}:
+            continue
+        data = _event_data(event)
+        if data.get("tool_name") == tool_name:
+            payloads.append(data)
+        tools = data.get("tools")
+        if isinstance(tools, list):
+            payloads.extend(
+                tool
+                for tool in tools
+                if isinstance(tool, dict)
+                and (
+                    tool.get("tool_name") == tool_name or tool.get("name") == tool_name
+                )
+            )
+    return payloads
 
 
 def _interrupt_reasons(events: list[dict[str, object]]) -> list[str]:
@@ -339,6 +388,107 @@ def _subagent_summary(
         "statuses": statuses,
         "join_states": join_states,
     }
+
+
+def _python_summary(
+    events: list[dict[str, object]],
+    *,
+    tool_names: list[str],
+    user_prompt: str | None,
+    assistant_text: str,
+    terminal_event: str | None,
+    continuation_reason: str | None,
+) -> dict[str, Any]:
+    payloads = _tool_payloads(events, _PYTHON_TOOL)
+    completed_payloads = [
+        payload
+        for payload in payloads
+        if str(payload.get("status") or "").lower()
+        in {"completed", "done", "success", "ok"}
+    ]
+    result_texts = [
+        str(payload.get("result_summary") or payload.get("result") or "")
+        for payload in payloads
+    ]
+    combined_results = "\n".join(result_texts).lower()
+    python_tool_used = _PYTHON_TOOL in tool_names
+    final_after_python = (
+        python_tool_used
+        and terminal_event == "run_completed"
+        and continuation_reason != "continuation_signal"
+        and len(assistant_text.strip()) >= 3
+    )
+    return {
+        "python_tool_available": python_tool_used or _python_expected(user_prompt),
+        "python_tool_used": python_tool_used,
+        "python_calls": tool_names.count(_PYTHON_TOOL),
+        "python_policy_errors": sum(
+            1
+            for text in result_texts
+            if "python policy:" in text.lower() or "unauthorized import" in text.lower()
+        ),
+        "python_timeouts": sum(1 for text in result_texts if "timeout" in text.lower()),
+        "python_expected": _python_expected(user_prompt),
+        "missed_python_for_calculation": (
+            _python_expected(user_prompt) and not python_tool_used
+        ),
+        "python_result_observed": bool(
+            completed_payloads
+            or any(text.strip() for text in result_texts)
+            or "final_answer" in combined_results
+        ),
+        "final_after_python": final_after_python,
+        "final_mentions_python_error": any(
+            marker in assistant_text.lower()
+            for marker in ("python policy", "unauthorized import", "sandbox")
+        ),
+    }
+
+
+def _python_expected(user_prompt: str | None) -> bool:
+    text = " ".join((user_prompt or "").lower().split())
+    if not text:
+        return False
+    if any(
+        marker in text
+        for marker in (
+            "не используй python",
+            "без python",
+            "without python",
+            "do not use python",
+        )
+    ):
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "посчитай",
+            "вычисли",
+            "сколько",
+            "счет",
+            "счёт",
+            "букв",
+            "символ",
+            "процент",
+            "средн",
+            "медиан",
+            "стандартн",
+            "статист",
+            "вероятност",
+            "комбинац",
+            "calculate",
+            "compute",
+            "count",
+            "how many",
+            "percent",
+            "average",
+            "mean",
+            "median",
+            "standard deviation",
+            "probability",
+            "combinatorics",
+        )
+    )
 
 
 def _delegation_requested(user_prompt: str | None) -> bool:
@@ -601,6 +751,26 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "child_prompt_not_bounded",
         "agent_tool was called without a bounded child task and description.",
+    ),
+    (
+        "missed_python",
+        "A calculation/counting prompt should have used the python tool.",
+    ),
+    (
+        "python_no_final",
+        "Python ran, but the assistant did not produce a terminal final answer.",
+    ),
+    (
+        "python_policy_loop",
+        "Python hit repeated policy errors instead of rewriting with allowed imports.",
+    ),
+    (
+        "unnecessary_python",
+        "Python ran for a simple prompt where code execution was unnecessary.",
+    ),
+    (
+        "python_result_ignored",
+        "Python returned a result, but the final answer did not use it.",
     ),
 )
 

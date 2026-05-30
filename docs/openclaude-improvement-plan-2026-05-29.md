@@ -362,7 +362,7 @@
 
 ### Product Behavior
 
-- [ ] Python execution всегда доступен в chat demo runtime surface вместе с
+- [x] Python execution всегда доступен в chat demo runtime surface вместе с
   bounded delegation и planning progress; Web Search/Web Fetch остаются
   пользовательскими переключателями.
 - [ ] Модель должна использовать `python` для:
@@ -381,15 +381,15 @@
 
 ### Runtime / Prompt Slices
 
-- [ ] Slice 1: включить `python_exec` в clean chat-demo tool surface для всех
+- [x] Slice 1: включить `python_exec` в clean chat-demo tool surface для всех
   безопасных presets (`off`, `web_search`, `web_fetch`, `web`) без UI toggle.
-- [ ] Slice 2: включить `PythonToolSettings(enabled=True, backend="local")` в
+- [x] Slice 2: включить `PythonToolSettings(enabled=True, backend="local")` в
   demo `RunnerConfig`; лимиты оставить короткими и понятными для чата,
   `allow_overlay=False`, filesystem/network через Python не открывать.
-- [ ] Slice 3: уточнить `react_chat_tool_policy.txt`:
+- [x] Slice 3: уточнить `react_chat_tool_policy.txt`:
   "для расчетов и точного счета сначала используй python, затем синтезируй
   ответ"; "не используй python для тривиального разговора".
-- [ ] Slice 4: расширить `python_tool_system_addendum.txt` коротким
+- [x] Slice 4: расширить `python_tool_system_addendum.txt` коротким
   decision guide и recovery rule: blocked import is policy, not missing package.
 - [ ] Slice 5: проверить, не нужен ли маленький runtime guard после успешного
   `python`: следующий LLM step при чистом расчетном запросе получает
@@ -397,14 +397,14 @@
 
 ### Chat UI/UX
 
-- [ ] Спроектировать `PythonExecutionPanel` вместо raw JSON:
+- [x] Спроектировать `PythonExecutionPanel` вместо raw JSON:
   компактная карточка "Python calculation" / "Code execution";
   статусы queued/running/done/error/timeout; elapsed time; session id только в
   details.
-- [ ] На основной поверхности показывать:
+- [x] На основной поверхности показывать:
   короткую цель/первую строку кода, итог stdout/final value, warning/error
   если есть, без горизонтального JSON-scroll.
-- [ ] В expandable details показывать:
+- [x] В expandable details показывать:
   syntax-highlighted code, stdout, stderr/traceback, limits, allowed imports,
   raw payload для debug.
 - [ ] Для числовых результатов добавить аккуратные result chips:
@@ -415,12 +415,12 @@
 
 ### Phoenix / Trace Criteria
 
-- [ ] Добавить в `/trace-summary` поля:
+- [x] Добавить в `/trace-summary` поля:
   `python_tool_available`, `python_tool_used`, `python_calls`,
   `python_policy_errors`, `python_timeouts`, `python_expected`,
   `missed_python_for_calculation`, `python_result_observed`,
   `final_after_python`, `final_mentions_python_error`.
-- [ ] Добавить scenario verdict labels:
+- [x] Добавить scenario verdict labels:
   `missed_python`, `python_no_final`, `python_policy_loop`,
   `unnecessary_python`, `python_result_ignored`.
 - [ ] Для live scenarios успех означает:
@@ -432,15 +432,15 @@
 
 ### Scenario Set
 
-- [ ] `python-count-letters`: "Сколько букв r в strawberry? Проверь точно."
+- [x] `python-count-letters`: "Сколько букв r в strawberry? Проверь точно."
   Ожидаем `python`, финал `3`, без planning/subagent/web.
-- [ ] `python-arithmetic`: составное выражение с процентами/округлением.
+- [x] `python-arithmetic`: составное выражение с процентами/округлением.
   Ожидаем `python`, финал с кратким расчетом.
-- [ ] `python-statistics`: среднее/медиана/стандартное отклонение по списку.
+- [x] `python-statistics`: среднее/медиана/стандартное отклонение по списку.
   Ожидаем `python`, желательно `statistics` или allowed scientific stack.
 - [ ] `python-combinatorics`: вероятность/число комбинаций.
   Ожидаем `python`, финал с формулой и результатом.
-- [ ] `python-no-tool-simple`: приветствие или короткая factual задача.
+- [x] `python-no-tool-simple`: приветствие или короткая factual задача.
   Ожидаем отсутствие `python`.
 - [ ] `web-plus-python`: найти свежие числа через web и посчитать производный
   показатель через `python`. Ожидаем `web_search`/`web_fetch` + `python` +
@@ -450,11 +450,10 @@
 
 ### Implementation Phases
 
-- [ ] Phase A: backend enablement and prompt tuning, focused unit tests for
+- [x] Phase A: backend enablement and prompt tuning, focused unit tests for
   tool surface and prompt rendering.
-- [ ] Phase B: frontend `PythonExecutionPanel`, deterministic Playwright
-  screenshot/DOM checks.
-- [ ] Phase C: trace-summary verdicts and live probe scenario additions.
+- [x] Phase B: frontend `PythonExecutionPanel`, deterministic DOM checks.
+- [x] Phase C: trace-summary verdicts and live probe scenario additions.
 - [ ] Phase D: Phoenix replay on 5-7 scenarios, prompt/runtime tuning by trace
   evidence.
 - [ ] Phase E: quality pass: `black`, `isort`, focused `pytest`, frontend

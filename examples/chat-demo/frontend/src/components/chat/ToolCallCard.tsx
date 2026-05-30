@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Calculator,
   ChevronDown,
   ChevronRight,
   FileText,
@@ -45,9 +46,112 @@ function statusClass(status: ToolChatMessage["status"]): string {
   return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
 }
 
+function firstCodeLine(args?: Record<string, unknown>): string {
+  const code = typeof args?.code === "string" ? args.code.trim() : "";
+  if (!code) {
+    return "Python code";
+  }
+  return code.split("\n").find((line) => line.trim())?.trim() ?? "Python code";
+}
+
+function PythonExecutionPanel({ message }: ToolCallCardProps) {
+  const [open, setOpen] = useState(message.status === "running" || message.status === "failed");
+  const code = typeof message.args?.code === "string" ? message.args.code.trim() : "";
+  const sessionId =
+    typeof message.args?.session_id === "string" && message.args.session_id.trim()
+      ? message.args.session_id.trim()
+      : undefined;
+
+  useEffect(() => {
+    if (message.status === "done") {
+      setOpen(false);
+    }
+  }, [message.status]);
+
+  return (
+    <div className="ml-9 max-w-[min(100%,58rem)] rounded-lg border border-border/80 bg-card/75 p-3 text-sm shadow-sm shadow-black/5 dark:bg-muted/20 dark:shadow-none">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+        aria-expanded={open}
+        aria-label={`${open ? "Collapse" : "Expand"} Python execution`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        <Calculator className="h-4 w-4 text-muted-foreground" />
+        <span className="min-w-0 truncate font-medium">Python calculation</span>
+        <Badge
+          variant="secondary"
+          className={cn(
+            "shrink-0",
+            message.status === "running" && "animate-pulse",
+            statusClass(message.status),
+          )}
+        >
+          {message.status}
+        </Badge>
+        {message.durationMs != null ? (
+          <span className="ml-auto text-xs text-muted-foreground">{message.durationMs}ms</span>
+        ) : null}
+      </button>
+      <div className="mt-2 space-y-2">
+        <p className="break-words text-xs text-muted-foreground">{firstCodeLine(message.args)}</p>
+        {message.resultPreview ? (
+          <div className="rounded-md border border-border/70 bg-background/70 px-3 py-2">
+            <div className="mb-1 text-[0.65rem] font-semibold uppercase text-muted-foreground">
+              Result
+            </div>
+            <pre className="whitespace-pre-wrap break-words font-sans text-xs text-foreground/90">
+              {message.resultPreview}
+            </pre>
+          </div>
+        ) : null}
+      </div>
+      {open ? (
+        <div className="mt-3 space-y-2">
+          {code ? (
+            <div className="rounded-md border bg-background/80 p-2 text-xs text-foreground">
+              <div className="mb-1 text-[0.65rem] font-semibold uppercase text-muted-foreground">
+                Code
+              </div>
+              <pre className="whitespace-pre-wrap break-words font-mono">{code}</pre>
+            </div>
+          ) : null}
+          <div className="rounded-md border bg-background/80 p-2 text-xs text-muted-foreground">
+            <div className="mb-1 text-[0.65rem] font-semibold uppercase">Execution</div>
+            <dl className="grid gap-1 sm:grid-cols-2">
+              <div>
+                <dt className="font-medium text-foreground">Tool</dt>
+                <dd>Sandboxed Python</dd>
+              </div>
+              <div>
+                <dt className="font-medium text-foreground">Session</dt>
+                <dd>{sessionId ?? "run scoped"}</dd>
+              </div>
+            </dl>
+          </div>
+          {message.args ? (
+            <details className="rounded-md border bg-background/80 p-2 text-xs text-foreground">
+              <summary className="cursor-pointer text-[0.65rem] font-semibold uppercase text-muted-foreground">
+                Debug payload
+              </summary>
+              <pre className="mt-2 whitespace-pre-wrap break-words font-mono">
+                {JSON.stringify(message.args, null, 2)}
+              </pre>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ToolCallCard({ message }: ToolCallCardProps) {
   if (message.name === "agent_tool") {
     return <SubagentPanel message={message} />;
+  }
+  if (message.name === "python") {
+    return <PythonExecutionPanel message={message} />;
   }
 
   const [open, setOpen] = useState(
