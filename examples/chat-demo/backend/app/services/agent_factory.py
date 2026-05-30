@@ -6,11 +6,18 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from app.config import Settings, ToolPreset
+from app.run_cancel import cancellation_probe
+from app.services.fake_scenarios import build_fake_scenario_provider
+
 from agent_driver.cli.providers import CliProviderConfig, build_cli_provider
 from agent_driver.cli.sessions import SessionStore
 from agent_driver.cli.tools import CliToolConfig, build_cli_toolset
 from agent_driver.contracts.tools import ToolManifest
-from agent_driver.runtime import create_runtime_store_bundle, runtime_store_config_from_env
+from agent_driver.runtime import (
+    create_runtime_store_bundle,
+    runtime_store_config_from_env,
+)
 from agent_driver.runtime.control import (
     CommandQueueStore,
     InMemoryCommandQueueStore,
@@ -19,10 +26,6 @@ from agent_driver.runtime.control import (
 from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.sdk import Agent, create_agent
-
-from app.config import Settings, ToolPreset
-from app.run_cancel import cancellation_probe
-from app.services.fake_scenarios import build_fake_scenario_provider
 
 
 @lru_cache(maxsize=1)
@@ -38,7 +41,9 @@ def get_shared_session_store(sessions_path: str) -> SessionStore:
 
 
 @lru_cache(maxsize=1)
-def get_shared_command_queue_store(kind: str, sqlite_path: str | None) -> CommandQueueStore:
+def get_shared_command_queue_store(
+    kind: str, sqlite_path: str | None
+) -> CommandQueueStore:
     """Return one steering command queue shared across tool presets."""
     if kind == "sqlite":
         path = (
@@ -68,29 +73,29 @@ def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
     if preset == "off":
         return CliToolConfig(
             tools_mode="default",
-            tool_packs=("planning",),
+            tool_packs=("planning_progress",),
         )
     if preset == "web_search":
         return CliToolConfig(
             tools_mode="default",
             tools=("web_search",),
-            tool_packs=("planning",),
+            tool_packs=("planning_progress",),
         )
     if preset == "web_fetch":
         return CliToolConfig(
             tools_mode="default",
             tools=("web_fetch",),
-            tool_packs=("planning",),
+            tool_packs=("planning_progress",),
         )
     if preset in {"web", "safe"}:
         return CliToolConfig(
             tools_mode="default",
-            tool_packs=("web", "planning"),
+            tool_packs=("web", "planning_progress"),
         )
     if preset == "workspace":
         return CliToolConfig(
             tools_mode="default",
-            tool_packs=("web", "planning", "filesystem_read"),
+            tool_packs=("web", "planning_progress", "filesystem_read"),
         )
     if preset == "dev":
         return CliToolConfig(

@@ -1,4 +1,10 @@
 services:
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    ports:
+      - "${PHOENIX_PORT:-6006}:6006"
+      - "${PHOENIX_OTLP_GRPC_PORT:-4317}:4317"
+
   backend:
     image: python:3.12-slim
     working_dir: /workspace/examples/chat-demo/backend
@@ -6,10 +12,10 @@ services:
       bash -lc "
       python -m venv /venv &&
       . /venv/bin/activate &&
-      if [ ! -f /venv/.chat-demo-ready ]; then
+      if [ ! -f /venv/.chat-demo-ready-phoenix ]; then
         python -m pip install -U pip &&
         python -m pip install -e /workspace[cli] -e .[dev] &&
-        touch /venv/.chat-demo-ready;
+        touch /venv/.chat-demo-ready-phoenix;
       fi &&
       uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8010 --reload
       --reload-dir /workspace/agent_driver
@@ -34,8 +40,13 @@ services:
         http://127.0.0.1:${FRONTEND_PORT:-5173}
       CHAT_DEMO_FAKE_SCENARIO: ${CHAT_DEMO_FAKE_SCENARIO:-}
       CHAT_DEMO_FORCE_PLANNING: ${CHAT_DEMO_FORCE_PLANNING:-false}
+      CHAT_DEMO_TRACING_ENABLED: ${CHAT_DEMO_TRACING_ENABLED:-true}
+      PHOENIX_COLLECTOR_ENDPOINT: ${PHOENIX_COLLECTOR_ENDPOINT:-http://phoenix:6006/v1/traces}
+      PHOENIX_PROJECT_NAME: ${PHOENIX_PROJECT_NAME:-agent-driver-chat-demo}
       AGENT_DRIVER_RUNTIME_STORE_KIND: sqlite
       CHAT_DEMO_SESSIONS_PATH: /workspace/examples/chat-demo/.agent-driver/sessions.json
+    depends_on:
+      - phoenix
 
   frontend:
     image: node:20-bookworm-slim

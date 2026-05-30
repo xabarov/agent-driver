@@ -4,19 +4,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.api.chat import router as chat_router
+from app.api.health import router as health_router
+from app.api.models import router as models_router
+from app.api.providers import router as providers_router
+from app.api.sessions import router as sessions_router
+from app.api.tools import router as tools_router
+from app.api.workspace import router as workspace_router
+from app.deps import get_settings
+from app.observability import setup_tracing
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-
-from app.api.chat import router as chat_router
-from app.api.health import router as health_router
-from app.api.providers import router as providers_router
-from app.api.sessions import router as sessions_router
-from app.api.models import router as models_router
-from app.api.tools import router as tools_router
-from app.api.workspace import router as workspace_router
-from app.deps import get_settings
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -24,6 +24,7 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 def create_app() -> FastAPI:
     """Create configured FastAPI application instance."""
     settings = get_settings()
+    setup_tracing(settings)
     app = FastAPI(title="agent-driver chat demo backend", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
@@ -42,7 +43,9 @@ def create_app() -> FastAPI:
     app.include_router(workspace_router, prefix="/api")
 
     if _STATIC_DIR.exists():
-        app.mount("/assets", StaticFiles(directory=_STATIC_DIR / "assets"), name="assets")
+        app.mount(
+            "/assets", StaticFiles(directory=_STATIC_DIR / "assets"), name="assets"
+        )
 
         @app.get("/", include_in_schema=False)
         def spa_index() -> FileResponse:
@@ -57,6 +60,7 @@ def create_app() -> FastAPI:
             if candidate.is_file():
                 return FileResponse(candidate)
             return FileResponse(_STATIC_DIR / "index.html")
+
     else:
 
         @app.get("/", include_in_schema=False)

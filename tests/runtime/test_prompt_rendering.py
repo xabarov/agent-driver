@@ -10,6 +10,11 @@ from agent_driver.contracts import (
     PromptTemplate,
     ToolManifest,
 )
+from agent_driver.prompts.agent import react_chat_tool_policy
+from agent_driver.runtime.single_agent.llm import (
+    LlmRequestBuildContext,
+    build_single_agent_llm_request,
+)
 from agent_driver.tools import (
     PromptTemplateRegistry,
     ToolRegistry,
@@ -17,12 +22,7 @@ from agent_driver.tools import (
     render_tool_docs,
     rendered_tool_docs_hash,
 )
-from agent_driver.prompts.agent import react_chat_tool_policy
 from agent_driver.tools.planning import register_planning_tool
-from agent_driver.runtime.single_agent.llm import (
-    LlmRequestBuildContext,
-    build_single_agent_llm_request,
-)
 
 
 def _sample_manifest() -> ToolManifest:
@@ -147,8 +147,13 @@ def test_build_single_agent_llm_request_renders_code_agent_prompt() -> None:
 def test_react_chat_policy_guides_adaptive_plan_mode() -> None:
     """Chat policy should mirror Claude Code-like voluntary plan mode behavior."""
     policy = react_chat_tool_policy()
-    assert "Use `enter_plan_mode` proactively before non-trivial implementation" in policy
-    assert "Do not use plan mode for simple factual answers" in policy
+    assert (
+        "Use `enter_plan_mode` proactively before non-trivial implementation" in policy
+    )
+    assert "Do not use approval plan mode for simple factual answers" in policy
+    assert "writing deliverables such as essays, reports, drafts" in policy
+    assert "напиши" in policy
+    assert "Do not use `ask_user_question` as a way to avoid producing" in policy
     assert "force_planning_required" in policy
     assert "call `exit_plan_mode_v2`" in policy
 

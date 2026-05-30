@@ -24,6 +24,7 @@ class HealthResponse(BaseModel):
     ok: bool = True
     store_kind: str
     provider: ProviderStatusView
+    tracing: dict[str, object] = Field(default_factory=dict)
 
 
 class ProviderResponse(BaseModel):
@@ -89,4 +90,3 @@ class ModelsResponse(BaseModel):
 
     provider: str
     models: list[ModelView]
-

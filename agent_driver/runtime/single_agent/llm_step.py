@@ -532,11 +532,35 @@ def _react_system_instruction(host: LlmStepHost, context: RunContext) -> str | N
         if isinstance(planning_payload, dict):
             todos = planning_payload.get("todos")
             if isinstance(todos, list) and todos:
-                lines.append(
-                    "Session plan is active: follow existing todos, update statuses "
-                    "with todo_write (merge=true) as each step completes, and do "
-                    "not restate the full plan checklist in chat."
+                current_input = str(context.run_input.input or "").lower()
+                deliverable_requested = any(
+                    marker in current_input
+                    for marker in (
+                        "write",
+                        "draft",
+                        "final",
+                        "deliverable",
+                        "напиши",
+                        "черновик",
+                        "итог",
+                        "финал",
+                        "не план",
+                    )
                 )
+                if deliverable_requested:
+                    lines.append(
+                        "Session plan is active, but the current user asks for the "
+                        "deliverable now. Use existing context and produce the "
+                        "requested final answer in this turn; update todos only if "
+                        "needed, and do not restart planning, ask another "
+                        "clarification, or ask for plan approval."
+                    )
+                else:
+                    lines.append(
+                        "Session plan is active: follow existing todos, update statuses "
+                        "with todo_write (merge=true) as each step completes, and do "
+                        "not restate the full plan checklist in chat."
+                    )
         planning_hint = context.run_input.tool_policy.metadata.get("planning_hint")
         if isinstance(planning_hint, dict):
             level = str(planning_hint.get("level") or "")

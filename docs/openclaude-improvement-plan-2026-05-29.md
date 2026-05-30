@@ -201,6 +201,129 @@ checks.
 Current demo-gate status:
 
 - Python Playwright installed in the repo `.venv`; Chromium browser installed.
+- Phoenix tracing is integrated into the chat-demo Docker dev stack. The
+  `phoenix` service exposes UI at `http://localhost:6006`; backend spans are
+  exported to project `agent-driver-chat-demo` through
+  `PHOENIX_COLLECTOR_ENDPOINT`.
+- Phoenix trace analysis, 2026-05-30:
+  - initial integration showed exporter errors because OTLP HTTP posted to
+    `/`; fixed by normalizing the endpoint to `/v1/traces`;
+  - replayed the Fender report scenario through the live backend/front-end and
+    inspected project traces in Phoenix (`3` traces, `229` spans in the first
+    captured batch);
+  - trace pattern confirmed the product issue: after a clarification turn the
+    next "напиши реферат, не план" request still triggered a fresh `todo_write`
+    and more research tools instead of moving to the deliverable;
+  - earlier screenshots and replay also showed public web chat exposing modal
+    `enter_plan_mode` / `exit_plan_mode_v2`, which can turn a research/report
+    task into approval-plan churn.
+- Phoenix-driven corrective plan:
+  - [x] Split planning tool packs into live progress tools and modal approval
+    tools.
+  - [x] Keep public chat presets on live progress planning only
+    (`todo_write`, `planning_state_update`, `ask_user_question`), while dev/all
+    surfaces can still exercise approval planning.
+  - [x] Tighten chat policy: approval plan mode is for implementation/risky
+    side effects, not research/writing deliverables; "напиши/черновик/не план"
+    must proceed to the requested answer.
+  - [x] When a session checklist already exists and the user asks for a
+    deliverable, runtime prompt guidance must prioritize final answer delivery
+    over restarting the checklist.
+  - [x] Re-run the Fender report scenario after the first fix: Phoenix/live SSE
+    showed no modal approval tools on the public web preset, but the final turn
+    still paused on `ask_user_question` instead of delivering the report.
+  - [x] Add a deliverable-request policy guard: for explicit "write/draft/not a
+    plan" turns, deny `ask_user_question` and modal plan tools for that run.
+  - [x] Add a runtime final-answer guard: once a deliverable-request run has
+    used at least one substantive data tool, force the next LLM step to answer
+    with `tool_choice=none` instead of continuing research/planning.
+  - [x] Re-run the Fender report scenario after the final-answer guard and
+    verify the final turn reaches a draft instead of another progress update.
+
+## OpenClaude / AgentHeroes Research Addendum, 2026-05-30
+
+Local sources reviewed:
+
+- `/home/roman/pyprojects/ML/openclaude/src/tools/EnterPlanModeTool/prompt.ts`
+- `/home/roman/pyprojects/ML/openclaude/src/tools/EnterPlanModeTool/EnterPlanModeTool.ts`
+- `/home/roman/pyprojects/ML/openclaude/src/tools/ExitPlanModeTool/prompt.ts`
+- `/home/roman/pyprojects/ML/openclaude/src/tools/ExitPlanModeTool/ExitPlanModeV2Tool.ts`
+- `/home/roman/pyprojects/ML/openclaude/src/tools/AskUserQuestionTool/prompt.ts`
+- `/home/roman/pyprojects/ML/openclaude/src/tools/TodoWriteTool/prompt.ts`
+- `/home/roman/pyprojects/ML/openclaude/src/utils/messages.ts`
+- `/home/roman/pyprojects/ML/openclaude/src/utils/attachments.ts`
+- `/home/roman/pyprojects/ML/agentheroes/packages/shared/agents/agent.flow.ts`
+- `/home/roman/pyprojects/ML/agentheroes/packages/backend/agents/agent.workflow.builder.ts`
+- `/home/roman/pyprojects/ML/agentheroes/packages/backend/agents/agent.process.service.ts`
+- `/home/roman/pyprojects/ML/agentheroes/packages/backend/generations/util/enhance.prompt.ts`
+
+Findings from OpenClaude:
+
+- Plan mode is a permission mode, not just a tool. `EnterPlanMode` switches the
+  session into a read-only planning state; `ExitPlanMode` validates that the
+  session is actually in plan mode before asking approval.
+- Approval plans are for implementation. The `ExitPlanMode` prompt explicitly
+  says not to use it for research/codebase understanding; this is the exact
+  boundary our public chat needed.
+- Plan mode instructions are injected as attachments, with full and sparse
+  reminders. This prevents the model from forgetting mode semantics after long
+  tool loops or compaction.
+- OpenClaude has an interview-style planning workflow: explore, update the plan
+  file, ask user questions only for decisions the code cannot answer, then exit
+  plan mode for approval.
+- `AskUserQuestion` is structured and bounded: 1-4 questions, 2-4 options, short
+  headers, optional previews, unique question/option labels, and an automatic
+  "Other" path.
+- `AskUserQuestion` is explicitly not plan approval. The prompt forbids asking
+  "is this plan ok?" through questions because the user cannot see the plan
+  before `ExitPlanMode`.
+- `TodoWrite` is progress telemetry, not approval. It is recommended for complex
+  multi-step work and requires exactly one in-progress task.
+- Plan artifacts are file-backed and durable, with session slug recovery and
+  plan-mode exit attachments that tell the model it can now implement.
+
+Findings from AgentHeroes:
+
+- Work is represented as an explicit typed workflow tree (`Trigger -> Third
+  Party -> Generate Image -> Generate Video -> Publish`) with `dependsOn`
+  constraints and `multiple` flags.
+- Execution merges each node output into a shared `State`, so downstream steps
+  consume structured state instead of reinterpreting the conversation.
+- Each node emits progress via an event stream and retries locally up to three
+  times before surfacing a node-level error.
+- Structured-output usage (`model.withStructuredOutput`) is applied at prompt
+  enhancement boundaries to turn fuzzy input into typed prompt artifacts.
+
+Best-of-both plan for `agent-driver`:
+
+- [x] Separate live progress planning from modal approval planning at the tool
+  pack level.
+- [x] Keep public chat on progress-only planning; reserve approval planning for
+  implementation/dev/risky side-effect contexts.
+- [x] Treat explicit deliverable turns as a run-level contract:
+  `produce_deliverable`, with clarification and approval tools denied unless a
+  runtime safety gate requires them.
+- [x] Add a first version of the deliverable final-answer gate after substantive
+  data tools, matching AgentHeroes' "node output must materialize into state"
+  idea rather than allowing endless progress narration.
+- [ ] Add OpenClaude-style mode attachments:
+  `planning_mode_active`, `planning_mode_sparse`, `planning_mode_exit`, and
+  `deliverable_request_active`, injected as structured runtime reminders rather
+  than one-off prompt strings.
+- [ ] Replace single-string `ask_user_question` with a structured question
+  contract: 1-4 questions, headers, 2-4 options, optional "Other", optional
+  preview, uniqueness validation, and a response payload that maps question to
+  answer.
+- [ ] Add an `AskUserQuestion` policy classifier: allow only for
+  user-owned decisions or truly blocking missing information; deny when the
+  current turn asks for a final deliverable and enough context exists.
+- [ ] Add an AgentHeroes-style execution blueprint for long research/writing
+  chat tasks: typed phases, required outputs per phase, state handoff, progress
+  events, retry/error policy, and a final deliverable gate.
+- [ ] Add Phoenix-backed regression scenarios for:
+  plan -> clarification -> answer, research -> deliverable, implementation
+  plan approval, subagent final synthesis, and ask-question denial on
+  deliverable turns.
 - Added `examples/chat-demo/frontend/tests/e2e/chat_concepts_smoke.py` for
   deterministic concept checks over the real React UI. Current scenarios cover
   plan approval, plan/tombstone/clarification/resume, denied tool feedback,

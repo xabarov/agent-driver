@@ -255,6 +255,25 @@ def _interrupt_from_checkpoint(bundle: AgentBundle, run_id: str) -> InterruptReq
     return interrupt
 
 
+def _is_deliverable_request(message: str) -> bool:
+    text = " ".join(message.lower().split())
+    markers = (
+        "не план",
+        "напиши реферат",
+        "напиши черновик",
+        "связный черновик",
+        "финальный ответ",
+        "итоговый ответ",
+        "write the report",
+        "write a report",
+        "draft the report",
+        "draft an essay",
+        "final answer",
+        "not a plan",
+    )
+    return any(marker in text for marker in markers)
+
+
 def _chat_tool_policy(*, body: ChatMessageRequest, settings: Settings) -> ToolPolicyInput:
     force_planning = (
         body.force_planning
@@ -264,12 +283,23 @@ def _chat_tool_policy(*, body: ChatMessageRequest, settings: Settings) -> ToolPo
     metadata: dict[str, object] = {}
     hint = classify_planning_hint(body.message)
     metadata["planning_hint"] = hint.model_dump(mode="json")
+    denied_tools: list[str] | None = None
+    if _is_deliverable_request(body.message):
+        metadata["deliverable_request"] = {
+            "enabled": True,
+            "reason": "user asked to produce the deliverable now",
+        }
+        denied_tools = [
+            "ask_user_question",
+            "enter_plan_mode",
+            "exit_plan_mode_v2",
+        ]
     if force_planning:
         metadata["force_planning"] = {
             "enabled": True,
             "mode": settings.force_planning_mode,
         }
-    return ToolPolicyInput(metadata=metadata)
+    return ToolPolicyInput(metadata=metadata, denied_tools=denied_tools)
 
 
 @router.post("/chat/messages")

@@ -50,11 +50,25 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_host: str = Field(default="127.0.0.1", validation_alias=AliasChoices("APP_HOST"))
+    app_host: str = Field(
+        default="127.0.0.1", validation_alias=AliasChoices("APP_HOST")
+    )
     app_port: int = Field(default=8010, validation_alias=AliasChoices("APP_PORT"))
     app_cors_origins: str = Field(
         default="http://localhost:5173",
         validation_alias=AliasChoices("APP_CORS_ORIGINS"),
+    )
+    tracing_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("CHAT_DEMO_TRACING_ENABLED"),
+    )
+    phoenix_project_name: str = Field(
+        default="agent-driver-chat-demo",
+        validation_alias=AliasChoices("PHOENIX_PROJECT_NAME"),
+    )
+    phoenix_collector_endpoint: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PHOENIX_COLLECTOR_ENDPOINT"),
     )
 
     tool_preset: ToolPreset = Field(
@@ -138,7 +152,5 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Parse comma-separated CORS origins into clean list."""
         return [
-            item.strip()
-            for item in self.app_cors_origins.split(",")
-            if item.strip()
+            item.strip() for item in self.app_cors_origins.split(",") if item.strip()
         ] or ["http://localhost:5173"]

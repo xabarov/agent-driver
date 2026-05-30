@@ -19,6 +19,17 @@ Open `http://localhost:5173`.
 
 If port 8010 is busy: `make dev-full APP_PORT=8020`
 
+The Docker dev stack also starts Phoenix tracing by default:
+
+```bash
+FRONTEND_PORT=5174 docker compose -f docker-compose.dev.yml up -d
+```
+
+Open Phoenix at `http://localhost:6006`. The backend exports chat run spans to
+project `agent-driver-chat-demo`; disable with `CHAT_DEMO_TRACING_ENABLED=false`.
+`PHOENIX_COLLECTOR_ENDPOINT` may be either the Phoenix base URL or the OTLP
+HTTP trace endpoint.
+
 ## Real LLM + web search (not just "ok")
 
 By default the backend uses the **Fake** provider (`AGENT_DRIVER_PROVIDER=fake`), which always replies **`ok`** — no reasoning, no tools.
@@ -120,6 +131,8 @@ See [`.env.example`](.env.example). Key variables:
 - `CHAT_DEMO_DEADLINE_SECONDS` — run wall-clock limit; default `600` for longer research/write tasks
 - `CHAT_DEMO_LLM_STREAM_IDLE_TIMEOUT_SECONDS` — fail a provider stream that stops emitting events; default `60`
 - `AGENT_DRIVER_RUNTIME_STORE_KIND` — `memory` (fast tests) or `sqlite` (HITL + replay)
+- `CHAT_DEMO_TRACING_ENABLED` — enables Phoenix/OpenTelemetry tracing in the Docker dev stack
+- `PHOENIX_COLLECTOR_ENDPOINT` — Phoenix OTLP HTTP endpoint, default `http://phoenix:6006/v1/traces` in Compose
 
 ## Smoke checks
 

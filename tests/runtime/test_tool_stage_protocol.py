@@ -10,7 +10,10 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.tools import ToolCall, ToolError, ToolResultEnvelope
 from agent_driver.contracts.usage import UsageSummary
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
-from agent_driver.runtime.single_agent.tool_stage import _update_tool_protocol_messages
+from agent_driver.runtime.single_agent.tool_stage import (
+    _should_force_final_answer,
+    _update_tool_protocol_messages,
+)
 from agent_driver.runtime.tools import ToolExecutionResult
 
 
@@ -32,7 +35,9 @@ def test_update_tool_protocol_messages_includes_truncated_and_error_code() -> No
         },
     )
     envelope = ToolResultEnvelope(
-        call=ToolCall(tool_name="glob_search", tool_call_id="call_1", args={"pattern": "**/*"}),
+        call=ToolCall(
+            tool_name="glob_search", tool_call_id="call_1", args={"pattern": "**/*"}
+        ),
         decision=ToolPolicyDecision.DENY,
         structured_output={"summary": "cap hit", "results": ["a.py"]},
         truncated=True,
@@ -72,7 +77,9 @@ def test_update_tool_protocol_messages_adds_python_policy_hint() -> None:
         },
     )
     envelope = ToolResultEnvelope(
-        call=ToolCall(tool_name="python", tool_call_id="call_py", args={"code": "import scipy"}),
+        call=ToolCall(
+            tool_name="python", tool_call_id="call_py", args={"code": "import scipy"}
+        ),
         decision=ToolPolicyDecision.ALLOW,
         structured_output={
             "error_kind": "policy",
@@ -89,8 +96,14 @@ def test_update_tool_protocol_messages_adds_python_policy_hint() -> None:
     _update_tool_protocol_messages(
         context=context, result=ToolExecutionResult(envelopes=[envelope], traces=[])
     )
-    user_rows = [row for row in context.metadata["protocol_messages"] if row.get("role") == "user"]
-    assert any("sandbox policy" in (row.get("content") or "").lower() for row in user_rows)
+    user_rows = [
+        row
+        for row in context.metadata["protocol_messages"]
+        if row.get("role") == "user"
+    ]
+    assert any(
+        "sandbox policy" in (row.get("content") or "").lower() for row in user_rows
+    )
     assert any("math" in (row.get("content") or "") for row in user_rows)
     assert context.metadata.get("python_policy_hint_sent") is True
 
@@ -162,12 +175,21 @@ def test_update_tool_protocol_messages_adds_web_fetch_verification_hint() -> Non
         },
     )
     envelope = ToolResultEnvelope(
-        call=ToolCall(tool_name="web_search", tool_call_id="call_w1", args={"query": "sam3"}),
+        call=ToolCall(
+            tool_name="web_search", tool_call_id="call_w1", args={"query": "sam3"}
+        ),
         decision=ToolPolicyDecision.ALLOW,
         structured_output={
             "summary": "2 results for 'sam3'",
-            "results": [{"title": "SAM3", "url": "https://ai.meta.com/blog/segment-anything-model-3/"}],
-            "result_preview_urls": ["https://ai.meta.com/blog/segment-anything-model-3/"],
+            "results": [
+                {
+                    "title": "SAM3",
+                    "url": "https://ai.meta.com/blog/segment-anything-model-3/",
+                }
+            ],
+            "result_preview_urls": [
+                "https://ai.meta.com/blog/segment-anything-model-3/"
+            ],
         },
         truncated=False,
     )
@@ -183,9 +205,14 @@ def test_update_tool_protocol_messages_adds_web_fetch_verification_hint() -> Non
     tool_rows = [row for row in rows if row.get("role") == ChatRole.TOOL.value]
     assert tool_rows
     payload = json.loads(tool_rows[-1]["content"])
-    assert payload["result_preview_urls"] == ["https://ai.meta.com/blog/segment-anything-model-3/"]
+    assert payload["result_preview_urls"] == [
+        "https://ai.meta.com/blog/segment-anything-model-3/"
+    ]
     user_rows = [row for row in rows if row.get("role") == ChatRole.USER.value]
-    assert any("open at least one returned URL with web_fetch" in (item.get("content") or "") for item in user_rows)
+    assert any(
+        "open at least one returned URL with web_fetch" in (item.get("content") or "")
+        for item in user_rows
+    )
 
 
 def test_update_tool_protocol_messages_coalesces_user_hints_with_force_final() -> None:
@@ -234,7 +261,9 @@ def test_update_tool_protocol_messages_coalesces_user_hints_with_force_final() -
 
 def test_update_tool_protocol_messages_drops_empty_assistant_before_user_hint() -> None:
     llm_response = LlmResponse(
-        message=ChatMessage(role=ChatRole.ASSISTANT, content="<tool_call>{}</tool_call>"),
+        message=ChatMessage(
+            role=ChatRole.ASSISTANT, content="<tool_call>{}</tool_call>"
+        ),
         finish_reason=LlmFinishReason.TOOL_CALLS,
         usage=UsageSummary(model_provider="fake", model_name="fake"),
         provider="fake",
@@ -250,7 +279,9 @@ def test_update_tool_protocol_messages_drops_empty_assistant_before_user_hint() 
         },
     )
     envelope = ToolResultEnvelope(
-        call=ToolCall(tool_name="web_search", tool_call_id="call_w2", args={"query": "sam3"}),
+        call=ToolCall(
+            tool_name="web_search", tool_call_id="call_w2", args={"query": "sam3"}
+        ),
         decision=ToolPolicyDecision.ALLOW,
         structured_output={"results": [], "summary": "no results"},
         truncated=False,
@@ -268,7 +299,58 @@ def test_update_tool_protocol_messages_drops_empty_assistant_before_user_hint() 
         row.get("role") == ChatRole.ASSISTANT.value
         and not (row.get("content") or "").strip()
         and not (
-            isinstance(row.get("metadata"), dict) and row.get("metadata", {}).get("tool_calls")
+            isinstance(row.get("metadata"), dict)
+            and row.get("metadata", {}).get("tool_calls")
         )
         for row in rows
     )
+
+
+def test_deliverable_request_forces_final_answer_after_data_tool() -> None:
+    context = SimpleNamespace(
+        tool_calls=1,
+        llm_step_count=1,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={"deliverable_request": {"enabled": True}}
+            ),
+        ),
+        metadata={
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "web_search",
+                        "args": {"query": "Fender history"},
+                    }
+                }
+            ]
+        },
+    )
+    assert _should_force_final_answer(context) is True
+
+
+def test_deliverable_request_does_not_force_after_progress_only_tool() -> None:
+    context = SimpleNamespace(
+        tool_calls=1,
+        llm_step_count=1,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={"deliverable_request": {"enabled": True}}
+            ),
+        ),
+        metadata={
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "planning_state_update",
+                        "args": {},
+                    }
+                }
+            ]
+        },
+    )
+    assert _should_force_final_answer(context) is False
