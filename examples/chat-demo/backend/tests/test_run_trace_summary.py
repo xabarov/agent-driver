@@ -49,6 +49,35 @@ def test_trace_summary_flags_missing_research_tool() -> None:
     assert summary["failures"]["missing_required_research_evidence"] is True
 
 
+def test_trace_summary_exposes_provider_profile() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="hello",
+        assistant_text="hello",
+        events=[
+            {
+                "event": "llm_call_completed",
+                "data": {
+                    "provider": "openrouter",
+                    "model": "openai/gpt-5.5",
+                    "provider_profile": {
+                        "provider_id": "openrouter",
+                        "model_id": "openai/gpt-5.5",
+                        "supports_reasoning": True,
+                    },
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["provider_profile"] == {
+        "provider_id": "openrouter",
+        "model_id": "openai/gpt-5.5",
+        "supports_reasoning": True,
+    }
+
+
 def test_trace_summary_passes_research_with_web_tool() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

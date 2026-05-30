@@ -240,6 +240,9 @@ async def execute_llm_call_step(
     planned_tool_calls = context.llm_response.metadata.get("planned_tool_calls")
     if isinstance(planned_tool_calls, list):
         completed_payload["planned_tool_calls"] = planned_tool_calls
+    provider_profile = context.llm_response.metadata.get("provider_profile")
+    if isinstance(provider_profile, dict):
+        completed_payload["provider_profile"] = provider_profile
     effective_tool_names = context.metadata.get("effective_tool_names")
     if isinstance(effective_tool_names, tuple):
         completed_payload["effective_tool_names"] = list(effective_tool_names)

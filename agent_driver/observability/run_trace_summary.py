@@ -49,6 +49,7 @@ def summarize_run_trace(
     )
     planning = _planning_summary(events, tool_names)
     llm_calls = _llm_call_summary(events)
+    provider_profile = _provider_profile_summary(events)
     prompt_surface = _prompt_surface_summary(events)
     runtime_markers = _runtime_markers(events)
     subagents = _subagent_summary(
@@ -146,6 +147,7 @@ def summarize_run_trace(
         "terminal_event": terminal_event,
         "llm_calls": llm_calls["completed"],
         "llm": llm_calls,
+        "provider_profile": provider_profile,
         "prompt_surface": prompt_surface,
         "tool_calls": len(tool_names),
         "tool_names": tool_names,
@@ -175,6 +177,20 @@ def _count_events(events: list[dict[str, object]], event_name: str) -> int:
 
 def _provider_rejected(events: list[dict[str, object]]) -> bool:
     return any(event.get("event") == "llm_request_rejected" for event in events)
+
+
+def _provider_profile_summary(events: list[dict[str, object]]) -> dict[str, Any] | None:
+    """Return latest provider capability profile recorded by the LLM layer."""
+    for event in reversed(events):
+        if event.get("event") != "llm_call_completed":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        profile = data.get("provider_profile")
+        if isinstance(profile, dict):
+            return profile
+    return None
 
 
 def _compaction_summary(events: list[dict[str, object]]) -> dict[str, Any]:

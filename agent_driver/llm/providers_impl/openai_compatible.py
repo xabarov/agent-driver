@@ -28,6 +28,10 @@ from agent_driver.llm.payload_debug import (
     debug_llm_payload_enabled,
     format_payload_debug_line,
 )
+from agent_driver.llm.provider_capabilities import (
+    ProviderCapabilityProfile,
+    resolve_openai_compatible_capabilities,
+)
 from agent_driver.llm.tool_call_parser import extract_text_form_tool_calls
 
 _LOGGER = logging.getLogger(__name__)
@@ -156,6 +160,19 @@ def _extract_usage_metadata(payload: dict[str, Any]) -> dict[str, Any]:
         )
     if completion_details:
         metadata["completion_token_details"] = completion_details
+    return metadata
+
+
+def _extract_reasoning_metadata(message_payload: dict[str, Any]) -> dict[str, Any]:
+    """Extract provider reasoning fields without exposing hidden text."""
+    metadata: dict[str, Any] = {}
+    reasoning_details = message_payload.get("reasoning_details")
+    if isinstance(reasoning_details, list):
+        metadata["provider_reasoning_details_present"] = bool(reasoning_details)
+        metadata["provider_reasoning_details_count"] = len(reasoning_details)
+    reasoning = message_payload.get("reasoning")
+    if isinstance(reasoning, str) and reasoning:
+        metadata["provider_reasoning_text_present"] = True
     return metadata
 
 
@@ -333,6 +350,7 @@ def normalize_openai_completion_payload(
         cost_per_1k_tokens=cost_per_1k_tokens,
     )
     metadata = _extract_usage_metadata(payload)
+    metadata.update(_extract_reasoning_metadata(message_payload))
     planned_tool_calls, parse_errors = _planned_tool_calls_from_openai(
         message_payload.get("tool_calls")
     )
@@ -385,6 +403,8 @@ def normalize_openai_stream_chunk(
         else None
     )
     metadata = _extract_usage_metadata(payload)
+    if isinstance(delta, dict):
+        metadata.update(_extract_reasoning_metadata(delta))
     choice_payload = choice if isinstance(choice, dict) else {}
     planned_tool_calls, parse_errors = _planned_tool_calls_from_openai(
         choice_payload.get("tool_calls")
@@ -441,6 +461,14 @@ class OpenAICompatibleProvider(ProviderBase):
         self._timeout_s = config.timeout_s
         self._max_tokens_default = config.max_tokens_default
         self._extra_body: dict[str, Any] = dict(config.extra_body or {})
+        self._capability_profile = resolve_openai_compatible_capabilities(
+            provider_name=config.name,
+            base_url=config.base_url,
+            model=config.model,
+        )
+        self.status.metadata["capability_profile"] = (
+            self._capability_profile.to_metadata()
+        )
 
     @dataclass(slots=True)
     class Config:
@@ -468,6 +496,25 @@ class OpenAICompatibleProvider(ProviderBase):
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
+
+    @property
+    def capability_profile(self) -> ProviderCapabilityProfile:
+        """Best-effort provider/model capability profile."""
+        return self._capability_profile
+
+    def _with_capability_metadata(self, response: LlmResponse) -> LlmResponse:
+        metadata = {
+            **response.metadata,
+            "provider_profile": self._capability_profile.to_metadata(),
+        }
+        return response.model_copy(update={"metadata": metadata})
+
+    def _event_with_capability_metadata(self, event: LlmStreamEvent) -> LlmStreamEvent:
+        metadata = {
+            **event.metadata,
+            "provider_profile": self._capability_profile.to_metadata(),
+        }
+        return event.model_copy(update={"metadata": metadata})
 
     def _payload(self, request: LlmRequest, *, stream: bool) -> dict[str, Any]:
         from agent_driver.llm.tool_result_unpacker import (
@@ -587,11 +634,13 @@ class OpenAICompatibleProvider(ProviderBase):
                     body=response.text,
                 )
             response.raise_for_status()
-            return normalize_openai_completion_payload(
-                response.json(),
-                provider_name=self.name,
-                fallback_model=str(request.model or self._model),
-                cost_per_1k_tokens=float(self.status.cost_per_1k_tokens or 0.0),
+            return self._with_capability_metadata(
+                normalize_openai_completion_payload(
+                    response.json(),
+                    provider_name=self.name,
+                    fallback_model=str(request.model or self._model),
+                    cost_per_1k_tokens=float(self.status.cost_per_1k_tokens or 0.0),
+                )
             )
 
         return await self.execute_with_telemetry(
@@ -662,9 +711,11 @@ class OpenAICompatibleProvider(ProviderBase):
                     fallback_model=str(request.model or self._model),
                     cost_per_1k_tokens=float(self.status.cost_per_1k_tokens or 0.0),
                 )
-                yield _suppress_text_form_tool_calls_when_tools_disabled(
-                    event,
-                    tool_choice=request.tool_choice,
+                yield self._event_with_capability_metadata(
+                    _suppress_text_form_tool_calls_when_tools_disabled(
+                        event,
+                        tool_choice=request.tool_choice,
+                    )
                 )
             if pending_tool_calls:
                 flattened = [
@@ -679,7 +730,9 @@ class OpenAICompatibleProvider(ProviderBase):
                         metadata["planned_tool_calls"] = planned_tool_calls
                     if parse_errors:
                         metadata["tool_call_parse_errors"] = parse_errors
-                    yield LlmStreamEvent(event="tool_calls", metadata=metadata)
+                    yield self._event_with_capability_metadata(
+                        LlmStreamEvent(event="tool_calls", metadata=metadata)
+                    )
             elif text_chunks and request.tool_choice != "none":
                 text = "".join(text_chunks)
                 text_planned, text_errors = extract_text_form_tool_calls(text)
@@ -694,7 +747,9 @@ class OpenAICompatibleProvider(ProviderBase):
                         metadata["planned_tool_calls"] = text_planned
                     if text_errors:
                         metadata["tool_call_parse_errors"] = text_errors
-                    yield LlmStreamEvent(event="tool_calls", metadata=metadata)
+                    yield self._event_with_capability_metadata(
+                        LlmStreamEvent(event="tool_calls", metadata=metadata)
+                    )
 
 
 __all__ = [

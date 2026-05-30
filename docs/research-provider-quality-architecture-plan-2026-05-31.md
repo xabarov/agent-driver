@@ -203,13 +203,15 @@ Each scenario must store:
 
 ### Phase A — Provider Profile Foundation
 
-- [ ] Add `agent_driver.llm.provider_capabilities` with static profiles and
+- [x] Add `agent_driver.llm.provider_capabilities` with static profiles and
   safe defaults for unknown OpenAI-compatible providers.
-- [ ] Teach OpenRouter/OpenAI-compatible request builder to expose selected
+- [x] Teach OpenRouter/OpenAI-compatible request builder to expose selected
   profile in run metadata/trace summary.
-- [ ] Preserve provider-specific reasoning metadata when present, without
+- [x] Preserve provider-specific reasoning metadata when present, without
   leaking chain-of-thought to UI.
-- [ ] Add backend tests for Qwen/OpenRouter/GPT profile defaults.
+- [x] Add backend tests for Qwen/OpenRouter/GPT profile defaults.
+- [ ] Extend profile usage into chat model picker capability warnings and
+  provider failure UX.
 
 ### Phase B — Research Contract Object
 

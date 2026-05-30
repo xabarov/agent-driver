@@ -231,6 +231,14 @@ def _collect_stream_item(
             start_index=len(reasoning_chunks) - 1,
         )
     if isinstance(item.metadata, dict):
+        for key in (
+            "provider_profile",
+            "provider_reasoning_details_present",
+            "provider_reasoning_details_count",
+            "provider_reasoning_text_present",
+        ):
+            if key in item.metadata:
+                stream_metadata[key] = item.metadata[key]
         if "planned_tool_calls" in item.metadata:
             stream_metadata["planned_tool_calls"] = item.metadata["planned_tool_calls"]
         if "tool_call_parse_errors" in item.metadata:
