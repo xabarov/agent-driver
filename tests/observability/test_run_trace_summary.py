@@ -277,11 +277,20 @@ def test_trace_summary_collects_control_markers() -> None:
         events=[
             {
                 "event": "control_requested",
-                "data": {"kind": "enqueue_user_message"},
+                "data": {"kind": "enqueue_user_message", "priority": "next"},
             },
-            {"event": "command_queued", "data": {"kind": "enqueue_user_message"}},
-            {"event": "command_dequeued", "data": {"kind": "enqueue_user_message"}},
-            {"event": "control_applied", "data": {"kind": "enqueue_user_message"}},
+            {
+                "event": "command_queued",
+                "data": {"kind": "enqueue_user_message", "priority": "next"},
+            },
+            {
+                "event": "command_dequeued",
+                "data": {"kind": "enqueue_user_message", "priority": "next"},
+            },
+            {
+                "event": "control_applied",
+                "data": {"kind": "enqueue_user_message", "priority": "next"},
+            },
             _completed_tool("web_search"),
             {"event": "run_completed", "data": {}},
         ],
@@ -290,3 +299,4 @@ def test_trace_summary_collects_control_markers() -> None:
     assert summary["controls"]["queued"] == 1
     assert summary["controls"]["dequeued"] == 1
     assert summary["controls"]["applied"] == 1
+    assert summary["controls"]["semantic_routes"] == ["queue_after_next_boundary"]

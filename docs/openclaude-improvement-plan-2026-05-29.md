@@ -102,16 +102,23 @@
 - [ ] Добавить Hermes-style execution blueprint для long research/writing и
   implementation chat tasks: typed phases, worker specs, required handoffs,
   verifier gate, synthesizer final answer, explicit block/retry/error policy.
-  Использовать только если Phoenix traces показывают, что простой prompt+tool
-  loop продолжает терять deliverable.
-- [ ] Уточнить steerability semantics в стиле Hermes:
+  Статус: gated/deferred. Не внедряем новый graph слой, пока Phoenix/live
+  traces не показывают повторяемую потерю deliverable после текущих prompt +
+  runtime guard исправлений.
+- [x] Уточнить steerability semantics в стиле Hermes:
   running user input должен быть `interrupt`, `queue` или
   `steer after next tool result`, с явными UI affordances и trace labels.
-- [ ] Добавить узкие policy hook points в стиле Hermes plugins:
-  `pre_tool_call` veto/context hook и `post_tool_result` transform hook.
-- [ ] Зафиксировать будущую compaction policy: сохранять active task contract,
-  recent tail и tool-call/result integrity; back off при неэффективной
-  compression.
+  Current mapping: `enqueue_user_message + next` -> `queue_after_next_boundary`,
+  `enqueue_user_message + now` -> `steer_at_next_boundary`, `interrupt` ->
+  `interrupt_now`; live trace summary exposes `controls.semantic_routes`.
+- [x] Добавить узкие policy hook points в стиле Hermes plugins:
+  существующий `GovernedToolExecutor` уже поддерживает `pre_tool_use` /
+  `post_tool_use`, chaining, context aggregation, timeout isolation and
+  `prevent_continuation`; не добавляем второй hook механизм.
+- [x] Зафиксировать compaction policy runtime-защитой: сохранять active task
+  contract/runtime attachments через recent tail, сохранять leading system
+  policy при partial compaction, защищать recent tail и back off при
+  неэффективной compression через orchestrator circuit breaker.
 
 ### Quality Gate
 
@@ -270,6 +277,8 @@ Latest known good checks:
 - Runtime attachment refactor smoke passed:
   `simple-direct` live `run_5ab97707b513`, `research-report` live
   `run_9e79e1b12d0f`.
+- Partial compaction now preserves leading system policy verbatim while
+  summarizing only the middle prefix; focused compaction tests passed.
 - latest 7-scenario live probe passed with run ids:
   `run_b4b5a25caf59`, `run_1305757bddea`, `run_14d441eb6cae`,
   `run_af1b198eb3fa`, `run_b662ac776ff2`, `run_bf797fbf2048`,

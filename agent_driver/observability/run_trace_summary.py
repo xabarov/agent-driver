@@ -296,6 +296,8 @@ def _subagent_summary(events: list[dict[str, object]]) -> dict[str, Any]:
 
 def _control_summary(events: list[dict[str, object]]) -> dict[str, Any]:
     kinds: list[str] = []
+    priorities: list[str] = []
+    semantic_routes: list[str] = []
     for event in events:
         if event.get("event") not in {
             "control_requested",
@@ -308,6 +310,12 @@ def _control_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         kind = _event_data(event).get("kind")
         if isinstance(kind, str) and kind:
             kinds.append(kind)
+        priority = _event_data(event).get("priority")
+        if isinstance(priority, str) and priority:
+            priorities.append(priority)
+        route = _control_semantic_route(kind=kind, priority=priority)
+        if route:
+            semantic_routes.append(route)
     return {
         "requested": _count_events(events, "control_requested"),
         "queued": _count_events(events, "command_queued"),
@@ -315,7 +323,36 @@ def _control_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         "applied": _count_events(events, "control_applied"),
         "cancelled": _count_events(events, "command_cancelled"),
         "kinds": kinds,
+        "priorities": priorities,
+        "semantic_routes": sorted(set(semantic_routes)),
     }
+
+
+def _control_semantic_route(kind: object, priority: object) -> str | None:
+    if not isinstance(kind, str) or not kind:
+        return None
+    priority_value = priority if isinstance(priority, str) else ""
+    fixed_routes = {
+        "interrupt": "interrupt_now",
+        "patch_planning_state": "runtime_setting",
+        "stop_subagent": "subagent_control",
+        "continue_subagent": "subagent_control",
+    }
+    route = fixed_routes.get(kind)
+    if route is not None:
+        return route
+    if kind == "enqueue_user_message":
+        if priority_value == "now":
+            route = "steer_at_next_boundary"
+        elif priority_value == "later":
+            route = "queue_later"
+        else:
+            route = "queue_after_next_boundary"
+    elif kind.startswith("set_"):
+        route = "runtime_setting"
+    else:
+        route = kind
+    return route
 
 
 def _runtime_markers(events: list[dict[str, object]]) -> dict[str, list[str]]:
