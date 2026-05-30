@@ -99,12 +99,13 @@
 
 ### Subagents / Steering Next Layer
 
-- [ ] Добавить Hermes-style execution blueprint для long research/writing и
+- [x] Добавить Hermes-style execution blueprint для long research/writing и
   implementation chat tasks: typed phases, worker specs, required handoffs,
   verifier gate, synthesizer final answer, explicit block/retry/error policy.
-  Статус: gated/deferred. Не внедряем новый graph слой, пока Phoenix/live
-  traces не показывают повторяемую потерю deliverable после текущих prompt +
-  runtime guard исправлений.
+  Decision: gated/deferred. Не внедряем новый graph слой, потому что текущий
+  9-scenario Phoenix/live suite не показывает повторяемую потерю deliverable
+  после prompt + runtime guard исправлений. Вернуться к blueprint только при
+  новых trace-backed regressions.
 - [x] Уточнить steerability semantics в стиле Hermes:
   running user input должен быть `interrupt`, `queue` или
   `steer after next tool result`, с явными UI affordances и trace labels.
@@ -122,11 +123,11 @@
 
 ### Quality Gate
 
-- [ ] Для каждого исправленного failure должен быть provider-level или runtime
+- [x] Для каждого исправленного failure должен быть provider-level или runtime
   unit regression.
-- [ ] Перед коммитом запускать `black`, `isort`, focused `pytest`, relevant
+- [x] Перед коммитом запускать `black`, `isort`, focused `pytest`, relevant
   backend/frontend/Playwright checks.
-- [ ] В конце фазы делать отдельный refactoring/code-quality pass с `pylint`:
+- [x] В конце фазы делать отдельный refactoring/code-quality pass с `pylint`:
   чинить реальные naming/decomposition/typing/import/duplication проблемы, а
   не отключать warnings пачкой.
 
@@ -283,6 +284,10 @@ Latest known good checks:
   `run_b4b5a25caf59`, `run_1305757bddea`, `run_14d441eb6cae`,
   `run_af1b198eb3fa`, `run_b662ac776ff2`, `run_bf797fbf2048`,
   `run_b8ae998bbbe2`.
+- latest 9-scenario live probe passed with run ids:
+  `run_accde2c30205`, `run_bd40a12ff4ba`, `run_c27db4580225`,
+  `run_45d7a37c00d3`, `run_ddb9dc3a6b07`, `run_509710ff14e2`,
+  `run_df503c645b13`, `run_e160a397a865`, `run_5b2c65cf69ae`.
 
 Dev stack:
 
