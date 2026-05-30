@@ -58,7 +58,7 @@
 - [x] Сделать `ask_user_question` schema/prompt ближе к OpenClaude:
   1-4 short questions, explicit choices, no plan approval through questions,
   no clarification for deliverables unless blocked.
-- [ ] Для deliverable задач отделить "progress checklist" от "final answer":
+- [x] Для deliverable задач отделить "progress checklist" от "final answer":
   checklist может существовать, но финал должен закрывать acceptance criteria.
 
 ### Scenario Harness
@@ -73,8 +73,9 @@
   final, fake citations without tool evidence, raw JSON in chat, stuck
   clarification.
 - [x] Добить минимум 5 live Phoenix-backed scenarios на текущей default model.
-  Latest `--all` passed on 2026-05-30 with `plan-only`, `plan-web-answer`,
-  `research-report`, `simple-direct`, and `web-search-final`.
+  Latest `--all` passed on 2026-05-30 with `deliverable-no-replan`,
+  `plan-only`, `plan-web-answer`, `research-report`, `simple-direct`, and
+  `web-search-final`.
 
 ### Core Scenario Set
 
@@ -254,6 +255,9 @@ Latest known good checks:
 - live `simple-direct` passed with `run_82c3ff4d12fc`;
 - after scenario-tag work, live `simple-direct` passed with
   `run_793c1c5a5614`.
+- latest 6-scenario live probe passed with run ids:
+  `run_939d0ad932ed`, `run_c3a4befd49bc`, `run_1fd22ffa5f16`,
+  `run_50dce1de0945`, `run_8bf476954a92`, `run_f62af2122f04`.
 
 Dev stack:
 

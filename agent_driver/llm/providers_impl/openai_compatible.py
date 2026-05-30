@@ -238,6 +238,8 @@ def _planned_tool_call_from_forced_text(
     if not tool_name:
         return []
     args = _parse_forced_tool_args_fragment(text)
+    if args is None and tool_name == "web_search":
+        args = _parse_forced_web_search_query_fragment(text)
     if args is None:
         return []
     call = ToolCall(
@@ -286,6 +288,16 @@ def _parse_forced_tool_args_fragment(text: str) -> dict[str, Any] | None:
         if isinstance(parsed, dict):
             return parsed
     return None
+
+
+def _parse_forced_web_search_query_fragment(text: str) -> dict[str, Any] | None:
+    """Recover Qwen/OpenRouter positional web_search query fragments."""
+    clean = re.sub(r"</?tool_call>", "", text, flags=re.IGNORECASE).strip()
+    match = re.search(r"(?:^|[\s,{])\d+\s*:\s*\"(?P<query>[^\"]+)\"", clean)
+    if match is None:
+        return None
+    query = match.group("query").strip()
+    return {"query": query} if query else None
 
 
 def normalize_openai_completion_payload(

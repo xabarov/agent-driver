@@ -99,6 +99,25 @@ SCENARIOS: dict[str, LiveScenario] = {
         ),
         requires_research=False,
     ),
+    "deliverable-no-replan": LiveScenario(
+        name="deliverable-no-replan",
+        prompt=(
+            "напиши короткий реферат на 3 абзаца об истории Fender, "
+            "не план и не список шагов"
+        ),
+        forbidden_failures=(
+            "stuck_on_interrupt",
+            "missing_terminal_event",
+            "run_failed_or_cancelled",
+            "missing_required_research_evidence",
+            "progress_only_final",
+            "text_form_tool_call",
+            "fabricated_planning",
+            "repeated_approval_planning",
+            "extra_ask_user_question",
+        ),
+        requires_research=False,
+    ),
 }
 
 
