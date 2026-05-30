@@ -600,11 +600,184 @@ def run_ask_question_denied_on_deliverable(page: Page) -> None:
     )
 
 
+def run_deliverable_no_replan(page: Page) -> None:
+    """A deliverable run may show progress, but must end with the deliverable."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "tool_call_completed",
+                {
+                    "planning_snapshot": {
+                        "todos": [
+                            {
+                                "id": "s1",
+                                "content": "Собрать факты",
+                                "status": "completed",
+                            },
+                            {
+                                "id": "s2",
+                                "content": "Написать черновик",
+                                "status": "in_progress",
+                            },
+                        ],
+                        "in_progress_id": "s2",
+                        "completed": 1,
+                        "total": 2,
+                        "plan_title": "Черновик ответа",
+                    },
+                    "tools": [
+                        {
+                            "tool_name": "todo_write",
+                            "tool_call_id": "todo_deliverable",
+                            "status": "ok",
+                        }
+                    ],
+                },
+            ),
+            sse_event(3, "assistant_message_tombstoned"),
+            sse_event(
+                4,
+                "token_delta",
+                {
+                    "delta_text": (
+                        "Готовый черновик: Fender стала важной компанией "
+                        "благодаря массовому производству электрогитар, "
+                        "моделям Telecaster и Stratocaster и влиянию на "
+                        "популярную музыку."
+                    )
+                },
+            ),
+            sse_event(5, "run_completed"),
+        ]
+    )
+
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    # 5-step visible path: request deliverable, send, see plan panel preserved,
+    # see final draft, confirm no clarification/approval modal took over.
+    send_chat_message(page, "напиши черновик по Fender, не план")
+    expect(page.get_by_text("Написать черновик")).to_be_visible(timeout=5000)
+    expect(page.get_by_text("Готовый черновик: Fender")).to_be_visible()
+    expect(
+        page.get_by_role("heading", name="Clarification required")
+    ).not_to_be_visible()
+    expect(
+        page.get_by_role("heading", name="Plan approval required")
+    ).not_to_be_visible()
+    page.screenshot(
+        path=str(ARTIFACT_DIR / "deliverable-no-replan.png"), full_page=True
+    )
+
+
+def run_plan_then_web_then_answer(page: Page) -> None:
+    """A requested plan should progress into data tools and a final answer."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "tool_call_completed",
+                {
+                    "planning_snapshot": {
+                        "todos": [
+                            {
+                                "id": "s1",
+                                "content": "Найти источники",
+                                "status": "in_progress",
+                            },
+                            {
+                                "id": "s2",
+                                "content": "Сверить факты",
+                                "status": "pending",
+                            },
+                            {
+                                "id": "s3",
+                                "content": "Дать ответ",
+                                "status": "pending",
+                            },
+                        ],
+                        "in_progress_id": "s1",
+                        "completed": 0,
+                        "total": 3,
+                        "plan_title": "План исследования",
+                    },
+                    "tools": [
+                        {
+                            "tool_name": "todo_write",
+                            "tool_call_id": "todo_research",
+                            "status": "ok",
+                        }
+                    ],
+                },
+            ),
+            sse_event(
+                3,
+                "tool_call_started",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "web_search",
+                            "tool_call_id": "web_plan_1",
+                            "status": "running",
+                            "args": {"query": "Fender Stratocaster history"},
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                4,
+                "tool_call_completed",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "web_search",
+                            "tool_call_id": "web_plan_1",
+                            "status": "ok",
+                            "result_summary": "Found 5 sources about Fender history.",
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                5,
+                "token_delta",
+                {
+                    "delta_text": (
+                        "По найденным источникам: Fender закрепилась в истории "
+                        "через массовые электрогитары, Telecaster, Stratocaster "
+                        "и стандартизацию звучания популярных жанров."
+                    )
+                },
+            ),
+            sse_event(6, "run_completed"),
+        ]
+    )
+
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    # 6-step visible path: ask plan+research, send, see plan panel, see web
+    # execution, see source summary, see synthesized answer.
+    send_chat_message(page, "составь план и найди факты о Fender")
+    expect(page.get_by_text("Найти источники")).to_be_visible(timeout=5000)
+    expect(page.get_by_text("web_search")).to_be_visible()
+    expect(page.get_by_text("Found 5 sources about Fender history")).to_be_visible()
+    expect(page.get_by_text("По найденным источникам")).to_be_visible()
+    page.screenshot(path=str(ARTIFACT_DIR / "plan-web-answer.png"), full_page=True)
+
+
 SCENARIOS = {
     "ask-question-denied": run_ask_question_denied_on_deliverable,
     "clarification": run_clarification_regression,
     "denied-tool": run_denied_tool_regression,
+    "deliverable-no-replan": run_deliverable_no_replan,
     "plan-approval": run_plan_approval_regression,
+    "plan-web-answer": run_plan_then_web_then_answer,
     "simple-direct": run_simple_direct_answer,
     "subagent-final": run_subagent_final_answer,
     "web-search-final": run_web_search_final_answer,

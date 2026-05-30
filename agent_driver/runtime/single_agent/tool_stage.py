@@ -1035,7 +1035,7 @@ def _should_force_final_answer(context: RunContext) -> bool:
     loop_detected = _has_repeated_recent_tool_call(context)
     zero_streak = int(context.metadata.get("web_search_zero_streak", 0))
     zero_results_triggered = zero_streak >= 1
-    deliverable_requested = _deliverable_request_has_data(context)
+    deliverable_requested = _deliverable_request_should_force_final(context)
     return (
         near_tool_budget
         or near_step_budget
@@ -1054,7 +1054,7 @@ _PROGRESS_ONLY_TOOL_NAMES = {
 }
 
 
-def _deliverable_request_has_data(context: RunContext) -> bool:
+def _deliverable_request_should_force_final(context: RunContext) -> bool:
     deliverable = context.run_input.tool_policy.metadata.get("deliverable_request")
     if not isinstance(deliverable, dict) or deliverable.get("enabled") is not True:
         return False
@@ -1068,7 +1068,11 @@ def _deliverable_request_has_data(context: RunContext) -> bool:
         if not isinstance(call, dict):
             continue
         tool_name = str(call.get("tool_name") or "").strip()
-        if tool_name and tool_name not in _PROGRESS_ONLY_TOOL_NAMES:
+        if not tool_name or tool_name == "ask_user_question":
+            continue
+        if tool_name not in _PROGRESS_ONLY_TOOL_NAMES:
+            return True
+        if tool_name in {"todo_write", "planning_state_update"}:
             return True
     return False
 

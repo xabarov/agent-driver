@@ -369,18 +369,30 @@ Best-of-both plan for `agent-driver`:
   structured `questions` payload, validates bounds/uniqueness, and renders
   option buttons plus the freeform "Other" path in chat-demo while resuming
   through the existing clarification message path.
-- [ ] Add an `AskUserQuestion` policy classifier: allow only for
+- [x] Add an `AskUserQuestion` policy classifier: allow only for
   user-owned decisions or truly blocking missing information; deny when the
   current turn asks for a final deliverable and enough context exists.
-- [ ] Add a Hermes-style "specifier" preflight for vague complex tasks:
+  Current chat-demo policy marks deliverable turns with `deliverable_request`,
+  hides `ask_user_question` from the model schema via `denied_tools`, and keeps
+  a runtime denial fallback if a provider still attempts the tool.
+- [x] Add a Hermes-style "specifier" preflight for vague complex tasks:
   produce a compact `Goal / Approach / Acceptance criteria / Out of scope`
   contract before planning/decomposition. Keep it one-shot, optional, and
   lenient on parse failure.
+  Current implementation is a deterministic lightweight chat task contract:
+  `deliverable`, `research`, and `implementation` contracts are attached to
+  chat-demo policy metadata and rendered as compact runtime reminders. This
+  keeps the first pass in the "model + prompt + small guard" lane rather than
+  adding a new LLM preflight or workflow graph.
 - [ ] Add a Hermes-style execution blueprint for long research/writing and
   implementation chat tasks: small typed phases, self-contained worker specs,
   required handoff outputs per phase, verifier gate, synthesizer final answer,
   and explicit block/retry/error policy. Use this only when Phoenix traces show
   the plain prompt+tool loop keeps re-planning or losing the deliverable.
+  Current small guard: deliverable requests now force `tool_choice=none` after
+  either substantive data tools or progress-only planning tools
+  (`todo_write`/`planning_state_update`), preventing "plan again instead of
+  answer" loops while still avoiding a full DAG.
 - [ ] Extend steerability semantics with a Hermes-like boundary: user messages
   during a running chat turn should be represented as `interrupt`, `queue`, or
   `steer after next tool result`, with deterministic UI affordances and trace
@@ -398,10 +410,11 @@ Best-of-both plan for `agent-driver`:
   deliverable turns.
   Current concept-smoke suite covers deterministic UI regressions for
   clarification, plan approval, denied tools, web-search final answer,
-  subagent synthesis, simple direct answers without planning, and denied
-  clarification on deliverable turns. Live Phoenix-backed passes should reuse
-  the same scenario labels where possible and compare trace shape against the
-  deterministic expectation.
+  subagent synthesis, simple direct answers without planning, denied
+  clarification on deliverable turns, deliverable-without-replanning, and
+  plan -> web execution -> final answer. Live Phoenix-backed passes should
+  reuse the same scenario labels where possible and compare trace shape against
+  the deterministic expectation.
 - Added `examples/chat-demo/frontend/tests/e2e/chat_concepts_smoke.py` for
   deterministic concept checks over the real React UI. Current scenarios cover
   plan approval, plan/tombstone/clarification/resume, denied tool feedback,
@@ -412,7 +425,13 @@ Best-of-both plan for `agent-driver`:
   traces for model/tool order, then apply the smallest prompt/contract/runtime
   change that fixes the trace. The baseline set is:
   `simple-direct`, `web-search-final`, `clarification`,
-  `ask-question-denied`, `plan-approval`, and `subagent-final`.
+  `ask-question-denied`, `deliverable-no-replan`, `plan-web-answer`,
+  `plan-approval`, and `subagent-final`.
+- Concept smoke check, 2026-05-30: full deterministic Playwright suite passed
+  against `http://localhost:5174` with scenarios `ask-question-denied`,
+  `clarification`, `deliverable-no-replan`, `denied-tool`, `plan-approval`,
+  `plan-web-answer`, `simple-direct`, `subagent-final`, and
+  `web-search-final`.
 - Live Phoenix check, 2026-05-30:
   - `simple-direct` prompt (`сколько r в слове strawberry?`) completed with no
     tool calls, matching the no-planning expectation;

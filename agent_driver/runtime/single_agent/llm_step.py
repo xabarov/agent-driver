@@ -58,6 +58,7 @@ from agent_driver.runtime.single_agent.types import (
     RunnerDeps,
     RuntimeStepResult,
 )
+from agent_driver.runtime.task_contract import render_task_contract_reminder
 
 
 class LlmStepHost(CompactionStageHost, Protocol):
@@ -529,6 +530,11 @@ def _react_system_instruction(host: LlmStepHost, context: RunContext) -> str | N
         lines.append(f"Workspace cwd: {workspace_cwd.strip()}")
     if context.run_input.app_metadata.get("chat_mode") is True:
         lines.extend(_chat_mode_runtime_reminders(context))
+        task_contract = context.run_input.tool_policy.metadata.get("task_contract")
+        if isinstance(task_contract, dict):
+            reminder = render_task_contract_reminder(task_contract)
+            if reminder:
+                lines.append(reminder)
         planning_hint = context.run_input.tool_policy.metadata.get("planning_hint")
         if isinstance(planning_hint, dict):
             level = str(planning_hint.get("level") or "")

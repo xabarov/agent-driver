@@ -6,14 +6,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_driver.contracts import AgentRunInput, ToolCall
-from agent_driver.contracts.tools import ToolResultEnvelope
+from agent_driver.contracts import AgentRunInput, ToolCall, ToolPolicyInput
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse, UsageSummary
+from agent_driver.contracts.tools import ToolResultEnvelope
+from agent_driver.llm.contracts import (
+    LlmFinishReason,
+    LlmRequest,
+    LlmResponse,
+    UsageSummary,
+)
 from agent_driver.llm.providers_impl.fake import FakeProvider
-from agent_driver.sdk import create_agent
 from agent_driver.runtime.single_agent.tool_stage import _update_zero_result_policy
 from agent_driver.runtime.tools import ToolExecutionResult
+from agent_driver.sdk import create_agent
 from agent_driver.tools import ToolSet
 
 
@@ -30,7 +35,9 @@ class _ThreeTurnProvider(FakeProvider):
         call_index = len(self.requests)
         if call_index <= 2:
             query = "same-query" if self._repeated_args else f"query-{call_index}"
-            result_title = "Result same" if self._repeated_args else f"Result {call_index}"
+            result_title = (
+                "Result same" if self._repeated_args else f"Result {call_index}"
+            )
             return LlmResponse(
                 message=ChatMessage(role="assistant", content=""),
                 finish_reason=LlmFinishReason.TOOL_CALLS,
@@ -85,7 +92,9 @@ class _ContinuationProvider(FakeProvider):
                     ),
                 ),
                 finish_reason=LlmFinishReason.STOP,
-                usage=UsageSummary(model_provider="continuation", model_name="test-model"),
+                usage=UsageSummary(
+                    model_provider="continuation", model_name="test-model"
+                ),
                 provider="continuation",
                 model="test-model",
                 metadata={},
@@ -95,6 +104,52 @@ class _ContinuationProvider(FakeProvider):
             finish_reason=LlmFinishReason.STOP,
             usage=UsageSummary(model_provider="continuation", model_name="test-model"),
             provider="continuation",
+            model="test-model",
+            metadata={},
+        )
+
+
+class _DeliverablePlanOnlyProvider(FakeProvider):
+    """Provider that tries to keep planning after a deliverable request."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=UsageSummary(
+                    model_provider="deliverable", model_name="test-model"
+                ),
+                provider="deliverable",
+                model="test-model",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="todo_write",
+                            tool_call_id="todo_deliverable",
+                            args={
+                                "todos": [
+                                    {
+                                        "id": "draft",
+                                        "content": "Написать черновик",
+                                        "status": "in_progress",
+                                    }
+                                ]
+                            },
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="Вот готовый черновик."),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+            provider="deliverable",
             model="test-model",
             metadata={},
         )
@@ -158,6 +213,32 @@ async def test_react_loop_continues_after_progress_only_final_text() -> None:
     assert output.answer == "Вот черновик статьи."
     assert len(provider.requests) == 2
     assert "Continue with the task" in provider.requests[1].messages[-1].content
+
+
+@pytest.mark.asyncio
+async def test_deliverable_request_forces_final_after_plan_only_tool() -> None:
+    """A deliverable turn should not continue planning after todo_write."""
+    provider = _DeliverablePlanOnlyProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only("todo_write"))
+    output = await agent.run(
+        AgentRunInput(
+            input="напиши черновик по плану, не план",
+            run_id="run_deliverable_plan_only",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(
+                metadata={"deliverable_request": {"enabled": True}}
+            ),
+            max_steps=8,
+            max_tool_calls=4,
+        )
+    )
+    assert output.answer == "Вот готовый черновик."
+    assert len(provider.requests) == 2
+    assert provider.requests[1].tool_choice == "none"
+    assert (
+        "Produce the requested deliverable" in provider.requests[1].messages[-1].content
+    )
 
 
 def test_upstream_web_search_error_does_not_trigger_zero_result_force_final() -> None:

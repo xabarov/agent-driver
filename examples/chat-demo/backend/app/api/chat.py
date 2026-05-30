@@ -20,6 +20,7 @@ from agent_driver.contracts.enums import ChatRole, ResumeAction
 from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
 from agent_driver.runtime.planning_policy import classify_planning_hint
 from agent_driver.runtime.stream import backfill_stream_events, project_runtime_events
+from agent_driver.runtime.task_contract import build_chat_task_contract
 
 from app.config import Settings, ToolPreset
 from app.deps import (
@@ -283,6 +284,9 @@ def _chat_tool_policy(*, body: ChatMessageRequest, settings: Settings) -> ToolPo
     metadata: dict[str, object] = {}
     hint = classify_planning_hint(body.message)
     metadata["planning_hint"] = hint.model_dump(mode="json")
+    task_contract = build_chat_task_contract(body.message)
+    if task_contract is not None:
+        metadata["task_contract"] = task_contract
     denied_tools: list[str] | None = None
     if _is_deliverable_request(body.message):
         metadata["deliverable_request"] = {

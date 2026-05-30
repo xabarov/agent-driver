@@ -77,6 +77,40 @@ def test_react_system_prompt_includes_deliverable_runtime_reminder() -> None:
     assert "do not restart planning" in instruction
 
 
+def test_react_system_prompt_includes_task_contract_reminder() -> None:
+    """Chat mode should surface the lightweight task contract to the model."""
+    registry = ToolRegistry()
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(tool_registry=registry),
+        _config=SimpleNamespace(python_tool=PythonToolSettings(enabled=False)),
+    )
+    context = SimpleNamespace(
+        run_input=AgentRunInput(
+            input="напиши реферат по Fender, не план",
+            agent_id="agent",
+            graph_preset="single_react",
+            app_metadata={"chat_mode": True},
+            tool_policy=ToolPolicyInput(
+                metadata={
+                    "task_contract": {
+                        "kind": "deliverable",
+                        "goal": "напиши реферат по Fender, не план",
+                        "approach": "Answer now.",
+                        "acceptance_criteria": ["Final answer, not another plan."],
+                        "out_of_scope": ["Restarting the plan."],
+                    }
+                }
+            ),
+        ),
+        metadata={},
+    )
+    instruction = _react_system_instruction(host, context)
+    assert instruction is not None
+    assert "task_contract_active (deliverable)" in instruction
+    assert "Final answer, not another plan" in instruction
+    assert "Restarting the plan" in instruction
+
+
 def test_react_system_prompt_includes_plan_mode_runtime_reminder() -> None:
     """Plan mode should be represented as a compact runtime reminder."""
     registry = ToolRegistry()
