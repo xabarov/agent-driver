@@ -309,6 +309,157 @@
 - Compression protective: сохранить head/recent tail/tool-call integrity и не
   переписывать context бесконечно.
 
+## Next Work: Python Code Executor Autonomy And UX
+
+Цель: сделать Python execution в chat demo такой же естественной способностью
+агента, как planning/subagents: инструмент доступен всегда, пользователь его не
+включает и не выключает, а модель сама решает, когда расчет/код надежнее
+свободного текста.
+
+### Current State
+
+- В `agent_driver` уже есть reusable `python` tool:
+  `agent_driver.tools.builtin.python`, `PythonToolSettings`,
+  `python_tool_system_addendum.txt`, local subprocess backend, import allowlist,
+  session persistence, policy-error remediation и unit tests.
+- В chat demo этот tool пока не включен в обычный tool surface: presets
+  управляют web search/fetch, а `python_exec` не добавляется как always-on
+  capability.
+- UI уже умеет скрывать text-form `<|python_tag|>`, но нет красивой карточки
+  исполнения: код/result/stderr показываются как обычный tool payload или могут
+  утонуть в raw JSON.
+- Phoenix `/trace-summary` пока не дает verdict уровня
+  `python_expected/python_used/final_matches_python_result`, поэтому live
+  сценарий может выглядеть успешным глазами UI, но фактически модель могла
+  посчитать сама.
+
+### External And Neighbor Findings
+
+- OpenAI Code Interpreter показывает явную prompt-практику: для math задач
+  просить модель писать и запускать код через "python tool"; контейнер
+  sandboxed и может быть auto/explicit, а модель видит инструмент как
+  `python tool`.
+  Source: https://developers.openai.com/api/docs/guides/tools-code-interpreter
+- Anthropic tool-use docs разделяют client-executed tools и server-executed
+  tools; для client tools приложение должно вести loop
+  `tool_use -> execute -> tool_result -> continue`. Для server tools модель
+  сама итерирует, но paused turns надо продолжать.
+  Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/how-tool-use-works
+- Anthropic code execution docs фиксируют правильную модель продукта:
+  Claude сам оценивает, поможет ли code execution, запускает расчеты в
+  sandbox и возвращает анализ/результаты; важно явно различать несколько
+  execution environments, если они есть.
+  Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool
+- OpenClaude полезен не Python executor как отдельной фичей, а sandbox
+  философией: sandbox auto-allow допустим только с явными deny/ask guard,
+  prompt должен объяснять ограничения, а failure должен вести к понятному
+  recovery, не к повтору опасной команды.
+- Hermes Agent держит `execute_code` в core toolset вместе с `delegate_task`;
+  schema динамически перечисляет только реально доступные sandbox tools,
+  child env чистится от API keys/secrets, stdout/stderr редактируются,
+  execution-only calls не съедают iteration budget, а UI показывает короткий
+  `exec first_line` preview вместо полного JSON.
+
+### Product Behavior
+
+- [ ] Python execution всегда доступен в chat demo runtime surface вместе с
+  bounded delegation и planning progress; Web Search/Web Fetch остаются
+  пользовательскими переключателями.
+- [ ] Модель должна использовать `python` для:
+  - арифметики, счета символов/слов/строк, процентов, дат и единиц измерения;
+  - статистики, вероятностей, комбинаторики, финансовых/табличных расчетов;
+  - проверки результата, где LLM склонна ошибаться;
+  - преобразования небольших структурированных данных, если это дешевле и
+    надежнее ручного рассуждения.
+- [ ] Модель не должна использовать `python` для приветствий, простых
+  переводов, мнений, обычного factual Q&A и задач, где tool latency явно
+  дороже ответа.
+- [ ] После `python` tool call агент обязан дать человекочитаемый финал,
+  опирающийся на результат execution, а не останавливаться на tool payload.
+- [ ] Policy error должен вести к переписыванию кода на allowed imports или к
+  краткому объяснению ограничения, без повторения того же blocked import.
+
+### Runtime / Prompt Slices
+
+- [ ] Slice 1: включить `python_exec` в clean chat-demo tool surface для всех
+  безопасных presets (`off`, `web_search`, `web_fetch`, `web`) без UI toggle.
+- [ ] Slice 2: включить `PythonToolSettings(enabled=True, backend="local")` в
+  demo `RunnerConfig`; лимиты оставить короткими и понятными для чата,
+  `allow_overlay=False`, filesystem/network через Python не открывать.
+- [ ] Slice 3: уточнить `react_chat_tool_policy.txt`:
+  "для расчетов и точного счета сначала используй python, затем синтезируй
+  ответ"; "не используй python для тривиального разговора".
+- [ ] Slice 4: расширить `python_tool_system_addendum.txt` коротким
+  decision guide и recovery rule: blocked import is policy, not missing package.
+- [ ] Slice 5: проверить, не нужен ли маленький runtime guard после успешного
+  `python`: следующий LLM step при чистом расчетном запросе получает
+  force-final reminder/tool_choice none, чтобы не уходить в лишние tools.
+
+### Chat UI/UX
+
+- [ ] Спроектировать `PythonExecutionPanel` вместо raw JSON:
+  компактная карточка "Python calculation" / "Code execution";
+  статусы queued/running/done/error/timeout; elapsed time; session id только в
+  details.
+- [ ] На основной поверхности показывать:
+  короткую цель/первую строку кода, итог stdout/final value, warning/error
+  если есть, без горизонтального JSON-scroll.
+- [ ] В expandable details показывать:
+  syntax-highlighted code, stdout, stderr/traceback, limits, allowed imports,
+  raw payload для debug.
+- [ ] Для числовых результатов добавить аккуратные result chips:
+  `result`, `rounded`, `exact` если поля можно достать из stdout/JSON без
+  сложного парсинга.
+- [ ] Accessibility: карточка раскрывается клавиатурой, status читается screen
+  reader, длинный output не ломает chat scroll/composer.
+
+### Phoenix / Trace Criteria
+
+- [ ] Добавить в `/trace-summary` поля:
+  `python_tool_available`, `python_tool_used`, `python_calls`,
+  `python_policy_errors`, `python_timeouts`, `python_expected`,
+  `missed_python_for_calculation`, `python_result_observed`,
+  `final_after_python`, `final_mentions_python_error`.
+- [ ] Добавить scenario verdict labels:
+  `missed_python`, `python_no_final`, `python_policy_loop`,
+  `unnecessary_python`, `python_result_ignored`.
+- [ ] Для live scenarios успех означает:
+  tool surface содержит `python`;
+  расчетные задачи реально вызывают `python`;
+  финальный ответ совпадает с stdout/result;
+  простые задачи не вызывают `python`;
+  UI показывает `PythonExecutionPanel`, а не raw JSON.
+
+### Scenario Set
+
+- [ ] `python-count-letters`: "Сколько букв r в strawberry? Проверь точно."
+  Ожидаем `python`, финал `3`, без planning/subagent/web.
+- [ ] `python-arithmetic`: составное выражение с процентами/округлением.
+  Ожидаем `python`, финал с кратким расчетом.
+- [ ] `python-statistics`: среднее/медиана/стандартное отклонение по списку.
+  Ожидаем `python`, желательно `statistics` или allowed scientific stack.
+- [ ] `python-combinatorics`: вероятность/число комбинаций.
+  Ожидаем `python`, финал с формулой и результатом.
+- [ ] `python-no-tool-simple`: приветствие или короткая factual задача.
+  Ожидаем отсутствие `python`.
+- [ ] `web-plus-python`: найти свежие числа через web и посчитать производный
+  показатель через `python`. Ожидаем `web_search`/`web_fetch` + `python` +
+  финальный синтез.
+- [ ] `python-policy-recovery`: попытка использовать blocked import в
+  deterministic/fake provider path и проверить recovery text/UI error.
+
+### Implementation Phases
+
+- [ ] Phase A: backend enablement and prompt tuning, focused unit tests for
+  tool surface and prompt rendering.
+- [ ] Phase B: frontend `PythonExecutionPanel`, deterministic Playwright
+  screenshot/DOM checks.
+- [ ] Phase C: trace-summary verdicts and live probe scenario additions.
+- [ ] Phase D: Phoenix replay on 5-7 scenarios, prompt/runtime tuning by trace
+  evidence.
+- [ ] Phase E: quality pass: `black`, `isort`, focused `pytest`, frontend
+  checks, Playwright live probe, meaningful `pylint` fixes for touched Python.
+
 ## Completed Summary
 
 ### Core Phases Closed
