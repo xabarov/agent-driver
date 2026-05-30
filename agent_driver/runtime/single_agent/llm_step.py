@@ -294,6 +294,10 @@ def _build_trimmed_request(
             PlanningStep.model_validate(planning_step_payload)
         )
     protocol_messages = _protocol_messages_from_metadata(context)
+    protocol_messages = _append_runtime_attachment_messages(
+        context,
+        protocol_messages,
+    )
     protocol_messages = maybe_append_todo_reminder_to_protocol(
         context, protocol_messages
     )
@@ -455,6 +459,60 @@ def _protocol_messages_from_metadata(
     return tuple(rows) if rows else None
 
 
+def _append_runtime_attachment_messages(
+    context: RunContext,
+    protocol_messages: tuple[ChatMessage, ...] | None,
+) -> tuple[ChatMessage, ...] | None:
+    attachments = _runtime_attachment_messages(context)
+    if not attachments:
+        return protocol_messages
+    if protocol_messages is not None:
+        return protocol_messages + attachments
+    base_messages = tuple(context.run_input.messages)
+    if not base_messages:
+        content = str(context.run_input.input or "").strip()
+        if content:
+            base_messages = (ChatMessage(role=ChatRole.USER, content=content),)
+    return base_messages + attachments if base_messages else attachments
+
+
+def _runtime_attachment_messages(context: RunContext) -> tuple[ChatMessage, ...]:
+    """Return volatile model-facing chat reminders as request attachments."""
+    if context.run_input.app_metadata.get("chat_mode") is not True:
+        return tuple()
+    lines = _chat_mode_runtime_reminders(context)
+    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
+    if isinstance(task_contract, dict):
+        reminder = render_task_contract_reminder(task_contract)
+        if reminder:
+            lines.append(reminder)
+    planning_hint = context.run_input.tool_policy.metadata.get("planning_hint")
+    if isinstance(planning_hint, dict):
+        level = str(planning_hint.get("level") or "")
+        reason = str(planning_hint.get("reason") or "").strip()
+        if level == "suggested":
+            lines.append(
+                "Planning hint: this request looks like non-trivial "
+                "implementation work; prefer enter_plan_mode before execution. "
+                f"Reason: {reason or 'adaptive planning suggested'}."
+            )
+        elif level == "required":
+            lines.append(
+                "Planning hint: approved planning is required before "
+                "side-effecting execution. Enter plan mode and call "
+                "exit_plan_mode_v2 with concrete plan content."
+            )
+    return tuple(
+        ChatMessage(
+            role=ChatRole.USER,
+            content=line,
+            metadata={"kind": "runtime_attachment"},
+        )
+        for line in lines
+        if line.strip()
+    )
+
+
 def _emit_protocol_debug(host: LlmStepHost, context: RunContext, request: Any) -> None:
     if context.run_input.app_metadata.get("debug_tool_protocol") is not True:
         return
@@ -537,29 +595,6 @@ def _react_system_instruction(host: LlmStepHost, context: RunContext) -> str | N
     workspace_cwd = context.run_input.app_metadata.get("workspace_cwd")
     if isinstance(workspace_cwd, str) and workspace_cwd.strip():
         lines.append(f"Workspace cwd: {workspace_cwd.strip()}")
-    if context.run_input.app_metadata.get("chat_mode") is True:
-        lines.extend(_chat_mode_runtime_reminders(context))
-        task_contract = context.run_input.tool_policy.metadata.get("task_contract")
-        if isinstance(task_contract, dict):
-            reminder = render_task_contract_reminder(task_contract)
-            if reminder:
-                lines.append(reminder)
-        planning_hint = context.run_input.tool_policy.metadata.get("planning_hint")
-        if isinstance(planning_hint, dict):
-            level = str(planning_hint.get("level") or "")
-            reason = str(planning_hint.get("reason") or "").strip()
-            if level == "suggested":
-                lines.append(
-                    "Planning hint: this request looks like non-trivial "
-                    "implementation work; prefer enter_plan_mode before execution. "
-                    f"Reason: {reason or 'adaptive planning suggested'}."
-                )
-            elif level == "required":
-                lines.append(
-                    "Planning hint: approved planning is required before "
-                    "side-effecting execution. Enter plan mode and call "
-                    "exit_plan_mode_v2 with concrete plan content."
-                )
     return "\n".join(lines)
 
 

@@ -52,7 +52,7 @@
 - [x] Переписать `react_chat_tool_policy.txt` в более модульную форму:
   identity, language, tool calling, planning boundaries, research boundaries,
   deliverable boundaries, ask-question boundaries.
-- [ ] Вынести volatile reminders из base prompt в runtime attachments:
+- [x] Вынести volatile reminders из base prompt в runtime attachments:
   active task contract, force-final, research-required, existing checklist,
   approved plan state, steering command.
 - [x] Сделать `ask_user_question` schema/prompt ближе к OpenClaude:
@@ -267,6 +267,9 @@ Latest known good checks:
 - `steering-mid-run` live passed with `run_7e50e962c1b8`:
   `enqueue_user_message` was queued, dequeued, applied, and final answer kept
   required web-search evidence.
+- Runtime attachment refactor smoke passed:
+  `simple-direct` live `run_5ab97707b513`, `research-report` live
+  `run_9e79e1b12d0f`.
 - latest 7-scenario live probe passed with run ids:
   `run_b4b5a25caf59`, `run_1305757bddea`, `run_14d441eb6cae`,
   `run_af1b198eb3fa`, `run_b662ac776ff2`, `run_bf797fbf2048`,

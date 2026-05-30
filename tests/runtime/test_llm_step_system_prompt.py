@@ -9,6 +9,7 @@ from agent_driver.runtime.single_agent.config_sections import PythonToolSettings
 from agent_driver.runtime.single_agent.llm_step import (
     _effective_code_agent_imports,
     _react_system_instruction,
+    _runtime_attachment_messages,
 )
 from agent_driver.tools.registry import ToolRegistry
 
@@ -45,13 +46,8 @@ def test_react_system_prompt_contains_todo_status_rules() -> None:
     assert "at most one todo may be in_progress" in instruction
 
 
-def test_react_system_prompt_includes_deliverable_runtime_reminder() -> None:
-    """Deliverable turns should get an explicit anti-replanning reminder."""
-    registry = ToolRegistry()
-    host = SimpleNamespace(
-        _deps=SimpleNamespace(tool_registry=registry),
-        _config=SimpleNamespace(python_tool=PythonToolSettings(enabled=False)),
-    )
+def test_runtime_attachments_include_deliverable_runtime_reminder() -> None:
+    """Deliverable turns should get an explicit anti-replanning attachment."""
     context = SimpleNamespace(
         run_input=AgentRunInput(
             input="напиши итоговый черновик, не план",
@@ -70,20 +66,16 @@ def test_react_system_prompt_includes_deliverable_runtime_reminder() -> None:
             }
         },
     )
-    instruction = _react_system_instruction(host, context)
-    assert instruction is not None
-    assert "deliverable_request_active" in instruction
-    assert "produce the requested final answer" in instruction
-    assert "do not restart planning" in instruction
-
-
-def test_react_system_prompt_includes_task_contract_reminder() -> None:
-    """Chat mode should surface the lightweight task contract to the model."""
-    registry = ToolRegistry()
-    host = SimpleNamespace(
-        _deps=SimpleNamespace(tool_registry=registry),
-        _config=SimpleNamespace(python_tool=PythonToolSettings(enabled=False)),
+    attachment_text = "\n".join(
+        message.content for message in _runtime_attachment_messages(context)
     )
+    assert "deliverable_request_active" in attachment_text
+    assert "produce the final deliverable" in attachment_text
+    assert "do not restart planning" in attachment_text
+
+
+def test_runtime_attachments_include_task_contract_reminder() -> None:
+    """Chat mode should surface the lightweight task contract to the model."""
     context = SimpleNamespace(
         run_input=AgentRunInput(
             input="напиши реферат по Fender, не план",
@@ -104,20 +96,16 @@ def test_react_system_prompt_includes_task_contract_reminder() -> None:
         ),
         metadata={},
     )
-    instruction = _react_system_instruction(host, context)
-    assert instruction is not None
-    assert "task_contract_active (deliverable)" in instruction
-    assert "Final answer, not another plan" in instruction
-    assert "Restarting the plan" in instruction
-
-
-def test_react_system_prompt_includes_plan_mode_runtime_reminder() -> None:
-    """Plan mode should be represented as a compact runtime reminder."""
-    registry = ToolRegistry()
-    host = SimpleNamespace(
-        _deps=SimpleNamespace(tool_registry=registry),
-        _config=SimpleNamespace(python_tool=PythonToolSettings(enabled=False)),
+    attachment_text = "\n".join(
+        message.content for message in _runtime_attachment_messages(context)
     )
+    assert "task_contract_active (deliverable)" in attachment_text
+    assert "Final answer, not another plan" in attachment_text
+    assert "Restarting the plan" in attachment_text
+
+
+def test_runtime_attachments_include_plan_mode_runtime_reminder() -> None:
+    """Plan mode should be represented as a compact runtime attachment."""
     context = SimpleNamespace(
         run_input=AgentRunInput(
             input="implement feature",
@@ -132,11 +120,12 @@ def test_react_system_prompt_includes_plan_mode_runtime_reminder() -> None:
             }
         },
     )
-    instruction = _react_system_instruction(host, context)
-    assert instruction is not None
-    assert "planning_mode_active" in instruction
-    assert "Stay read-only" in instruction
-    assert "exit_plan_mode_v2" in instruction
+    attachment_text = "\n".join(
+        message.content for message in _runtime_attachment_messages(context)
+    )
+    assert "planning_mode_active" in attachment_text
+    assert "Stay read-only" in attachment_text
+    assert "exit_plan_mode_v2" in attachment_text
 
 
 def test_react_system_prompt_includes_workspace_cwd_when_present() -> None:
