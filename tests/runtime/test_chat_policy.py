@@ -41,6 +41,8 @@ def test_force_planning_metadata_is_preserved() -> None:
 def test_initial_tool_choice_for_research_requires_web_preset() -> None:
     policy = build_chat_tool_policy("найди в интернете информацию о Fender")
 
+    assert policy.metadata["research_request"]["enabled"] is True
+    assert policy.denied_tools == ["ask_user_question"]
     assert initial_tool_choice_for_chat(policy=policy, preset="web") == {
         "type": "tool",
         "name": "web_search",

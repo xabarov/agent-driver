@@ -281,10 +281,7 @@ def _parse_forced_tool_args_fragment(text: str) -> dict[str, Any] | None:
             candidate = f"{candidate}}}"
         candidates.append(candidate)
     for candidate in candidates:
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
+        parsed = _parse_json_object_prefix(candidate)
         if isinstance(parsed, dict):
             return parsed
     return None
@@ -293,11 +290,28 @@ def _parse_forced_tool_args_fragment(text: str) -> dict[str, Any] | None:
 def _parse_forced_web_search_query_fragment(text: str) -> dict[str, Any] | None:
     """Recover Qwen/OpenRouter positional web_search query fragments."""
     clean = re.sub(r"</?tool_call>", "", text, flags=re.IGNORECASE).strip()
+    object_match = re.search(r"(?:^|[\s,{])\d+\s*:\s*(?P<object>\{[\s\S]*\})", clean)
+    if object_match is not None:
+        raw_object = object_match.group("object").strip()
+        parsed = _parse_json_object_prefix(raw_object)
+        if isinstance(parsed, dict) and isinstance(parsed.get("query"), str):
+            query = parsed["query"].strip()
+            return {"query": query} if query else None
     match = re.search(r"(?:^|[\s,{])\d+\s*:\s*\"(?P<query>[^\"]+)\"", clean)
     if match is None:
         return None
     query = match.group("query").strip()
     return {"query": query} if query else None
+
+
+def _parse_json_object_prefix(text: str) -> dict[str, Any] | None:
+    """Parse the shortest valid JSON object prefix from text."""
+    decoder = json.JSONDecoder()
+    try:
+        parsed, _index = decoder.raw_decode(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def normalize_openai_completion_payload(

@@ -118,6 +118,15 @@ SCENARIOS: dict[str, LiveScenario] = {
         ),
         requires_research=False,
     ),
+    "clarification-only-when-blocked": LiveScenario(
+        name="clarification-only-when-blocked",
+        prompt=(
+            "найди в интернете краткую информацию о Fender Jazzmaster и дай итог; "
+            "если нужно выбрать аспект, выбери сам"
+        ),
+        required_tools=("web_search",),
+        requires_research=True,
+    ),
 }
 
 

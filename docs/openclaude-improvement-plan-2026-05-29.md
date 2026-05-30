@@ -73,9 +73,9 @@
   final, fake citations without tool evidence, raw JSON in chat, stuck
   clarification.
 - [x] Добить минимум 5 live Phoenix-backed scenarios на текущей default model.
-  Latest `--all` passed on 2026-05-30 with `deliverable-no-replan`,
-  `plan-only`, `plan-web-answer`, `research-report`, `simple-direct`, and
-  `web-search-final`.
+  Latest suite includes `clarification-only-when-blocked`,
+  `deliverable-no-replan`, `plan-only`, `plan-web-answer`, `research-report`,
+  `simple-direct`, and `web-search-final`.
 
 ### Core Scenario Set
 
@@ -90,7 +90,7 @@
 - [x] `deliverable-no-replan`: explicit deliverable не рестартует planning loop.
 - [x] `plan-only`: пользователь просит только план; агент показывает checklist
   и не пишет deliverable.
-- [ ] `clarification-only-when-blocked`: уточнение только для реально
+- [x] `clarification-only-when-blocked`: уточнение только для реально
   блокирующего user-owned решения.
 - [ ] `subagent-synthesis` live: `agent_tool` порождает детей, parent получает
   результаты и выдает синтез.
@@ -258,6 +258,10 @@ Latest known good checks:
 - latest 6-scenario live probe passed with run ids:
   `run_939d0ad932ed`, `run_c3a4befd49bc`, `run_1fd22ffa5f16`,
   `run_50dce1de0945`, `run_8bf476954a92`, `run_f62af2122f04`.
+- latest 7-scenario live probe passed with run ids:
+  `run_b4b5a25caf59`, `run_1305757bddea`, `run_14d441eb6cae`,
+  `run_af1b198eb3fa`, `run_b662ac776ff2`, `run_bf797fbf2048`,
+  `run_b8ae998bbbe2`.
 
 Dev stack:
 

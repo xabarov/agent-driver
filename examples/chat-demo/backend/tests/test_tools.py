@@ -132,6 +132,23 @@ def test_initial_tool_choice_forces_web_search_for_research_deliverable() -> Non
     assert initial_tool_choice_for_chat(policy=policy, preset="off") is None
 
 
+def test_chat_tool_policy_denies_clarification_for_research_request() -> None:
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="найди в интернете краткую информацию о Fender Jazzmaster",
+        ),
+        settings=Settings(),
+    )
+
+    assert policy.metadata["task_contract"]["kind"] == "research"
+    assert policy.metadata["research_request"]["enabled"] is True
+    assert policy.denied_tools == ["ask_user_question"]
+    assert initial_tool_choice_for_chat(policy=policy, preset="web") == {
+        "type": "tool",
+        "name": "web_search",
+    }
+
+
 def test_chat_tool_policy_denies_web_tools_for_plan_only() -> None:
     policy = _chat_tool_policy(
         body=ChatMessageRequest(

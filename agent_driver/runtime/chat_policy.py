@@ -65,6 +65,12 @@ def build_chat_tool_policy(
             "reason": "user asked for a plan without executing the work",
         }
         denied_tools = ["web_search", "web_fetch"]
+    elif contract_kind == "research":
+        metadata["research_request"] = {
+            "enabled": True,
+            "reason": "user gave a research target; proceed with available sources",
+        }
+        denied_tools = ["ask_user_question"]
     if force_planning:
         metadata["force_planning"] = {
             "enabled": True,
