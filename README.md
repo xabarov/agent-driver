@@ -99,11 +99,11 @@ AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests
 - Chat demo: `docs/chat-demo.md`
 - Testing: `docs/testing.md`
 - Built-in tools overview: `docs/builtin-tools.md`
-- Implementation roadmap: `docs/roadmap.md`
+- Roadmap: `docs/roadmap.md`
 - OpenClaude improvement plan: `docs/openclaude-improvement-plan-2026-05-29.md`
 
 ## Project status
 
 The repository is actively evolving around the runtime/tooling contract surface
-described in `docs/roadmap.md`. Public API is still early and may change between
-minor iterations.
+summarized in `docs/roadmap.md`. Public API is still early and may change
+between minor iterations.

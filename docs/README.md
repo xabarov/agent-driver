@@ -24,8 +24,7 @@ and tied to code that exists in the repository.
   best-of-both backlog.
 - [Chat demo design improvement plan](chat-demo-design-improvement-plan-2026-05-29.md)
   - UI/product issues discovered while testing the demo.
-- [Implementation roadmap](roadmap.md) - historical roadmap plus long-running
-  implementation notes. Treat it as context, not the freshest index.
+- [Roadmap](roadmap.md) - short current direction and quality bar.
 
 ## Recipes And Patterns
 
