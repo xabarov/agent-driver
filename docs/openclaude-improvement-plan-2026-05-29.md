@@ -342,12 +342,32 @@ Best-of-both plan for `agent-driver`:
   plan -> clarification -> answer, research -> deliverable, implementation
   plan approval, subagent final synthesis, and ask-question denial on
   deliverable turns.
+  Current concept-smoke suite covers deterministic UI regressions for
+  clarification, plan approval, denied tools, web-search final answer,
+  subagent synthesis, simple direct answers without planning, and denied
+  clarification on deliverable turns. Live Phoenix-backed passes should reuse
+  the same scenario labels where possible and compare trace shape against the
+  deterministic expectation.
 - Added `examples/chat-demo/frontend/tests/e2e/chat_concepts_smoke.py` for
   deterministic concept checks over the real React UI. Current scenarios cover
   plan approval, plan/tombstone/clarification/resume, denied tool feedback,
   web-search final answer, and subagent final answer.
 - Current concept smoke writes screenshots to `/tmp/chat-demo-concepts` and
   can be run through `make test-chat-concepts`.
+- Scenario methodology: run a small orthogonal set first, inspect Phoenix
+  traces for model/tool order, then apply the smallest prompt/contract/runtime
+  change that fixes the trace. The baseline set is:
+  `simple-direct`, `web-search-final`, `clarification`,
+  `ask-question-denied`, `plan-approval`, and `subagent-final`.
+- Live Phoenix check, 2026-05-30:
+  - `simple-direct` prompt (`сколько r в слове strawberry?`) completed with no
+    tool calls, matching the no-planning expectation;
+  - `web-search-final` prompt produced `web_search -> web_fetch -> final`,
+    with trace `run_0455d4ec910b` visible in Phoenix under
+    `agent-driver-chat-demo`;
+  - trace inspection showed `chat.session_id` was empty on root spans, so
+    chat-demo now includes `session_id` in run `app_metadata` for cleaner
+    Phoenix filtering.
 - Root `.venv` has backend/frontend test dependencies installed for local
   checks; the stale `examples/chat-demo/backend/.venv` is no longer used.
 - Frontend unit tests pass.

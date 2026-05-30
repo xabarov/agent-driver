@@ -116,6 +116,7 @@ def build_chat_app_metadata(settings: Settings, session_id: str) -> dict[str, ob
         "stream_poll_interval_ms": settings.stream_poll_interval_ms,
         "llm_stream_idle_timeout_seconds": settings.llm_stream_idle_timeout_seconds,
         "chat_mode": True,
+        "session_id": session_id,
         "workspace_cwd": str(resolve_session_workspace(settings, session_id)),
     }
 

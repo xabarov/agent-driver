@@ -49,7 +49,26 @@ Single scenario:
 ```
 
 Current concept scenarios cover clarification, plan approval, denied tool
-feedback, web-search final answer, and subagent final answer.
+feedback, simple direct answers, web-search final answer, ask-question denial
+on deliverable turns, and subagent final answer.
+
+Recommended orthogonal subset while developing planning/control behavior:
+
+```bash
+.venv/bin/python examples/chat-demo/frontend/tests/e2e/chat_concepts_smoke.py \
+  --scenario simple-direct \
+  --scenario web-search-final \
+  --scenario clarification \
+  --scenario ask-question-denied \
+  --scenario plan-approval \
+  --scenario subagent-final
+```
+
+For live-provider debugging, run the matching user prompts in the real chat,
+then inspect Phoenix at `http://localhost:6006`. Compare the trace shape against
+the deterministic scenario: direct answers should not create tools, deliverable
+turns should not pause on clarification, and subagent runs should end with a
+coordinator synthesis rather than worker-only progress.
 
 ## Design Backlog
 

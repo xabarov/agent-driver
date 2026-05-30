@@ -483,10 +483,129 @@ def run_subagent_final_answer(page: Page) -> None:
     page.screenshot(path=str(ARTIFACT_DIR / "subagent-final.png"), full_page=True)
 
 
+def run_simple_direct_answer(page: Page) -> None:
+    """Simple factual chat should not create plan, tools, or interrupts."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2, "token_delta", {"delta_text": "В слове strawberry три буквы r."}
+            ),
+            sse_event(3, "run_completed"),
+        ]
+    )
+
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    # 5-step visible path: type simple question, send, see direct answer,
+    # verify no plan panel, verify no tool/interrupt UI.
+    send_chat_message(page, "сколько r в слове strawberry?")
+    expect(page.get_by_text("В слове strawberry три буквы r.")).to_be_visible(
+        timeout=5000
+    )
+    expect(page.get_by_text("PLAN")).not_to_be_visible(timeout=1000)
+    expect(page.locator("button[aria-label*='tool call']")).to_have_count(0)
+    expect(
+        page.get_by_role("heading", name="Clarification required")
+    ).not_to_be_visible()
+    expect(
+        page.get_by_role("heading", name="Plan approval required")
+    ).not_to_be_visible()
+    page.screenshot(path=str(ARTIFACT_DIR / "simple-direct-answer.png"), full_page=True)
+
+
+def run_ask_question_denied_on_deliverable(page: Page) -> None:
+    """Denied clarification should not become a user-facing interrupt."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "tool_call_started",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "ask_user_question",
+                            "tool_call_id": "ask_denied_1",
+                            "status": "running",
+                            "args": {
+                                "prompt": "Какой формат нужен?",
+                                "questions": [
+                                    {
+                                        "id": "format",
+                                        "header": "Format",
+                                        "question": "Какой формат нужен?",
+                                        "choices": [
+                                            {"id": "short", "label": "Short"},
+                                            {"id": "full", "label": "Full"},
+                                        ],
+                                    }
+                                ],
+                            },
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                3,
+                "tool_call_completed",
+                {
+                    "tools": [
+                        {
+                            "tool_name": "ask_user_question",
+                            "tool_call_id": "ask_denied_1",
+                            "status": "denied",
+                            "result_summary": (
+                                "deliverable request: clarification tool denied; "
+                                "state reasonable assumptions and answer"
+                            ),
+                        }
+                    ]
+                },
+            ),
+            sse_event(
+                4,
+                "token_delta",
+                {
+                    "delta_text": (
+                        "Принял разумное допущение: нужен краткий итог. "
+                        "Вот готовый ответ без дополнительного уточнения."
+                    )
+                },
+            ),
+            sse_event(5, "run_completed"),
+        ]
+    )
+
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    # 5-step visible path: type deliverable, send, confirm no clarification
+    # card/raw control tool, see final text, keep composer usable.
+    send_chat_message(page, "напиши короткий итог по найденным фактам, без вопросов")
+    expect(
+        page.get_by_text("Вот готовый ответ без дополнительного уточнения")
+    ).to_be_visible(timeout=5000)
+    expect(
+        page.get_by_role("heading", name="Clarification required")
+    ).not_to_be_visible()
+    expect(page.get_by_text("ask_user_question")).not_to_be_visible(timeout=1000)
+    expect(page.get_by_role("textbox", name="Message the assistant…")).to_be_enabled()
+    page.screenshot(
+        path=str(ARTIFACT_DIR / "ask-question-denied-deliverable.png"),
+        full_page=True,
+    )
+
+
 SCENARIOS = {
+    "ask-question-denied": run_ask_question_denied_on_deliverable,
     "clarification": run_clarification_regression,
     "denied-tool": run_denied_tool_regression,
     "plan-approval": run_plan_approval_regression,
+    "simple-direct": run_simple_direct_answer,
     "subagent-final": run_subagent_final_answer,
     "web-search-final": run_web_search_final_answer,
 }

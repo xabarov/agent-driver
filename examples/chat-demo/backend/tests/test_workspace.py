@@ -44,6 +44,7 @@ def test_resolve_session_workspace_creates_directory(settings) -> None:
 def test_build_chat_app_metadata_includes_workspace_and_chat_mode(settings) -> None:
     meta = build_chat_app_metadata(settings, "session_xyz")
     assert meta["chat_mode"] is True
+    assert meta["session_id"] == "session_xyz"
     assert meta["stream_poll_interval_ms"] == settings.stream_poll_interval_ms
     workspace = Path(str(meta["workspace_cwd"]))
     assert workspace == resolve_session_workspace(settings, "session_xyz")
