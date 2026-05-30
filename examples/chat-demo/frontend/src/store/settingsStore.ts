@@ -4,10 +4,21 @@ import { persist } from "zustand/middleware";
 export type ToolPreset = "off" | "web_search" | "web_fetch" | "web";
 
 export function normalizeToolPreset(value: unknown): ToolPreset {
-  if (value === "web" || value === "web_search" || value === "web_fetch" || value === "off") {
+  if (
+    value === "web" ||
+    value === "web_search" ||
+    value === "web_fetch" ||
+    value === "off"
+  ) {
     return value;
   }
-  if (value === "safe" || value === "workspace" || value === "dev" || value === "all") {
+  if (
+    value === "agents" ||
+    value === "safe" ||
+    value === "workspace" ||
+    value === "dev" ||
+    value === "all"
+  ) {
     return "web";
   }
   return "web";

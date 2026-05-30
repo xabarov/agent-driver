@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, test } from "vitest";
 
-import { parseToolStatesFromEvent, type RunStreamEvent } from "../src/lib/events";
+import {
+  parseSubagentLifecycleEvent,
+  parseToolStatesFromEvent,
+  type RunStreamEvent,
+} from "../src/lib/events";
 import type { PlanningSnapshot } from "../src/lib/planning";
 import { useChatStore } from "../src/store/chatStore";
 
@@ -367,6 +371,50 @@ describe("chatStore", () => {
       status: "running",
     });
   });
+
+  test("applySubagentLifecycle attaches child status to latest agent tool", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("delegate");
+    useChatStore.getState().appendToolStarted(assistantId, {
+      toolCallId: "agent_1",
+      name: "agent_tool",
+      status: "running",
+      args: {
+        description: "Verify facts",
+        task: "Check facts and summarize.",
+      },
+    });
+    useChatStore.getState().applySubagentLifecycle(assistantId, {
+      seq: 2,
+      event: "subagent_group_started",
+      groupId: "group_1",
+    });
+    useChatStore.getState().applySubagentLifecycle(assistantId, {
+      seq: 3,
+      event: "subagent_completed",
+      groupId: "group_1",
+      childRun: {
+        taskId: "task_1",
+        childRunId: "run_child",
+        status: "completed",
+        description: "Verifier",
+        outputPreview: "facts ok",
+      },
+    });
+    const tool = useChatStore
+      .getState()
+      .messages.find((item) => item.role === "tool" && item.name === "agent_tool");
+
+    expect(tool?.role).toBe("tool");
+    if (tool?.role === "tool") {
+      expect(tool.subagent?.groupStatus).toBe("running");
+      expect(tool.subagent?.childRuns?.[0]).toMatchObject({
+        taskId: "task_1",
+        childRunId: "run_child",
+        status: "completed",
+        outputPreview: "facts ok",
+      });
+    }
+  });
 });
 
 describe("parseToolStatesFromEvent", () => {
@@ -393,5 +441,41 @@ describe("parseToolStatesFromEvent", () => {
     expect(tools).toHaveLength(1);
     expect(tools[0]).toMatchObject({ name: "read_file", toolCallId: "call_a", status: "running" });
     expect(tools[0].argsSummary).toBe("path: README.md");
+  });
+
+  test("parses subagent lifecycle events", () => {
+    const event: RunStreamEvent<Record<string, unknown>> = {
+      schema_version: "1.0",
+      stream_id: "run_1:2",
+      run_id: "run_1",
+      attempt_id: "att_1",
+      seq: 2,
+      event: "subagent_completed",
+      source: "runtime_event",
+      data: {
+        group_id: "group_1",
+        task_id: "task_1",
+        child_run_id: "run_child",
+        status: "completed",
+        description: "Verifier",
+        summary: "facts ok",
+        used_tools: ["web_search"],
+        warning: "low confidence",
+      },
+    };
+
+    expect(parseSubagentLifecycleEvent(event)).toMatchObject({
+      event: "subagent_completed",
+      groupId: "group_1",
+      childRun: {
+        taskId: "task_1",
+        childRunId: "run_child",
+        status: "completed",
+        description: "Verifier",
+        outputPreview: "facts ok",
+        usedTools: ["web_search"],
+        warning: "low confidence",
+      },
+    });
   });
 });

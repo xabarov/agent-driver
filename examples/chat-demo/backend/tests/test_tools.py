@@ -13,7 +13,7 @@ async def test_tools_default_preset(client) -> None:
     assert response.status_code == 200
     payload = response.json()
     names = {item["name"] for item in payload["tools"]}
-    assert names == {"web_fetch", "web_search"}
+    assert names == {"agent_tool", "web_fetch", "web_search"}
     assert "read_file" not in names
     assert "bash" not in names
     assert payload["workspace"]["mode"] == "session"
@@ -23,21 +23,29 @@ async def test_tools_off_preset_query(client) -> None:
     response = await client.get("/api/tools", params={"preset": "off"})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["tools"] == []
+    names = {item["name"] for item in payload["tools"]}
+    assert names == {"agent_tool"}
 
 
 async def test_tools_web_search_preset_only_shows_search(client) -> None:
     response = await client.get("/api/tools", params={"preset": "web_search"})
     assert response.status_code == 200
     names = {item["name"] for item in response.json()["tools"]}
-    assert names == {"web_search"}
+    assert names == {"agent_tool", "web_search"}
 
 
 async def test_tools_web_fetch_preset_only_shows_fetch(client) -> None:
     response = await client.get("/api/tools", params={"preset": "web_fetch"})
     assert response.status_code == 200
     names = {item["name"] for item in response.json()["tools"]}
-    assert names == {"web_fetch"}
+    assert names == {"agent_tool", "web_fetch"}
+
+
+async def test_tools_agents_preset_shows_agent_tool(client) -> None:
+    response = await client.get("/api/tools", params={"preset": "agents"})
+    assert response.status_code == 200
+    names = {item["name"] for item in response.json()["tools"]}
+    assert names == {"agent_tool"}
 
 
 async def test_tools_legacy_dev_preset_still_hides_filesystem_from_public_endpoint(
@@ -46,7 +54,9 @@ async def test_tools_legacy_dev_preset_still_hides_filesystem_from_public_endpoi
     response = await client.get("/api/tools", params={"preset": "dev"})
     assert response.status_code == 200
     names = {item["name"] for item in response.json()["tools"]}
-    assert names == {"web_fetch", "web_search"}
+    assert "read_file" not in names
+    assert "write_file" not in names
+    assert "bash" not in names
 
 
 async def test_workspace_sample_import_populates_session_workspace(client) -> None:
@@ -183,10 +193,10 @@ def test_public_chat_presets_exclude_modal_plan_approval_tools() -> None:
     assert "planning" in set(dev_config.tool_packs)
 
 
-def test_agents_preset_exposes_agent_tool_without_dangerous_tools() -> None:
-    config = _tool_config_from_preset("agents")
-
-    assert config.tools == ("agent_tool",)
-    assert "shell" not in config.tool_packs
-    assert "filesystem_write" not in config.tool_packs
-    assert config.allow_dangerous_tools is False
+def test_public_chat_presets_include_agent_tool_without_dangerous_tools() -> None:
+    for preset in ("off", "web_search", "web_fetch", "web", "agents"):
+        config = _tool_config_from_preset(preset)
+        assert "agent_tool" in set(config.tools)
+        assert "shell" not in config.tool_packs
+        assert "filesystem_write" not in config.tool_packs
+        assert config.allow_dangerous_tools is False

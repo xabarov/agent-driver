@@ -13,6 +13,7 @@ import type { LucideIcon } from "lucide-react";
 import { cn } from "../../lib/cn";
 import type { ToolChatMessage } from "../../store/chatStore";
 import { Badge } from "../ui/badge";
+import { SubagentPanel } from "./SubagentPanel";
 
 interface ToolCallCardProps {
   message: ToolChatMessage;
@@ -45,6 +46,10 @@ function statusClass(status: ToolChatMessage["status"]): string {
 }
 
 export function ToolCallCard({ message }: ToolCallCardProps) {
+  if (message.name === "agent_tool") {
+    return <SubagentPanel message={message} />;
+  }
+
   const [open, setOpen] = useState(
     message.status === "running" || message.status === "denied",
   );

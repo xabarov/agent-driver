@@ -7,7 +7,7 @@ import {
   type AssistantMessageMetadata,
   type LlmCompletedPatch,
 } from "../lib/messageMetadata";
-import type { ParsedToolState } from "../lib/events";
+import type { ParsedSubagentLifecycleEvent, ParsedToolState } from "../lib/events";
 import type { PlanningSnapshot } from "../lib/planning";
 import { stripTextFormToolCalls } from "../lib/stripToolCalls";
 import type { SessionDetailView } from "../types/api";
@@ -31,6 +31,25 @@ export interface ToolChatMessage {
   resultPreview?: string;
   risk?: string;
   durationMs?: number;
+  subagent?: SubagentLifecycle;
+}
+
+export interface SubagentLifecycle {
+  groupId?: string;
+  groupStatus?: "preparing" | "running" | "joined" | "waiting" | "failed" | "cancelled";
+  joinState?: string;
+  childRuns?: SubagentChildRun[];
+}
+
+export interface SubagentChildRun {
+  taskId: string;
+  subagentRunId?: string;
+  childRunId?: string;
+  status: "spawned" | "running" | "completed" | "failed" | "cancelled";
+  description?: string;
+  outputPreview?: string;
+  usedTools?: string[];
+  warning?: string;
 }
 
 export type ChatMessage =
@@ -120,6 +139,84 @@ function insertAfterAssistant(messages: ChatMessage[], assistantId: string, item
   return [...messages.slice(0, insertAt), item, ...messages.slice(insertAt)];
 }
 
+function updateLatestAgentTool(
+  messages: ChatMessage[],
+  assistantId: string,
+  update: (message: ToolChatMessage) => ToolChatMessage,
+): ChatMessage[] {
+  const assistantIndex = messages.findIndex(
+    (message) => message.id === assistantId && message.role === "assistant",
+  );
+  let fallbackIndex = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "tool" || message.name !== "agent_tool") {
+      continue;
+    }
+    if (fallbackIndex < 0) {
+      fallbackIndex = index;
+    }
+    if (assistantIndex >= 0 && index > assistantIndex) {
+      return messages.map((item, itemIndex) =>
+        itemIndex === index && item.role === "tool" ? update(item) : item,
+      );
+    }
+  }
+  if (fallbackIndex >= 0) {
+    return messages.map((item, itemIndex) =>
+      itemIndex === fallbackIndex && item.role === "tool" ? update(item) : item,
+    );
+  }
+  return messages;
+}
+
+function upsertChildRun(
+  children: SubagentChildRun[],
+  patch: SubagentChildRun,
+): SubagentChildRun[] {
+  const index = children.findIndex(
+    (child) =>
+      child.taskId === patch.taskId ||
+      Boolean(patch.subagentRunId && child.subagentRunId === patch.subagentRunId) ||
+      Boolean(patch.childRunId && child.childRunId === patch.childRunId),
+  );
+  if (index < 0) {
+    return [...children, patch];
+  }
+  return children.map((child, childIndex) =>
+    childIndex === index ? { ...child, ...patch } : child,
+  );
+}
+
+function applySubagentPatch(
+  lifecycle: SubagentLifecycle | undefined,
+  event: ParsedSubagentLifecycleEvent,
+): SubagentLifecycle {
+  const next: SubagentLifecycle = {
+    ...(lifecycle ?? {}),
+    childRuns: [...(lifecycle?.childRuns ?? [])],
+  };
+  if (event.groupId) {
+    next.groupId = event.groupId;
+  }
+  if (event.event === "subagent_group_started") {
+    next.groupStatus = "running";
+  } else if (event.event === "subagent_group_joined") {
+    next.groupStatus = "joined";
+    next.joinState = event.joinState;
+  } else if (event.event === "subagent_group_join_waiting") {
+    next.groupStatus = "waiting";
+    next.joinState = event.joinState;
+  } else if (event.event === "subagent_group_failed") {
+    next.groupStatus = "failed";
+    next.joinState = event.joinState;
+  }
+  if (event.childRun) {
+    next.childRuns = upsertChildRun(next.childRuns ?? [], event.childRun);
+  }
+  return next;
+}
+
 interface ChatState {
   messages: ChatMessage[];
   streaming: boolean;
@@ -135,6 +232,10 @@ interface ChatState {
   tombstoneAssistant: (assistantId: string) => void;
   appendToolStarted: (assistantId: string, tool: ParsedToolState) => void;
   updateToolCompleted: (toolCallId: string, tool: ParsedToolState) => void;
+  applySubagentLifecycle: (
+    assistantId: string,
+    event: ParsedSubagentLifecycleEvent,
+  ) => void;
   finishTurn: (assistantId: string) => void;
   setStreaming: (value: boolean) => void;
   setLastSeq: (seq: number) => void;
@@ -317,6 +418,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
           : message,
       ),
+    })),
+  applySubagentLifecycle: (assistantId, event) =>
+    set((state) => ({
+      messages: updateLatestAgentTool(state.messages, assistantId, (message) => ({
+        ...message,
+        subagent: applySubagentPatch(message.subagent, event),
+      })),
     })),
   finishTurn: (assistantId) => {
     set((state) => ({

@@ -190,6 +190,98 @@
 - Extra clarification: `ask_user_question` is used for research or deliverable
   tasks where reasonable assumptions should be enough.
 
+## Next Work: Subagent Autonomy And UX
+
+Цель: в chat demo должно быть видно не только что `agent_tool` технически
+работает, но и что агент разумно делегирует сложные задачи сам или по прямой
+просьбе пользователя, а пользователь может заглянуть в работу дочерних агентов
+без чтения сырого JSON.
+
+### Product Behavior
+
+- [x] Уточнить prompt/runtime policy для делегирования:
+  - делегировать при явной просьбе пользователя: "поручи субагенту",
+    "пусть отдельный агент проверит", "сравни несколькими исполнителями";
+  - делегировать для сложных задач, где есть независимые подзадачи:
+    research + verification, compare alternatives, draft + critique,
+    implementation + review;
+  - не делегировать для простых factual вопросов, маленьких переводов,
+    коротких ответов и задач, где один проход дешевле и понятнее;
+  - child prompt должен быть self-contained, bounded, с явным expected output
+    и запретом выдумывать недоступные результаты.
+- [x] Упростить UI capability model:
+  - Web Search/Web Fetch остаются пользовательскими переключателями;
+  - bounded delegation всегда доступно агенту и не выключается в chat demo;
+  - модель решает, когда делегировать, по prompt policy и task complexity.
+- [x] Добавить model-dependent live сценарии:
+  - explicit delegation: пользователь прямо просит поручить часть работы
+    субагенту, ожидаем `agent_tool`, child completed, parent synthesis;
+  - autonomous delegation: сложная compare/review задача без прямого слова
+    "субагент", ожидаем делегирование при обычном web-capable surface;
+  - no delegation: простой вопрос при доступном `agent_tool` не должен вызывать
+    `agent_tool`;
+  - delegation final: parent обязан дать финальный ответ, а не только
+    сообщить, что child завершился.
+
+### Runtime / Trace Criteria
+
+- [x] Расширить `/trace-summary` для subagent verdict:
+  `delegation_requested`, `delegation_expected`, `agent_tool_used`,
+  `child_runs_started`, `child_runs_completed`, `groups_joined`,
+  `parent_synthesized_final`, `child_error_count`.
+- [x] Добавить failure labels:
+  `missed_explicit_delegation`, `unnecessary_delegation`,
+  `subagent_no_final`, `child_result_not_used`, `child_prompt_not_bounded`.
+- [x] В live probe считать сценарий успешным только если:
+  - tool surface содержит `agent_tool` вместе с выбранными web capabilities;
+  - есть `agent_tool` при explicit/autonomous delegation;
+  - есть completed child/group join;
+  - финальный parent answer содержит синтез child output;
+  - нет повторного plan loop после join.
+
+### Chat UI/UX
+
+- [x] Спроектировать `SubagentPanel` вместо сырого tool JSON:
+  - компактная карточка "Delegated work";
+  - статусы: preparing, spawned, running, joined, failed, cancelled;
+  - список child agents с role/title, short task, elapsed time, terminal state;
+  - итоговый child summary в 1-3 строки;
+  - кнопка/accordion "Inspect" для деталей.
+- [x] Детальный просмотр должен показывать полезную работу, а не шум:
+  - child prompt / task brief;
+  - child final output;
+  - used tools summary;
+  - warnings/errors;
+  - ссылки на child run id и Phoenix trace when available.
+- [x] Скрыть raw `agent_tool` JSON по умолчанию:
+  - raw payload оставить только в expandable debug view;
+  - на основной поверхности показывать человекочитаемый lifecycle.
+- [x] Продумать визуальную модель:
+  - в общем чате субагенты не должны выглядеть как отдельные полноценные
+    собеседники;
+  - лучше формат "work packet / worker lane" внутри assistant bubble;
+  - parent final answer остается главным артефактом.
+- [x] Проверить accessibility:
+  - статусы читаются screen reader;
+  - keyboard раскрывает child details;
+  - long child output не ломает scroll и composer.
+
+### Implementation Slices
+
+- [x] Slice 1: expose Agents preset in demo UI and docs, keep filesystem/shell
+  unavailable from web surface.
+- [x] Slice 2: add subagent lifecycle projection in frontend event parser:
+  group started, child spawned, child completed, group joined, merge completed.
+- [x] Slice 3: build deterministic `subagent-final` UI regression around
+  `SubagentPanel`.
+- [x] Slice 4: add live explicit/autonomous/no-delegation scenarios and Phoenix
+  verdict checks.
+- [x] Slice 5: prompt/runtime policy tuning from traces, keeping Python Zen
+  rule: prefer model + prompt + small guard before graph machinery.
+- [x] Slice 6: code quality pass with focused frontend tests, backend tests,
+  Playwright screenshots, `black`, `isort`, and meaningful `pylint` fixes for
+  touched Python.
+
 ## Neighbor Project Findings
 
 ### OpenClaude
@@ -288,6 +380,41 @@ Latest known good checks:
   `run_accde2c30205`, `run_bd40a12ff4ba`, `run_c27db4580225`,
   `run_45d7a37c00d3`, `run_ddb9dc3a6b07`, `run_509710ff14e2`,
   `run_df503c645b13`, `run_e160a397a865`, `run_5b2c65cf69ae`.
+- Subagent UX slice passed:
+  - `Tools · Agents` was replaced by always-available bounded delegation;
+  - Web Search/Web Fetch can coexist with `agent_tool` in the same surface;
+  - deterministic `subagent-final` renders `SubagentPanel` instead of raw
+    `agent_tool` JSON;
+  - frontend parses subagent lifecycle events into visible child rows:
+    group started, child started/completed, group joined;
+  - live `subagent-synthesis` passed with `run_19fb7d84ec99`;
+  - live `subagent-no-delegation-simple` passed with `run_8fd5cb28ff56`:
+    no `agent_tool` for a simple prompt even when delegation is available;
+  - live `subagent-explicit-delegation` passed with `run_2c1175e14afc`:
+    explicit delegation used `agent_tool`, child joined, parent synthesized;
+  - live `subagent-autonomous-delegation` passed with `run_23710fbfc304`:
+    complex compare/review prompt used `agent_tool`, child joined, parent
+    synthesized;
+  - Slice 5 tuning added prompt guidance plus a tiny runtime guard:
+    after successful subagent group join, the next parent LLM call is forced to
+    `tool_choice=none` with `force_final_reason=subagent_group_joined`;
+  - retested live subagent suite after the guard:
+    `subagent-autonomous-delegation` `run_d15d8f4670b6`,
+    `subagent-explicit-delegation` `run_69013e22a57d`,
+    `subagent-no-delegation-simple` `run_1a6e5e73ebdf`; all stayed
+    `verdict=pass`, with `planning_tool_calls=0` for subagent flows;
+  - latest live subagent suite after UI/accessibility/code-quality pass:
+    `subagent-autonomous-delegation` `run_0be5842a4522`,
+    `subagent-explicit-delegation` `run_501813483836`,
+    `subagent-no-delegation-simple` `run_3534caaa18aa`;
+  - after making delegation always-on and combinable with web tools, live
+    probes passed:
+    `web-search-final` `run_5f112a3ef6dd`,
+    `subagent-autonomous-delegation` `run_a4378cc314d2`,
+    `subagent-explicit-delegation` `run_412f2fc4bd1e`,
+    `subagent-no-delegation-simple` `run_83de9cb4f773`;
+  - `/trace-summary` now reports subagent delegation verdict fields and the
+    live run stayed `verdict=pass`.
 
 Dev stack:
 

@@ -43,7 +43,7 @@ class CompactionSettings:
 class SubagentSettings:
     """Subagent fan-out limits."""
 
-    enable_subagents: bool = False
+    enable_subagents: bool = True
     max_child_runs: int = 8
     default_child_deadline_seconds: float | None = 90.0
 

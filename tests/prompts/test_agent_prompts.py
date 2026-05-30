@@ -24,6 +24,9 @@ def test_react_prompt_templates_are_non_empty() -> None:
     assert "Do not read local repository files for purely external" in chat_policy
     assert "attempt the appropriate filesystem tool once" in chat_policy
     assert "grep_search for the relevant prefix" in chat_policy
+    assert "## Subagent Delegation" in chat_policy
+    assert "When `agent_tool` is available" in chat_policy
+    assert "Do not use `agent_tool` for simple factual questions" in chat_policy
 
 
 def test_force_final_answer_templates_are_non_empty() -> None:

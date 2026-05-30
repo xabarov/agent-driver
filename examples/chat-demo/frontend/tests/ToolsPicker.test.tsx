@@ -11,11 +11,13 @@ afterEach(() => {
 });
 
 describe("ToolsPicker", () => {
-  it("shows only user-facing web tool toggles", () => {
+  it("shows only user-facing safe tool toggles", () => {
     render(<ToolsPicker />);
     expect(screen.getByText("Web Search")).toBeInTheDocument();
     expect(screen.getByText("Web Fetch")).toBeInTheDocument();
-    expect(screen.getByText(/agent can use planning/i)).toBeInTheDocument();
+    expect(screen.getByText("Delegation")).toBeInTheDocument();
+    expect(screen.getByText("Auto")).toBeInTheDocument();
+    expect(screen.getByText(/agent can use planning and delegation/i)).toBeInTheDocument();
     expect(screen.queryByText(/todo_write/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/grep/i)).not.toBeInTheDocument();
   });
@@ -40,6 +42,13 @@ describe("ToolsPicker", () => {
     await waitFor(() => {
       expect(useSettingsStore.getState().toolPreset).toBe("web_fetch");
     });
+  });
+
+  it("keeps delegation as an always-on status, not a user toggle", () => {
+    render(<ToolsPicker />);
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    expect(screen.getByText("Delegation")).toBeInTheDocument();
+    expect(useSettingsStore.getState().toolPreset).toBe("web");
   });
 
   it("normalizes legacy presets loaded from local storage", () => {

@@ -568,6 +568,39 @@ def run_subagent_final_answer(page: Page) -> None:
             ),
             sse_event(
                 3,
+                "subagent_group_started",
+                {"group_id": "group_1", "tasks": 2},
+            ),
+            sse_event(
+                4,
+                "subagent_started",
+                {
+                    "group_id": "group_1",
+                    "task_id": "researcher",
+                    "child_run_id": "run_child_researcher",
+                    "description": "Researcher",
+                    "status": "running",
+                },
+            ),
+            sse_event(
+                5,
+                "subagent_completed",
+                {
+                    "group_id": "group_1",
+                    "task_id": "researcher",
+                    "child_run_id": "run_child_researcher",
+                    "description": "Researcher",
+                    "status": "completed",
+                    "summary": "history facts collected",
+                },
+            ),
+            sse_event(
+                6,
+                "subagent_group_joined",
+                {"group_id": "group_1", "join_state": "joined", "child_runs": 1},
+            ),
+            sse_event(
+                7,
                 "tool_call_completed",
                 {
                     "tools": [
@@ -583,7 +616,7 @@ def run_subagent_final_answer(page: Page) -> None:
                 },
             ),
             sse_event(
-                4,
+                8,
                 "token_delta",
                 {
                     "delta_text": (
@@ -593,7 +626,7 @@ def run_subagent_final_answer(page: Page) -> None:
                     )
                 },
             ),
-            sse_event(5, "run_completed"),
+            sse_event(9, "run_completed"),
         ]
     )
 
@@ -604,10 +637,19 @@ def run_subagent_final_answer(page: Page) -> None:
     page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
     open_new_chat(page)
 
-    # 5-step visible path: type fan-out request, send, see agent tool, see
+    # 5-step visible path: type fan-out request, send, see delegated work, see
     # completed subagents, see final coordinator answer.
     send_chat_message(page, "поручи субагентам собрать и проверить факты о Fender")
-    expect(page.get_by_text("agent_tool")).to_be_visible(timeout=5000)
+    expect(
+        page.get_by_role("button", name="Inspect delegated subagent work")
+    ).to_be_visible(timeout=5000)
+    expect(
+        page.get_by_role("button", name="Inspect delegated subagent work").get_by_text(
+            "joined", exact=True
+        )
+    ).to_be_visible()
+    expect(page.get_by_text("Researcher", exact=True)).to_be_visible()
+    expect(page.get_by_text("history facts collected")).to_be_visible()
     expect(page.get_by_text("2 subagents completed")).to_be_visible()
     expect(page.get_by_text("Субагенты собрали историю")).to_be_visible()
     expect_trace_summary(page, required_tools=["agent_tool"])

@@ -1,4 +1,4 @@
-import { Globe, Link2, Search } from "lucide-react";
+import { Bot, Globe, Link2, Search } from "lucide-react";
 
 import { PRESET_HINTS } from "../../lib/tools";
 import {
@@ -62,6 +62,25 @@ function ToolToggle({
   );
 }
 
+function CapabilityRow({
+  icon: Icon,
+  title,
+  description,
+}: Pick<ToolToggleProps, "icon" | "title" | "description">) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-border/70 bg-background/60 px-3 py-2.5 text-sm">
+      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium text-foreground">{title}</span>
+        <span className="block text-xs leading-5 text-muted-foreground">{description}</span>
+      </span>
+      <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+        Auto
+      </span>
+    </div>
+  );
+}
+
 export function ToolsPicker({ disabled, compact, onPresetChange }: ToolsPickerProps) {
   const toolPreset = normalizeToolPreset(useSettingsStore((state) => state.toolPreset));
   const setToolPreset = useSettingsStore((state) => state.setToolPreset);
@@ -105,10 +124,15 @@ export function ToolsPicker({ disabled, compact, onPresetChange }: ToolsPickerPr
           description="Retrieve content from URLs."
           onChange={(checked) => update({ webFetch: checked })}
         />
+        <CapabilityRow
+          icon={Bot}
+          title="Delegation"
+          description="The agent can spawn bounded child agents when the task warrants it."
+        />
       </div>
       <p className="text-xs leading-5 text-muted-foreground">
-        The agent can use planning when a task needs it. Local file and shell tools are not exposed
-        in this web demo.
+        The agent can use planning and delegation when a task needs them. Web access is the
+        user-controlled capability here. Local file and shell tools are not exposed in this web demo.
       </p>
     </div>
   );

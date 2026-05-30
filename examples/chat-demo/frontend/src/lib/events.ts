@@ -78,6 +78,32 @@ export interface ParsedSteeringEvent {
   priority?: string;
 }
 
+export interface ParsedSubagentChildRun {
+  taskId: string;
+  subagentRunId?: string;
+  childRunId?: string;
+  status: "spawned" | "running" | "completed" | "failed" | "cancelled";
+  description?: string;
+  outputPreview?: string;
+  usedTools?: string[];
+  warning?: string;
+}
+
+export interface ParsedSubagentLifecycleEvent {
+  seq: number;
+  event:
+    | "subagent_group_started"
+    | "subagent_group_joined"
+    | "subagent_group_join_waiting"
+    | "subagent_group_failed"
+    | "subagent_spawned"
+    | "subagent_started"
+    | "subagent_completed";
+  groupId?: string;
+  joinState?: string;
+  childRun?: ParsedSubagentChildRun;
+}
+
 export function isTokenDelta(event: RunStreamEvent<Record<string, unknown>>): boolean {
   return event.event === "token_delta";
 }
@@ -253,6 +279,90 @@ export function parseSteeringEvents(
     .filter((event) => event.queueId);
 }
 
+function lifecycleText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function lifecycleTextList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items = value.filter(
+    (item): item is string => typeof item === "string" && item.trim().length > 0,
+  );
+  return items.length ? items : undefined;
+}
+
+function lifecycleStatus(
+  eventName: ParsedSubagentLifecycleEvent["event"],
+  rawStatus: unknown,
+): ParsedSubagentChildRun["status"] {
+  const status = typeof rawStatus === "string" ? rawStatus.toLowerCase() : "";
+  if (status === "failed" || status === "error" || status === "timeout") {
+    return "failed";
+  }
+  if (status === "cancelled" || status === "canceled" || status === "stopped") {
+    return "cancelled";
+  }
+  if (status === "completed" || status === "done") {
+    return "completed";
+  }
+  if (eventName === "subagent_spawned") {
+    return "spawned";
+  }
+  if (eventName === "subagent_completed") {
+    return "completed";
+  }
+  return "running";
+}
+
+export function parseSubagentLifecycleEvent(
+  event: RunStreamEvent<Record<string, unknown>>,
+): ParsedSubagentLifecycleEvent | undefined {
+  if (
+    event.event !== "subagent_group_started" &&
+    event.event !== "subagent_group_joined" &&
+    event.event !== "subagent_group_join_waiting" &&
+    event.event !== "subagent_group_failed" &&
+    event.event !== "subagent_spawned" &&
+    event.event !== "subagent_started" &&
+    event.event !== "subagent_completed"
+  ) {
+    return undefined;
+  }
+  const eventName = event.event;
+  const taskId =
+    lifecycleText(event.data.task_id) ??
+    lifecycleText(event.data.subagent_run_id) ??
+    lifecycleText(event.data.child_run_id);
+  return {
+    seq: event.seq,
+    event: eventName,
+    groupId: lifecycleText(event.data.group_id),
+    joinState: lifecycleText(event.data.join_state),
+    childRun: taskId
+      ? {
+          taskId,
+          subagentRunId: lifecycleText(event.data.subagent_run_id),
+          childRunId: lifecycleText(event.data.child_run_id),
+          status: lifecycleStatus(eventName, event.data.status),
+          description: lifecycleText(event.data.description),
+          outputPreview:
+            lifecycleText(event.data.output_preview) ??
+            lifecycleText(event.data.summary) ??
+            lifecycleText(event.data.result_summary),
+          usedTools:
+            lifecycleTextList(event.data.used_tools) ??
+            lifecycleTextList(event.data.tool_names),
+          warning:
+            lifecycleText(event.data.warning) ??
+            lifecycleText(event.data.error) ??
+            lifecycleText(event.data.reason),
+        }
+      : undefined,
+  };
+}
+
 function applyPlanningToAssistantMessage(
   messages: ChatMessage[],
   assistantId: string,
@@ -273,6 +383,63 @@ function applyPlanningToAssistantMessage(
     metadata,
     planningSnapshot: snapshot,
   });
+}
+
+function applySubagentLifecycleToLatestTool(
+  messages: ChatMessage[],
+  lifecycle: ParsedSubagentLifecycleEvent,
+): void {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "tool" || message.name !== "agent_tool") {
+      continue;
+    }
+    const current = message.subagent ?? {};
+    const nextChildren = [...(current.childRuns ?? [])];
+    if (lifecycle.childRun) {
+      const childIndex = nextChildren.findIndex(
+        (child) =>
+          child.taskId === lifecycle.childRun?.taskId ||
+          Boolean(
+            lifecycle.childRun?.subagentRunId &&
+              child.subagentRunId === lifecycle.childRun.subagentRunId,
+          ) ||
+          Boolean(
+            lifecycle.childRun?.childRunId &&
+              child.childRunId === lifecycle.childRun.childRunId,
+          ),
+      );
+      if (childIndex < 0) {
+        nextChildren.push(lifecycle.childRun);
+      } else {
+        nextChildren[childIndex] = {
+          ...nextChildren[childIndex],
+          ...lifecycle.childRun,
+        };
+      }
+    }
+    let groupStatus = current.groupStatus;
+    if (lifecycle.event === "subagent_group_started") {
+      groupStatus = "running";
+    } else if (lifecycle.event === "subagent_group_joined") {
+      groupStatus = "joined";
+    } else if (lifecycle.event === "subagent_group_join_waiting") {
+      groupStatus = "waiting";
+    } else if (lifecycle.event === "subagent_group_failed") {
+      groupStatus = "failed";
+    }
+    messages[index] = {
+      ...message,
+      subagent: {
+        ...current,
+        groupId: lifecycle.groupId ?? current.groupId,
+        groupStatus,
+        joinState: lifecycle.joinState ?? current.joinState,
+        childRuns: nextChildren,
+      },
+    };
+    return;
+  }
 }
 
 export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>[]): ChatMessage[] {
@@ -437,6 +604,10 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
           });
         }
       }
+    }
+    const subagentLifecycle = parseSubagentLifecycleEvent(event);
+    if (subagentLifecycle) {
+      applySubagentLifecycleToLatestTool(messages, subagentLifecycle);
     }
     if (isTerminalEvent(event)) {
       flushAssistant();

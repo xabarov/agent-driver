@@ -43,7 +43,7 @@ describe("ToolCallCard", () => {
     expect(screen.getByText("force planning requires an approved plan")).toBeInTheDocument();
   });
 
-  test("shows completed result preview while collapsed", () => {
+  test("renders agent tool as delegated work panel", () => {
     render(
       <ToolCallCard
         message={{
@@ -52,12 +52,89 @@ describe("ToolCallCard", () => {
           toolCallId: "call_1",
           name: "agent_tool",
           status: "done",
+          args: {
+            description: "Verify Fender model timeline",
+            task: "Check key Fender Jazzmaster facts and return a short summary.",
+            task_type: "verifier",
+            execution_mode: "sync",
+          },
           resultPreview: "2 subagents completed",
         }}
       />,
     );
-    expect(screen.getByText("agent_tool")).toBeInTheDocument();
+    expect(screen.getByText("Delegated work")).toBeInTheDocument();
+    expect(screen.getByText("joined")).toBeInTheDocument();
+    expect(screen.getByText("Verify Fender model timeline")).toBeInTheDocument();
+    expect(screen.getByText("verifier")).toBeInTheDocument();
     expect(screen.getByText("2 subagents completed")).toBeInTheDocument();
+    expect(screen.queryByText("Debug payload")).not.toBeInTheDocument();
+  });
+
+  test("keeps agent tool raw payload behind inspect", () => {
+    render(
+      <ToolCallCard
+        message={{
+          id: "tool_1",
+          role: "tool",
+          toolCallId: "call_1",
+          name: "agent_tool",
+          status: "done",
+          args: {
+            description: "Research Jazzmaster facts",
+            task: "Return 3 verified facts.",
+          },
+          resultPreview: "child completed",
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /inspect delegated subagent work/i }));
+
+    expect(screen.getByText("Child brief")).toBeInTheDocument();
+    expect(screen.getByText("Return 3 verified facts.")).toBeInTheDocument();
+    expect(screen.getByText("Debug payload")).toBeInTheDocument();
+  });
+
+  test("shows subagent child lifecycle rows", () => {
+    render(
+      <ToolCallCard
+        message={{
+          id: "tool_1",
+          role: "tool",
+          toolCallId: "call_1",
+          name: "agent_tool",
+          status: "done",
+          args: {
+            description: "Compare candidates",
+            task: "Compare two candidates and return a short verdict.",
+          },
+          subagent: {
+            groupId: "group_1",
+            groupStatus: "joined",
+            childRuns: [
+              {
+                taskId: "task_1",
+                childRunId: "run_child",
+                status: "completed",
+                description: "Verifier",
+                outputPreview: "candidate A is safer",
+                usedTools: ["memory"],
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("joined")).toBeInTheDocument();
+    expect(screen.getByLabelText("Child agent Verifier completed")).toBeInTheDocument();
+    expect(screen.getByText("run_child")).toBeInTheDocument();
+    expect(screen.getByText("candidate A is safer")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /inspect delegated subagent work/i }));
+    expect(screen.getByText("Child results")).toBeInTheDocument();
+    expect(screen.getByText("Used tools")).toBeInTheDocument();
+    expect(screen.getByText("memory")).toBeInTheDocument();
   });
 
   test("wraps tool details behind a collapsible input section", () => {

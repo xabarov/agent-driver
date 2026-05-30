@@ -45,7 +45,7 @@ AGENT_DRIVER_MODEL=your/model
 
 2. Restart `make dev-full` (backend reloads env from repo `.env` automatically).
 
-3. In the UI use **Tools** to enable **Web Search** and/or **Web Fetch**. Planning tools are available internally when the agent decides they are useful; local file and shell tools are not exposed in the web UI.
+3. In the UI use **Tools** to enable **Web Search** and/or **Web Fetch**. Planning and bounded agent delegation are available internally when the agent decides they are useful; local file and shell tools are not exposed in the web UI.
 
 Header should show `openrouter · <model>` instead of `fake · default`.
 
@@ -53,7 +53,7 @@ Header should show `openrouter · <model>` instead of `fake · default`.
 
 - Full-height layout: sidebar + sticky composer
 - **Model picker** in header (`GET /api/models`, OpenRouter catalog when configured)
-- **Tools** popover: Web Search and Web Fetch toggles; planning is internal
+- **Tools** popover: Web Search and Web Fetch toggles; planning and delegation are internal
 - Message avatars, copy assistant reply, tool cards with type icons
 - **Runs** menu (replay) instead of chip row above chat
 - Stream errors shown inline (SSL/network/API)
@@ -119,7 +119,7 @@ Open `http://127.0.0.1:8000` (UI + API on one port).
 
 - Store file: `CHAT_DEMO_SESSIONS_PATH` (default `./.agent-driver/sessions.json`)
 - Routes: `/sessions/new`, `/sessions/<session_id>`, `/sessions/<session_id>/replay/<run_id>`
-- Web tool presets: `off`, `web_search`, `web_fetch`, `web`. The backend also has an `agents` preset for live subagent probes. Planning tools are hidden from UI and always available to the agent.
+- Tool presets: `off`, `web_search`, `web_fetch`, `web`. Planning tools and bounded agent delegation are hidden from UI and always available to the agent.
 - Runtime event log: `AGENT_DRIVER_RUNTIME_STORE_KIND=sqlite` recommended for HITL/replay durability
 
 ## Environment
@@ -129,7 +129,7 @@ See [`.env.example`](.env.example). Key variables:
 - `AGENT_DRIVER_PROVIDER` — `fake` (default), `openrouter`, `vllm`, `ollama`
 - `CHAT_DEMO_TOOL_PRESET` — default tool surface when UI does not override
 - `CHAT_DEMO_DEADLINE_SECONDS` — run wall-clock limit; default `600` for longer research/write tasks
-- `CHAT_DEMO_ENABLE_SUBAGENTS` / `CHAT_DEMO_MAX_CHILD_RUNS` — enables bounded child-run execution for the `agents` preset and subagent scenarios
+- `CHAT_DEMO_MAX_CHILD_RUNS` — caps bounded child-run execution; delegation is always enabled in the demo backend
 - `CHAT_DEMO_LLM_STREAM_IDLE_TIMEOUT_SECONDS` — fail a provider stream that stops emitting events; default `60`
 - `AGENT_DRIVER_RUNTIME_STORE_KIND` — `memory` (fast tests) or `sqlite` (HITL + replay)
 - `CHAT_DEMO_TRACING_ENABLED` — enables Phoenix/OpenTelemetry tracing in the Docker dev stack
@@ -171,7 +171,7 @@ plan → clarification → resume path. It writes screenshots to
 
 - [ ] `/` redirects to `/sessions/new`; sidebar lists sessions
 - [ ] Send message → URL becomes `/sessions/<id>`; transcript persists on reload
-- [ ] Web Search/Web Fetch toggles change the next run; web tool cards appear with a real provider
+- [ ] Web Search/Web Fetch toggles change the next run; web and agent tool cards can appear together with a real provider
 - [ ] Interrupt card shows on approval-required tool; Approve resumes stream
 - [ ] Replay link opens read-only run timeline
 - [ ] Theme toggle switches light/dark; provider badge shows health

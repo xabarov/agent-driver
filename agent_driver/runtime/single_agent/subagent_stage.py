@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 from agent_driver.contracts.control import ControlKind, ControlPriority, ControlRequest
@@ -36,14 +36,26 @@ class SubagentStageHost(Protocol):
     _config: RunnerConfig
 
     def _emit(self, event: object) -> None: ...
-    def run(self, run_input: Any) -> Any: ...
+    def run(self, run_input: Any) -> Any:
+        """Execute a child run through the host runner."""
+        raise NotImplementedError
+
+
+def _host_deps(host: SubagentStageHost) -> RunnerDeps:
+    return cast(RunnerDeps, getattr(host, "_deps"))
+
+
+def _host_config(host: SubagentStageHost) -> RunnerConfig:
+    return cast(RunnerConfig, getattr(host, "_config"))
 
 
 async def maybe_execute_subagent_group(
     host: SubagentStageHost, context: RunContext
 ) -> None:
     """Execute sync subagent group under feature flag."""
-    if not host._config.enable_subagents:
+    config = _host_config(host)
+    deps = _host_deps(host)
+    if not config.enable_subagents:
         return
     if context.metadata.get("subagent_origin") == "child":
         return
@@ -55,9 +67,7 @@ async def maybe_execute_subagent_group(
         planned = context.metadata.get("planned_subagent_group")
     if not isinstance(planned, dict):
         return
-    group_spec = _group_spec_from_planned(
-        planned, max_child_runs=host._config.max_child_runs
-    )
+    group_spec = _group_spec_from_planned(planned, max_child_runs=config.max_child_runs)
     if group_spec is None:
         return
     emit_step_event(
@@ -88,9 +98,9 @@ async def maybe_execute_subagent_group(
         result = await execute_subagent_group_background(
             parent=parent,
             group_spec=group_spec,
-            store=host._deps.subagent_store,
+            store=deps.subagent_store,
             child_runner=host.run,
-            max_child_runs=host._config.max_child_runs,
+            max_child_runs=config.max_child_runs,
             child_app_metadata={"subagent_origin": "child"},
             on_event=on_event,
             parent_abort_handle=context.abort_handle,
@@ -99,21 +109,21 @@ async def maybe_execute_subagent_group(
         result = await execute_subagent_group_sync(
             parent=parent,
             group_spec=group_spec,
-            store=host._deps.subagent_store,
+            store=deps.subagent_store,
             child_runner=host.run,
-            max_child_runs=host._config.max_child_runs,
+            max_child_runs=config.max_child_runs,
             child_app_metadata={"subagent_origin": "child"},
             on_event=on_event,
             parent_abort_handle=context.abort_handle,
         )
     context.metadata["subagent_groups"] = [
         row.model_dump(mode="json")
-        for row in host._deps.subagent_store.list_groups(context.run_id)
+        for row in deps.subagent_store.list_groups(context.run_id)
     ]
     context.metadata["subagent_runs"] = summarize_child_runs_for_parent(
         [
             row.model_dump(mode="json")
-            for row in host._deps.subagent_store.list_runs(context.run_id)
+            for row in deps.subagent_store.list_runs(context.run_id)
         ]
     )
     context.metadata["subagent_merge_summary"] = result.merged_summary
@@ -133,6 +143,10 @@ async def maybe_execute_subagent_group(
             "child_runs": len(result.runs),
         },
     )
+    if group_event_type == RuntimeEventType.SUBAGENT_GROUP_JOINED:
+        context.metadata["force_final_answer"] = True
+        context.metadata["tool_choice_override"] = "none"
+        context.metadata["force_final_answer_reason"] = "subagent_group_joined"
 
 
 def _group_spec_from_planned(
@@ -262,6 +276,7 @@ def _queue_child_completion_notification(
     subagent_run_id = _optional_text(payload.get("subagent_run_id"))
     child_run_id = _optional_text(payload.get("child_run_id"))
     message = f"Subagent task `{task_id}` finished with status `{status}`."
+    deps = _host_deps(host)
     dedupe_key = "|".join(
         [
             "subagent_completed",
@@ -270,8 +285,8 @@ def _queue_child_completion_notification(
             status,
         ]
     )
-    if host._deps.subagent_mailbox_store is not None:
-        host._deps.subagent_mailbox_store.enqueue(
+    if deps.subagent_mailbox_store is not None:
+        deps.subagent_mailbox_store.enqueue(
             SubagentMailboxItem(
                 parent_run_id=context.run_id,
                 direction=SubagentMailboxDirection.CHILD_TO_PARENT,
@@ -284,9 +299,9 @@ def _queue_child_completion_notification(
                 dedupe_key=dedupe_key,
             )
         )
-    if host._deps.command_queue_store is None:
+    if deps.command_queue_store is None:
         return
-    queued = host._deps.command_queue_store.enqueue(
+    queued = deps.command_queue_store.enqueue(
         ControlRequest(
             kind=ControlKind.ENQUEUE_USER_MESSAGE,
             run_id=context.run_id,

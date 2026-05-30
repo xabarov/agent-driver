@@ -11,6 +11,7 @@ import {
   isTokenDelta,
   isToolCallCompleted,
   isToolCallStarted,
+  parseSubagentLifecycleEvent,
   parseToolStatesFromEvent,
   type RunStreamEvent,
 } from "../lib/events";
@@ -79,6 +80,10 @@ function applyStreamEvent(
     for (const tool of parseToolStatesFromEvent(event)) {
       store.updateToolCompleted(tool.toolCallId, tool);
     }
+  }
+  const subagentLifecycle = parseSubagentLifecycleEvent(event);
+  if (subagentLifecycle) {
+    store.applySubagentLifecycle(assistantId, subagentLifecycle);
   }
   if (event.event === "llm_call_completed" || event.event === "run_completed") {
     const snapshot = parsePlanningSnapshot(event.data.planning_snapshot);

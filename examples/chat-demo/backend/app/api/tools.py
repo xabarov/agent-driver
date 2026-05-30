@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-
 from app.config import ToolPreset
 from app.deps import get_agent_bundle_for_preset, get_settings, resolve_tool_preset
 from app.schemas.meta import ToolManifestView, ToolsResponse
 from app.workspace import workspace_status
+from fastapi import APIRouter
 
 router = APIRouter(tags=["meta"])
 
-PUBLIC_TOOL_NAMES = {"web_fetch", "web_search"}
+PUBLIC_TOOL_NAMES = {"agent_tool", "web_fetch", "web_search"}
 
 
 @router.get("/tools", response_model=ToolsResponse)
-def tools(preset: ToolPreset | None = None, session_id: str | None = None) -> ToolsResponse:
+def tools(
+    preset: ToolPreset | None = None, session_id: str | None = None
+) -> ToolsResponse:
     """List tool manifests for the requested or default preset."""
     bundle = get_agent_bundle_for_preset(resolve_tool_preset(preset))
     payload = [

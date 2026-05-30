@@ -22,9 +22,9 @@ Typical dev URLs:
 ## Provider Modes
 
 The demo can run with a real provider from `.env` or deterministic fake
-scenarios. Public web presets expose web search/fetch plus live planning
-progress. Filesystem/shell controls and raw approval planning are not part of
-the public web surface.
+scenarios. Public presets expose web search/fetch, bounded agent delegation,
+and live planning progress. Filesystem/shell controls and raw approval planning
+are not part of the public web surface.
 
 ## Design Baseline
 
@@ -34,9 +34,10 @@ marketing-style presentation.
 
 Current product/design rules:
 
-- The public Tools UI exposes only **Web Search** and **Web Fetch**. Local
-  filesystem, shell, glob, grep, and raw planning tools are not user-facing
-  web controls.
+- The public Tools UI exposes **Web Search**, **Web Fetch**, and **Agent
+  Delegation**. Agent delegation uses the runtime's bounded `agent_tool`
+  surface; local filesystem, shell, glob, grep, and raw planning tools are not
+  user-facing web controls.
 - Planning is agent-controlled. The agent may use planning when a task needs
   it, while simple direct answers should stay direct. Planning outcomes,
   approvals, denials, and snapshots should be visible as runtime outcomes, not

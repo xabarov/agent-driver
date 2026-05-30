@@ -6,10 +6,16 @@ from agent_driver.observability import summarize_run_trace
 
 
 def _completed_tool(name: str) -> dict[str, object]:
+    tool: dict[str, object] = {"tool_name": name, "status": "completed"}
+    if name == "agent_tool":
+        tool["args"] = {
+            "description": "Verify delegated facts",
+            "task": "Check delegated facts and return a concise grounded summary.",
+        }
     return {
         "event": "tool_call_completed",
         "data": {
-            "tools": [{"tool_name": name, "status": "completed"}],
+            "tools": [tool],
         },
     }
 
@@ -247,9 +253,102 @@ def test_trace_summary_collects_subagent_markers() -> None:
     )
 
     assert summary["subagents"]["groups_started"] == 1
+    assert summary["subagents"]["agent_tool_used"] is True
+    assert summary["subagents"]["delegation_requested"] is True
     assert summary["subagents"]["runs_completed"] == 1
     assert summary["subagents"]["join_states"] == ["done"]
+    assert summary["subagents"]["parent_synthesized_final"] is True
     assert summary["verdict"] == "pass"
+
+
+def test_trace_summary_flags_missed_explicit_delegation() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Поручи субагенту проверить факты и дай итог",
+        assistant_text="Я сам проверил факты и даю итог.",
+        events=[{"event": "run_completed", "data": {}}],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["subagents"]["delegation_requested"] is True
+    assert summary["failures"]["missed_explicit_delegation"] is True
+
+
+def test_trace_summary_flags_unnecessary_delegation_for_simple_prompt() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сколько букв в слове test",
+        assistant_text="В слове test четыре буквы.",
+        events=[
+            _completed_tool("agent_tool"),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["failures"]["unnecessary_delegation"] is True
+
+
+def test_trace_summary_flags_subagent_without_parent_synthesis() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Поручи субагенту собрать факты и дай итог",
+        assistant_text="Субагент завершился. Сейчас подготовлю итог.",
+        events=[
+            _completed_tool("agent_tool"),
+            {"event": "subagent_group_started", "data": {"group_id": "group_1"}},
+            {"event": "subagent_started", "data": {"task_id": "task_1"}},
+            {
+                "event": "subagent_completed",
+                "data": {"task_id": "task_1", "status": "completed"},
+            },
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "group_1", "join_state": "done"},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["failures"]["subagent_no_final"] is True
+    assert summary["failures"]["child_result_not_used"] is True
+
+
+def test_trace_summary_flags_unbounded_child_prompt() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Поручи субагенту собрать факты и дай итог",
+        assistant_text="Итог с учетом ответа субагента.",
+        events=[
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "agent_tool",
+                            "status": "completed",
+                            "args": {"task": "проверь"},
+                        }
+                    ]
+                },
+            },
+            {"event": "subagent_group_started", "data": {"group_id": "group_1"}},
+            {"event": "subagent_started", "data": {"task_id": "task_1"}},
+            {
+                "event": "subagent_completed",
+                "data": {"task_id": "task_1", "status": "completed"},
+            },
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "group_1", "join_state": "done"},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["failures"]["child_prompt_not_bounded"] is True
 
 
 def test_trace_summary_respects_no_search_instruction() -> None:

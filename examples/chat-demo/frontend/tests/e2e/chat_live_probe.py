@@ -37,8 +37,11 @@ class LiveScenario:
     name: str
     prompt: str
     required_tools: tuple[str, ...] = ()
+    forbidden_tools: tuple[str, ...] = ()
     tool_preset: str | None = None
     requires_subagent: bool = False
+    requires_parent_synthesis: bool = False
+    max_planning_tool_calls: int | None = None
     steering_message: str | None = None
     requires_steering: bool = False
     forbidden_failures: tuple[str, ...] = (
@@ -51,6 +54,11 @@ class LiveScenario:
         "fabricated_planning",
         "repeated_approval_planning",
         "extra_ask_user_question",
+        "missed_explicit_delegation",
+        "unnecessary_delegation",
+        "subagent_no_final",
+        "child_result_not_used",
+        "child_prompt_not_bounded",
     )
     requires_research: bool | None = None
 
@@ -138,8 +146,45 @@ SCENARIOS: dict[str, LiveScenario] = {
             "а затем сам дай итог в 2 предложения. Без поиска в интернете."
         ),
         required_tools=("agent_tool",),
-        tool_preset="agents",
+        tool_preset="web",
         requires_subagent=True,
+        requires_parent_synthesis=True,
+        max_planning_tool_calls=0,
+        requires_research=False,
+    ),
+    "subagent-explicit-delegation": LiveScenario(
+        name="subagent-explicit-delegation",
+        prompt=(
+            "Поручи субагенту проверить по памяти, чем Fender Jazzmaster "
+            "отличается от Stratocaster, а затем сам дай итог в 3 пункта. "
+            "Без поиска в интернете."
+        ),
+        required_tools=("agent_tool",),
+        tool_preset="web",
+        requires_subagent=True,
+        requires_parent_synthesis=True,
+        max_planning_tool_calls=0,
+        requires_research=False,
+    ),
+    "subagent-autonomous-delegation": LiveScenario(
+        name="subagent-autonomous-delegation",
+        prompt=(
+            "Сравни два варианта структуры короткого ответа о Fender Jazzmaster: "
+            "исторический обзор и сравнение с Stratocaster. Выбери лучший вариант, "
+            "предварительно проверь аргументы отдельным исполнителем. Без поиска в интернете."
+        ),
+        required_tools=("agent_tool",),
+        tool_preset="web",
+        requires_subagent=True,
+        requires_parent_synthesis=True,
+        max_planning_tool_calls=0,
+        requires_research=False,
+    ),
+    "subagent-no-delegation-simple": LiveScenario(
+        name="subagent-no-delegation-simple",
+        prompt="сколько r в слове strawberry?",
+        forbidden_tools=("agent_tool",),
+        tool_preset="web",
         requires_research=False,
     ),
     "steering-mid-run": LiveScenario(
@@ -257,6 +302,9 @@ def assert_trace_acceptance(
     for tool_name in scenario.required_tools:
         if tool_name not in tools:
             failures.append(f"required tool missing: {tool_name}")
+    for tool_name in scenario.forbidden_tools:
+        if tool_name in tools:
+            failures.append(f"forbidden tool used: {tool_name}")
     if scenario.requires_subagent:
         subagents = summary.get("subagents") or {}
         if not isinstance(subagents, dict):
@@ -266,6 +314,25 @@ def assert_trace_acceptance(
                 failures.append("subagent run did not complete")
             if subagents.get("groups_joined", 0) < 1:
                 failures.append("subagent group did not join")
+    if scenario.requires_parent_synthesis:
+        subagents = summary.get("subagents") or {}
+        if not isinstance(subagents, dict):
+            failures.append("subagent summary missing")
+        elif subagents.get("parent_synthesized_final") is not True:
+            failures.append("parent did not synthesize subagent final answer")
+    if scenario.max_planning_tool_calls is not None:
+        planning = summary.get("planning") or {}
+        planning_tool_calls = (
+            planning.get("planning_tool_calls") if isinstance(planning, dict) else None
+        )
+        if (
+            not isinstance(planning_tool_calls, int)
+            or planning_tool_calls > scenario.max_planning_tool_calls
+        ):
+            failures.append(
+                "planning tool calls exceeded limit: "
+                f"{planning_tool_calls!r} > {scenario.max_planning_tool_calls}"
+            )
     if scenario.requires_steering:
         controls = summary.get("controls") or {}
         if not isinstance(controls, dict):

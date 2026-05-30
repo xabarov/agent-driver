@@ -32,7 +32,13 @@ def summarize_run_trace(
     planning = _planning_summary(events, tool_names)
     llm_calls = _llm_call_summary(events)
     runtime_markers = _runtime_markers(events)
-    subagents = _subagent_summary(events)
+    subagents = _subagent_summary(
+        events,
+        tool_names=tool_names,
+        user_prompt=user_prompt,
+        assistant_text=text,
+        continuation_reason=continuation.reason,
+    )
     controls = _control_summary(events)
 
     failures: dict[str, bool] = {
@@ -57,6 +63,21 @@ def summarize_run_trace(
             requires_research=requires_research,
             user_prompt=user_prompt,
             assistant_text=text,
+        ),
+        "missed_explicit_delegation": (
+            subagents["delegation_requested"] and not subagents["agent_tool_used"]
+        ),
+        "unnecessary_delegation": (
+            subagents["agent_tool_used"] and _simple_prompt(user_prompt)
+        ),
+        "subagent_no_final": (
+            subagents["agent_tool_used"] and not subagents["parent_synthesized_final"]
+        ),
+        "child_result_not_used": (
+            subagents["groups_joined"] > 0 and not subagents["parent_synthesized_final"]
+        ),
+        "child_prompt_not_bounded": (
+            subagents["agent_tool_used"] and _agent_tool_prompt_unbounded(events)
         ),
     }
     notes = _notes(
@@ -270,7 +291,14 @@ def _llm_call_summary(events: list[dict[str, object]]) -> dict[str, Any]:
     }
 
 
-def _subagent_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+def _subagent_summary(
+    events: list[dict[str, object]],
+    *,
+    tool_names: list[str],
+    user_prompt: str | None,
+    assistant_text: str,
+    continuation_reason: str | None,
+) -> dict[str, Any]:
     statuses: list[str] = []
     join_states: list[str] = []
     for event in events:
@@ -283,15 +311,126 @@ def _subagent_summary(events: list[dict[str, object]]) -> dict[str, Any]:
             join_state = data.get("join_state")
             if isinstance(join_state, str) and join_state:
                 join_states.append(join_state)
+    agent_tool_used = "agent_tool" in tool_names
+    groups_joined = _count_events(events, "subagent_group_joined")
+    child_error_count = sum(
+        1
+        for status in statuses
+        if status.lower() in {"failed", "error", "cancelled", "timeout"}
+    )
+    parent_synthesized_final = (
+        agent_tool_used
+        and groups_joined > 0
+        and continuation_reason != "continuation_signal"
+        and not _subagent_progress_only_text(assistant_text)
+        and len(assistant_text.strip()) >= 20
+    )
     return {
+        "delegation_requested": _delegation_requested(user_prompt),
+        "delegation_expected": _delegation_requested(user_prompt),
+        "agent_tool_used": agent_tool_used,
         "groups_started": _count_events(events, "subagent_group_started"),
-        "groups_joined": _count_events(events, "subagent_group_joined"),
+        "groups_joined": groups_joined,
         "groups_failed": _count_events(events, "subagent_group_failed"),
         "runs_started": _count_events(events, "subagent_started"),
         "runs_completed": _count_events(events, "subagent_completed"),
+        "child_error_count": child_error_count,
+        "parent_synthesized_final": parent_synthesized_final,
         "statuses": statuses,
         "join_states": join_states,
     }
+
+
+def _delegation_requested(user_prompt: str | None) -> bool:
+    text = " ".join((user_prompt or "").lower().split())
+    return any(
+        marker in text
+        for marker in (
+            "субагент",
+            "дочерн",
+            "делегир",
+            "поручи",
+            "отдельный агент",
+            "subagent",
+            "delegate",
+            "child agent",
+            "worker agent",
+        )
+    )
+
+
+def _simple_prompt(user_prompt: str | None) -> bool:
+    text = " ".join((user_prompt or "").lower().split())
+    if not text:
+        return False
+    if _delegation_requested(text) or _requires_research(
+        task_contract=None,
+        user_prompt=text,
+    ):
+        return False
+    complex_markers = (
+        "сравни",
+        "проверь",
+        "проанализируй",
+        "реферат",
+        "план",
+        "compare",
+        "review",
+        "analyze",
+        "report",
+        "plan",
+    )
+    if any(marker in text for marker in complex_markers):
+        return False
+    return len(text.split()) <= 8
+
+
+def _subagent_progress_only_text(assistant_text: str) -> bool:
+    text = " ".join(assistant_text.lower().split())
+    progress_markers = (
+        "сейчас подготовлю",
+        "сейчас составлю",
+        "теперь подготовлю",
+        "теперь составлю",
+        "приступаю к итог",
+        "subagent completed",
+        "now i will prepare",
+        "now i will write",
+        "i will now synthesize",
+    )
+    return any(marker in text for marker in progress_markers)
+
+
+def _agent_tool_prompt_unbounded(events: list[dict[str, object]]) -> bool:
+    saw_agent_tool = False
+    for event in events:
+        if event.get("event") not in {"tool_call_started", "tool_call_completed"}:
+            continue
+        data = _event_data(event)
+        tool_payloads: list[dict[str, Any]] = []
+        if data.get("tool_name") == "agent_tool":
+            tool_payloads.append(data)
+        tools = data.get("tools")
+        if isinstance(tools, list):
+            tool_payloads.extend(
+                tool
+                for tool in tools
+                if isinstance(tool, dict)
+                and (
+                    tool.get("tool_name") == "agent_tool"
+                    or tool.get("name") == "agent_tool"
+                )
+            )
+        for tool in tool_payloads:
+            saw_agent_tool = True
+            args = tool.get("args")
+            if not isinstance(args, dict):
+                continue
+            task = str(args.get("task") or "").strip()
+            description = str(args.get("description") or "").strip()
+            if len(task.split()) >= 5 and description:
+                return False
+    return saw_agent_tool
 
 
 def _control_summary(events: list[dict[str, object]]) -> dict[str, Any]:
@@ -421,6 +560,51 @@ def _extra_ask_user_question(
     return "?" not in assistant_text and "？" not in assistant_text
 
 
+_FAILURE_NOTE_MESSAGES = (
+    (
+        "missing_required_research_evidence",
+        "Research was required, but no web_search/web_fetch tool call is visible.",
+    ),
+    (
+        "progress_only_final",
+        "Final assistant text looks like progress narration, not a deliverable.",
+    ),
+    (
+        "text_form_tool_call",
+        "Assistant emitted a plain-text tool call instead of native tool-call JSON.",
+    ),
+    ("fabricated_planning", "Planning tools ran, but no data/execution tool followed."),
+    (
+        "repeated_approval_planning",
+        "Approval planning was entered more than once in one run.",
+    ),
+    (
+        "extra_ask_user_question",
+        "ask_user_question was used where the task should proceed with assumptions.",
+    ),
+    (
+        "missed_explicit_delegation",
+        "User explicitly requested delegation, but agent_tool was not used.",
+    ),
+    (
+        "unnecessary_delegation",
+        "agent_tool was used for a simple prompt that should stay direct.",
+    ),
+    (
+        "subagent_no_final",
+        "Subagent delegation happened, but parent did not synthesize a final answer.",
+    ),
+    (
+        "child_result_not_used",
+        "A subagent group joined, but the parent answer does not show synthesis.",
+    ),
+    (
+        "child_prompt_not_bounded",
+        "agent_tool was called without a bounded child task and description.",
+    ),
+)
+
+
 def _notes(
     *,
     failures: dict[str, bool],
@@ -428,26 +612,7 @@ def _notes(
     interrupt_reasons: list[str],
 ) -> list[str]:
     notes: list[str] = []
-    if failures["missing_required_research_evidence"]:
-        notes.append(
-            "Research was required, but no web_search/web_fetch tool call is visible."
-        )
-    if failures["progress_only_final"]:
-        notes.append(
-            "Final assistant text looks like progress narration, not a deliverable."
-        )
-    if failures["text_form_tool_call"]:
-        notes.append(
-            "Assistant emitted a plain-text tool call instead of native tool-call JSON."
-        )
-    if failures["fabricated_planning"]:
-        notes.append("Planning tools ran, but no data/execution tool followed.")
-    if failures["repeated_approval_planning"]:
-        notes.append("Approval planning was entered more than once in one run.")
-    if failures["extra_ask_user_question"]:
-        notes.append(
-            "ask_user_question was used where the task should proceed with assumptions."
-        )
+    notes.extend(message for key, message in _FAILURE_NOTE_MESSAGES if failures[key])
     if interrupt_reasons:
         notes.append("Run paused for interrupt: " + ", ".join(interrupt_reasons))
     if continuation_reason and not any(notes):

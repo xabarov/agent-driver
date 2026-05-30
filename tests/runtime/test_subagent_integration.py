@@ -48,8 +48,10 @@ class _AgentToolSpawnProvider(FakeProvider):
     def __init__(self) -> None:
         super().__init__(response_text="parent done")
         self.calls = 0
+        self.requests: list[LlmRequest] = []
 
     async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
         self.calls += 1
         usage = UsageSummary(model_provider="fake", model_name="test")
         if self.calls == 1:
@@ -267,8 +269,9 @@ async def test_runtime_with_subagents_executes_group_from_agent_tool() -> None:
     event_log = InMemoryEventLog()
     command_queue = InMemoryCommandQueueStore()
     mailbox_store = InMemorySubagentMailboxStore()
+    provider = _AgentToolSpawnProvider()
     runner = FakeSingleStepRunner(
-        provider=_AgentToolSpawnProvider(),
+        provider=provider,
         checkpoint_store=InMemoryCheckpointStore(),
         event_log=event_log,
         config=RunnerConfig(
@@ -297,6 +300,7 @@ async def test_runtime_with_subagents_executes_group_from_agent_tool() -> None:
     assert output.metadata["subagent_groups"][0]["purpose"] == "agent_tool_spawn"
     assert output.metadata["subagent_runs"]
     assert output.metadata["subagent_runs"][0]["task_id"].startswith("subreq_")
+    assert provider.requests[-1].tool_choice == "none"
     event_types = [event.type for event in event_log.list_for_run("run_agent_tool_sub")]
     assert RuntimeEventType.SUBAGENT_STARTED in event_types
     assert RuntimeEventType.SUBAGENT_COMPLETED in event_types

@@ -74,23 +74,25 @@ def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
     if preset == "off":
         return CliToolConfig(
             tools_mode="default",
+            tools=("agent_tool",),
             tool_packs=("planning_progress",),
         )
     if preset == "web_search":
         return CliToolConfig(
             tools_mode="default",
-            tools=("web_search",),
+            tools=("agent_tool", "web_search"),
             tool_packs=("planning_progress",),
         )
     if preset == "web_fetch":
         return CliToolConfig(
             tools_mode="default",
-            tools=("web_fetch",),
+            tools=("agent_tool", "web_fetch"),
             tool_packs=("planning_progress",),
         )
     if preset in {"web", "safe"}:
         return CliToolConfig(
             tools_mode="default",
+            tools=("agent_tool",),
             tool_packs=("web", "planning_progress"),
         )
     if preset == "agents":
@@ -156,7 +158,7 @@ def create_agent_bundle(
     runner_config = RunnerConfig(
         cancellation_probe=cancellation_probe,
         subagents=SubagentSettings(
-            enable_subagents=settings.enable_subagents,
+            enable_subagents=True,
             max_child_runs=settings.max_child_runs,
         ),
     )
