@@ -30,6 +30,8 @@ def summarize_run_trace(
         user_prompt=user_prompt,
     )
     planning = _planning_summary(events, tool_names)
+    llm_calls = _llm_call_summary(events)
+    runtime_markers = _runtime_markers(events)
 
     failures: dict[str, bool] = {
         "stuck_on_interrupt": bool(interrupt_reasons) and terminal_event is None,
@@ -47,6 +49,13 @@ def summarize_run_trace(
             user_prompt=user_prompt,
             assistant_text=text,
         ),
+        "repeated_approval_planning": planning["approval_cycles"] > 1,
+        "extra_ask_user_question": _extra_ask_user_question(
+            tool_names=tool_names,
+            requires_research=requires_research,
+            user_prompt=user_prompt,
+            assistant_text=text,
+        ),
     }
     notes = _notes(
         failures=failures,
@@ -57,9 +66,11 @@ def summarize_run_trace(
         "run_id": run_id,
         "verdict": "fail" if any(failures.values()) else "pass",
         "terminal_event": terminal_event,
-        "llm_calls": _count_events(events, "llm_call_completed"),
+        "llm_calls": llm_calls["completed"],
+        "llm": llm_calls,
         "tool_calls": len(tool_names),
         "tool_names": tool_names,
+        "runtime_markers": runtime_markers,
         "research": {
             "required": requires_research,
             "tools_used": [name for name in tool_names if name in _RESEARCH_TOOLS],
@@ -170,6 +181,8 @@ def _planning_summary(
     tool_names: list[str],
 ) -> dict[str, Any]:
     planning_tool_count = sum(1 for name in tool_names if name in PLANNING_TOOL_NAMES)
+    enter_plan_count = tool_names.count("enter_plan_mode")
+    exit_plan_count = tool_names.count("exit_plan_mode_v2")
     data_tool_count = sum(1 for name in tool_names if name not in PLANNING_TOOL_NAMES)
     snapshots = 0
     latest_snapshot: dict[str, Any] | None = None
@@ -185,9 +198,54 @@ def _planning_summary(
     return {
         "verdict": verdict,
         "planning_tool_calls": planning_tool_count,
+        "approval_cycles": min(enter_plan_count, exit_plan_count),
+        "enter_plan_mode_calls": enter_plan_count,
+        "exit_plan_mode_calls": exit_plan_count,
         "data_tool_calls": data_tool_count,
         "snapshots": snapshots,
         "latest_snapshot": latest_snapshot,
+    }
+
+
+def _llm_call_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    tool_choices: list[Any] = []
+    force_final_reasons: list[str] = []
+    continuation_reasons: list[str] = []
+    for event in events:
+        if event.get("event") != "llm_call_started":
+            continue
+        data = _event_data(event)
+        if "tool_choice_effective" in data:
+            tool_choices.append(data.get("tool_choice_effective"))
+        force_final_reason = data.get("force_final_reason")
+        if isinstance(force_final_reason, str) and force_final_reason:
+            force_final_reasons.append(force_final_reason)
+        continuation_reason = data.get("continuation_reason")
+        if isinstance(continuation_reason, str) and continuation_reason:
+            continuation_reasons.append(continuation_reason)
+    return {
+        "started": _count_events(events, "llm_call_started"),
+        "completed": _count_events(events, "llm_call_completed"),
+        "tool_choice_effective": tool_choices,
+        "force_final_reasons": force_final_reasons,
+        "continuation_reasons": continuation_reasons,
+    }
+
+
+def _runtime_markers(events: list[dict[str, object]]) -> dict[str, list[str]]:
+    force_final_reasons: list[str] = []
+    continuation_reasons: list[str] = []
+    for event in events:
+        data = _event_data(event)
+        force_final_reason = data.get("force_final_reason")
+        if isinstance(force_final_reason, str) and force_final_reason:
+            force_final_reasons.append(force_final_reason)
+        continuation_reason = data.get("continuation_reason")
+        if isinstance(continuation_reason, str) and continuation_reason:
+            continuation_reasons.append(continuation_reason)
+    return {
+        "force_final_reasons": sorted(set(force_final_reasons)),
+        "continuation_reasons": sorted(set(continuation_reasons)),
     }
 
 
@@ -217,6 +275,29 @@ def _planning_execution_expected(
     )
 
 
+def _extra_ask_user_question(
+    *,
+    tool_names: list[str],
+    requires_research: bool,
+    user_prompt: str | None,
+    assistant_text: str,
+) -> bool:
+    if "ask_user_question" not in tool_names:
+        return False
+    prompt = " ".join((user_prompt or "").lower().split())
+    deliverable_markers = (
+        "напиши",
+        "черновик",
+        "реферат",
+        "final answer",
+        "write",
+        "draft",
+    )
+    if requires_research or any(marker in prompt for marker in deliverable_markers):
+        return True
+    return "?" not in assistant_text and "？" not in assistant_text
+
+
 def _notes(
     *,
     failures: dict[str, bool],
@@ -238,6 +319,12 @@ def _notes(
         )
     if failures["fabricated_planning"]:
         notes.append("Planning tools ran, but no data/execution tool followed.")
+    if failures["repeated_approval_planning"]:
+        notes.append("Approval planning was entered more than once in one run.")
+    if failures["extra_ask_user_question"]:
+        notes.append(
+            "ask_user_question was used where the task should proceed with assumptions."
+        )
     if interrupt_reasons:
         notes.append("Run paused for interrupt: " + ", ".join(interrupt_reasons))
     if continuation_reason and not any(notes):

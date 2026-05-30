@@ -63,7 +63,7 @@
 
 ### Scenario Harness
 
-- [ ] Добавить Phoenix trace extractor для run id:
+- [x] Добавить run/Phoenix trace extractor для run id:
   LLM calls, tool calls, selected tools, effective `tool_choice`, safe runtime
   reminders, text-form tool calls, progress-only final, missing required tool
   evidence, repeated planning, extra `ask_user_question`.
