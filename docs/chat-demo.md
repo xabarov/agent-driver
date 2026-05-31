@@ -38,6 +38,16 @@ Current product/design rules:
   Delegation**. Agent delegation uses the runtime's bounded `agent_tool`
   surface; local filesystem, shell, glob, grep, and raw planning tools are not
   user-facing web controls.
+- New Deep Research and Skills UI must sit on top of shared `agent_driver`
+  contracts. Chat-demo may add a Deep Research selector/button, progress
+  cards, source/citation inspector, skill library/install UI and trust
+  warnings, but reusable behavior stays in `agent_driver`: research contracts,
+  source ledger, skill parsing, trust classification, invocation records,
+  compaction survival, subagent preload and SDK/session APIs.
+- The demo backend should remain a thin adapter from UI state to
+  `AgentRunInput`, `ToolPolicyInput` or SDK/session calls. It must not grow a
+  private `SKILL.md` parser, evidence ledger, final-readiness checker or
+  Deep Research orchestrator.
 - Planning is agent-controlled. The agent may use planning when a task needs
   it, while simple direct answers should stay direct. Planning outcomes,
   approvals, denials, and snapshots should be visible as runtime outcomes, not

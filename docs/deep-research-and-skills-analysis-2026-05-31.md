@@ -281,6 +281,33 @@ OpenClaude показывает более productized SkillTool:
 
 ## Design Position
 
+### 0. Shared Runtime First, Chat-Demo As UX
+
+Deep Research and Skills must be implemented as reusable `agent_driver`
+capabilities first. Chat-demo is allowed to expose them as product UX, but it
+must not become a second research/skills engine.
+
+Concrete boundary:
+
+- `agent_driver` owns `research_depth`, `ResearchSessionContract`, source
+  ledger, final-readiness checks, progress/runtime events, skill manifest
+  parsing, trust policy, `skill_view`, invocation records, compaction survival,
+  skill-aware subagent preload and SDK contracts.
+- `examples/chat-demo` owns the button/segmented control for Deep Research,
+  skill library UI, upload/install screens, trust warning presentation,
+  progress cards, citation/source inspector, child-run panel and deterministic
+  UI/live probes.
+- The demo backend should translate UI choices into shared
+  `AgentRunInput`/SDK/session calls. It should not parse `SKILL.md`, maintain a
+  private evidence ledger, decide research final-readiness or implement
+  demo-only skill invocation.
+- If another frontend or SDK user would need the behavior, it belongs in
+  `agent_driver`.
+
+This is what keeps the OpenClaude/Hermes principle intact: the demo stays a
+product integration gate, not the place where reusable runtime logic quietly
+forks.
+
 ### 1. Skills Are Runtime Context, Not Hidden System Prompt
 
 Не стоит автоматически вшивать все skills в base prompt. Нужно:
@@ -442,6 +469,25 @@ Search candidates stay candidates. Verified evidence starts only at successful
 fetch/file/MCP read or explicit final links with enough support. UI should keep
 the current distinction: `Search candidates` vs `Sources`.
 
+### Chat-Demo UX Contract
+
+When runtime contracts exist, chat-demo should expose:
+
+- Deep Research mode selector/button that maps to shared `research_depth` and
+  optional strategy hints;
+- progress surface for search, fetch, file/MCP/code calls, subagent handoffs,
+  context-pressure recommendations and synthesis;
+- source shelf that renders `EvidenceRecord` status:
+  candidates, verified sources, failed/blocked reads and assistant links;
+- citation inspector that shows claim/source coverage from the shared ledger;
+- skill library UI with install/upload/review flows, trust badges, allowed-tool
+  hints and supporting-file preview;
+- skill invocation timeline sourced from runtime events/metadata;
+- child-run panel for research workers and citation/verifier workers.
+
+The demo must render shared events/contracts. It should not infer state from
+assistant prose or maintain a parallel research checklist.
+
 ### Research Orchestration
 
 Keep the single-agent loop as default. Add a small strategy layer:
@@ -488,6 +534,7 @@ if still available; otherwise warn that the skill changed or disappeared.
   symlink/duplicate handling, trust classification and description caps.
 
 Acceptance: `skill_tool` returns useful metadata, not just file paths.
+Chat-demo, CLI and SDK can all consume the same skill metadata shape.
 
 ### Phase 2 - Skill View / Invocation
 
@@ -534,6 +581,17 @@ final synthesis.
 
 Acceptance: UI and trace can explain why a research final was allowed,
 repaired, partial or blocked.
+
+### Phase 5A - Product UX Adapter
+
+- [ ] Add chat-demo Deep Research mode UX over shared runtime contracts.
+- [ ] Add chat-demo Skills library/installation UX over `agent_driver.skills`.
+- [ ] Add backend endpoints only as thin adapters to SDK/runtime contracts.
+- [ ] Add deterministic fake scenarios for Deep Research progress, skill load,
+  untrusted skill review, citation coverage and provider failure after search.
+
+Acceptance: chat-demo proves UX and traceability without owning reusable
+research or skill logic.
 
 ### Phase 6 - Eval Gate
 

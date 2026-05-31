@@ -37,6 +37,18 @@ External context note:
   around roughly 40-60% context utilization, and using subagents as context
   control rather than as role-play:
   <https://github.com/humanlayer/advanced-context-engineering-for-coding-agents/blob/main/ace-fca.md>
+- External re-check on 2026-05-31 confirms the same product/runtime split:
+  OpenAI Deep Research exposes long-running/background runs, output items for
+  web/file/MCP/code activity and clickable citations; OpenAI Skills and
+  Anthropic Agent Skills both treat skills as portable `SKILL.md` workflows
+  with metadata-first discovery, lazy body/supporting-file loading and trust
+  review. Sources:
+  <https://developers.openai.com/api/docs/guides/deep-research>,
+  <https://help.openai.com/en/articles/20001066-skills-in-chatgpt>,
+  <https://academy.openai.com/public/resources/skills>,
+  <https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills>,
+  <https://www.anthropic.com/engineering/built-multi-agent-research-system>,
+  <https://www.anthropic.com/engineering/building-effective-agents>.
 
 ## Current State
 
@@ -82,6 +94,46 @@ docs front door.
    `governed.py`, `run_trace_summary.py`.
 7. Docs have accumulated closed plans that obscure the active sequence.
 
+## Principle Fit And Product Boundary
+
+The OpenClaude/Hermes principles are achievable in this plan if we keep one
+non-negotiable boundary:
+
+**`agent_driver` owns reusable runtime/product logic; `examples/chat-demo`
+owns only UX composition, local FastAPI/React wiring, settings, scenario
+fixtures and visual regression checks.**
+
+That means:
+
+- Deep Research mode can appear in chat-demo as a button, segmented mode,
+  progress surface, source shelf, citation inspector and run-history UX. The
+  button must map to shared runtime contracts such as `research_depth`,
+  `ResearchSessionContract`, source ledger, context-pressure diagnostics and
+  optional subagent strategy. It must not implement private research logic in
+  the demo backend/frontend.
+- Skills can appear in chat-demo as skill library management, install/upload,
+  trust warnings, skill picker, invocation trace and supporting-file preview.
+  Parsing `SKILL.md`, trust classification, skill registry, `skill_view`,
+  invocation records, allowed-tools policy, compaction survival and
+  skill-aware subagent preload belong in `agent_driver`.
+- Chat-demo may keep thin adapters that translate UI state into
+  `AgentRunInput`, `ToolPolicyInput` or future SDK/session calls. If a behavior
+  would also be needed by CLI, SDK, another backend, or eval harness, it belongs
+  in `agent_driver`.
+- New UI affordances should follow shared runtime events/metadata first. If the
+  UI needs a new event, state or trace field, add it to runtime contracts before
+  rendering it in the demo.
+
+Principle audit:
+
+| Principle | Current plan fit | Required guardrail |
+| --- | --- | --- |
+| Python Zen / simple, readable, testable | Mostly fit: phases favor contracts, small helpers, trace gates | Keep Deep Research as contract + ledger + optional subagents, not a generic DAG |
+| Model + prompt + small runtime guard first | Fit: research repair, tool-surface prompts and context nudges follow this | Add orchestration only after trace/eval failures show the simple loop is insufficient |
+| Complex orchestration only from traces/tests | Fit if Phase 5 subagents remain optional and gated | Add eval labels for when subagents were necessary vs wasteful |
+| Simplify when possible | Fit: metadata owner map and module splits reduce hidden coupling | Reject chat-demo-only feature forks that duplicate runtime behavior |
+| Chat demo stays clean | Needs explicit enforcement | Treat chat-demo as product integration gate, not the owner of Deep Research/Skills logic |
+
 ## Dependency Graph
 
 | Workstream | Depends On | Blocks / Enables |
@@ -92,6 +144,7 @@ docs front door.
 | Context pressure / early compaction | Typed state, trace diagnostics | Better long research/code tasks, SDK diagnostics |
 | Skill metadata + `skill_view` | Tool catalog projection, trust policy | Research skills, skill-aware subagents |
 | Research + Skills integration | Skill core, source evidence ledger | Deep Research quality without DAG |
+| Chat-demo research/skills UX | Research/skill runtime contracts, SDK/session helpers | Product validation without logic duplication |
 | SDK productization | Contract snapshots, stable state names | Public API/docs, package consumer tests |
 | Structural refactor | Contract snapshots, focused behavior tests | Long-term maintainability |
 | Docs cleanup | Unified plan, status map | Lower planning noise |
@@ -331,6 +384,8 @@ Acceptance:
 - A backend developer can build a chat endpoint without importing
   `runtime.single_agent`.
 - SDK does not leak CLI/TUI/chat-demo dependencies.
+- Chat-demo can migrate toward SDK/session calls without becoming the owner of
+  reusable runtime behavior.
 
 ### Phase 4 - Skill Core
 
@@ -349,12 +404,17 @@ mechanism.
   merely mention a skill without loading it.
 - [ ] Add compaction persistence for invoked skill refs: name, path, digest,
   trusted flag, agent id; do not persist full bodies by default.
+- [ ] Keep all shared skill behavior in `agent_driver`: frontmatter parsing,
+  trust classification, registry/listing, `skill_view`, invocation records,
+  allowed-tools policy and compaction survival.
 
 Acceptance:
 
 - Skills are visible, loadable, traceable and safe enough for curated research
   work.
 - Full skill content is loaded only on demand.
+- Chat-demo can render skills and skill warnings using shared contracts without
+  parsing or executing skills itself.
 
 ### Phase 5 - Research + Skills Integration
 
@@ -373,6 +433,11 @@ DAG.
 - [ ] Add optional skill-aware subagent preload:
   child receives trusted skill bodies, parent receives compact findings +
   source refs.
+- [ ] Add a provider-neutral Deep Research mode contract:
+  `research_depth=deep_parallel_research`, progress events, source ledger,
+  context-pressure recommendations, optional child strategy and final citation
+  coverage. Provider-native Deep Research adapters may feed this ledger, but
+  must not become the only implementation.
 - [ ] Add live/fake evals:
   deep report with skill loaded, literature review, provider-doc official-only,
   malicious/untrusted skill, compaction after skill invocation.
@@ -382,6 +447,36 @@ Acceptance:
 - Skills improve research behavior but cannot launder search candidates into
   verified sources.
 - Parent still owns final synthesis and citation coverage.
+- Deep Research remains a shared runtime contract; chat-demo only selects,
+  displays and verifies it.
+
+### Phase 5A - Chat-Demo Deep Research And Skills UX
+
+Purpose: expose the new runtime capabilities in the product surface without
+moving product logic into the demo.
+
+- [ ] Add a Deep Research affordance only after the runtime exposes the shared
+  mode contract: button/segmented mode, progress surface, source/citation
+  inspector, context-pressure status, child-run panel and final-readiness
+  diagnostics.
+- [ ] Add Skills UX only after `agent_driver.skills` and `skill_view` exist:
+  skill library list, install/upload flow, trust/review warnings, skill picker,
+  invocation timeline and supporting-file preview.
+- [ ] Backend endpoints must be thin adapters over SDK/runtime contracts:
+  no local `SKILL.md` parser, no private evidence ledger, no demo-only research
+  readiness logic.
+- [ ] Frontend state should render runtime events and stable contracts, not
+  infer hidden research/skill state from assistant prose.
+- [ ] Add deterministic fake scenarios plus at least one live probe for:
+  deep research progress, skill load, untrusted skill warning, citation shelf,
+  compaction after skill invocation and provider failure after search.
+
+Acceptance:
+
+- Chat-demo proves the UX, accessibility and traceability of Deep
+  Research/Skills while remaining replaceable by another frontend.
+- A second app can reuse the same SDK/runtime contracts without copying
+  chat-demo code.
 
 ### Phase 6 - Structural Refactor
 
@@ -462,6 +557,10 @@ Acceptance:
 - Do not freeze SDK metadata fields until typed runtime state exists.
 - Do not add automatic skill loading from semantic guesses; make skill use
   visible through `skill_view` and traces.
+- Do not implement Deep Research or Skills as chat-demo-only behavior. The demo
+  may expose buttons, settings, progress and management UI, but the contracts,
+  ledgers, parsing, trust policy and runtime decisions belong in
+  `agent_driver`.
 - Do not delete historical docs until links are updated and closed status is
   recorded.
 
