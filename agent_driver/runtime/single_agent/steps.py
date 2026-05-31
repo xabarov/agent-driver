@@ -8,6 +8,11 @@ from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalRe
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.control.dispatcher import drain_step_boundary_controls
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.metadata_state import (
+    get_loop_control_state,
+    get_research_runtime_state,
+    get_tool_loop_state,
+)
 from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
     REPAIR_FINAL_MISSING_SOURCE_LINKS,
@@ -82,7 +87,7 @@ class SingleAgentStepMixin:
             return await run_code_agent_stage(runner=self, context=context)
         if context.llm_response is None:
             raise RuntimeExecutionError("Missing LLM response before tool stage")
-        approved_call = context.metadata.pop("approved_tool_call", None)
+        approved_call = get_tool_loop_state(context).pop_approved_tool_call()
         # A0.2 — only forward ``tool_gate`` when the caller actually set
         # one. Old executors and test mocks have ``(run_input,
         # llm_response)`` signatures and would reject an unknown kwarg;
@@ -112,18 +117,10 @@ class SingleAgentStepMixin:
     ) -> None:
         """Persist tool stage traces/results into context metadata."""
         context.tool_calls += len(result.traces)
-        existing_trace = context.metadata.get("tool_trace")
-        if not isinstance(existing_trace, list):
-            existing_trace = []
-        existing_results = context.metadata.get("tool_results")
-        if not isinstance(existing_results, list):
-            existing_results = []
-        existing_trace.extend(trace.model_dump(mode="json") for trace in result.traces)
-        existing_results.extend(
-            item.model_dump(mode="json") for item in result.envelopes
+        get_tool_loop_state(context).append_stage_outputs(
+            traces=[trace.model_dump(mode="json") for trace in result.traces],
+            results=[item.model_dump(mode="json") for item in result.envelopes],
         )
-        context.metadata["tool_trace"] = existing_trace
-        context.metadata["tool_results"] = existing_results
 
     async def _execute_run_started(self, context: RunContext) -> RuntimeStepResult:
         from agent_driver.runtime.single_agent.step_planning import (
@@ -140,12 +137,9 @@ class SingleAgentStepMixin:
             )
         )
         context.step_count += 1
-        context.metadata.update(
-            {
-                "next_step": "llm_call",
-                "step_count": context.step_count,
-                "tool_calls": context.tool_calls,
-            }
+        get_loop_control_state(context).set_step_transition(
+            next_step="llm_call",
+            tool_calls=context.tool_calls,
         )
         self._save_checkpoint(context, latest_output=None, node_id="run_started")
         self._maybe_fail_after_step("run_started")
@@ -200,7 +194,7 @@ class SingleAgentStepMixin:
             else "unknown"
         )
         completed_payload: dict[str, object] = {"finish_reason": finish_reason}
-        force_final_reason = context.metadata.get("force_final_answer_reason")
+        force_final_reason = get_tool_loop_state(context).force_final_answer_reason()
         if isinstance(force_final_reason, str) and force_final_reason:
             completed_payload["force_final_reason"] = force_final_reason
         continuation_reason = context.metadata.get("continuation_nudge_reason")
@@ -216,12 +210,9 @@ class SingleAgentStepMixin:
         continuation = _maybe_build_continuation_transition(context)
         if continuation is not None:
             context.step_count += 1
-            context.metadata.update(
-                {
-                    "next_step": "llm_call",
-                    "step_count": context.step_count,
-                    "tool_calls": context.tool_calls,
-                }
+            get_loop_control_state(context).set_step_transition(
+                next_step="llm_call",
+                tool_calls=context.tool_calls,
             )
             self._save_checkpoint(context, latest_output=None, node_id="finalize")
             self._maybe_fail_after_step("finalize")
@@ -242,12 +233,9 @@ class SingleAgentStepMixin:
             ),
         )
         context.step_count += 1
-        context.metadata.update(
-            {
-                "next_step": "done",
-                "step_count": context.step_count,
-                "tool_calls": context.tool_calls,
-            }
+        get_loop_control_state(context).set_step_transition(
+            next_step="done",
+            tool_calls=context.tool_calls,
         )
         output.checkpoint = self._save_checkpoint(
             context,
@@ -255,7 +243,9 @@ class SingleAgentStepMixin:
             node_id="finalize",
         )
         self._maybe_fail_after_step("finalize")
-        context.metadata["terminal_output"] = output.model_dump(mode="json")
+        get_loop_control_state(context).set_terminal_output(
+            output.model_dump(mode="json")
+        )
         return RuntimeStepResult(next_step="done")
 
     async def _execute_step(self, context: RunContext) -> RuntimeStepResult:
@@ -281,27 +271,25 @@ def _maybe_build_continuation_transition(
         context,
         assistant_text=text,
     )
-    context.metadata["research_session_contract"] = contract.model_dump()
+    research_state = get_research_runtime_state(context)
+    research_state.set_contract_payload(contract.model_dump())
     readiness = contract.final_readiness
     if readiness.status != FINAL_READINESS_ALLOWED:
         reason_signature = ",".join(readiness.reasons)
-        repair_count = int(context.metadata.get("contract_repair_nudge_count", 0))
-        previous_signature = context.metadata.get("contract_repair_reason_signature")
+        repair_count = research_state.contract_repair_nudge_count()
+        previous_signature = research_state.contract_repair_reason_signature()
         if repair_count >= 2 or (
             repair_count >= 1 and previous_signature == reason_signature
         ):
-            context.metadata["final_readiness"] = "repair_exhausted"
-            context.metadata["repair_required_reasons"] = list(readiness.reasons)
+            research_state.set_repair_exhausted(list(readiness.reasons))
             return None
         from agent_driver.runtime.single_agent.continuation import ContinuationIntent
 
         intent = ContinuationIntent(True, "contract_repair_required")
         nudge = _research_contract_repair_nudge(context, readiness.reasons)
-        context.metadata.pop("force_final_answer", None)
-        context.metadata.pop("tool_choice_override", None)
-        context.metadata.pop("force_final_answer_reason", None)
+        get_tool_loop_state(context).clear_force_final_answer()
         _force_research_repair_tool_choice(context, readiness.reasons)
-        context.metadata["contract_repair_reason_signature"] = reason_signature
+        research_state.set_contract_repair_reason_signature(reason_signature)
         return _build_continuation_transition(
             context,
             text=text,
@@ -380,38 +368,32 @@ def _force_research_repair_tool_choice(
     """Force the concrete research tool when a model tries to finish too early."""
     if REPAIR_MISSING_RESEARCH_EVIDENCE in reasons:
         if _tool_available_for_repair(context, "web_search"):
-            context.metadata["tool_choice_override"] = {
-                "type": "tool",
-                "name": "web_search",
-            }
+            get_tool_loop_state(context).set_tool_choice_override(
+                {"type": "tool", "name": "web_search"}
+            )
             return
     if REPAIR_INSUFFICIENT_SOURCE_DIVERSITY in reasons:
         if _tool_available_for_repair(context, "web_search"):
-            context.metadata["tool_choice_override"] = {
-                "type": "tool",
-                "name": "web_search",
-            }
+            get_tool_loop_state(context).set_tool_choice_override(
+                {"type": "tool", "name": "web_search"}
+            )
             return
     if REPAIR_MISSING_FETCHED_SOURCES in reasons:
         if _tool_available_for_repair(context, "web_fetch"):
-            context.metadata["tool_choice_override"] = {
-                "type": "tool",
-                "name": "web_fetch",
-            }
+            get_tool_loop_state(context).set_tool_choice_override(
+                {"type": "tool", "name": "web_fetch"}
+            )
             return
     if REPAIR_UNFINISHED_TODOS in reasons:
         if _research_evidence_ready_for_final_repair(context):
-            context.metadata["tool_choice_override"] = "none"
-            context.metadata["force_final_answer"] = True
-            context.metadata["force_final_answer_reason"] = (
-                "contract_repair_final_answer"
+            get_tool_loop_state(context).force_final_answer(
+                reason="contract_repair_final_answer"
             )
             return
         if _tool_available_for_repair(context, "todo_write"):
-            context.metadata["tool_choice_override"] = {
-                "type": "tool",
-                "name": "todo_write",
-            }
+            get_tool_loop_state(context).set_tool_choice_override(
+                {"type": "tool", "name": "todo_write"}
+            )
 
 
 def _tool_available_for_repair(context: RunContext, tool_name: str) -> bool:
@@ -422,8 +404,8 @@ def _tool_available_for_repair(context: RunContext, tool_name: str) -> bool:
     allowed = policy.allowed_tools
     if allowed is not None and tool_name not in set(allowed):
         return False
-    effective = context.metadata.get("effective_tool_names")
-    if isinstance(effective, (list, tuple, set)) and tool_name not in set(effective):
+    effective = get_tool_loop_state(context).effective_tool_names()
+    if effective is not None and tool_name not in set(effective):
         return False
     return True
 
@@ -434,7 +416,9 @@ def _research_evidence_ready_for_final_repair(context: RunContext) -> bool:
         return False
     if task_contract.get("requires_research") is not True:
         return False
-    evidence = research_evidence_from_tool_results(context.metadata.get("tool_results"))
+    evidence = research_evidence_from_tool_results(
+        get_tool_loop_state(context).tool_results()
+    )
     if task_contract.get("research_depth") == "source_verified_report":
         if not _tool_available_for_repair(context, "web_fetch"):
             return evidence.search_calls > 0 or evidence.fetch_calls > 0
@@ -466,7 +450,7 @@ def _research_contract_repair_nudge(
         )
     if REPAIR_INSUFFICIENT_SOURCE_DIVERSITY in reasons:
         evidence = research_evidence_from_tool_results(
-            context.metadata.get("tool_results")
+            get_tool_loop_state(context).tool_results()
         )
         domains = ", ".join(evidence.unique_domains)
         message = "the fetched evidence needs at least two distinct domains"

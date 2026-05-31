@@ -17,6 +17,10 @@ from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.observability.source_evidence import source_evidence_from_tool_result
 from agent_driver.prompts import force_final_answer_tool_message
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.metadata_state import (
+    get_research_runtime_state,
+    get_tool_loop_state,
+)
 from agent_driver.runtime.research_evidence import (
     RESEARCH_DEPTH_SOURCE_VERIFIED,
     SOURCE_VERIFIED_DOMAINS,
@@ -908,9 +912,11 @@ def _append_web_fetch_verification_hint(
     if web_search_total < 1:
         return
     required_fetches = _required_research_fetch_count(context)
-    evidence = research_evidence_from_tool_results(context.metadata.get("tool_results"))
+    evidence = research_evidence_from_tool_results(
+        get_tool_loop_state(context).tool_results()
+    )
     if evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES:
-        context.metadata["research_fetch_fallback_required"] = True
+        get_research_runtime_state(context).set_fetch_fallback_required()
         messages.append(
             ChatMessage(
                 role=ChatRole.USER,
@@ -1021,9 +1027,9 @@ def _append_denial_recovery_message(
     denied_counts[tool_key] = prior_count + 1
     context.metadata["denied_tool_counts"] = denied_counts
     if denied_counts[tool_key] >= 2:
-        context.metadata["force_final_answer"] = True
-        context.metadata["tool_choice_override"] = "none"
-        context.metadata["force_final_answer_reason"] = "repeated_tool_handler_error"
+        get_tool_loop_state(context).force_final_answer(
+            reason="repeated_tool_handler_error"
+        )
         messages.append(
             ChatMessage(
                 role=ChatRole.USER,
@@ -1071,9 +1077,7 @@ def _append_unknown_tool_recovery_message(
             repeated.append(name)
     context.metadata["unknown_tool_counts"] = counts
     if repeated:
-        context.metadata["force_final_answer"] = True
-        context.metadata["tool_choice_override"] = "none"
-        context.metadata["force_final_answer_reason"] = "repeated_unknown_tool"
+        get_tool_loop_state(context).force_final_answer(reason="repeated_unknown_tool")
         names = ", ".join(sorted(set(repeated)))
         messages.append(
             ChatMessage(
@@ -1183,22 +1187,19 @@ def _update_zero_result_policy(
         return
     context.metadata["web_search_zero_streak"] = zero_streak
     if zero_streak >= 1:
-        context.metadata["force_final_answer"] = True
-        context.metadata["tool_choice_override"] = "none"
-        context.metadata["force_final_answer_reason"] = "web_search_zero_results"
+        get_tool_loop_state(context).force_final_answer(
+            reason="web_search_zero_results"
+        )
 
 
 def _refresh_force_final_controls(context: RunContext) -> None:
     """Clear forced-final flags unless current run state still requires them."""
     reason = _force_final_reason(context)
+    tool_state = get_tool_loop_state(context)
     if reason is not None:
-        context.metadata["force_final_answer"] = True
-        context.metadata["tool_choice_override"] = "none"
-        context.metadata.setdefault("force_final_answer_reason", reason)
+        tool_state.ensure_force_final_answer(reason=reason)
         return
-    context.metadata.pop("force_final_answer", None)
-    context.metadata.pop("tool_choice_override", None)
-    context.metadata.pop("force_final_answer_reason", None)
+    tool_state.clear_force_final_answer()
 
 
 def _force_web_fetch_for_source_verified_research(context: RunContext) -> None:
@@ -1206,39 +1207,48 @@ def _force_web_fetch_for_source_verified_research(context: RunContext) -> None:
 
     def _clear_fetch_force() -> None:
         if context.metadata.get("continuation_nudge_reason") in {
-            "source_verified_fetch_required" "source_diversity_search_required",
+            "source_verified_fetch_required",
+            "source_diversity_search_required",
             "source_diversity_fetch_required",
         }:
             context.metadata.pop("continuation_nudge_reason", None)
         context.metadata.pop("research_avoid_domains", None)
         context.metadata.pop("research_source_diversity_avoid_domains", None)
 
-    if context.metadata.get("force_final_answer") is True:
+    if get_tool_loop_state(context).force_final_answer_enabled():
         _clear_fetch_force()
         return
     if not _source_verified_research_pending(context):
         _clear_fetch_force()
         return
-    evidence = research_evidence_from_tool_results(context.metadata.get("tool_results"))
+    evidence = research_evidence_from_tool_results(
+        get_tool_loop_state(context).tool_results()
+    )
     if evidence.search_calls < 1:
         _clear_fetch_force()
         return
     if _source_diversity_repair_pending(evidence):
         domains = ", ".join(evidence.unique_domains)
-        context.metadata["research_avoid_domains"] = list(evidence.unique_domains)
+        get_research_runtime_state(context).set_avoid_domains(
+            list(evidence.unique_domains)
+        )
         if _last_research_tool_name(context) == "web_search":
-            context.metadata["tool_choice_override"] = {
-                "type": "tool",
-                "name": "web_fetch",
-            }
+            get_tool_loop_state(context).set_tool_choice_override(
+                {
+                    "type": "tool",
+                    "name": "web_fetch",
+                }
+            )
             context.metadata["continuation_nudge_reason"] = (
                 "source_diversity_fetch_required"
             )
         else:
-            context.metadata["tool_choice_override"] = {
-                "type": "tool",
-                "name": "web_search",
-            }
+            get_tool_loop_state(context).set_tool_choice_override(
+                {
+                    "type": "tool",
+                    "name": "web_search",
+                }
+            )
             context.metadata["continuation_nudge_reason"] = (
                 "source_diversity_search_required"
             )
@@ -1248,24 +1258,23 @@ def _force_web_fetch_for_source_verified_research(context: RunContext) -> None:
     if evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES:
         _clear_fetch_force()
         return
-    context.metadata["tool_choice_override"] = {
-        "type": "tool",
-        "name": "web_fetch",
-    }
+    get_tool_loop_state(context).set_tool_choice_override(
+        {
+            "type": "tool",
+            "name": "web_fetch",
+        }
+    )
     context.metadata["continuation_nudge_reason"] = "source_verified_fetch_required"
 
 
 def _maybe_force_final_answer(context: RunContext) -> None:
     """Enable forced final-answer mode only when guard heuristics trigger."""
     reason = _force_final_reason(context)
+    tool_state = get_tool_loop_state(context)
     if reason is not None:
-        context.metadata["force_final_answer"] = True
-        context.metadata["tool_choice_override"] = "none"
-        context.metadata.setdefault("force_final_answer_reason", reason)
+        tool_state.ensure_force_final_answer(reason=reason)
         return
-    context.metadata.pop("force_final_answer", None)
-    context.metadata.pop("tool_choice_override", None)
-    context.metadata.pop("force_final_answer_reason", None)
+    tool_state.clear_force_final_answer()
 
 
 def _should_force_final_answer(context: RunContext) -> bool:
@@ -1306,24 +1315,31 @@ def _force_final_reason(context: RunContext) -> str | None:
             enforce_todos=False,
             allow_final_deliverable_todos=True,
         )
-        context.metadata["research_session_contract"] = contract.model_dump()
-        context.metadata["final_readiness"] = FINAL_READINESS_ALLOWED
-        context.metadata["repair_required_reasons"] = []
+        get_research_runtime_state(context).set_contract(
+            payload=contract.model_dump(),
+            status=FINAL_READINESS_ALLOWED,
+            reasons=[],
+        )
         return "research_request_satisfied"
     contract = build_research_session_contract_from_context(
         context,
         enforce_final_source_links=False,
         allow_final_deliverable_todos=True,
     )
-    context.metadata["research_session_contract"] = contract.model_dump()
+    research_state = get_research_runtime_state(context)
+    research_state.set_contract_payload(contract.model_dump())
     if contract.final_readiness.status != FINAL_READINESS_ALLOWED:
-        context.metadata["final_readiness"] = contract.final_readiness.status
-        context.metadata["repair_required_reasons"] = list(
-            contract.final_readiness.reasons
+        research_state.set_contract(
+            payload=contract.model_dump(),
+            status=contract.final_readiness.status,
+            reasons=list(contract.final_readiness.reasons),
         )
         return None
-    context.metadata["final_readiness"] = contract.final_readiness.status
-    context.metadata["repair_required_reasons"] = []
+    research_state.set_contract(
+        payload=contract.model_dump(),
+        status=contract.final_readiness.status,
+        reasons=[],
+    )
     if loop_detected:
         return "repeated_tool_call"
     if zero_results_triggered:
@@ -1352,9 +1368,7 @@ def _deliverable_request_should_force_final(context: RunContext) -> bool:
         return False
     if _source_verified_research_pending(context):
         return False
-    tool_results = context.metadata.get("tool_results")
-    if not isinstance(tool_results, list):
-        return False
+    tool_results = get_tool_loop_state(context).tool_results()
     for item in tool_results:
         if not isinstance(item, dict):
             continue
@@ -1379,9 +1393,7 @@ def _research_request_should_force_final(context: RunContext) -> bool:
         return False
     if task_contract.get("requires_research") is not True:
         return False
-    tool_results = context.metadata.get("tool_results")
-    if not isinstance(tool_results, list):
-        return False
+    tool_results = get_tool_loop_state(context).tool_results()
     if task_contract.get("research_depth") == RESEARCH_DEPTH_SOURCE_VERIFIED:
         if not _tool_available(context, "web_fetch"):
             return any(
@@ -1395,7 +1407,7 @@ def _research_request_should_force_final(context: RunContext) -> bool:
             evidence.successful_fetches == 0
             and (evidence.search_calls > 0 or evidence.fetch_calls > 0)
         ):
-            context.metadata["research_fetch_fallback_required"] = True
+            get_research_runtime_state(context).set_fetch_fallback_required()
             return True
         return evidence.source_verified(
             required_fetches=SOURCE_VERIFIED_FETCHES,
@@ -1420,7 +1432,9 @@ def _source_verified_research_pending(context: RunContext) -> bool:
         return False
     if not _tool_available(context, "web_fetch"):
         return False
-    evidence = research_evidence_from_tool_results(context.metadata.get("tool_results"))
+    evidence = research_evidence_from_tool_results(
+        get_tool_loop_state(context).tool_results()
+    )
     if evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES and (
         evidence.successful_fetches == 0
         and (evidence.search_calls > 0 or evidence.fetch_calls > 0)
@@ -1440,9 +1454,7 @@ def _source_diversity_repair_pending(evidence: Any) -> bool:
 
 
 def _last_research_tool_name(context: RunContext) -> str | None:
-    tool_results = context.metadata.get("tool_results")
-    if not isinstance(tool_results, list):
-        return None
+    tool_results = get_tool_loop_state(context).tool_results()
     for item in reversed(tool_results):
         if not isinstance(item, dict):
             continue
@@ -1476,8 +1488,8 @@ def _task_contract_metadata(context: RunContext) -> object:
 
 
 def _tool_available(context: RunContext, tool_name: str) -> bool:
-    effective_tool_names = context.metadata.get("effective_tool_names")
-    if isinstance(effective_tool_names, (list, tuple, set)):
+    effective_tool_names = get_tool_loop_state(context).effective_tool_names()
+    if effective_tool_names is not None:
         return tool_name in effective_tool_names
     policy = context.run_input.tool_policy
     denied = getattr(policy, "denied_tools", None) or []
@@ -1505,9 +1517,7 @@ def _python_reliability_request_active(context: RunContext) -> bool:
 
 
 def _has_successful_python_result(context: RunContext) -> bool:
-    tool_results = context.metadata.get("tool_results")
-    if not isinstance(tool_results, list):
-        return False
+    tool_results = get_tool_loop_state(context).tool_results()
     for item in tool_results:
         if not isinstance(item, dict):
             continue
@@ -1531,9 +1541,7 @@ def _has_successful_python_result(context: RunContext) -> bool:
 
 def _has_repeated_recent_tool_call(context: RunContext) -> bool:
     """Detect two latest tool calls with identical tool name and args."""
-    tool_results = context.metadata.get("tool_results")
-    if not isinstance(tool_results, list):
-        return False
+    tool_results = get_tool_loop_state(context).tool_results()
     recent: list[tuple[str, str]] = []
     for item in tool_results:
         if not isinstance(item, dict):

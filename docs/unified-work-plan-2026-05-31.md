@@ -175,6 +175,22 @@ ten happy-path prompts. At the same time, adopting a huge external benchmark as
 the daily gate would make iteration slow, expensive and noisy. Use a layered
 benchmark strategy.
 
+## Phase-End Quality Gate
+
+After every phase, run a real code-quality pass over the packages touched by
+that phase:
+
+- `ruff check` over touched Python files/packages.
+- focused `pytest` plus the relevant broader non-live regression gate.
+- `pylint` over touched runtime/domain packages with the existing project
+  configuration and a non-lowered `--fail-under` threshold. Fix real
+  `error`/`warning` findings and any new actionable convention/refactor
+  findings. Do not hide phase regressions with broad disable pragmas or by
+  weakening the threshold.
+- If `pylint` reports pre-existing structural debt outside the phase boundary,
+  record it as a later refactor item instead of silently treating the phase as
+  clean.
+
 ### Relevant External Benchmarks
 
 Deep Research / browsing:
@@ -329,12 +345,25 @@ Purpose: stop new work from deepening the metadata bag problem.
 - [x] Execute refactoring Phase 1: inventory every `context.metadata[...]` key
   with owner, producer, consumer, persistence need and UI relevance.
 - [x] Add `docs/runtime-metadata.md` as the metadata owner map.
-- [ ] Execute refactoring Phase 2 in a compatibility-preserving way:
+- [x] Execute refactoring Phase 2 in a compatibility-preserving way:
   `LoopControlState`, `ToolLoopState`, `PlanningRuntimeState`,
   `ResearchRuntimeState`, `StreamingRuntimeState`,
   `CompactionRuntimeState`.
   Initial metadata views exist in `agent_driver/runtime/metadata_state.py`;
-  migration of direct reads/writes is intentionally incremental.
+  migration of direct reads/writes is intentionally incremental. 2026-05-31
+  update: explicit `get_*_state(context)` helpers were added; `RunContext`
+  loop/tool counters, terminal-output lookup, workspace-cwd lookup, planning
+  event emission and forced-final/tool-choice paths in `tool_stage.py` now use
+  the typed views while preserving the legacy metadata keys. A second slice
+  moved terminal/paused output compaction projection, interrupt payload,
+  approved-plan lookup, raw assistant content and stream recovery bookkeeping
+  behind the same views. Final Phase 1 closure moved research contract,
+  tool-result consumers, todo reminder counters, planning updates, LLM
+  trim/microcompaction payloads, tool-choice reads and source-verified repair
+  paths behind those views. Remaining direct writes in producer stages such as
+  `compaction_stage.py`, `resume.py` and subagent bookkeeping are owned by
+  later structural workstreams and do not create new public SDK metadata
+  contracts.
 - [x] Add contract snapshots for public shapes:
   `AgentRunInput`, `AgentRunOutput`, `RuntimeEvent`, `ToolManifest`,
   `ToolTrace`, interrupt/resume payloads.
@@ -352,6 +381,17 @@ Acceptance:
 - Refactor and SDK work can proceed with stable internal state boundaries.
 - Planning approval no longer exposes accidental tool-name versioning as an
   architectural decision.
+
+Status on 2026-05-31:
+
+- Phase 1 is closed for the six planned state groups: loop control, tool loop,
+  planning, research, streaming and compaction.
+- High-churn consumers in `steps.py`, `llm_step.py`, `tool_stage.py`,
+  `output.py`, `todo_reminders.py`, `step_planning.py`,
+  `research_session_contract.py` and `subagent_stage.py` now use typed metadata
+  views for the migrated state paths while preserving legacy serialized keys.
+- Compatibility tests cover helper shape preservation and the non-live runtime
+  regression gate passed.
 
 ### Phase 2 - Harness Context Pressure
 

@@ -18,6 +18,7 @@ from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.abort import RunAbortHandle  # noqa: F401
+from agent_driver.runtime.metadata_state import get_loop_control_state
 from agent_driver.runtime.tool_gate import ToolGate  # noqa: F401 (re-exported via runtime/__init__)
 from agent_driver.runtime.single_agent.journal import SingleAgentJournalMixin
 from agent_driver.runtime.single_agent.output import SingleAgentOutputMixin
@@ -187,7 +188,7 @@ class SingleAgentRunner(
                     )
                     return self._build_output(context, terminal)
                 context.step_name = result.next_step
-            payload = context.metadata.get("terminal_output")
+            payload = get_loop_control_state(context).terminal_output()
             if not isinstance(payload, dict):
                 raise RuntimeExecutionError("Missing terminal output metadata")
             return AgentRunOutput.model_validate(payload)
@@ -195,11 +196,12 @@ class SingleAgentRunner(
 
 def _pick_workspace_cwd(context: _RunContext):
     """Resolve run-scoped workspace cwd from metadata hints."""
-    workspace_raw = context.metadata.get("workspace_cwd")
-    if isinstance(workspace_raw, str) and workspace_raw.strip():
+    loop_state = get_loop_control_state(context)
+    workspace_raw = loop_state.workspace_cwd()
+    if workspace_raw is not None:
         return Path(workspace_raw).expanduser().resolve()
-    sandbox_raw = context.metadata.get("eval_sandbox_dir")
-    if isinstance(sandbox_raw, str) and sandbox_raw.strip():
+    sandbox_raw = loop_state.eval_sandbox_dir()
+    if sandbox_raw is not None:
         return Path(sandbox_raw).expanduser().resolve()
     return None
 

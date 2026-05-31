@@ -5,10 +5,6 @@ from __future__ import annotations
 from typing import Any
 
 from agent_driver.context import (
-    COMPACTION_AUDIT_KEY,
-    COMPACTION_DECISION_KEY,
-    COMPACTION_FAILURES_KEY,
-    COMPACTION_RESULT_KEY,
     planning_state_event,
     planning_step_event,
     split_preview_and_artifact,
@@ -34,6 +30,12 @@ from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.observability.source_evidence import (
     merge_source_evidence,
     source_evidence_from_tool_result,
+)
+from agent_driver.runtime.metadata_state import (
+    get_compaction_runtime_state,
+    get_loop_control_state,
+    get_planning_runtime_state,
+    get_streaming_runtime_state,
 )
 from agent_driver.runtime.single_agent.output_builders import (
     build_memory_audit,
@@ -118,24 +120,27 @@ class SingleAgentOutputMixin:
                 artifact_store=self._deps.artifact_store,
                 memory=extraction.memory,
             )
-        context.metadata["session_memory_extraction"] = {
-            "updated": extraction.updated,
-            "reason": extraction.reason,
-            "considered_digest_ids": list(extraction.considered_digest_ids),
-            "last_summarized_turn_index": (
-                extraction.memory.last_summarized_turn_index
-                if extraction.memory is not None
-                else (
-                    previous.last_summarized_turn_index
-                    if previous is not None
-                    else None
-                )
-            ),
-        }
+        get_compaction_runtime_state(context).set_session_memory_extraction(
+            {
+                "updated": extraction.updated,
+                "reason": extraction.reason,
+                "considered_digest_ids": list(extraction.considered_digest_ids),
+                "last_summarized_turn_index": (
+                    extraction.memory.last_summarized_turn_index
+                    if extraction.memory is not None
+                    else (
+                        previous.last_summarized_turn_index
+                        if previous is not None
+                        else None
+                    )
+                ),
+            }
+        )
 
     def _emit_planning_events(self, context: RunContext) -> None:
         """Emit dedicated planning events if state exists in metadata."""
-        step_payload = context.metadata.get("planning_step")
+        planning_state = get_planning_runtime_state(context)
+        step_payload = planning_state.dict_or_none("planning_step")
         if isinstance(step_payload, dict):
             self._deps.event_log.append(
                 planning_step_event(
@@ -145,7 +150,7 @@ class SingleAgentOutputMixin:
                     step=PlanningStep.model_validate(step_payload),
                 )
             )
-        state_payload = context.metadata.get("planning_state")
+        state_payload = planning_state.planning_state()
         if isinstance(state_payload, dict):
             self._deps.event_log.append(
                 planning_state_event(
@@ -201,7 +206,7 @@ class SingleAgentOutputMixin:
             return raw
         cleaned = strip_text_form_tool_calls(raw)
         if cleaned != raw:
-            context.metadata["raw_assistant_content"] = raw
+            get_streaming_runtime_state(context).set_raw_assistant_content(raw)
         return cleaned or None
 
     def _source_evidence_from_tool_results(
@@ -268,7 +273,7 @@ class SingleAgentOutputMixin:
             events=self._deps.event_log.list_for_run(context.run_id),
             tool_trace=tool_trace,
             usage=usage,
-            interrupt=context.metadata.get("interrupt_payload"),
+            interrupt=get_loop_control_state(context).interrupt_payload(),
             terminal_reason=terminal.reason,
             memory_projection=projection,
             memory_audit=build_memory_audit(context),
@@ -292,6 +297,10 @@ class SingleAgentOutputMixin:
         source_evidence = self._source_evidence_from_tool_results(
             normalized_tool_results
         )
+        compaction_projection = get_compaction_runtime_state(
+            context
+        ).output_metadata_projection()
+        planning_state = get_planning_runtime_state(context)
         return {
             "graph_id": self.graph_id,
             "tool_results": normalized_tool_results,
@@ -300,34 +309,22 @@ class SingleAgentOutputMixin:
                 context.run_id, artifact_refs
             ),
             "digest_refs": digest_refs,
-            "observations": context.metadata.get("observations", []),
-            "trim_audit": context.metadata.get("trim_audit", []),
-            "trim_metadata": context.metadata.get("trim_metadata", {}),
-            "microcompaction_audit": context.metadata.get("microcompaction_audit", []),
-            "microcompaction": context.metadata.get("microcompaction", {}),
-            "token_pressure": context.metadata.get("token_pressure", {}),
+            **compaction_projection,
             "subagent_groups": list_dict_metadata(context, "subagent_groups"),
             "subagent_runs": summarize_child_runs_for_parent(subagent_runs_raw),
-            COMPACTION_DECISION_KEY: context.metadata.get(COMPACTION_DECISION_KEY),
-            COMPACTION_AUDIT_KEY: context.metadata.get(COMPACTION_AUDIT_KEY),
-            COMPACTION_RESULT_KEY: context.metadata.get(COMPACTION_RESULT_KEY),
-            COMPACTION_FAILURES_KEY: context.metadata.get(COMPACTION_FAILURES_KEY, []),
-            "post_compact_cleanup": context.metadata.get("post_compact_cleanup", {}),
-            "session_memory_extraction": context.metadata.get(
-                "session_memory_extraction", {}
-            ),
-            "prompt_render": context.metadata.get("prompt_render"),
             "approval_payload": self._approval_payload_from_context(context),
-            "approved_plan": context.metadata.get("approved_plan"),
+            "approved_plan": planning_state.approved_plan(),
             "step_count": context.step_count,
             "tool_calls": context.tool_calls,
-            "raw_assistant_content": context.metadata.get("raw_assistant_content"),
+            "raw_assistant_content": get_streaming_runtime_state(
+                context
+            ).raw_assistant_content(),
         }
 
     def _approval_payload_from_context(
         self, context: RunContext
     ) -> dict[str, Any] | None:
-        interrupt_payload = context.metadata.get("interrupt_payload")
+        interrupt_payload = get_loop_control_state(context).interrupt_payload()
         if not isinstance(interrupt_payload, dict):
             return None
         return ApprovalPayload.from_interrupt(
@@ -348,6 +345,9 @@ class SingleAgentOutputMixin:
             artifact_refs=artifact_refs,
             digest_refs=digest_refs,
         )
+        compaction_projection = get_compaction_runtime_state(
+            context
+        ).output_metadata_projection()
         return AgentRunOutput(
             run_id=context.run_id,
             attempt_id=context.attempt_id,
@@ -368,23 +368,9 @@ class SingleAgentOutputMixin:
                     context.run_id, artifact_refs
                 ),
                 "digest_refs": digest_refs,
-                "observations": context.metadata.get("observations", []),
-                "trim_audit": context.metadata.get("trim_audit", []),
-                "trim_metadata": context.metadata.get("trim_metadata", {}),
-                "microcompaction_audit": context.metadata.get(
-                    "microcompaction_audit", []
-                ),
-                "microcompaction": context.metadata.get("microcompaction", {}),
-                "token_pressure": context.metadata.get("token_pressure", {}),
+                **compaction_projection,
                 "subagent_groups": list_dict_metadata(context, "subagent_groups"),
                 "subagent_runs": list_dict_metadata(context, "subagent_runs"),
-                "post_compact_cleanup": context.metadata.get(
-                    "post_compact_cleanup", {}
-                ),
-                "session_memory_extraction": context.metadata.get(
-                    "session_memory_extraction", {}
-                ),
-                "prompt_render": context.metadata.get("prompt_render"),
                 "approval_payload": ApprovalPayload.from_interrupt(
                     result.interrupt
                 ).model_dump(mode="json"),

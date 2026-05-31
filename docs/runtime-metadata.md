@@ -86,11 +86,25 @@ state boundary:
 
 ## Migration Order
 
-1. In progress: add small typed wrappers around the highest-churn groups:
-   planning, research, compaction/context and tool loop.
-2. Replace direct writes in `runtime/single_agent/*` with helper calls while
-   preserving the same serialized metadata.
-3. Add tests that assert helpers preserve current `AgentRunOutput.metadata`
+1. Done for Phase 1: add small typed wrappers around the highest-churn groups:
+   planning, research, compaction/context and tool loop. `get_*_state(context)`
+   helpers now provide the preferred entry point for new runtime code.
+2. Done for Phase 1: replace direct writes in `runtime/single_agent/*` with helper
+   calls while preserving the same serialized metadata.
+   Completed first slice: `RunContext` loop/tool counters, terminal-output
+   lookup, workspace-cwd lookup, planning event emission and forced-final /
+   tool-choice controls in `tool_stage.py`.
+   Completed second slice: terminal/paused output compaction projection,
+   interrupt payload, approved-plan lookup, raw assistant content and stream
+   recovery bookkeeping.
+   Completed final Phase 1 slice: research contract consumers, tool-result
+   consumers, todo reminder counters, planning updates, LLM trim/microcompaction
+   payloads, tool-choice reads and source-verified repair paths.
+   Remaining direct metadata writes are producer-owned stage internals
+   (`compaction_stage.py`, `resume.py`, subagent bookkeeping) and should move
+   during the structural refactor/SDK-diagnostics phases if they become public
+   surface.
+3. Done: add tests that assert helpers preserve current `AgentRunOutput.metadata`
    shape.
 4. Decide which keys graduate to documented SDK diagnostics and which remain
    internal trace fields.

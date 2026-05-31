@@ -25,6 +25,10 @@ from agent_driver.contracts.tools import ToolCall, ToolResultEnvelope
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.abort import RunAbortHandle
+from agent_driver.runtime.metadata_state import (
+    get_loop_control_state,
+    get_tool_loop_state,
+)
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.control.protocols import CommandQueueStore
 from agent_driver.runtime.tool_gate import ToolGate
@@ -248,38 +252,38 @@ class RunContext:
     @property
     def step_name(self) -> str:
         """Current step pointer in deterministic loop."""
-        return str(self.metadata.get("next_step", "run_started"))
+        return get_loop_control_state(self).next_step
 
     @step_name.setter
     def step_name(self, value: str) -> None:
-        self.metadata["next_step"] = value
+        get_loop_control_state(self).next_step = value
 
     @property
     def step_count(self) -> int:
         """Executed transition count in current run."""
-        return int(self.metadata.get("step_count", 0))
+        return get_loop_control_state(self).step_count
 
     @step_count.setter
     def step_count(self, value: int) -> None:
-        self.metadata["step_count"] = value
+        get_loop_control_state(self).step_count = value
 
     @property
     def tool_calls(self) -> int:
         """Accumulated tool-call count across tool stages."""
-        return int(self.metadata.get("tool_calls", 0))
+        return get_tool_loop_state(self).tool_calls
 
     @tool_calls.setter
     def tool_calls(self, value: int) -> None:
-        self.metadata["tool_calls"] = value
+        get_tool_loop_state(self).tool_calls = value
 
     @property
     def llm_step_count(self) -> int:
         """Count of completed LLM-call iterations (used for max_steps budget)."""
-        return int(self.metadata.get("llm_step_count", 0))
+        return get_loop_control_state(self).llm_step_count
 
     @llm_step_count.setter
     def llm_step_count(self, value: int) -> None:
-        self.metadata["llm_step_count"] = value
+        get_loop_control_state(self).llm_step_count = value
 
 
 @dataclass(frozen=True, slots=True)

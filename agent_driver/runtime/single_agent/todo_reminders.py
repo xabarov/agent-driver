@@ -5,6 +5,7 @@ from __future__ import annotations
 from agent_driver.contracts.context import PlanningState
 from agent_driver.contracts.enums import ChatRole, PlanningTodoStatus
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.runtime.metadata_state import get_planning_runtime_state
 from agent_driver.runtime.single_agent.types import RunContext
 from agent_driver.runtime.tools import ToolExecutionResult
 
@@ -17,24 +18,20 @@ SUBSTANTIVE_TODO_HINT_TOOLS = frozenset(
 
 def increment_tool_loops_since_todo_write(context: RunContext) -> None:
     """Count tool-loop iterations since the last successful todo_write."""
-    loops = int(context.metadata.get("tool_loops_since_todo_write", 0))
-    context.metadata["tool_loops_since_todo_write"] = loops + 1
+    get_planning_runtime_state(context).increment_tool_loops_since_todo_write()
 
 
 def reset_todo_write_loop_counters(
     context: RunContext, *, in_progress_id: str | None
 ) -> None:
     """Reset loop and hint counters after a successful todo_write."""
-    context.metadata["tool_loops_since_todo_write"] = 0
-    for key in list(context.metadata):
-        if isinstance(key, str) and key.startswith("todo_hint_count_"):
-            context.metadata.pop(key, None)
-    if in_progress_id:
-        context.metadata["last_in_progress_id"] = in_progress_id
+    get_planning_runtime_state(context).reset_todo_write_loop_counters(
+        in_progress_id=in_progress_id
+    )
 
 
 def planning_state_from_metadata(context: RunContext) -> PlanningState | None:
-    payload = context.metadata.get("planning_state")
+    payload = get_planning_runtime_state(context).planning_state()
     if not isinstance(payload, dict):
         return None
     state = PlanningState.model_validate(payload)
@@ -94,10 +91,9 @@ def maybe_append_todo_reminder_to_protocol(
     """Append a model-facing todo reminder when tool loops exceed the threshold."""
     if protocol_messages is None:
         return None
-    threshold = int(
-        context.metadata.get("todo_reminder_tool_loops", TODO_REMINDER_TOOL_LOOPS)
-    )
-    loops = int(context.metadata.get("tool_loops_since_todo_write", 0))
+    planning_state = get_planning_runtime_state(context)
+    threshold = planning_state.todo_reminder_tool_loops(TODO_REMINDER_TOOL_LOOPS)
+    loops = planning_state.tool_loops_since_todo_write()
     if loops < threshold:
         return protocol_messages
     state = planning_state_from_metadata(context)
@@ -127,8 +123,8 @@ def append_todo_progress_hint_after_substantive_tool(
     if active is None:
         return
     todo_id, content = active
-    hint_count_key = f"todo_hint_count_{todo_id}"
-    hint_count = int(context.metadata.get(hint_count_key, 0))
+    planning_state = get_planning_runtime_state(context)
+    hint_count = planning_state.todo_hint_count(todo_id)
     if hint_count >= 2:
         return
     substantive_ok = False
@@ -152,7 +148,7 @@ def append_todo_progress_hint_after_substantive_tool(
             metadata={"kind": "todo_progress_hint"},
         )
     )
-    context.metadata[hint_count_key] = hint_count + 1
+    planning_state.increment_todo_hint_count(todo_id)
 
 
 __all__ = [

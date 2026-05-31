@@ -35,6 +35,14 @@ from agent_driver.prompts import (
     todo_write_guidance,
 )
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.metadata_state import (
+    get_compaction_runtime_state,
+    get_loop_control_state,
+    get_planning_runtime_state,
+    get_research_runtime_state,
+    get_streaming_runtime_state,
+    get_tool_loop_state,
+)
 from agent_driver.runtime.research_evidence import RESEARCH_DEPTH_SOURCE_VERIFIED
 from agent_driver.runtime.single_agent.compaction_stage import (
     CompactionStageHost,
@@ -100,9 +108,7 @@ def _fetched_source_links(context: RunContext) -> list[tuple[str, str]]:
         and task_contract.get("research_depth") == RESEARCH_DEPTH_SOURCE_VERIFIED
     ):
         return []
-    tool_results = context.metadata.get("tool_results")
-    if not isinstance(tool_results, list):
-        return []
+    tool_results = get_tool_loop_state(context).tool_results()
     links: list[tuple[str, str]] = []
     seen: set[str] = set()
     for item in tool_results:
@@ -154,11 +160,12 @@ def _emit_partial_assistant_tombstone(
     reason: str,
 ) -> None:
     """Mark partial streamed assistant output as invalid before terminal failure."""
-    if not context.metadata.get("assistant_stream_started"):
+    streaming_state = get_streaming_runtime_state(context)
+    if not streaming_state.started():
         return
-    if context.metadata.get("assistant_stream_completed"):
+    if streaming_state.completed():
         return
-    content = context.metadata.get("assistant_stream_content")
+    content = streaming_state.content()
     if not isinstance(content, str) or not content:
         return
     emit_step_event(
@@ -171,7 +178,7 @@ def _emit_partial_assistant_tombstone(
             "transition_reason": "partial_tombstone",
         },
     )
-    context.metadata["assistant_stream_tombstoned"] = True
+    streaming_state.mark_tombstoned()
 
 
 def _recover_force_final_stream_response(
@@ -187,16 +194,15 @@ def _recover_force_final_stream_response(
     answer, keeping that text is better than tombstoning a useful sourced
     report. Early/short partials still fail normally.
     """
-    if context.metadata.get("force_final_answer") is not True:
+    streaming_state = get_streaming_runtime_state(context)
+    if not get_tool_loop_state(context).force_final_answer_enabled():
         return None
-    if context.metadata.get("assistant_stream_completed"):
+    if streaming_state.completed():
         return None
-    content = context.metadata.get("assistant_stream_content")
+    content = streaming_state.content()
     if not isinstance(content, str) or len(content.strip()) < 200:
         return None
-    context.metadata["assistant_stream_completed"] = True
-    context.metadata["assistant_stream_recovered"] = True
-    context.metadata["assistant_stream_recovery_reason"] = reason
+    streaming_state.mark_recovered(content=content, reason=reason)
     emit_step_event(
         host,
         context,
@@ -239,6 +245,7 @@ async def execute_llm_call_step(
     host: LlmStepHost, context: RunContext
 ) -> RuntimeStepResult:
     """Run LLM call step with trimming, compaction, and provider completion."""
+    tool_state = get_tool_loop_state(context)
     emit_step_event(
         host,
         context,
@@ -246,16 +253,16 @@ async def execute_llm_call_step(
         payload={
             "provider": host._deps.provider.name,
             "tool_choice_effective": (
-                context.metadata.get("tool_choice_override")
-                if context.metadata.get("tool_choice_override") is not None
+                tool_state.tool_choice_override()
+                if tool_state.tool_choice_override() is not None
                 else context.run_input.tool_choice
             ),
-            "force_final_reason": context.metadata.get("force_final_answer_reason"),
+            "force_final_reason": tool_state.force_final_answer_reason(),
             "continuation_reason": context.metadata.get("continuation_nudge_reason"),
         },
     )
     context.metadata["llm_call_started_monotonic"] = time.monotonic()
-    clarification = context.metadata.get("clarification")
+    clarification = get_planning_runtime_state(context).clarification()
     try:
         observations = _microcompact_context_observations(host, context)
         request, trim_payload = _build_trimmed_request(
@@ -263,11 +270,9 @@ async def execute_llm_call_step(
         )
         request = _narrow_request_tools_to_forced_choice(request)
         _emit_protocol_debug(host, context, request)
-        context.metadata["trim_audit"] = trim_payload["trim_audit"]
-        context.metadata["trim_metadata"] = trim_payload["trim_metadata"]
-        context.metadata["token_pressure"] = trim_payload["token_pressure"]
-        context.metadata["prompt_render"] = trim_payload["prompt_render"]
-        token_state = _token_pressure_state(context.metadata.get("token_pressure", {}))
+        compaction_state = get_compaction_runtime_state(context)
+        compaction_state.set_trim_payload(trim_payload)
+        token_state = compaction_state.token_pressure_state()
         await apply_compaction_if_eligible(
             host,
             context=context,
@@ -387,8 +392,8 @@ async def execute_llm_call_step(
     provider_profile = context.llm_response.metadata.get("provider_profile")
     if isinstance(provider_profile, dict):
         completed_payload["provider_profile"] = provider_profile
-    effective_tool_names = context.metadata.get("effective_tool_names")
-    if isinstance(effective_tool_names, tuple):
+    effective_tool_names = get_tool_loop_state(context).effective_tool_names()
+    if effective_tool_names is not None:
         completed_payload["effective_tool_names"] = list(effective_tool_names)
     prompt_fragments = context.metadata.get("prompt_fragments")
     if isinstance(prompt_fragments, tuple):
@@ -405,14 +410,9 @@ async def execute_llm_call_step(
     _emit_token_pressure_warning(host, context)
     context.step_count += 1
     context.llm_step_count += 1
-    context.metadata.update(
-        {
-            "next_step": "tool_stage",
-            "step_count": context.step_count,
-            "llm_step_count": context.llm_step_count,
-            "tool_calls": context.tool_calls,
-            "last_llm_response": context.llm_response.model_dump(mode="json"),
-        }
+    context.metadata["last_llm_response"] = context.llm_response.model_dump(mode="json")
+    get_loop_control_state(context).set_llm_step_transition(
+        tool_calls=context.tool_calls
     )
     host._save_checkpoint(context, latest_output=None, node_id="llm_call")
     host._maybe_fail_after_step("llm_call")
@@ -446,20 +446,19 @@ def _provider_error_message(response: httpx.Response) -> str:
 def _microcompact_context_observations(
     host: LlmStepHost, context: RunContext
 ) -> list[dict[str, object]]:
-    observations = context.metadata.get("observations", [])
-    if not isinstance(observations, list):
-        observations = []
+    compaction_state = get_compaction_runtime_state(context)
+    observations = compaction_state.observations()
     micro = microcompact_observations(
         [item for item in observations if isinstance(item, dict)],
         preserve_recent=host._config.microcompact_preserve_recent,
         max_preview_chars=host._config.microcompact_max_preview_chars,
     )
-    context.metadata["observations"] = micro.observations
-    context.metadata["microcompaction_audit"] = micro.audit
-    context.metadata["microcompaction"] = {
-        "bytes_saved": micro.bytes_saved,
-        "estimated_tokens_saved": micro.estimated_tokens_saved,
-    }
+    compaction_state.set_microcompaction(
+        observations=micro.observations,
+        audit=micro.audit,
+        bytes_saved=micro.bytes_saved,
+        estimated_tokens_saved=micro.estimated_tokens_saved,
+    )
     return micro.observations
 
 
@@ -469,14 +468,11 @@ def _build_trimmed_request(
     observations: list[dict[str, object]],
     clarification: object,
 ) -> tuple[Any, dict[str, object]]:
-    digest_refs = context.metadata.get("digest_refs", [])
-    if not isinstance(digest_refs, list):
-        digest_refs = []
-    artifact_refs = context.metadata.get("artifact_refs", [])
-    if not isinstance(artifact_refs, list):
-        artifact_refs = []
+    compaction_state = get_compaction_runtime_state(context)
+    digest_refs = compaction_state.digest_refs()
+    artifact_refs = compaction_state.artifact_refs()
     planning_prompt = None
-    planning_step_payload = context.metadata.get("planning_step")
+    planning_step_payload = get_planning_runtime_state(context).planning_step()
     if host._config.include_planning_prompt and isinstance(planning_step_payload, dict):
         planning_prompt = render_planning_step_prompt(
             PlanningStep.model_validate(planning_step_payload)
@@ -494,7 +490,8 @@ def _build_trimmed_request(
     # the caller-supplied ``RunInput.tool_choice`` so the public seam can
     # force a specific tool. None on both sides preserves the legacy
     # ``"auto"`` default applied by the provider adapters.
-    tool_choice = context.metadata.get("tool_choice_override")
+    tool_loop_state = get_tool_loop_state(context)
+    tool_choice = tool_loop_state.tool_choice_override()
     if tool_choice is None:
         if (
             context.run_input.app_metadata.get("chat_mode") is True
@@ -505,7 +502,7 @@ def _build_trimmed_request(
             tool_choice = context.run_input.tool_choice
     system_instruction = _react_system_instruction(host, context)
     if (
-        context.metadata.get("force_final_answer") is True
+        tool_loop_state.force_final_answer_enabled()
         and protocol_messages is not None
         and protocol_messages
     ):
@@ -667,7 +664,10 @@ async def _complete_request(
             raise
         except httpx.TimeoutException as exc:
             last_timeout = exc
-            if isinstance(exc, LlmStreamIdleTimeout) and exc.emitted_chunks > 0:
+            if (
+                isinstance(exc, LlmStreamIdleTimeout)
+                and getattr(exc, "emitted_chunks", 0) > 0
+            ):
                 raise
             if attempt == 0:
                 continue
@@ -893,8 +893,7 @@ def _emit_non_stream_retry_assistant_message(
     if not content:
         return
     emit_token_delta_events(host, context, [content])
-    context.metadata["assistant_stream_completed"] = True
-    context.metadata["assistant_stream_content"] = content
+    get_streaming_runtime_state(context).mark_completed(content)
     emit_step_event(
         host,
         context,
@@ -966,8 +965,8 @@ _TOKEN_PRESSURE_SEVERITIES: dict[str, str] = {
 
 
 def _emit_token_pressure_warning(host: LlmStepHost, context: RunContext) -> None:
-    token_pressure = context.metadata.get("token_pressure", {})
-    if not isinstance(token_pressure, dict):
+    token_pressure = get_compaction_runtime_state(context).token_pressure()
+    if not token_pressure:
         return
     state = str(token_pressure.get("state", "ok"))
     if state not in _TOKEN_PRESSURE_SIGNAL_IDS:
@@ -1245,14 +1244,14 @@ def _chat_mode_runtime_reminders(context: RunContext) -> list[str]:
             "When you synthesize the final answer from fetched web evidence, include "
             "Markdown links to the concrete fetched/source URLs you relied on."
         )
-    if context.metadata.get("research_fetch_fallback_required") is True:
+    if get_research_runtime_state(context).fetch_fallback_required():
         reminders.append(
             "Runtime reminder: research_fetch_fallback. Multiple page fetches "
             "failed; do not retry the same fetch loop. Answer from available "
             "search metadata and explicitly state that full pages could not be "
             "verified."
         )
-    if context.metadata.get("approved_plan"):
+    if get_planning_runtime_state(context).approved_plan():
         reminders.append(
             "Runtime reminder: planning_mode_exit. An approval plan has already "
             "been accepted for this run; continue execution instead of creating "

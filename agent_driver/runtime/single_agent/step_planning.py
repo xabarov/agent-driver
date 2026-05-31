@@ -12,7 +12,10 @@ from agent_driver.context import (
 )
 from agent_driver.contracts.context import PlanningState, PlanningStep, TodoState
 from agent_driver.contracts.enums import PlanningTodoStatus
-from agent_driver.runtime.metadata_state import PlanningRuntimeState
+from agent_driver.runtime.metadata_state import (
+    PlanningRuntimeState,
+    get_tool_loop_state,
+)
 from agent_driver.runtime.single_agent.types import RunContext
 from agent_driver.runtime.tools import ToolExecutionResult
 from agent_driver.runtime.single_agent.todo_reminders import reset_todo_write_loop_counters
@@ -149,9 +152,7 @@ def apply_planning_updates_from_envelopes(
 
 def update_planning_state_from_tool_results(context: RunContext) -> None:
     """Update minimal planning state and latest planning step payload."""
-    tool_results = context.metadata.get("tool_results", [])
-    if not isinstance(tool_results, list):
-        tool_results = []
+    tool_results = get_tool_loop_state(context).tool_results()
     facts_learned = [
         str(item.get("summary", ""))
         for item in tool_results

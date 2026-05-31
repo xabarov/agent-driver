@@ -21,6 +21,11 @@ from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
     build_research_session_contract_from_context,
 )
+from agent_driver.runtime.metadata_state import (
+    get_loop_control_state,
+    get_research_runtime_state,
+    get_tool_loop_state,
+)
 from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.types import RunContext, RunnerConfig, RunnerDeps
 from agent_driver.subagents import (
@@ -92,7 +97,7 @@ async def maybe_execute_subagent_group(
         artifact_refs=_list_metadata(context, "artifact_refs"),
         digest_refs=_list_metadata(context, "digest_refs"),
         planning_state=_dict_metadata(context, "planning_state"),
-        workspace_cwd=_optional_text(context.metadata.get("workspace_cwd")),
+        workspace_cwd=get_loop_control_state(context).workspace_cwd(),
     )
 
     def on_event(event_type: str, payload: dict[str, object]) -> None:
@@ -150,9 +155,7 @@ async def maybe_execute_subagent_group(
     if group_event_type == RuntimeEventType.SUBAGENT_GROUP_JOINED and (
         _final_answer_ready_after_subagent(context)
     ):
-        context.metadata["force_final_answer"] = True
-        context.metadata["tool_choice_override"] = "none"
-        context.metadata["force_final_answer_reason"] = "subagent_group_joined"
+        get_tool_loop_state(context).force_final_answer(reason="subagent_group_joined")
 
 
 def _final_answer_ready_after_subagent(context: RunContext) -> bool:
@@ -161,14 +164,16 @@ def _final_answer_ready_after_subagent(context: RunContext) -> bool:
         context,
         enforce_final_source_links=False,
     )
-    context.metadata["research_session_contract"] = contract.model_dump()
+    research_state = get_research_runtime_state(context)
+    research_state.set_contract_payload(contract.model_dump())
     if contract.final_readiness.status == FINAL_READINESS_ALLOWED:
         return True
-    context.metadata["final_readiness"] = contract.final_readiness.status
-    context.metadata["repair_required_reasons"] = list(contract.final_readiness.reasons)
-    context.metadata.pop("force_final_answer", None)
-    context.metadata.pop("tool_choice_override", None)
-    context.metadata.pop("force_final_answer_reason", None)
+    research_state.set_contract(
+        payload=contract.model_dump(),
+        status=contract.final_readiness.status,
+        reasons=list(contract.final_readiness.reasons),
+    )
+    get_tool_loop_state(context).clear_force_final_answer()
     return False
 
 

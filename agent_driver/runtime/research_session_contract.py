@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 from agent_driver.contracts.context import PlanningState
 from agent_driver.contracts.enums import PlanningTodoStatus
+from agent_driver.runtime.metadata_state import (
+    get_planning_runtime_state,
+    get_tool_loop_state,
+)
 from agent_driver.runtime.research_evidence import (
     RESEARCH_DEPTH_LIGHT,
     RESEARCH_DEPTH_NONE,
@@ -15,7 +19,6 @@ from agent_driver.runtime.research_evidence import (
     SOURCE_VERIFIED_DOMAINS,
     SOURCE_VERIFIED_FETCHES,
     WEB_FETCH_TOOL,
-    WEB_SEARCH_TOOL,
     ResearchEvidenceState,
     research_evidence_from_tool_results,
 )
@@ -195,8 +198,8 @@ def build_research_session_contract_from_context(
     """Build a research contract from a single-agent run context."""
     return build_research_session_contract(
         task_contract=_task_contract_from_context(context),
-        tool_results=context.metadata.get("tool_results"),
-        planning_state=context.metadata.get("planning_state"),
+        tool_results=get_tool_loop_state(context).tool_results(),
+        planning_state=get_planning_runtime_state(context).planning_state(),
         assistant_text=assistant_text,
         web_fetch_available=_tool_available(context, WEB_FETCH_TOOL),
         enforce_final_source_links=enforce_final_source_links,
@@ -345,8 +348,8 @@ def _task_contract_from_context(context: RunContext) -> dict[str, Any] | None:
 
 
 def _tool_available(context: RunContext, tool_name: str) -> bool:
-    effective_tool_names = context.metadata.get("effective_tool_names")
-    if isinstance(effective_tool_names, (list, tuple, set)):
+    effective_tool_names = get_tool_loop_state(context).effective_tool_names()
+    if effective_tool_names is not None:
         return tool_name in effective_tool_names
     policy = context.run_input.tool_policy
     denied = getattr(policy, "denied_tools", None) or []
