@@ -195,6 +195,7 @@ def test_deep_research_preset_includes_scoped_artifact_tools() -> None:
         "planning_progress",
         "filesystem_read",
         "filesystem_write",
+        "artifacts",
     }
     assert "shell" not in config.tool_packs
     assert "discovery" not in config.tool_packs

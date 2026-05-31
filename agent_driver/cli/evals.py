@@ -632,7 +632,13 @@ def default_deep_scenarios() -> list[EvalScenario]:
             ),
             required_tools=("todo_write", "web_search", "web_fetch", "file_write"),
             sandbox_required=True,
-            tool_packs=("planning", "web", "filesystem_read", "filesystem_write"),
+            tool_packs=(
+                "planning",
+                "web",
+                "filesystem_read",
+                "filesystem_write",
+                "artifacts",
+            ),
             allow_dangerous_tools=True,
         ),
         EvalScenario(

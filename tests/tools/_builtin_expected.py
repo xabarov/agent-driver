@@ -4,6 +4,9 @@ from __future__ import annotations
 
 EXPECTED_BUILTIN_TOOL_NAMES = {
     "read_file",
+    "artifact_list",
+    "artifact_preview",
+    "artifact_read",
     "task_create",
     "workflow_tool",
     "file_edit",

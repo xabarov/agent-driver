@@ -127,6 +127,7 @@ def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
                 "planning_progress",
                 "filesystem_read",
                 "filesystem_write",
+                "artifacts",
             ),
             allow_dangerous_tools=True,
             enable_python=False,

@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+from agent_driver.tools.builtin.filesystem.artifacts import (
+    artifact_list_handler,
+    artifact_list_manifest,
+    artifact_preview_handler,
+    artifact_preview_manifest,
+    artifact_read_handler,
+    artifact_read_manifest,
+)
 from agent_driver.tools.builtin.filesystem.notebook import (
     notebook_edit_handler,
     notebook_edit_manifest,
 )
-from agent_driver.tools.builtin.filesystem.read import read_file_handler, read_file_manifest
+from agent_driver.tools.builtin.filesystem.read import (
+    read_file_handler,
+    read_file_manifest,
+)
 from agent_driver.tools.builtin.filesystem.search import (
     glob_search_handler,
     glob_search_manifest,
@@ -30,6 +41,9 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
     registry.register(file_write_manifest(), file_write_handler)
     registry.register(file_edit_manifest(), file_edit_handler)
     registry.register(notebook_edit_manifest(), notebook_edit_handler)
+    registry.register(artifact_list_manifest(), artifact_list_handler)
+    registry.register(artifact_read_manifest(), artifact_read_handler)
+    registry.register(artifact_preview_manifest(), artifact_preview_handler)
 
 
 __all__ = ["register_filesystem_tools"]

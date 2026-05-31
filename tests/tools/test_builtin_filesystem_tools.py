@@ -78,6 +78,69 @@ async def test_read_file_resolves_relative_path_with_workspace_scope(tmp_path) -
 
 
 @pytest.mark.asyncio
+async def test_artifact_tools_list_read_and_preview_workspace_artifacts(
+    tmp_path,
+) -> None:
+    """Artifact tools should expose bounded research artifact reads."""
+    report = tmp_path / "research" / "report.md"
+    report.parent.mkdir()
+    report.write_text("# Report\n\nbody\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    list_tool = registry.get("artifact_list")
+    read_tool = registry.get("artifact_read")
+    preview_tool = registry.get("artifact_preview")
+    assert list_tool is not None
+    assert read_tool is not None
+    assert preview_tool is not None
+
+    with workspace_cwd_scope(tmp_path):
+        listed = await list_tool.handler({})
+        read = await read_tool.handler({"path": "research/report.md"})
+        preview = await preview_tool.handler({"path": "research/report.md"})
+
+    assert listed["artifacts"][0]["path"] == "research/report.md"
+    assert listed["artifacts"][0]["kind"] == "report"
+    assert read["content"] == "# Report\n\nbody\n"
+    assert read["truncated"] is False
+    assert preview["headings"] == ["# Report"]
+    assert preview["preview"] == "# Report\n\nbody\n"
+
+
+@pytest.mark.asyncio
+async def test_artifact_tools_reject_non_artifact_paths(tmp_path) -> None:
+    """Artifact tools should not become a second unrestricted read_file."""
+    (tmp_path / "note.txt").write_text("secret", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    read_tool = registry.get("artifact_read")
+    assert read_tool is not None
+
+    with workspace_cwd_scope(tmp_path):
+        with pytest.raises(ValueError, match="known artifact"):
+            await read_tool.handler({"path": "note.txt"})
+
+
+@pytest.mark.asyncio
+async def test_artifact_read_truncates_large_artifact(tmp_path) -> None:
+    """artifact_read should return a bounded preview instead of failing."""
+    report = tmp_path / "research" / "report.md"
+    report.parent.mkdir()
+    report.write_text("abcdef", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    read_tool = registry.get("artifact_read")
+    assert read_tool is not None
+
+    with workspace_cwd_scope(tmp_path):
+        out = await read_tool.handler({"path": "research/report.md", "max_bytes": 3})
+
+    assert out["content"] == "abc"
+    assert out["truncated"] is True
+    assert out["size_bytes"] == 6
+
+
+@pytest.mark.asyncio
 async def test_glob_respects_gitignore(tmp_path) -> None:
     """glob_search should skip paths matched by .gitignore patterns."""
     (tmp_path / ".gitignore").write_text("ignored.py\n", encoding="utf-8")
@@ -337,7 +400,9 @@ async def test_grep_marks_more_lines_in_file_when_capped(tmp_path) -> None:
     register_filesystem_tools(registry)
     tool = registry.get("grep_search")
     assert tool is not None
-    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "hit", "max_matches": 1})
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "hit", "max_matches": 1}
+    )
     assert out["matches"][0]["more_lines_in_file"] is True
 
 

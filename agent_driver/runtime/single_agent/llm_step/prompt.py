@@ -240,7 +240,8 @@ def chat_mode_runtime_reminders(context: RunContext) -> list[str]:
             "messages concise progress/final handoff. For long drafts, call "
             "file_write to create research/report.md, then use read_file plus "
             "file_edit for targeted revisions instead of rewriting the full "
-            "report in chat."
+            "report in chat. Use artifact_list or artifact_preview to inspect "
+            "workspace artifacts before final handoff."
         )
     if (
         isinstance(task_contract, dict)

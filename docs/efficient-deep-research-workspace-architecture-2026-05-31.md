@@ -839,3 +839,29 @@ Focused checks:
 - `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
   deep-research-artifact` against local fake backend/frontend on isolated ports.
+
+## Implementation Slice P4-artifact-tools - 2026-05-31
+
+Added model-visible workspace artifact tools:
+
+- `artifact_list` lists known durable artifacts under `research/` and
+  `tool-results/` with path, kind, size, and mtime;
+- `artifact_read` reads bounded UTF-8 artifact content by workspace-relative
+  artifact path;
+- `artifact_preview` returns bounded preview text plus markdown headings for
+  quick report-state checks;
+- all three tools are read-only, workspace-scoped, and reject non-artifact paths
+  so they do not become a second unrestricted `read_file`;
+- added a new `artifacts` tool pack and included it in the chat-demo
+  `deep_research` preset and the CLI `deep_research_artifact_report` scenario;
+- deep research prompt reminders now tell the model to use `artifact_list` or
+  `artifact_preview` before final handoff.
+
+Focused checks:
+
+- `tests/tools/test_builtin_filesystem_tools.py`;
+- `tests/tools/test_toolset.py`;
+- `tests/tools/test_toolset_docs_sync.py`;
+- `tests/tools/test_builtin_registry.py`;
+- `examples/chat-demo/backend/tests/test_tools.py`;
+- `examples/chat-demo/backend/tests/test_chat_deep_research_sse.py`.

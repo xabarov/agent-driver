@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from agent_driver.contracts import AgentProfile, ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.contracts import (
+    AgentProfile,
+    ApprovalMode,
+    SideEffectClass,
+    ToolManifest,
+    ToolRisk,
+)
 from agent_driver.tools import (
     ToolRegistry,
     ToolSet,
@@ -49,6 +55,17 @@ def test_toolset_supports_discovery_pack() -> None:
     filtered = ToolSet.packs("discovery").apply(registry)
     names = set(filtered.list_names())
     assert {"skill_tool", "tool_search", "brief_tool", "agent_tool"}.issubset(names)
+
+
+def test_toolset_supports_artifacts_pack() -> None:
+    """Artifacts pack should expose read-only workspace artifact helpers."""
+    registry = _registry_with_defaults()
+    filtered = ToolSet.packs("artifacts").apply(registry)
+    assert set(filtered.list_names()) == {
+        "artifact_list",
+        "artifact_read",
+        "artifact_preview",
+    }
 
 
 def test_toolset_filters_by_application_tags() -> None:
@@ -101,7 +118,12 @@ def test_toolset_empty_side_effect_and_tag_filters_do_not_drop_tools() -> None:
 def test_toolset_without_excludes_named_tools() -> None:
     """without() should drop excluded names after pack composition."""
     registry = _registry_with_defaults()
-    names = ToolSet.packs("filesystem_read").without("glob_search").apply(registry).list_names()
+    names = (
+        ToolSet.packs("filesystem_read")
+        .without("glob_search")
+        .apply(registry)
+        .list_names()
+    )
     assert "read_file" in names
     assert "glob_search" not in names
 
