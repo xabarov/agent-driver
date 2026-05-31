@@ -688,6 +688,10 @@ Status on 2026-05-31:
 - `GovernedToolExecutor.execute()` now runs through explicit stages:
   normalize planned calls, apply pre-hooks, add policy hints, partition
   serial/parallel units, execute units and collect ordered results.
+- OpenAI-compatible completion/stream response normalization, usage metadata,
+  finish-reason mapping and provider/tool-call parsing moved to
+  `llm/providers_impl/openai_compatible_normalization.py`, with compatibility
+  aliases kept in `openai_compatible.py`.
 - `tool_stage.py` remains the compatibility entrypoint for
   `execute_tool_stage_step`; focused planning, subagent and chat-demo Deep
   Research/Skills SSE tests pass after the extraction.
