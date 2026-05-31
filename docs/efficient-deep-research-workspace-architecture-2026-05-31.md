@@ -750,3 +750,21 @@ Focused checks:
 - `tests/cli/test_eval_harness.py`;
 - `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
 - `tests/observability/test_run_trace_summary.py`.
+
+## Implementation Slice P2-live-scenario - 2026-05-31
+
+Added the first explicit eval scenario for artifact-backed Deep Research:
+
+- `deep_research_artifact_report` lives in the `deep` suite;
+- it requires `todo_write -> web_search -> web_fetch -> file_write` and forbids
+  `bash`/`python`;
+- it runs with planning, web, filesystem read, and filesystem write packs in a
+  sandboxed workspace;
+- the expected final answer must point to `research/report.md`, letting the
+  eval scorecard judge whether the expensive report stayed in the artifact
+  instead of being duplicated in chat.
+
+Focused checks:
+
+- `tests/cli/test_eval_suite_membership.py`;
+- `tests/cli/test_eval_harness.py`.

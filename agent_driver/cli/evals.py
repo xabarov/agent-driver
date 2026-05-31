@@ -601,6 +601,41 @@ def default_deep_scenarios() -> list[EvalScenario]:
             tool_packs=("planning", "web"),
         ),
         EvalScenario(
+            scenario_id="deep_research_artifact_report",
+            prompt=(
+                "Сделай deep research отчет по fork-join очередям и их применению "
+                "для расчета компьютерных сетей."
+            ),
+            prompt_template=(
+                "Сначала todo_write с валидной схемой. "
+                "Затем найди источники через web_search и открой минимум две страницы "
+                "через web_fetch. "
+                "Полный отчет обязательно пиши в research/report.md через file_write; "
+                "если нужен патч, используй file_edit. "
+                "Финальный ответ после записи файла должен быть коротким: "
+                "упомяни research/report.md, количество проверенных источников и 3 вывода. "
+                "Не используй bash или python."
+            ),
+            expected_tools=("todo_write", "web_search", "web_fetch", "file_write"),
+            forbidden_tools=("bash", "python"),
+            expected_answer_contains=("research/report.md",),
+            max_tool_calls=10,
+            max_steps=18,
+            deadline_seconds=300.0,
+            tags=("deep", "deep_research", "web", "filesystem_write", "planning"),
+            expected_min_tool_calls=5,
+            expected_tool_chain_contains=(
+                "todo_write",
+                "web_search",
+                "web_fetch",
+                "file_write",
+            ),
+            required_tools=("todo_write", "web_search", "web_fetch", "file_write"),
+            sandbox_required=True,
+            tool_packs=("planning", "web", "filesystem_read", "filesystem_write"),
+            allow_dangerous_tools=True,
+        ),
+        EvalScenario(
             scenario_id="todo_status_lifecycle",
             prompt=(
                 "Проверь lifecycle статусов todo_write с одним in_progress и переходом на следующий шаг."
