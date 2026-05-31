@@ -31,7 +31,7 @@ from agent_driver.runtime.single_agent.lifecycle.pending import (
     pending_interrupt_from_execution_result,
     serialize_pending_interrupt,
 )
-from agent_driver.runtime.single_agent.step_events import emit_step_event
+from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.tool_stage.observations import (
     build_observations_from_tool_result,
 )

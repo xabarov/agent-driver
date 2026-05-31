@@ -34,7 +34,7 @@ from agent_driver.observability.run_trace_tools import (
     tool_payloads as _tool_payloads,
     unknown_tool_summary as _unknown_tool_summary,
 )
-from agent_driver.runtime.single_agent.continuation import analyze_continuation_intent
+from agent_driver.runtime.single_agent.lifecycle.continuation import analyze_continuation_intent
 
 _PYTHON_TOOL = "python"
 _TERMINAL_EVENTS = frozenset({"run_completed", "run_failed", "run_cancelled"})

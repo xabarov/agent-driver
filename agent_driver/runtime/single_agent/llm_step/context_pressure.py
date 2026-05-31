@@ -8,7 +8,7 @@ from agent_driver.contracts.enums import ChatRole, RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmRequest
 from agent_driver.runtime.metadata_state import get_compaction_runtime_state
-from agent_driver.runtime.single_agent.step_events import emit_step_event
+from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.types import EventSpec, RunContext
 
 

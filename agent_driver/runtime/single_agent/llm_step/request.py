@@ -28,7 +28,7 @@ from agent_driver.runtime.single_agent.llm_step.prompt import (
 from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     force_final_answer_message,
 )
-from agent_driver.runtime.single_agent.step_events import emit_step_event
+from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.llm_step.streaming import is_stream_enabled
 from agent_driver.runtime.single_agent.context_management.todo_reminders import (
     maybe_append_todo_reminder_to_protocol,

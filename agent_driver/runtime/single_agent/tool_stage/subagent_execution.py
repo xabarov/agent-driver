@@ -27,7 +27,7 @@ from agent_driver.runtime.metadata_state import (
     get_research_runtime_state,
     get_tool_loop_state,
 )
-from agent_driver.runtime.single_agent.step_events import emit_step_event
+from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.types import RunContext, RunnerConfig, RunnerDeps
 from agent_driver.subagents import (
     SubagentGroupSpec,

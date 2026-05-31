@@ -708,6 +708,9 @@ Status on 2026-05-31:
   `runtime/single_agent/tool_stage/` package as `observations.py` and
   `subagent_execution.py`; old `step_observations` and `subagent_stage` module
   paths remain compatibility shims.
+- Continuation intent analysis and step event emission were grouped under
+  `runtime/single_agent/lifecycle/` as `continuation.py` and `events.py`; old
+  `continuation` and `step_events` module paths remain compatibility shims.
 - `GovernedToolExecutor.execute()` now runs through explicit stages:
   normalize planned calls, apply pre-hooks, add policy hints, partition
   serial/parallel units, execute units and collect ordered results.

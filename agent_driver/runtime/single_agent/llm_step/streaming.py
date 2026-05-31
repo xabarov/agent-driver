@@ -14,7 +14,7 @@ from agent_driver.contracts.enums import RuntimeEventType
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.runtime.metadata_state import StreamingRuntimeState
-from agent_driver.runtime.single_agent.step_events import emit_step_event
+from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.types import RunContext, RunnerDeps
 
 

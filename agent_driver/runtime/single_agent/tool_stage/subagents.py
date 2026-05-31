@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from agent_driver.contracts.enums import RuntimeEventType
-from agent_driver.runtime.single_agent.step_events import emit_step_event
+from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
     RunContext,

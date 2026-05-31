@@ -53,7 +53,7 @@ from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     force_final_answer_message as _force_final_answer_message,
     recover_force_final_stream_response as _recover_force_final_stream_response,
 )
-from agent_driver.runtime.single_agent.step_events import emit_step_event
+from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.planning.state import build_planning_snapshot
 from agent_driver.runtime.single_agent.llm_step.streaming import (
     LlmStreamIdleTimeout,

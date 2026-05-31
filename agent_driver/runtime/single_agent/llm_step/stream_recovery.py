@@ -14,7 +14,7 @@ from agent_driver.runtime.metadata_state import (
     get_tool_loop_state,
 )
 from agent_driver.runtime.research_evidence import RESEARCH_DEPTH_SOURCE_VERIFIED
-from agent_driver.runtime.single_agent.step_events import emit_step_event
+from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.llm_step.streaming import emit_token_delta_events
 from agent_driver.runtime.single_agent.types import EventSpec, RunContext
 

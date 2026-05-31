@@ -30,7 +30,7 @@ from agent_driver.runtime.research_evidence import (
 from agent_driver.runtime.single_agent.context_management.compaction_stage import (
     apply_compaction_if_eligible,
 )
-from agent_driver.runtime.single_agent.continuation import analyze_continuation_intent
+from agent_driver.runtime.single_agent.lifecycle.continuation import analyze_continuation_intent
 from agent_driver.runtime.single_agent.llm_step import execute_llm_call_step
 from agent_driver.runtime.single_agent.planning.state import build_planning_snapshot
 from agent_driver.runtime.single_agent.tool_stage.subagent_execution import (
@@ -283,7 +283,7 @@ def _maybe_build_continuation_transition(
         ):
             research_state.set_repair_exhausted(list(readiness.reasons))
             return None
-        from agent_driver.runtime.single_agent.continuation import ContinuationIntent
+        from agent_driver.runtime.single_agent.lifecycle.continuation import ContinuationIntent
 
         intent = ContinuationIntent(True, "contract_repair_required")
         nudge = _research_contract_repair_nudge(context, readiness.reasons)

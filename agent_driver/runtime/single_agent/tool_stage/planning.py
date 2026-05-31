@@ -6,7 +6,7 @@ from typing import Protocol
 
 from agent_driver.contracts.enums import InterruptReason, RuntimeEventType
 from agent_driver.runtime.planning_check import is_exit_plan_mode_tool
-from agent_driver.runtime.single_agent.step_events import emit_step_event
+from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.types import EventSpec, RunContext
 from agent_driver.runtime.tools import ToolExecutionResult
 
