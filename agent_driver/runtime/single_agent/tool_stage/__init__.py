@@ -24,6 +24,9 @@ from agent_driver.runtime.metadata_state import (
 from agent_driver.runtime.research_evidence import (
     research_source_ledger_from_tool_results,
 )
+from agent_driver.runtime.research_artifacts import (
+    persist_deep_research_source_ledger,
+)
 from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
     build_research_session_contract_from_context,
@@ -370,6 +373,31 @@ def _emit_tool_completed_if_needed(
         for row in tools
         if isinstance(row.get("tool_name"), str)
     ):
+        source_artifact = persist_deep_research_source_ledger(context, source_ledger)
+        if source_artifact is not None:
+            source_ledger["artifact"] = {
+                "path": source_artifact["path"],
+                "record_count": source_artifact["record_count"],
+                "size_bytes": source_artifact["size_bytes"],
+            }
+            emit_step_event(
+                host,
+                context,
+                event_type=(
+                    RuntimeEventType.ARTIFACT_CREATED
+                    if source_artifact.get("created") is True
+                    else RuntimeEventType.ARTIFACT_UPDATED
+                ),
+                payload={
+                    "path": source_artifact["path"],
+                    "kind": source_artifact["kind"],
+                    "operation": source_artifact["operation"],
+                    "tool_name": "source_ledger",
+                    "size_bytes": source_artifact["size_bytes"],
+                    "bytes": source_artifact["bytes"],
+                    "record_count": source_artifact["record_count"],
+                },
+            )
         emit_step_event(
             host,
             context,

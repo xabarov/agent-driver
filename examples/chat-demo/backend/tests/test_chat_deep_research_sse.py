@@ -90,8 +90,21 @@ async def test_chat_deep_research_sse_emits_report_artifact(monkeypatch, tmp_pat
 
     names = [event["event"] for event in events]
     assert "artifact_created" in names
+    artifact_events = [
+        event
+        for event in events
+        if event["event"] in {"artifact_created", "artifact_updated"}
+    ]
+    assert any(
+        isinstance(event["data"], dict)
+        and event["data"].get("path") == "research/sources.jsonl"
+        for event in artifact_events
+    )
     artifact_event = next(
-        event for event in events if event["event"] == "artifact_created"
+        event
+        for event in artifact_events
+        if isinstance(event["data"], dict)
+        and event["data"].get("path") == "research/report.md"
     )
     data = artifact_event["data"]
     assert isinstance(data, dict)
@@ -103,6 +116,7 @@ async def test_chat_deep_research_sse_emits_report_artifact(monkeypatch, tmp_pat
     artifacts = metadata["deep_research_artifacts"]
     assert isinstance(artifacts, dict)
     assert artifacts["report_path"] == "research/report.md"
+    assert artifacts["source_ledger_path"] == "research/sources.jsonl"
 
 
 @pytest.mark.asyncio

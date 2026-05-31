@@ -8,8 +8,10 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.runtime.research_artifacts import (
     REPORT_RELATIVE_PATH,
+    SOURCE_LEDGER_RELATIVE_PATH,
     ensure_deep_research_report_artifact_metadata,
     maybe_capture_deep_research_draft,
+    persist_deep_research_source_ledger,
 )
 from agent_driver.runtime.single_agent.lifecycle.steps import (
     _maybe_build_continuation_transition,
@@ -101,6 +103,45 @@ def test_deep_research_existing_report_is_observed_for_metadata(
     assert payload["report_path"] == REPORT_RELATIVE_PATH
     assert payload["report_size_bytes"] > 0
     assert payload["captured_long_answers"] == 0
+
+
+def test_deep_research_source_ledger_is_persisted_to_jsonl(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    ledger = {
+        "verified_reads": [
+            {
+                "url": "https://example.com/paper",
+                "domain": "example.com",
+                "source_type": "web_fetch",
+                "title": "Paper",
+            }
+        ],
+        "search_candidates": [
+            {
+                "url": "https://example.org/candidate",
+                "domain": "example.org",
+                "source_type": "web_search",
+                "rank": 1,
+            }
+        ],
+        "failed_reads": [],
+        "blocked_reads": [],
+        "assistant_links": [],
+    }
+
+    payload = persist_deep_research_source_ledger(context, ledger)
+
+    assert payload is not None
+    assert payload["path"] == SOURCE_LEDGER_RELATIVE_PATH
+    assert payload["created"] is True
+    assert payload["record_count"] == 2
+    source_ledger = tmp_path / SOURCE_LEDGER_RELATIVE_PATH
+    content = source_ledger.read_text(encoding="utf-8")
+    assert '"ledger_section": "verified_reads"' in content
+    assert '"ledger_section": "search_candidates"' in content
+    artifacts = context.metadata["deep_research_artifacts"]
+    assert artifacts["source_ledger_path"] == SOURCE_LEDGER_RELATIVE_PATH
+    assert artifacts["source_ledger_record_count"] == 2
 
 
 def test_contract_repair_uses_captured_report_instead_of_full_prompt(

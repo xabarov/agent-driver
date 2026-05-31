@@ -888,3 +888,26 @@ Focused checks:
 - `tests/tools/test_builtin_registry.py`;
 - `tests/runtime/test_artifact_events.py`;
 - `tests/runtime/test_llm_step_system_prompt.py`.
+
+## Implementation Slice P6-durable-source-ledger - 2026-05-31
+
+Persisted the Deep Research source ledger into the session workspace:
+
+- web search/fetch ledger updates now write `research/sources.jsonl` when Deep
+  Research artifact mode is active;
+- the JSONL file contains verified reads, blocked/failed reads, search
+  candidates, and assistant-visible links with `ledger_section` and
+  `ledger_index` metadata;
+- source ledger artifact metadata is attached to `deep_research_artifacts`;
+- runtime emits `artifact_created`/`artifact_updated` for
+  `research/sources.jsonl`, so the frontend artifact panel can expose the
+  evidence ledger alongside `research/report.md`;
+- `source_ledger_updated` events include a compact artifact pointer for
+  scorecards and live probes.
+
+Focused checks:
+
+- `tests/runtime/test_deep_research_artifacts.py`;
+- `examples/chat-demo/backend/tests/test_chat_deep_research_sse.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact`.
