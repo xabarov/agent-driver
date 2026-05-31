@@ -28,7 +28,7 @@ from agent_driver.observability.phoenix import (
     start_otel_span,
     trace_otel_event_span,
 )
-from agent_driver.observability.run_trace_summary import summarize_run_trace
+from agent_driver.observability.run_trace.summary import summarize_run_trace
 from agent_driver.observability.support_bundle import (
     build_persisted_support_bundle,
     build_runtime_support_bundle,
