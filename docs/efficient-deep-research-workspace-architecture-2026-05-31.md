@@ -686,3 +686,26 @@ Focused checks:
 - `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
 - frontend `tests/deepResearchEvents.test.ts`;
 - frontend `tsc -b`.
+
+## Implementation Slice P1-visible - 2026-05-31
+
+Added the first user-visible workspace artifact surface:
+
+- backend exposes bounded session artifact APIs:
+  `GET /api/workspace/{session_id}/artifacts` and
+  `GET /api/workspace/{session_id}/artifacts/{artifact_path:path}`;
+- artifact listing is path-jailed to the session workspace and returns stable
+  path, kind, size, and modified time metadata;
+- artifact preview returns bounded text content and a `truncated` flag so the UI
+  can inspect `research/report.md` without loading arbitrary large files into
+  chat state;
+- chat UI now has an artifact popover beside the run selector, with a compact
+  artifact list and markdown/text preview area;
+- `research/report.md` is prioritized when present, matching the Deep Research
+  artifact contract.
+
+Focused checks:
+
+- `examples/chat-demo/backend/tests/test_workspace.py`;
+- frontend `tests/WorkspaceArtifactsPanel.test.tsx`;
+- frontend `tsc -b`.

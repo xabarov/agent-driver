@@ -11,6 +11,7 @@ import { InterruptCard } from "./InterruptCard";
 import { MessageList } from "./MessageList";
 import { SessionRunsMenu } from "./SessionRunsMenu";
 import { StreamErrorBanner } from "./StreamErrorBanner";
+import { WorkspaceArtifactsPanel } from "./WorkspaceArtifactsPanel";
 
 interface ChatPageProps {
   mode: "new" | "existing";
@@ -35,6 +36,7 @@ export function ChatPage({ mode }: ChatPageProps) {
     stopStreaming,
   } = useRunStream();
   const selectedSessionId = mode === "existing" ? params.id ?? "" : "";
+  const artifactSessionId = selectedSessionId || sessionId || "";
   const sessionQuery = useSession(selectedSessionId);
 
   useEffect(() => {
@@ -92,12 +94,20 @@ export function ChatPage({ mode }: ChatPageProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col px-4 pt-3 lg:max-w-4xl xl:max-w-5xl">
-        {mode === "existing" && sessionQuery.data && sessionQuery.data.run_ids.length > 0 ? (
-          <div className="mb-2 flex justify-end">
-            <SessionRunsMenu
-              sessionId={selectedSessionId}
-              runIds={sessionQuery.data.run_ids}
+        {artifactSessionId ? (
+          <div className="mb-2 flex justify-end gap-1">
+            <WorkspaceArtifactsPanel
+              sessionId={artifactSessionId}
+              disabled={streaming && !sessionId && !selectedSessionId}
             />
+            {mode === "existing" &&
+            sessionQuery.data &&
+            sessionQuery.data.run_ids.length > 0 ? (
+              <SessionRunsMenu
+                sessionId={selectedSessionId}
+                runIds={sessionQuery.data.run_ids}
+              />
+            ) : null}
           </div>
         ) : null}
         <div className="mb-2 space-y-2">

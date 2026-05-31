@@ -16,6 +16,8 @@ import type {
   SkillsListResponse,
   SkillViewResponse,
   ToolsResponse,
+  WorkspaceArtifactPreviewResponse,
+  WorkspaceArtifactsResponse,
   WorkspaceImportResponse,
 } from "../types/api";
 import type { ToolPreset } from "../store/settingsStore";
@@ -73,6 +75,22 @@ export function importSampleWorkspace(sessionId: string): Promise<WorkspaceImpor
   return request<WorkspaceImportResponse>(`/api/workspace/sample?${params.toString()}`, {
     method: "POST",
   });
+}
+
+export function fetchWorkspaceArtifacts(sessionId: string): Promise<WorkspaceArtifactsResponse> {
+  return request<WorkspaceArtifactsResponse>(
+    `/api/workspace/${encodeURIComponent(sessionId)}/artifacts`,
+  );
+}
+
+export function fetchWorkspaceArtifactPreview(
+  sessionId: string,
+  path: string,
+): Promise<WorkspaceArtifactPreviewResponse> {
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  return request<WorkspaceArtifactPreviewResponse>(
+    `/api/workspace/${encodeURIComponent(sessionId)}/artifacts/${encodedPath}`,
+  );
 }
 
 export function cancelRun(runId: string): Promise<{ ok: boolean; run_id: string; cancelled: boolean }> {

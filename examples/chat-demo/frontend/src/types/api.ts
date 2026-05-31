@@ -89,6 +89,29 @@ export interface WorkspaceImportResponse {
   workspace: WorkspaceStatusView;
 }
 
+export interface WorkspaceArtifactView {
+  path: string;
+  kind: string;
+  sizeBytes: number;
+  modifiedAt: string;
+}
+
+export interface WorkspaceArtifactsResponse {
+  ok: boolean;
+  sessionId: string;
+  artifacts: WorkspaceArtifactView[];
+}
+
+export interface WorkspaceArtifactPreviewResponse {
+  ok: boolean;
+  sessionId: string;
+  path: string;
+  kind: string;
+  sizeBytes: number;
+  content: string;
+  truncated: boolean;
+}
+
 export interface AssistantMessageMetadataView {
   promptTokens?: number;
   completionTokens?: number;
