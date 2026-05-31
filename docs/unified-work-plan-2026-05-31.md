@@ -689,6 +689,10 @@ Status on 2026-05-31:
   were promoted to packages, removing the sibling `llm_step_*` and
   `tool_stage_*` pseudo-package filenames while preserving
   `agent_driver.runtime.single_agent.llm_step` and `.tool_stage` import paths.
+- Context-management helpers were grouped under
+  `runtime/single_agent/context_management/`: compaction lifecycle,
+  context-window recovery, protocol validation and todo reminders. The old
+  module paths remain thin compatibility shims.
 - `GovernedToolExecutor.execute()` now runs through explicit stages:
   normalize planned calls, apply pre-hooks, add policy hints, partition
   serial/parallel units, execute units and collect ordered results.

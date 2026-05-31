@@ -22,7 +22,7 @@ from agent_driver.runtime.metadata_state import (
     get_planning_runtime_state,
     get_tool_loop_state,
 )
-from agent_driver.runtime.single_agent.compaction_stage import (
+from agent_driver.runtime.single_agent.context_management.compaction_stage import (
     CompactionStageHost,
     apply_compaction_if_eligible,
 )

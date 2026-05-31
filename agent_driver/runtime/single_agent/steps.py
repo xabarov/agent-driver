@@ -27,7 +27,7 @@ from agent_driver.runtime.research_evidence import (
     SOURCE_VERIFIED_FETCHES,
     research_evidence_from_tool_results,
 )
-from agent_driver.runtime.single_agent.compaction_stage import (
+from agent_driver.runtime.single_agent.context_management.compaction_stage import (
     apply_compaction_if_eligible,
 )
 from agent_driver.runtime.single_agent.continuation import analyze_continuation_intent

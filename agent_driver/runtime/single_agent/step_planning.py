@@ -18,7 +18,9 @@ from agent_driver.runtime.metadata_state import (
 )
 from agent_driver.runtime.single_agent.types import RunContext
 from agent_driver.runtime.tools import ToolExecutionResult
-from agent_driver.runtime.single_agent.todo_reminders import reset_todo_write_loop_counters
+from agent_driver.runtime.single_agent.context_management.todo_reminders import (
+    reset_todo_write_loop_counters,
+)
 from agent_driver.tools import apply_planning_state_tool_update
 
 PLANNING_TOOL_NAMES = frozenset({"planning_state_update", "todo_write"})

@@ -30,7 +30,7 @@ from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
 )
 from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.streaming import is_stream_enabled
-from agent_driver.runtime.single_agent.todo_reminders import (
+from agent_driver.runtime.single_agent.context_management.todo_reminders import (
     maybe_append_todo_reminder_to_protocol,
 )
 from agent_driver.runtime.single_agent.types import (

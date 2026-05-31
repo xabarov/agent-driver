@@ -22,7 +22,7 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolManifest
 from agent_driver.llm.contracts import LlmRequest
-from agent_driver.runtime.single_agent.protocol_validate import (
+from agent_driver.runtime.single_agent.context_management.protocol_validate import (
     validate_and_repair_protocol_messages,
 )
 
