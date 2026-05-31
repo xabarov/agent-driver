@@ -682,6 +682,9 @@ Status on 2026-05-31:
   injection, attachment/todo reminders, effective tool-choice selection and
   request-trim construction moved to
   `runtime/single_agent/llm_step_request.py`.
+- Provider completion, streaming fallback, encrypted-reasoning retry,
+  forced-tool-choice retry, max-token retry and forced-final no-tools retry
+  moved to `runtime/single_agent/llm_step_completion.py`.
 - `tool_stage.py` remains the compatibility entrypoint for
   `execute_tool_stage_step`; focused planning, subagent and chat-demo Deep
   Research/Skills SSE tests pass after the extraction.

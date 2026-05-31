@@ -11,7 +11,6 @@ from agent_driver.contracts.enums import (
     RuntimeEventType,
     TerminalReason,
 )
-from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.payload_debug import (
     debug_llm_payload_enabled,
     summarize_llm_request_payload,
@@ -27,20 +26,17 @@ from agent_driver.runtime.single_agent.compaction_stage import (
     CompactionStageHost,
     apply_compaction_if_eligible,
 )
+from agent_driver.runtime.single_agent.llm_step_completion import (
+    complete_request as _complete_request,
+    retry_forced_final_without_tools as _retry_forced_final_without_tools,
+)
 from agent_driver.runtime.single_agent.llm_step_context_pressure import (
     emit_token_pressure_warning as _emit_token_pressure_warning,
     request_with_context_pressure_nudge as _request_with_context_pressure_nudge,
 )
 from agent_driver.runtime.single_agent.llm_step_provider_requests import (
-    is_forced_tool_choice_provider_error as _is_forced_tool_choice_provider_error,
-    is_invalid_encrypted_reasoning_error as _is_invalid_encrypted_reasoning_error,
-    is_reduce_max_tokens_credit_error as _is_reduce_max_tokens_credit_error,
     narrow_request_tools_to_forced_choice as _narrow_request_tools_to_forced_choice,
     provider_error_message as _provider_error_message,
-    request_with_reduced_max_tokens as _request_with_reduced_max_tokens,
-    request_without_forced_tool_choice as _request_without_forced_tool_choice,
-    request_without_tools as _request_without_tools,
-    strip_reasoning_echo as _strip_reasoning_echo,
 )
 from agent_driver.runtime.single_agent.llm_step_prompt import (
     effective_code_agent_imports as _effective_code_agent_imports,
@@ -53,20 +49,15 @@ from agent_driver.runtime.single_agent.llm_step_request import (
     microcompact_context_observations as _microcompact_context_observations,
 )
 from agent_driver.runtime.single_agent.llm_step_stream_recovery import (
-    emit_non_stream_retry_assistant_message as _emit_non_stream_retry_assistant_message,
     emit_partial_assistant_tombstone as _emit_partial_assistant_tombstone,
     force_final_answer_message as _force_final_answer_message,
-    forced_final_no_tools_retry_reason as _forced_final_no_tools_retry_reason,
     recover_force_final_stream_response as _recover_force_final_stream_response,
-    should_retry_empty_forced_final_non_stream as _should_retry_empty_forced_final_non_stream,
 )
 from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.step_planning import build_planning_snapshot
 from agent_driver.runtime.single_agent.streaming import (
     LlmStreamIdleTimeout,
-    complete_streaming_request,
     emit_token_delta_events,
-    is_stream_enabled,
 )
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
@@ -272,174 +263,13 @@ async def execute_llm_call_step(
     return RuntimeStepResult(next_step="tool_stage")
 
 
-async def _complete_request(
-    host: LlmStepHost, context: RunContext, request: Any
-) -> LlmResponse:
-    last_timeout: httpx.TimeoutException | None = None
-    for attempt in range(3):
-        try:
-            if not is_stream_enabled(context.run_input):
-                response = await host._deps.provider.complete(request)
-                return await _retry_forced_final_without_tools(
-                    host,
-                    context,
-                    request=request,
-                    response=response,
-                )
-            response = await complete_streaming_request(host, context, request)
-            if _should_retry_empty_forced_final_non_stream(context, response):
-                context.metadata["empty_forced_final_retry"] = "non_streaming"
-                emit_step_event(
-                    host,
-                    context,
-                    event_type=RuntimeEventType.WARNING,
-                    payload={
-                        "warning": (
-                            "Provider returned an empty forced final stream; "
-                            "retrying once without streaming."
-                        ),
-                        "signal_id": "provider_empty_forced_final_non_stream_retry",
-                        "severity": "warning",
-                    },
-                )
-                response = await host._deps.provider.complete(
-                    request.model_copy(update={"stream": False})
-                )
-                return await _retry_forced_final_without_tools(
-                    host,
-                    context,
-                    request=request,
-                    response=response,
-                )
-            return response
-        except httpx.HTTPStatusError as exc:
-            if attempt == 0 and _is_invalid_encrypted_reasoning_error(exc):
-                stripped = _strip_reasoning_echo(request)
-                if stripped is not request:
-                    context.metadata["reasoning_echo_retry"] = (
-                        "stripped_invalid_encrypted_content"
-                    )
-                    emit_step_event(
-                        host,
-                        context,
-                        event_type=RuntimeEventType.WARNING,
-                        payload={
-                            "warning": (
-                                "Provider rejected echoed encrypted reasoning; "
-                                "retrying once without reasoning metadata."
-                            ),
-                            "signal_id": "provider_invalid_encrypted_reasoning_retry",
-                            "severity": "warning",
-                        },
-                    )
-                    request = stripped
-                    continue
-            if _is_forced_tool_choice_provider_error(exc, request):
-                context.metadata["forced_tool_choice_retry"] = (
-                    "removed_after_provider_rejection"
-                )
-                emit_step_event(
-                    host,
-                    context,
-                    event_type=RuntimeEventType.WARNING,
-                    payload={
-                        "warning": (
-                            "Provider rejected a forced tool_choice; retrying "
-                            "once with the same tools and no forced tool_choice."
-                        ),
-                        "signal_id": "provider_forced_tool_choice_removed_retry",
-                        "severity": "warning",
-                        "status_code": exc.response.status_code,
-                    },
-                )
-                request = _request_without_forced_tool_choice(request)
-                continue
-            if _is_reduce_max_tokens_credit_error(exc):
-                reduced = _request_with_reduced_max_tokens(request)
-                if reduced is not request:
-                    context.metadata["max_tokens_retry"] = "reduced_after_provider_402"
-                    emit_step_event(
-                        host,
-                        context,
-                        event_type=RuntimeEventType.WARNING,
-                        payload={
-                            "warning": (
-                                "Provider rejected the requested output budget; "
-                                "retrying once with fewer max_tokens."
-                            ),
-                            "signal_id": "provider_max_tokens_reduced_retry",
-                            "severity": "warning",
-                            "max_tokens": reduced.max_tokens,
-                        },
-                    )
-                    request = reduced
-                    continue
-            raise
-        except httpx.TimeoutException as exc:
-            last_timeout = exc
-            if (
-                isinstance(exc, LlmStreamIdleTimeout)
-                and getattr(exc, "emitted_chunks", 0) > 0
-            ):
-                raise
-            if attempt == 0:
-                continue
-            raise
-    if last_timeout is not None:
-        raise last_timeout
-    raise RuntimeError("unreachable")
-
-
-async def _retry_forced_final_without_tools(
-    host: LlmStepHost,
-    context: RunContext,
-    *,
-    request: Any,
-    response: LlmResponse,
-) -> LlmResponse:
-    retry_reason = _forced_final_no_tools_retry_reason(context, request, response)
-    if retry_reason is None:
-        return response
-    signal_id = (
-        "provider_forced_final_tool_call_no_tools_retry"
-        if retry_reason == "tool_call"
-        else "provider_empty_forced_final_no_tools_retry"
-    )
-    warning = (
-        "Provider returned a tool-call shaped forced final answer; retrying once "
-        "with tools disabled for a clean final response."
-        if retry_reason == "tool_call"
-        else (
-            "Provider returned an empty forced final answer; retrying once "
-            "with tools disabled for a clean final response."
-        )
-    )
-    emit_step_event(
-        host,
-        context,
-        event_type=RuntimeEventType.WARNING,
-        payload={
-            "warning": warning,
-            "signal_id": signal_id,
-            "severity": "warning",
-        },
-    )
-    context.metadata["forced_final_retry"] = f"{retry_reason}_no_tools"
-    if retry_reason == "empty":
-        context.metadata["empty_forced_final_retry"] = "no_tools"
-    provider_name = str(getattr(host._deps.provider, "name", "") or "")
-    retry_response = await host._deps.provider.complete(
-        _request_without_tools(request, provider_name=provider_name)
-    )
-    _emit_non_stream_retry_assistant_message(host, context, retry_response)
-    return retry_response
-
-
 __all__ = [
     "LlmStepHost",
+    "_complete_request",
     "_effective_code_agent_imports",
     "_force_final_answer_message",
     "_react_system_instruction",
+    "_retry_forced_final_without_tools",
     "_runtime_attachment_messages",
     "execute_llm_call_step",
 ]
