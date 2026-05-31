@@ -147,6 +147,8 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
             "artifacts": {"paths": ["research/report.md", "research/sources.jsonl"]},
             "research_efficiency": {
                 "deep_research_artifact_expected": True,
+                "report_status": "verified",
+                "verified_read_count": 2,
                 "first_tool": "todo_write",
                 "long_final_after_report": False,
                 "full_report_rewrite": False,
@@ -192,6 +194,8 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
     assert "stale_edits=`0`" in scorecard
     assert "repeat_reads=`0`" in scorecard
     assert "source_records=`2`" in scorecard
+    assert "status=`verified`" in scorecard
+    assert "verified=`2`" in scorecard
     assert "final_refs_report=`True`" in scorecard
     assert "first_tool=`todo_write`" in scorecard
     assert "phoenix: enabled=`True`, configured=`True`, error=`-`" in scorecard

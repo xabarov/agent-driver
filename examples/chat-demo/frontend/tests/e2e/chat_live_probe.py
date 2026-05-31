@@ -269,6 +269,8 @@ SCENARIOS: dict[str, LiveScenario] = {
             "deep_research_missing_initial_todo",
             "deep_research_unexpected_agent_tool",
             "deep_research_skill_denied",
+            "deep_research_low_verified_coverage",
+            "deep_research_preliminary_final",
             "deep_research_long_final_after_report",
         ),
         requires_research=True,
@@ -320,6 +322,8 @@ SCENARIOS: dict[str, LiveScenario] = {
             "deep_research_missing_initial_todo",
             "deep_research_unexpected_agent_tool",
             "deep_research_skill_denied",
+            "deep_research_low_verified_coverage",
+            "deep_research_preliminary_final",
             "deep_research_long_final_after_report",
         ),
         requires_research=True,
@@ -365,6 +369,8 @@ SCENARIOS: dict[str, LiveScenario] = {
             "deep_research_missing_initial_todo",
             "deep_research_unexpected_agent_tool",
             "deep_research_skill_denied",
+            "deep_research_low_verified_coverage",
+            "deep_research_preliminary_final",
             "deep_research_long_final_after_report",
         ),
         requires_research=True,
@@ -999,6 +1005,8 @@ def render_scenario_scorecard(
         (
             "- deep_research: "
             f"expected=`{efficiency.get('deep_research_artifact_expected', False)}`, "
+            f"status=`{efficiency.get('report_status') or '-'}`, "
+            f"verified=`{efficiency.get('verified_read_count', 0)}`, "
             f"first_tool=`{efficiency.get('first_tool') or '-'}`, "
             f"final_refs_report=`{efficiency.get('final_references_report_artifact', False)}`, "
             f"long_final_after_report=`{efficiency.get('long_final_after_report', False)}`"

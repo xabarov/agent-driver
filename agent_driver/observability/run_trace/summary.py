@@ -205,6 +205,10 @@ def summarize_run_trace(
             "unexpected_agent_tool"
         ],
         "deep_research_skill_denied": research_efficiency["skill_denied"],
+        "deep_research_low_verified_coverage": research_efficiency[
+            "low_verified_coverage"
+        ],
+        "deep_research_preliminary_final": research_efficiency["preliminary_final"],
     }
     notes = _notes(
         failures=failures,
@@ -590,6 +594,7 @@ def _research_efficiency_summary(
         artifacts.get("repeated_unchanged_report_read_count")
     )
     source_ledger_updated = bool(artifacts.get("source_ledger_updated"))
+    source_ledger_counts = _source_ledger_counts(events)
     assistant_chars = len(assistant_text.strip())
     usage = llm_calls.get("usage")
     total_tokens = usage.get("total_tokens") if isinstance(usage, dict) else 0
@@ -614,6 +619,24 @@ def _research_efficiency_summary(
     )
     unexpected_agent_tool = deep_expected and "agent_tool" in tool_names
     skill_denied = deep_expected and _skill_tool_denied(events)
+    required_verified_reads = _as_int(research.get("required_fetch_count"))
+    if required_verified_reads <= 0:
+        required_verified_reads = 1
+    verified_read_count = source_ledger_counts["verified_reads"]
+    report_status = _deep_research_report_status(
+        deep_expected=deep_expected,
+        report_updated=report_updated,
+        source_ledger_updated=source_ledger_updated,
+        verified_read_count=verified_read_count,
+        required_verified_reads=required_verified_reads,
+        fetch_fallback_required=bool(research.get("fetch_fallback_required")),
+    )
+    low_verified_coverage = report_status == "draft"
+    preliminary_final = (
+        low_verified_coverage
+        and bool(assistant_text.strip())
+        and not _assistant_declares_preliminary(assistant_text)
+    )
     return {
         "deep_research_artifact_expected": deep_expected,
         "missing_report_artifact": missing_report_artifact,
@@ -626,6 +649,14 @@ def _research_efficiency_summary(
         "missing_initial_todo": missing_initial_todo,
         "unexpected_agent_tool": unexpected_agent_tool,
         "skill_denied": skill_denied,
+        "report_status": report_status,
+        "verified_read_count": verified_read_count,
+        "blocked_read_count": source_ledger_counts["blocked_reads"],
+        "failed_read_count": source_ledger_counts["failed_reads"],
+        "candidate_count": source_ledger_counts["search_candidates"],
+        "required_verified_read_count": required_verified_reads,
+        "low_verified_coverage": low_verified_coverage,
+        "preliminary_final": preliminary_final,
         "first_tool": first_tool,
         "tool_chain": " -> ".join(tool_names),
         "unique_tool_count": len(set(tool_names)),
@@ -644,6 +675,62 @@ def _research_efficiency_summary(
         "output_tokens": output_tokens if isinstance(output_tokens, int) else 0,
         "output_tokens_after_first_report_update": completion_after_report,
     }
+
+
+def _source_ledger_counts(events: list[dict[str, object]]) -> dict[str, int]:
+    counts = {
+        "search_candidates": 0,
+        "verified_reads": 0,
+        "blocked_reads": 0,
+        "failed_reads": 0,
+    }
+    for event in events:
+        if event.get("event") != "source_ledger_updated":
+            continue
+        data = _event_data(event)
+        for key in tuple(counts):
+            value = data.get(key)
+            if isinstance(value, list):
+                counts[key] = len(value)
+    return counts
+
+
+def _deep_research_report_status(
+    *,
+    deep_expected: bool,
+    report_updated: bool,
+    source_ledger_updated: bool,
+    verified_read_count: int,
+    required_verified_reads: int,
+    fetch_fallback_required: bool,
+) -> str:
+    if not deep_expected:
+        return "not_applicable"
+    if not report_updated:
+        return "missing"
+    if not source_ledger_updated:
+        return "invalid"
+    if verified_read_count >= required_verified_reads:
+        return "verified"
+    if fetch_fallback_required:
+        return "fallback"
+    return "draft"
+
+
+def _assistant_declares_preliminary(assistant_text: str) -> bool:
+    text = " ".join(assistant_text.lower().split())
+    return any(
+        marker in text
+        for marker in (
+            "preliminary",
+            "draft",
+            "чернов",
+            "предваритель",
+            "не финаль",
+            "нужно ещё проверить",
+            "нужно еще проверить",
+        )
+    )
 
 
 def _skill_tool_denied(events: list[dict[str, object]]) -> bool:
@@ -961,6 +1048,14 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "deep_research_skill_denied",
         "Deep Research hit a denied/failed skill_tool or skill_view call.",
+    ),
+    (
+        "deep_research_low_verified_coverage",
+        "Deep Research report artifact exists but source ledger coverage is still draft/pre-verified.",
+    ),
+    (
+        "deep_research_preliminary_final",
+        "Deep Research handed off a draft report as if it were final.",
     ),
     (
         "plan_todos_incomplete_on_final",

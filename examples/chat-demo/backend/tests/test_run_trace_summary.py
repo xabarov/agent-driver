@@ -369,6 +369,56 @@ def test_trace_summary_flags_denied_skill_tool_in_deep_research() -> None:
     assert summary["verdict"] == "fail"
 
 
+def test_trace_summary_flags_deep_research_report_with_only_candidates() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово: полный отчет сохранен в research/report.md.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search"),
+            {
+                "event": "source_ledger_updated",
+                "data": {
+                    "search_candidates": [
+                        {"url": "https://candidate.example/a"},
+                        {"url": "https://candidate.example/b"},
+                    ],
+                    "verified_reads": [],
+                    "failed_reads": [],
+                    "blocked_reads": [],
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 2},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["report_status"] == "draft"
+    assert summary["research_efficiency"]["candidate_count"] == 2
+    assert summary["research_efficiency"]["verified_read_count"] == 0
+    assert summary["research_efficiency"]["low_verified_coverage"] is True
+    assert summary["research_efficiency"]["preliminary_final"] is True
+    assert summary["failures"]["deep_research_low_verified_coverage"] is True
+    assert summary["failures"]["deep_research_preliminary_final"] is True
+    assert summary["verdict"] == "fail"
+
+
 def test_trace_summary_flags_repeated_full_report_write() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

@@ -1334,3 +1334,29 @@ Focused checks:
 - `tests/runtime/test_research_session_contract.py`;
 - `examples/chat-demo/backend/tests/test_tools.py`;
 - `examples/chat-demo/backend/tests/test_run_trace_summary.py`.
+
+## Implementation Slice P14.2-report-status-guard - 2026-05-31
+
+Added the first report-status guard so a visible report artifact cannot hide
+weak evidence coverage:
+
+- trace summaries now derive Deep Research report status:
+  `missing`, `invalid`, `draft`, `verified`, `fallback`, or `not_applicable`;
+- status uses the durable report artifact, source ledger artifact,
+  `source_ledger_updated` counts, required verified reads, and fetch fallback
+  state;
+- `research_efficiency` exposes verified, blocked, failed, and candidate counts;
+- `deep_research_low_verified_coverage` fires when a report exists but remains
+  draft/pre-verified;
+- `deep_research_preliminary_final` fires when a draft report is handed off as
+  final rather than explicitly preliminary;
+- live scorecards print `status` and `verified` in the Deep Research row;
+- Deep Research Playwright scenarios forbid low verified coverage unless the run
+  is explicitly in fallback mode.
+
+Focused checks:
+
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact`.
