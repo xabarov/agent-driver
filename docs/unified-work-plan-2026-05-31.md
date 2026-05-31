@@ -685,6 +685,9 @@ Status on 2026-05-31:
 - Provider completion, streaming fallback, encrypted-reasoning retry,
   forced-tool-choice retry, max-token retry and forced-final no-tools retry
   moved to `runtime/single_agent/llm_step_completion.py`.
+- `GovernedToolExecutor.execute()` now runs through explicit stages:
+  normalize planned calls, apply pre-hooks, add policy hints, partition
+  serial/parallel units, execute units and collect ordered results.
 - `tool_stage.py` remains the compatibility entrypoint for
   `execute_tool_stage_step`; focused planning, subagent and chat-demo Deep
   Research/Skills SSE tests pass after the extraction.

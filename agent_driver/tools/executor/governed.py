@@ -231,38 +231,88 @@ class GovernedToolExecutor:
         (operator approval). See :mod:`agent_driver.runtime.tool_gate`.
         """
         result = GovernedExecutionResult()
+        planned_calls = self._normalize_planned_calls(llm_response)
+        planned_calls = await self._apply_pre_hook_stage(planned_calls)
+        run_input = self._apply_policy_hint_stage(
+            run_input,
+            planned_calls,
+            current_tool_calls=current_tool_calls,
+        )
+        units = self._partition_stage(planned_calls)
+        await self._execute_units_stage(
+            units=units,
+            run_input=run_input,
+            result=result,
+            current_tool_calls=current_tool_calls,
+            tool_gate=tool_gate,
+        )
+        return result
+
+    def _lookup_manifest(self, tool_name: str):
+        registered = self._registry.get(tool_name)
+        return registered.manifest if registered is not None else None
+
+    def _normalize_planned_calls(self, llm_response: LlmResponse) -> list[ToolCall]:
+        """Extract planned calls and normalize explicit compatibility aliases."""
         available_tool_names = tuple(self._registry.list_names())
-        planned_calls = [
+        return [
             _normalize_tool_alias(call, available_tool_names=available_tool_names)
             for call in extract_planned_tool_calls(llm_response)
         ]
-        # Phase 11 H15 — apply pre_tool_use hook chain BEFORE partition
-        # so concurrency-safety decisions see the transformed call.
-        # Hook errors are isolated; on any exception the original call
-        # for THAT hook is preserved (see ``_apply_pre_hooks``).
-        if self._tool_hooks:
-            transformed: list[ToolCall] = []
-            for call in planned_calls:
-                transformed.append(await self._apply_pre_hooks(call))
-            planned_calls = transformed
-        if planned_calls:
-            run_input = run_input.model_copy(
-                update={
-                    "tool_policy": tool_policy_with_planned_tool_hint(
-                        run_input.tool_policy,
-                        planned_calls,
-                        manifest_lookup=self._lookup_manifest,
-                        current_tool_calls=current_tool_calls,
-                    )
-                }
-            )
-        units = partition_concurrent_calls(
+
+    async def _apply_pre_hook_stage(
+        self, planned_calls: list[ToolCall]
+    ) -> list[ToolCall]:
+        """Run pre_tool_use hooks before concurrency partitioning."""
+        if not self._tool_hooks:
+            return planned_calls
+        transformed: list[ToolCall] = []
+        for call in planned_calls:
+            transformed.append(await self._apply_pre_hooks(call))
+        return transformed
+
+    def _apply_policy_hint_stage(
+        self,
+        run_input: AgentRunInput,
+        planned_calls: list[ToolCall],
+        *,
+        current_tool_calls: int,
+    ) -> AgentRunInput:
+        """Enrich run policy with planned-tool context before execution."""
+        if not planned_calls:
+            return run_input
+        return run_input.model_copy(
+            update={
+                "tool_policy": tool_policy_with_planned_tool_hint(
+                    run_input.tool_policy,
+                    planned_calls,
+                    manifest_lookup=self._lookup_manifest,
+                    current_tool_calls=current_tool_calls,
+                )
+            }
+        )
+
+    def _partition_stage(
+        self, planned_calls: list[ToolCall]
+    ) -> list[SerialCall[ToolCall] | ParallelBatch[ToolCall]]:
+        """Partition planned calls into serial and concurrency-safe units."""
+        return partition_concurrent_calls(
             planned_calls,
             is_safe=lambda c: is_call_concurrency_safe(
                 c, manifest_lookup=self._lookup_manifest
             ),
         )
 
+    async def _execute_units_stage(
+        self,
+        *,
+        units: list[SerialCall[ToolCall] | ParallelBatch[ToolCall]],
+        run_input: AgentRunInput,
+        result: GovernedExecutionResult,
+        current_tool_calls: int,
+        tool_gate: "ToolGate | None" = None,
+    ) -> None:
+        """Execute partitioned units and collect envelopes/traces in order."""
         next_index = 1
         for unit in units:
             if isinstance(unit, SerialCall):
@@ -278,9 +328,8 @@ class GovernedToolExecutor:
                 )
                 next_index += 1
                 if stop:
-                    return result
+                    return
                 continue
-            # ParallelBatch
             stop = await self._execute_parallel_batch(
                 batch=unit,
                 run_input=run_input,
@@ -291,12 +340,7 @@ class GovernedToolExecutor:
             )
             next_index += len(unit.items)
             if stop:
-                return result
-        return result
-
-    def _lookup_manifest(self, tool_name: str):
-        registered = self._registry.get(tool_name)
-        return registered.manifest if registered is not None else None
+                return
 
     async def _apply_tool_gate(
         self,
