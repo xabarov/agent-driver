@@ -633,18 +633,18 @@ Purpose: reduce maintenance cost after state and behavior gates exist.
 
 Do this in small PRs; avoid combining file moves with behavior changes.
 
-- [ ] Repackage `runtime/single_agent` into lifecycle, llm call, tool loop,
+- [x] Repackage `runtime/single_agent` into lifecycle, llm call, tool loop,
   finalization, planning and context-management subpackages with compatibility
   shims.
-- [ ] Split `tool_stage.py` around transitions, research controls, planning
+- [x] Split `tool_stage.py` around transitions, research controls, planning
   events and subagent outputs.
-- [ ] Split `llm_step.py` around request preparation, compaction integration,
+- [x] Split `llm_step.py` around request preparation, compaction integration,
   provider call, event projection and provider error mapping.
-- [ ] Turn `GovernedToolExecutor` into an explicit pipeline:
+- [x] Turn `GovernedToolExecutor` into an explicit pipeline:
   normalize -> hooks -> policy -> gate -> partition -> execute -> collect.
-- [ ] Decompose OpenAI-compatible provider adapter:
+- [x] Decompose OpenAI-compatible provider adapter:
   wire payload, response parser, stream parser, usage parser, tool choice.
-- [ ] Split `run_trace_summary.py` into analyzers:
+- [x] Split `run_trace_summary.py` into analyzers:
   research, provider, tools, compaction, planning, streaming.
 
 Acceptance:
@@ -734,6 +734,13 @@ Status on 2026-05-31:
 - `tool_stage.py` remains the compatibility entrypoint for
   `execute_tool_stage_step`; focused planning, subagent and chat-demo Deep
   Research/Skills SSE tests pass after the extraction.
+- Compatibility shims for the old `runtime/single_agent` module paths now use
+  explicit re-exports instead of wildcard imports, so compatibility remains
+  visible without becoming a lint sink.
+- Phase 6 closed on 2026-05-31: broad ruff and focused runtime/provider/tool/
+  observability/SDK tests passed after the final extraction. Pylint was used as
+  a structural smoke gate; the newly introduced shims are clean, while remaining
+  warnings are pre-existing broader debt outside the Phase 6 file moves.
 
 ### Phase 7 - SDK P1 And Documentation
 
