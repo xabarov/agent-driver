@@ -702,6 +702,9 @@ Status on 2026-05-31:
 - Run trace planning analyzer, planning-only prompt detection, expected
   execution heuristic and unfinished-todo check moved to
   `observability/run_trace_planning.py`.
+- Run trace research-required detection, source-verified evidence metrics,
+  fetch/domain/link checks and final-readiness repair reasons moved to
+  `observability/run_trace_research.py`.
 - `tool_stage.py` remains the compatibility entrypoint for
   `execute_tool_stage_step`; focused planning, subagent and chat-demo Deep
   Research/Skills SSE tests pass after the extraction.

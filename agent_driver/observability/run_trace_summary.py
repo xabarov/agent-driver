@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
-from urllib.parse import urlparse
 
 from agent_driver.observability.run_trace_compaction import (
     compaction_summary as _compaction_summary,
     context_pressure_summary as _context_pressure_summary,
 )
 from agent_driver.observability.run_trace_planning import (
-    is_plan_only_prompt as _is_plan_only_prompt,
     planning_execution_expected as _planning_execution_expected,
     planning_summary as _planning_summary,
     planning_todos_incomplete as _planning_todos_incomplete,
@@ -22,6 +19,12 @@ from agent_driver.observability.run_trace_provider import (
     provider_profile_summary as _provider_profile_summary,
     provider_rejected as _provider_rejected,
 )
+from agent_driver.observability.run_trace_research import (
+    RESEARCH_TOOLS as _RESEARCH_TOOLS,
+    requires_research as _requires_research,
+    research_final_answer_covers_plan_todos as _research_final_answer_covers_plan_todos,
+    research_summary as _research_summary,
+)
 from agent_driver.observability.run_trace_tools import (
     assistant_text as _assistant_text,
     count_events as _count_events,
@@ -31,27 +34,10 @@ from agent_driver.observability.run_trace_tools import (
     tool_payloads as _tool_payloads,
     unknown_tool_summary as _unknown_tool_summary,
 )
-from agent_driver.runtime.research_evidence import (
-    RESEARCH_DEPTH_SOURCE_VERIFIED,
-    SOURCE_VERIFIED_DOMAINS,
-    SOURCE_VERIFIED_FETCHES,
-    classify_research_depth,
-)
 from agent_driver.runtime.single_agent.continuation import analyze_continuation_intent
 
-_RESEARCH_TOOLS = frozenset({"web_search", "web_fetch"})
 _PYTHON_TOOL = "python"
 _TERMINAL_EVENTS = frozenset({"run_completed", "run_failed", "run_cancelled"})
-_FETCH_REQUIRED_MARKERS = (
-    "открой",
-    "открыть",
-    "загрузи",
-    "прочитай url",
-    "web_fetch",
-    "fetch",
-    "open url",
-    "open the url",
-)
 
 
 def summarize_run_trace(
@@ -228,268 +214,6 @@ def _last_event_name(
         if isinstance(name, str) and name in names:
             return name
     return None
-
-
-def _requires_research(
-    *,
-    task_contract: dict[str, Any] | None,
-    user_prompt: str | None,
-) -> bool:
-    text = " ".join((user_prompt or "").lower().split())
-    if any(
-        marker in text
-        for marker in (
-            "без поиска",
-            "без интернета",
-            "не ищи",
-            "не используй интернет",
-            "по памяти",
-            "no search",
-            "without search",
-            "without web",
-            "do not search",
-        )
-    ):
-        return False
-    if (
-        isinstance(task_contract, dict)
-        and task_contract.get("requires_research") is True
-    ):
-        return True
-    if _is_plan_only_prompt(text):
-        return False
-    return any(
-        marker in text
-        for marker in (
-            "найди",
-            "поиск",
-            "интернет",
-            "источник",
-            "research",
-            "search",
-            "source",
-        )
-    )
-
-
-def _research_summary(
-    events: list[dict[str, object]],
-    *,
-    tool_names: list[str],
-    requires_research: bool,
-    user_prompt: str | None,
-    assistant_text: str,
-    task_contract: dict[str, Any] | None,
-    planning: dict[str, Any],
-) -> dict[str, Any]:
-    depth = _research_depth(
-        task_contract=task_contract,
-        user_prompt=user_prompt,
-        requires_research=requires_research,
-    )
-    search_count = tool_names.count("web_search")
-    fetch_payloads = [
-        payload
-        for payload in _tool_payloads(events, "web_fetch")
-        if _tool_payload_succeeded(payload)
-    ]
-    research_payloads = [
-        payload
-        for tool_name in _RESEARCH_TOOLS
-        for payload in _tool_payloads(events, tool_name)
-        if _tool_payload_succeeded(payload)
-    ]
-    fetch_count = len(fetch_payloads)
-    domains = _unique_domains(fetch_payloads)
-    final_has_source_links = _has_source_links(assistant_text) or _has_tool_sources(
-        research_payloads
-    )
-    fetch_required = _fetch_required(
-        task_contract=task_contract,
-        user_prompt=user_prompt,
-    )
-    fetch_required_but_missing = (
-        (depth == RESEARCH_DEPTH_SOURCE_VERIFIED or fetch_required)
-        and search_count > 0
-        and fetch_count < (SOURCE_VERIFIED_FETCHES if not fetch_required else 1)
-    )
-    insufficient_source_diversity = (
-        depth == RESEARCH_DEPTH_SOURCE_VERIFIED
-        and fetch_count >= SOURCE_VERIFIED_FETCHES
-        and len(domains) < SOURCE_VERIFIED_DOMAINS
-    )
-    final_missing_source_links = (
-        depth == RESEARCH_DEPTH_SOURCE_VERIFIED
-        and fetch_count >= SOURCE_VERIFIED_FETCHES
-        and len(domains) >= SOURCE_VERIFIED_DOMAINS
-        and not final_has_source_links
-    )
-    repair_reasons: list[str] = []
-    if _planning_todos_incomplete(
-        planning,
-        assistant_text=assistant_text,
-        allow_all_todos=_research_final_metrics_cover_plan_todos(
-            requires_research=requires_research,
-            search_count=search_count,
-            fetch_required_but_missing=fetch_required_but_missing,
-            insufficient_source_diversity=insufficient_source_diversity,
-            final_missing_source_links=final_missing_source_links,
-            assistant_text=assistant_text,
-        ),
-    ):
-        repair_reasons.append("unfinished_todos")
-    if requires_research and search_count == 0 and fetch_count == 0:
-        repair_reasons.append("missing_research_evidence")
-    if fetch_required_but_missing:
-        repair_reasons.append("missing_fetched_sources")
-    if insufficient_source_diversity:
-        repair_reasons.append("insufficient_source_diversity")
-    if final_missing_source_links:
-        repair_reasons.append("final_missing_source_links")
-    final_readiness = "repair_needed" if repair_reasons else "allowed"
-    return {
-        "depth": depth,
-        "search_count": search_count,
-        "fetch_count": fetch_count,
-        "required_fetch_count": (
-            SOURCE_VERIFIED_FETCHES
-            if depth == RESEARCH_DEPTH_SOURCE_VERIFIED
-            else (1 if requires_research or fetch_required else 0)
-        ),
-        "fetch_required": fetch_required,
-        "fetch_required_but_missing": fetch_required_but_missing,
-        "insufficient_source_diversity": insufficient_source_diversity,
-        "unique_domains": domains,
-        "final_has_source_links": final_has_source_links,
-        "final_missing_source_links": final_missing_source_links,
-        "final_readiness": final_readiness,
-        "repair_required_reasons": repair_reasons,
-    }
-
-
-def _research_depth(
-    *,
-    task_contract: dict[str, Any] | None,
-    user_prompt: str | None,
-    requires_research: bool,
-) -> str:
-    if isinstance(task_contract, dict):
-        depth = task_contract.get("research_depth")
-        if isinstance(depth, str) and depth:
-            return depth
-    return classify_research_depth(
-        user_prompt or "",
-        requires_research=requires_research,
-        plan_only=_is_plan_only_prompt(" ".join((user_prompt or "").lower().split())),
-    )
-
-
-def _fetch_required(
-    *,
-    task_contract: dict[str, Any] | None,
-    user_prompt: str | None,
-) -> bool:
-    if isinstance(task_contract, dict) and task_contract.get("fetch_required") is True:
-        return True
-    text = " ".join((user_prompt or "").lower().split())
-    return any(marker in text for marker in _FETCH_REQUIRED_MARKERS)
-
-
-def _unique_domains(payloads: list[dict[str, Any]]) -> list[str]:
-    domains: list[str] = []
-    for payload in payloads:
-        url = _payload_url(payload)
-        if not url:
-            continue
-        domain = urlparse(url).netloc.lower()
-        if domain.startswith("www."):
-            domain = domain[4:]
-        if domain and domain not in domains:
-            domains.append(domain)
-    return domains
-
-
-def _payload_url(payload: dict[str, Any]) -> str | None:
-    args = payload.get("args")
-    if isinstance(args, dict):
-        url = args.get("url")
-        if isinstance(url, str) and url:
-            return url
-    url = payload.get("url")
-    if isinstance(url, str) and url:
-        return url
-    return None
-
-
-def _tool_payload_succeeded(payload: dict[str, Any]) -> bool:
-    status = str(payload.get("status") or "").lower()
-    if status in {"failed", "error", "denied", "timed_out", "timeout"}:
-        return False
-    status_code = payload.get("status_code")
-    if isinstance(status_code, int) and not isinstance(status_code, bool):
-        return status_code < 400
-    if payload.get("error_code") or payload.get("error"):
-        return False
-    summary = str(payload.get("result_summary") or "").lower()
-    if re.search(r"\bhttp\s+[45]\d\d\b", summary):
-        return False
-    if any(
-        marker in summary
-        for marker in ("failed:", "blocked by upstream", "unsupported content type")
-    ):
-        return False
-    return True
-
-
-def _has_tool_sources(payloads: list[dict[str, Any]]) -> bool:
-    return any(
-        isinstance(payload.get("sources"), list) and payload["sources"]
-        for payload in payloads
-    )
-
-
-def _has_source_links(text: str) -> bool:
-    return bool(re.search(r"https?://|\[[^\]]+\]\(https?://", text))
-
-
-def _research_final_answer_covers_plan_todos(
-    *,
-    requires_research: bool,
-    research: dict[str, Any],
-    assistant_text: str,
-) -> bool:
-    return _research_final_metrics_cover_plan_todos(
-        requires_research=requires_research,
-        search_count=int(research.get("search_count") or 0),
-        fetch_required_but_missing=bool(research.get("fetch_required_but_missing")),
-        insufficient_source_diversity=bool(
-            research.get("insufficient_source_diversity")
-        ),
-        final_missing_source_links=bool(research.get("final_missing_source_links")),
-        assistant_text=assistant_text,
-    )
-
-
-def _research_final_metrics_cover_plan_todos(
-    *,
-    requires_research: bool,
-    search_count: int,
-    fetch_required_but_missing: bool,
-    insufficient_source_diversity: bool,
-    final_missing_source_links: bool,
-    assistant_text: str,
-) -> bool:
-    if not requires_research:
-        return False
-    if search_count <= 0:
-        return False
-    if len(assistant_text.strip()) < 200:
-        return False
-    return not (
-        fetch_required_but_missing
-        or insufficient_source_diversity
-        or final_missing_source_links
-    )
 
 
 def _subagent_summary(
