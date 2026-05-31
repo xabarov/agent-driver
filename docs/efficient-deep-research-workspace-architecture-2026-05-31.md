@@ -1013,6 +1013,37 @@ Focused checks:
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
   deep-research-blocked-fetch`.
 
+## Implementation Slice P14.6-optional-phase-hard-gate - 2026-05-31
+
+Added an opt-in hard gate for Deep Research phase ordering:
+
+- new `create_deep_research_phase_gate` builds a per-run `ToolGate` with the
+  same phase model used by trace diagnostics;
+- the gate denies out-of-phase tools before handler execution and returns a
+  normal `tool_gate_denied` tool result so the model can recover;
+- chat-demo can enable it with
+  `CHAT_DEMO_DEEP_RESEARCH_PHASE_GATE_ENABLED=true`;
+- when enabled, Deep Research policy metadata records
+  `deep_research_phase_gate.enabled=true`;
+- the default remains disabled so fake and real-provider live lanes can be
+  compared with and without hard enforcement.
+
+Initial hard-gate policy:
+
+- `plan`: only `todo_write`;
+- `discover`: `skill_tool`, `skill_view`, `web_search`, `glob_search`,
+  `grep_search`, `read_file`;
+- `verify`: `web_fetch`, `web_search`, `read_file` until two fetch attempts;
+- `write`: `file_write`, `read_file`, `artifact_list`;
+- `review`: `artifact_preview`, `artifact_read`, `read_file`, `file_patch`,
+  `file_edit`, `todo_write`.
+
+Focused checks:
+
+- `tests/runtime/test_deep_research_phase_gate.py`;
+- chat-demo fake live lanes with the gate enabled:
+  `deep-research-artifact`, `deep-research-blocked-fetch`.
+
 ## Implementation Slice P8-full-report-rewrite-guard - 2026-05-31
 
 Added trace-level detection for the original waste loop class:

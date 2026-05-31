@@ -49,8 +49,12 @@ from agent_driver.runtime.chat_policy import (
     build_chat_tool_policy,
     initial_tool_choice_for_chat,
 )
+from agent_driver.runtime.deep_research_phase_gate import (
+    create_deep_research_phase_gate,
+)
 from agent_driver.runtime.stream import backfill_stream_events, project_runtime_events
 from agent_driver.runtime.task_contract import build_chat_task_contract
+from agent_driver.runtime.tool_gate import ToolGate
 
 router = APIRouter(tags=["chat"])
 _TERMINAL_EVENTS = {
@@ -292,7 +296,20 @@ def _chat_tool_policy(
         "enabled": True,
         "research_depth": "deep_parallel_research",
     }
+    if settings.deep_research_phase_gate_enabled:
+        metadata["deep_research_phase_gate"] = {
+            "enabled": True,
+            "required_fetch_attempts": 2,
+        }
     return policy.model_copy(update={"metadata": metadata})
+
+
+def _chat_tool_gate(*, body: ChatMessageRequest, settings: Settings) -> ToolGate | None:
+    if body.research_depth != "deep_parallel_research":
+        return None
+    if not settings.deep_research_phase_gate_enabled:
+        return None
+    return create_deep_research_phase_gate(required_fetch_attempts=2)
 
 
 @router.post("/chat/messages")
@@ -363,6 +380,7 @@ async def chat_messages(
         client_requests=client_requests,
     )
     tool_policy = _chat_tool_policy(body=body, settings=settings)
+    tool_gate = _chat_tool_gate(body=body, settings=settings)
     run_input = AgentRunInput(
         input=body.message,
         messages=transcript_to_messages(transcript),
@@ -406,6 +424,7 @@ async def chat_messages(
         run_input=run_input,
         event_log=bundle.event_log,
         on_finish=_persist_assistant,
+        tool_gate=tool_gate,
     )
     stream = _tail_existing_run(
         bundle=bundle,

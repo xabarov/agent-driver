@@ -15,6 +15,7 @@ from agent_driver.adapters import (
     sse_event_stream,
 )
 from agent_driver.contracts.runtime import AgentRunInput
+from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.runtime.storage import RuntimeEventLog
 from agent_driver.sdk import Agent
 
@@ -41,6 +42,7 @@ def ensure_run_task(
     run_input: AgentRunInput,
     event_log: RuntimeEventLog,
     on_finish: OnFinish | None = None,
+    tool_gate: ToolGate | None = None,
 ) -> None:
     """Start the agent run once, decoupled from any one HTTP stream."""
     run_id = run_input.run_id or ""
@@ -51,7 +53,11 @@ def ensure_run_task(
         return
     task = asyncio.create_task(
         _drive_run(
-            agent=agent, run_input=run_input, event_log=event_log, on_finish=on_finish
+            agent=agent,
+            run_input=run_input,
+            event_log=event_log,
+            on_finish=on_finish,
+            tool_gate=tool_gate,
         ),
         name=f"chat-run-{run_id}",
     )
@@ -72,6 +78,7 @@ async def _drive_run(
     run_input: AgentRunInput,
     event_log: RuntimeEventLog,
     on_finish: OnFinish | None,
+    tool_gate: ToolGate | None,
 ) -> None:
     capture = AssistantTextCapture()
     terminal_event: TerminalEvent = None
@@ -80,7 +87,8 @@ async def _drive_run(
     token = set_active_run(run_id or None)
     try:
         with start_run_span(run_input):
-            async for event in agent.stream(run_input):
+            stream = agent.stream_run(run_input, tool_gate=tool_gate)
+            async for event in stream.events():
                 trace_runtime_event(event.event, event.data)
                 capture.apply(event_name=event.event, data=event.data)
                 if event.event in _TERMINAL_EVENTS:

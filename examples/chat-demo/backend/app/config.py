@@ -104,6 +104,10 @@ class Settings(BaseSettings):
         default=3,
         validation_alias=AliasChoices("CHAT_DEMO_MAX_CHILD_RUNS"),
     )
+    deep_research_phase_gate_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("CHAT_DEMO_DEEP_RESEARCH_PHASE_GATE_ENABLED"),
+    )
     stream_poll_interval_ms: int = Field(
         default=20,
         validation_alias=AliasChoices("CHAT_DEMO_STREAM_POLL_INTERVAL_MS"),
