@@ -20,12 +20,12 @@ from agent_driver.runtime.single_agent.llm import (
     LlmRequestBuildContext,
     build_single_agent_llm_request,
 )
-from agent_driver.runtime.single_agent.llm_step_prompt import (
+from agent_driver.runtime.single_agent.llm_step.prompt import (
     append_runtime_attachment_messages,
     effective_code_agent_imports,
     react_system_instruction,
 )
-from agent_driver.runtime.single_agent.llm_step_stream_recovery import (
+from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     force_final_answer_message,
 )
 from agent_driver.runtime.single_agent.step_events import emit_step_event

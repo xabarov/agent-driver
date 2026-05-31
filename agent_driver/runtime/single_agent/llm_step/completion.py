@@ -8,7 +8,7 @@ import httpx
 
 from agent_driver.contracts.enums import RuntimeEventType
 from agent_driver.llm.contracts import LlmResponse
-from agent_driver.runtime.single_agent.llm_step_provider_requests import (
+from agent_driver.runtime.single_agent.llm_step.provider_requests import (
     is_forced_tool_choice_provider_error,
     is_invalid_encrypted_reasoning_error,
     is_reduce_max_tokens_credit_error,
@@ -17,7 +17,7 @@ from agent_driver.runtime.single_agent.llm_step_provider_requests import (
     request_without_tools,
     strip_reasoning_echo,
 )
-from agent_driver.runtime.single_agent.llm_step_stream_recovery import (
+from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     emit_non_stream_retry_assistant_message,
     forced_final_no_tools_retry_reason,
     should_retry_empty_forced_final_non_stream,

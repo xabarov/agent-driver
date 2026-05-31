@@ -26,29 +26,29 @@ from agent_driver.runtime.single_agent.compaction_stage import (
     CompactionStageHost,
     apply_compaction_if_eligible,
 )
-from agent_driver.runtime.single_agent.llm_step_completion import (
+from agent_driver.runtime.single_agent.llm_step.completion import (
     complete_request as _complete_request,
     retry_forced_final_without_tools as _retry_forced_final_without_tools,
 )
-from agent_driver.runtime.single_agent.llm_step_context_pressure import (
+from agent_driver.runtime.single_agent.llm_step.context_pressure import (
     emit_token_pressure_warning as _emit_token_pressure_warning,
     request_with_context_pressure_nudge as _request_with_context_pressure_nudge,
 )
-from agent_driver.runtime.single_agent.llm_step_provider_requests import (
+from agent_driver.runtime.single_agent.llm_step.provider_requests import (
     narrow_request_tools_to_forced_choice as _narrow_request_tools_to_forced_choice,
     provider_error_message as _provider_error_message,
 )
-from agent_driver.runtime.single_agent.llm_step_prompt import (
+from agent_driver.runtime.single_agent.llm_step.prompt import (
     effective_code_agent_imports as _effective_code_agent_imports,
     react_system_instruction as _react_system_instruction,
     runtime_attachment_messages,
 )
-from agent_driver.runtime.single_agent.llm_step_request import (
+from agent_driver.runtime.single_agent.llm_step.request import (
     build_trimmed_request as _build_trimmed_request,
     emit_protocol_debug as _emit_protocol_debug,
     microcompact_context_observations as _microcompact_context_observations,
 )
-from agent_driver.runtime.single_agent.llm_step_stream_recovery import (
+from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     emit_partial_assistant_tombstone as _emit_partial_assistant_tombstone,
     force_final_answer_message as _force_final_answer_message,
     recover_force_final_stream_response as _recover_force_final_stream_response,

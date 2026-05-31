@@ -40,10 +40,10 @@ from agent_driver.runtime.single_agent.step_planning import (
     build_planning_snapshot,
     update_planning_state_from_tool_results,
 )
-from agent_driver.runtime.single_agent.tool_stage_planning import (
+from agent_driver.runtime.single_agent.tool_stage.planning import (
     emit_plan_lifecycle_events,
 )
-from agent_driver.runtime.single_agent.tool_stage_research import (
+from agent_driver.runtime.single_agent.tool_stage.research import (
     append_web_fetch_duplicate_guard,
     append_web_fetch_verification_hint,
     force_web_fetch_for_source_verified_research,
@@ -54,7 +54,7 @@ from agent_driver.runtime.single_agent.todo_reminders import (
     append_todo_progress_hint_after_substantive_tool,
     increment_tool_loops_since_todo_write,
 )
-from agent_driver.runtime.single_agent.tool_stage_subagents import (
+from agent_driver.runtime.single_agent.tool_stage.subagents import (
     apply_agent_tool_spawn_requests,
     apply_subagent_control_tool_outputs,
 )
@@ -67,6 +67,10 @@ from agent_driver.runtime.single_agent.types import (
 )
 from agent_driver.runtime.tools import ToolExecutionResult
 from agent_driver.tools.executor.planned import extract_planned_tool_calls
+
+_force_web_fetch_for_source_verified_research = (
+    force_web_fetch_for_source_verified_research
+)
 
 
 class ToolStageHost(Protocol):
@@ -1104,4 +1108,10 @@ def _has_repeated_recent_tool_call(context: RunContext) -> bool:
     return recent[-1] == recent[-2]
 
 
-__all__ = ["ToolStageHost", "execute_tool_stage_step"]
+__all__ = [
+    "ToolStageHost",
+    "_force_web_fetch_for_source_verified_research",
+    "_should_force_final_answer",
+    "_update_tool_protocol_messages",
+    "execute_tool_stage_step",
+]

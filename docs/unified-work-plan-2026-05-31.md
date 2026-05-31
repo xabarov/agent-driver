@@ -656,35 +656,39 @@ Status on 2026-05-31:
 
 - Started Phase 6 with compatibility-preserving `tool_stage.py` splits:
   planning lifecycle event projection moved to
-  `runtime/single_agent/tool_stage_planning.py`, and subagent post-processing
+  `runtime/single_agent/tool_stage/planning.py`, and subagent post-processing
   for `agent_tool`, `send_message_tool` and `task_stop_tool` moved to
-  `runtime/single_agent/tool_stage_subagents.py`.
+  `runtime/single_agent/tool_stage/subagents.py`.
 - Source-verified research repair, web-fetch verification hints and research
   final-readiness helper checks moved to
-  `runtime/single_agent/tool_stage_research.py`, leaving `tool_stage.py` as the
-  transition/protocol compatibility layer.
+  `runtime/single_agent/tool_stage/research.py`, leaving the `tool_stage`
+  package `__init__.py` as the transition/protocol compatibility layer.
 - Started the `llm_step.py` split by moving context-pressure nudges and warning
-  event projection to `runtime/single_agent/llm_step_context_pressure.py` while
-  preserving the existing `llm_step.py` private helper imports used by focused
+  event projection to `runtime/single_agent/llm_step/context_pressure.py` while
+  preserving the existing `llm_step` private helper imports used by focused
   tests.
 - Provider HTTP error parsing, forced-tool request narrowing, reasoning-echo
   stripping, max-token retry shaping and no-tools retry request shaping moved to
-  `runtime/single_agent/llm_step_provider_requests.py`; the LLM step keeps the
+  `runtime/single_agent/llm_step/provider_requests.py`; the LLM step keeps the
   retry loop and runtime event emission.
 - ReAct system-prompt composition, chat/runtime attachment reminders, prompt
   surface metadata capture and effective code-agent import resolution moved to
-  `runtime/single_agent/llm_step_prompt.py`.
+  `runtime/single_agent/llm_step/prompt.py`.
 - Forced-final source reminders, partial-stream tombstoning, forced-final
   stream recovery and no-tools retry assistant event projection moved to
-  `runtime/single_agent/llm_step_stream_recovery.py`; `llm_step.py` is down to
-  the call orchestration/request-trimming layer plus compatibility aliases.
+  `runtime/single_agent/llm_step/stream_recovery.py`; `llm_step/__init__.py`
+  is down to the call orchestration layer plus compatibility aliases.
 - Observation microcompaction, protocol-message hydration, planning prompt
   injection, attachment/todo reminders, effective tool-choice selection and
   request-trim construction moved to
-  `runtime/single_agent/llm_step_request.py`.
+  `runtime/single_agent/llm_step/request.py`.
 - Provider completion, streaming fallback, encrypted-reasoning retry,
   forced-tool-choice retry, max-token retry and forced-final no-tools retry
-  moved to `runtime/single_agent/llm_step_completion.py`.
+  moved to `runtime/single_agent/llm_step/completion.py`.
+- `runtime/single_agent/llm_step.py` and `runtime/single_agent/tool_stage.py`
+  were promoted to packages, removing the sibling `llm_step_*` and
+  `tool_stage_*` pseudo-package filenames while preserving
+  `agent_driver.runtime.single_agent.llm_step` and `.tool_stage` import paths.
 - `GovernedToolExecutor.execute()` now runs through explicit stages:
   normalize planned calls, apply pre-hooks, add policy hints, partition
   serial/parallel units, execute units and collect ordered results.
