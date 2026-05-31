@@ -260,6 +260,7 @@ SCENARIOS: dict[str, LiveScenario] = {
             "extra_ask_user_question",
             "search_only_research_report",
             "deep_research_no_report_artifact",
+            "deep_research_no_source_ledger_artifact",
             "deep_research_missing_initial_todo",
             "deep_research_long_final_after_report",
         ),
@@ -700,6 +701,8 @@ def assert_trace_acceptance(
                 failures.append("deep research artifact was not expected")
             if efficiency.get("missing_report_artifact") is True:
                 failures.append("research report artifact is missing")
+            if efficiency.get("missing_source_ledger_artifact") is True:
+                failures.append("research source ledger artifact is missing")
             if efficiency.get("long_final_after_report") is True:
                 failures.append("long final answer was emitted after report artifact")
             if efficiency.get("first_tool") != "todo_write":
@@ -836,7 +839,8 @@ def render_scenario_scorecard(
             "- artifacts: "
             f"trace=`{', '.join(artifacts.get('paths') or []) or '-'}`, "
             f"workspace=`{', '.join(workspace_paths) if workspace_paths else '-'}`, "
-            f"report_updates=`{efficiency.get('report_update_count', 0)}`"
+            f"report_updates=`{efficiency.get('report_update_count', 0)}`, "
+            f"source_records=`{efficiency.get('source_ledger_record_count', 0)}`"
         ),
         (
             "- artifact_preview: "

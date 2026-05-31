@@ -911,3 +911,22 @@ Focused checks:
 - `examples/chat-demo/backend/tests/test_chat_deep_research_sse.py`;
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
   deep-research-artifact`.
+
+## Implementation Slice P7-source-ledger-scorecard - 2026-05-31
+
+Added source-ledger artifact checks to trace summaries and live scorecards:
+
+- `artifacts` summary now tracks whether `research/sources.jsonl` was updated
+  and the highest observed `record_count`;
+- `research_efficiency` exposes `missing_source_ledger_artifact`,
+  `source_ledger_update_count`, and `source_ledger_record_count`;
+- Deep Research failures include `deep_research_no_source_ledger_artifact`;
+- the Playwright live probe fails Deep Research scenarios when the source
+  ledger artifact is missing and prints source record count in `scorecard.md`.
+
+Focused checks:
+
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact`.

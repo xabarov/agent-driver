@@ -114,6 +114,17 @@ def test_trace_summary_exposes_tool_chain_usage_and_artifact_updates() -> None:
                 },
             },
             {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "kind": "research",
+                    "operation": "write",
+                    "size_bytes": 1024,
+                    "record_count": 3,
+                    "tool_name": "source_ledger",
+                },
+            },
+            {
                 "event": "llm_call_completed",
                 "data": {
                     "usage": {
@@ -130,10 +141,16 @@ def test_trace_summary_exposes_tool_chain_usage_and_artifact_updates() -> None:
 
     assert summary["tool_chain"] == "todo_write -> web_search -> file_write"
     assert summary["llm"]["usage"]["total_tokens"] == 140
-    assert summary["artifacts"]["update_count"] == 1
+    assert summary["artifacts"]["update_count"] == 2
     assert summary["artifacts"]["report_updated"] is True
-    assert summary["artifacts"]["paths"] == ["research/report.md"]
+    assert summary["artifacts"]["source_ledger_updated"] is True
+    assert summary["artifacts"]["source_ledger_record_count"] == 3
+    assert summary["artifacts"]["paths"] == [
+        "research/report.md",
+        "research/sources.jsonl",
+    ]
     assert summary["research_efficiency"]["first_tool"] == "todo_write"
+    assert summary["research_efficiency"]["missing_source_ledger_artifact"] is False
     assert (
         summary["research_efficiency"]["output_tokens_after_first_report_update"] == 40
     )
@@ -157,6 +174,35 @@ def test_trace_summary_flags_deep_research_without_report_artifact() -> None:
     assert summary["research_efficiency"]["missing_report_artifact"] is True
     assert summary["failures"]["deep_research_no_report_artifact"] is True
     assert summary["failures"]["deep_research_missing_initial_todo"] is True
+
+
+def test_trace_summary_flags_deep_research_without_source_ledger_artifact() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово, отчет в research/report.md",
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search"),
+            _completed_tool("web_fetch"),
+            _completed_tool("file_write"),
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "operation": "write",
+                },
+            },
+            {"event": "llm_call_completed", "data": {}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["research_efficiency"]["missing_report_artifact"] is False
+    assert summary["research_efficiency"]["missing_source_ledger_artifact"] is True
+    assert summary["failures"]["deep_research_no_source_ledger_artifact"] is True
 
 
 def test_trace_summary_flags_long_final_after_report_artifact() -> None:
@@ -188,7 +234,9 @@ def test_trace_summary_flags_long_final_after_report_artifact() -> None:
 
     assert summary["research_efficiency"]["long_final_after_report"] is True
     assert summary["failures"]["deep_research_long_final_after_report"] is True
-    assert summary["research_efficiency"]["output_tokens_after_first_report_update"] == 900
+    assert (
+        summary["research_efficiency"]["output_tokens_after_first_report_update"] == 900
+    )
 
 
 def test_trace_summary_flags_search_only_report_research() -> None:

@@ -34,7 +34,9 @@ from agent_driver.observability.run_trace.tools import (
     tool_payloads as _tool_payloads,
     unknown_tool_summary as _unknown_tool_summary,
 )
-from agent_driver.runtime.single_agent.lifecycle.continuation import analyze_continuation_intent
+from agent_driver.runtime.single_agent.lifecycle.continuation import (
+    analyze_continuation_intent,
+)
 
 _PYTHON_TOOL = "python"
 _TERMINAL_EVENTS = frozenset({"run_completed", "run_failed", "run_cancelled"})
@@ -180,6 +182,9 @@ def summarize_run_trace(
         "unknown_tool_call": unknown_tools["count"] > 0,
         "deep_research_no_report_artifact": research_efficiency[
             "missing_report_artifact"
+        ],
+        "deep_research_no_source_ledger_artifact": research_efficiency[
+            "missing_source_ledger_artifact"
         ],
         "deep_research_long_final_after_report": research_efficiency[
             "long_final_after_report"
@@ -499,6 +504,8 @@ def _control_semantic_route(kind: object, priority: object) -> str | None:
 def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
     updates: list[dict[str, Any]] = []
     report_paths: list[str] = []
+    source_ledger_paths: list[str] = []
+    source_ledger_records = 0
     for event in events:
         if event.get("event") not in {"artifact_created", "artifact_updated"}:
             continue
@@ -521,6 +528,11 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         )
         if path == "research/report.md":
             report_paths.append(path)
+        if path == "research/sources.jsonl":
+            source_ledger_paths.append(path)
+            record_count = data.get("record_count")
+            if isinstance(record_count, int) and not isinstance(record_count, bool):
+                source_ledger_records = max(source_ledger_records, record_count)
     return {
         "updates": updates,
         "update_count": len(updates),
@@ -529,6 +541,9 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         "paths": _dedupe_paths([item["path"] for item in updates]),
         "report_updated": bool(report_paths),
         "report_update_count": len(report_paths),
+        "source_ledger_updated": bool(source_ledger_paths),
+        "source_ledger_update_count": len(source_ledger_paths),
+        "source_ledger_record_count": source_ledger_records,
     }
 
 
@@ -551,6 +566,7 @@ def _research_efficiency_summary(
         research=research,
     )
     report_updated = bool(artifacts.get("report_updated"))
+    source_ledger_updated = bool(artifacts.get("source_ledger_updated"))
     assistant_chars = len(assistant_text.strip())
     usage = llm_calls.get("usage")
     total_tokens = usage.get("total_tokens") if isinstance(usage, dict) else 0
@@ -560,6 +576,7 @@ def _research_efficiency_summary(
     missing_initial_todo = deep_expected and first_tool not in {None, "todo_write"}
     long_final_after_report = report_updated and assistant_chars > 2000
     missing_report_artifact = deep_expected and not report_updated
+    missing_source_ledger_artifact = deep_expected and not source_ledger_updated
     repeated_tools = sorted(
         name
         for name in set(tool_names)
@@ -568,6 +585,7 @@ def _research_efficiency_summary(
     return {
         "deep_research_artifact_expected": deep_expected,
         "missing_report_artifact": missing_report_artifact,
+        "missing_source_ledger_artifact": missing_source_ledger_artifact,
         "missing_initial_todo": missing_initial_todo,
         "first_tool": first_tool,
         "tool_chain": " -> ".join(tool_names),
@@ -575,6 +593,8 @@ def _research_efficiency_summary(
         "repeated_tools": repeated_tools,
         "artifact_update_count": artifacts.get("update_count", 0),
         "report_update_count": artifacts.get("report_update_count", 0),
+        "source_ledger_update_count": artifacts.get("source_ledger_update_count", 0),
+        "source_ledger_record_count": artifacts.get("source_ledger_record_count", 0),
         "long_final_after_report": long_final_after_report,
         "assistant_chars": assistant_chars,
         "total_tokens": total_tokens if isinstance(total_tokens, int) else 0,
@@ -705,6 +725,10 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "deep_research_no_report_artifact",
         "Deep Research/report-like task finished without a research/report.md artifact update.",
+    ),
+    (
+        "deep_research_no_source_ledger_artifact",
+        "Deep Research finished without a durable research/sources.jsonl ledger.",
     ),
     (
         "deep_research_long_final_after_report",
