@@ -622,6 +622,81 @@ def test_trace_summary_exposes_deep_research_phase_from_terminal_contract() -> N
     )
 
 
+def test_trace_summary_allows_expected_deep_research_phase_sequence() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово: полный отчет сохранен в research/report.md.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search", args={"query": "fork join queue"}),
+            _completed_tool("web_fetch", args={"url": "https://example.com/a"}),
+            _completed_tool("web_fetch", args={"url": "https://example.org/b"}),
+            _completed_tool("file_write", args={"path": "research/report.md"}),
+            {
+                "event": "source_ledger_updated",
+                "data": {
+                    "verified_reads": [
+                        {"url": "https://example.com/a"},
+                        {"url": "https://example.org/b"},
+                    ],
+                    "failed_reads": [],
+                    "blocked_reads": [],
+                    "search_candidates": [],
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 2},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["phase_violation"] is False
+    assert summary["research_efficiency"]["phase_violation_count"] == 0
+    assert summary["failures"]["deep_research_phase_violation"] is False
+
+
+def test_trace_summary_flags_deep_research_phase_violation() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Черновик сохранен в research/report.md.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search", args={"query": "fork join queue"}),
+            _completed_tool("file_write", args={"path": "research/report.md"}),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["phase_violation"] is True
+    assert summary["research_efficiency"]["phase_violation_count"] == 1
+    assert summary["research_efficiency"]["phase_violations"][0]["phase"] == "verify"
+    assert summary["research_efficiency"]["phase_violations"][0]["tool_name"] == (
+        "file_write"
+    )
+    assert summary["failures"]["deep_research_phase_violation"] is True
+    assert summary["verdict"] == "fail"
+
+
 def test_trace_summary_flags_repeated_full_report_write() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

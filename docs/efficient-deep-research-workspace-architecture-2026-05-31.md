@@ -984,6 +984,35 @@ Focused checks:
 - `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
 - `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`.
 
+## Implementation Slice P14.5-phase-violation-diagnostics - 2026-05-31
+
+Added trace-level phase violation checks before hard runtime gating:
+
+- trace summaries now reconstruct the expected Deep Research phase sequence
+  from tool/artifact events;
+- valid default flow is treated as:
+  `todo_write -> discover tools -> web_fetch attempts -> file_write ->
+  review/edit tools -> final`;
+- `deep_research_phase_violation` fires when a tool is used outside the current
+  phase, for example writing `research/report.md` before fetch verification;
+- `research_efficiency.phase_violations` records the offending phase, tool, and
+  allowed tool set;
+- live Deep Research acceptance treats phase violations as forbidden;
+- live scorecards print `phase_violations` beside the current phase.
+
+This keeps the runtime non-disruptive while making entropy visible in the same
+scorecard used for fake and real-provider lanes. The next implementation step
+can use these diagnostics as the acceptance baseline for optional hard gating.
+
+Focused checks:
+
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-blocked-fetch`.
+
 ## Implementation Slice P8-full-report-rewrite-guard - 2026-05-31
 
 Added trace-level detection for the original waste loop class:

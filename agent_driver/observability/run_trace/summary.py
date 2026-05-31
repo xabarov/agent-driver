@@ -43,6 +43,32 @@ _PYTHON_TOOL = "python"
 _TERMINAL_EVENTS = frozenset({"run_completed", "run_failed", "run_cancelled"})
 _DEEP_RESEARCH_INITIAL_SEARCH_BUDGET = 6
 _DEEP_RESEARCH_HARD_SEARCH_CAP = 15
+_DEEP_RESEARCH_PHASE_FETCH_ATTEMPTS = 2
+_DEEP_RESEARCH_PHASE_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
+    "plan": frozenset({"todo_write"}),
+    "discover": frozenset(
+        {
+            "skill_tool",
+            "skill_view",
+            "web_search",
+            "glob_search",
+            "grep_search",
+            "read_file",
+        }
+    ),
+    "verify": frozenset({"web_fetch", "web_search", "read_file"}),
+    "write": frozenset({"file_write", "read_file", "artifact_list"}),
+    "review": frozenset(
+        {
+            "artifact_preview",
+            "artifact_read",
+            "read_file",
+            "file_patch",
+            "file_edit",
+            "todo_write",
+        }
+    ),
+}
 
 
 def summarize_run_trace(
@@ -218,6 +244,7 @@ def summarize_run_trace(
             "search_without_fetch_progress"
         ],
         "deep_research_tool_entropy_high": research_efficiency["tool_entropy_high"],
+        "deep_research_phase_violation": research_efficiency["phase_violation"],
     }
     notes = _notes(
         failures=failures,
@@ -664,10 +691,15 @@ def _research_efficiency_summary(
         report_updated=report_updated,
         report_status=report_status,
     )
+    phase_diagnostics = _deep_research_phase_diagnostics(
+        events,
+        deep_expected=deep_expected,
+    )
     return {
         "deep_research_artifact_expected": deep_expected,
         "deep_research_phase": deep_research_phase,
         "deep_research_phase_next_allowed_tools": _phase_allowed_tools(phase_contract),
+        **phase_diagnostics,
         "missing_report_artifact": missing_report_artifact,
         "missing_source_ledger_artifact": missing_source_ledger_artifact,
         "full_report_rewrite": full_report_rewrite,
@@ -705,6 +737,92 @@ def _research_efficiency_summary(
         "output_tokens": output_tokens if isinstance(output_tokens, int) else 0,
         "output_tokens_after_first_report_update": completion_after_report,
     }
+
+
+def _deep_research_phase_diagnostics(
+    events: list[dict[str, object]],
+    *,
+    deep_expected: bool,
+) -> dict[str, Any]:
+    if not deep_expected:
+        return {
+            "phase_violation": False,
+            "phase_violation_count": 0,
+            "phase_violations": [],
+        }
+
+    plan_created = False
+    search_seen = False
+    fetch_attempts = 0
+    report_seen = False
+    violations: list[dict[str, Any]] = []
+    for event in events:
+        event_name = event.get("event")
+        if event_name in {"artifact_created", "artifact_updated"}:
+            data = _event_data(event)
+            if data.get("path") == "research/report.md":
+                report_seen = True
+            continue
+        if event_name != "tool_call_completed":
+            continue
+        for tool in event_tools(_event_data(event)):
+            tool_name = tool.get("tool_name") or tool.get("name")
+            if not isinstance(tool_name, str) or not tool_name:
+                continue
+            phase = _deep_research_phase_before_tool(
+                plan_created=plan_created,
+                search_seen=search_seen,
+                fetch_attempts=fetch_attempts,
+                report_seen=report_seen,
+            )
+            allowed = _DEEP_RESEARCH_PHASE_ALLOWED_TOOLS.get(phase, frozenset())
+            if tool_name not in allowed and tool_name not in _phase_neutral_tools():
+                violations.append(
+                    {
+                        "phase": phase,
+                        "tool_name": tool_name,
+                        "allowed_tools": sorted(allowed),
+                    }
+                )
+            if tool_name == "todo_write":
+                plan_created = True
+            elif tool_name == "web_search":
+                search_seen = True
+            elif tool_name == "web_fetch":
+                fetch_attempts += 1
+            elif tool_name == "file_write":
+                # The artifact event is authoritative, but planned write is enough
+                # for subsequent same-batch diagnostics.
+                args = tool.get("args")
+                if isinstance(args, dict) and _path_targets_report(args.get("path")):
+                    report_seen = True
+    return {
+        "phase_violation": bool(violations),
+        "phase_violation_count": len(violations),
+        "phase_violations": violations[:10],
+    }
+
+
+def _deep_research_phase_before_tool(
+    *,
+    plan_created: bool,
+    search_seen: bool,
+    fetch_attempts: int,
+    report_seen: bool,
+) -> str:
+    if not plan_created and not search_seen:
+        return "plan"
+    if not search_seen:
+        return "discover"
+    if fetch_attempts < _DEEP_RESEARCH_PHASE_FETCH_ATTEMPTS:
+        return "verify"
+    if not report_seen:
+        return "write"
+    return "review"
+
+
+def _phase_neutral_tools() -> frozenset[str]:
+    return frozenset()
 
 
 def _deep_research_phase_contract_from_events(
@@ -1249,6 +1367,10 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "deep_research_tool_entropy_high",
         "Deep Research exceeded the hard search/tool budget without enough evidence progress.",
+    ),
+    (
+        "deep_research_phase_violation",
+        "Deep Research used a tool outside the expected phase contract.",
     ),
     (
         "plan_todos_incomplete_on_final",

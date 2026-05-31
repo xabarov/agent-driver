@@ -148,6 +148,7 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
             "research_efficiency": {
                 "deep_research_artifact_expected": True,
                 "deep_research_phase": "final",
+                "phase_violation_count": 0,
                 "report_status": "verified",
                 "verified_read_count": 2,
                 "search_budget_status": "within_initial",
@@ -199,6 +200,7 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
     assert "source_records=`2`" in scorecard
     assert "status=`verified`" in scorecard
     assert "phase=`final`" in scorecard
+    assert "phase_violations=`0`" in scorecard
     assert "verified=`2`" in scorecard
     assert "search_budget=`within_initial`" in scorecard
     assert "repeat_queries=`0`" in scorecard

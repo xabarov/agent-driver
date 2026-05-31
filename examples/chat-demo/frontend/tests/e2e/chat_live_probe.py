@@ -274,6 +274,7 @@ SCENARIOS: dict[str, LiveScenario] = {
             "deep_research_repeated_search_args",
             "deep_research_search_without_fetch_progress",
             "deep_research_tool_entropy_high",
+            "deep_research_phase_violation",
             "deep_research_long_final_after_report",
         ),
         requires_research=True,
@@ -330,6 +331,7 @@ SCENARIOS: dict[str, LiveScenario] = {
             "deep_research_repeated_search_args",
             "deep_research_search_without_fetch_progress",
             "deep_research_tool_entropy_high",
+            "deep_research_phase_violation",
             "deep_research_long_final_after_report",
         ),
         requires_research=True,
@@ -380,6 +382,7 @@ SCENARIOS: dict[str, LiveScenario] = {
             "deep_research_repeated_search_args",
             "deep_research_search_without_fetch_progress",
             "deep_research_tool_entropy_high",
+            "deep_research_phase_violation",
             "deep_research_long_final_after_report",
         ),
         requires_research=True,
@@ -853,6 +856,8 @@ def assert_trace_acceptance(
                 )
             if efficiency.get("tool_entropy_high") is True:
                 failures.append("deep research exceeded search/tool entropy budget")
+            if efficiency.get("phase_violation") is True:
+                failures.append("deep research violated the phase tool contract")
             if efficiency.get("first_tool") != "todo_write":
                 failures.append(
                     f"first tool is {efficiency.get('first_tool')!r}, expected todo_write"
@@ -1023,6 +1028,7 @@ def render_scenario_scorecard(
             "- deep_research: "
             f"expected=`{efficiency.get('deep_research_artifact_expected', False)}`, "
             f"phase=`{efficiency.get('deep_research_phase') or '-'}`, "
+            f"phase_violations=`{efficiency.get('phase_violation_count', 0)}`, "
             f"status=`{efficiency.get('report_status') or '-'}`, "
             f"verified=`{efficiency.get('verified_read_count', 0)}`, "
             f"search_budget=`{efficiency.get('search_budget_status') or '-'}`, "
