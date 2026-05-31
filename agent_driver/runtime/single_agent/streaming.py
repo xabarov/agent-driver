@@ -13,6 +13,7 @@ from agent_driver.contracts import ChatMessage, UsageSummary
 from agent_driver.contracts.enums import RuntimeEventType
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
+from agent_driver.runtime.metadata_state import StreamingRuntimeState
 from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.types import RunContext, RunnerDeps
 
@@ -92,9 +93,8 @@ async def complete_streaming_request(
     stream_metadata: dict[str, Any] = {}
     idle_timeout = _stream_idle_timeout_seconds(context.run_input)
     last_meaningful_event_at = monotonic()
-    context.metadata["assistant_stream_started"] = True
-    context.metadata["assistant_stream_completed"] = False
-    context.metadata["assistant_stream_content"] = ""
+    streaming_state = StreamingRuntimeState(context.metadata)
+    streaming_state.mark_started()
     emit_step_event(
         host,
         context,
@@ -147,8 +147,7 @@ async def complete_streaming_request(
             with suppress(BaseException):
                 await asyncio.wait_for(aclose(), timeout=2.0)
     content = "".join(delta_chunks)
-    context.metadata["assistant_stream_completed"] = True
-    context.metadata["assistant_stream_content"] = content
+    streaming_state.mark_completed(content)
     emit_step_event(
         host,
         context,
@@ -217,7 +216,7 @@ def _collect_stream_item(
     chunk = item.delta_text or ""
     if chunk:
         delta_chunks.append(chunk)
-        context.metadata["assistant_stream_content"] = "".join(delta_chunks)
+        StreamingRuntimeState(context.metadata).set_content("".join(delta_chunks))
         emit_token_delta_events(
             host, context, [chunk], start_index=len(delta_chunks) - 1
         )

@@ -86,7 +86,7 @@ state boundary:
 
 ## Migration Order
 
-1. Add small typed wrappers around the highest-churn groups:
+1. In progress: add small typed wrappers around the highest-churn groups:
    planning, research, compaction/context and tool loop.
 2. Replace direct writes in `runtime/single_agent/*` with helper calls while
    preserving the same serialized metadata.

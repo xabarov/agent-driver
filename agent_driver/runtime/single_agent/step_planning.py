@@ -12,6 +12,7 @@ from agent_driver.context import (
 )
 from agent_driver.contracts.context import PlanningState, PlanningStep, TodoState
 from agent_driver.contracts.enums import PlanningTodoStatus
+from agent_driver.runtime.metadata_state import PlanningRuntimeState
 from agent_driver.runtime.single_agent.types import RunContext
 from agent_driver.runtime.tools import ToolExecutionResult
 from agent_driver.runtime.single_agent.todo_reminders import reset_todo_write_loop_counters
@@ -22,8 +23,9 @@ PLANNING_TOOL_NAMES = frozenset({"planning_state_update", "todo_write"})
 
 def apply_planning_state_seed_from_metadata(context: RunContext) -> None:
     """Merge session planning seed from app_metadata into run planning_state."""
-    seed = context.metadata.pop("planning_state_seed", None)
-    if not isinstance(seed, dict):
+    planning_runtime = PlanningRuntimeState(context.metadata)
+    seed = planning_runtime.pop_seed()
+    if seed is None:
         return
     todos_raw = seed.get("todos")
     if not isinstance(todos_raw, list) or not todos_raw:
@@ -45,12 +47,12 @@ def apply_planning_state_seed_from_metadata(context: RunContext) -> None:
             state,
             TodoState(todo_id=todo_id, content=content, status=status),
         )
-    context.metadata["planning_state"] = state.model_dump(mode="json")
+    planning_runtime.set_planning_state(state.model_dump(mode="json"))
 
 
 def build_planning_snapshot(context: RunContext) -> dict[str, object] | None:
     """Build a TUI-friendly planning snapshot from run metadata."""
-    payload = context.metadata.get("planning_state")
+    payload = PlanningRuntimeState(context.metadata).planning_state()
     if not isinstance(payload, dict):
         return None
     state = PlanningState.model_validate(payload)
@@ -92,13 +94,14 @@ def apply_planning_updates_from_envelopes(
     result: ToolExecutionResult,
 ) -> bool:
     """Apply planning tool envelopes; return True if any tool updated planning."""
-    planning_state_payload = context.metadata.get("planning_state")
+    planning_runtime = PlanningRuntimeState(context.metadata)
+    planning_state_payload = planning_runtime.planning_state()
     if isinstance(planning_state_payload, dict):
         planning_state = PlanningState.model_validate(planning_state_payload)
     else:
         planning_state = planning_state_init(context.run_id)
     planning_updated_by_tool = False
-    context.metadata.pop("todo_write_deduped", None)
+    planning_runtime.clear_todo_deduped()
     for envelope in result.envelopes:
         if envelope.call.tool_name not in PLANNING_TOOL_NAMES:
             continue
@@ -109,7 +112,7 @@ def apply_planning_updates_from_envelopes(
             applied_args = structured.get("applied_args")
             if isinstance(applied_args, dict):
                 signature = json.dumps(applied_args, ensure_ascii=True, sort_keys=True)
-                if context.metadata.get("last_todo_write_signature") == signature:
+                if planning_runtime.last_todo_write_signature() == signature:
                     structured["summary"] = (
                         "todo_write duplicate payload ignored; "
                         "use merge=true or change row statuses/content"
@@ -119,16 +122,16 @@ def apply_planning_updates_from_envelopes(
                         "todo_merge": True,
                     }
                     envelope.summary = str(structured["summary"])
-                    context.metadata["todo_write_deduped"] = True
+                    planning_runtime.mark_todo_deduped()
                     continue
-                context.metadata["last_todo_write_signature"] = signature
+                planning_runtime.set_last_todo_write_signature(signature)
         planning_updated_by_tool = True
         planning_state = apply_planning_state_tool_update(
             planning_state, structured.get("applied_args", {})
         )
         if (
             envelope.call.tool_name == "todo_write"
-            and not context.metadata.get("todo_write_deduped")
+            and not planning_runtime.is_todo_deduped()
         ):
             in_progress_id = None
             for item in planning_state.todos:
@@ -139,8 +142,8 @@ def apply_planning_updates_from_envelopes(
                 context, in_progress_id=in_progress_id
             )
         if isinstance(structured.get("planning_step"), dict):
-            context.metadata["planning_step"] = structured["planning_step"]
-    context.metadata["planning_state"] = planning_state.model_dump(mode="json")
+            planning_runtime.set_planning_step(structured["planning_step"])
+    planning_runtime.set_planning_state(planning_state.model_dump(mode="json"))
     return planning_updated_by_tool
 
 
@@ -163,7 +166,8 @@ def update_planning_state_from_tool_results(context: RunContext) -> None:
         next_plan="Continue execution",
         metadata={"run_id": context.run_id},
     )
-    planning_state_payload = context.metadata.get("planning_state")
+    planning_runtime = PlanningRuntimeState(context.metadata)
+    planning_state_payload = planning_runtime.planning_state()
     if isinstance(planning_state_payload, dict):
         state = planning_state_set_step(
             PlanningState.model_validate(planning_state_payload), planning_step
@@ -172,8 +176,8 @@ def update_planning_state_from_tool_results(context: RunContext) -> None:
         state = planning_state_set_step(
             planning_state_init(context.run_id), planning_step
         )
-    context.metadata["planning_step"] = planning_step.model_dump(mode="json")
-    context.metadata["planning_state"] = state.model_dump(mode="json")
+    planning_runtime.set_planning_step(planning_step.model_dump(mode="json"))
+    planning_runtime.set_planning_state(state.model_dump(mode="json"))
 
 
 __all__ = [

@@ -265,6 +265,8 @@ Purpose: stop new work from deepening the metadata bag problem.
   `LoopControlState`, `ToolLoopState`, `PlanningRuntimeState`,
   `ResearchRuntimeState`, `StreamingRuntimeState`,
   `CompactionRuntimeState`.
+  Initial metadata views exist in `agent_driver/runtime/metadata_state.py`;
+  migration of direct reads/writes is intentionally incremental.
 - [ ] Add contract snapshots for public shapes:
   `AgentRunInput`, `AgentRunOutput`, `RuntimeEvent`, `ToolManifest`,
   `ToolTrace`, interrupt/resume payloads.

@@ -5,26 +5,19 @@ from __future__ import annotations
 from typing import Any
 
 from agent_driver.context import (
-    COMPACTION_AUDIT_KEY,
-    COMPACTION_DECISION_KEY,
-    COMPACTION_FAILURES_KEY,
-    COMPACTION_RESULT_KEY,
     build_memory_projection,
 )
 from agent_driver.context.projection_input import MemoryProjectionInput
 from agent_driver.contracts.tools import ToolTrace
+from agent_driver.runtime.metadata_state import CompactionRuntimeState, ToolLoopState
 from agent_driver.runtime.single_agent.types import RunContext
 
 
 def collect_tool_trace(context: RunContext) -> list[ToolTrace]:
     """Parse tool traces from context metadata."""
-    tool_trace_payload = context.metadata.get("tool_trace", [])
-    if not isinstance(tool_trace_payload, list):
-        return []
     return [
         ToolTrace.model_validate(item)
-        for item in tool_trace_payload
-        if isinstance(item, dict)
+        for item in ToolLoopState(context.metadata).tool_trace()
     ]
 
 
@@ -67,21 +60,7 @@ def build_memory_projection_for_context(
 
 def build_memory_audit(context: RunContext) -> dict[str, Any]:
     """Assemble memory audit block for terminal output."""
-    return {
-        "trim_audit": context.metadata.get("trim_audit", []),
-        "microcompaction_audit": context.metadata.get("microcompaction_audit", []),
-        "token_pressure": context.metadata.get("token_pressure", {}),
-        "compaction_decision": context.metadata.get(COMPACTION_DECISION_KEY),
-        "compaction_audit": context.metadata.get(COMPACTION_AUDIT_KEY),
-        "compaction_result": context.metadata.get(COMPACTION_RESULT_KEY),
-        "compaction_failures": context.metadata.get(COMPACTION_FAILURES_KEY, []),
-        "post_compact_cleanup": context.metadata.get("post_compact_cleanup", {}),
-        "session_memory_extraction": context.metadata.get(
-            "session_memory_extraction", {}
-        ),
-        "retained_digest_ids": context.metadata.get("retained_digest_ids", []),
-        "retained_artifact_ids": context.metadata.get("retained_artifact_ids", []),
-    }
+    return CompactionRuntimeState(context.metadata).memory_audit()
 
 
 __all__ = [
