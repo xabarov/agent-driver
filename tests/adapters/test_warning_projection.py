@@ -54,15 +54,15 @@ def test_warning_missing_severity_returns_none() -> None:
     assert project_warning_event(event) is None
 
 
-def test_token_pressure_warning_state_projection() -> None:
-    """state=warning projects to context_above_soft_threshold + warning severity."""
+def test_token_pressure_early_warning_state_projection() -> None:
+    """state=early_warning projects to context_early_warning + info severity."""
     event = _make_event(
         event="warning",
         data={
             "kind": "token_pressure",
-            "signal_id": "context_above_soft_threshold",
-            "severity": "warning",
-            "state": "warning",
+            "signal_id": "context_early_warning",
+            "severity": "info",
+            "state": "early_warning",
             "used_tokens_estimate": 8000,
             "remaining_tokens_estimate": 2500,
             "context_window_estimate": 12000,
@@ -71,21 +71,43 @@ def test_token_pressure_warning_state_projection() -> None:
             "compact_threshold": 9000,
             "blocking_threshold": 10500,
             "usage_ratio": 0.6667,
+            "recommendation": "summarize_findings",
         },
     )
     projection = project_warning_event(event)
     assert projection is not None
     assert projection["kind"] == "token_pressure"
-    assert projection["signal_id"] == "context_above_soft_threshold"
-    assert projection["severity"] == "warning"
+    assert projection["signal_id"] == "context_early_warning"
+    assert projection["severity"] == "info"
     data = projection["data"]
-    assert data["state"] == "warning"
+    assert data["state"] == "early_warning"
     assert data["used_tokens_estimate"] == 8000
     assert data["context_window_estimate"] == 12000
     assert data["warning_threshold"] == 7500
     assert data["compact_threshold"] == 9000
     assert data["blocking_threshold"] == 10500
     assert data["usage_ratio"] == 0.6667
+    assert data["recommendation"] == "summarize_findings"
+
+
+def test_token_pressure_delegate_or_summarize_projection() -> None:
+    """state=delegate_or_summarize projects with a stable recommendation."""
+    event = _make_event(
+        event="warning",
+        data={
+            "kind": "token_pressure",
+            "signal_id": "context_delegate_or_summarize",
+            "severity": "warning",
+            "state": "delegate_or_summarize",
+            "context_usage_ratio": 0.4667,
+            "recommendation": "delegate_or_summarize",
+        },
+    )
+    projection = project_warning_event(event)
+    assert projection is not None
+    assert projection["signal_id"] == "context_delegate_or_summarize"
+    assert projection["data"]["state"] == "delegate_or_summarize"
+    assert projection["data"]["recommendation"] == "delegate_or_summarize"
 
 
 def test_token_pressure_blocking_state_severity_critical() -> None:

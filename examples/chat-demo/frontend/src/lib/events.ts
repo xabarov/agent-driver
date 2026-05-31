@@ -13,6 +13,19 @@ import { stripTextFormToolCalls } from "./stripToolCalls";
 import type { ChatMessage, ToolCallStatus } from "../store/chatStore";
 import type { PlanningSnapshot } from "./planning";
 
+export interface SourceLedger {
+  searchCandidates: SourceEvidence[];
+  verifiedReads: SourceEvidence[];
+  failedReads: SourceEvidence[];
+  blockedReads: SourceEvidence[];
+  assistantLinks: SourceEvidence[];
+}
+
+export interface DeepResearchState {
+  ledger?: SourceLedger;
+  progress: Array<{ seq: number; event: string; label: string }>;
+}
+
 const CONTROL_TOOL_NAMES = new Set([
   "todo_write",
   "planning_state_update",
@@ -120,6 +133,50 @@ export interface ParsedCompactionNotice {
   failureKind?: string;
   summarizedMessageCount?: number;
   attempts?: number;
+}
+
+function sourceLedgerList(raw: unknown): SourceEvidence[] {
+  return normalizeSourceEvidenceList(raw);
+}
+
+export function parseSourceLedgerEvent(
+  event: RunStreamEvent<Record<string, unknown>>,
+): SourceLedger | undefined {
+  if (event.event !== "source_ledger_updated") {
+    return undefined;
+  }
+  return {
+    searchCandidates: sourceLedgerList(
+      event.data.search_candidates ?? event.data.searchCandidates,
+    ),
+    verifiedReads: sourceLedgerList(
+      event.data.verified_reads ?? event.data.verifiedReads,
+    ),
+    failedReads: sourceLedgerList(event.data.failed_reads ?? event.data.failedReads),
+    blockedReads: sourceLedgerList(
+      event.data.blocked_reads ?? event.data.blockedReads,
+    ),
+    assistantLinks: sourceLedgerList(
+      event.data.assistant_links ?? event.data.assistantLinks,
+    ),
+  };
+}
+
+export function parseDeepResearchProgress(
+  event: RunStreamEvent<Record<string, unknown>>,
+): { seq: number; event: string; label: string } | undefined {
+  if (
+    event.event !== "research_progress" &&
+    event.event !== "citation_coverage_updated" &&
+    event.event !== "source_ledger_updated"
+  ) {
+    return undefined;
+  }
+  const label =
+    textValue(event.data.status) ??
+    textValue(event.data.reason) ??
+    event.event.replaceAll("_", " ");
+  return { seq: event.seq, event: event.event, label };
 }
 
 export function isTokenDelta(event: RunStreamEvent<Record<string, unknown>>): boolean {
@@ -589,6 +646,7 @@ export function eventsToMessages(
   let assistantRawContent = "";
   let assistantMetadata: AssistantMessageMetadata | undefined = undefined;
   let assistantPlanningSnapshot: PlanningSnapshot | undefined = undefined;
+  let assistantDeepResearch: DeepResearchState | undefined = undefined;
   let runSources: SourceEvidence[] = [];
   let seq = 0;
 
@@ -601,6 +659,7 @@ export function eventsToMessages(
         pending: false,
         metadata: assistantMetadata,
         planningSnapshot: assistantPlanningSnapshot,
+        deepResearch: assistantDeepResearch,
         sources: runSources.length ? runSources : undefined,
       });
     }
@@ -609,6 +668,7 @@ export function eventsToMessages(
     assistantRawContent = "";
     assistantMetadata = undefined;
     assistantPlanningSnapshot = undefined;
+    assistantDeepResearch = undefined;
   };
 
   for (const event of events) {
@@ -642,6 +702,7 @@ export function eventsToMessages(
           pending: false,
           metadata: assistantMetadata,
           planningSnapshot: assistantPlanningSnapshot,
+          deepResearch: assistantDeepResearch,
         });
       }
       assistantId = null;
@@ -688,11 +749,13 @@ export function eventsToMessages(
           pending: false,
           metadata: assistantMetadata,
           planningSnapshot: assistantPlanningSnapshot,
+          deepResearch: assistantDeepResearch,
         });
         assistantContent = "";
         assistantRawContent = "";
         assistantMetadata = undefined;
         assistantPlanningSnapshot = undefined;
+        assistantDeepResearch = undefined;
       }
       for (const tool of parseToolStatesFromEvent(event)) {
         if (CONTROL_TOOL_NAMES.has(tool.name)) {
@@ -763,6 +826,17 @@ export function eventsToMessages(
     if (compactionNotice) {
       flushAssistant();
       upsertCompactionMessage(messages, compactionNotice);
+    }
+    const ledger = parseSourceLedgerEvent(event);
+    const progress = parseDeepResearchProgress(event);
+    if (ledger || progress) {
+      const current = assistantDeepResearch as DeepResearchState | undefined;
+      assistantDeepResearch = {
+        ledger: ledger ?? current?.ledger,
+        progress: progress
+          ? [...(current?.progress ?? []), progress].slice(-6)
+          : (current?.progress ?? []),
+      };
     }
     if (isTerminalEvent(event)) {
       flushAssistant();

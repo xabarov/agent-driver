@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 export type ToolPreset = "off" | "web_search" | "web_fetch" | "web";
+export type ResearchDepth = "standard" | "deep_parallel_research";
 
 export function normalizeToolPreset(value: unknown): ToolPreset {
   if (
@@ -39,8 +40,10 @@ export function toolPresetLabel(preset: ToolPreset): string {
 
 interface SettingsState {
   toolPreset: ToolPreset;
+  researchDepth: ResearchDepth;
   model: string;
   setToolPreset: (preset: ToolPreset) => void;
+  setResearchDepth: (depth: ResearchDepth) => void;
   setModel: (model: string) => void;
 }
 
@@ -48,8 +51,10 @@ export const useSettingsStore = create<SettingsState>()(
   persist(
     (set) => ({
       toolPreset: "web",
+      researchDepth: "standard",
       model: "",
       setToolPreset: (toolPreset) => set({ toolPreset: normalizeToolPreset(toolPreset) }),
+      setResearchDepth: (researchDepth) => set({ researchDepth }),
       setModel: (model) => set({ model }),
     }),
     {
@@ -63,6 +68,10 @@ export const useSettingsStore = create<SettingsState>()(
           ...current,
           ...state,
           toolPreset: normalizeToolPreset(state.toolPreset),
+          researchDepth:
+            state.researchDepth === "deep_parallel_research"
+              ? "deep_parallel_research"
+              : "standard",
         };
       },
       migrate: (persisted) => {
@@ -73,6 +82,10 @@ export const useSettingsStore = create<SettingsState>()(
         return {
           ...state,
           toolPreset: normalizeToolPreset(state.toolPreset),
+          researchDepth:
+            state.researchDepth === "deep_parallel_research"
+              ? "deep_parallel_research"
+              : "standard",
         };
       },
     },

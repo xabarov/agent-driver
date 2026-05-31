@@ -13,6 +13,7 @@ from agent_driver.runtime.metadata_state import (
     get_tool_loop_state,
 )
 from agent_driver.runtime.research_evidence import (
+    RESEARCH_DEPTH_DEEP_PARALLEL,
     RESEARCH_DEPTH_LIGHT,
     RESEARCH_DEPTH_NONE,
     RESEARCH_DEPTH_SOURCE_VERIFIED,
@@ -20,7 +21,9 @@ from agent_driver.runtime.research_evidence import (
     SOURCE_VERIFIED_FETCHES,
     WEB_FETCH_TOOL,
     ResearchEvidenceState,
+    ResearchSourceLedger,
     research_evidence_from_tool_results,
+    research_source_ledger_from_tool_results,
 )
 
 if TYPE_CHECKING:
@@ -56,6 +59,7 @@ class ResearchSessionContract:
     requires_research: bool
     research_depth: str
     evidence: ResearchEvidenceState
+    source_ledger: ResearchSourceLedger
     web_fetch_available: bool
     fetch_required: bool = False
     unfinished_todos: tuple[str, ...] = ()
@@ -89,7 +93,7 @@ class ResearchSessionContract:
             and self.evidence.successful_fetches < 1
         ):
             return [REPAIR_MISSING_FETCHED_SOURCES]
-        if self.research_depth != RESEARCH_DEPTH_SOURCE_VERIFIED:
+        if self.research_depth not in _SOURCE_VERIFIED_DEPTHS:
             return []
         if not self.web_fetch_available:
             return []
@@ -125,6 +129,8 @@ class ResearchSessionContract:
                 "failed_fetches": self.evidence.failed_fetches,
                 "unique_domains": list(self.evidence.unique_domains),
             },
+            "source_ledger": self.source_ledger.model_dump(),
+            "deep_research": _deep_research_contract_payload(self),
         }
 
 
@@ -147,8 +153,12 @@ def build_research_session_contract(
     research_depth = _research_depth_from_task_contract(task_contract)
     fetch_required = _fetch_required_from_task_contract(task_contract)
     evidence = research_evidence_from_tool_results(tool_results)
+    source_ledger = research_source_ledger_from_tool_results(
+        tool_results,
+        assistant_text=assistant_text,
+    )
     fetch_fallback_required = (
-        research_depth == RESEARCH_DEPTH_SOURCE_VERIFIED
+        research_depth in _SOURCE_VERIFIED_DEPTHS
         and web_fetch_available
         and evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES
         and evidence.successful_fetches == 0
@@ -170,6 +180,7 @@ def build_research_session_contract(
         requires_research=requires_research,
         research_depth=research_depth,
         evidence=evidence,
+        source_ledger=source_ledger,
         web_fetch_available=web_fetch_available,
         fetch_required=fetch_required,
         unfinished_todos=tuple(
@@ -224,11 +235,7 @@ def _research_depth_from_task_contract(task_contract: dict[str, Any] | None) -> 
     if not isinstance(task_contract, dict):
         return RESEARCH_DEPTH_NONE
     depth = task_contract.get("research_depth")
-    if depth in {
-        RESEARCH_DEPTH_NONE,
-        RESEARCH_DEPTH_LIGHT,
-        RESEARCH_DEPTH_SOURCE_VERIFIED,
-    }:
+    if depth in _SUPPORTED_RESEARCH_DEPTHS:
         return str(depth)
     return (
         RESEARCH_DEPTH_LIGHT
@@ -331,7 +338,7 @@ def _research_evidence_satisfied(
         return False
     if fetch_required and web_fetch_available and evidence.successful_fetches < 1:
         return False
-    if research_depth != RESEARCH_DEPTH_SOURCE_VERIFIED:
+    if research_depth not in _SOURCE_VERIFIED_DEPTHS:
         return True
     if not web_fetch_available or fetch_fallback_required:
         return True
@@ -339,6 +346,43 @@ def _research_evidence_satisfied(
         required_fetches=SOURCE_VERIFIED_FETCHES,
         required_domains=SOURCE_VERIFIED_DOMAINS,
     )
+
+
+_SOURCE_VERIFIED_DEPTHS = {RESEARCH_DEPTH_SOURCE_VERIFIED, RESEARCH_DEPTH_DEEP_PARALLEL}
+_SUPPORTED_RESEARCH_DEPTHS = {
+    RESEARCH_DEPTH_NONE,
+    RESEARCH_DEPTH_LIGHT,
+    RESEARCH_DEPTH_SOURCE_VERIFIED,
+    RESEARCH_DEPTH_DEEP_PARALLEL,
+}
+
+
+def _deep_research_contract_payload(
+    contract: ResearchSessionContract,
+) -> dict[str, Any] | None:
+    if contract.research_depth != RESEARCH_DEPTH_DEEP_PARALLEL:
+        return None
+    return {
+        "mode": RESEARCH_DEPTH_DEEP_PARALLEL,
+        "progress_event_types": [
+            "research_progress",
+            "source_ledger_updated",
+            "citation_coverage_updated",
+        ],
+        "source_ledger_enabled": True,
+        "context_pressure_recommendations": [
+            "compact_or_delegate_before_blocking_pressure",
+            "prefer_child_tasks_for_parallel_source_discovery",
+            "parent_keeps_final_synthesis_and_citation_coverage",
+        ],
+        "optional_child_strategy": "trusted_skill_preload_with_compact_findings",
+        "final_citation_coverage": {
+            "verified_read_count": len(contract.source_ledger.verified_reads),
+            "assistant_link_count": len(contract.source_ledger.assistant_links),
+            "final_has_source_links": contract.final_has_source_links,
+        },
+        "final_readiness_authority": "ResearchSessionContract",
+    }
 
 
 def _task_contract_from_context(context: RunContext) -> dict[str, Any] | None:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from app.config import ToolPreset
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from agent_driver.contracts import ControlKind, ControlPriority
@@ -19,6 +21,7 @@ class ChatMessageRequest(BaseModel):
     retry_from_run_id: str | None = None
     client_request_id: str | None = None
     scenario_id: str | None = None
+    research_depth: Literal["deep_parallel_research"] | None = None
 
 
 class ResumeRequest(BaseModel):

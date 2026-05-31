@@ -399,21 +399,40 @@ Purpose: address the "dumb zone" before it silently degrades research/code
 quality.
 
 - [x] Add `context_usage_ratio` to token pressure snapshots.
-- [ ] Add states:
+- [x] Add states:
   `ok`, `early_warning`, `delegate_or_summarize`,
   `compact_recommended`, `blocking`.
-- [ ] Emit runtime/stream diagnostics when state changes.
-- [ ] Add model-facing nudges around 35-45% context usage:
+- [x] Emit runtime/stream diagnostics when state changes.
+- [x] Add model-facing nudges around 35-45% context usage:
   summarize findings, delegate read-heavy work, preserve source refs, move to
   synthesis.
-- [ ] Keep 92% as emergency compaction/blocking, not normal operating policy.
-- [ ] Add eval/live scenario for a long research/code task comparing behavior
+- [x] Keep 92% as emergency compaction/blocking, not normal operating policy.
+- [x] Add eval/live scenario for a long research/code task comparing behavior
   before and after early pressure nudges.
 
 Acceptance:
 
 - Long tasks get early structured guidance before context is already bad.
 - Trace summary can explain whether the run ignored a context recommendation.
+
+Status on 2026-05-31:
+
+- Token pressure snapshots now use the full Phase 2 state ladder. The default
+  soft threshold starts near 35% context usage, `delegate_or_summarize` starts
+  near 45%, `compact_recommended` remains the compaction trigger, and
+  `blocking` is the emergency guard at roughly 92% usage.
+- Runtime warning/stream diagnostics are emitted only when the pressure state
+  changes and include stable signal ids, severity, `context_usage_ratio` and a
+  recommendation slug.
+- The current LLM request receives a context-pressure system nudge for
+  early-warning/delegation/compaction/blocking states so the model can preserve
+  source refs, summarize read-heavy findings, delegate separable work or move
+  toward synthesis before emergency compaction.
+- `summarize_run_trace` now exposes `context_pressure` diagnostics including
+  states, recommendations, delegation/compaction reaction and whether the latest
+  recommendation appears ignored. Focused deterministic tests cover the long
+  research/code pressure path; live comparison remains optional calibration, not
+  a per-change gate.
 
 ### Phase 3 - Minimal SDK P0
 
@@ -422,16 +441,16 @@ Purpose: package existing capabilities without exposing unstable internals.
 This phase should be small and compatibility-preserving; do not wait for every
 refactor phase before making the SDK pleasant.
 
-- [ ] Add `agent.query(...)` / top-level `query(...)` for one-shot usage.
-- [ ] Add `Session` facade:
+- [x] Add `agent.query(...)` / top-level `query(...)` for one-shot usage.
+- [x] Add `Session` facade:
   `send`, `stream`, `resume`, `history`, `runs`, `fork` where already
   supported by stores.
-- [ ] Add `RunHandle`:
+- [x] Add `RunHandle`:
   `run_id`, `events()`, `final()`, `abort()`, `checkpoint()`.
-- [ ] Add stream helper object over the existing event log:
+- [x] Add stream helper object over the existing event log:
   `events`, `text_deltas`, `final_output`, `cancel`, `cursor`.
-- [ ] Add package import isolation tests for `agent_driver.sdk`.
-- [ ] Keep `graph_preset` and low-level `SingleAgentRunner` as advanced escape
+- [x] Add package import isolation tests for `agent_driver.sdk`.
+- [x] Keep `graph_preset` and low-level `SingleAgentRunner` as advanced escape
   hatches, not quick-start API.
 
 Acceptance:
@@ -442,24 +461,35 @@ Acceptance:
 - Chat-demo can migrate toward SDK/session calls without becoming the owner of
   reusable runtime behavior.
 
+Status on 2026-05-31:
+
+- SDK P0 exposes `Agent.query`, top-level `query`, thread-scoped `Session`,
+  `RunHandle` and object-oriented `RunStream` helpers over the existing runner,
+  stores, checkpoint store and event log.
+- `Session` covers `send`, `stream`, `resume`, `history`, `runs`, `start` and
+  `fork`; the low-level `SingleAgentRunner` remains available through
+  `Agent.runner` for advanced embedders.
+- SDK import isolation is covered so importing `agent_driver.sdk` does not pull
+  CLI or chat-demo modules.
+
 ### Phase 4 - Skill Core
 
 Purpose: turn Skills from filesystem discovery into a real runtime context
 mechanism.
 
-- [ ] Add `agent_driver.skills` package with `SkillManifest` and frontmatter
+- [x] Add `agent_driver.skills` package with `SkillManifest` and frontmatter
   parser.
-- [ ] Extend/replace `skill_tool` with metadata listing:
+- [x] Extend/replace `skill_tool` with metadata listing:
   `name`, `description`, `when_to_use`, `version`, `tags`, `allowed_tools`,
   `context`, `agent`, `paths`, `trusted`, `source`, `skill_dir`.
-- [ ] Add `skill_view`: load full `SKILL.md` or one supporting file.
-- [ ] Return supporting file index, skill directory, trust and safety warnings.
-- [ ] Record `SkillInvocation` in runtime events/metadata.
-- [ ] Add prompt fragment: call `skill_view` when a skill is relevant; do not
+- [x] Add `skill_view`: load full `SKILL.md` or one supporting file.
+- [x] Return supporting file index, skill directory, trust and safety warnings.
+- [x] Record `SkillInvocation` in runtime events/metadata.
+- [x] Add prompt fragment: call `skill_view` when a skill is relevant; do not
   merely mention a skill without loading it.
-- [ ] Add compaction persistence for invoked skill refs: name, path, digest,
+- [x] Add compaction persistence for invoked skill refs: name, path, digest,
   trusted flag, agent id; do not persist full bodies by default.
-- [ ] Keep all shared skill behavior in `agent_driver`: frontmatter parsing,
+- [x] Keep all shared skill behavior in `agent_driver`: frontmatter parsing,
   trust classification, registry/listing, `skill_view`, invocation records,
   allowed-tools policy and compaction survival.
 
@@ -471,29 +501,43 @@ Acceptance:
 - Chat-demo can render skills and skill warnings using shared contracts without
   parsing or executing skills itself.
 
+Status on 2026-05-31:
+
+- Added `agent_driver.skills` with `SkillManifest`, `SkillInvocation`,
+  conservative `SKILL.md` frontmatter parsing, trust classification,
+  supporting-file indexing, metadata listing and on-demand view helpers.
+- `skill_tool` now returns metadata-first skill rows while preserving old path
+  and provenance fields; `skill_view` loads either the skill body or a single
+  supporting file and returns safety warnings plus a compact invocation record.
+- Runtime records `skill_view` usage as `skill_invoked` events and persists
+  `skill_invocations` / `invoked_skill_refs` in output metadata and compaction
+  projection without storing full skill bodies.
+- Prompt assembly now includes a skills policy fragment when `skill_tool` or
+  `skill_view` is in the effective tool surface.
+
 ### Phase 5 - Research + Skills Integration
 
 Purpose: improve Deep Research quality without building a separate research
 DAG.
 
-- [ ] Add curated research skills:
+- [x] Add curated research skills:
   `deep-research-report`, `source-triangulation`,
   `provider-doc-research`, `literature-review`, `citation-auditor`.
-- [ ] For `source_verified_report`, suggest relevant skills when `skill_view`
+- [x] For `source_verified_report`, suggest relevant skills when `skill_view`
   is available; do not auto-load hidden instructions.
-- [ ] Promote source evidence into a first-class ledger:
+- [x] Promote source evidence into a first-class ledger:
   search candidates, verified web/file/MCP reads, failed/blocked reads,
   assistant links.
-- [ ] Keep `ResearchSessionContract` as final-readiness authority.
-- [ ] Add optional skill-aware subagent preload:
+- [x] Keep `ResearchSessionContract` as final-readiness authority.
+- [x] Add optional skill-aware subagent preload:
   child receives trusted skill bodies, parent receives compact findings +
   source refs.
-- [ ] Add a provider-neutral Deep Research mode contract:
+- [x] Add a provider-neutral Deep Research mode contract:
   `research_depth=deep_parallel_research`, progress events, source ledger,
   context-pressure recommendations, optional child strategy and final citation
   coverage. Provider-native Deep Research adapters may feed this ledger, but
   must not become the only implementation.
-- [ ] Add live/fake evals:
+- [x] Add live/fake evals:
   deep report with skill loaded, literature review, provider-doc official-only,
   malicious/untrusted skill, compaction after skill invocation.
 
@@ -505,24 +549,49 @@ Acceptance:
 - Deep Research remains a shared runtime contract; chat-demo only selects,
   displays and verifies it.
 
+Status on 2026-05-31:
+
+- Bundled curated research skills live under `agent_driver.skills.curated` and
+  are discoverable through the normal skill registry.
+- Runtime reminders suggest curated skills for `source_verified_report` only
+  when `skill_view` is available; skill bodies are not auto-loaded.
+- `ResearchSessionContract` now exposes a `source_ledger` with candidate,
+  verified, failed/blocked and assistant-link rows; readiness still depends on
+  verified reads rather than search candidates.
+- `deep_parallel_research` is accepted as a provider-neutral depth with a
+  mode payload for progress event names, source ledger, context-pressure
+  recommendations, optional child strategy and final citation coverage.
+- Subagent groups may opt into `skill_preload=trusted_viewed`; only trusted
+  viewed skill bodies are passed to child task metadata/input, while the parent
+  remains responsible for final synthesis.
+- Focused fake regression coverage was added for curated skill discovery,
+  source-ledger non-laundering, deep-research readiness authority, skill
+  suggestion prompts and trusted-only subagent preload. Live provider probes
+  remain part of the weekly/phase live matrix rather than the default local
+  gate.
+- Live OpenRouter sanity was run before Phase 5A with
+  `AGENT_DRIVER_RUN_LIVE_TESTS=1`, model `qwen/qwen3.6-plus`:
+  `tests/runtime/live_smoke/test_deep_research_skills.py -m live` and
+  `tests/runtime/test_live_context_quality_openrouter.py -m live` both passed.
+
 ### Phase 5A - Chat-Demo Deep Research And Skills UX
 
 Purpose: expose the new runtime capabilities in the product surface without
 moving product logic into the demo.
 
-- [ ] Add a Deep Research affordance only after the runtime exposes the shared
+- [x] Add a Deep Research affordance only after the runtime exposes the shared
   mode contract: button/segmented mode, progress surface, source/citation
   inspector, context-pressure status, child-run panel and final-readiness
   diagnostics.
-- [ ] Add Skills UX only after `agent_driver.skills` and `skill_view` exist:
+- [x] Add Skills UX only after `agent_driver.skills` and `skill_view` exist:
   skill library list, install/upload flow, trust/review warnings, skill picker,
   invocation timeline and supporting-file preview.
-- [ ] Backend endpoints must be thin adapters over SDK/runtime contracts:
+- [x] Backend endpoints must be thin adapters over SDK/runtime contracts:
   no local `SKILL.md` parser, no private evidence ledger, no demo-only research
   readiness logic.
-- [ ] Frontend state should render runtime events and stable contracts, not
+- [x] Frontend state should render runtime events and stable contracts, not
   infer hidden research/skill state from assistant prose.
-- [ ] Add deterministic fake scenarios plus at least one live probe for:
+- [x] Add deterministic fake scenarios plus at least one live probe for:
   deep research progress, skill load, untrusted skill warning, citation shelf,
   compaction after skill invocation and provider failure after search.
 
@@ -532,6 +601,31 @@ Acceptance:
   Research/Skills while remaining replaceable by another frontend.
 - A second app can reuse the same SDK/runtime contracts without copying
   chat-demo code.
+
+Status on 2026-05-31:
+
+- Chat-demo now exposes a Deep mode toggle that sends
+  `research_depth=deep_parallel_research` and renders runtime source-ledger /
+  progress diagnostics from SSE events.
+- Chat-demo now exposes a Skills panel backed by thin `/api/skills` adapters
+  over `agent_driver.skills` / `skill_view`; upload installs a demo-local
+  `SKILL.md` and reuses the shared registry parser.
+- The default web/safe tool presets include the discovery tool pack, so
+  `skill_tool` and `skill_view` are visible through the public tools endpoint
+  and the normal ReAct prompt surface.
+- Added a deterministic `deep_research_skills` fake scenario that creates a
+  workspace-local skill, invokes `skill_view`, fetches `https://example.com`,
+  and emits `source_ledger_updated` through the runtime event stream.
+- Focused backend/frontend tests pass for the new adapters, SSE event flow,
+  source-ledger parsing and replay rendering. Browser smoke is blocked locally
+  because Playwright is not installed in the project environment; ESLint is
+  blocked before linting because the project still has legacy `.eslintrc.cjs`
+  while ESLint 9 expects `eslint.config.*`.
+- The broader chat-demo matrix now has deterministic SSE scenarios for skill
+  load plus source ledger, untrusted skill warning, compaction lifecycle after
+  skill invocation and provider rejection after mock web search. Live provider
+  sanity remains an opt-in acceptance probe using the existing live matrix
+  credentials rather than a default local gate.
 
 ### Phase 6 - Structural Refactor
 
@@ -558,6 +652,21 @@ Acceptance:
 - Large files stop being the default landing zone for unrelated features.
 - Tests prove public behavior and event contracts stayed stable.
 
+Status on 2026-05-31:
+
+- Started Phase 6 with compatibility-preserving `tool_stage.py` splits:
+  planning lifecycle event projection moved to
+  `runtime/single_agent/tool_stage_planning.py`, and subagent post-processing
+  for `agent_tool`, `send_message_tool` and `task_stop_tool` moved to
+  `runtime/single_agent/tool_stage_subagents.py`.
+- Source-verified research repair, web-fetch verification hints and research
+  final-readiness helper checks moved to
+  `runtime/single_agent/tool_stage_research.py`, leaving `tool_stage.py` as the
+  transition/protocol compatibility layer.
+- `tool_stage.py` remains the compatibility entrypoint for
+  `execute_tool_stage_step`; focused planning, subagent and chat-demo Deep
+  Research/Skills SSE tests pass after the extraction.
+
 ### Phase 7 - SDK P1 And Documentation
 
 Purpose: finish productization once internals have stable owners.
@@ -565,6 +674,9 @@ Purpose: finish productization once internals have stable owners.
 - [ ] Add SDK typed provider errors, request IDs, timeout/retry config.
 - [ ] Polish custom tool API:
   docstring/signature defaults, `tool(...)` helper, catalog projections.
+- [ ] Pay down pre-existing SDK lint debt in `sdk.subagent` and
+  `sdk.resume_payload` surfaced during Phase 3 P0 (`too-many-instance-attributes`,
+  protected default access, broad exception catch, line-length cleanup).
 - [ ] Add stable `TraceSummary` SDK contract and support-bundle recipe.
 - [ ] Add SDK context diagnostics:
   `output.context.pressure`, `output.context.recommendation`.

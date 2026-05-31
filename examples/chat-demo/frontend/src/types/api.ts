@@ -44,6 +44,45 @@ export interface ToolsResponse {
   workspace: WorkspaceStatusView;
 }
 
+export interface SkillManifestView {
+  name: string;
+  description: string;
+  whenToUse?: string | null;
+  tags: string[];
+  allowedTools: string[];
+  trusted: boolean;
+  source: string;
+  skillDir: string;
+  path: string;
+  supportingFiles: Array<Record<string, unknown>>;
+  safetyWarnings: string[];
+  digest: string;
+}
+
+export interface SkillsListResponse {
+  skills: SkillManifestView[];
+  uploadEnabled: boolean;
+}
+
+export interface SkillViewResponse {
+  skill: SkillManifestView;
+  content: string;
+  contentKind: string;
+  contentPath: string;
+  relativeFile?: string | null;
+  truncated: boolean;
+  skillInvocation: Record<string, unknown>;
+}
+
+export interface SkillUploadRequest {
+  name: string;
+  content: string;
+}
+
+export interface SkillUploadResponse {
+  skill: SkillManifestView;
+}
+
 export interface WorkspaceImportResponse {
   ok: boolean;
   files: string[];

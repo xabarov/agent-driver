@@ -45,6 +45,7 @@ include = ["agent_driver*"]
 
 [tool.setuptools.package-data]
 "agent_driver.prompts.templates" = ["*.txt"]
+"agent_driver.skills.curated" = ["*/SKILL.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

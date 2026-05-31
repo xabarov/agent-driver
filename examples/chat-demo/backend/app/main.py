@@ -9,6 +9,7 @@ from app.api.health import router as health_router
 from app.api.models import router as models_router
 from app.api.providers import router as providers_router
 from app.api.sessions import router as sessions_router
+from app.api.skills import router as skills_router
 from app.api.tools import router as tools_router
 from app.api.workspace import router as workspace_router
 from app.deps import get_settings
@@ -38,6 +39,7 @@ def create_app() -> FastAPI:
     app.include_router(providers_router, prefix="/api")
     app.include_router(tools_router, prefix="/api")
     app.include_router(models_router, prefix="/api")
+    app.include_router(skills_router, prefix="/api")
     app.include_router(sessions_router, prefix="/api")
     app.include_router(chat_router, prefix="/api")
     app.include_router(workspace_router, prefix="/api")

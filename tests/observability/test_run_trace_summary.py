@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from agent_driver.observability import summarize_run_trace
 
 
@@ -415,3 +417,60 @@ def test_trace_summary_collects_control_markers() -> None:
     assert summary["controls"]["dequeued"] == 1
     assert summary["controls"]["applied"] == 1
     assert summary["controls"]["semantic_routes"] == ["queue_after_next_boundary"]
+
+
+def test_trace_summary_explains_context_pressure_recommendation() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Сделай длинное исследование",
+        assistant_text="Итог.",
+        events=[
+            {
+                "event": "warning",
+                "data": {
+                    "kind": "token_pressure",
+                    "signal_id": "context_delegate_or_summarize",
+                    "severity": "warning",
+                    "state": "delegate_or_summarize",
+                    "recommendation": "delegate_or_summarize",
+                    "context_usage_ratio": 0.46,
+                },
+            },
+            _completed_tool("agent_tool"),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    pressure = summary["context_pressure"]
+    assert pressure["states"] == ["delegate_or_summarize"]
+    assert pressure["recommendations"] == ["delegate_or_summarize"]
+    assert pressure["delegated_after_recommendation"] is True
+    assert pressure["ignored_latest_recommendation"] is False
+
+
+def test_trace_summary_flags_ignored_context_pressure_recommendation() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Сделай длинное исследование",
+        assistant_text="Итог.",
+        events=[
+            {
+                "event": "warning",
+                "data": {
+                    "kind": "token_pressure",
+                    "signal_id": "context_compact_recommended",
+                    "severity": "warning",
+                    "state": "compact_recommended",
+                    "recommendation": "compact_recommended",
+                    "context_usage_ratio": 0.75,
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    pressure = summary["context_pressure"]
+    latest = cast(dict[str, Any], pressure["latest"])
+    assert latest.get("state") == "compact_recommended"
+    assert pressure["compaction_attempted_after_recommendation"] is False
+    assert pressure["ignored_latest_recommendation"] is True

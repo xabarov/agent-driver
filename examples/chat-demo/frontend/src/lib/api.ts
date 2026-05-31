@@ -11,6 +11,10 @@ import type {
   RunTraceSummaryResponse,
   SessionDetailView,
   SessionsListResponse,
+  SkillUploadRequest,
+  SkillUploadResponse,
+  SkillsListResponse,
+  SkillViewResponse,
   ToolsResponse,
   WorkspaceImportResponse,
 } from "../types/api";
@@ -46,6 +50,22 @@ export function fetchTools(preset?: ToolPreset, sessionId?: string): Promise<Too
   }
   const query = params.toString();
   return request<ToolsResponse>(`/api/tools${query ? `?${query}` : ""}`);
+}
+
+export function fetchSkills(): Promise<SkillsListResponse> {
+  return request<SkillsListResponse>("/api/skills");
+}
+
+export function fetchSkill(name: string): Promise<SkillViewResponse> {
+  return request<SkillViewResponse>(`/api/skills/${encodeURIComponent(name)}`);
+}
+
+export function uploadSkill(body: SkillUploadRequest): Promise<SkillUploadResponse> {
+  return request<SkillUploadResponse>("/api/skills/uploads", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 export function importSampleWorkspace(sessionId: string): Promise<WorkspaceImportResponse> {

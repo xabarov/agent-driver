@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass
+from importlib import import_module
 import uuid
 
 from agent_driver.contracts.control import (
@@ -24,6 +25,7 @@ from agent_driver.runtime.runner import SingleAgentRunner
 from agent_driver.runtime.control import CommandQueueStore, InMemoryCommandQueueStore
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.runtime.stream import project_runtime_events
+from agent_driver.sdk.handle import RunHandle, RunStream
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +36,7 @@ class AgentDefaults:
     graph_preset: str = "single_react"
 
 
-class Agent:
+class Agent:  # pylint: disable=too-many-public-methods
     """High-level facade for run/resume flows."""
 
     def __init__(
@@ -47,6 +49,11 @@ class Agent:
         self._runner = runner
         self._defaults = defaults or AgentDefaults()
         self._command_queue_store = command_queue_store or InMemoryCommandQueueStore()
+
+    @property
+    def defaults(self) -> AgentDefaults:
+        """Expose SDK defaults for session helpers."""
+        return self._defaults
 
     @property
     def runner(self) -> SingleAgentRunner:
@@ -154,7 +161,9 @@ class Agent:
         """Cancel a pending queued steering command."""
         item = self._command_queue_store.cancel(queue_id)
         if item is None:
-            return ControlResponse(ok=False, queue_id=queue_id, error="queue item not found")
+            return ControlResponse(
+                ok=False, queue_id=queue_id, error="queue item not found"
+            )
         self._emit_control_event(
             run_id=item.run_id,
             event_type=RuntimeEventType.COMMAND_CANCELLED,
@@ -241,6 +250,83 @@ class Agent:
                 app_metadata=app_metadata or {},
             )
         )
+
+    async def query(
+        self,
+        text: str,
+        *,
+        run_id: str | None = None,
+        stream: bool = False,
+        app_metadata: dict[str, object] | None = None,
+    ) -> AgentRunOutput:
+        """One-shot query helper for quick-start SDK callers."""
+        return await self.run_text(
+            text,
+            run_id=run_id,
+            stream=stream,
+            app_metadata=app_metadata,
+        )
+
+    def start(
+        self,
+        run_input: AgentRunInput,
+        *,
+        abort_handle: RunAbortHandle | None = None,
+        tool_gate: ToolGate | None = None,
+    ) -> RunHandle:
+        """Start a run in the background and return a handle."""
+        effective_run_id = run_input.run_id or f"run_{uuid.uuid4().hex[:12]}"
+        effective_input = (
+            run_input
+            if run_input.run_id
+            else run_input.model_copy(update={"run_id": effective_run_id})
+        )
+        effective_abort = abort_handle or RunAbortHandle()
+        task = asyncio.create_task(
+            self.run(
+                effective_input,
+                abort_handle=effective_abort,
+                tool_gate=tool_gate,
+            )
+        )
+        return RunHandle(
+            run_id=effective_run_id,
+            _task=task,
+            _abort_handle=effective_abort,
+            _event_log=self._runner.deps.event_log,
+            _checkpoint_store=self._runner.deps.checkpoint_store,
+        )
+
+    def stream_run(
+        self,
+        run_input: AgentRunInput,
+        *,
+        abort_handle: RunAbortHandle | None = None,
+        tool_gate: ToolGate | None = None,
+    ) -> RunStream:
+        """Start a run and return the object-oriented stream helper."""
+        effective_input = (
+            run_input
+            if run_input.stream
+            else run_input.model_copy(update={"stream": True})
+        )
+        poll_interval_ms = int(
+            effective_input.app_metadata.get("stream_poll_interval_ms", 20)
+        )
+        return RunStream(
+            self.start(
+                effective_input,
+                abort_handle=abort_handle,
+                tool_gate=tool_gate,
+            ),
+            poll_interval_seconds=poll_interval_ms / 1000.0,
+        )
+
+    def session(self, session_id: str | None = None):
+        """Create a thread-scoped Session facade."""
+        session_module = import_module("agent_driver.sdk.session")
+        session_cls = session_module.Session
+        return session_cls(self, session_id or f"session_{uuid.uuid4().hex[:12]}")
 
     async def resume(
         self,

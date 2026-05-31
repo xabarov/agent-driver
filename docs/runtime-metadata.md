@@ -25,7 +25,7 @@ not a public SDK contract.
 | Owner | Purpose | Candidate helper/state |
 | --- | --- | --- |
 | Loop control | step routing, max steps, terminal output, resume targets | `LoopControlState` |
-| Tool loop | tool results, traces, denials, unknown tools, tool-call counters | `ToolLoopState` |
+| Tool loop | tool results, traces, denials, unknown tools, tool-call counters, skill invocation records | `ToolLoopState` |
 | Planning | live todo state, approval plan payloads, dedupe hints | `PlanningRuntimeState` |
 | Research | fetch/search counters, final readiness, repair nudges, source diversity | `ResearchRuntimeState` |
 | Streaming | assistant streaming lifecycle and recovery flags | `StreamingRuntimeState` |
@@ -41,6 +41,7 @@ not a public SDK contract.
 | `next_step`, `step_count`, `llm_step_count`, `max_steps`, `terminal_output` | single-agent loop, runner output | checkpoint/output | terminal diagnostics | `LoopControlState` |
 | `resume_action`, `resume_message`, `resume_target_step`, `pending_interrupt`, `interrupt_payload` | resume/interrupt flow, output builder | checkpoint/output | yes for resume/interrupt UI | `LoopControlState` plus interrupt contract |
 | `tool_results`, `tool_trace`, `tool_calls`, `tool_loop_iterations`, `max_tool_calls` | tool stage, output, research contract | output/checkpoint | yes, trace/debug | `ToolLoopState` |
+| `skill_invocations`, `invoked_skill_refs` | `skill_view` post-processing, output/compaction projection | output/checkpoint | yes for Skills UI and trace/debug | `ToolLoopState` plus `CompactionRuntimeState` projection |
 | `unknown_tool_counts`, `denied_tool_counts`, `last_denied_signature`, `approved_tool_call` | tool governance and repair loops | checkpoint mostly | diagnostics | `ToolLoopState` |
 | `effective_tool_names`, `tool_choice_override`, `force_final_answer`, `force_final_answer_reason`, `forced_tool_choice_retry`, `forced_tool_catalog` | llm/tool-call preparation and repair | checkpoint | diagnostics | `ToolLoopState` or `ProviderRuntimeState` |
 | `planning_state`, `planning_step`, `planning_state_seed` | step planning, output, research contract | output/checkpoint | yes | `PlanningRuntimeState` |
@@ -54,7 +55,7 @@ not a public SDK contract.
 | `assistant_stream_started`, `assistant_stream_content`, `assistant_stream_completed` | streaming LLM step/output recovery | checkpoint | yes for stream UI | `StreamingRuntimeState` |
 | `assistant_stream_tombstoned`, `assistant_stream_recovered`, `assistant_stream_recovery_reason` | stream recovery | output/checkpoint | diagnostics | `StreamingRuntimeState` |
 | `raw_assistant_content`, `last_llm_response`, `llm_call_started_monotonic` | LLM step/output builder | checkpoint/runtime | diagnostics | `StreamingRuntimeState` or `ProviderRuntimeState` |
-| `trim_audit`, `trim_metadata`, `token_pressure`, `prompt_render` | deterministic trimming / prompt render | output/checkpoint | trace/debug | `CompactionRuntimeState` |
+| `trim_audit`, `trim_metadata`, `token_pressure`, `previous_token_pressure_state`, `prompt_render` | deterministic trimming / prompt render / pressure state-change diagnostics | output/checkpoint | trace/debug | `CompactionRuntimeState` |
 | `microcompaction`, `microcompaction_audit`, `post_compact_cleanup` | context compaction/microcompaction | output/checkpoint | trace/debug | `CompactionRuntimeState` |
 | `active_compaction_id`, `compaction_decision`, `compaction_audit`, `compaction_result`, `compaction_failures` | compaction stage/orchestrator | output/checkpoint | yes for compaction UI | `CompactionRuntimeState` |
 | `session_memory_extraction`, `retained_artifact_ids`, `retained_digest_ids` | output/memory compaction | output/checkpoint | trace/debug | `CompactionRuntimeState` |

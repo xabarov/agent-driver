@@ -35,6 +35,7 @@ from agent_driver.prompts import (
     todo_write_guidance,
 )
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.skills import CURATED_RESEARCH_SKILL_NAMES, curated_skills_dir
 from agent_driver.runtime.metadata_state import (
     get_compaction_runtime_state,
     get_loop_control_state,
@@ -273,6 +274,7 @@ async def execute_llm_call_step(
         compaction_state = get_compaction_runtime_state(context)
         compaction_state.set_trim_payload(trim_payload)
         token_state = compaction_state.token_pressure_state()
+        request = _request_with_context_pressure_nudge(request, token_state)
         await apply_compaction_if_eligible(
             host,
             context=context,
@@ -945,6 +947,48 @@ def _request_with_reduced_max_tokens(request: Any) -> Any:
     return request.model_copy(update={"max_tokens": reduced})
 
 
+_CONTEXT_PRESSURE_NUDGES: dict[str, str] = {
+    "early_warning": (
+        "Runtime context-pressure guidance: context use is no longer low. "
+        "Keep a compact running summary of durable findings, preserve concrete "
+        "source/file references, and avoid rereading bulky material unless it is "
+        "needed for the next step."
+    ),
+    "delegate_or_summarize": (
+        "Runtime context-pressure guidance: context use is in the delegation or "
+        "summarization band. Summarize read-heavy findings now, preserve source "
+        "refs and artifact ids, delegate separable read-heavy work when the "
+        "agent_tool is available, and move toward synthesis instead of expanding "
+        "the search surface."
+    ),
+    "compact_recommended": (
+        "Runtime context-pressure guidance: compaction is recommended. Preserve "
+        "only task-critical facts, source refs, open decisions and todo state; "
+        "then move to synthesis or a compact next action."
+    ),
+    "blocking": (
+        "Runtime context-pressure guidance: context is at the emergency guard. "
+        "Do not start broad new reading. Preserve source refs and produce the "
+        "smallest viable synthesis or next step."
+    ),
+}
+
+
+def _request_with_context_pressure_nudge(request: Any, state: str) -> Any:
+    """Inject a model-facing context pressure reminder for the current request."""
+    nudge = _CONTEXT_PRESSURE_NUDGES.get(state)
+    if not nudge or not isinstance(request, LlmRequest):
+        return request
+    messages = list(request.messages)
+    if messages and messages[0].role == ChatRole.SYSTEM:
+        messages[0] = messages[0].model_copy(
+            update={"content": f"{messages[0].content}\n\n{nudge}"}
+        )
+    else:
+        messages.insert(0, ChatMessage(role=ChatRole.SYSTEM, content=nudge))
+    return request.model_copy(update={"messages": messages})
+
+
 def _token_pressure_state(token_pressure: object) -> str:
     if not isinstance(token_pressure, dict):
         return "ok"
@@ -952,23 +996,40 @@ def _token_pressure_state(token_pressure: object) -> str:
 
 
 _TOKEN_PRESSURE_SIGNAL_IDS: dict[str, str] = {
+    "early_warning": "context_early_warning",
+    "delegate_or_summarize": "context_delegate_or_summarize",
     "warning": "context_above_soft_threshold",
     "compact_recommended": "context_compact_recommended",
     "blocking": "context_blocking_threshold",
 }
 
 _TOKEN_PRESSURE_SEVERITIES: dict[str, str] = {
+    "early_warning": "info",
+    "delegate_or_summarize": "warning",
     "warning": "warning",
     "compact_recommended": "warning",
     "blocking": "critical",
 }
 
+_TOKEN_PRESSURE_RECOMMENDATIONS: dict[str, str] = {
+    "early_warning": "summarize_findings",
+    "delegate_or_summarize": "delegate_or_summarize",
+    "warning": "summarize_findings",
+    "compact_recommended": "compact_recommended",
+    "blocking": "blocking",
+}
+
 
 def _emit_token_pressure_warning(host: LlmStepHost, context: RunContext) -> None:
-    token_pressure = get_compaction_runtime_state(context).token_pressure()
+    compaction_state = get_compaction_runtime_state(context)
+    token_pressure = compaction_state.token_pressure()
     if not token_pressure:
         return
     state = str(token_pressure.get("state", "ok"))
+    previous_state = compaction_state.previous_token_pressure_state()
+    if previous_state == state:
+        return
+    compaction_state.set_previous_token_pressure_state(state)
     if state not in _TOKEN_PRESSURE_SIGNAL_IDS:
         return
     used_tokens_raw = token_pressure.get("used_tokens_estimate")
@@ -996,6 +1057,7 @@ def _emit_token_pressure_warning(host: LlmStepHost, context: RunContext) -> None
         "blocking_threshold": token_pressure.get("blocking_threshold"),
         "context_usage_ratio": context_usage_ratio,
         "usage_ratio": context_usage_ratio,
+        "recommendation": _TOKEN_PRESSURE_RECOMMENDATIONS[state],
     }
     emit_step_event(
         host,
@@ -1244,6 +1306,12 @@ def _chat_mode_runtime_reminders(context: RunContext) -> list[str]:
             "When you synthesize the final answer from fetched web evidence, include "
             "Markdown links to the concrete fetched/source URLs you relied on."
         )
+        if _tool_available_by_policy(
+            name="skill_view",
+            allowed=policy_allowed,
+            denied=policy_denied,
+        ):
+            reminders.append(_research_skill_suggestion_message())
     if get_research_runtime_state(context).fetch_fallback_required():
         reminders.append(
             "Runtime reminder: research_fetch_fallback. Multiple page fetches "
@@ -1291,6 +1359,24 @@ def _chat_mode_runtime_reminders(context: RunContext) -> list[str]:
                 "checklist in chat."
             )
     return reminders
+
+
+def _tool_available_by_policy(
+    *, name: str, allowed: list[str] | tuple[str, ...] | None, denied: list[str]
+) -> bool:
+    return name not in denied and (allowed is None or name in allowed)
+
+
+def _research_skill_suggestion_message() -> str:
+    names = ", ".join(CURATED_RESEARCH_SKILL_NAMES)
+    return (
+        "Runtime reminder: curated_research_skills_available. For "
+        "source_verified_report work, relevant bundled skills may help: "
+        f"{names}. Discover them with skill_tool using base_dir="
+        f"{str(curated_skills_dir())!r}, then call skill_view for a selected "
+        "skill before relying on it. Do not auto-load hidden instructions or "
+        "treat skill listings as evidence."
+    )
 
 
 def _current_turn_requests_deliverable(context: RunContext) -> bool:

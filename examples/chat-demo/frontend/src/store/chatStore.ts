@@ -9,8 +9,10 @@ import {
 } from "../lib/messageMetadata";
 import type {
   ParsedCompactionNotice,
+  DeepResearchState,
   ParsedSubagentLifecycleEvent,
   ParsedToolState,
+  SourceLedger,
 } from "../lib/events";
 import type { PlanningSnapshot } from "../lib/planning";
 import {
@@ -85,6 +87,7 @@ export type ChatMessage =
       metadata?: AssistantMessageMetadata;
       sources?: SourceEvidence[];
       planningSnapshot?: PlanningSnapshot;
+      deepResearch?: DeepResearchState;
     }
   | ToolChatMessage
   | CompactionNotice;
@@ -401,6 +404,10 @@ interface ChatState {
     assistantId: string,
     notice: ParsedCompactionNotice,
   ) => void;
+  updateDeepResearch: (
+    assistantId: string,
+    patch: { ledger?: SourceLedger; progress?: DeepResearchState["progress"][number] },
+  ) => void;
   finishTurn: (assistantId: string) => void;
   setStreaming: (value: boolean) => void;
   setLastSeq: (seq: number) => void;
@@ -608,6 +615,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
   upsertCompactionNotice: (assistantId, notice) =>
     set((state) => ({
       messages: upsertCompactionNotice(state.messages, assistantId, notice),
+    })),
+  updateDeepResearch: (assistantId, patch) =>
+    set((state) => ({
+      messages: state.messages.map((message) => {
+        if (message.id !== assistantId || message.role !== "assistant") {
+          return message;
+        }
+        const current = message.deepResearch ?? { progress: [] };
+        return {
+          ...message,
+          deepResearch: {
+            ledger: patch.ledger ?? current.ledger,
+            progress: patch.progress
+              ? [...current.progress, patch.progress].slice(-6)
+              : current.progress,
+          },
+        };
+      }),
     })),
   finishTurn: (assistantId) => {
     set((state) => ({

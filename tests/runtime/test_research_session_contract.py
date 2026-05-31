@@ -309,3 +309,63 @@ def test_research_contract_allows_verified_research_with_links_and_done_todos() 
 
     assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
     assert contract.final_readiness.reasons == ()
+
+
+def test_source_ledger_does_not_launder_candidates() -> None:
+    """Search candidates should not count as verified source evidence."""
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "source_verified_report",
+        },
+        tool_results=[
+            {
+                "call": {"tool_name": "web_search", "tool_call_id": "s1"},
+                "structured_output": {
+                    "results": [
+                        {
+                            "url": "https://candidate.example/a",
+                            "title": "Candidate",
+                        }
+                    ]
+                },
+            },
+            _tool_result("web_fetch", url="https://verified.example/a"),
+        ],
+        assistant_text="See https://verified.example/a",
+    )
+
+    payload = contract.model_dump()
+    assert payload["source_ledger"]["search_candidates"][0]["source_type"] == (
+        "web_search"
+    )
+    assert payload["source_ledger"]["verified_reads"][0]["url"] == (
+        "https://verified.example/a"
+    )
+    assert payload["source_ledger"]["assistant_links"][0]["url"] == (
+        "https://verified.example/a"
+    )
+    assert contract.final_readiness.status == FINAL_READINESS_REPAIR_NEEDED
+
+
+def test_deep_parallel_research_uses_readiness_contract_and_mode_payload() -> None:
+    """Deep research mode keeps ResearchSessionContract as readiness authority."""
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        tool_results=[
+            _tool_result("web_search"),
+            _tool_result("web_fetch", url="https://example.com/a"),
+            _tool_result("web_fetch", url="https://example.org/b"),
+        ],
+        assistant_text="[A](https://example.com/a), [B](https://example.org/b)",
+    )
+
+    payload = contract.model_dump()
+    assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
+    assert payload["deep_research"]["mode"] == "deep_parallel_research"
+    assert payload["deep_research"]["final_readiness_authority"] == (
+        "ResearchSessionContract"
+    )

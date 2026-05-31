@@ -6,6 +6,7 @@ from copy import deepcopy
 import os
 
 from agent_driver.code_agent.backends import create_python_backend
+from agent_driver.contracts.runtime import AgentRunOutput
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
 from agent_driver.runtime.events import InMemoryEventLog
@@ -80,6 +81,38 @@ def create_agent(
     )
 
 
+async def query(
+    text: str,
+    *,
+    provider: LlmProvider,
+    tools: ToolSet | None = None,
+    config: RunnerConfig | None = None,
+    checkpoint_store: CheckpointStore | None = None,
+    event_log: RuntimeEventLog | None = None,
+    command_queue_store: CommandQueueStore | None = None,
+    agent_id: str = "agent",
+    graph_preset: str = "single_react",
+    run_id: str | None = None,
+    app_metadata: dict[str, object] | None = None,
+) -> AgentRunOutput:
+    """One-shot top-level SDK query helper."""
+    agent = create_agent(
+        provider=provider,
+        tools=tools,
+        config=config,
+        checkpoint_store=checkpoint_store,
+        event_log=event_log,
+        command_queue_store=command_queue_store,
+        agent_id=agent_id,
+        graph_preset=graph_preset,
+    )
+    return await agent.query(
+        text,
+        run_id=run_id,
+        app_metadata=app_metadata,
+    )
+
+
 def sdk_config_from_env() -> SdkConfig:
     """Resolve minimal SDK bootstrap config from env."""
     return SdkConfig(
@@ -92,4 +125,4 @@ def sdk_config_from_env() -> SdkConfig:
     )
 
 
-__all__ = ["build_default_registry", "create_agent", "sdk_config_from_env"]
+__all__ = ["build_default_registry", "create_agent", "query", "sdk_config_from_env"]

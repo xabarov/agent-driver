@@ -57,6 +57,10 @@ class RuntimeEventType(StrEnum):
     # TOOL_CALL_STARTED → 0..N TOOL_PROGRESS → TOOL_CALL_COMPLETED.
     TOOL_PROGRESS = "tool_progress"
     TOOL_CALL_COMPLETED = "tool_call_completed"
+    SKILL_INVOKED = "skill_invoked"
+    RESEARCH_PROGRESS = "research_progress"
+    SOURCE_LEDGER_UPDATED = "source_ledger_updated"
+    CITATION_COVERAGE_UPDATED = "citation_coverage_updated"
     GUARDRAIL_DECISION = "guardrail_decision"
     CHECKPOINT_SAVED = "checkpoint_saved"
     INTERRUPT_REQUESTED = "interrupt_requested"

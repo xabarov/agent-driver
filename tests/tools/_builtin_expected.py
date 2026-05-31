@@ -29,6 +29,7 @@ EXPECTED_BUILTIN_TOOL_NAMES = {
     "mcp_auth",
     "exit_plan_mode_v2",
     "skill_tool",
+    "skill_view",
     "send_message_tool",
     "notebook_edit",
     "enter_plan_mode",

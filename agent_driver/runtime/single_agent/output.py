@@ -37,6 +37,9 @@ from agent_driver.runtime.metadata_state import (
     get_planning_runtime_state,
     get_streaming_runtime_state,
 )
+from agent_driver.runtime.research_evidence import (
+    research_source_ledger_from_tool_results,
+)
 from agent_driver.runtime.single_agent.output_builders import (
     build_memory_audit,
     build_memory_projection_for_context,
@@ -297,6 +300,12 @@ class SingleAgentOutputMixin:
         source_evidence = self._source_evidence_from_tool_results(
             normalized_tool_results
         )
+        source_ledger = research_source_ledger_from_tool_results(
+            normalized_tool_results,
+            assistant_text=context.llm_response.message.content
+            if context.llm_response is not None
+            else "",
+        ).model_dump()
         compaction_projection = get_compaction_runtime_state(
             context
         ).output_metadata_projection()
@@ -305,6 +314,7 @@ class SingleAgentOutputMixin:
             "graph_id": self.graph_id,
             "tool_results": normalized_tool_results,
             "source_evidence": source_evidence,
+            "source_ledger": source_ledger,
             "artifact_refs": self._normalize_context_artifacts(
                 context.run_id, artifact_refs
             ),
@@ -338,6 +348,9 @@ class SingleAgentOutputMixin:
         digest_refs = list_dict_metadata(context, "digest_refs")
         tool_results = list_dict_metadata(context, "tool_results")
         source_evidence = self._source_evidence_from_tool_results(tool_results)
+        source_ledger = research_source_ledger_from_tool_results(
+            tool_results,
+        ).model_dump()
         projection = build_memory_projection_for_context(
             context,
             answer=None,
@@ -364,6 +377,7 @@ class SingleAgentOutputMixin:
                 "graph_id": self.graph_id,
                 "tool_results": tool_results,
                 "source_evidence": source_evidence,
+                "source_ledger": source_ledger,
                 "artifact_refs": self._normalize_context_artifacts(
                     context.run_id, artifact_refs
                 ),

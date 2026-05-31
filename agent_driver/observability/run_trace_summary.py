@@ -83,6 +83,11 @@ def summarize_run_trace(
     )
     controls = _control_summary(events)
     compaction = _compaction_summary(events)
+    context_pressure = _context_pressure_summary(
+        events,
+        tool_names=tool_names,
+        compaction=compaction,
+    )
     provider_rejected = _provider_rejected(events)
     unknown_tools = _unknown_tool_summary(events)
     research_final_covers_plan = _research_final_answer_covers_plan_todos(
@@ -182,6 +187,7 @@ def summarize_run_trace(
         "subagents": subagents,
         "controls": controls,
         "compaction": compaction,
+        "context_pressure": context_pressure,
         "unknown_tools": unknown_tools,
         "provider_rejected": provider_rejected,
         "final_readiness": research["final_readiness"],
@@ -268,6 +274,62 @@ def _compaction_summary(events: list[dict[str, object]]) -> dict[str, Any]:
             else False
         ),
         "latest": latest,
+    }
+
+
+def _context_pressure_summary(
+    events: list[dict[str, object]],
+    *,
+    tool_names: list[str],
+    compaction: dict[str, Any],
+) -> dict[str, Any]:
+    """Summarize pressure diagnostics and whether the run reacted."""
+    diagnostics: list[dict[str, Any]] = []
+    for event in events:
+        if event.get("event") != "warning":
+            continue
+        data = _event_data(event)
+        if data.get("kind") != "token_pressure":
+            continue
+        state = data.get("state")
+        signal_id = data.get("signal_id")
+        if not isinstance(state, str) or not isinstance(signal_id, str):
+            continue
+        diagnostics.append(
+            {
+                "state": state,
+                "signal_id": signal_id,
+                "severity": data.get("severity"),
+                "recommendation": data.get("recommendation"),
+                "context_usage_ratio": data.get("context_usage_ratio"),
+            }
+        )
+    states = [item["state"] for item in diagnostics]
+    recommendations = [
+        str(item["recommendation"])
+        for item in diagnostics
+        if isinstance(item.get("recommendation"), str)
+    ]
+    latest = diagnostics[-1] if diagnostics else None
+    delegated = "agent_tool" in tool_names
+    compaction_attempted = int(compaction.get("attempts") or 0) > 0
+    ignored = False
+    if latest is not None:
+        latest_recommendation = latest.get("recommendation")
+        if latest_recommendation in {"compact_recommended", "blocking"}:
+            ignored = not compaction_attempted
+        elif latest_recommendation == "delegate_or_summarize":
+            ignored = not delegated and not compaction_attempted
+    return {
+        "diagnostic_count": len(diagnostics),
+        "states": states,
+        "recommendations": recommendations,
+        "latest": latest,
+        "delegated_after_recommendation": delegated if diagnostics else False,
+        "compaction_attempted_after_recommendation": (
+            compaction_attempted if diagnostics else False
+        ),
+        "ignored_latest_recommendation": ignored,
     }
 
 

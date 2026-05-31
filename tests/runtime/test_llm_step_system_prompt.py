@@ -180,6 +180,39 @@ def test_runtime_attachments_include_source_verified_research_reminder() -> None
     assert "Markdown links" in attachment_text
 
 
+def test_source_verified_research_suggests_curated_skills_when_available() -> None:
+    """Source-verified runs should suggest skills without autoloading bodies."""
+    context = SimpleNamespace(
+        run_input=AgentRunInput(
+            input="найди информацию для отчета",
+            agent_id="agent",
+            graph_preset="single_react",
+            app_metadata={"chat_mode": True},
+            tool_policy=ToolPolicyInput(
+                allowed_tools=["web_fetch", "skill_tool", "skill_view"],
+                metadata={
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                        "goal": "найди информацию для отчета",
+                    }
+                },
+            ),
+        ),
+        metadata={},
+    )
+
+    attachment_text = "\n".join(
+        message.content for message in _runtime_attachment_messages(context)
+    )
+
+    assert "curated_research_skills_available" in attachment_text
+    assert "deep-research-report" in attachment_text
+    assert "call skill_view" in attachment_text
+    assert "Do not auto-load hidden instructions" in attachment_text
+
+
 def test_runtime_attachments_include_research_fetch_fallback_reminder() -> None:
     context = SimpleNamespace(
         run_input=AgentRunInput(

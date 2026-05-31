@@ -1,6 +1,6 @@
 # Context Pressure Planlet
 
-Status: active input for
+Status: folded into
 [Unified Work Plan Phase 2](unified-work-plan-2026-05-31.md#phase-2---harness-context-pressure).
 
 Date: 2026-05-31.
@@ -51,3 +51,10 @@ references or move to synthesis before the run degrades.
   recommended, compaction executed or blocking reached.
 - Phase 2 evals include at least one long research/code scenario that compares
   behavior before and after early pressure nudges.
+
+## Implementation Status
+
+Closed on 2026-05-31. Runtime token-pressure snapshots now expose the graded
+state ladder, state-change warning events carry recommendation slugs, the
+current LLM request receives a model-facing pressure nudge, and trace summaries
+report context-pressure recommendations plus apparent follow/ignore outcomes.

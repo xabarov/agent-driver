@@ -13,7 +13,14 @@ async def test_tools_default_preset(client) -> None:
     assert response.status_code == 200
     payload = response.json()
     names = {item["name"] for item in payload["tools"]}
-    assert names == {"agent_tool", "python", "web_fetch", "web_search"}
+    assert names == {
+        "agent_tool",
+        "python",
+        "skill_tool",
+        "skill_view",
+        "web_fetch",
+        "web_search",
+    }
     assert "read_file" not in names
     assert "bash" not in names
     assert payload["workspace"]["mode"] == "session"
@@ -151,6 +158,22 @@ def test_chat_tool_policy_denies_clarification_for_research_request() -> None:
     assert policy.metadata["research_request"]["enabled"] is True
     assert policy.denied_tools == ["ask_user_question"]
     assert initial_tool_choice_for_chat(policy=policy, preset="web") is None
+
+
+def test_chat_tool_policy_accepts_deep_research_mode() -> None:
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="найди источники и подготовь отчет",
+            research_depth="deep_parallel_research",
+        ),
+        settings=Settings(),
+    )
+
+    assert policy.metadata["deep_research_mode"]["enabled"] is True
+    assert policy.metadata["task_contract"]["research_depth"] == (
+        "deep_parallel_research"
+    )
+    assert policy.metadata["task_contract"]["requires_research"] is True
 
 
 def test_chat_tool_policy_denies_web_tools_for_plan_only() -> None:

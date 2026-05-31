@@ -61,6 +61,7 @@ _BUILTIN_PACKS: dict[str, tuple[str, ...]] = {
     ),
     "discovery": (
         "skill_tool",
+        "skill_view",
         "tool_search",
         "brief_tool",
         "agent_tool",

@@ -102,7 +102,7 @@ def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
         return CliToolConfig(
             tools_mode="default",
             tools=("agent_tool",),
-            tool_packs=("web", "planning_progress"),
+            tool_packs=("web", "planning_progress", "discovery"),
             enable_python=True,
         )
     if preset == "agents":
@@ -167,7 +167,10 @@ def create_agent_bundle(
         runtime_store_config.kind,
         runtime_store_config.sqlite_path,
     )
-    synthetic_compaction_probe = settings.fake_scenario == "compaction_notice"
+    synthetic_compaction_probe = settings.fake_scenario in {
+        "compaction_notice",
+        "compaction_after_skill_invocation",
+    }
     runner_config = RunnerConfig(
         cancellation_probe=cancellation_probe,
         trimming=(

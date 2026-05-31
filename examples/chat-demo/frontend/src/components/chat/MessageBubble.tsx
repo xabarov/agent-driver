@@ -11,6 +11,7 @@ import { useChatStore } from "../../store/chatStore";
 import { AssistantStreaming } from "./AssistantStreaming";
 import { CitationShelf } from "./CitationShelf";
 import { CompactionNoticeCard } from "./CompactionNoticeCard";
+import { DeepResearchPanel } from "./DeepResearchPanel";
 import { MessageActions } from "./MessageActions";
 import { PlanningCard } from "./PlanningCard";
 import { ToolCallCard } from "./ToolCallCard";
@@ -113,6 +114,7 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
             />
           ) : null}
           {!message.pending ? <CitationShelf sources={sources} /> : null}
+          <DeepResearchPanel state={message.deepResearch} />
           {message.pending ? <AssistantStreaming /> : null}
         </div>
         {showActions ? (

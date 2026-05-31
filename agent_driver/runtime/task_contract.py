@@ -10,7 +10,9 @@ from __future__ import annotations
 from typing import Any
 
 from agent_driver.runtime.research_evidence import (
+    RESEARCH_DEPTH_DEEP_PARALLEL,
     RESEARCH_DEPTH_NONE,
+    RESEARCH_DEPTH_SOURCE_VERIFIED,
     classify_research_depth,
 )
 
@@ -228,9 +230,13 @@ def render_task_contract_reminder(contract: dict[str, Any]) -> str | None:
             "Fetch requirement: the user explicitly asked to open/read a URL; "
             "use web_fetch before the final answer when it is available."
         )
-    if contract.get("research_depth") == "source_verified_report":
+    if contract.get("research_depth") in {
+        RESEARCH_DEPTH_SOURCE_VERIFIED,
+        RESEARCH_DEPTH_DEEP_PARALLEL,
+    }:
+        depth = contract.get("research_depth")
         parts.append(
-            "Research depth: source_verified_report. Treat search results as "
+            f"Research depth: {depth}. Treat search results as "
             "candidates; fetch/open concrete URLs before final synthesis when "
             "web_fetch is available."
         )

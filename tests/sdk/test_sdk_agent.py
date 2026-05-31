@@ -28,7 +28,16 @@ from agent_driver.llm.contracts import (
 from agent_driver.runtime import RunnerConfig
 from agent_driver.runtime.control import InMemoryCommandQueueStore, SqliteCommandQueueStore
 from agent_driver.runtime.errors import RuntimeExecutionError
-from agent_driver.sdk import Agent, build_default_registry, create_agent, sdk_config_from_env
+from agent_driver.sdk import (
+    Agent,
+    RunHandle,
+    RunStream,
+    Session,
+    build_default_registry,
+    create_agent,
+    query,
+    sdk_config_from_env,
+)
 from agent_driver.tools import ToolRegistry, ToolSet
 
 
@@ -61,6 +70,87 @@ async def test_sdk_create_agent_returns_facade_and_runs() -> None:
         )
     )
     assert output.status.value == "completed"
+
+
+@pytest.mark.asyncio
+async def test_sdk_top_level_query_and_agent_query_return_output() -> None:
+    """SDK should expose one-shot query helpers without low-level runner imports."""
+    agent = create_agent(provider=FakeProvider(response_text="agent ok"), tools=ToolSet.only())
+
+    agent_output = await agent.query("Hello")
+    top_level_output = await query(
+        "Hello",
+        provider=FakeProvider(response_text="top ok"),
+        tools=ToolSet.only(),
+    )
+
+    assert agent_output.answer == "agent ok"
+    assert top_level_output.answer == "top ok"
+
+
+@pytest.mark.asyncio
+async def test_sdk_run_handle_exposes_events_final_abort_and_checkpoint() -> None:
+    """RunHandle should hide runner internals while exposing run operations."""
+    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only())
+    handle = agent.start(
+        AgentRunInput(
+            input="background",
+            run_id="run_sdk_handle",
+            agent_id="agent",
+            graph_preset="single_react",
+        )
+    )
+
+    assert isinstance(handle, RunHandle)
+    output = await handle.final()
+    assert output.status.value == "completed"
+    assert handle.events()
+    assert handle.checkpoint() is not None
+    handle.abort()
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_helper_yields_text_deltas_and_final_output() -> None:
+    """Object stream helper should expose events, text_deltas, final_output and cursor."""
+    agent = create_agent(provider=_SlowStreamingProvider(response_text="ok"), tools=ToolSet.only())
+    stream = agent.stream_run(
+        AgentRunInput(
+            input="stream helper",
+            run_id="run_sdk_stream_helper",
+            agent_id="agent",
+            graph_preset="single_react",
+            stream=True,
+        )
+    )
+
+    assert isinstance(stream, RunStream)
+    deltas = [item async for item in stream.text_deltas()]
+    output = await stream.final_output()
+
+    assert "slow" in deltas
+    assert output.status.value == "completed"
+    assert stream.cursor > 0
+    stream.cancel()
+
+
+@pytest.mark.asyncio
+async def test_sdk_session_facade_send_history_runs_and_stream() -> None:
+    """Session should provide thread-scoped send/history/runs/stream helpers."""
+    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only())
+    session = agent.session("session_sdk")
+
+    assert isinstance(session, Session)
+    output = await session.send("Hello", run_id="run_sdk_session")
+    streamed = session.stream("Stream", run_id="run_sdk_session_stream")
+    stream_output = await streamed.final_output()
+
+    assert output.status.value == "completed"
+    assert stream_output.status.value == "completed"
+    assert [turn.metadata.get("run_id") for turn in session.history()] == [
+        "run_sdk_session",
+        "run_sdk_session_stream",
+    ]
+    assert session.runs() == ["run_sdk_session", "run_sdk_session_stream"]
 
 
 def test_sdk_control_methods_queue_commands() -> None:

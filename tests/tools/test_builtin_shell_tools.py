@@ -146,7 +146,7 @@ async def test_bash_allows_python_inline_command() -> None:
     register_shell_tools(registry)
     tool = registry.get("bash")
     assert tool is not None
-    out = await tool.handler({"command": "python -c \"print(1)\""})
+    out = await tool.handler({"command": ".venv/bin/python -c \"print(1)\""})
     assert out["exit_code"] == 0
     assert out["risk_category"] == "readonly"
     assert "1" in out["stdout"]

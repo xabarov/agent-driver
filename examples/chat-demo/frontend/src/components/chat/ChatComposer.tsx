@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUp, Square, Wrench, X } from "lucide-react";
+import { ArrowUp, BookOpenCheck, Library, Square, Wrench, X } from "lucide-react";
 
 import { cn } from "../../lib/cn";
 import type { SteeringControl } from "../../store/chatStore";
 import { ToolsPicker } from "../settings/ToolsPicker";
+import { SkillsPanel } from "../settings/SkillsPanel";
 import { normalizeToolPreset, toolPresetLabel, useSettingsStore } from "../../store/settingsStore";
 import { Button } from "../ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
@@ -31,7 +32,10 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const [value, setValue] = useState("");
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const toolPreset = normalizeToolPreset(useSettingsStore((state) => state.toolPreset));
+  const researchDepth = useSettingsStore((state) => state.researchDepth);
+  const setResearchDepth = useSettingsStore((state) => state.setResearchDepth);
   const canSteer = streaming && !disabled && Boolean(onSteer);
 
   const submit = () => {
@@ -49,13 +53,16 @@ export function ChatComposer({
 
   return (
     <div className="relative z-20 shrink-0 border-t border-border/60 bg-background/95 px-4 py-3 shadow-[0_-10px_30px_rgba(0,0,0,0.16)]">
-      {toolsOpen
+      {toolsOpen || skillsOpen
         ? createPortal(
             <button
               type="button"
-              aria-label="Close tools"
+              aria-label="Close popover"
               className="fixed inset-0 z-[95] cursor-default bg-black/55 backdrop-blur-[1px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={() => setToolsOpen(false)}
+              onClick={() => {
+                setToolsOpen(false);
+                setSkillsOpen(false);
+              }}
             />,
             document.body,
           )
@@ -134,6 +141,50 @@ export function ChatComposer({
                 />
               </PopoverContent>
             </Popover>
+            <Popover open={skillsOpen} onOpenChange={setSkillsOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="gap-1.5"
+                  disabled={disabled}
+                >
+                  <Library className="h-4 w-4" />
+                  <span className="hidden sm:inline">Skills</span>
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent
+                side="top"
+                align="start"
+                sideOffset={8}
+                collisionPadding={16}
+                className="z-[110] w-[min(28rem,calc(100vw-2rem))] border-border/80 p-3"
+              >
+                <SkillsPanel />
+              </PopoverContent>
+            </Popover>
+            <Button
+              type="button"
+              size="sm"
+              variant={researchDepth === "deep_parallel_research" ? "default" : "ghost"}
+              className={cn(
+                "gap-1.5",
+                researchDepth === "deep_parallel_research" &&
+                  "bg-emerald-600 text-white hover:bg-emerald-700",
+              )}
+              disabled={disabled || streaming}
+              onClick={() =>
+                setResearchDepth(
+                  researchDepth === "deep_parallel_research"
+                    ? "standard"
+                    : "deep_parallel_research",
+                )
+              }
+            >
+              <BookOpenCheck className="h-4 w-4" />
+              <span className="hidden sm:inline">Deep</span>
+            </Button>
             <span className="hidden text-xs text-muted-foreground sm:inline">
               ⌘/Ctrl + Enter to send
             </span>

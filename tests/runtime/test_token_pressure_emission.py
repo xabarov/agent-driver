@@ -8,7 +8,12 @@ import pytest
 
 from agent_driver.contracts import AgentRunInput
 from agent_driver.contracts.enums import RuntimeEventType
-from agent_driver.runtime.single_agent.llm_step import _emit_token_pressure_warning
+from agent_driver.contracts.messages import ChatMessage
+from agent_driver.llm.contracts import LlmRequest
+from agent_driver.runtime.single_agent.llm_step import (
+    _emit_token_pressure_warning,
+    _request_with_context_pressure_nudge,
+)
 from agent_driver.runtime.single_agent.types import EventSpec, RunContext
 
 
@@ -55,12 +60,12 @@ def test_emission_skipped_when_token_pressure_missing() -> None:
     assert not host.events
 
 
-def test_warning_payload_carries_signal_id_severity_and_thresholds() -> None:
+def test_early_warning_payload_carries_signal_id_severity_and_thresholds() -> None:
     """Emission packs stable signal_id, severity, all thresholds and ratio."""
     host = _CaptureHost()
     context = _make_context(
         {
-            "state": "warning",
+            "state": "early_warning",
             "used_tokens_estimate": 8000,
             "remaining_tokens_estimate": 2500,
             "context_window_estimate": 12000,
@@ -76,9 +81,9 @@ def test_warning_payload_carries_signal_id_severity_and_thresholds() -> None:
     assert event.event_type is RuntimeEventType.WARNING
     payload = event.payload or {}
     assert payload["kind"] == "token_pressure"
-    assert payload["signal_id"] == "context_above_soft_threshold"
-    assert payload["severity"] == "warning"
-    assert payload["state"] == "warning"
+    assert payload["signal_id"] == "context_early_warning"
+    assert payload["severity"] == "info"
+    assert payload["state"] == "early_warning"
     assert payload["used_tokens_estimate"] == 8000
     assert payload["remaining_tokens_estimate"] == 2500
     assert payload["context_window_estimate"] == 12000
@@ -88,6 +93,7 @@ def test_warning_payload_carries_signal_id_severity_and_thresholds() -> None:
     assert payload["blocking_threshold"] == 10500
     assert payload["context_usage_ratio"] == pytest.approx(0.6667, abs=0.0001)
     assert payload["usage_ratio"] == pytest.approx(0.6667, abs=0.0001)
+    assert payload["recommendation"] == "summarize_findings"
 
 
 def test_warning_payload_prefers_snapshot_context_usage_ratio() -> None:
@@ -105,6 +111,27 @@ def test_warning_payload_prefers_snapshot_context_usage_ratio() -> None:
     payload = host.events[0].payload or {}
     assert payload["context_usage_ratio"] == 0.42
     assert payload["usage_ratio"] == 0.42
+
+
+def test_delegate_or_summarize_state_has_distinct_signal_id() -> None:
+    """state=delegate_or_summarize maps to context_delegate_or_summarize."""
+    host = _CaptureHost()
+    context = _make_context(
+        {
+            "state": "delegate_or_summarize",
+            "used_tokens_estimate": 5600,
+            "context_window_estimate": 12000,
+            "context_usage_ratio": 0.4667,
+            "warning_threshold": 4200,
+            "compact_threshold": 9000,
+            "blocking_threshold": 11040,
+        }
+    )
+    _emit_token_pressure_warning(host, context)
+    payload = host.events[0].payload or {}
+    assert payload["signal_id"] == "context_delegate_or_summarize"
+    assert payload["severity"] == "warning"
+    assert payload["recommendation"] == "delegate_or_summarize"
 
 
 def test_compact_recommended_state_has_distinct_signal_id() -> None:
@@ -149,6 +176,21 @@ def test_blocking_state_carries_critical_severity() -> None:
     assert payload["usage_ratio"] == pytest.approx(0.9167, abs=0.0001)
 
 
+def test_emission_only_fires_on_state_change() -> None:
+    """Diagnostics are emitted once per pressure state transition."""
+    host = _CaptureHost()
+    context = _make_context(
+        {
+            "state": "delegate_or_summarize",
+            "used_tokens_estimate": 5600,
+            "context_window_estimate": 12000,
+        }
+    )
+    _emit_token_pressure_warning(host, context)
+    _emit_token_pressure_warning(host, context)
+    assert len(host.events) == 1
+
+
 def test_context_usage_ratio_is_none_when_window_zero() -> None:
     """Division-by-zero guard: ratio is None when context_window_estimate is 0."""
     host = _CaptureHost()
@@ -164,3 +206,18 @@ def test_context_usage_ratio_is_none_when_window_zero() -> None:
     payload = host.events[0].payload or {}
     assert payload["context_usage_ratio"] is None
     assert payload["usage_ratio"] is None
+
+
+def test_context_pressure_nudge_is_model_facing() -> None:
+    """Delegate pressure injects a system reminder into the LLM request."""
+    request = LlmRequest(
+        messages=(ChatMessage(role="user", content="research a long topic"),),
+    )
+    updated = _request_with_context_pressure_nudge(
+        request,
+        "delegate_or_summarize",
+    )
+    assert updated is not request
+    assert updated.messages[0].role == "system"
+    assert "Summarize read-heavy findings now" in updated.messages[0].content
+    assert updated.messages[1].content == "research a long topic"

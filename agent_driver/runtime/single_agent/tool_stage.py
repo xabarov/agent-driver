@@ -8,7 +8,6 @@ from typing import Any, Protocol
 from agent_driver.contracts.enums import (
     AgentProfile,
     ChatRole,
-    InterruptReason,
     RuntimeEventType,
 )
 from agent_driver.contracts.messages import ChatMessage
@@ -22,16 +21,12 @@ from agent_driver.runtime.metadata_state import (
     get_tool_loop_state,
 )
 from agent_driver.runtime.research_evidence import (
-    RESEARCH_DEPTH_SOURCE_VERIFIED,
-    SOURCE_VERIFIED_DOMAINS,
-    SOURCE_VERIFIED_FETCHES,
-    research_evidence_from_tool_results,
+    research_source_ledger_from_tool_results,
 )
 from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
     build_research_session_contract_from_context,
 )
-from agent_driver.runtime.planning_check import is_exit_plan_mode_tool
 from agent_driver.runtime.single_agent.pending import (
     pending_interrupt_from_execution_result,
     serialize_pending_interrupt,
@@ -45,9 +40,23 @@ from agent_driver.runtime.single_agent.step_planning import (
     build_planning_snapshot,
     update_planning_state_from_tool_results,
 )
+from agent_driver.runtime.single_agent.tool_stage_planning import (
+    emit_plan_lifecycle_events,
+)
+from agent_driver.runtime.single_agent.tool_stage_research import (
+    append_web_fetch_duplicate_guard,
+    append_web_fetch_verification_hint,
+    force_web_fetch_for_source_verified_research,
+    research_request_should_force_final,
+    source_verified_research_pending,
+)
 from agent_driver.runtime.single_agent.todo_reminders import (
     append_todo_progress_hint_after_substantive_tool,
     increment_tool_loops_since_todo_write,
+)
+from agent_driver.runtime.single_agent.tool_stage_subagents import (
+    apply_agent_tool_spawn_requests,
+    apply_subagent_control_tool_outputs,
 )
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
@@ -57,7 +66,6 @@ from agent_driver.runtime.single_agent.types import (
     RuntimeStepResult,
 )
 from agent_driver.runtime.tools import ToolExecutionResult
-from agent_driver.subagents import append_subagent_continuation, stop_subagent_run
 from agent_driver.tools.executor.planned import extract_planned_tool_calls
 
 
@@ -92,7 +100,7 @@ async def execute_tool_stage_step(
     result = await host._tool_result_with_approved_override(context)
     host._store_tool_stage_outputs(context, result)
     _post_process_tool_result(host, context, result)
-    _emit_plan_lifecycle_events(host, context, result)
+    emit_plan_lifecycle_events(host, context, result)
     interrupt_result = _try_build_interrupt_transition(host, context, result)
     if interrupt_result is not None:
         return interrupt_result
@@ -100,57 +108,6 @@ async def execute_tool_stage_step(
     if code_loop is not None:
         return code_loop
     return await _finalize_tool_stage_transition(host, context, result)
-
-
-def _emit_plan_lifecycle_events(
-    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
-) -> None:
-    """Emit plan-mode and plan-approval lifecycle events from tool results."""
-    for envelope in result.envelopes:
-        if envelope.call.tool_name == "enter_plan_mode":
-            emit_step_event(
-                host,
-                context,
-                event_type=RuntimeEventType.PLAN_MODE_ENTERED,
-                payload={
-                    "tool_call_id": envelope.call.tool_call_id,
-                    "summary": envelope.summary,
-                },
-            )
-            continue
-        if not is_exit_plan_mode_tool(envelope.call.tool_name):
-            continue
-        structured = envelope.structured_output
-        if not isinstance(structured, dict):
-            continue
-        plan_payload = structured.get("plan_approval")
-        if not isinstance(plan_payload, dict):
-            continue
-        payload = {
-            "tool_call_id": envelope.call.tool_call_id,
-            "plan_id": plan_payload.get("plan_id"),
-            "content_hash": plan_payload.get("content_hash"),
-            "path": plan_payload.get("path"),
-        }
-        emit_step_event(
-            host,
-            context,
-            event_type=RuntimeEventType.PLAN_ARTIFACT_UPDATED,
-            payload=payload,
-        )
-        if (
-            result.interrupt is not None
-            and result.interrupt.reason == InterruptReason.PLAN_APPROVAL_REQUIRED
-        ):
-            emit_step_event(
-                host,
-                context,
-                event_type=RuntimeEventType.PLAN_APPROVAL_REQUESTED,
-                payload={
-                    **payload,
-                    "interrupt_id": result.interrupt.interrupt_id,
-                },
-            )
 
 
 def _post_process_tool_result(
@@ -164,13 +121,49 @@ def _post_process_tool_result(
     if observations:
         context.metadata["observations"] = observations
     _update_tool_protocol_messages(context, result)
-    _apply_agent_tool_spawn_requests(context, result)
-    _apply_subagent_control_tool_outputs(host, context, result)
+    _record_skill_invocations(host, context, result)
+    apply_agent_tool_spawn_requests(context, result)
+    apply_subagent_control_tool_outputs(host, context, result)
     _update_zero_result_policy(context, result)
     _refresh_force_final_controls(context)
-    _force_web_fetch_for_source_verified_research(context)
+    force_web_fetch_for_source_verified_research(context)
     if not planning_updated:
         update_planning_state_from_tool_results(context)
+
+
+def _record_skill_invocations(
+    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
+) -> None:
+    """Persist compact skill invocation records from skill_view outputs."""
+    tool_state = get_tool_loop_state(context)
+    for envelope in result.envelopes:
+        if envelope.call.tool_name != "skill_view":
+            continue
+        structured = envelope.structured_output
+        if not isinstance(structured, dict):
+            continue
+        invocation = structured.get("skill_invocation")
+        if not isinstance(invocation, dict):
+            continue
+        payload = dict(invocation)
+        if not payload.get("tool_call_id"):
+            payload["tool_call_id"] = envelope.call.tool_call_id
+        tool_state.append_skill_invocation(payload)
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.SKILL_INVOKED,
+            payload={
+                "name": payload.get("name"),
+                "path": payload.get("path"),
+                "digest": payload.get("digest"),
+                "trusted": payload.get("trusted"),
+                "agent_id": payload.get("agent_id"),
+                "content_kind": payload.get("content_kind"),
+                "relative_file": payload.get("relative_file"),
+                "tool_call_id": payload.get("tool_call_id"),
+            },
+        )
 
 
 def _try_build_interrupt_transition(
@@ -204,164 +197,6 @@ def _try_build_interrupt_transition(
     context.metadata["terminal_output"] = paused_output.model_dump(mode="json")
     host._save_checkpoint(context, latest_output=paused_output, node_id="tool_stage")
     return RuntimeStepResult(next_step="done")
-
-
-def _apply_agent_tool_spawn_requests(
-    context: RunContext, result: ToolExecutionResult
-) -> None:
-    """Turn successful ``agent_tool`` envelopes into runtime subagent plans."""
-    tasks: list[dict[str, object]] = []
-    for envelope in result.envelopes:
-        if envelope.call.tool_name != "agent_tool":
-            continue
-        structured = envelope.structured_output
-        if not isinstance(structured, dict):
-            continue
-        request = structured.get("subagent_request")
-        if not isinstance(request, dict):
-            continue
-        task = str(request.get("task") or "").strip()
-        description = str(request.get("description") or task or "subagent task").strip()
-        if not task:
-            continue
-        request_id = str(
-            request.get("request_id") or envelope.call.tool_call_id
-        ).strip()
-        task_id = request_id or f"task_{len(tasks) + 1}"
-        idempotency_key = request.get("idempotency_key")
-        tasks.append(
-            {
-                "task_id": task_id,
-                "task": task,
-                "description": description,
-                "idempotency_key": (
-                    str(idempotency_key) if idempotency_key is not None else task_id
-                ),
-            }
-        )
-    if not tasks:
-        return
-    existing = context.metadata.get("planned_subagent_group")
-    if isinstance(existing, dict) and isinstance(existing.get("tasks"), list):
-        merged_tasks = [item for item in existing["tasks"] if isinstance(item, dict)]
-        merged_tasks.extend(tasks)
-        context.metadata["planned_subagent_group"] = {**existing, "tasks": merged_tasks}
-        return
-    context.metadata["planned_subagent_group"] = {
-        "group_id": f"group_{context.run_id}_agent_tool",
-        "purpose": "agent_tool_spawn",
-        "join_policy": "wait_all",
-        "merge_mode": "append",
-        "tasks": tasks,
-        "source": "agent_tool",
-    }
-
-
-def _apply_subagent_control_tool_outputs(
-    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
-) -> None:
-    """Apply parent-to-child continuation/stop tool outputs to subagent rows."""
-    for envelope in result.envelopes:
-        structured = envelope.structured_output
-        if not isinstance(structured, dict):
-            continue
-        if envelope.call.tool_name == "send_message_tool":
-            _apply_subagent_continuation_output(host, context, structured)
-        elif envelope.call.tool_name == "task_stop_tool":
-            _apply_subagent_stop_output(host, context, structured)
-
-
-def _apply_subagent_continuation_output(
-    host: ToolStageHost, context: RunContext, structured: dict[str, Any]
-) -> None:
-    message_event = structured.get("message_event")
-    if not isinstance(message_event, dict):
-        return
-    recipient = _clean_optional_text(message_event.get("recipient"))
-    message = _clean_optional_text(message_event.get("message"))
-    if recipient is None or message is None:
-        return
-    metadata = message_event.get("metadata")
-    updated = append_subagent_continuation(
-        host._deps.subagent_store,
-        parent_run_id=context.run_id,
-        subagent_run_id=recipient,
-        child_run_id=recipient,
-        message=message,
-        metadata=metadata if isinstance(metadata, dict) else None,
-        mailbox_store=host._deps.subagent_mailbox_store,
-    )
-    if updated is None:
-        return
-    _refresh_subagent_metadata(host, context)
-    emit_step_event(
-        host,
-        context,
-        event_type=RuntimeEventType.CONTROL_APPLIED,
-        payload={
-            "kind": "subagent_continuation",
-            "subagent_run_id": updated.subagent_run_id,
-            "child_run_id": updated.child_run_id,
-            "messages": len(updated.metadata.get("continuation_messages") or []),
-        },
-    )
-
-
-def _apply_subagent_stop_output(
-    host: ToolStageHost, context: RunContext, structured: dict[str, Any]
-) -> None:
-    stop_payload = structured.get("subagent_stop")
-    if not isinstance(stop_payload, dict):
-        return
-    subagent_run_id = _clean_optional_text(
-        stop_payload.get("subagent_run_id") or stop_payload.get("task_id")
-    )
-    child_run_id = _clean_optional_text(stop_payload.get("child_run_id"))
-    updated = stop_subagent_run(
-        host._deps.subagent_store,
-        parent_run_id=context.run_id,
-        subagent_run_id=subagent_run_id,
-        child_run_id=child_run_id,
-        reason=_clean_optional_text(stop_payload.get("reason")),
-    )
-    if updated is None:
-        return
-    _refresh_subagent_metadata(host, context)
-    payload = {
-        "subagent_run_id": updated.subagent_run_id,
-        "child_run_id": updated.child_run_id,
-        "status": updated.status.value,
-        "terminal_state": (
-            updated.terminal_state.value if updated.terminal_state is not None else None
-        ),
-        "reason": updated.metadata.get("stop_reason"),
-    }
-    emit_step_event(
-        host,
-        context,
-        event_type=RuntimeEventType.SUBAGENT_COMPLETED,
-        payload=payload,
-    )
-    emit_step_event(
-        host,
-        context,
-        event_type=RuntimeEventType.CONTROL_APPLIED,
-        payload={"kind": "subagent_stop", **payload},
-    )
-
-
-def _refresh_subagent_metadata(host: ToolStageHost, context: RunContext) -> None:
-    context.metadata["subagent_runs"] = [
-        row.model_dump(mode="json")
-        for row in host._deps.subagent_store.list_runs(context.run_id)
-    ]
-
-
-def _clean_optional_text(value: object) -> str | None:
-    if value is None:
-        return None
-    cleaned = str(value).strip()
-    return cleaned or None
 
 
 def _try_code_agent_loop_transition(
@@ -410,7 +245,7 @@ async def _finalize_tool_stage_transition(
         increment_tool_loops_since_todo_write(context)
     if continue_with_llm and context.run_input.agent_profile != AgentProfile.CODE_AGENT:
         _maybe_force_final_answer(context)
-        _force_web_fetch_for_source_verified_research(context)
+        force_web_fetch_for_source_verified_research(context)
     context.metadata.update(
         {
             "next_step": "llm_call" if continue_with_llm else "finalize",
@@ -521,6 +356,20 @@ def _emit_tool_completed_if_needed(
         event_type=RuntimeEventType.TOOL_CALL_COMPLETED,
         payload=payload,
     )
+    source_ledger = research_source_ledger_from_tool_results(
+        get_tool_loop_state(context).tool_results()
+    ).model_dump()
+    if any(
+        row["tool_name"] in {"web_search", "web_fetch"}
+        for row in tools
+        if isinstance(row.get("tool_name"), str)
+    ):
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.SOURCE_LEDGER_UPDATED,
+            payload=source_ledger,
+        )
 
 
 def _emit_tool_started_if_needed(host: ToolStageHost, context: RunContext) -> None:
@@ -647,8 +496,8 @@ def _update_tool_protocol_messages(
     _append_python_policy_recovery_hint(context, result, messages)
     _append_tool_call_parse_error_feedback(context, result, messages)
     append_todo_progress_hint_after_substantive_tool(context, result, messages)
-    _append_web_fetch_verification_hint(context, result, messages)
-    _append_web_fetch_duplicate_guard(context, result, messages)
+    append_web_fetch_verification_hint(context, result, messages)
+    append_web_fetch_duplicate_guard(context, result, messages)
     if context.metadata.get("force_final_answer"):
         messages.append(
             ChatMessage(
@@ -869,134 +718,6 @@ def _append_python_policy_recovery_hint(
         return
 
 
-def _append_web_fetch_duplicate_guard(
-    context: RunContext, result: ToolExecutionResult, messages: list[ChatMessage]
-) -> None:
-    """Discourage repeated web_fetch when prior fetch already returned usable text."""
-    saw_fetch = any(
-        envelope.call.tool_name == "web_fetch" for envelope in result.envelopes
-    )
-    if not saw_fetch:
-        return
-    prior_fetch_total = int(context.metadata.get("web_fetch_calls_total", 0))
-    allowed_fetches_before_warning = _required_research_fetch_count(context)
-    if prior_fetch_total > max(1, allowed_fetches_before_warning):
-        if context.metadata.get("web_fetch_duplicate_guard_sent") is True:
-            return
-        messages.append(
-            ChatMessage(
-                role=ChatRole.USER,
-                content=(
-                    "You already fetched at least one URL. Do not call web_fetch "
-                    "again "
-                    "unless the previous excerpt/metadata was clearly insufficient."
-                ),
-            )
-        )
-        context.metadata["web_fetch_duplicate_guard_sent"] = True
-
-
-def _append_web_fetch_verification_hint(
-    context: RunContext, result: ToolExecutionResult, messages: list[ChatMessage]
-) -> None:
-    """Nudge model to verify web searches with fetched source text."""
-    web_search_total = int(context.metadata.get("web_search_calls_total", 0))
-    web_fetch_total = int(context.metadata.get("web_fetch_calls_total", 0))
-    for envelope in result.envelopes:
-        if envelope.call.tool_name == "web_search":
-            web_search_total += 1
-        elif envelope.call.tool_name == "web_fetch":
-            web_fetch_total += 1
-    context.metadata["web_search_calls_total"] = web_search_total
-    context.metadata["web_fetch_calls_total"] = web_fetch_total
-    if web_search_total < 1:
-        return
-    required_fetches = _required_research_fetch_count(context)
-    evidence = research_evidence_from_tool_results(
-        get_tool_loop_state(context).tool_results()
-    )
-    if evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES:
-        get_research_runtime_state(context).set_fetch_fallback_required()
-        messages.append(
-            ChatMessage(
-                role=ChatRole.USER,
-                content=(
-                    "Multiple web_fetch attempts failed. Stop retrying fetch for "
-                    "this run; synthesize from available search-result metadata "
-                    "and explicitly say that full pages could not be verified."
-                ),
-            )
-        )
-        return
-    successful_fetches = max(web_fetch_total, evidence.successful_fetches)
-    unique_domains = len(evidence.unique_domains)
-    diversity_pending = (
-        successful_fetches >= 1 and unique_domains < SOURCE_VERIFIED_DOMAINS
-    )
-    if (
-        successful_fetches >= required_fetches
-        and unique_domains >= SOURCE_VERIFIED_DOMAINS
-    ):
-        return
-    if required_fetches > 1:
-        hint_signature = f"{successful_fetches}:{unique_domains}"
-        sent_for_count = context.metadata.get("web_fetch_verification_hint_sent_for")
-        if sent_for_count == hint_signature:
-            return
-        remaining = max(required_fetches - successful_fetches, 0)
-        if (
-            successful_fetches >= required_fetches
-            and unique_domains < SOURCE_VERIFIED_DOMAINS
-        ):
-            avoid_domains = ", ".join(evidence.unique_domains)
-            fetch_instruction = (
-                "fetch/open at least one additional concrete high-signal URL "
-                "from a different domain"
-            )
-            if avoid_domains:
-                fetch_instruction += (
-                    f"; do not fetch/open URLs from these already fetched "
-                    f"domain(s): {avoid_domains}"
-                )
-        else:
-            fetch_instruction = (
-                f"fetch/open at least {remaining} more concrete high-signal "
-                "URL(s) with web_fetch"
-            )
-            if diversity_pending:
-                avoid_domains = ", ".join(evidence.unique_domains)
-                if avoid_domains:
-                    fetch_instruction += (
-                        f", preferably outside these already fetched domain(s): "
-                        f"{avoid_domains}"
-                    )
-        messages.append(
-            ChatMessage(
-                role=ChatRole.USER,
-                content=(
-                    "This is source-verified research/report work. Search results "
-                    f"are only candidates; {fetch_instruction} before final "
-                    "synthesis, then cite the fetched sources."
-                ),
-            )
-        )
-        context.metadata["web_fetch_verification_hint_sent_for"] = hint_signature
-        return
-    if context.metadata.get("web_fetch_verification_hint_sent") is True:
-        return
-    messages.append(
-        ChatMessage(
-            role=ChatRole.USER,
-            content=(
-                "You already used web_search. Before concluding on "
-                "external-world facts, open at least one returned URL "
-                "with web_fetch and cite that URL."
-            ),
-        )
-    )
-    context.metadata["web_fetch_verification_hint_sent"] = True
-
-
 def _append_denial_recovery_message(
     context: RunContext, result: ToolExecutionResult, messages: list[ChatMessage]
 ) -> None:
@@ -1202,71 +923,6 @@ def _refresh_force_final_controls(context: RunContext) -> None:
     tool_state.clear_force_final_answer()
 
 
-def _force_web_fetch_for_source_verified_research(context: RunContext) -> None:
-    """Force the next repair turn to verify search candidates with web_fetch."""
-
-    def _clear_fetch_force() -> None:
-        if context.metadata.get("continuation_nudge_reason") in {
-            "source_verified_fetch_required",
-            "source_diversity_search_required",
-            "source_diversity_fetch_required",
-        }:
-            context.metadata.pop("continuation_nudge_reason", None)
-        context.metadata.pop("research_avoid_domains", None)
-        context.metadata.pop("research_source_diversity_avoid_domains", None)
-
-    if get_tool_loop_state(context).force_final_answer_enabled():
-        _clear_fetch_force()
-        return
-    if not _source_verified_research_pending(context):
-        _clear_fetch_force()
-        return
-    evidence = research_evidence_from_tool_results(
-        get_tool_loop_state(context).tool_results()
-    )
-    if evidence.search_calls < 1:
-        _clear_fetch_force()
-        return
-    if _source_diversity_repair_pending(evidence):
-        domains = ", ".join(evidence.unique_domains)
-        get_research_runtime_state(context).set_avoid_domains(
-            list(evidence.unique_domains)
-        )
-        if _last_research_tool_name(context) == "web_search":
-            get_tool_loop_state(context).set_tool_choice_override(
-                {
-                    "type": "tool",
-                    "name": "web_fetch",
-                }
-            )
-            context.metadata["continuation_nudge_reason"] = (
-                "source_diversity_fetch_required"
-            )
-        else:
-            get_tool_loop_state(context).set_tool_choice_override(
-                {
-                    "type": "tool",
-                    "name": "web_search",
-                }
-            )
-            context.metadata["continuation_nudge_reason"] = (
-                "source_diversity_search_required"
-            )
-        if domains:
-            context.metadata["research_source_diversity_avoid_domains"] = domains
-        return
-    if evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES:
-        _clear_fetch_force()
-        return
-    get_tool_loop_state(context).set_tool_choice_override(
-        {
-            "type": "tool",
-            "name": "web_fetch",
-        }
-    )
-    context.metadata["continuation_nudge_reason"] = "source_verified_fetch_required"
-
-
 def _maybe_force_final_answer(context: RunContext) -> None:
     """Enable forced final-answer mode only when guard heuristics trigger."""
     reason = _force_final_reason(context)
@@ -1305,7 +961,7 @@ def _force_final_reason(context: RunContext) -> str | None:
         return "near_tool_budget"
     if near_step_budget:
         return "near_step_budget"
-    research_satisfied = _research_request_should_force_final(
+    research_satisfied = research_request_should_force_final(
         context
     ) and not _python_reliability_request_pending(context)
     if research_satisfied:
@@ -1366,7 +1022,7 @@ def _deliverable_request_should_force_final(context: RunContext) -> bool:
     deliverable = context.run_input.tool_policy.metadata.get("deliverable_request")
     if not isinstance(deliverable, dict) or deliverable.get("enabled") is not True:
         return False
-    if _source_verified_research_pending(context):
+    if source_verified_research_pending(context):
         return False
     tool_results = get_tool_loop_state(context).tool_results()
     for item in tool_results:
@@ -1383,118 +1039,6 @@ def _deliverable_request_should_force_final(context: RunContext) -> bool:
         if tool_name in {"todo_write", "planning_state_update"}:
             return True
     return False
-
-
-def _research_request_should_force_final(context: RunContext) -> bool:
-    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
-    if not isinstance(task_contract, dict):
-        return False
-    if task_contract.get("kind") != "research":
-        return False
-    if task_contract.get("requires_research") is not True:
-        return False
-    tool_results = get_tool_loop_state(context).tool_results()
-    if task_contract.get("research_depth") == RESEARCH_DEPTH_SOURCE_VERIFIED:
-        if not _tool_available(context, "web_fetch"):
-            return any(
-                isinstance(item, dict)
-                and isinstance(item.get("call"), dict)
-                and item["call"].get("tool_name") == "web_search"
-                for item in tool_results
-            )
-        evidence = research_evidence_from_tool_results(tool_results)
-        if evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES and (
-            evidence.successful_fetches == 0
-            and (evidence.search_calls > 0 or evidence.fetch_calls > 0)
-        ):
-            get_research_runtime_state(context).set_fetch_fallback_required()
-            return True
-        return evidence.source_verified(
-            required_fetches=SOURCE_VERIFIED_FETCHES,
-            required_domains=SOURCE_VERIFIED_DOMAINS,
-        )
-    for item in tool_results:
-        if not isinstance(item, dict):
-            continue
-        call = item.get("call")
-        if not isinstance(call, dict):
-            continue
-        if call.get("tool_name") in {"web_search", "web_fetch"}:
-            return True
-    return False
-
-
-def _source_verified_research_pending(context: RunContext) -> bool:
-    task_contract = _task_contract_metadata(context)
-    if not isinstance(task_contract, dict):
-        return False
-    if task_contract.get("research_depth") != RESEARCH_DEPTH_SOURCE_VERIFIED:
-        return False
-    if not _tool_available(context, "web_fetch"):
-        return False
-    evidence = research_evidence_from_tool_results(
-        get_tool_loop_state(context).tool_results()
-    )
-    if evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES and (
-        evidence.successful_fetches == 0
-        and (evidence.search_calls > 0 or evidence.fetch_calls > 0)
-    ):
-        return False
-    return not evidence.source_verified(
-        required_fetches=SOURCE_VERIFIED_FETCHES,
-        required_domains=SOURCE_VERIFIED_DOMAINS,
-    )
-
-
-def _source_diversity_repair_pending(evidence: Any) -> bool:
-    return (
-        getattr(evidence, "successful_fetches", 0) >= SOURCE_VERIFIED_FETCHES
-        and len(getattr(evidence, "unique_domains", ())) < SOURCE_VERIFIED_DOMAINS
-    )
-
-
-def _last_research_tool_name(context: RunContext) -> str | None:
-    tool_results = get_tool_loop_state(context).tool_results()
-    for item in reversed(tool_results):
-        if not isinstance(item, dict):
-            continue
-        call = item.get("call")
-        if not isinstance(call, dict):
-            continue
-        tool_name = str(call.get("tool_name") or "").strip()
-        if tool_name in {"web_search", "web_fetch"}:
-            return tool_name
-    return None
-
-
-def _required_research_fetch_count(context: RunContext) -> int:
-    task_contract = _task_contract_metadata(context)
-    if (
-        isinstance(task_contract, dict)
-        and task_contract.get("research_depth") == RESEARCH_DEPTH_SOURCE_VERIFIED
-        and _tool_available(context, "web_fetch")
-    ):
-        return SOURCE_VERIFIED_FETCHES
-    return 1
-
-
-def _task_contract_metadata(context: RunContext) -> object:
-    run_input = getattr(context, "run_input", None)
-    policy = getattr(run_input, "tool_policy", None)
-    metadata = getattr(policy, "metadata", None)
-    if not isinstance(metadata, dict):
-        return None
-    return metadata.get("task_contract")
-
-
-def _tool_available(context: RunContext, tool_name: str) -> bool:
-    effective_tool_names = get_tool_loop_state(context).effective_tool_names()
-    if effective_tool_names is not None:
-        return tool_name in effective_tool_names
-    policy = context.run_input.tool_policy
-    denied = getattr(policy, "denied_tools", None) or []
-    allowed = getattr(policy, "allowed_tools", None)
-    return tool_name not in denied and (allowed is None or tool_name in allowed)
 
 
 def _python_request_should_force_final(context: RunContext) -> bool:

@@ -17,6 +17,7 @@ export interface StartChatStreamOptions {
   model?: string;
   retryFromRunId?: string;
   clientRequestId?: string;
+  researchDepth?: "deep_parallel_research";
   signal?: AbortSignal;
   lastEventId?: string;
   onEvent: (event: RunStreamEvent) => void;
@@ -92,6 +93,7 @@ export async function startChatStream(opts: StartChatStreamOptions): Promise<voi
         model: opts.model,
         retry_from_run_id: opts.retryFromRunId,
         client_request_id: opts.clientRequestId,
+        research_depth: opts.researchDepth,
       }),
       signal: opts.signal,
     },

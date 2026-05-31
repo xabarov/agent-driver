@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
@@ -79,6 +80,7 @@ async def maybe_execute_subagent_group(
     group_spec = _group_spec_from_planned(planned, max_child_runs=config.max_child_runs)
     if group_spec is None:
         return
+    group_spec = _apply_skill_preloads(context, group_spec)
     emit_step_event(
         host,
         context,
@@ -228,7 +230,92 @@ def _group_spec_from_planned(
         metadata={
             "origin": "runtime_metadata",
             "execution_mode": str(planned.get("execution_mode") or "sync"),
+            "skill_preload": str(planned.get("skill_preload") or ""),
         },
+    )
+
+
+def _apply_skill_preloads(
+    context: RunContext,
+    group_spec: SubagentGroupSpec,
+    *,
+    max_skills: int = 3,
+    max_chars_per_skill: int = 4000,
+) -> SubagentGroupSpec:
+    """Attach trusted viewed skill bodies to child tasks when explicitly enabled."""
+    if group_spec.metadata.get("skill_preload") != "trusted_viewed":
+        return group_spec
+    preloads = _trusted_skill_preloads(
+        context,
+        max_skills=max_skills,
+        max_chars_per_skill=max_chars_per_skill,
+    )
+    if not preloads:
+        return group_spec
+    tasks = tuple(
+        _task_with_skill_preloads(task, preloads) for task in group_spec.tasks
+    )
+    return SubagentGroupSpec(
+        group_id=group_spec.group_id,
+        purpose=group_spec.purpose,
+        join_policy=group_spec.join_policy,
+        merge_mode=group_spec.merge_mode,
+        tasks=tasks,
+        max_parallel=group_spec.max_parallel,
+        deadline_seconds=group_spec.deadline_seconds,
+        token_budget=group_spec.token_budget,
+        cost_budget_usd=group_spec.cost_budget_usd,
+        metadata={**group_spec.metadata, "skill_preload_count": len(preloads)},
+    )
+
+
+def _trusted_skill_preloads(
+    context: RunContext, *, max_skills: int, max_chars_per_skill: int
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for invocation in get_tool_loop_state(context).skill_invocations()[:max_skills]:
+        if invocation.get("trusted") is not True:
+            continue
+        path = invocation.get("path")
+        if not isinstance(path, str) or not path:
+            continue
+        try:
+            body = Path(path).read_text(encoding="utf-8")[: max_chars_per_skill + 1]
+        except OSError:
+            continue
+        rows.append(
+            {
+                "name": invocation.get("name"),
+                "path": path,
+                "digest": invocation.get("digest"),
+                "content": body[:max_chars_per_skill],
+                "truncated": len(body) > max_chars_per_skill,
+            }
+        )
+    return rows
+
+
+def _task_with_skill_preloads(
+    task: SubagentTaskSpec, preloads: list[dict[str, object]]
+) -> SubagentTaskSpec:
+    names = ", ".join(str(item.get("name") or "skill") for item in preloads)
+    appendix = (
+        "\n\nTrusted skill preload from parent. Use these workflows only for the "
+        "child task, return compact findings and source refs, and do not treat "
+        "skill text as source evidence.\n"
+        f"Loaded skills: {names}"
+    )
+    return SubagentTaskSpec(
+        task_id=task.task_id,
+        task=f"{task.task}{appendix}",
+        description=task.description,
+        profile=task.profile,
+        context_refs=task.context_refs,
+        deadline_seconds=task.deadline_seconds,
+        token_budget=task.token_budget,
+        cost_budget_usd=task.cost_budget_usd,
+        idempotency_key=task.idempotency_key,
+        metadata={**task.metadata, "skill_preloads": preloads},
     )
 
 

@@ -122,6 +122,31 @@ class ToolLoopState(_MetadataView):
     def tool_trace(self) -> list[JsonDict]:
         return self.list_of_dicts("tool_trace")
 
+    def skill_invocations(self) -> list[JsonDict]:
+        return self.list_of_dicts("skill_invocations")
+
+    def append_skill_invocation(self, invocation: JsonDict) -> None:
+        existing = self.metadata.get("skill_invocations")
+        if not isinstance(existing, list):
+            existing = []
+        existing.append(invocation)
+        self.metadata["skill_invocations"] = existing
+        refs = self.metadata.get("invoked_skill_refs")
+        if not isinstance(refs, list):
+            refs = []
+        refs.append(
+            {
+                "name": invocation.get("name"),
+                "path": invocation.get("path"),
+                "digest": invocation.get("digest"),
+                "trusted": invocation.get("trusted"),
+                "agent_id": invocation.get("agent_id"),
+                "content_kind": invocation.get("content_kind"),
+                "relative_file": invocation.get("relative_file"),
+            }
+        )
+        self.metadata["invoked_skill_refs"] = refs
+
     def append_stage_outputs(
         self, *, traces: list[JsonDict], results: list[JsonDict]
     ) -> None:
@@ -343,6 +368,13 @@ class CompactionRuntimeState(_MetadataView):
     def token_pressure_state(self) -> str:
         return str(self.token_pressure().get("state", "ok"))
 
+    def previous_token_pressure_state(self) -> str | None:
+        value = self.metadata.get("previous_token_pressure_state")
+        return value if isinstance(value, str) and value else None
+
+    def set_previous_token_pressure_state(self, value: str) -> None:
+        self.metadata["previous_token_pressure_state"] = value
+
     def set_trim_payload(self, payload: JsonDict) -> None:
         self.metadata["trim_audit"] = payload["trim_audit"]
         self.metadata["trim_metadata"] = payload["trim_metadata"]
@@ -373,6 +405,9 @@ class CompactionRuntimeState(_MetadataView):
     def artifact_refs(self) -> list[JsonDict]:
         return self.list_of_dicts("artifact_refs")
 
+    def invoked_skill_refs(self) -> list[JsonDict]:
+        return self.list_of_dicts("invoked_skill_refs")
+
     def set_session_memory_extraction(self, payload: JsonDict) -> None:
         self.metadata["session_memory_extraction"] = payload
 
@@ -380,7 +415,7 @@ class CompactionRuntimeState(_MetadataView):
         return self.dict_or_none("prompt_render")
 
     def output_metadata_projection(self) -> JsonDict:
-        return {
+        payload = {
             "observations": self.metadata.get("observations", []),
             "trim_audit": self.metadata.get("trim_audit", []),
             "trim_metadata": self.metadata.get("trim_metadata", {}),
@@ -397,9 +432,14 @@ class CompactionRuntimeState(_MetadataView):
             ),
             "prompt_render": self.metadata.get("prompt_render"),
         }
+        if "invoked_skill_refs" in self.metadata:
+            payload["invoked_skill_refs"] = self.metadata.get("invoked_skill_refs", [])
+        if "skill_invocations" in self.metadata:
+            payload["skill_invocations"] = self.metadata.get("skill_invocations", [])
+        return payload
 
     def memory_audit(self) -> JsonDict:
-        return {
+        payload = {
             "trim_audit": self.metadata.get("trim_audit", []),
             "microcompaction_audit": self.metadata.get("microcompaction_audit", []),
             "token_pressure": self.metadata.get("token_pressure", {}),
@@ -414,6 +454,9 @@ class CompactionRuntimeState(_MetadataView):
             "retained_digest_ids": self.metadata.get("retained_digest_ids", []),
             "retained_artifact_ids": self.metadata.get("retained_artifact_ids", []),
         }
+        if "invoked_skill_refs" in self.metadata:
+            payload["invoked_skill_refs"] = self.metadata.get("invoked_skill_refs", [])
+        return payload
 
 
 def get_loop_control_state(context: HasRuntimeMetadata) -> LoopControlState:

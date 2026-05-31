@@ -34,7 +34,9 @@ from agent_driver.runtime import (
     wrap_governed_executor,
 )
 from agent_driver.runtime.control import InMemoryCommandQueueStore
+from agent_driver.runtime.single_agent.subagent_stage import _apply_skill_preloads
 from agent_driver.subagents import InMemorySubagentMailboxStore, InMemorySubagentStore
+from agent_driver.subagents.specs import SubagentGroupSpec, SubagentTaskSpec
 from agent_driver.tools import (
     GovernedToolExecutor,
     ToolRegistry,
@@ -419,6 +421,59 @@ async def test_task_stop_tool_cancels_existing_subagent_run() -> None:
     event_types = [event.type for event in event_log.list_for_run("run_child_stop")]
     assert RuntimeEventType.SUBAGENT_COMPLETED in event_types
     assert RuntimeEventType.CONTROL_APPLIED in event_types
+
+
+def test_skill_aware_subagent_preload_keeps_only_trusted_viewed_skills(
+    tmp_path,
+) -> None:
+    """Optional subagent skill preload should ignore untrusted invocations."""
+    skill_path = tmp_path / "SKILL.md"
+    skill_path.write_text(
+        "---\nname: trusted-research\n---\n# Trusted Research\nFetch sources.",
+        encoding="utf-8",
+    )
+    context = type(
+        "Context",
+        (),
+        {
+            "metadata": {
+                "skill_invocations": [
+                    {
+                        "name": "trusted-research",
+                        "path": str(skill_path),
+                        "digest": "abc",
+                        "trusted": True,
+                    },
+                    {
+                        "name": "untrusted",
+                        "path": str(skill_path),
+                        "digest": "def",
+                        "trusted": False,
+                    },
+                ]
+            }
+        },
+    )()
+    group = SubagentGroupSpec(
+        group_id="group",
+        purpose="research",
+        tasks=(
+            SubagentTaskSpec(
+                task_id="one",
+                task="Research one source",
+                description="Research one source",
+            ),
+        ),
+        metadata={"skill_preload": "trusted_viewed"},
+    )
+
+    updated = _apply_skill_preloads(context, group)
+
+    assert updated.metadata["skill_preload_count"] == 1
+    assert "Trusted skill preload" in updated.tasks[0].task
+    assert updated.tasks[0].metadata["skill_preloads"][0]["name"] == (
+        "trusted-research"
+    )
 
 
 def _running_child_row(*, parent_run_id: str) -> SubagentRun:

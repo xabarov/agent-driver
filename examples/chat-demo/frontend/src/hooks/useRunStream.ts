@@ -12,6 +12,8 @@ import {
   isToolCallCompleted,
   isToolCallStarted,
   parseCompactionNotice,
+  parseDeepResearchProgress,
+  parseSourceLedgerEvent,
   parseSubagentLifecycleEvent,
   parseToolStatesFromEvent,
   type RunStreamEvent,
@@ -90,6 +92,14 @@ function applyStreamEvent(
   if (compactionNotice) {
     store.upsertCompactionNotice(assistantId, compactionNotice);
   }
+  const sourceLedger = parseSourceLedgerEvent(event);
+  const researchProgress = parseDeepResearchProgress(event);
+  if (sourceLedger || researchProgress) {
+    store.updateDeepResearch(assistantId, {
+      ledger: sourceLedger,
+      progress: researchProgress,
+    });
+  }
   if (event.event === "llm_call_completed" || event.event === "run_completed") {
     const snapshot = parsePlanningSnapshot(event.data.planning_snapshot);
     if (snapshot) {
@@ -167,6 +177,7 @@ function applyStreamEvent(
 export function useRunStream(): RunStreamController {
   const queryClient = useQueryClient();
   const toolPreset = normalizeToolPreset(useSettingsStore((state) => state.toolPreset));
+  const researchDepth = useSettingsStore((state) => state.researchDepth);
   const model = useSettingsStore((state) => state.model);
   const abortRef = useRef<AbortController | null>(null);
   const activeAssistantRef = useRef<string | null>(null);
@@ -231,6 +242,10 @@ export function useRunStream(): RunStreamController {
           sessionId: state.sessionId,
           toolPreset,
           model: model || undefined,
+          researchDepth:
+            researchDepth === "deep_parallel_research"
+              ? "deep_parallel_research"
+              : undefined,
           retryFromRunId,
           clientRequestId,
           signal,
@@ -256,7 +271,7 @@ export function useRunStream(): RunStreamController {
         });
       });
     },
-    [invalidateAfterTerminal, model, runStream, toolPreset],
+    [invalidateAfterTerminal, model, researchDepth, runStream, toolPreset],
   );
 
   const sendMessage = useCallback(

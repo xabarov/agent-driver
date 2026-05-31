@@ -11,8 +11,10 @@ Stable signal ids
 
 For ``kind="token_pressure"``:
 
-- ``context_above_soft_threshold`` — context usage entered the warning band;
-  compaction is not yet recommended but the host may surface a hint.
+- ``context_early_warning`` — context usage crossed the early guidance band.
+- ``context_delegate_or_summarize`` — context usage crossed the band where the
+  model should summarize or delegate read-heavy work.
+- ``context_above_soft_threshold`` — legacy alias for the old warning band.
 - ``context_compact_recommended`` — context usage crossed the compact
   threshold; the runtime will attempt compaction on the next eligible turn.
 - ``context_blocking_threshold`` — context usage approached the blocking
@@ -84,6 +86,7 @@ _TOKEN_PRESSURE_FIELDS: tuple[str, ...] = (
     "blocking_threshold",
     "context_usage_ratio",
     "usage_ratio",
+    "recommendation",
 )
 
 _TOOL_CHOICE_ANTIPATTERN_FIELDS: tuple[str, ...] = (

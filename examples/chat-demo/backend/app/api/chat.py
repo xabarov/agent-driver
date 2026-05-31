@@ -257,11 +257,34 @@ def _chat_tool_policy(
         if body.force_planning is not None
         else settings.force_planning
     )
-    return build_chat_tool_policy(
+    policy = build_chat_tool_policy(
         body.message,
         force_planning=force_planning,
         force_planning_mode=settings.force_planning_mode,
     )
+    if body.research_depth != "deep_parallel_research":
+        return policy
+    metadata = dict(policy.metadata)
+    task_contract = dict(metadata.get("task_contract") or {})
+    task_contract.update(
+        {
+            "kind": "research",
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "goal": task_contract.get("goal") or body.message,
+            "approach": (
+                "Use the shared Deep Research runtime contract: discover "
+                "candidate sources, verify concrete reads, preserve the source "
+                "ledger, and keep final synthesis in the parent run."
+            ),
+        }
+    )
+    metadata["task_contract"] = task_contract
+    metadata["deep_research_mode"] = {
+        "enabled": True,
+        "research_depth": "deep_parallel_research",
+    }
+    return policy.model_copy(update={"metadata": metadata})
 
 
 @router.post("/chat/messages")

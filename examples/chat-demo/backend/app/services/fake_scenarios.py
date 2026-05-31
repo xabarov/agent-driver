@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+import httpx
+
 from agent_driver.contracts import ChatMessage
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.tools import ToolCall
@@ -347,6 +349,421 @@ class CompactionNoticeFakeProvider(FakeProvider):
         )
 
 
+class DeepResearchSkillsFakeProvider(FakeProvider):
+    """Fake provider that exercises skill_view + web_fetch chat-demo UX."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="Deep research skill probe completed.")
+        self._calls = 0
+
+    def _usage(self, request: LlmRequest) -> UsageSummary:
+        return UsageSummary(
+            input_tokens=max(
+                1, sum(len(message.content) for message in request.messages) // 4
+            ),
+            output_tokens=16,
+            total_tokens=32,
+            model_provider=self.name,
+            model_name=request.model or "fake-model",
+        )
+
+    def _planned_calls(self) -> list[dict[str, object]]:
+        from agent_driver.tools.context import get_workspace_cwd
+
+        workspace = get_workspace_cwd()
+        skill_dir = workspace / ".agent-driver" / "skills" / "deep-research-report"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_path = skill_dir / "SKILL.md"
+        if not skill_path.exists():
+            skill_path.write_text(
+                "\n".join(
+                    [
+                        "---",
+                        "name: deep-research-report",
+                        "description: Deterministic chat-demo deep research probe.",
+                        "allowed-tools: [web_fetch]",
+                        "---",
+                        "",
+                        "# Deep Research Report",
+                        "",
+                        "Use verified web reads before writing the final answer.",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+        base_dir = str(skill_dir.parent)
+        return [
+            ToolCall(
+                tool_name="skill_view",
+                tool_call_id="fake_skill_view",
+                args={
+                    "base_dir": base_dir,
+                    "name": "deep-research-report",
+                    "trusted_roots": [base_dir],
+                    "agent_id": "chat-demo-agent",
+                },
+            ).model_dump(mode="json"),
+            ToolCall(
+                tool_name="web_fetch",
+                tool_call_id="fake_web_fetch",
+                args={
+                    "url": "https://example.com",
+                    "extract_mode": "text",
+                    "max_chars": 500,
+                },
+            ).model_dump(mode="json"),
+        ]
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            return LlmResponse(
+                message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                provider=self.name,
+                model=request.model or "fake-model",
+                metadata={
+                    "provider_kind": "fake",
+                    "planned_tool_calls": self._planned_calls(),
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(
+                role=ChatRole.ASSISTANT,
+                content=(
+                    "Deep research skill probe completed with "
+                    "[Example](https://example.com)."
+                ),
+            ),
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+            provider=self.name,
+            model=request.model or "fake-model",
+            metadata={"provider_kind": "fake"},
+        )
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            yield LlmStreamEvent(
+                event="tool_calls",
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                metadata={"planned_tool_calls": self._planned_calls()},
+            )
+            return
+        yield LlmStreamEvent(
+            event="delta",
+            delta_text="Deep research skill probe completed with ",
+        )
+        yield LlmStreamEvent(
+            event="delta",
+            delta_text="[Example](https://example.com).",
+        )
+        yield LlmStreamEvent(
+            event="done",
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+        )
+
+
+class UntrustedSkillWarningFakeProvider(FakeProvider):
+    """Fake provider that loads a skill outside trusted roots."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="Untrusted skill warning probe completed.")
+        self._calls = 0
+
+    def _usage(self, request: LlmRequest) -> UsageSummary:
+        return UsageSummary(
+            input_tokens=max(
+                1, sum(len(message.content) for message in request.messages) // 4
+            ),
+            output_tokens=16,
+            total_tokens=32,
+            model_provider=self.name,
+            model_name=request.model or "fake-model",
+        )
+
+    def _planned_calls(self) -> list[dict[str, object]]:
+        from agent_driver.tools.context import get_workspace_cwd
+
+        workspace = get_workspace_cwd()
+        skill_dir = workspace / "uploaded-skills" / "untrusted-research"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_path = skill_dir / "SKILL.md"
+        if not skill_path.exists():
+            skill_path.write_text(
+                "\n".join(
+                    [
+                        "---",
+                        "name: untrusted-research",
+                        "description: Deterministic untrusted skill probe.",
+                        "allowed_tools: [python]",
+                        "---",
+                        "",
+                        "# Untrusted Research",
+                        "",
+                        "This skill intentionally lives outside trusted roots.",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+        base_dir = str(skill_dir.parent)
+        trusted_root = workspace / ".agent-driver" / "trusted-skills"
+        trusted_root.mkdir(parents=True, exist_ok=True)
+        return [
+            ToolCall(
+                tool_name="skill_view",
+                tool_call_id="fake_untrusted_skill_view",
+                args={
+                    "base_dir": base_dir,
+                    "name": "untrusted-research",
+                    "trusted_roots": [str(trusted_root)],
+                    "agent_id": "chat-demo-agent",
+                },
+            ).model_dump(mode="json")
+        ]
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            return LlmResponse(
+                message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                provider=self.name,
+                model=request.model or "fake-model",
+                metadata={
+                    "provider_kind": "fake",
+                    "planned_tool_calls": self._planned_calls(),
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(
+                role=ChatRole.ASSISTANT,
+                content="Untrusted skill warning probe completed.",
+            ),
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+            provider=self.name,
+            model=request.model or "fake-model",
+            metadata={"provider_kind": "fake"},
+        )
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            yield LlmStreamEvent(
+                event="tool_calls",
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                metadata={"planned_tool_calls": self._planned_calls()},
+            )
+            return
+        yield LlmStreamEvent(event="delta", delta_text="Untrusted skill warning ")
+        yield LlmStreamEvent(event="delta", delta_text="probe completed.")
+        yield LlmStreamEvent(
+            event="done",
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+        )
+
+
+class CompactionAfterSkillFakeProvider(FakeProvider):
+    """Fake provider that makes viewed skill content trigger later compaction."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="Compaction after skill probe completed.")
+        self._calls = 0
+
+    def _usage(self, request: LlmRequest) -> UsageSummary:
+        return UsageSummary(
+            input_tokens=max(
+                1, sum(len(message.content) for message in request.messages) // 4
+            ),
+            output_tokens=16,
+            total_tokens=32,
+            model_provider=self.name,
+            model_name=request.model or "fake-model",
+        )
+
+    def _planned_calls(self) -> list[dict[str, object]]:
+        from agent_driver.tools.context import get_workspace_cwd
+
+        workspace = get_workspace_cwd()
+        skill_dir = workspace / ".agent-driver" / "skills" / "large-research-skill"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_path = skill_dir / "SKILL.md"
+        if not skill_path.exists():
+            skill_path.write_text(
+                "\n".join(
+                    [
+                        "---",
+                        "name: large-research-skill",
+                        "description: Large deterministic compaction probe skill.",
+                        "allowed_tools: [web_search]",
+                        "---",
+                        "",
+                        "# Large Research Skill",
+                        "",
+                        "Preserve this compact invocation record across compaction.",
+                        "",
+                        "finding: alpha source https://example.com/alpha",
+                        ("detail " * 3200).strip(),
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+        base_dir = str(skill_dir.parent)
+        return [
+            ToolCall(
+                tool_name="skill_view",
+                tool_call_id="fake_compaction_skill_view",
+                args={
+                    "base_dir": base_dir,
+                    "name": "large-research-skill",
+                    "trusted_roots": [base_dir],
+                    "agent_id": "chat-demo-agent",
+                    "max_chars": 20000,
+                },
+            ).model_dump(mode="json")
+        ]
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            return LlmResponse(
+                message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                provider=self.name,
+                model=request.model or "fake-model",
+                metadata={
+                    "provider_kind": "fake",
+                    "planned_tool_calls": self._planned_calls(),
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(
+                role=ChatRole.ASSISTANT,
+                content="Compaction after skill probe completed.",
+            ),
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+            provider=self.name,
+            model=request.model or "fake-model",
+            metadata={"provider_kind": "fake"},
+        )
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            yield LlmStreamEvent(
+                event="tool_calls",
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                metadata={"planned_tool_calls": self._planned_calls()},
+            )
+            return
+        yield LlmStreamEvent(event="delta", delta_text="Compaction after skill ")
+        yield LlmStreamEvent(event="delta", delta_text="probe completed.")
+        yield LlmStreamEvent(
+            event="done",
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+        )
+
+
+class ProviderFailureAfterSearchFakeProvider(FakeProvider):
+    """Fake provider that searches successfully, then fails the next LLM call."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="Provider failure after search probe.")
+        self._calls = 0
+
+    def _usage(self, request: LlmRequest) -> UsageSummary:
+        return UsageSummary(
+            input_tokens=max(
+                1, sum(len(message.content) for message in request.messages) // 4
+            ),
+            output_tokens=12,
+            total_tokens=24,
+            model_provider=self.name,
+            model_name=request.model or "fake-model",
+        )
+
+    def _planned_calls(self) -> list[dict[str, object]]:
+        return [
+            ToolCall(
+                tool_name="web_search",
+                tool_call_id="fake_search_before_provider_failure",
+                args={
+                    "query": "agent-driver provider failure after search probe",
+                    "max_results": 1,
+                    "mock_results": [
+                        {
+                            "title": "Provider failure probe",
+                            "url": "https://example.com/provider-failure",
+                            "snippet": "Deterministic search result before failure.",
+                        }
+                    ],
+                },
+            ).model_dump(mode="json")
+        ]
+
+    def _raise_provider_error(self) -> None:
+        request = httpx.Request("POST", "https://fake.provider.local/chat")
+        response = httpx.Response(
+            429,
+            request=request,
+            text="rate limit after web search",
+        )
+        response.raise_for_status()
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            return LlmResponse(
+                message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                provider=self.name,
+                model=request.model or "fake-model",
+                metadata={
+                    "provider_kind": "fake",
+                    "planned_tool_calls": self._planned_calls(),
+                },
+            )
+        self._raise_provider_error()
+        raise RuntimeError("unreachable")
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            yield LlmStreamEvent(
+                event="tool_calls",
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                metadata={"planned_tool_calls": self._planned_calls()},
+            )
+            return
+        self._raise_provider_error()
+        yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.ERROR)
+
+
 def build_fake_scenario_provider(scenario: str | None) -> FakeProvider | None:
     """Return a scenario provider, or None when no scenario is selected."""
     normalized = (scenario or "").strip()
@@ -358,4 +775,12 @@ def build_fake_scenario_provider(scenario: str | None) -> FakeProvider | None:
         return PythonPolicyRecoveryFakeProvider()
     if normalized == "compaction_notice":
         return CompactionNoticeFakeProvider()
+    if normalized == "deep_research_skills":
+        return DeepResearchSkillsFakeProvider()
+    if normalized == "untrusted_skill_warning":
+        return UntrustedSkillWarningFakeProvider()
+    if normalized == "compaction_after_skill_invocation":
+        return CompactionAfterSkillFakeProvider()
+    if normalized == "provider_failure_after_search":
+        return ProviderFailureAfterSearchFakeProvider()
     return None
