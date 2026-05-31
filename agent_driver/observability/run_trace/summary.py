@@ -29,6 +29,7 @@ from agent_driver.observability.run_trace.tools import (
     assistant_text as _assistant_text,
     count_events as _count_events,
     event_data as _event_data,
+    event_tools,
     interrupt_reasons as _interrupt_reasons,
     tool_names as _tool_names,
     tool_payloads as _tool_payloads,
@@ -187,6 +188,7 @@ def summarize_run_trace(
             "missing_source_ledger_artifact"
         ],
         "deep_research_full_report_rewrite": research_efficiency["full_report_rewrite"],
+        "deep_research_stale_report_edit": research_efficiency["stale_report_edit"],
         "deep_research_long_final_after_report": research_efficiency[
             "long_final_after_report"
         ],
@@ -544,6 +546,7 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         "report_updated": bool(report_paths),
         "report_update_count": len(report_paths),
         "report_full_write_count": _report_full_write_count(updates),
+        **_report_read_edit_flow_summary(events),
         "source_ledger_updated": bool(source_ledger_paths),
         "source_ledger_update_count": len(source_ledger_paths),
         "source_ledger_record_count": source_ledger_records,
@@ -570,6 +573,9 @@ def _research_efficiency_summary(
     )
     report_updated = bool(artifacts.get("report_updated"))
     report_full_write_count = _as_int(artifacts.get("report_full_write_count"))
+    stale_report_edit_count = _as_int(
+        artifacts.get("report_targeted_edit_without_fresh_read_count")
+    )
     source_ledger_updated = bool(artifacts.get("source_ledger_updated"))
     assistant_chars = len(assistant_text.strip())
     usage = llm_calls.get("usage")
@@ -582,6 +588,7 @@ def _research_efficiency_summary(
     missing_report_artifact = deep_expected and not report_updated
     missing_source_ledger_artifact = deep_expected and not source_ledger_updated
     full_report_rewrite = deep_expected and report_full_write_count > 1
+    stale_report_edit = deep_expected and stale_report_edit_count > 0
     repeated_tools = sorted(
         name
         for name in set(tool_names)
@@ -592,6 +599,7 @@ def _research_efficiency_summary(
         "missing_report_artifact": missing_report_artifact,
         "missing_source_ledger_artifact": missing_source_ledger_artifact,
         "full_report_rewrite": full_report_rewrite,
+        "stale_report_edit": stale_report_edit,
         "missing_initial_todo": missing_initial_todo,
         "first_tool": first_tool,
         "tool_chain": " -> ".join(tool_names),
@@ -600,6 +608,8 @@ def _research_efficiency_summary(
         "artifact_update_count": artifacts.get("update_count", 0),
         "report_update_count": artifacts.get("report_update_count", 0),
         "report_full_write_count": report_full_write_count,
+        "report_targeted_edit_count": artifacts.get("report_targeted_edit_count", 0),
+        "report_targeted_edit_without_fresh_read_count": stale_report_edit_count,
         "source_ledger_update_count": artifacts.get("source_ledger_update_count", 0),
         "source_ledger_record_count": artifacts.get("source_ledger_record_count", 0),
         "long_final_after_report": long_final_after_report,
@@ -673,6 +683,52 @@ def _report_full_write_count(updates: list[dict[str, Any]]) -> int:
             continue
         count += 1
     return count
+
+
+def _report_read_edit_flow_summary(events: list[dict[str, object]]) -> dict[str, int]:
+    fresh_read = False
+    targeted_edits = 0
+    stale_targeted_edits = 0
+    report_reads = 0
+    for event in events:
+        event_name = event.get("event")
+        if event_name == "tool_call_completed":
+            for tool in event_tools(_event_data(event)):
+                tool_name = tool.get("tool_name") or tool.get("name")
+                if tool_name in {"read_file", "artifact_read", "artifact_preview"}:
+                    args = tool.get("args")
+                    if isinstance(args, dict) and _path_targets_report(
+                        args.get("path")
+                    ):
+                        report_reads += 1
+                        fresh_read = True
+        if event_name not in {"artifact_created", "artifact_updated"}:
+            continue
+        data = _event_data(event)
+        if data.get("path") != "research/report.md":
+            continue
+        tool_name = data.get("tool_name")
+        if tool_name == "file_write":
+            fresh_read = False
+        elif tool_name in {"file_edit", "file_patch"}:
+            targeted_edits += 1
+            if not fresh_read:
+                stale_targeted_edits += 1
+            fresh_read = False
+    return {
+        "report_read_count": report_reads,
+        "report_targeted_edit_count": targeted_edits,
+        "report_targeted_edit_without_fresh_read_count": stale_targeted_edits,
+    }
+
+
+def _path_targets_report(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().replace("\\", "/").rstrip("/")
+    return normalized == "research/report.md" or normalized.endswith(
+        "/research/report.md"
+    )
 
 
 def _as_int(value: object) -> int:
@@ -764,6 +820,10 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "deep_research_full_report_rewrite",
         "research/report.md was fully written more than once; use file_edit/file_patch after the first draft.",
+    ),
+    (
+        "deep_research_stale_report_edit",
+        "research/report.md was edited without a fresh read/preview after the previous write.",
     ),
     (
         "deep_research_long_final_after_report",

@@ -149,9 +149,11 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
                 "first_tool": "todo_write",
                 "long_final_after_report": False,
                 "full_report_rewrite": False,
+                "stale_report_edit": False,
                 "output_tokens_after_first_report_update": 7,
                 "report_update_count": 1,
                 "report_full_write_count": 1,
+                "report_targeted_edit_without_fresh_read_count": 0,
                 "source_ledger_record_count": 2,
             },
         },
@@ -175,5 +177,6 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
     assert "domains=`2`" in scorecard
     assert "workspace=`research/report.md, research/sources.jsonl`" in scorecard
     assert "full_writes=`1`" in scorecard
+    assert "stale_edits=`0`" in scorecard
     assert "source_records=`2`" in scorecard
     assert "first_tool=`todo_write`" in scorecard

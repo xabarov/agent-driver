@@ -952,3 +952,25 @@ Focused checks:
 - `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
   deep-research-artifact`.
+
+## Implementation Slice P9-stale-report-edit-guard - 2026-05-31
+
+Added trace-level stale-read detection for targeted report edits:
+
+- trace summary now treats `read_file`, `artifact_read`, and `artifact_preview`
+  of `research/report.md` as a fresh read;
+- every `file_write` to `research/report.md` invalidates freshness;
+- `file_edit`/`file_patch` updates to the report without a fresh read are
+  counted as stale targeted edits;
+- Deep Research efficiency exposes `report_targeted_edit_count`,
+  `report_targeted_edit_without_fresh_read_count`, and `stale_report_edit`;
+- failure flag `deep_research_stale_report_edit` catches report patches that
+  risk overwriting a newer draft section from stale context;
+- live scorecards print `stale_edits`.
+
+Focused checks:
+
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact`.

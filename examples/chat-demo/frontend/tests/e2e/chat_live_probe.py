@@ -262,6 +262,7 @@ SCENARIOS: dict[str, LiveScenario] = {
             "deep_research_no_report_artifact",
             "deep_research_no_source_ledger_artifact",
             "deep_research_full_report_rewrite",
+            "deep_research_stale_report_edit",
             "deep_research_missing_initial_todo",
             "deep_research_long_final_after_report",
         ),
@@ -708,6 +709,8 @@ def assert_trace_acceptance(
                 failures.append(
                     "research report was fully rewritten after initial draft"
                 )
+            if efficiency.get("stale_report_edit") is True:
+                failures.append("research report was edited without a fresh read")
             if efficiency.get("long_final_after_report") is True:
                 failures.append("long final answer was emitted after report artifact")
             if efficiency.get("first_tool") != "todo_write":
@@ -846,6 +849,7 @@ def render_scenario_scorecard(
             f"workspace=`{', '.join(workspace_paths) if workspace_paths else '-'}`, "
             f"report_updates=`{efficiency.get('report_update_count', 0)}`, "
             f"full_writes=`{efficiency.get('report_full_write_count', 0)}`, "
+            f"stale_edits=`{efficiency.get('report_targeted_edit_without_fresh_read_count', 0)}`, "
             f"source_records=`{efficiency.get('source_ledger_record_count', 0)}`"
         ),
         (
