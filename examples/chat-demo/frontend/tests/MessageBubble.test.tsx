@@ -134,6 +134,34 @@ describe("MessageBubble", () => {
     expect(screen.getByText(/1 domains/)).toBeInTheDocument();
   });
 
+  test("labels search-only evidence as candidates, not verified sources", () => {
+    renderBubble(
+      <MessageBubble
+        message={{
+          id: "a-search-only",
+          role: "assistant",
+          content: "**Run failed**\n\nProvider rejected the request with HTTP 400.",
+          sources: [
+            {
+              id: "web_search:call_1:1",
+              url: "https://example.com/search-hit",
+              canonicalUrl: "https://example.com/search-hit",
+              sourceType: "web_search",
+              title: "Search hit",
+              domain: "example.com",
+              toolCallId: "call_1",
+              rank: 1,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("Search candidates")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Sources")).not.toBeInTheDocument();
+    expect(screen.getByText("candidate")).toBeInTheDocument();
+  });
+
   test("source cards are keyboard focusable links", () => {
     renderBubble(
       <MessageBubble

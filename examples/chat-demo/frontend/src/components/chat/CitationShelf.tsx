@@ -16,9 +16,13 @@ function sourceBadge(source: SourceEvidence): string {
     return "fetched";
   }
   if (source.sourceType === "web_search") {
-    return "search";
+    return "candidate";
   }
   return "linked";
+}
+
+function hasVerifiedSource(sources: SourceEvidence[]): boolean {
+  return sources.some((source) => source.sourceType !== "web_search");
 }
 
 function coverageLabel(sources: SourceEvidence[]): string {
@@ -49,13 +53,15 @@ export function CitationShelf({ sources }: CitationShelfProps) {
   const visible = sources.slice(0, 5);
   const hiddenCount = Math.max(0, sources.length - visible.length);
   const coverage = coverageLabel(sources);
+  const verified = hasVerifiedSource(sources);
+  const shelfLabel = verified ? "Sources" : "Search candidates";
 
   return (
-    <section aria-label="Sources" className="mt-3 border-t border-border/70 pt-3">
+    <section aria-label={shelfLabel} className="mt-3 border-t border-border/70 pt-3">
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground">
         <div className="flex items-center gap-2">
           <Link2 className="h-3.5 w-3.5" aria-hidden />
-          Sources
+          {shelfLabel}
         </div>
         {coverage ? (
           <Badge variant="outline" className="text-[0.65rem] font-normal">
@@ -106,7 +112,7 @@ export function CitationShelf({ sources }: CitationShelfProps) {
       </div>
       {hiddenCount > 0 ? (
         <div className="mt-2 text-xs text-muted-foreground">
-          +{hiddenCount} more sources
+          +{hiddenCount} more {verified ? "sources" : "candidates"}
         </div>
       ) : null}
     </section>

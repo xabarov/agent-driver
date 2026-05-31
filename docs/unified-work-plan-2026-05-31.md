@@ -1,0 +1,483 @@
+# Unified Work Plan
+
+Дата: 2026-05-31.
+
+Цель: связать текущие направления `agent-driver` в один порядок работ:
+research/provider quality, Deep Research + Skills, harness/context pressure,
+SDK productization, refactoring and docs cleanup.
+
+Короткий вердикт: **сначала укрепляем измерение и state discipline, потом
+меняем поведение, затем упаковываем SDK и только после этого чистим/двигаем
+крупные модули и документацию**. Иначе мы либо зафиксируем грязные internal
+metadata как публичный SDK, либо добавим Skills/Deep Research поверх уже
+перегруженных stage-файлов.
+
+## Inputs
+
+Active / semi-active planning docs:
+
+- [Research Quality Summary](research-quality-improvement-plan-2026-05-31.md)
+- [Provider And Model Debugging](provider-model-debugging.md)
+- [Deep Research And Skills Analysis](deep-research-and-skills-analysis-2026-05-31.md)
+- [SDK Quality Deep Analysis](sdk-quality-deep-analysis-2026-05-31.md)
+- [Agent Driver Refactoring Plan](agent-driver-refactoring-plan-2026-05-31.md)
+- [Additional Notes](add-notes.md)
+
+Closed / noisy but valuable history:
+
+- [OpenClaude/Hermes Improvement Plan](openclaude-improvement-plan-2026-05-29.md)
+- [Chat Demo Markdown And Citations Plan](chat-demo-markdown-citations-plan-2026-05-30.md)
+- [Chat Demo Compaction Notification Plan](chat-demo-compaction-notification-plan-2026-05-30.md)
+- [Research Provider Quality Architecture Plan](research-provider-quality-architecture-plan-2026-05-31.md)
+
+External context note:
+
+- HumanLayer's "Advanced Context Engineering for Coding Agents" argues for
+  frequent intentional compaction, keeping complex coding-agent workflows
+  around roughly 40-60% context utilization, and using subagents as context
+  control rather than as role-play:
+  <https://github.com/humanlayer/advanced-context-engineering-for-coding-agents/blob/main/ace-fca.md>
+
+## Current State
+
+### What Is Already Mostly Closed
+
+The following should not be reopened as open-ended architecture debates unless
+new Phoenix traces show a fresh regression:
+
+- dynamic prompt assembly by effective tool surface;
+- chat planning split: live todos vs modal approval planning;
+- steering controls and queue semantics;
+- subagent basics: spawn, child rows, join, synthesis UI;
+- Python tool autonomy and UI;
+- Markdown/math/code rendering and citation shelf;
+- compaction notification lifecycle;
+- research evidence gate: `web_search` candidates vs `web_fetch` verified
+  evidence;
+- provider failure UX for 4xx/stream errors;
+- unknown-tool repair and bounded research repair.
+
+These plans are useful as decision logs, but they are too long for the active
+docs front door.
+
+### What Is Still Active
+
+1. Provider/model research quality has a completed baseline for the fork-join
+   scenario and must keep the cheap-to-expensive live matrix discipline from
+   `provider-model-debugging.md` for future provider/research changes.
+2. `skill_tool` is only discovery; it does not yet implement metadata parsing,
+   `skill_view`, invocation records, subagent preload or compaction survival.
+3. Runtime state is still too dependent on ad hoc `context.metadata[...]`.
+   Planning tools show the same smell at the public tool boundary:
+   `exit_plan_mode_v2` is the only registered approval-exit tool, while older
+   names such as `exit_plan_mode` still appear in runtime checks/history. The
+   issue is not "two tools" so much as versioned tool names leaking into
+   prompts, traces, tests and future SDK contracts.
+4. Context pressure behavior is late; `add-notes.md` correctly points out that
+   92% is emergency territory, not the first moment to summarize/delegate.
+5. SDK shape is too close to internal runtime: no first-class `Session`,
+   `RunHandle`, stream helper, typed SDK errors or stable trace contract.
+6. Large modules are now friction points:
+   `tool_stage.py`, `llm_step.py`, `openai_compatible.py`,
+   `governed.py`, `run_trace_summary.py`.
+7. Docs have accumulated closed plans that obscure the active sequence.
+
+## Dependency Graph
+
+| Workstream | Depends On | Blocks / Enables |
+| --- | --- | --- |
+| Provider/research verification gate | Existing trace summary, live probe | Safe research/skills changes |
+| Metadata inventory + typed runtime state | None | Refactor, SDK contracts, context pressure |
+| Contract snapshots | Metadata inventory | SDK stabilization, refactor safety |
+| Context pressure / early compaction | Typed state, trace diagnostics | Better long research/code tasks, SDK diagnostics |
+| Skill metadata + `skill_view` | Tool catalog projection, trust policy | Research skills, skill-aware subagents |
+| Research + Skills integration | Skill core, source evidence ledger | Deep Research quality without DAG |
+| SDK productization | Contract snapshots, stable state names | Public API/docs, package consumer tests |
+| Structural refactor | Contract snapshots, focused behavior tests | Long-term maintainability |
+| Docs cleanup | Unified plan, status map | Lower planning noise |
+
+The important ordering constraint: **do not freeze public SDK APIs before
+metadata/state contracts are explicit**, and **do not add a Deep Research DAG
+before Skills + evidence ledger + trace gates are tested**.
+
+## Benchmark Strategy
+
+Research and harness quality should not be validated by a hand-picked set of
+ten happy-path prompts. At the same time, adopting a huge external benchmark as
+the daily gate would make iteration slow, expensive and noisy. Use a layered
+benchmark strategy.
+
+### Relevant External Benchmarks
+
+Deep Research / browsing:
+
+- **BrowseComp**: OpenAI benchmark for hard-to-find factual answers that
+  require persistent browsing. Good for search strategy and source discovery,
+  but vulnerable to contamination and often too expensive for daily runs.
+  Source: <https://openai.com/index/browsecomp/>
+- **GAIA**: real-world assistant tasks requiring reasoning, tool use, web
+  browsing and often file/multimodal handling. Good for general agentic
+  behavior, but broader than our research contract.
+  Source: <https://ai.meta.com/research/publications/gaia-a-benchmark-for-general-ai-assistants/>
+- **FRAMES**: 824 multi-hop retrieval/reasoning questions over Wikipedia
+  evidence. Good for retrieval/source synthesis and cheaper to adapt to
+  controlled corpora than open web.
+  Source: <https://huggingface.co/datasets/google/frames-benchmark>
+- **BrowseComp-Plus / fixed-corpus derivatives**: useful because a fixed corpus
+  makes runs more reproducible than live web, though we should treat newer
+  derivatives as research inputs until their tooling is stable.
+  Source: <https://arxiv.org/abs/2508.06600>
+
+Harness / full agent evaluation:
+
+- **Harness-Bench**: evaluates harness/configuration effects across sandboxed
+  offline tasks with file operations, shell, browser interactions and artifact
+  grading. Relevant to our concern that model quality and harness quality get
+  mixed together.
+  Source: <https://www.harness-bench.ai/>
+- **ClawBench / OpenClaw-style trace benchmarks**: useful design pattern:
+  trace-based scoring, failure modes such as hallucinated completion,
+  verification skipped, tool misuse, state regression. Treat as methodology
+  inspiration even if we do not adopt the suite wholesale.
+  Source: <https://github.com/openclaw/clawbench>
+- **ProofAgent Harness / similar local harnesses**: useful for adversarial
+  multi-turn behavior, policy edges and behavioral regression testing.
+  Source: <https://www.proofagent.ai/harness>
+- **SWE-bench, Terminal-Bench, WebArena, OSWorld, tau-bench**: useful for
+  broader agent capability comparisons, but most are not direct gates for our
+  current research/provider/skills work.
+
+### Recommended Use
+
+Use external benchmarks as **calibration and seed pools**, not as the only
+definition of done.
+
+Daily / per-PR gate:
+
+- 8-15 internal scenarios, deterministic or fake-provider where possible.
+- Trace-level assertions, not just final text:
+  tool order, fetch count, source diversity, final citation coverage,
+  unfinished todos, unknown tools, provider terminal state, context pressure
+  state, compaction events, child handoff.
+- These should run quickly and fail with actionable labels.
+
+Weekly / phase gate:
+
+- 20-40 scenarios total:
+  internal scenarios plus a small stratified sample from external benchmarks.
+- Suggested sample:
+  5 BrowseComp-style hard lookup tasks;
+  5 GAIA-style multi-tool tasks;
+  5 FRAMES-style multi-hop retrieval tasks;
+  5 harness stress tasks with bad JSON, blocked fetch, provider 4xx, stalled
+  stream, context pressure, compaction/resume, subagent join.
+- Run each stochastic live scenario 3 times or on 2 model classes when judging
+  model-dependent behavior.
+
+Release / confidence gate:
+
+- 50-100 scenario matrix, not necessarily all live web.
+- Include fixed-corpus tasks to avoid live-web drift.
+- Include current production-like prompts from our own users/docs.
+- Track trend over time: pass rate, failure labels, token cost, latency,
+  source coverage, provider failures, context-pressure outcomes.
+
+### Why Not Only External Benchmarks
+
+- Many public benchmarks measure "model + harness + provider + tool stack" as
+  one number. That is useful for marketing but weak for engineering diagnosis.
+- Live web tasks drift; exact answers and pages can disappear.
+- Public questions can be contaminated, and Anthropic has documented eval
+  awareness/contamination concerns around BrowseComp-style evaluation:
+  <https://www.anthropic.com/engineering/eval-awareness-browsecomp>.
+- Benchmarks often score only final answers, while our risk is hidden runtime
+  behavior: fake sources, unfinished todos, bad tool recovery, progress-only
+  finals, provider protocol failures.
+
+### Why Not Only Our Own Tests
+
+- Internal tests overfit quickly. A plan can look "closed" after ten examples
+  and still fail on unfamiliar search strategies.
+- External samples add distribution pressure: obscure factual lookup,
+  multi-hop retrieval, mixed tools, file/code reasoning and adversarial harness
+  faults.
+- External benchmark task taxonomies help us notice missing scenario classes.
+
+### Target Dataset Shape
+
+Create an `eval_scenarios/research_harness/` or equivalent fixture set with
+explicit tags:
+
+- `research_depth`: `light_search`, `source_verified_report`,
+  `deep_parallel_research`;
+- `source_mode`: `live_web`, `fixed_corpus`, `file_search`, `mcp_resource`;
+- `failure_mode`: `none`, `provider_4xx`, `fetch_blocked`, `bad_json`,
+  `unknown_tool`, `context_pressure`, `compaction_resume`;
+- `expected_tools`: `web_search`, `web_fetch`, `python`, `agent_tool`,
+  `skill_view`;
+- `scoring`: deterministic, trace-contract, LLM-judge, human-review.
+
+The default engineering score should be trace-contract first, final-answer
+judge second.
+
+## Optimal Sequence
+
+### Phase 0 - Plan Triage And Live Gate Baseline
+
+Purpose: establish a single truth for what is active and make every later
+change measurable.
+
+- [x] Treat this document as the active sequence for cross-cutting work.
+- [x] Finish/update the model matrix in
+  [Provider And Model Debugging](provider-model-debugging.md): cheap models
+  first, GPT-5.5 only as final acceptance or model-specific reproduction.
+- [x] Add or refresh one trace artifact per important research/provider failure
+  class: provider 4xx, search-only candidate, missing source diversity,
+  unfinished todos, progress-only final.
+- [x] Convert `docs/add-notes.md` into a real context-pressure plan or fold its
+  content into Phase 2 below.
+- [x] Do not delete closed docs yet; first mark their status.
+
+Acceptance:
+
+- We can say which live scenario proves a change fixed research/provider
+  behavior.
+- Active docs vs closed history are identified.
+
+Status on 2026-05-31:
+
+- GPT-5.5 final acceptance passed for `research-report-requires-fetch` as
+  `run_657ce790e764`.
+- Adjacent model acceptance passed on DeepSeek, GLM, Kimi, Qwen 3.7 and Claude
+  Sonnet 4.6; see [Provider And Model Debugging](provider-model-debugging.md).
+- Broad deterministic regression passed after the live acceptance. Remaining
+  Phase 0 work is closed: docs/status hygiene was completed without deleting
+  historical plans.
+
+### Phase 1 - Runtime State And Contract Foundation
+
+Purpose: stop new work from deepening the metadata bag problem.
+
+- [x] Execute refactoring Phase 1: inventory every `context.metadata[...]` key
+  with owner, producer, consumer, persistence need and UI relevance.
+- [x] Add `docs/runtime-metadata.md` as the metadata owner map.
+- [ ] Execute refactoring Phase 2 in a compatibility-preserving way:
+  `LoopControlState`, `ToolLoopState`, `PlanningRuntimeState`,
+  `ResearchRuntimeState`, `StreamingRuntimeState`,
+  `CompactionRuntimeState`.
+- [ ] Add contract snapshots for public shapes:
+  `AgentRunInput`, `AgentRunOutput`, `RuntimeEvent`, `ToolManifest`,
+  `ToolTrace`, interrupt/resume payloads.
+- [ ] Define a canonical planning tool contract before SDK freeze:
+  choose whether the public tool name should be stable
+  `exit_plan_mode` with schema-versioned payloads, or keep
+  `exit_plan_mode_v2` as the canonical name and document old names strictly as
+  trace-only aliases. Update prompts, `PLANNING_TOOL_NAMES`, trace summaries,
+  tests and docs to use one canonical vocabulary.
+- [ ] Add a rule: new runtime state must go through owned helpers, not fresh
+  ad hoc metadata keys.
+
+Acceptance:
+
+- Existing `AgentRunOutput.metadata` remains behavior-compatible.
+- Refactor and SDK work can proceed with stable internal state boundaries.
+- Planning approval no longer exposes accidental tool-name versioning as an
+  architectural decision.
+
+### Phase 2 - Harness Context Pressure
+
+Purpose: address the "dumb zone" before it silently degrades research/code
+quality.
+
+- [x] Add `context_usage_ratio` to token pressure snapshots.
+- [ ] Add states:
+  `ok`, `early_warning`, `delegate_or_summarize`,
+  `compact_recommended`, `blocking`.
+- [ ] Emit runtime/stream diagnostics when state changes.
+- [ ] Add model-facing nudges around 35-45% context usage:
+  summarize findings, delegate read-heavy work, preserve source refs, move to
+  synthesis.
+- [ ] Keep 92% as emergency compaction/blocking, not normal operating policy.
+- [ ] Add eval/live scenario for a long research/code task comparing behavior
+  before and after early pressure nudges.
+
+Acceptance:
+
+- Long tasks get early structured guidance before context is already bad.
+- Trace summary can explain whether the run ignored a context recommendation.
+
+### Phase 3 - Minimal SDK P0
+
+Purpose: package existing capabilities without exposing unstable internals.
+
+This phase should be small and compatibility-preserving; do not wait for every
+refactor phase before making the SDK pleasant.
+
+- [ ] Add `agent.query(...)` / top-level `query(...)` for one-shot usage.
+- [ ] Add `Session` facade:
+  `send`, `stream`, `resume`, `history`, `runs`, `fork` where already
+  supported by stores.
+- [ ] Add `RunHandle`:
+  `run_id`, `events()`, `final()`, `abort()`, `checkpoint()`.
+- [ ] Add stream helper object over the existing event log:
+  `events`, `text_deltas`, `final_output`, `cancel`, `cursor`.
+- [ ] Add package import isolation tests for `agent_driver.sdk`.
+- [ ] Keep `graph_preset` and low-level `SingleAgentRunner` as advanced escape
+  hatches, not quick-start API.
+
+Acceptance:
+
+- A backend developer can build a chat endpoint without importing
+  `runtime.single_agent`.
+- SDK does not leak CLI/TUI/chat-demo dependencies.
+
+### Phase 4 - Skill Core
+
+Purpose: turn Skills from filesystem discovery into a real runtime context
+mechanism.
+
+- [ ] Add `agent_driver.skills` package with `SkillManifest` and frontmatter
+  parser.
+- [ ] Extend/replace `skill_tool` with metadata listing:
+  `name`, `description`, `when_to_use`, `version`, `tags`, `allowed_tools`,
+  `context`, `agent`, `paths`, `trusted`, `source`, `skill_dir`.
+- [ ] Add `skill_view`: load full `SKILL.md` or one supporting file.
+- [ ] Return supporting file index, skill directory, trust and safety warnings.
+- [ ] Record `SkillInvocation` in runtime events/metadata.
+- [ ] Add prompt fragment: call `skill_view` when a skill is relevant; do not
+  merely mention a skill without loading it.
+- [ ] Add compaction persistence for invoked skill refs: name, path, digest,
+  trusted flag, agent id; do not persist full bodies by default.
+
+Acceptance:
+
+- Skills are visible, loadable, traceable and safe enough for curated research
+  work.
+- Full skill content is loaded only on demand.
+
+### Phase 5 - Research + Skills Integration
+
+Purpose: improve Deep Research quality without building a separate research
+DAG.
+
+- [ ] Add curated research skills:
+  `deep-research-report`, `source-triangulation`,
+  `provider-doc-research`, `literature-review`, `citation-auditor`.
+- [ ] For `source_verified_report`, suggest relevant skills when `skill_view`
+  is available; do not auto-load hidden instructions.
+- [ ] Promote source evidence into a first-class ledger:
+  search candidates, verified web/file/MCP reads, failed/blocked reads,
+  assistant links.
+- [ ] Keep `ResearchSessionContract` as final-readiness authority.
+- [ ] Add optional skill-aware subagent preload:
+  child receives trusted skill bodies, parent receives compact findings +
+  source refs.
+- [ ] Add live/fake evals:
+  deep report with skill loaded, literature review, provider-doc official-only,
+  malicious/untrusted skill, compaction after skill invocation.
+
+Acceptance:
+
+- Skills improve research behavior but cannot launder search candidates into
+  verified sources.
+- Parent still owns final synthesis and citation coverage.
+
+### Phase 6 - Structural Refactor
+
+Purpose: reduce maintenance cost after state and behavior gates exist.
+
+Do this in small PRs; avoid combining file moves with behavior changes.
+
+- [ ] Repackage `runtime/single_agent` into lifecycle, llm call, tool loop,
+  finalization, planning and context-management subpackages with compatibility
+  shims.
+- [ ] Split `tool_stage.py` around transitions, research controls, planning
+  events and subagent outputs.
+- [ ] Split `llm_step.py` around request preparation, compaction integration,
+  provider call, event projection and provider error mapping.
+- [ ] Turn `GovernedToolExecutor` into an explicit pipeline:
+  normalize -> hooks -> policy -> gate -> partition -> execute -> collect.
+- [ ] Decompose OpenAI-compatible provider adapter:
+  wire payload, response parser, stream parser, usage parser, tool choice.
+- [ ] Split `run_trace_summary.py` into analyzers:
+  research, provider, tools, compaction, planning, streaming.
+
+Acceptance:
+
+- Large files stop being the default landing zone for unrelated features.
+- Tests prove public behavior and event contracts stayed stable.
+
+### Phase 7 - SDK P1 And Documentation
+
+Purpose: finish productization once internals have stable owners.
+
+- [ ] Add SDK typed provider errors, request IDs, timeout/retry config.
+- [ ] Polish custom tool API:
+  docstring/signature defaults, `tool(...)` helper, catalog projections.
+- [ ] Add stable `TraceSummary` SDK contract and support-bundle recipe.
+- [ ] Add SDK context diagnostics:
+  `output.context.pressure`, `output.context.recommendation`.
+- [ ] Add docs:
+  `docs/sdk.md`, `docs/sdk-sessions.md`, `docs/sdk-tools.md`,
+  `docs/sdk-streaming.md`, `docs/sdk-errors.md`.
+- [ ] Rewrite README quick start around SDK entrypoints.
+
+Acceptance:
+
+- SDK is usable as a product surface, not just a wrapper over internal runner
+  wiring.
+
+### Phase 8 - Docs Cleanup
+
+Purpose: keep docs useful without losing decision history.
+
+Do after Phase 0 status marking and after the new active sequence is accepted.
+
+- [ ] Add status labels to long plan docs:
+  `active`, `closed`, `reference`, `archive-candidate`.
+- [ ] Move closed long plans to `docs/archive/2026-05/` or compress them into
+  short decision summaries.
+- [ ] Keep only active/current docs in `docs/README.md` and `docs/roadmap.md`.
+- [ ] Replace `docs/add-notes.md` with a real plan or delete it after its only
+  note is absorbed.
+- [ ] Keep `provider-model-debugging.md` active until the live model matrix is
+  no longer changing.
+- [ ] Keep `research-quality-improvement-plan-2026-05-31.md` as a status page,
+  but link forward to this unified plan and the skills/research plan.
+- [ ] Preserve test artifacts and historical run IDs only where they explain a
+  current regression or acceptance gate.
+
+Acceptance:
+
+- A new contributor can open `docs/README.md` and see current concepts plus one
+  active roadmap, not several completed phase logs.
+
+## What Not To Do Yet
+
+- Do not build a generic DAG/state-machine runner for research. Use skills,
+  source ledger, bounded repair and subagent handoff first.
+- Do not start broad module moves before metadata inventory and contract
+  snapshots.
+- Do not freeze SDK metadata fields until typed runtime state exists.
+- Do not add automatic skill loading from semantic guesses; make skill use
+  visible through `skill_view` and traces.
+- Do not delete historical docs until links are updated and closed status is
+  recorded.
+
+## Recommended First Sprint
+
+If we want the next slice to be maximally useful and low-regret:
+
+1. Done: create `docs/runtime-metadata.md` inventory.
+2. Add minimal typed state helpers for research/planning/compaction/tool loop.
+3. Add contract snapshots for public outputs and runtime events.
+4. Normalize the planning approval tool contract:
+   canonical name, legacy alias policy, prompt text and trace labels.
+5. Done: promote `add-notes.md` into context-pressure acceptance criteria.
+6. Refresh the provider live matrix with one cheap model and one reasoning
+   model.
+7. Only then start `skill_view` and SDK `query/session` slices.
+
+This sequence keeps the runway clean: every later feature either becomes a
+small contract change, a skill catalog change, or an SDK wrapper change, not
+another hidden metadata convention.

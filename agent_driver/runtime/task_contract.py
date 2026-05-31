@@ -38,6 +38,17 @@ _RESEARCH_MARKERS = (
     "source",
 )
 
+_FETCH_REQUIRED_MARKERS = (
+    "открой",
+    "открыть",
+    "загрузи",
+    "прочитай url",
+    "web_fetch",
+    "fetch",
+    "open url",
+    "open the url",
+)
+
 _NO_RESEARCH_MARKERS = (
     "без поиска",
     "без интернета",
@@ -108,6 +119,7 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
         }
     if any(marker in lowered for marker in _DELIVERABLE_MARKERS):
         requires_research = _requires_research(lowered)
+        fetch_required = _requires_fetch(lowered)
         research_depth = classify_research_depth(
             lowered,
             requires_research=requires_research,
@@ -132,6 +144,7 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
             "kind": "deliverable",
             "requires_research": requires_research,
             "research_depth": research_depth,
+            "fetch_required": fetch_required,
             "goal": text,
             "approach": (
                 "Use existing context plus only the tools needed for missing "
@@ -145,10 +158,12 @@ def build_chat_task_contract(message: str) -> dict[str, Any] | None:
         }
     if _requires_research(lowered):
         research_depth = classify_research_depth(lowered, requires_research=True)
+        fetch_required = _requires_fetch(lowered)
         return {
             "kind": "research",
             "requires_research": True,
             "research_depth": research_depth,
+            "fetch_required": fetch_required,
             "goal": text,
             "approach": (
                 "Gather evidence with data tools, verify enough context, then "
@@ -208,6 +223,11 @@ def render_task_contract_reminder(contract: dict[str, Any]) -> str | None:
             "Research requirement: user explicitly asked for internet/search/source "
             "work; use available web/data tools before the final answer."
         )
+    if contract.get("fetch_required") is True:
+        parts.append(
+            "Fetch requirement: the user explicitly asked to open/read a URL; "
+            "use web_fetch before the final answer when it is available."
+        )
     if contract.get("research_depth") == "source_verified_report":
         parts.append(
             "Research depth: source_verified_report. Treat search results as "
@@ -235,6 +255,10 @@ def _requires_research(text: str) -> bool:
     if any(marker in text for marker in _NO_RESEARCH_MARKERS):
         return False
     return any(marker in text for marker in _RESEARCH_MARKERS)
+
+
+def _requires_fetch(text: str) -> bool:
+    return any(marker in text for marker in _FETCH_REQUIRED_MARKERS)
 
 
 __all__ = ["build_chat_task_contract", "render_task_contract_reminder"]

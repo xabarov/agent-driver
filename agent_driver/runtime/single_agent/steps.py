@@ -17,6 +17,11 @@ from agent_driver.runtime.research_session_contract import (
     REPAIR_UNFINISHED_TODOS,
     build_research_session_contract_from_context,
 )
+from agent_driver.runtime.research_evidence import (
+    SOURCE_VERIFIED_DOMAINS,
+    SOURCE_VERIFIED_FETCHES,
+    research_evidence_from_tool_results,
+)
 from agent_driver.runtime.single_agent.compaction_stage import (
     apply_compaction_if_eligible,
 )
@@ -279,18 +284,24 @@ def _maybe_build_continuation_transition(
     context.metadata["research_session_contract"] = contract.model_dump()
     readiness = contract.final_readiness
     if readiness.status != FINAL_READINESS_ALLOWED:
+        reason_signature = ",".join(readiness.reasons)
         repair_count = int(context.metadata.get("contract_repair_nudge_count", 0))
-        if repair_count >= 1:
+        previous_signature = context.metadata.get("contract_repair_reason_signature")
+        if repair_count >= 2 or (
+            repair_count >= 1 and previous_signature == reason_signature
+        ):
             context.metadata["final_readiness"] = "repair_exhausted"
             context.metadata["repair_required_reasons"] = list(readiness.reasons)
             return None
         from agent_driver.runtime.single_agent.continuation import ContinuationIntent
 
         intent = ContinuationIntent(True, "contract_repair_required")
-        nudge = _research_contract_repair_nudge(readiness.reasons)
+        nudge = _research_contract_repair_nudge(context, readiness.reasons)
         context.metadata.pop("force_final_answer", None)
         context.metadata.pop("tool_choice_override", None)
         context.metadata.pop("force_final_answer_reason", None)
+        _force_research_repair_tool_choice(context, readiness.reasons)
+        context.metadata["contract_repair_reason_signature"] = reason_signature
         return _build_continuation_transition(
             context,
             text=text,
@@ -363,7 +374,84 @@ def _build_continuation_transition(
     return RuntimeStepResult(next_step="llm_call")
 
 
-def _research_contract_repair_nudge(reasons: tuple[str, ...]) -> str:
+def _force_research_repair_tool_choice(
+    context: RunContext, reasons: tuple[str, ...]
+) -> None:
+    """Force the concrete research tool when a model tries to finish too early."""
+    if REPAIR_MISSING_RESEARCH_EVIDENCE in reasons:
+        if _tool_available_for_repair(context, "web_search"):
+            context.metadata["tool_choice_override"] = {
+                "type": "tool",
+                "name": "web_search",
+            }
+            return
+    if REPAIR_INSUFFICIENT_SOURCE_DIVERSITY in reasons:
+        if _tool_available_for_repair(context, "web_search"):
+            context.metadata["tool_choice_override"] = {
+                "type": "tool",
+                "name": "web_search",
+            }
+            return
+    if REPAIR_MISSING_FETCHED_SOURCES in reasons:
+        if _tool_available_for_repair(context, "web_fetch"):
+            context.metadata["tool_choice_override"] = {
+                "type": "tool",
+                "name": "web_fetch",
+            }
+            return
+    if REPAIR_UNFINISHED_TODOS in reasons:
+        if _research_evidence_ready_for_final_repair(context):
+            context.metadata["tool_choice_override"] = "none"
+            context.metadata["force_final_answer"] = True
+            context.metadata["force_final_answer_reason"] = (
+                "contract_repair_final_answer"
+            )
+            return
+        if _tool_available_for_repair(context, "todo_write"):
+            context.metadata["tool_choice_override"] = {
+                "type": "tool",
+                "name": "todo_write",
+            }
+
+
+def _tool_available_for_repair(context: RunContext, tool_name: str) -> bool:
+    policy = context.run_input.tool_policy
+    denied = set(policy.denied_tools or [])
+    if tool_name in denied:
+        return False
+    allowed = policy.allowed_tools
+    if allowed is not None and tool_name not in set(allowed):
+        return False
+    effective = context.metadata.get("effective_tool_names")
+    if isinstance(effective, (list, tuple, set)) and tool_name not in set(effective):
+        return False
+    return True
+
+
+def _research_evidence_ready_for_final_repair(context: RunContext) -> bool:
+    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
+    if not isinstance(task_contract, dict):
+        return False
+    if task_contract.get("requires_research") is not True:
+        return False
+    evidence = research_evidence_from_tool_results(context.metadata.get("tool_results"))
+    if task_contract.get("research_depth") == "source_verified_report":
+        if not _tool_available_for_repair(context, "web_fetch"):
+            return evidence.search_calls > 0 or evidence.fetch_calls > 0
+        if evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES and (
+            evidence.search_calls > 0 or evidence.fetch_calls > 0
+        ):
+            return True
+        return evidence.source_verified(
+            required_fetches=SOURCE_VERIFIED_FETCHES,
+            required_domains=SOURCE_VERIFIED_DOMAINS,
+        )
+    return evidence.search_calls > 0 or evidence.fetch_calls > 0
+
+
+def _research_contract_repair_nudge(
+    context: RunContext, reasons: tuple[str, ...]
+) -> str:
     """Return a compact one-shot repair instruction for contract violations."""
     fragments: list[str] = []
     if REPAIR_UNFINISHED_TODOS in reasons:
@@ -377,7 +465,17 @@ def _research_contract_repair_nudge(reasons: tuple[str, ...]) -> str:
             "source-verified work needs fetched/read pages, not search results only"
         )
     if REPAIR_INSUFFICIENT_SOURCE_DIVERSITY in reasons:
-        fragments.append("the fetched evidence needs at least two distinct domains")
+        evidence = research_evidence_from_tool_results(
+            context.metadata.get("tool_results")
+        )
+        domains = ", ".join(evidence.unique_domains)
+        message = "the fetched evidence needs at least two distinct domains"
+        if domains:
+            message += (
+                f"; already fetched domain(s): {domains}; search for and fetch "
+                "a concrete source outside those domains"
+            )
+        fragments.append(message)
     if REPAIR_FINAL_MISSING_SOURCE_LINKS in reasons:
         fragments.append("the final answer must include visible source links")
     reason_text = (

@@ -28,6 +28,18 @@ def test_openrouter_gpt_reasoning_profile() -> None:
     assert profile.supports_reasoning_details is True
 
 
+def test_openrouter_deepseek_v4_reasoning_profile() -> None:
+    profile = resolve_openai_compatible_capabilities(
+        provider_name="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        model="deepseek/deepseek-v4-flash",
+    )
+
+    assert profile.provider_id == "openrouter"
+    assert profile.supports_reasoning is True
+    assert profile.supports_reasoning_details is True
+
+
 def test_unknown_openai_compatible_uses_safe_defaults() -> None:
     profile = resolve_openai_compatible_capabilities(
         provider_name="custom",
@@ -60,6 +72,85 @@ def test_openai_compatible_provider_status_exposes_profile() -> None:
     assert isinstance(profile, dict)
     assert profile["provider_id"] == "openrouter"
     assert profile["supports_reasoning"] is True
+
+
+def test_openai_compatible_payload_echoes_assistant_reasoning_details() -> None:
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleProvider.Config(
+            name="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            api_key="token",
+            model="openai/gpt-5.5",
+        )
+    )
+    request = LlmRequest(
+        messages=[
+            ChatMessage(role=ChatRole.USER, content="research"),
+            ChatMessage(
+                role=ChatRole.ASSISTANT,
+                content="",
+                metadata={
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "web_fetch",
+                                "arguments": '{"url":"https://example.com"}',
+                            },
+                        }
+                    ],
+                    "reasoning_details": [
+                        {
+                            "type": "reasoning.encrypted",
+                            "data": "opaque",
+                            "id": "r1",
+                            "format": "openai-responses-v1",
+                            "index": 0,
+                        }
+                    ],
+                },
+            ),
+            ChatMessage(
+                role=ChatRole.TOOL,
+                tool_call_id="call_1",
+                content='{"summary":"ok"}',
+            ),
+        ]
+    )
+
+    payload = provider._payload(request, stream=False)
+
+    assert payload["messages"][1]["reasoning_details"] == [
+        {
+            "type": "reasoning.encrypted",
+            "data": "opaque",
+            "id": "r1",
+            "format": "openai-responses-v1",
+            "index": 0,
+        }
+    ]
+
+
+def test_openai_compatible_payload_merges_request_provider_extra_body() -> None:
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleProvider.Config(
+            name="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            api_key="token",
+            model="deepseek/deepseek-v4-flash",
+        )
+    )
+    request = LlmRequest(
+        messages=[ChatMessage(role=ChatRole.USER, content="final")],
+        metadata={
+            "provider_extra_body": {"reasoning": {"enabled": False, "exclude": True}}
+        },
+    )
+
+    payload = provider._payload(request, stream=False)
+
+    assert payload["reasoning"] == {"enabled": False, "exclude": True}
 
 
 @pytest.mark.asyncio
@@ -103,4 +194,6 @@ async def test_openai_completion_metadata_exposes_profile_and_reasoning_presence
     assert response.metadata["provider_profile"]["provider_id"] == "openrouter"
     assert response.metadata["provider_reasoning_details_present"] is True
     assert response.metadata["provider_reasoning_details_count"] == 1
-    assert "hidden" not in str(response.metadata)
+    assert response.metadata["provider_reasoning_details"] == [
+        {"type": "summary", "text": "hidden"}
+    ]

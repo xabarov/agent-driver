@@ -35,8 +35,9 @@ For ``kind="compaction_circuit_breaker"``:
 Each signal carries a precomputed ``severity`` (``info|warning|critical``) and
 the raw thresholds (``warning_threshold``, ``compact_threshold``,
 ``blocking_threshold``, ``context_window_estimate``, ``output_token_reserve``)
-plus the derived ``usage_ratio``. The host can build its own message copy from
-these numbers without re-deriving any thresholds.
+plus the derived ``context_usage_ratio``. The legacy alias ``usage_ratio`` is
+also projected while existing clients migrate. The host can build its own
+message copy from these numbers without re-deriving any thresholds.
 
 Example
 -------
@@ -58,7 +59,7 @@ Example
                 "message": "...",
                 "suggestion": "near_hard_threshold",
                 "detail": {
-                    "usage_ratio": projection["usage_ratio"],
+                    "context_usage_ratio": projection["context_usage_ratio"],
                     ...
                 },
             }
@@ -81,6 +82,7 @@ _TOKEN_PRESSURE_FIELDS: tuple[str, ...] = (
     "warning_threshold",
     "compact_threshold",
     "blocking_threshold",
+    "context_usage_ratio",
     "usage_ratio",
 )
 

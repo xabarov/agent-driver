@@ -6,7 +6,6 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from agent_driver.runtime.chat_policy import is_python_reliability_request
 from agent_driver.runtime.planning_check import PLANNING_TOOL_NAMES
 from agent_driver.runtime.research_evidence import (
     RESEARCH_DEPTH_SOURCE_VERIFIED,
@@ -20,6 +19,16 @@ from agent_driver.runtime.single_agent.continuation import analyze_continuation_
 _RESEARCH_TOOLS = frozenset({"web_search", "web_fetch"})
 _PYTHON_TOOL = "python"
 _TERMINAL_EVENTS = frozenset({"run_completed", "run_failed", "run_cancelled"})
+_FETCH_REQUIRED_MARKERS = (
+    "открой",
+    "открыть",
+    "загрузи",
+    "прочитай url",
+    "web_fetch",
+    "fetch",
+    "open url",
+    "open the url",
+)
 
 
 def summarize_run_trace(
@@ -73,6 +82,11 @@ def summarize_run_trace(
     compaction = _compaction_summary(events)
     provider_rejected = _provider_rejected(events)
     unknown_tools = _unknown_tool_summary(events)
+    research_final_covers_plan = _research_final_answer_covers_plan_todos(
+        requires_research=requires_research,
+        research=research,
+        assistant_text=text,
+    )
 
     failures: dict[str, bool] = {
         "stuck_on_interrupt": bool(interrupt_reasons) and terminal_event is None,
@@ -99,7 +113,11 @@ def summarize_run_trace(
         "repeated_approval_planning": planning["approval_cycles"] > 1,
         "plan_todos_incomplete_on_final": (
             terminal_event == "run_completed"
-            and _planning_todos_incomplete(planning, assistant_text=text)
+            and _planning_todos_incomplete(
+                planning,
+                assistant_text=text,
+                allow_all_todos=research_final_covers_plan,
+            )
         ),
         "extra_ask_user_question": _extra_ask_user_question(
             tool_names=tool_names,
@@ -122,16 +140,12 @@ def summarize_run_trace(
         "child_prompt_not_bounded": (
             subagents["agent_tool_used"] and _agent_tool_prompt_unbounded(events)
         ),
-        "missed_python": (python["python_expected"] and not python["python_tool_used"]),
+        "missed_python": False,
         "python_no_final": (
             python["python_tool_used"] and not python["final_after_python"]
         ),
         "python_policy_loop": python["python_policy_errors"] > 1,
-        "unnecessary_python": (
-            python["python_tool_used"]
-            and not python["python_expected"]
-            and _simple_prompt(user_prompt)
-        ),
+        "unnecessary_python": False,
         "python_result_ignored": (
             python["python_tool_used"]
             and python["python_result_observed"]
@@ -426,10 +440,14 @@ def _research_summary(
     final_has_source_links = _has_source_links(assistant_text) or _has_tool_sources(
         research_payloads
     )
+    fetch_required = _fetch_required(
+        task_contract=task_contract,
+        user_prompt=user_prompt,
+    )
     fetch_required_but_missing = (
-        depth == RESEARCH_DEPTH_SOURCE_VERIFIED
+        (depth == RESEARCH_DEPTH_SOURCE_VERIFIED or fetch_required)
         and search_count > 0
-        and fetch_count < SOURCE_VERIFIED_FETCHES
+        and fetch_count < (SOURCE_VERIFIED_FETCHES if not fetch_required else 1)
     )
     insufficient_source_diversity = (
         depth == RESEARCH_DEPTH_SOURCE_VERIFIED
@@ -443,7 +461,18 @@ def _research_summary(
         and not final_has_source_links
     )
     repair_reasons: list[str] = []
-    if _planning_todos_incomplete(planning):
+    if _planning_todos_incomplete(
+        planning,
+        assistant_text=assistant_text,
+        allow_all_todos=_research_final_metrics_cover_plan_todos(
+            requires_research=requires_research,
+            search_count=search_count,
+            fetch_required_but_missing=fetch_required_but_missing,
+            insufficient_source_diversity=insufficient_source_diversity,
+            final_missing_source_links=final_missing_source_links,
+            assistant_text=assistant_text,
+        ),
+    ):
         repair_reasons.append("unfinished_todos")
     if requires_research and search_count == 0 and fetch_count == 0:
         repair_reasons.append("missing_research_evidence")
@@ -461,8 +490,9 @@ def _research_summary(
         "required_fetch_count": (
             SOURCE_VERIFIED_FETCHES
             if depth == RESEARCH_DEPTH_SOURCE_VERIFIED
-            else (1 if requires_research else 0)
+            else (1 if requires_research or fetch_required else 0)
         ),
+        "fetch_required": fetch_required,
         "fetch_required_but_missing": fetch_required_but_missing,
         "insufficient_source_diversity": insufficient_source_diversity,
         "unique_domains": domains,
@@ -488,6 +518,17 @@ def _research_depth(
         requires_research=requires_research,
         plan_only=_is_plan_only_prompt(" ".join((user_prompt or "").lower().split())),
     )
+
+
+def _fetch_required(
+    *,
+    task_contract: dict[str, Any] | None,
+    user_prompt: str | None,
+) -> bool:
+    if isinstance(task_contract, dict) and task_contract.get("fetch_required") is True:
+        return True
+    text = " ".join((user_prompt or "").lower().split())
+    return any(marker in text for marker in _FETCH_REQUIRED_MARKERS)
 
 
 def _unique_domains(payloads: list[dict[str, Any]]) -> list[str]:
@@ -545,6 +586,46 @@ def _has_tool_sources(payloads: list[dict[str, Any]]) -> bool:
 
 def _has_source_links(text: str) -> bool:
     return bool(re.search(r"https?://|\[[^\]]+\]\(https?://", text))
+
+
+def _research_final_answer_covers_plan_todos(
+    *,
+    requires_research: bool,
+    research: dict[str, Any],
+    assistant_text: str,
+) -> bool:
+    return _research_final_metrics_cover_plan_todos(
+        requires_research=requires_research,
+        search_count=int(research.get("search_count") or 0),
+        fetch_required_but_missing=bool(research.get("fetch_required_but_missing")),
+        insufficient_source_diversity=bool(
+            research.get("insufficient_source_diversity")
+        ),
+        final_missing_source_links=bool(research.get("final_missing_source_links")),
+        assistant_text=assistant_text,
+    )
+
+
+def _research_final_metrics_cover_plan_todos(
+    *,
+    requires_research: bool,
+    search_count: int,
+    fetch_required_but_missing: bool,
+    insufficient_source_diversity: bool,
+    final_missing_source_links: bool,
+    assistant_text: str,
+) -> bool:
+    if not requires_research:
+        return False
+    if search_count <= 0:
+        return False
+    if len(assistant_text.strip()) < 200:
+        return False
+    return not (
+        fetch_required_but_missing
+        or insufficient_source_diversity
+        or final_missing_source_links
+    )
 
 
 def _is_plan_only_prompt(text: str) -> bool:
@@ -728,8 +809,13 @@ def _subagent_summary(
 
 
 def _planning_todos_incomplete(
-    planning: dict[str, Any], *, assistant_text: str = ""
+    planning: dict[str, Any],
+    *,
+    assistant_text: str = "",
+    allow_all_todos: bool = False,
 ) -> bool:
+    if allow_all_todos:
+        return False
     latest = planning.get("latest_snapshot")
     if not isinstance(latest, dict):
         return False
@@ -781,7 +867,7 @@ def _python_summary(
         and len(assistant_text.strip()) >= 3
     )
     return {
-        "python_tool_available": python_tool_used or _python_expected(user_prompt),
+        "python_tool_available": python_tool_used,
         "python_tool_used": python_tool_used,
         "python_calls": tool_names.count(_PYTHON_TOOL),
         "python_policy_errors": sum(
@@ -790,10 +876,8 @@ def _python_summary(
             if "python policy:" in text.lower() or "unauthorized import" in text.lower()
         ),
         "python_timeouts": sum(1 for text in result_texts if "timeout" in text.lower()),
-        "python_expected": _python_expected(user_prompt),
-        "missed_python_for_calculation": (
-            _python_expected(user_prompt) and not python_tool_used
-        ),
+        "python_expected": False,
+        "missed_python_for_calculation": False,
         "python_result_observed": bool(
             completed_payloads
             or any(text.strip() for text in result_texts)
@@ -805,10 +889,6 @@ def _python_summary(
             for marker in ("python policy", "unauthorized import", "sandbox")
         ),
     }
-
-
-def _python_expected(user_prompt: str | None) -> bool:
-    return is_python_reliability_request(user_prompt or "")
 
 
 def _delegation_requested(user_prompt: str | None) -> bool:

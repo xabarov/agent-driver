@@ -11,6 +11,7 @@ from agent_driver.contracts.tools import ToolCall, ToolError, ToolResultEnvelope
 from agent_driver.contracts.usage import UsageSummary
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.runtime.single_agent.tool_stage import (
+    _force_web_fetch_for_source_verified_research,
     _should_force_final_answer,
     _update_tool_protocol_messages,
 )
@@ -57,6 +58,60 @@ def test_update_tool_protocol_messages_includes_truncated_and_error_code() -> No
     payload = json.loads(tool_rows[-1]["content"])
     assert payload["truncated"] is True
     assert payload["error_code"] == "tool_policy_denied"
+
+
+def test_update_tool_protocol_messages_preserves_reasoning_details() -> None:
+    reasoning_details = [
+        {
+            "type": "reasoning.encrypted",
+            "data": "opaque",
+            "id": "r1",
+            "format": "openai-responses-v1",
+            "index": 0,
+        }
+    ]
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="openrouter", model_name="openai/gpt-5.5"),
+        provider="openrouter",
+        model="openai/gpt-5.5",
+        metadata={
+            "provider_reasoning_details": reasoning_details,
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="web_search",
+                    tool_call_id="call_search",
+                    args={"query": "fork join"},
+                ).model_dump(mode="json")
+            ],
+        },
+    )
+    envelope = ToolResultEnvelope(
+        call=ToolCall(
+            tool_name="web_search",
+            tool_call_id="call_search",
+            args={"query": "fork join"},
+        ),
+        decision=ToolPolicyDecision.ALLOW,
+        structured_output={"summary": "ok", "results": []},
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        run_input=SimpleNamespace(messages=(), input="hello"),
+        metadata={},
+    )
+
+    _update_tool_protocol_messages(
+        context=context, result=ToolExecutionResult(envelopes=[envelope], traces=[])
+    )
+
+    assistant_rows = [
+        row
+        for row in context.metadata["protocol_messages"]
+        if row.get("role") == "assistant"
+    ]
+    assert assistant_rows[-1]["metadata"]["reasoning_details"] == reasoning_details
 
 
 def test_update_tool_protocol_messages_adds_python_policy_hint() -> None:
@@ -315,6 +370,149 @@ def test_update_tool_protocol_messages_adds_web_fetch_verification_hint() -> Non
     )
 
 
+def test_force_web_fetch_for_source_verified_research_after_search() -> None:
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "task_contract": {
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                    }
+                },
+                allowed_tools=None,
+                denied_tools=(),
+            )
+        ),
+        metadata={
+            "effective_tool_names": ("web_search", "web_fetch"),
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "web_search",
+                        "tool_call_id": "call_search",
+                        "args": {"query": "fork join"},
+                    },
+                    "structured_output": {
+                        "results": [
+                            {
+                                "title": "Fork join",
+                                "url": "https://example.com/fork",
+                            }
+                        ]
+                    },
+                }
+            ],
+        },
+    )
+
+    _force_web_fetch_for_source_verified_research(context)
+
+    assert context.metadata["tool_choice_override"] == {
+        "type": "tool",
+        "name": "web_fetch",
+    }
+    assert (
+        context.metadata["continuation_nudge_reason"]
+        == "source_verified_fetch_required"
+    )
+
+
+def test_source_diversity_repair_forces_search_after_same_domain_fetches() -> None:
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "task_contract": {
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                    }
+                },
+                allowed_tools=None,
+                denied_tools=(),
+            )
+        ),
+        metadata={
+            "effective_tool_names": ("web_search", "web_fetch"),
+            "tool_results": [
+                {"call": {"tool_name": "web_search", "args": {"query": "q"}}},
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.com/a"},
+                    },
+                    "structured_output": {"url": "https://example.com/a"},
+                },
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.com/b"},
+                    },
+                    "structured_output": {"url": "https://example.com/b"},
+                },
+            ],
+        },
+    )
+
+    _force_web_fetch_for_source_verified_research(context)
+
+    assert context.metadata["tool_choice_override"] == {
+        "type": "tool",
+        "name": "web_search",
+    }
+    assert context.metadata["continuation_nudge_reason"] == (
+        "source_diversity_search_required"
+    )
+    assert context.metadata["research_avoid_domains"] == ["example.com"]
+
+
+def test_source_diversity_repair_forces_fetch_after_search() -> None:
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "task_contract": {
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                    }
+                },
+                allowed_tools=None,
+                denied_tools=(),
+            )
+        ),
+        metadata={
+            "effective_tool_names": ("web_search", "web_fetch"),
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.com/a"},
+                    },
+                    "structured_output": {"url": "https://example.com/a"},
+                },
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.com/b"},
+                    },
+                    "structured_output": {"url": "https://example.com/b"},
+                },
+                {"call": {"tool_name": "web_search", "args": {"query": "q"}}},
+            ],
+        },
+    )
+
+    _force_web_fetch_for_source_verified_research(context)
+
+    assert context.metadata["tool_choice_override"] == {
+        "type": "tool",
+        "name": "web_fetch",
+    }
+    assert context.metadata["continuation_nudge_reason"] == (
+        "source_diversity_fetch_required"
+    )
+
+
 def test_update_tool_protocol_messages_coalesces_user_hints_with_force_final() -> None:
     llm_response = LlmResponse(
         message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
@@ -540,7 +738,7 @@ def test_source_verified_research_requires_distinct_fetched_domains() -> None:
     assert _should_force_final_answer(context) is False
 
 
-def test_research_satisfied_waits_for_synthesis_todo_completion() -> None:
+def test_research_satisfied_can_force_final_for_synthesis_todo() -> None:
     context = SimpleNamespace(
         tool_calls=3,
         llm_step_count=3,
@@ -596,9 +794,78 @@ def test_research_satisfied_waits_for_synthesis_todo_completion() -> None:
         },
     )
 
-    assert _should_force_final_answer(context) is False
-    assert context.metadata["final_readiness"] == "repair_needed"
-    assert context.metadata["repair_required_reasons"] == ["unfinished_todos"]
+    assert _should_force_final_answer(context) is True
+    assert context.metadata["final_readiness"] == "allowed"
+    assert context.metadata["repair_required_reasons"] == []
+
+
+def test_research_satisfied_forces_final_despite_stale_process_todos() -> None:
+    context = SimpleNamespace(
+        tool_calls=3,
+        llm_step_count=3,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                    }
+                },
+                allowed_tools=None,
+                denied_tools=[],
+            ),
+        ),
+        metadata={
+            "effective_tool_names": ("web_search", "web_fetch", "todo_write"),
+            "planning_state": {
+                "run_id": "run_research",
+                "todos": [
+                    {
+                        "todo_id": "search",
+                        "content": "Search for sources",
+                        "status": "in_progress",
+                    },
+                    {
+                        "todo_id": "fetch",
+                        "content": "Fetch relevant pages",
+                        "status": "pending",
+                    },
+                    {
+                        "todo_id": "synthesize",
+                        "content": "Write final synthesis",
+                        "status": "pending",
+                    },
+                ],
+                "metadata": {},
+            },
+            "tool_results": [
+                {"call": {"tool_name": "web_search", "args": {"query": "q"}}},
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.com/a"},
+                    },
+                    "structured_output": {"url": "https://example.com/a", "text": "a"},
+                    "error": None,
+                },
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.org/b"},
+                    },
+                    "structured_output": {"url": "https://example.org/b", "text": "b"},
+                    "error": None,
+                },
+            ],
+        },
+    )
+
+    assert _should_force_final_answer(context) is True
+    assert context.metadata["final_readiness"] == "allowed"
+    assert context.metadata["repair_required_reasons"] == []
 
 
 def test_zero_result_force_final_does_not_bypass_unfinished_todos() -> None:
@@ -628,6 +895,11 @@ def test_zero_result_force_final_does_not_bypass_unfinished_todos() -> None:
                 "todos": [
                     {"todo_id": "search", "content": "Search", "status": "completed"},
                     {
+                        "todo_id": "analyze",
+                        "content": "Analyze fetched sources",
+                        "status": "in_progress",
+                    },
+                    {
                         "todo_id": "synthesize",
                         "content": "Write final synthesis",
                         "status": "in_progress",
@@ -648,9 +920,9 @@ def test_zero_result_force_final_does_not_bypass_unfinished_todos() -> None:
                 {
                     "call": {
                         "tool_name": "web_fetch",
-                        "args": {"url": "https://example.org/b"},
+                        "args": {"url": "https://example.com/b"},
                     },
-                    "structured_output": {"url": "https://example.org/b", "text": "b"},
+                    "structured_output": {"url": "https://example.com/b", "text": "b"},
                     "error": None,
                 },
             ],
@@ -661,7 +933,10 @@ def test_zero_result_force_final_does_not_bypass_unfinished_todos() -> None:
     assert (
         context.metadata.get("force_final_answer_reason") != "web_search_zero_results"
     )
-    assert context.metadata["repair_required_reasons"] == ["unfinished_todos"]
+    assert context.metadata["repair_required_reasons"] == [
+        "unfinished_todos",
+        "insufficient_source_diversity",
+    ]
 
 
 def test_research_deliverable_waits_for_source_verified_fetches() -> None:

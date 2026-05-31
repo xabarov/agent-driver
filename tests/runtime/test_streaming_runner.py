@@ -33,6 +33,7 @@ from agent_driver.runtime.single_agent.llm_step import (
     _force_final_answer_message,
     _recover_force_final_stream_response,
 )
+from agent_driver.runtime.single_agent.streaming import _append_reasoning_details
 from agent_driver.runtime.single_agent.types import EventSpec, RunContext
 
 
@@ -217,6 +218,51 @@ def test_force_final_stream_failure_recovers_long_partial_answer() -> None:
     assert RuntimeEventType.WARNING in event_types
     assert RuntimeEventType.ASSISTANT_MESSAGE_COMPLETED in event_types
     assert RuntimeEventType.ASSISTANT_MESSAGE_TOMBSTONED not in event_types
+
+
+def test_streaming_reasoning_details_merge_text_deltas() -> None:
+    details: list[object] = []
+
+    _append_reasoning_details(
+        details,
+        [
+            {
+                "type": "reasoning.summary",
+                "summary": "Need",
+                "format": "openai-responses-v1",
+                "index": 0,
+            },
+            {
+                "type": "reasoning.summary",
+                "summary": " fetch",
+                "format": "openai-responses-v1",
+                "index": 0,
+            },
+            {
+                "type": "reasoning.encrypted",
+                "data": "opaque",
+                "format": "openai-responses-v1",
+                "id": "rs_1",
+                "index": 0,
+            },
+        ],
+    )
+
+    assert details == [
+        {
+            "type": "reasoning.summary",
+            "summary": "Need fetch",
+            "format": "openai-responses-v1",
+            "index": 0,
+        },
+        {
+            "type": "reasoning.encrypted",
+            "data": "opaque",
+            "format": "openai-responses-v1",
+            "id": "rs_1",
+            "index": 0,
+        },
+    ]
 
 
 def test_force_final_stream_failure_does_not_recover_short_partial_answer() -> None:

@@ -1,5 +1,8 @@
 # Agent Driver Refactoring Plan
 
+Status: active reference for Unified Work Plan Phases 1 and 6. Execute the
+metadata inventory and contract snapshots before broad module moves.
+
 Дата: 2026-05-31.
 
 Цель: снизить сложность `agent_driver` без смены архитектурной парадигмы:

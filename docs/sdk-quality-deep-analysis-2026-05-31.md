@@ -1,5 +1,8 @@
 # Agent Driver SDK Quality Deep Analysis
 
+Status: active reference for Unified Work Plan Phases 3 and 7. Do not freeze
+new public SDK contracts before Phase 1 runtime state/contract work.
+
 Дата: 2026-05-31.
 
 Цель: оценить качество публичного SDK слоя `agent_driver` после закрытых

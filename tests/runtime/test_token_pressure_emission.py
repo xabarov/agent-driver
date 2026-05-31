@@ -86,7 +86,25 @@ def test_warning_payload_carries_signal_id_severity_and_thresholds() -> None:
     assert payload["warning_threshold"] == 7500
     assert payload["compact_threshold"] == 9000
     assert payload["blocking_threshold"] == 10500
+    assert payload["context_usage_ratio"] == pytest.approx(0.6667, abs=0.0001)
     assert payload["usage_ratio"] == pytest.approx(0.6667, abs=0.0001)
+
+
+def test_warning_payload_prefers_snapshot_context_usage_ratio() -> None:
+    """Emission keeps the estimator's rounded ratio when present."""
+    host = _CaptureHost()
+    context = _make_context(
+        {
+            "state": "warning",
+            "used_tokens_estimate": 8000,
+            "context_window_estimate": 12000,
+            "context_usage_ratio": 0.42,
+        }
+    )
+    _emit_token_pressure_warning(host, context)
+    payload = host.events[0].payload or {}
+    assert payload["context_usage_ratio"] == 0.42
+    assert payload["usage_ratio"] == 0.42
 
 
 def test_compact_recommended_state_has_distinct_signal_id() -> None:
@@ -127,11 +145,12 @@ def test_blocking_state_carries_critical_severity() -> None:
     assert payload["signal_id"] == "context_blocking_threshold"
     assert payload["severity"] == "critical"
     assert payload["state"] == "blocking"
+    assert payload["context_usage_ratio"] == pytest.approx(0.9167, abs=0.0001)
     assert payload["usage_ratio"] == pytest.approx(0.9167, abs=0.0001)
 
 
-def test_usage_ratio_is_none_when_window_zero() -> None:
-    """Division-by-zero guard: usage_ratio is None when context_window_estimate is 0."""
+def test_context_usage_ratio_is_none_when_window_zero() -> None:
+    """Division-by-zero guard: ratio is None when context_window_estimate is 0."""
     host = _CaptureHost()
     context = _make_context(
         {
@@ -143,4 +162,5 @@ def test_usage_ratio_is_none_when_window_zero() -> None:
     _emit_token_pressure_warning(host, context)
     assert len(host.events) == 1
     payload = host.events[0].payload or {}
+    assert payload["context_usage_ratio"] is None
     assert payload["usage_ratio"] is None

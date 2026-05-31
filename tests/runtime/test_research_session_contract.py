@@ -42,6 +42,38 @@ def test_research_contract_requires_web_evidence() -> None:
     assert contract.final_readiness.reasons == (REPAIR_MISSING_RESEARCH_EVIDENCE,)
 
 
+def test_research_contract_requires_fetch_when_user_requested_open_url() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "light_search",
+            "fetch_required": True,
+        },
+        tool_results=[_tool_result("web_search")],
+        web_fetch_available=True,
+    )
+
+    assert contract.final_readiness.status == FINAL_READINESS_REPAIR_NEEDED
+    assert REPAIR_MISSING_FETCHED_SOURCES in contract.final_readiness.reasons
+
+
+def test_research_contract_allows_fetch_required_after_one_fetch() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "light_search",
+            "fetch_required": True,
+        },
+        tool_results=[
+            _tool_result("web_search"),
+            _tool_result("web_fetch", url="https://example.com/a"),
+        ],
+        web_fetch_available=True,
+    )
+
+    assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
+
+
 def test_research_contract_requires_fetched_source_verified_evidence() -> None:
     contract = build_research_session_contract(
         task_contract={
@@ -130,6 +162,77 @@ def test_research_contract_allows_final_answer_to_cover_synthesis_todo() -> None
             "Итоговый отчет с обобщением найденных данных и ссылками на "
             "[A](https://example.com/a), [B](https://example.org/b). "
             "Текст достаточно длинный, чтобы считаться реальным финальным "
+            "ответом, а не коротким progress update."
+        ),
+        web_fetch_available=True,
+    )
+
+    assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
+    assert contract.final_readiness.reasons == ()
+
+
+def test_research_contract_can_allow_final_deliverable_todo_before_answer() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "source_verified_report",
+        },
+        tool_results=[
+            _tool_result("web_search"),
+            _tool_result("web_fetch", url="https://example.com/a"),
+            _tool_result("web_fetch", url="https://example.org/b"),
+        ],
+        planning_state={
+            "run_id": "run_todo",
+            "todos": [
+                {
+                    "todo_id": "summary",
+                    "content": "Синтез и оформление ответа",
+                    "status": "in_progress",
+                },
+            ],
+        },
+        web_fetch_available=True,
+        enforce_final_source_links=False,
+        allow_final_deliverable_todos=True,
+    )
+
+    assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
+    assert contract.final_readiness.reasons == ()
+
+
+def test_meaningful_sourced_final_answer_covers_research_process_todos() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "source_verified_report",
+        },
+        tool_results=[
+            _tool_result("web_search"),
+            _tool_result("web_fetch", url="https://example.com/a"),
+            _tool_result("web_fetch", url="https://example.org/b"),
+        ],
+        planning_state={
+            "run_id": "run_todo",
+            "todos": [
+                {
+                    "todo_id": "search",
+                    "content": "Поискать информацию о моделях",
+                    "status": "pending",
+                },
+                {
+                    "todo_id": "read",
+                    "content": "Изучить основные источники",
+                    "status": "in_progress",
+                },
+            ],
+        },
+        assistant_text=(
+            "Итоговый отчет: fork-join queue разбивает работу на параллельные "
+            "подзадачи и ждет их объединения; это применимо к параллельным "
+            "сервисам и сетевым расчетам задержки. Источники: "
+            "[A](https://example.com/a), [B](https://example.org/b). "
+            "Этого текста достаточно, чтобы считаться содержательным финальным "
             "ответом, а не коротким progress update."
         ),
         web_fetch_available=True,

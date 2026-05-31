@@ -46,8 +46,39 @@ def test_validate_drops_orphan_tool_message() -> None:
             ),
         ]
     )
-    assert len(result.messages) == 1
+    assert len(result.messages) == 2
+    assert result.messages[1].tool_call_id == "call_1"
+    assert result.messages[1].metadata["tool_trim_stub"] is True
     assert "dropped_orphan_tool_message" in result.repairs
+
+
+def test_validate_inserts_stub_for_missing_tool_result() -> None:
+    result = validate_and_repair_protocol_messages(
+        [
+            ChatMessage(
+                role=ChatRole.ASSISTANT,
+                content="",
+                metadata={
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "web_search", "arguments": "{}"},
+                        }
+                    ]
+                },
+            )
+        ]
+    )
+
+    assert [message.role for message in result.messages] == [
+        ChatRole.ASSISTANT,
+        ChatRole.TOOL,
+    ]
+    assert result.messages[1].tool_call_id == "call_1"
+    assert result.messages[1].name == "web_search"
+    assert result.messages[1].metadata["tool_trim_stub"] is True
+    assert "inserted_missing_tool_result_stubs" in result.repairs
 
 
 def test_validate_truncates_oversized_tool_payloads() -> None:

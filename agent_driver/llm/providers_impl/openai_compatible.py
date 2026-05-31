@@ -170,9 +170,11 @@ def _extract_reasoning_metadata(message_payload: dict[str, Any]) -> dict[str, An
     if isinstance(reasoning_details, list):
         metadata["provider_reasoning_details_present"] = bool(reasoning_details)
         metadata["provider_reasoning_details_count"] = len(reasoning_details)
+        metadata["provider_reasoning_details"] = reasoning_details
     reasoning = message_payload.get("reasoning")
     if isinstance(reasoning, str) and reasoning:
         metadata["provider_reasoning_text_present"] = True
+        metadata["provider_reasoning"] = reasoning
     return metadata
 
 
@@ -554,6 +556,20 @@ class OpenAICompatibleProvider(ProviderBase):
                 and tool_calls
             ):
                 row["tool_calls"] = tool_calls
+            reasoning_details = message.metadata.get("reasoning_details")
+            if (
+                message.role.value == "assistant"
+                and isinstance(reasoning_details, list)
+                and reasoning_details
+            ):
+                row["reasoning_details"] = reasoning_details
+            reasoning = message.metadata.get("reasoning")
+            if (
+                message.role.value == "assistant"
+                and isinstance(reasoning, str)
+                and reasoning
+            ):
+                row["reasoning"] = reasoning
             messages_payload.append(row)
         payload = {
             "model": request.model or self._model,
@@ -598,6 +614,10 @@ class OpenAICompatibleProvider(ProviderBase):
         # collision with the standard openai-compat keys.
         if self._extra_body:
             for key, value in self._extra_body.items():
+                payload[key] = value
+        request_extra_body = request.metadata.get("provider_extra_body")
+        if isinstance(request_extra_body, dict):
+            for key, value in request_extra_body.items():
                 payload[key] = value
         return payload
 

@@ -124,6 +124,13 @@ plan-only, deliverable-no-replan, clarification-only-when-blocked,
 web-search-final, subagent synthesis, and steering at the next runtime
 boundary.
 
+For research-quality work, Phoenix inspection is part of the acceptance loop:
+confirm the model searched, fetched concrete pages before synthesis, completed
+visible todos, produced source links or source shelf evidence, and ended with a
+terminal run event. If the browser looks acceptable but trace summary says
+`repair_needed`, fix the shared runtime contract rather than special-casing the
+demo.
+
 ## UI Smoke Checks
 
 Run browser UI smoke checks against a running frontend:

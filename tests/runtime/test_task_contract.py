@@ -48,6 +48,21 @@ def test_research_contract_is_lightweight() -> None:
     assert "Uses data tools" in contract["acceptance_criteria"][0]
 
 
+def test_research_contract_marks_explicit_fetch_request_without_deepening() -> None:
+    contract = build_chat_task_contract(
+        "найди источник про fork-join queueing models и открой один найденный URL"
+    )
+
+    assert contract is not None
+    assert contract["kind"] == "research"
+    assert contract["research_depth"] == "light_search"
+    assert contract["fetch_required"] is True
+
+    reminder = render_task_contract_reminder(contract)
+    assert reminder is not None
+    assert "Fetch requirement" in reminder
+
+
 def test_plan_only_contract_does_not_force_research() -> None:
     contract = build_chat_task_contract(
         "составь только план поиска информации по истории Fender, без реферата"

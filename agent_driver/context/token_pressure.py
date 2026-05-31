@@ -30,6 +30,11 @@ def estimate_token_pressure(inp: TokenPressureInput) -> dict[str, Any]:
     used_tokens_estimate = (prompt_chars + observation_chars) // 4
     available_after_reserve = max(0, inp.context_window_estimate - inp.output_token_reserve)
     remaining_tokens = max(0, available_after_reserve - used_tokens_estimate)
+    context_usage_ratio = (
+        round(used_tokens_estimate / inp.context_window_estimate, 4)
+        if inp.context_window_estimate > 0
+        else None
+    )
     state = "ok"
     if used_tokens_estimate >= inp.blocking_threshold:
         state = "blocking"
@@ -40,6 +45,7 @@ def estimate_token_pressure(inp: TokenPressureInput) -> dict[str, Any]:
     return {
         "state": state,
         "used_tokens_estimate": used_tokens_estimate,
+        "context_usage_ratio": context_usage_ratio,
         "remaining_tokens_estimate": remaining_tokens,
         "context_window_estimate": inp.context_window_estimate,
         "output_token_reserve": inp.output_token_reserve,

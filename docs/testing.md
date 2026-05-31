@@ -65,6 +65,18 @@ The current suite covers direct answers, web research, plan-only behavior,
 deliverable-no-replan, clarification avoidance, web-search final answers,
 subagent synthesis, and mid-run steering.
 
+For research/provider slices, also inspect the Phoenix trace and
+`/api/chat/runs/{run_id}/trace-summary` after each live probe. Check that the
+run has a terminal event, fetched evidence before synthesis when required,
+source links or source shelf coverage, no unknown tools, no progress-only final,
+and no unfinished visible todos. Treat repeated trace failures as a runtime
+contract issue before adding heavier orchestration.
+
+For model-specific OpenRouter failures, follow
+[Provider and model debugging](provider-model-debugging.md): check current
+OpenRouter docs, capture Phoenix/trace artifacts, and record the model matrix
+result instead of leaving the finding only in chat history.
+
 ## Live Provider Checks
 
 Live tests are opt-in and should load secrets from `.env` without printing

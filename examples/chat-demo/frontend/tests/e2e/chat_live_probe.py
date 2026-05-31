@@ -50,6 +50,8 @@ class LiveScenario:
     requires_compaction: bool = False
     min_research_fetch_count: int | None = None
     min_research_domain_count: int | None = None
+    max_research_search_count_without_min_domains: int | None = None
+    max_research_fetch_count_without_min_domains: int | None = None
     timeout_ms: int = 180000
     forbidden_failures: tuple[str, ...] = (
         "stuck_on_interrupt",
@@ -152,6 +154,45 @@ SCENARIOS: dict[str, LiveScenario] = {
         forbidden_tools=("agent_tool",),
         requires_research=True,
     ),
+    "model-preflight-web-search": LiveScenario(
+        name="model-preflight-web-search",
+        prompt=(
+            "Найди в интернете 2 источника про fork-join queueing models и "
+            "дай одну короткую фразу со ссылкой. Не открывай страницы."
+        ),
+        required_tools=("web_search",),
+        forbidden_tools=("web_fetch", "agent_tool"),
+        tool_preset="web_search",
+        timeout_ms=180000,
+        requires_research=True,
+    ),
+    "model-preflight-web-fetch-direct": LiveScenario(
+        name="model-preflight-web-fetch-direct",
+        prompt=(
+            "Открой URL https://en.wikipedia.org/wiki/Fork–join_queue "
+            "через web_fetch и дай одно предложение о том, что это такое, "
+            "со ссылкой на источник."
+        ),
+        required_tools=("web_fetch",),
+        forbidden_tools=("web_search", "agent_tool"),
+        tool_preset="web_fetch",
+        min_research_fetch_count=1,
+        timeout_ms=180000,
+        requires_research=True,
+    ),
+    "model-preflight-search-fetch": LiveScenario(
+        name="model-preflight-search-fetch",
+        prompt=(
+            "Найди в интернете источник про fork-join queueing models, открой "
+            "один найденный URL через web_fetch и дай 2 коротких вывода со ссылкой."
+        ),
+        required_tools=("web_search", "web_fetch"),
+        forbidden_tools=("agent_tool",),
+        tool_preset="web",
+        min_research_fetch_count=1,
+        timeout_ms=240000,
+        requires_research=True,
+    ),
     "research-report": LiveScenario(
         name="research-report",
         prompt=(
@@ -176,6 +217,8 @@ SCENARIOS: dict[str, LiveScenario] = {
         ),
         min_research_fetch_count=2,
         min_research_domain_count=2,
+        max_research_search_count_without_min_domains=10,
+        max_research_fetch_count_without_min_domains=10,
         timeout_ms=600000,
         requires_research=True,
     ),
@@ -325,6 +368,14 @@ SCENARIOS: dict[str, LiveScenario] = {
     ),
 }
 
+MODEL_PREFLIGHT_SCENARIOS: tuple[str, ...] = (
+    "simple-direct",
+    "model-preflight-web-search",
+    "model-preflight-web-fetch-direct",
+    "model-preflight-search-fetch",
+    "research-report-requires-fetch",
+)
+
 
 def open_new_chat(page: Page) -> None:
     page.goto(f"{BASE_URL}/sessions/new", wait_until="networkidle")
@@ -380,9 +431,59 @@ def queue_steering_message(page: Page, run_id: str, message: str) -> dict[str, A
     )
 
 
+def cancel_run(page: Page, run_id: str) -> dict[str, Any]:
+    return page.evaluate(
+        """async (runId) => {
+            const response = await fetch(`/api/chat/runs/${runId}/cancel`, {
+                method: "POST"
+            });
+            if (!response.ok) {
+                throw new Error(`cancel request failed: ${response.status}`);
+            }
+            return await response.json();
+        }""",
+        run_id,
+    )
+
+
+def research_budget_stop_reason(
+    scenario: LiveScenario,
+    summary: dict[str, Any],
+) -> str | None:
+    if scenario.min_research_domain_count is None:
+        return None
+    research = summary.get("research") or {}
+    if not isinstance(research, dict):
+        return None
+    domains = research.get("unique_domains")
+    domain_count = len(domains) if isinstance(domains, list) else 0
+    if domain_count >= scenario.min_research_domain_count:
+        return None
+
+    search_count = research.get("search_count")
+    max_search = scenario.max_research_search_count_without_min_domains
+    if isinstance(search_count, int) and max_search is not None:
+        if search_count >= max_search:
+            return (
+                "research search budget exhausted before source diversity: "
+                f"{search_count} searches, {domain_count} domains"
+            )
+
+    fetch_count = research.get("fetch_count")
+    max_fetch = scenario.max_research_fetch_count_without_min_domains
+    if isinstance(fetch_count, int) and max_fetch is not None:
+        if fetch_count >= max_fetch:
+            return (
+                "research fetch budget exhausted before source diversity: "
+                f"{fetch_count} fetches, {domain_count} domains"
+            )
+    return None
+
+
 def wait_until_run_idle(
     page: Page,
     *,
+    scenario: LiveScenario,
     run_id: str,
     timeout_ms: int,
 ) -> dict[str, Any]:
@@ -399,6 +500,16 @@ def wait_until_run_idle(
                 page.get_by_role("textbox", name="Message the assistant…")
             ).to_be_visible(timeout=15000)
             return latest
+        if latest:
+            budget_stop_reason = research_budget_stop_reason(scenario, latest)
+            if budget_stop_reason is not None:
+                latest["probe_budget_stop"] = True
+                latest["probe_budget_stop_reason"] = budget_stop_reason
+                try:
+                    latest["probe_cancel_response"] = cancel_run(page, run_id)
+                except Exception as exc:
+                    latest["probe_cancel_error"] = str(exc)
+                return latest
         page.wait_for_timeout(1000)
     if latest is None:
         latest = {
@@ -486,6 +597,8 @@ def assert_trace_acceptance(
             failures.append("compaction did not complete successfully")
     if summary.get("probe_timeout") is True:
         failures.append("probe timed out before terminal event")
+    if summary.get("probe_budget_stop") is True:
+        failures.append(str(summary.get("probe_budget_stop_reason")))
     if scenario.requires_research is not None:
         required = summary.get("research", {}).get("required")
         if required is not scenario.requires_research:
@@ -591,7 +704,12 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
     run_id = send_message_and_capture_run_id(page, scenario.prompt)
     if scenario.steering_message:
         queue_steering_message(page, run_id, scenario.steering_message)
-    summary = wait_until_run_idle(page, run_id=run_id, timeout_ms=scenario.timeout_ms)
+    summary = wait_until_run_idle(
+        page,
+        scenario=scenario,
+        run_id=run_id,
+        timeout_ms=scenario.timeout_ms,
+    )
     failures = assert_trace_acceptance(scenario, summary)
     write_scenario_artifacts(
         page=page,
@@ -617,6 +735,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run all live scenarios.",
     )
+    parser.add_argument(
+        "--model-preflight",
+        action="store_true",
+        help="Run the cheap model+web-tool ladder before full research.",
+    )
     parser.add_argument("--headed", action="store_true", help="Run Chromium headed.")
     return parser.parse_args()
 
@@ -624,9 +747,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    scenario_names = (
-        sorted(SCENARIOS) if args.all else args.scenario or ["simple-direct"]
-    )
+    if args.all:
+        scenario_names = sorted(SCENARIOS)
+    elif args.model_preflight:
+        scenario_names = list(MODEL_PREFLIGHT_SCENARIOS)
+    else:
+        scenario_names = args.scenario or ["simple-direct"]
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=args.headed is False)
         try:

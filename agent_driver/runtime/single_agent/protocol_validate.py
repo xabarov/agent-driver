@@ -23,7 +23,11 @@ def validate_and_repair_protocol_messages(
 ) -> ProtocolValidationResult:
     """Normalize message order and drop invalid rows for OpenAI-compatible APIs."""
     working = [
-        message if isinstance(message, ChatMessage) else ChatMessage.model_validate(message)
+        (
+            message
+            if isinstance(message, ChatMessage)
+            else ChatMessage.model_validate(message)
+        )
         for message in messages
     ]
     repairs: list[str] = []
@@ -122,7 +126,36 @@ def _repair_tool_call_pairing(
         missing = [call_id for call_id in expected_ids if call_id not in seen_ids]
         if missing:
             warnings.append(f"missing_tool_results:{','.join(missing)}")
+            for call_id in missing:
+                kept.append(
+                    ChatMessage(
+                        role=ChatRole.TOOL,
+                        name=_tool_name_for_call(tool_calls, call_id),
+                        tool_call_id=call_id,
+                        content=(
+                            "[trimmed] Prior tool result was dropped due to "
+                            "context budget. Re-run the tool if exact values are "
+                            "needed."
+                        ),
+                        metadata={"tool_trim_stub": True},
+                    )
+                )
+            repairs.append("inserted_missing_tool_result_stubs")
     return kept
+
+
+def _tool_name_for_call(tool_calls: list[Any], call_id: str) -> str | None:
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        if str(call.get("id") or "").strip() != call_id:
+            continue
+        function = call.get("function")
+        if isinstance(function, dict):
+            name = function.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+    return None
 
 
 def _truncate_total_content(

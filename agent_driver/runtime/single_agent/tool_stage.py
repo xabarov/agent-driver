@@ -163,6 +163,7 @@ def _post_process_tool_result(
     _apply_subagent_control_tool_outputs(host, context, result)
     _update_zero_result_policy(context, result)
     _refresh_force_final_controls(context)
+    _force_web_fetch_for_source_verified_research(context)
     if not planning_updated:
         update_planning_state_from_tool_results(context)
 
@@ -404,6 +405,7 @@ async def _finalize_tool_stage_transition(
         increment_tool_loops_since_todo_write(context)
     if continue_with_llm and context.run_input.agent_profile != AgentProfile.CODE_AGENT:
         _maybe_force_final_answer(context)
+        _force_web_fetch_for_source_verified_research(context)
     context.metadata.update(
         {
             "next_step": "llm_call" if continue_with_llm else "finalize",
@@ -568,11 +570,22 @@ def _update_tool_protocol_messages(
                 },
             }
         )
+    assistant_metadata: dict[str, Any] = {"tool_calls": assistant_tool_calls}
+    reasoning_details = response.metadata.get("provider_reasoning_details")
+    if isinstance(reasoning_details, list) and reasoning_details:
+        assistant_metadata["reasoning_details"] = reasoning_details
+    reasoning = response.metadata.get("provider_reasoning")
+    if (
+        "reasoning_details" not in assistant_metadata
+        and isinstance(reasoning, str)
+        and reasoning
+    ):
+        assistant_metadata["reasoning"] = reasoning
     messages.append(
         ChatMessage(
             role=ChatRole.ASSISTANT,
             content=strip_text_form_tool_calls(response.message.content or ""),
-            metadata={"tool_calls": assistant_tool_calls},
+            metadata=assistant_metadata,
         )
     )
     from agent_driver.llm.tool_result_unpacker import (
@@ -910,6 +923,9 @@ def _append_web_fetch_verification_hint(
         return
     successful_fetches = max(web_fetch_total, evidence.successful_fetches)
     unique_domains = len(evidence.unique_domains)
+    diversity_pending = (
+        successful_fetches >= 1 and unique_domains < SOURCE_VERIFIED_DOMAINS
+    )
     if (
         successful_fetches >= required_fetches
         and unique_domains >= SOURCE_VERIFIED_DOMAINS
@@ -925,15 +941,28 @@ def _append_web_fetch_verification_hint(
             successful_fetches >= required_fetches
             and unique_domains < SOURCE_VERIFIED_DOMAINS
         ):
+            avoid_domains = ", ".join(evidence.unique_domains)
             fetch_instruction = (
                 "fetch/open at least one additional concrete high-signal URL "
                 "from a different domain"
             )
+            if avoid_domains:
+                fetch_instruction += (
+                    f"; do not fetch/open URLs from these already fetched "
+                    f"domain(s): {avoid_domains}"
+                )
         else:
             fetch_instruction = (
                 f"fetch/open at least {remaining} more concrete high-signal "
                 "URL(s) with web_fetch"
             )
+            if diversity_pending:
+                avoid_domains = ", ".join(evidence.unique_domains)
+                if avoid_domains:
+                    fetch_instruction += (
+                        f", preferably outside these already fetched domain(s): "
+                        f"{avoid_domains}"
+                    )
         messages.append(
             ChatMessage(
                 role=ChatRole.USER,
@@ -1171,6 +1200,60 @@ def _refresh_force_final_controls(context: RunContext) -> None:
     context.metadata.pop("force_final_answer_reason", None)
 
 
+def _force_web_fetch_for_source_verified_research(context: RunContext) -> None:
+    """Force the next repair turn to verify search candidates with web_fetch."""
+
+    def _clear_fetch_force() -> None:
+        if context.metadata.get("continuation_nudge_reason") in {
+            "source_verified_fetch_required" "source_diversity_search_required",
+            "source_diversity_fetch_required",
+        }:
+            context.metadata.pop("continuation_nudge_reason", None)
+        context.metadata.pop("research_avoid_domains", None)
+        context.metadata.pop("research_source_diversity_avoid_domains", None)
+
+    if context.metadata.get("force_final_answer") is True:
+        _clear_fetch_force()
+        return
+    if not _source_verified_research_pending(context):
+        _clear_fetch_force()
+        return
+    evidence = research_evidence_from_tool_results(context.metadata.get("tool_results"))
+    if evidence.search_calls < 1:
+        _clear_fetch_force()
+        return
+    if _source_diversity_repair_pending(evidence):
+        domains = ", ".join(evidence.unique_domains)
+        context.metadata["research_avoid_domains"] = list(evidence.unique_domains)
+        if _last_research_tool_name(context) == "web_search":
+            context.metadata["tool_choice_override"] = {
+                "type": "tool",
+                "name": "web_fetch",
+            }
+            context.metadata["continuation_nudge_reason"] = (
+                "source_diversity_fetch_required"
+            )
+        else:
+            context.metadata["tool_choice_override"] = {
+                "type": "tool",
+                "name": "web_search",
+            }
+            context.metadata["continuation_nudge_reason"] = (
+                "source_diversity_search_required"
+            )
+        if domains:
+            context.metadata["research_source_diversity_avoid_domains"] = domains
+        return
+    if evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES:
+        _clear_fetch_force()
+        return
+    context.metadata["tool_choice_override"] = {
+        "type": "tool",
+        "name": "web_fetch",
+    }
+    context.metadata["continuation_nudge_reason"] = "source_verified_fetch_required"
+
+
 def _maybe_force_final_answer(context: RunContext) -> None:
     """Enable forced final-answer mode only when guard heuristics trigger."""
     reason = _force_final_reason(context)
@@ -1212,9 +1295,24 @@ def _force_final_reason(context: RunContext) -> str | None:
         return "near_tool_budget"
     if near_step_budget:
         return "near_step_budget"
+    research_satisfied = _research_request_should_force_final(
+        context
+    ) and not _python_reliability_request_pending(context)
+    if research_satisfied:
+        contract = build_research_session_contract_from_context(
+            context,
+            enforce_final_source_links=False,
+            enforce_todos=False,
+            allow_final_deliverable_todos=True,
+        )
+        context.metadata["research_session_contract"] = contract.model_dump()
+        context.metadata["final_readiness"] = FINAL_READINESS_ALLOWED
+        context.metadata["repair_required_reasons"] = []
+        return "research_request_satisfied"
     contract = build_research_session_contract_from_context(
         context,
         enforce_final_source_links=False,
+        allow_final_deliverable_todos=True,
     )
     context.metadata["research_session_contract"] = contract.model_dump()
     if contract.final_readiness.status != FINAL_READINESS_ALLOWED:
@@ -1230,12 +1328,7 @@ def _force_final_reason(context: RunContext) -> str | None:
     if zero_results_triggered:
         return "web_search_zero_results"
     deliverable_requested = _deliverable_request_should_force_final(context)
-    research_satisfied = _research_request_should_force_final(
-        context
-    ) and not _python_reliability_request_pending(context)
     python_result_ready = _python_request_should_force_final(context)
-    if research_satisfied:
-        return "research_request_satisfied"
     if deliverable_requested:
         return "deliverable_request_satisfied"
     if python_result_ready:
@@ -1298,7 +1391,8 @@ def _research_request_should_force_final(context: RunContext) -> bool:
             )
         evidence = research_evidence_from_tool_results(tool_results)
         if evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES and (
-            evidence.search_calls > 0 or evidence.fetch_calls > 0
+            evidence.successful_fetches == 0
+            and (evidence.search_calls > 0 or evidence.fetch_calls > 0)
         ):
             context.metadata["research_fetch_fallback_required"] = True
             return True
@@ -1327,13 +1421,37 @@ def _source_verified_research_pending(context: RunContext) -> bool:
         return False
     evidence = research_evidence_from_tool_results(context.metadata.get("tool_results"))
     if evidence.failed_fetches >= SOURCE_VERIFIED_FETCHES and (
-        evidence.search_calls > 0 or evidence.fetch_calls > 0
+        evidence.successful_fetches == 0
+        and (evidence.search_calls > 0 or evidence.fetch_calls > 0)
     ):
         return False
     return not evidence.source_verified(
         required_fetches=SOURCE_VERIFIED_FETCHES,
         required_domains=SOURCE_VERIFIED_DOMAINS,
     )
+
+
+def _source_diversity_repair_pending(evidence: Any) -> bool:
+    return (
+        getattr(evidence, "successful_fetches", 0) >= SOURCE_VERIFIED_FETCHES
+        and len(getattr(evidence, "unique_domains", ())) < SOURCE_VERIFIED_DOMAINS
+    )
+
+
+def _last_research_tool_name(context: RunContext) -> str | None:
+    tool_results = context.metadata.get("tool_results")
+    if not isinstance(tool_results, list):
+        return None
+    for item in reversed(tool_results):
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        tool_name = str(call.get("tool_name") or "").strip()
+        if tool_name in {"web_search", "web_fetch"}:
+            return tool_name
+    return None
 
 
 def _required_research_fetch_count(context: RunContext) -> int:

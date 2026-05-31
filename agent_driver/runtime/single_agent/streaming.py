@@ -236,9 +236,18 @@ def _collect_stream_item(
             "provider_reasoning_details_present",
             "provider_reasoning_details_count",
             "provider_reasoning_text_present",
+            "provider_reasoning",
         ):
             if key in item.metadata:
                 stream_metadata[key] = item.metadata[key]
+        if "provider_reasoning_details" in item.metadata:
+            existing = stream_metadata.get("provider_reasoning_details")
+            if not isinstance(existing, list):
+                existing = []
+            details = item.metadata["provider_reasoning_details"]
+            if isinstance(details, list):
+                _append_reasoning_details(existing, details)
+                stream_metadata["provider_reasoning_details"] = existing
         if "planned_tool_calls" in item.metadata:
             stream_metadata["planned_tool_calls"] = item.metadata["planned_tool_calls"]
         if "tool_call_parse_errors" in item.metadata:
@@ -253,6 +262,42 @@ def _stream_idle_timeout_seconds(run_input: AgentRunInput) -> float | None:
         return None
     value = float(raw)
     return value if value > 0 else None
+
+
+def _append_reasoning_details(existing: list[Any], details: list[Any]) -> None:
+    """Append OpenRouter streaming reasoning blocks, merging text deltas."""
+    for detail in details:
+        if not isinstance(detail, dict):
+            existing.append(detail)
+            continue
+        if _merge_reasoning_text_delta(existing, detail):
+            continue
+        existing.append(dict(detail))
+
+
+def _merge_reasoning_text_delta(existing: list[Any], detail: dict[str, Any]) -> bool:
+    if not existing or not isinstance(existing[-1], dict):
+        return False
+    previous = existing[-1]
+    if not _same_reasoning_block(previous, detail):
+        return False
+    for key in ("summary", "text"):
+        value = detail.get(key)
+        if isinstance(value, str) and value:
+            previous[key] = str(previous.get(key) or "") + value
+            return True
+    return False
+
+
+def _same_reasoning_block(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    if left.get("type") not in {"reasoning.summary", "reasoning.text"}:
+        return False
+    if right.get("type") != left.get("type"):
+        return False
+    for key in ("id", "format", "index"):
+        if left.get(key) != right.get(key):
+            return False
+    return True
 
 
 __all__ = [

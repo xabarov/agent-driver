@@ -118,6 +118,55 @@ def test_openai_completion_normalizes_tool_calls_into_planned_metadata() -> None
     assert planned[0]["tool_name"] == "web_search"
 
 
+def test_openai_completion_preserves_reasoning_details_for_tool_turns() -> None:
+    payload = {
+        "model": "openai/gpt-5.5",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_details": [
+                        {
+                            "type": "reasoning.encrypted",
+                            "data": "opaque",
+                            "id": "r1",
+                            "format": "openai-responses-v1",
+                            "index": 0,
+                        }
+                    ],
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "web_fetch",
+                                "arguments": '{"url":"https://example.com"}',
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    }
+
+    response = normalize_openai_completion_payload(
+        payload, provider_name="openrouter", fallback_model="openai/gpt-5.5"
+    )
+
+    assert response.metadata["provider_reasoning_details"] == [
+        {
+            "type": "reasoning.encrypted",
+            "data": "opaque",
+            "id": "r1",
+            "format": "openai-responses-v1",
+            "index": 0,
+        }
+    ]
+    assert response.metadata["provider_reasoning_details_count"] == 1
+
+
 def test_openai_completion_fallback_parses_text_form_tool_call() -> None:
     """Fallback parser should extract text-form tool calls from assistant content."""
     payload = {
@@ -141,6 +190,37 @@ def test_openai_completion_fallback_parses_text_form_tool_call() -> None:
     planned = response.metadata.get("planned_tool_calls")
     assert isinstance(planned, list) and planned
     assert planned[0]["tool_name"] == "glob_search"
+    assert response.metadata.get("text_form_tool_calls_parsed") is True
+
+
+def test_openai_completion_fallback_parses_xmlish_text_form_tool_call() -> None:
+    """GLM/OpenRouter may emit arg_key/arg_value text-form tool calls."""
+    payload = {
+        "model": "glm-test",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        "<tool_call>web_fetch"
+                        "<arg_key>url</arg_key>"
+                        "<arg_value>https://example.com/a</arg_value>"
+                        "</tool_call>"
+                    ),
+                },
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+    response = normalize_openai_completion_payload(
+        payload, provider_name="openai-compat", fallback_model="fallback"
+    )
+
+    planned = response.metadata.get("planned_tool_calls")
+    assert isinstance(planned, list) and planned
+    assert planned[0]["tool_name"] == "web_fetch"
+    assert planned[0]["args"] == {"url": "https://example.com/a"}
     assert response.metadata.get("text_form_tool_calls_parsed") is True
 
 

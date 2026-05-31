@@ -21,7 +21,7 @@ from agent_driver.contracts.enums import (
     TerminalReason,
 )
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
+from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse
 from agent_driver.llm.payload_debug import (
     debug_llm_payload_enabled,
     summarize_llm_request_payload,
@@ -261,6 +261,7 @@ async def execute_llm_call_step(
         request, trim_payload = _build_trimmed_request(
             host, context, observations, clarification
         )
+        request = _narrow_request_tools_to_forced_choice(request)
         _emit_protocol_debug(host, context, request)
         context.metadata["trim_audit"] = trim_payload["trim_audit"]
         context.metadata["trim_metadata"] = trim_payload["trim_metadata"]
@@ -565,11 +566,105 @@ async def _complete_request(
     host: LlmStepHost, context: RunContext, request: Any
 ) -> LlmResponse:
     last_timeout: httpx.TimeoutException | None = None
-    for attempt in range(2):
+    for attempt in range(3):
         try:
             if not is_stream_enabled(context.run_input):
-                return await host._deps.provider.complete(request)
-            return await complete_streaming_request(host, context, request)
+                response = await host._deps.provider.complete(request)
+                return await _retry_forced_final_without_tools(
+                    host,
+                    context,
+                    request=request,
+                    response=response,
+                )
+            response = await complete_streaming_request(host, context, request)
+            if _should_retry_empty_forced_final_non_stream(context, response):
+                context.metadata["empty_forced_final_retry"] = "non_streaming"
+                emit_step_event(
+                    host,
+                    context,
+                    event_type=RuntimeEventType.WARNING,
+                    payload={
+                        "warning": (
+                            "Provider returned an empty forced final stream; "
+                            "retrying once without streaming."
+                        ),
+                        "signal_id": "provider_empty_forced_final_non_stream_retry",
+                        "severity": "warning",
+                    },
+                )
+                response = await host._deps.provider.complete(
+                    request.model_copy(update={"stream": False})
+                )
+                return await _retry_forced_final_without_tools(
+                    host,
+                    context,
+                    request=request,
+                    response=response,
+                )
+            return response
+        except httpx.HTTPStatusError as exc:
+            if attempt == 0 and _is_invalid_encrypted_reasoning_error(exc):
+                stripped = _strip_reasoning_echo(request)
+                if stripped is not request:
+                    context.metadata["reasoning_echo_retry"] = (
+                        "stripped_invalid_encrypted_content"
+                    )
+                    emit_step_event(
+                        host,
+                        context,
+                        event_type=RuntimeEventType.WARNING,
+                        payload={
+                            "warning": (
+                                "Provider rejected echoed encrypted reasoning; "
+                                "retrying once without reasoning metadata."
+                            ),
+                            "signal_id": "provider_invalid_encrypted_reasoning_retry",
+                            "severity": "warning",
+                        },
+                    )
+                    request = stripped
+                    continue
+            if _is_forced_tool_choice_provider_error(exc, request):
+                context.metadata["forced_tool_choice_retry"] = (
+                    "removed_after_provider_rejection"
+                )
+                emit_step_event(
+                    host,
+                    context,
+                    event_type=RuntimeEventType.WARNING,
+                    payload={
+                        "warning": (
+                            "Provider rejected a forced tool_choice; retrying "
+                            "once with the same tools and no forced tool_choice."
+                        ),
+                        "signal_id": "provider_forced_tool_choice_removed_retry",
+                        "severity": "warning",
+                        "status_code": exc.response.status_code,
+                    },
+                )
+                request = _request_without_forced_tool_choice(request)
+                continue
+            if _is_reduce_max_tokens_credit_error(exc):
+                reduced = _request_with_reduced_max_tokens(request)
+                if reduced is not request:
+                    context.metadata["max_tokens_retry"] = "reduced_after_provider_402"
+                    emit_step_event(
+                        host,
+                        context,
+                        event_type=RuntimeEventType.WARNING,
+                        payload={
+                            "warning": (
+                                "Provider rejected the requested output budget; "
+                                "retrying once with fewer max_tokens."
+                            ),
+                            "signal_id": "provider_max_tokens_reduced_retry",
+                            "severity": "warning",
+                            "max_tokens": reduced.max_tokens,
+                        },
+                    )
+                    request = reduced
+                    continue
+            raise
         except httpx.TimeoutException as exc:
             last_timeout = exc
             if isinstance(exc, LlmStreamIdleTimeout) and exc.emitted_chunks > 0:
@@ -580,6 +675,275 @@ async def _complete_request(
     if last_timeout is not None:
         raise last_timeout
     raise RuntimeError("unreachable")
+
+
+def _is_invalid_encrypted_reasoning_error(exc: httpx.HTTPStatusError) -> bool:
+    if exc.response.status_code != 400:
+        return False
+    body = exc.response.text.lower()
+    return (
+        "invalid_encrypted_content" in body
+        or "encrypted content" in body
+        and "could not be" in body
+    )
+
+
+def _is_forced_tool_choice_provider_error(
+    exc: httpx.HTTPStatusError,
+    request: Any,
+) -> bool:
+    if exc.response.status_code not in {400, 404}:
+        return False
+    if not isinstance(request, LlmRequest):
+        return False
+    return _forced_named_tool_choice(request.tool_choice) is not None
+
+
+def _forced_named_tool_choice(tool_choice: object) -> str | None:
+    if not isinstance(tool_choice, dict):
+        return None
+    if tool_choice.get("type") != "tool":
+        return None
+    name = tool_choice.get("name")
+    return name if isinstance(name, str) and name.strip() else None
+
+
+def _narrow_request_tools_to_forced_choice(request: Any) -> Any:
+    if not isinstance(request, LlmRequest):
+        return request
+    forced_tool_name = _forced_named_tool_choice(request.tool_choice)
+    if not forced_tool_name:
+        return request
+    tools = _request_tools_matching(request.tools, forced_tool_name)
+    if not tools or len(tools) == len(request.tools):
+        return request
+    metadata = dict(request.metadata)
+    metadata["forced_tool_catalog"] = forced_tool_name
+    return request.model_copy(update={"metadata": metadata, "tools": tools})
+
+
+def _request_without_forced_tool_choice(request: LlmRequest) -> LlmRequest:
+    forced_tool_name = _forced_named_tool_choice(request.tool_choice)
+    metadata = dict(request.metadata)
+    metadata["forced_tool_choice_retry"] = "removed_after_provider_rejection"
+    tools = request.tools
+    if forced_tool_name:
+        tools = _request_tools_matching(request.tools, forced_tool_name)
+    return request.model_copy(
+        update={
+            "metadata": metadata,
+            "tools": tools,
+            "tool_choice": None,
+        }
+    )
+
+
+def _request_tools_matching(
+    tools: list[dict[str, Any]],
+    tool_name: str,
+) -> list[dict[str, Any]]:
+    return [tool for tool in tools if _request_tool_name(tool) == tool_name]
+
+
+def _request_tool_name(tool: object) -> str | None:
+    if not isinstance(tool, dict):
+        return None
+    function = tool.get("function")
+    if not isinstance(function, dict):
+        return None
+    name = function.get("name")
+    return name if isinstance(name, str) and name.strip() else None
+
+
+def _should_retry_empty_forced_final_non_stream(
+    context: RunContext, response: LlmResponse
+) -> bool:
+    metadata = getattr(context, "metadata", {})
+    if not isinstance(metadata, dict) or metadata.get("force_final_answer") is not True:
+        return False
+    if response.finish_reason != LlmFinishReason.STOP:
+        return False
+    if (response.message.content or "").strip():
+        return False
+    planned = response.metadata.get("planned_tool_calls")
+    return not isinstance(planned, list) or not planned
+
+
+async def _retry_forced_final_without_tools(
+    host: LlmStepHost,
+    context: RunContext,
+    *,
+    request: Any,
+    response: LlmResponse,
+) -> LlmResponse:
+    retry_reason = _forced_final_no_tools_retry_reason(context, request, response)
+    if retry_reason is None:
+        return response
+    signal_id = (
+        "provider_forced_final_tool_call_no_tools_retry"
+        if retry_reason == "tool_call"
+        else "provider_empty_forced_final_no_tools_retry"
+    )
+    warning = (
+        "Provider returned a tool-call shaped forced final answer; retrying once "
+        "with tools disabled for a clean final response."
+        if retry_reason == "tool_call"
+        else (
+            "Provider returned an empty forced final answer; retrying once "
+            "with tools disabled for a clean final response."
+        )
+    )
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.WARNING,
+        payload={
+            "warning": warning,
+            "signal_id": signal_id,
+            "severity": "warning",
+        },
+    )
+    context.metadata["forced_final_retry"] = f"{retry_reason}_no_tools"
+    if retry_reason == "empty":
+        context.metadata["empty_forced_final_retry"] = "no_tools"
+    provider_name = str(getattr(host._deps.provider, "name", "") or "")
+    retry_response = await host._deps.provider.complete(
+        _request_without_tools(request, provider_name=provider_name)
+    )
+    _emit_non_stream_retry_assistant_message(host, context, retry_response)
+    return retry_response
+
+
+def _forced_final_no_tools_retry_reason(
+    context: RunContext,
+    request: Any,
+    response: LlmResponse,
+) -> str | None:
+    metadata = getattr(context, "metadata", {})
+    if not isinstance(metadata, dict) or metadata.get("force_final_answer") is not True:
+        return None
+    if not isinstance(request, LlmRequest):
+        return None
+    if not request.tools and request.tool_choice is None:
+        return None
+    if response.metadata.get("text_form_tool_calls_suppressed") is True:
+        return "tool_call"
+    planned = response.metadata.get("planned_tool_calls")
+    if isinstance(planned, list) and planned:
+        return "tool_call"
+    if response.finish_reason != LlmFinishReason.STOP:
+        return None
+    if (response.message.content or "").strip():
+        return None
+    return "empty" if not isinstance(planned, list) or not planned else None
+
+
+def _request_without_tools(
+    request: LlmRequest, *, provider_name: str | None = None
+) -> LlmRequest:
+    messages = [
+        *request.messages,
+        ChatMessage(
+            role=ChatRole.USER,
+            content=(
+                "Final answer retry: the previous forced-final attempt returned "
+                "empty content. Tools are now disabled. Return the final answer "
+                "now, in the user's language, using only the evidence and tool "
+                "results already present in this conversation. Do not mention "
+                "tool limitations; include source links when the task used web "
+                "sources."
+            ),
+            metadata={"runtime_retry": "empty_forced_final_no_tools"},
+        ),
+    ]
+    metadata = dict(request.metadata)
+    if _should_disable_reasoning_for_no_tools_retry(
+        request=request,
+        provider_name=provider_name,
+    ):
+        provider_extra_body = dict(metadata.get("provider_extra_body") or {})
+        provider_extra_body["reasoning"] = {"enabled": False, "exclude": True}
+        metadata["provider_extra_body"] = provider_extra_body
+    return request.model_copy(
+        update={
+            "messages": messages,
+            "metadata": metadata,
+            "stream": False,
+            "tools": [],
+            "tool_choice": None,
+            "parallel_tool_calls": None,
+        }
+    )
+
+
+def _should_disable_reasoning_for_no_tools_retry(
+    *, request: LlmRequest, provider_name: str | None
+) -> bool:
+    provider_l = (provider_name or "").strip().lower()
+    model_l = (request.model or "").strip().lower()
+    return provider_l == "openrouter" and "deepseek" in model_l
+
+
+def _emit_non_stream_retry_assistant_message(
+    host: LlmStepHost,
+    context: RunContext,
+    response: LlmResponse,
+) -> None:
+    content = (response.message.content or "").strip()
+    if not content:
+        return
+    emit_token_delta_events(host, context, [content])
+    context.metadata["assistant_stream_completed"] = True
+    context.metadata["assistant_stream_content"] = content
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.ASSISTANT_MESSAGE_REPLACED,
+        payload={
+            "content": content,
+            "finish_reason": response.finish_reason.value,
+            "provider": response.provider,
+            "model": response.model,
+            "replacement_reason": "empty_forced_final_no_tools_retry",
+        },
+    )
+
+
+def _strip_reasoning_echo(request: Any) -> Any:
+    if not isinstance(request, LlmRequest):
+        return request
+    changed = False
+    messages: list[ChatMessage] = []
+    for message in request.messages:
+        metadata = message.metadata if isinstance(message.metadata, dict) else {}
+        if "reasoning_details" not in metadata and "reasoning" not in metadata:
+            messages.append(message)
+            continue
+        updated_metadata = dict(metadata)
+        updated_metadata.pop("reasoning_details", None)
+        updated_metadata.pop("reasoning", None)
+        messages.append(message.model_copy(update={"metadata": updated_metadata}))
+        changed = True
+    if not changed:
+        return request
+    return request.model_copy(update={"messages": messages})
+
+
+def _is_reduce_max_tokens_credit_error(exc: httpx.HTTPStatusError) -> bool:
+    if exc.response.status_code != 402:
+        return False
+    body = exc.response.text.lower()
+    return "fewer max_tokens" in body or "requested up to" in body
+
+
+def _request_with_reduced_max_tokens(request: Any) -> Any:
+    if not isinstance(request, LlmRequest):
+        return request
+    current = request.max_tokens if request.max_tokens is not None else 4096
+    reduced = max(512, min(2048, int(current) // 2))
+    if request.max_tokens == reduced:
+        return request
+    return request.model_copy(update={"max_tokens": reduced})
 
 
 def _token_pressure_state(token_pressure: object) -> str:
@@ -616,7 +980,9 @@ def _emit_token_pressure_warning(host: LlmStepHost, context: RunContext) -> None
     window = (
         int(window_raw) if isinstance(window_raw, (int, float)) and window_raw else 0
     )
-    usage_ratio = round(used_tokens / window, 4) if window > 0 else None
+    context_usage_ratio = token_pressure.get("context_usage_ratio")
+    if not isinstance(context_usage_ratio, (int, float)):
+        context_usage_ratio = round(used_tokens / window, 4) if window > 0 else None
     payload: dict[str, Any] = {
         "kind": "token_pressure",
         "signal_id": _TOKEN_PRESSURE_SIGNAL_IDS[state],
@@ -629,7 +995,8 @@ def _emit_token_pressure_warning(host: LlmStepHost, context: RunContext) -> None
         "warning_threshold": token_pressure.get("warning_threshold"),
         "compact_threshold": token_pressure.get("compact_threshold"),
         "blocking_threshold": token_pressure.get("blocking_threshold"),
-        "usage_ratio": usage_ratio,
+        "context_usage_ratio": context_usage_ratio,
+        "usage_ratio": context_usage_ratio,
     }
     emit_step_event(
         host,

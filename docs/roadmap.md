@@ -21,6 +21,11 @@ chat applications:
 
 ## Current Priorities
 
+The cross-workstream execution order is tracked in
+[Unified work plan](unified-work-plan-2026-05-31.md). Treat that page as the
+active sequence for research/provider quality, Skills, SDK, refactoring,
+context pressure, and docs cleanup.
+
 1. Keep public chat behavior coherent.
    Planning should help the user, not trap the model in repeated plans,
    clarification loops, or approval churn.
@@ -55,6 +60,7 @@ chat applications:
 
 ## Current Docs Map
 
+- [Unified work plan](unified-work-plan-2026-05-31.md)
 - [Runtime overview](runtime.md)
 - [Planning and control](planning-and-control.md)
 - [Built-in tools](builtin-tools.md)

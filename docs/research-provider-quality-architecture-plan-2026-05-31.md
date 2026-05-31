@@ -1,5 +1,9 @@
 # Research Provider Quality Architecture Plan
 
+Status: closed decision log / reference. The active provider/research sequence
+is [Unified Work Plan](unified-work-plan-2026-05-31.md) plus
+[Provider And Model Debugging](provider-model-debugging.md).
+
 Дата: 2026-05-31.
 
 Этот план расширяет

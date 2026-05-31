@@ -22,7 +22,21 @@ def test_token_pressure_reports_warning_state() -> None:
     )
     assert pressure["state"] in {"warning", "compact_recommended", "blocking"}
     assert pressure["used_tokens_estimate"] > 0
+    assert pressure["context_usage_ratio"] == 0.2667
     assert pressure["retained_digest_count"] == 1
+
+
+def test_token_pressure_reports_context_usage_ratio() -> None:
+    """Snapshot includes usage ratio against the full context window."""
+    pressure = estimate_token_pressure(
+        TokenPressureInput(
+            prompt_messages=({"content": "x" * 1000},),
+            context_window_estimate=1000,
+            output_token_reserve=100,
+        )
+    )
+    assert pressure["used_tokens_estimate"] == 250
+    assert pressure["context_usage_ratio"] == 0.25
 
 
 def test_token_pressure_reports_blocking_state() -> None:

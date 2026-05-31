@@ -12,6 +12,11 @@ _JSON_OBJECT_RE = re.compile(r"\{[\s\S]*?\}")
 _TOOL_CALL_BLOCK_RE = re.compile(
     r"<tool_call>\s*(?P<body>[\s\S]*?)\s*</tool_call>", re.IGNORECASE
 )
+_ARG_PAIR_RE = re.compile(
+    r"<arg_key>\s*(?P<key>[\s\S]*?)\s*</arg_key>\s*"
+    r"<arg_value>\s*(?P<value>[\s\S]*?)\s*</arg_value>",
+    re.IGNORECASE,
+)
 _PYTHON_TAG_BLOCK_RE = re.compile(
     r"<\|python_tag\|>\s*(?P<body>[\s\S]*?)\s*<\|eom_id\|>", re.IGNORECASE
 )
@@ -73,7 +78,9 @@ def _to_tool_call(
         tool_call = ToolCall(
             tool_name=name,
             args=args,
-            tool_call_id=call_id if isinstance(call_id, str) and call_id.strip() else None,
+            tool_call_id=(
+                call_id if isinstance(call_id, str) and call_id.strip() else None
+            ),
             metadata={"text_form_source": source, "text_form_index": index},
         )
     except (TypeError, ValueError):
@@ -86,6 +93,35 @@ def _to_tool_call(
     return tool_call.model_dump(mode="json"), None
 
 
+def _xmlish_tool_call_payload(raw: str) -> dict[str, Any] | None:
+    body = raw.strip()
+    if not body or body.startswith("{"):
+        return None
+    first_tag = body.find("<")
+    name_text = body[: first_tag if first_tag >= 0 else len(body)].strip()
+    if not name_text:
+        return None
+    args: dict[str, Any] = {}
+    for match in _ARG_PAIR_RE.finditer(body):
+        key = match.group("key").strip()
+        value = match.group("value").strip()
+        if key:
+            args[key] = _coerce_xmlish_arg_value(value)
+    return {"name": name_text, "arguments": args}
+
+
+def _coerce_xmlish_arg_value(value: str) -> Any:
+    text = value.strip()
+    if not text:
+        return ""
+    if text[0] in '[{"' or text in {"true", "false", "null"}:
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
+    return text
+
+
 def extract_text_form_tool_calls(
     text: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -93,8 +129,14 @@ def extract_text_form_tool_calls(
     if not isinstance(text, str) or not text.strip():
         return [], []
     candidates: list[tuple[str, str]] = []
+    xmlish_candidates: list[tuple[str, dict[str, Any]]] = []
     for match in _TOOL_CALL_BLOCK_RE.finditer(text):
-        body = _extract_json_object(match.group("body"))
+        raw_body = match.group("body")
+        xmlish = _xmlish_tool_call_payload(raw_body)
+        if xmlish is not None:
+            xmlish_candidates.append(("tool_call_xmlish_block", xmlish))
+            continue
+        body = _extract_json_object(raw_body)
         if body:
             candidates.append(("tool_call_block", body))
     for match in _PYTHON_TAG_BLOCK_RE.finditer(text):
@@ -105,11 +147,19 @@ def extract_text_form_tool_calls(
         body = _extract_json_object(match.group("body"))
         if body:
             candidates.append(("tool_call_fence", body))
-    if not candidates:
+    if not candidates and not xmlish_candidates:
         return [], []
     planned: list[dict[str, Any]] = []
     parse_errors: list[dict[str, Any]] = []
-    for index, (source, raw_payload) in enumerate(candidates):
+    index = 0
+    for source, payload in xmlish_candidates:
+        parsed, parse_error = _to_tool_call(payload, index=index, source=source)
+        if parsed is not None:
+            planned.append(parsed)
+        if parse_error is not None:
+            parse_errors.append(parse_error)
+        index += 1
+    for source, raw_payload in candidates:
         try:
             payload = json.loads(raw_payload)
         except json.JSONDecodeError:

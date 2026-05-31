@@ -175,7 +175,18 @@ def setup_minimal_api_routes(page: Page) -> None:
         "**/api/models",
         lambda route: fulfill_json(
             route,
-            {"models": ["concept-smoke"], "selected": "concept-smoke"},
+            {
+                "provider": "fake",
+                "models": [
+                    {
+                        "id": "concept-smoke",
+                        "name": "Concept Smoke",
+                        "description": None,
+                        "context_length": None,
+                        "capability_profile": {"supports_tool_calls": True},
+                    }
+                ],
+            },
         ),
     )
     page.route(
@@ -545,12 +556,14 @@ def run_web_search_final_answer(page: Page) -> None:
     expect(page.get_by_text('"query"')).not_to_be_visible(timeout=1000)
     expect(page.get_by_text("Found sources about Leo Fender")).to_be_visible()
     expect(page.get_by_text("Fender Stratocaster стала важной моделью")).to_be_visible()
-    expect(page.get_by_label("Sources")).to_be_visible()
+    expect(page.get_by_label("Search candidates")).to_be_visible()
     expect(
-        page.get_by_label("Sources").get_by_text("Stratocaster history", exact=True)
+        page.get_by_label("Search candidates").get_by_text(
+            "Stratocaster history", exact=True
+        )
     ).to_be_visible()
     expect(
-        page.get_by_label("Sources").get_by_text("search", exact=True)
+        page.get_by_label("Search candidates").get_by_text("candidate", exact=True)
     ).to_be_visible()
     expect_trace_summary(
         page,
@@ -998,9 +1011,11 @@ def run_plan_then_web_then_answer(page: Page) -> None:
     expect(page.get_by_text('"query"')).not_to_be_visible(timeout=1000)
     expect(page.get_by_text("Found 5 sources about Fender history")).to_be_visible()
     expect(page.get_by_text("По найденным источникам")).to_be_visible()
-    expect(page.get_by_label("Sources")).to_be_visible()
+    expect(page.get_by_label("Search candidates")).to_be_visible()
     expect(
-        page.get_by_label("Sources").get_by_text("Fender history source", exact=True)
+        page.get_by_label("Search candidates").get_by_text(
+            "Fender history source", exact=True
+        )
     ).to_be_visible()
     expect_trace_summary(
         page,

@@ -117,6 +117,28 @@ def test_trace_summary_flags_search_only_report_research() -> None:
     assert summary["failures"]["search_only_research_report"] is True
 
 
+def test_trace_summary_requires_fetch_for_explicit_open_url_request() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt=(
+            "найди источник про fork-join queueing models и открой один "
+            "найденный URL"
+        ),
+        assistant_text="Краткий итог со ссылкой https://example.com/a.",
+        events=[
+            _completed_tool("web_search"),
+            {"event": "llm_call_completed", "data": {}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["research"]["depth"] == "light_search"
+    assert summary["research"]["fetch_required"] is True
+    assert summary["research"]["fetch_required_but_missing"] is True
+    assert "missing_fetched_sources" in summary["repair_required_reasons"]
+
+
 def test_trace_summary_passes_report_research_with_fetched_sources() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
@@ -450,6 +472,82 @@ def test_trace_summary_flags_incomplete_plan_on_final() -> None:
     assert summary["repair_required_reasons"] == ["unfinished_todos"]
 
 
+def test_trace_summary_allows_sourced_research_final_to_cover_process_todos() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt=(
+            "составь todo лист и иди по нему. Нужно поискать информацию "
+            "в интернете и подготовить отчет"
+        ),
+        assistant_text=(
+            "Итоговый отчет на основе проверенных источников. "
+            "Я сопоставил найденные материалы, выделил основные выводы, "
+            "объяснил практическое применение и указал ограничения. "
+            "Ключевой вывод: модель применима для анализа задержек и "
+            "производительности в системах с параллельными ветвями выполнения. "
+            "Источники: [A](https://example.com/a), [B](https://example.org/b)."
+        ),
+        events=[
+            _completed_tool("web_search"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.com/a"},
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.org/b"},
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "run_completed",
+                "data": {
+                    "planning_snapshot": {
+                        "todos": [
+                            {
+                                "id": "search",
+                                "content": "Search",
+                                "status": "completed",
+                            },
+                            {
+                                "id": "analyze",
+                                "content": "Analyze sources",
+                                "status": "in_progress",
+                            },
+                            {
+                                "id": "final",
+                                "content": "Write final report",
+                                "status": "pending",
+                            },
+                        ],
+                        "completed": 1,
+                        "total": 3,
+                    }
+                },
+            },
+        ],
+    )
+
+    assert summary["verdict"] == "pass"
+    assert summary["failures"]["plan_todos_incomplete_on_final"] is False
+    assert summary["final_readiness"] == "allowed"
+    assert summary["repair_required_reasons"] == []
+
+
 def test_trace_summary_flags_progress_only_final() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
@@ -561,7 +659,7 @@ def test_trace_summary_allows_plan_only_without_data_tools() -> None:
     assert summary["verdict"] == "pass"
 
 
-def test_trace_summary_requires_python_for_calculation_prompt() -> None:
+def test_trace_summary_does_not_fail_missing_python_from_prompt_heuristic() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
         user_prompt="Сколько букв r в strawberry? Проверь точно.",
@@ -572,10 +670,10 @@ def test_trace_summary_requires_python_for_calculation_prompt() -> None:
         ],
     )
 
-    assert summary["verdict"] == "fail"
-    assert summary["python"]["python_expected"] is True
-    assert summary["python"]["missed_python_for_calculation"] is True
-    assert summary["failures"]["missed_python"] is True
+    assert summary["verdict"] == "pass"
+    assert summary["python"]["python_expected"] is False
+    assert summary["python"]["missed_python_for_calculation"] is False
+    assert summary["failures"]["missed_python"] is False
 
 
 def test_trace_summary_does_not_require_python_for_research_about_calculation_domain() -> (

@@ -134,6 +134,7 @@ def _model_supports_reasoning(model_l: str) -> bool:
             "o3",
             "o4",
             "qwen3",
+            "deepseek-v4",
             "deepseek-r1",
             "deepseek-reasoner",
             "glm-z1",

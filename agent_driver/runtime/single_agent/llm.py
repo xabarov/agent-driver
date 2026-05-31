@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
@@ -89,6 +90,8 @@ def _tool_schema_from_manifest(manifest: ToolManifest) -> dict[str, Any]:
             "properties": {},
             "additionalProperties": True,
         }
+    else:
+        parameters = _provider_compatible_json_schema(parameters)
     return {
         "type": "function",
         "function": {
@@ -97,6 +100,29 @@ def _tool_schema_from_manifest(manifest: ToolManifest) -> dict[str, Any]:
             "parameters": parameters,
         },
     }
+
+
+def _provider_compatible_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a provider-friendly copy of a tool JSON Schema.
+
+    Some OpenAI/OpenRouter routes reject array schemas without an explicit
+    ``items`` key. JSON Schema allows that omission, but provider function
+    calling is stricter, so normalize before sending tool definitions.
+    """
+    normalized = deepcopy(schema)
+    _ensure_array_items(normalized)
+    return normalized
+
+
+def _ensure_array_items(value: Any) -> None:
+    if isinstance(value, dict):
+        if value.get("type") == "array" and "items" not in value:
+            value["items"] = {}
+        for child in value.values():
+            _ensure_array_items(child)
+    elif isinstance(value, list):
+        for child in value:
+            _ensure_array_items(child)
 
 
 def _request_tools_from_registry(
@@ -247,6 +273,19 @@ def build_single_agent_llm_request(
         artifact_ids=list(ctx.artifact_ids),
         observation_rows=list(ctx.observations),
     )
+    final_prompt_messages = list(trimmed.prompt_messages)
+    post_trim_protocol_repairs: tuple[str, ...] = ()
+    post_trim_protocol_warnings: tuple[str, ...] = ()
+    if ctx.protocol_messages is not None:
+        repaired_trimmed = validate_and_repair_protocol_messages(
+            _normalize_trimmed_messages(final_prompt_messages),
+            max_total_content_chars=max(ctx.max_chars * 3, ctx.max_chars),
+        )
+        post_trim_protocol_repairs = repaired_trimmed.repairs
+        post_trim_protocol_warnings = repaired_trimmed.warnings
+        final_prompt_messages = [
+            message.model_dump(mode="json") for message in repaired_trimmed.messages
+        ]
     request_metadata = dict(run_input.tool_policy.metadata)
     forced_model = request_metadata.pop("forced_model", None)
     # Mirror the runtime policy's allow/deny into the schema layer so the
@@ -262,7 +301,7 @@ def build_single_agent_llm_request(
     if response_format is None:
         response_format = run_input.response_format
     request = LlmRequest(
-        messages=_normalize_trimmed_messages(trimmed.prompt_messages),
+        messages=_normalize_trimmed_messages(final_prompt_messages),
         model_role=run_input.model_role,
         model=forced_model if isinstance(forced_model, str) else None,
         stream=ctx.stream,
@@ -276,6 +315,15 @@ def build_single_agent_llm_request(
         metadata=request_metadata,
     )
     trim_metadata = trimmed.model_dump(mode="json").get("metadata", {})
+    if isinstance(trim_metadata, dict):
+        if post_trim_protocol_repairs:
+            trim_metadata["post_trim_protocol_repairs"] = list(
+                post_trim_protocol_repairs
+            )
+        if post_trim_protocol_warnings:
+            trim_metadata["post_trim_protocol_warnings"] = list(
+                post_trim_protocol_warnings
+            )
     retained_observations = (
         trim_metadata.get("retained_observations", [])
         if isinstance(trim_metadata, dict)
@@ -283,7 +331,7 @@ def build_single_agent_llm_request(
     )
     token_pressure = estimate_token_pressure(
         TokenPressureInput(
-            prompt_messages=tuple(trimmed.prompt_messages),
+            prompt_messages=tuple(final_prompt_messages),
             observations=tuple(
                 retained_observations if isinstance(retained_observations, list) else []
             ),

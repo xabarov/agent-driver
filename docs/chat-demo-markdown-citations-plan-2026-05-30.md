@@ -1,5 +1,9 @@
 # Chat Demo Markdown And Citations Plan
 
+Status: closed decision log / reference. Keep as history for Markdown,
+math/code rendering and citation-shelf decisions; active cross-stream work is
+tracked in [Unified Work Plan](unified-work-plan-2026-05-31.md).
+
 Date: 2026-05-30
 
 ## Goal

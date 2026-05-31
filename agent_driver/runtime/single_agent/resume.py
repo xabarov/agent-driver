@@ -261,6 +261,18 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                         payload=plan_payload,
                     )
                 )
+            if (
+                resume.action == ResumeAction.APPROVE
+                and pending.interrupt.reason == InterruptReason.PLAN_APPROVAL_REQUIRED
+            ):
+                context.metadata["next_step"] = "llm_call"
+                context.tool_calls = max(0, context.tool_calls - 1)
+                context.metadata["pending_interrupt"] = None
+                context.metadata["interrupt_payload"] = None
+                context.metadata.pop("force_final_answer", None)
+                context.metadata.pop("force_final_answer_reason", None)
+                context.metadata.pop("approved_tool_call", None)
+                return
             call = apply_resume_to_call(
                 pending.call, resume.action, resume.edited_tool_args
             )

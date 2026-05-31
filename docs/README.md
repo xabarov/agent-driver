@@ -14,11 +14,20 @@ and tied to code that exists in the repository.
   clarification, steering, and subagents.
 - [Chat demo](chat-demo.md) - local demo stack, Phoenix tracing, provider/env
   setup, and concept checks.
+- [Provider and model debugging](provider-model-debugging.md) - OpenRouter,
+  Phoenix, reasoning/tool-call failures, and live model matrix practice.
 - [Testing](testing.md) - focused unit tests, quality pass, live checks, and
   Playwright smoke scenarios.
 
 ## Plans And Status
 
+- [Unified work plan](unified-work-plan-2026-05-31.md) - active cross-stream
+  order for provider/research quality, Skills, SDK, refactoring, context
+  pressure, and docs cleanup.
+- [Provider and model debugging](provider-model-debugging.md) - OpenRouter,
+  Phoenix, reasoning/tool-call failures, and live model matrix practice.
+- [Runtime metadata inventory](runtime-metadata.md) - current
+  `RunContext.metadata` owner map for runtime state refactoring.
 - [OpenClaude improvement plan](openclaude-improvement-plan-2026-05-29.md) -
   closed force-planning, steerability, subagents, Phoenix findings, and
   best-of-both decisions from the OpenClaude/Hermes workstream.

@@ -24,6 +24,7 @@ from agent_driver.contracts.enums import ToolPolicyMode
 from agent_driver.contracts.tools import ToolManifest
 from agent_driver.runtime.single_agent.llm import (
     LlmRequestBuildContext,
+    _provider_compatible_json_schema,
     _request_tools_from_registry,
     build_single_agent_llm_request,
 )
@@ -64,9 +65,7 @@ def test_no_filters_returns_all_registry_tools() -> None:
 def test_allowed_tuple_filters_to_subset() -> None:
     """Only tools named in ``allowed`` survive."""
     registry = _FakeRegistry(["sandbox", "chart", "find", "read"])
-    tools = _request_tools_from_registry(
-        registry, allowed=("sandbox", "find", "read")
-    )
+    tools = _request_tools_from_registry(registry, allowed=("sandbox", "find", "read"))
     names = [t["function"]["name"] for t in tools]
     assert names == ["sandbox", "find", "read"]
 
@@ -82,9 +81,7 @@ def test_empty_allowed_tuple_returns_no_tools() -> None:
 
 def test_denied_tuple_strips_named_tools() -> None:
     registry = _FakeRegistry(["sandbox", "todo_write", "find"])
-    tools = _request_tools_from_registry(
-        registry, denied=("todo_write",)
-    )
+    tools = _request_tools_from_registry(registry, denied=("todo_write",))
     names = [t["function"]["name"] for t in tools]
     assert names == ["sandbox", "find"]
 
@@ -111,6 +108,26 @@ def test_registry_without_list_registered_returns_empty() -> None:
     """A registry-like object lacking ``list_registered`` (older test
     doubles) degrades gracefully — never raises."""
     assert _request_tools_from_registry(object()) == []  # type: ignore[arg-type]
+
+
+def test_tool_schema_adds_items_to_array_properties_without_mutating_manifest() -> None:
+    """OpenRouter/OpenAI tool schemas require explicit array ``items``."""
+    raw = {
+        "type": "object",
+        "properties": {
+            "mock_results": {"type": "array"},
+            "nested": {
+                "type": "object",
+                "properties": {"rows": {"type": "array"}},
+            },
+        },
+    }
+
+    normalized = _provider_compatible_json_schema(raw)
+
+    assert normalized["properties"]["mock_results"]["items"] == {}
+    assert normalized["properties"]["nested"]["properties"]["rows"]["items"] == {}
+    assert "items" not in raw["properties"]["mock_results"]
 
 
 # ---------------------------------------------------------------------------
