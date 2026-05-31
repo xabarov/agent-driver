@@ -678,6 +678,10 @@ Status on 2026-05-31:
   stream recovery and no-tools retry assistant event projection moved to
   `runtime/single_agent/llm_step_stream_recovery.py`; `llm_step.py` is down to
   the call orchestration/request-trimming layer plus compatibility aliases.
+- Observation microcompaction, protocol-message hydration, planning prompt
+  injection, attachment/todo reminders, effective tool-choice selection and
+  request-trim construction moved to
+  `runtime/single_agent/llm_step_request.py`.
 - `tool_stage.py` remains the compatibility entrypoint for
   `execute_tool_stage_step`; focused planning, subagent and chat-demo Deep
   Research/Skills SSE tests pass after the extraction.
