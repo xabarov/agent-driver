@@ -1,7 +1,7 @@
 # Agent Driver Roadmap
 
-This is the short current roadmap. Historical phase notes were removed during
-docs cleanup; detailed active work now lives in focused plans and concept docs.
+This is the short current roadmap. Historical phase notes live in
+`docs/archive/`; detailed active work lives in focused plans and concept docs.
 
 ## Direction
 
@@ -23,29 +23,33 @@ chat applications:
 
 The cross-workstream execution order is tracked in
 [Unified work plan](unified-work-plan-2026-05-31.md). Treat that page as the
-active sequence for research/provider quality, Skills, SDK, refactoring,
-context pressure, and docs cleanup.
+active sequence for artifact-first Deep Research, eval harness work, storage
+convergence and optional SDK gateway/tool-server productization.
 
-1. Keep public chat behavior coherent.
-   Planning should help the user, not trap the model in repeated plans,
-   clarification loops, or approval churn.
+1. Make long Deep Research artifact-first.
+   Report drafts should live in session workspace files, while chat stays a
+   concise progress/final surface.
 
-2. Improve the planning/control surface with simple mechanisms first.
-   Prefer prompt guidance, structured contracts, and small runtime guards before
-   adding heavy DAG/workflow machinery.
+2. Measure the rewrite-loop fix.
+   Add deterministic scenarios and trace assertions before expanding the
+   workflow or spending on live provider runs.
 
-3. Keep the OpenClaude/Hermes workstream closed unless traces justify reopening.
-   The closed decision log is
-   [OpenClaude improvement plan](openclaude-improvement-plan-2026-05-29.md).
-   New DAG/blueprint machinery should require a fresh Phoenix-backed
-   regression, not just architectural appetite.
+3. Keep provider/model debugging disciplined.
+   Cheap model preflight comes before expensive acceptance gates; run IDs stay
+   in docs only when they explain a current regression or acceptance result.
 
-4. Keep the chat demo as the integration gate.
-   User-visible concepts should be checked in the real UI and, when behavior is
-   confusing, inspected in Phoenix traces.
+4. Finish infrastructure convergence deliberately.
+   Storage backend ordering/serialization and eval result contracts are active
+   infrastructure work, not old refactor leftovers.
 
-5. Keep docs short and current.
-   Add concise pages for live concepts; avoid restoring old exploratory notes.
+5. Keep closed work closed.
+   Skills, SDK P0/P1, context pressure, structural splits and old OpenClaude/
+   Hermes plans should remain decision records unless fresh traces show a
+   regression.
+
+6. Keep docs short and current.
+   Add concise pages for live concepts; avoid restoring old exploratory notes
+   or active-looking checklists in reference docs.
 
 ## Quality Bar
 
@@ -62,8 +66,12 @@ context pressure, and docs cleanup.
 
 - [Unified work plan](unified-work-plan-2026-05-31.md)
 - [Runtime overview](runtime.md)
+- [SDK](sdk.md)
 - [Planning and control](planning-and-control.md)
 - [Built-in tools](builtin-tools.md)
 - [Chat demo](chat-demo.md)
+- [Provider and model debugging](provider-model-debugging.md)
+- [Research quality summary](research-quality-improvement-plan-2026-05-31.md)
+- [Efficient Deep Research workspace architecture](efficient-deep-research-workspace-architecture-2026-05-31.md)
+- [Runtime metadata inventory](runtime-metadata.md)
 - [Testing](testing.md)
-- [OpenClaude improvement plan](openclaude-improvement-plan-2026-05-29.md)

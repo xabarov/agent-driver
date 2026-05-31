@@ -25,6 +25,21 @@ _STATUS_RETRY_STATUSES: frozenset[int] = frozenset({429, 502, 503, 504})
 _STATUS_RETRY_MAX_ATTEMPTS = 4  # 1 initial + 3 retries
 _STATUS_RETRY_BACKOFF_SCHEDULE_SECONDS: tuple[float, ...] = (1.0, 2.0, 4.0)
 _STATUS_RETRY_BACKOFF_CAP_SECONDS = 32.0
+_REQUEST_ID_HEADERS = (
+    "x-request-id",
+    "request-id",
+    "x-correlation-id",
+    "cf-ray",
+)
+
+
+def provider_request_id(headers: httpx.Headers | dict[str, str]) -> str | None:
+    """Return a provider request/correlation id from common HTTP headers."""
+    for name in _REQUEST_ID_HEADERS:
+        value = headers.get(name)
+        if value:
+            return str(value)
+    return None
 
 
 def _parse_retry_after(header_value: str | None) -> float | None:
@@ -255,7 +270,8 @@ class ProviderBase:
                                 return
                             delay = _status_retry_delay(status_attempt, retry_after)
                             await asyncio.sleep(delay)
-                            break  # break the inner stream-open retry loop, continue outer status loop
+                            # Continue outer status loop after transient retry.
+                            break
                         try:
                             if response.status_code >= 400:
                                 await response.aread()

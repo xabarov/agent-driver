@@ -236,6 +236,9 @@ async def execute_llm_call_step(
     provider_profile = context.llm_response.metadata.get("provider_profile")
     if isinstance(provider_profile, dict):
         completed_payload["provider_profile"] = provider_profile
+    provider_request_id = context.llm_response.metadata.get("provider_request_id")
+    if isinstance(provider_request_id, str) and provider_request_id:
+        completed_payload["provider_request_id"] = provider_request_id
     effective_tool_names = get_tool_loop_state(context).effective_tool_names()
     if effective_tool_names is not None:
         completed_payload["effective_tool_names"] = list(effective_tool_names)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import inspect
-from types import UnionType
+from types import NoneType, UnionType
 from typing import Any, Union, get_args, get_origin
 
 from agent_driver.contracts import (
@@ -92,13 +92,13 @@ def tool_from_function(
     """Build validated custom tool definition from async function signature."""
     if not inspect.iscoroutinefunction(func):
         raise TypeError("custom tools must be async functions")
-    if remediation_hints is None or not remediation_hints:
-        raise ValueError(
-            "custom tools require remediation_hints for model-facing guidance"
-        )
     signature = inspect.signature(func)
     schema = _args_schema_from_signature(signature)
     _validate_schema_descriptions(schema)
+    effective_hints = _default_remediation_hints(
+        tool_name=name or func.__name__,
+        remediation_hints=remediation_hints,
+    )
     manifest = ToolManifest(
         name=name or func.__name__,
         description=(description or inspect.getdoc(func) or func.__name__).strip(),
@@ -111,7 +111,7 @@ def tool_from_function(
         args_schema=schema,
         output_type=output_type,
         output_schema=output_schema,
-        remediation_hints=list(remediation_hints),
+        remediation_hints=effective_hints,
         supported_profiles=(
             list(supported_profiles)
             if supported_profiles is not None
@@ -154,6 +154,31 @@ def register_custom_function(
     return definition.manifest
 
 
+def tool(
+    func: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+    **manifest_overrides: Any,
+) -> (
+    CustomToolDefinition
+    | Callable[[Callable[..., Awaitable[dict[str, Any]]]], CustomToolDefinition]
+):
+    """Build a custom-tool definition with SDK-friendly defaults.
+
+    Use as ``tool(my_async_fn)`` for an immediate definition, or
+    ``@tool(name="...")`` when a decorator is more convenient. Unlike
+    ``@custom_tool``, the decorated object is the ``CustomToolDefinition`` so
+    SDK callers can register it directly.
+    """
+
+    def _build(
+        target: Callable[..., Awaitable[dict[str, Any]]],
+    ) -> CustomToolDefinition:
+        return tool_from_function(target, **manifest_overrides)
+
+    if func is not None:
+        return _build(func)
+    return _build
+
+
 def _args_schema_from_signature(signature: inspect.Signature) -> dict[str, Any]:
     properties: dict[str, dict[str, Any]] = {}
     required: list[str] = []
@@ -164,12 +189,15 @@ def _args_schema_from_signature(signature: inspect.Signature) -> dict[str, Any]:
             inspect.Parameter.VAR_KEYWORD,
         ):
             raise TypeError(
-                "custom tools require named parameters and do not support positional-only, *args, or **kwargs"
+                "custom tools require named parameters and do not support "
+                "positional-only, *args, or **kwargs"
             )
         schema = _schema_for_annotation(parameter.annotation)
         schema["description"] = f"Argument '{parameter.name}'."
+        if parameter.default is not inspect.Parameter.empty:
+            schema["default"] = parameter.default
         properties[parameter.name] = schema
-        if parameter.default is inspect._empty:
+        if parameter.default is inspect.Parameter.empty:
             required.append(parameter.name)
     return {
         "type": "object",
@@ -180,12 +208,12 @@ def _args_schema_from_signature(signature: inspect.Signature) -> dict[str, Any]:
 
 
 def _schema_for_annotation(annotation: Any) -> dict[str, Any]:
-    if annotation is inspect._empty:
+    if annotation is inspect.Parameter.empty:
         return {"type": "string"}
     origin = get_origin(annotation)
     args = get_args(annotation)
     if origin in (UnionType, Union):
-        non_none = [item for item in args if item is not type(None)]
+        non_none = [item for item in args if item is not NoneType]
         if len(non_none) == 1 and len(args) == 2:
             return _schema_for_annotation(non_none[0])
         return {"anyOf": [_schema_for_annotation(item) for item in non_none or args]}
@@ -196,10 +224,13 @@ def _schema_for_annotation(annotation: Any) -> dict[str, Any]:
         return {"type": "array", "items": _schema_for_annotation(inner)}
     if origin is dict:
         value_type = args[1] if len(args) > 1 else str
-        return {"type": "object", "additionalProperties": _schema_for_annotation(value_type)}
+        return {
+            "type": "object",
+            "additionalProperties": _schema_for_annotation(value_type),
+        }
     if origin is tuple:
         return {"type": "array"}
-    if origin is type(None):
+    if origin is NoneType:
         return {"type": "null"}
     if origin is Callable:
         return {"type": "string"}
@@ -209,19 +240,19 @@ def _schema_for_annotation(annotation: Any) -> dict[str, Any]:
 
 
 def _schema_for_plain_type(annotation: Any) -> dict[str, Any]:
-    if annotation is str:
+    if annotation in (str, "str"):
         return {"type": "string"}
-    if annotation is int:
+    if annotation in (int, "int"):
         return {"type": "integer"}
-    if annotation is float:
+    if annotation in (float, "float"):
         return {"type": "number"}
-    if annotation is bool:
+    if annotation in (bool, "bool"):
         return {"type": "boolean"}
-    if annotation is dict:
+    if annotation in (dict, "dict"):
         return {"type": "object"}
-    if annotation is list:
+    if annotation in (list, "list"):
         return {"type": "array"}
-    if annotation is Any:
+    if annotation in (Any, "Any"):
         return {}
     return {"type": "string"}
 
@@ -238,6 +269,20 @@ def _validate_schema_descriptions(schema: dict[str, Any]) -> None:
             raise ValueError(f"generated args schema for '{name}' needs description")
 
 
+def _default_remediation_hints(
+    *, tool_name: str, remediation_hints: list[str] | None
+) -> list[str]:
+    hints = [item.strip() for item in remediation_hints or [] if item.strip()]
+    if hints:
+        return hints
+    return [
+        f"If {tool_name} fails, check the argument values and retry once with a "
+        "narrower input.",
+        f"If {tool_name} returns empty output, explain that no matching result was "
+        "available instead of inventing one.",
+    ]
+
+
 def _wrap_custom_handler(
     func: Callable[..., Awaitable[dict[str, Any]]],
     signature: inspect.Signature,
@@ -250,7 +295,7 @@ def _wrap_custom_handler(
             if parameter.name in args:
                 kwargs[parameter.name] = args[parameter.name]
                 continue
-            if parameter.default is inspect._empty:
+            if parameter.default is inspect.Parameter.empty:
                 raise ValueError(f"missing required argument '{parameter.name}'")
         unknown = sorted(set(args) - set(signature.parameters))
         if unknown:
@@ -268,5 +313,6 @@ __all__ = [
     "custom_tool",
     "register_custom_function",
     "register_custom_tool",
+    "tool",
     "tool_from_function",
 ]

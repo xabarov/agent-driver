@@ -70,6 +70,7 @@ PUBLIC_CONTRACT_FIELD_SNAPSHOTS: dict[str, tuple[str, ...]] = {
         "interrupt",
         "memory_audit",
         "terminal_reason",
+        "context",
         "metadata",
     ),
     "RuntimeEvent": (

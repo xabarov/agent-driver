@@ -76,6 +76,41 @@ class WorkspaceImportResponse(BaseModel):
     workspace: WorkspaceStatusView
 
 
+class WorkspaceArtifactView(BaseModel):
+    """One file artifact in a session workspace."""
+
+    path: str
+    kind: str
+    size_bytes: int = Field(alias="sizeBytes")
+    modified_at: str = Field(alias="modifiedAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class WorkspaceArtifactsResponse(BaseModel):
+    """Artifact index for a session workspace."""
+
+    ok: bool = True
+    session_id: str = Field(alias="sessionId")
+    artifacts: list[WorkspaceArtifactView]
+
+    model_config = {"populate_by_name": True}
+
+
+class WorkspaceArtifactPreviewResponse(BaseModel):
+    """Bounded text preview for one workspace artifact."""
+
+    ok: bool = True
+    session_id: str = Field(alias="sessionId")
+    path: str
+    kind: str
+    size_bytes: int = Field(alias="sizeBytes")
+    content: str
+    truncated: bool
+
+    model_config = {"populate_by_name": True}
+
+
 class ModelView(BaseModel):
     """OpenRouter-compatible model entry."""
 

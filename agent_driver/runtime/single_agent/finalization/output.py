@@ -25,7 +25,7 @@ from agent_driver.contracts.context import (
 from agent_driver.contracts.enums import RunStatus
 from agent_driver.contracts.interrupts import ApprovalPayload, InterruptRequest
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.contracts.runtime import AgentRunOutput
+from agent_driver.contracts.runtime import AgentRunOutput, ContextDiagnostics
 from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.observability.source_evidence import (
     merge_source_evidence,
@@ -278,6 +278,7 @@ class SingleAgentOutputMixin:
             usage=usage,
             interrupt=get_loop_control_state(context).interrupt_payload(),
             terminal_reason=terminal.reason,
+            context=self._context_diagnostics(context),
             memory_projection=projection,
             memory_audit=build_memory_audit(context),
             metadata=self._terminal_metadata(
@@ -310,7 +311,7 @@ class SingleAgentOutputMixin:
             context
         ).output_metadata_projection()
         planning_state = get_planning_runtime_state(context)
-        return {
+        metadata = {
             "graph_id": self.graph_id,
             "tool_results": normalized_tool_results,
             "source_evidence": source_evidence,
@@ -330,6 +331,10 @@ class SingleAgentOutputMixin:
                 context
             ).raw_assistant_content(),
         }
+        research_artifacts = context.metadata.get("deep_research_artifacts")
+        if isinstance(research_artifacts, dict):
+            metadata["deep_research_artifacts"] = dict(research_artifacts)
+        return metadata
 
     def _approval_payload_from_context(
         self, context: RunContext
@@ -369,6 +374,7 @@ class SingleAgentOutputMixin:
             events=self._deps.event_log.list_for_run(context.run_id),
             tool_trace=result.traces,
             interrupt=result.interrupt,
+            context=self._context_diagnostics(context),
             memory_projection=projection,
             memory_audit=build_memory_audit(context),
             subagent_groups=list_dict_metadata(context, "subagent_groups"),
@@ -391,6 +397,22 @@ class SingleAgentOutputMixin:
                 "step_count": context.step_count,
                 "tool_calls": context.tool_calls,
             },
+        )
+
+    def _context_diagnostics(self, context: RunContext) -> ContextDiagnostics:
+        token_pressure = get_compaction_runtime_state(context).token_pressure()
+        state = str(token_pressure.get("state", "ok")) if token_pressure else "ok"
+        recommendation = {
+            "early_warning": "summarize_findings",
+            "delegate_or_summarize": "delegate_or_summarize",
+            "warning": "summarize_findings",
+            "compact_recommended": "compact_recommended",
+            "blocking": "blocking",
+        }.get(state, "continue")
+        return ContextDiagnostics(
+            pressure=state,
+            recommendation=recommendation,
+            token_pressure=token_pressure,
         )
 
 

@@ -5,8 +5,18 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from app.deps import get_settings
-from app.schemas.meta import WorkspaceImportResponse
-from app.workspace import import_sample_project, workspace_status
+from app.schemas.meta import (
+    WorkspaceArtifactPreviewResponse,
+    WorkspaceArtifactsResponse,
+    WorkspaceArtifactView,
+    WorkspaceImportResponse,
+)
+from app.workspace import (
+    import_sample_project,
+    list_workspace_artifacts,
+    preview_workspace_artifact,
+    workspace_status,
+)
 
 router = APIRouter(tags=["workspace"])
 
@@ -22,4 +32,58 @@ def import_workspace_sample(session_id: str) -> WorkspaceImportResponse:
     return WorkspaceImportResponse(
         files=files,
         workspace=workspace_status(settings, clean_session_id, create=True),
+    )
+
+
+@router.get(
+    "/workspace/{session_id}/artifacts",
+    response_model=WorkspaceArtifactsResponse,
+)
+def workspace_artifacts(session_id: str) -> WorkspaceArtifactsResponse:
+    """Return session artifact index."""
+    clean_session_id = session_id.strip()
+    if not clean_session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    settings = get_settings()
+    artifacts = [
+        WorkspaceArtifactView(
+            path=item.path,
+            kind=item.kind,
+            sizeBytes=item.size_bytes,
+            modifiedAt=item.modified_at,
+        )
+        for item in list_workspace_artifacts(settings, clean_session_id)
+    ]
+    return WorkspaceArtifactsResponse(sessionId=clean_session_id, artifacts=artifacts)
+
+
+@router.get(
+    "/workspace/{session_id}/artifacts/{artifact_path:path}",
+    response_model=WorkspaceArtifactPreviewResponse,
+)
+def workspace_artifact_preview(
+    session_id: str,
+    artifact_path: str,
+) -> WorkspaceArtifactPreviewResponse:
+    """Return bounded text preview for one session artifact."""
+    clean_session_id = session_id.strip()
+    if not clean_session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    try:
+        artifact, content, truncated = preview_workspace_artifact(
+            get_settings(),
+            clean_session_id,
+            artifact_path,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="artifact not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return WorkspaceArtifactPreviewResponse(
+        sessionId=clean_session_id,
+        path=artifact.path,
+        kind=artifact.kind,
+        sizeBytes=artifact.size_bytes,
+        content=content,
+        truncated=truncated,
     )

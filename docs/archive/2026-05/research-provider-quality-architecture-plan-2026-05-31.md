@@ -1,13 +1,13 @@
 # Research Provider Quality Architecture Plan
 
-Status: closed decision log / reference. The active provider/research sequence
-is [Unified Work Plan](unified-work-plan-2026-05-31.md) plus
-[Provider And Model Debugging](provider-model-debugging.md).
+Status: closed / archived decision log. The active provider/research sequence
+is [Unified Work Plan](../../unified-work-plan-2026-05-31.md) plus
+[Provider And Model Debugging](../../provider-model-debugging.md).
 
 Дата: 2026-05-31.
 
 Этот план расширяет
-[research-quality-improvement-plan-2026-05-31.md](research-quality-improvement-plan-2026-05-31.md)
+[research-quality-improvement-plan-2026-05-31.md](../../research-quality-improvement-plan-2026-05-31.md)
 и фокусируется на более глубокой проблеме: research quality зависит не только
 от `web_search -> web_fetch`, но и от provider semantics, streaming,
 reasoning/tool-call совместимости, recovery loops и качества engine contracts.

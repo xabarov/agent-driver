@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
 
 from agent_driver.contracts import (
@@ -30,13 +31,16 @@ from agent_driver.runtime.control import InMemoryCommandQueueStore, SqliteComman
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.sdk import (
     Agent,
+    ProviderStatusError,
     RunHandle,
     RunStream,
     Session,
+    TraceSummary,
     build_default_registry,
     create_agent,
     query,
     sdk_config_from_env,
+    summarize_output,
 )
 from agent_driver.tools import ToolRegistry, ToolSet
 
@@ -252,6 +256,18 @@ class _CaptureRequestProvider(FakeProvider):
     async def complete(self, request: LlmRequest) -> LlmResponse:
         self.last_request = request
         return await super().complete(request)
+
+
+class _HTTPErrorProvider(FakeProvider):
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        http_request = httpx.Request("POST", "https://provider.example/v1/chat")
+        response = httpx.Response(
+            429,
+            request=http_request,
+            headers={"x-request-id": "req_123"},
+            json={"error": {"message": "rate limited"}},
+        )
+        raise httpx.HTTPStatusError("rate limited", request=http_request, response=response)
 
 
 @pytest.mark.asyncio
@@ -766,6 +782,8 @@ def test_sdk_config_from_env_returns_bootstrap_fields(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_DRIVER_BASE_URL", "https://example.com/v1")
     monkeypatch.setenv("AGENT_DRIVER_MODEL", "test-model")
     monkeypatch.setenv("AGENT_DRIVER_API_KEY", "secret")
+    monkeypatch.setenv("AGENT_DRIVER_TIMEOUT_S", "12.5")
+    monkeypatch.setenv("AGENT_DRIVER_MAX_RETRIES", "5")
     config = sdk_config_from_env()
     assert config.run_live_tests is True
     assert config.runtime_store_kind == "sqlite"
@@ -773,6 +791,8 @@ def test_sdk_config_from_env_returns_bootstrap_fields(monkeypatch) -> None:
     assert config.base_url == "https://example.com/v1"
     assert config.model == "test-model"
     assert config.api_key == "secret"
+    assert config.timeout_s == 12.5
+    assert config.max_retries == 5
 
 
 def test_sdk_create_agent_rejects_unknown_toolset_names() -> None:
@@ -782,3 +802,31 @@ def test_sdk_create_agent_rejects_unknown_toolset_names() -> None:
             provider=FakeProvider(response_text="ok"),
             tools=ToolSet.only("missing_tool"),
         )
+
+
+@pytest.mark.asyncio
+async def test_sdk_wraps_provider_status_errors_with_request_id() -> None:
+    """SDK callers should get typed provider errors with request IDs."""
+    agent = create_agent(provider=_HTTPErrorProvider(response_text="unused"), tools=ToolSet.only())
+
+    with pytest.raises(ProviderStatusError) as exc_info:
+        await agent.query("hello")
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.request_id == "req_123"
+    assert "rate limited" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_sdk_output_context_and_trace_summary_contract() -> None:
+    """SDK outputs should expose context diagnostics and stable trace summary."""
+    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only())
+    output = await agent.query("Hello", run_id="run_sdk_trace_summary")
+
+    assert output.context.pressure == "ok"
+    assert output.context.recommendation == "continue"
+    summary = summarize_output(output)
+    assert isinstance(summary, TraceSummary)
+    assert summary.run_id == "run_sdk_trace_summary"
+    assert agent.summarize(output).run_id == summary.run_id
+    assert agent.support_bundle(output)["trace_summary"]["run_id"] == summary.run_id

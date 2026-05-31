@@ -38,7 +38,12 @@ import httpx
 
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.usage import UsageSummary
-from agent_driver.llm.base import HttpClientConfig, ProviderBase, StreamRequest
+from agent_driver.llm.base import (
+    HttpClientConfig,
+    ProviderBase,
+    StreamRequest,
+    provider_request_id,
+)
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmProviderKind,
@@ -382,11 +387,22 @@ class AnthropicProvider(ProviderBase):
                     headers=self._headers(stream=False),
                 )
             response.raise_for_status()
-            return normalize_anthropic_completion_payload(
+            llm_response = normalize_anthropic_completion_payload(
                 response.json(),
                 provider_name=self.name,
                 fallback_model=str(request.model or self._model),
             )
+            request_id = provider_request_id(response.headers)
+            if request_id:
+                llm_response = llm_response.model_copy(
+                    update={
+                        "metadata": {
+                            **llm_response.metadata,
+                            "provider_request_id": request_id,
+                        }
+                    }
+                )
+            return llm_response
 
         handled_errors: tuple[type[BaseException], ...] = (httpx.HTTPError, ValueError)
         return await self.execute_with_telemetry(_op, handled_exceptions=handled_errors)

@@ -1,9 +1,9 @@
 # OpenClaude/Hermes Improvement Plan
 
-Status: closed decision log. Use
-[Unified Work Plan](unified-work-plan-2026-05-31.md) for active work; reopen
-this page only if new traces show a regression in force planning, steerability
-or subagents.
+Status: closed / archived decision log. Use
+[Unified Work Plan](../../unified-work-plan-2026-05-31.md) for active work;
+reopen this page only if new traces show a regression in force planning,
+steerability or subagents.
 
 Дата исходного анализа: 2026-05-29.  
 Последняя сводка: 2026-05-30.
@@ -124,7 +124,7 @@ streaming Markdown и source shelf. Это продолжает общий пр�
 ## Research Quality Track
 
 Отдельный план повышения качества research-ответов зафиксирован в
-[research-quality-improvement-plan-2026-05-31.md](research-quality-improvement-plan-2026-05-31.md).
+[research-quality-improvement-plan-2026-05-31.md](../../research-quality-improvement-plan-2026-05-31.md).
 
 Короткая цель: research-report задачи должны проходить цикл
 `web_search -> web_fetch -> synthesis -> cited final`, а не завершаться после

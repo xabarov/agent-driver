@@ -11,6 +11,7 @@ from agent_driver.tools.custom import (
     custom_tool,
     register_custom_function,
     register_custom_tool,
+    tool,
     tool_from_function,
 )
 from agent_driver.tools.executor import GovernedToolExecutor
@@ -75,6 +76,7 @@ __all__ = [
     "register_contract_tool",
     "register_custom_function",
     "register_custom_tool",
+    "tool",
     "tool_from_function",
     "render_tool_doc",
     "render_tool_docs",

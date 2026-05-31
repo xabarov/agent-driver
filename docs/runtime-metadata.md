@@ -1,6 +1,6 @@
 # Runtime Metadata Inventory
 
-Status: active Phase 1 inventory for
+Status: reference / current inventory for
 [Unified Work Plan](unified-work-plan-2026-05-31.md#phase-1---runtime-state-and-contract-foundation).
 
 Date: 2026-05-31.

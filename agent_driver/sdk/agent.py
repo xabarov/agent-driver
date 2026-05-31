@@ -23,9 +23,12 @@ from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.runner import SingleAgentRunner
 from agent_driver.runtime.control import CommandQueueStore, InMemoryCommandQueueStore
+from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.runtime.stream import project_runtime_events
+from agent_driver.sdk.errors import sdk_provider_error_from_runtime
 from agent_driver.sdk.handle import RunHandle, RunStream
+from agent_driver.sdk.trace import TraceSummary, summarize_output, support_bundle
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,9 +230,15 @@ class Agent:  # pylint: disable=too-many-public-methods
         :mod:`agent_driver.runtime.tool_gate` for the result contract
         and fail-closed semantics.
         """
-        return await self._runner.run(
-            run_input, abort_handle=abort_handle, tool_gate=tool_gate
-        )
+        try:
+            return await self._runner.run(
+                run_input, abort_handle=abort_handle, tool_gate=tool_gate
+            )
+        except RuntimeExecutionError as exc:
+            sdk_error = sdk_provider_error_from_runtime(exc)
+            if sdk_error is not None:
+                raise sdk_error from exc
+            raise
 
     async def run_text(
         self,
@@ -327,6 +336,14 @@ class Agent:  # pylint: disable=too-many-public-methods
         session_module = import_module("agent_driver.sdk.session")
         session_cls = session_module.Session
         return session_cls(self, session_id or f"session_{uuid.uuid4().hex[:12]}")
+
+    def summarize(self, output: AgentRunOutput) -> TraceSummary:
+        """Return a stable SDK trace summary for one output."""
+        return summarize_output(output)
+
+    def support_bundle(self, output: AgentRunOutput) -> dict[str, object]:
+        """Return a redacted support bundle recipe for one output."""
+        return support_bundle(output)
 
     async def resume(
         self,

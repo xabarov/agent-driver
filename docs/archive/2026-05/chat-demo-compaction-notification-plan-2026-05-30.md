@@ -1,8 +1,8 @@
 # Chat Demo Compaction Notification Plan
 
-Status: closed decision log / reference. Keep as history for chat-demo
+Status: closed / archived decision log. Keep as history for chat-demo
 compaction notification UI; active context-pressure work is tracked in
-[Unified Work Plan Phase 2](unified-work-plan-2026-05-31.md#phase-2---harness-context-pressure).
+[Unified Work Plan Phase 2](../../unified-work-plan-2026-05-31.md#phase-2---harness-context-pressure).
 
 Date: 2026-05-30
 

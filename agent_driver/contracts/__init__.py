@@ -92,7 +92,11 @@ from agent_driver.contracts.interrupts import (
 from agent_driver.contracts.memory import MemoryProjection
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.profiles import PromptRenderResult, PromptTemplate
-from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
+from agent_driver.contracts.runtime import (
+    AgentRunInput,
+    AgentRunOutput,
+    ContextDiagnostics,
+)
 from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.contracts.subagent_mailbox import (
@@ -151,6 +155,7 @@ __all__ = [
     "ControlPriority",
     "ControlRequest",
     "ControlResponse",
+    "ContextDiagnostics",
     "EventSeverity",
     "GuardrailDecision",
     "CompactionMode",

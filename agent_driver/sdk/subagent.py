@@ -65,6 +65,32 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
+class SubagentToolPolicy:
+    """Tool exposure and provider tool-choice controls for a child run."""
+
+    allowed_tools: tuple[str, ...] | None = None
+    denied_tools: tuple[str, ...] | None = None
+    tool_choice: str | dict[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentOutputPolicy:
+    """Output and profile controls for a child run."""
+
+    response_format: dict[str, Any] | None = None
+    agent_profile: AgentProfile = AgentProfile.TOOL_CALLING
+    app_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentLimits:
+    """Execution ceilings for one child run."""
+
+    max_tool_calls: int | None = None
+    deadline_seconds: float | None = None
+    max_cost_usd: float | None = None
+
+
 class SubagentSpec:
     """Declarative spec for one Python-driven child agent run.
 
@@ -108,43 +134,179 @@ class SubagentSpec:
         because that matches every consumer we have (qwen / gpt /
         deepseek all speak OpenAI tools). Override for ``CODE_AGENT``
         in code-style stages.
+
+    The constructor keeps the original flat keyword arguments for
+    compatibility, while internally grouping policy, output and limits so the
+    public spec stays readable as it grows.
     """
 
+    __slots__ = (
+        "agent_type",
+        "prompt",
+        "system_prompt",
+        "_tool_policy",
+        "_output_policy",
+        "_limits",
+        "_frozen",
+    )
+    _tool_policy: SubagentToolPolicy
+    _output_policy: SubagentOutputPolicy
+    _limits: SubagentLimits
     agent_type: str
     prompt: str
-    system_prompt: str | None = None
-    allowed_tools: tuple[str, ...] | None = None
-    denied_tools: tuple[str, ...] | None = None
-    tool_choice: str | dict[str, Any] | None = None
-    response_format: dict[str, Any] | None = None
-    max_tool_calls: int | None = None
-    deadline_seconds: float | None = None
-    agent_profile: AgentProfile = AgentProfile.TOOL_CALLING
-    app_metadata: dict[str, Any] = field(default_factory=dict)
-    max_cost_usd: float | None = None
-    """B2.2 — soft cost ceiling for the child run.
+    system_prompt: str | None
 
-    When set, a background watchdog polls the child's event log,
-    sums ``cost_usd_estimate`` from every ``llm_call_completed``
-    event, and flips the child's :class:`RunAbortHandle` with
-    ``reason="budget_exceeded"`` once the running total reaches
-    ``max_cost_usd``. The child's runner detects the abort at its
-    next step boundary and terminates with
-    ``RunStatus.CANCELLED`` / ``TerminalReason.CANCELLED_BY_USER``
-    (no new terminal reason is introduced — operators see
-    cancellation, and the ``reason`` on the abort handle is logged
-    for diagnostics).
+    def __init__(
+        self,
+        *,
+        agent_type: str,
+        prompt: str,
+        system_prompt: str | None = None,
+        allowed_tools: tuple[str, ...] | None = None,
+        denied_tools: tuple[str, ...] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        response_format: dict[str, Any] | None = None,
+        max_tool_calls: int | None = None,
+        deadline_seconds: float | None = None,
+        agent_profile: AgentProfile = AgentProfile.TOOL_CALLING,
+        app_metadata: dict[str, Any] | None = None,
+        max_cost_usd: float | None = None,
+        tool_policy: SubagentToolPolicy | None = None,
+        output_policy: SubagentOutputPolicy | None = None,
+        limits: SubagentLimits | None = None,
+    ) -> None:
+        object.__setattr__(self, "agent_type", agent_type)
+        object.__setattr__(self, "prompt", prompt)
+        object.__setattr__(self, "system_prompt", system_prompt)
+        object.__setattr__(
+            self,
+            "_tool_policy",
+            tool_policy
+            or SubagentToolPolicy(
+                allowed_tools=allowed_tools,
+                denied_tools=denied_tools,
+                tool_choice=tool_choice,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "_output_policy",
+            output_policy
+            or SubagentOutputPolicy(
+                response_format=response_format,
+                agent_profile=agent_profile,
+                app_metadata=dict(app_metadata or {}),
+            ),
+        )
+        object.__setattr__(
+            self,
+            "_limits",
+            limits
+            or SubagentLimits(
+                max_tool_calls=max_tool_calls,
+                deadline_seconds=deadline_seconds,
+                max_cost_usd=max_cost_usd,
+            ),
+        )
+        object.__setattr__(self, "_frozen", True)
 
-    Skipped when ``None`` (default). The watchdog is also skipped
-    when the provider doesn't supply cost estimates — without per-
-    call cost we can't enforce a USD ceiling. Operators wanting a
-    hard token / call ceiling should still use
-    ``max_tool_calls`` / ``deadline_seconds`` (which the runtime
-    already enforces).
-    """
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_frozen", False):
+            raise AttributeError(f"can't set attribute {name!r} on frozen SubagentSpec")
+        object.__setattr__(self, name, value)
+
+    def with_system_prompt(self, system_prompt: str | None) -> "SubagentSpec":
+        """Return a copy with a different system prompt."""
+        return SubagentSpec(
+            agent_type=self.agent_type,
+            prompt=self.prompt,
+            system_prompt=system_prompt,
+            tool_policy=self._tool_policy,
+            output_policy=self._output_policy,
+            limits=self._limits,
+        )
+
+    @property
+    def allowed_tools(self) -> tuple[str, ...] | None:
+        """Optional allowed tool names for the child."""
+        return self._tool_policy.allowed_tools
+
+    @property
+    def denied_tools(self) -> tuple[str, ...] | None:
+        """Optional denied tool names for the child."""
+        return self._tool_policy.denied_tools
+
+    @property
+    def tool_choice(self) -> str | dict[str, Any] | None:
+        """Provider-level tool-choice forcing for the child."""
+        return self._tool_policy.tool_choice
+
+    @property
+    def response_format(self) -> dict[str, Any] | None:
+        """Provider-level response format for the child."""
+        return self._output_policy.response_format
+
+    @property
+    def max_tool_calls(self) -> int | None:
+        """Maximum tool calls for the child run."""
+        return self._limits.max_tool_calls
+
+    @property
+    def deadline_seconds(self) -> float | None:
+        """Deadline in seconds for the child run."""
+        return self._limits.deadline_seconds
+
+    @property
+    def agent_profile(self) -> AgentProfile:
+        """Runtime agent profile for the child."""
+        return self._output_policy.agent_profile
+
+    @property
+    def app_metadata(self) -> dict[str, Any]:
+        """JSON-friendly metadata merged into the child run input."""
+        return dict(self._output_policy.app_metadata)
+
+    @property
+    def max_cost_usd(self) -> float | None:
+        """B2.2 — soft cost ceiling for the child run.
+
+        When set, a background watchdog polls the child's event log,
+        sums ``cost_usd_estimate`` from every ``llm_call_completed``
+        event, and flips the child's :class:`RunAbortHandle` with
+        ``reason="budget_exceeded"`` once the running total reaches
+        ``max_cost_usd``.
+        """
+        return self._limits.max_cost_usd
 
 
 @dataclass(frozen=True, slots=True)
+class SubagentResultIdentity:
+    """Run identity fields for a subagent result."""
+
+    child_run_id: str
+    parent_run_id: str | None
+    agent_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentResultOutcome:
+    """Terminal status and answer fields for a subagent result."""
+
+    status: RunStatus
+    terminal_reason: TerminalReason | None
+    answer: str | None
+    structured_output: dict[str, Any] | None
+
+
+@dataclass(frozen=True, slots=True)
+class SubagentResultArtifacts:
+    """Trace, usage and raw output fields for a subagent result."""
+
+    tool_trace: tuple[ToolTrace, ...]
+    usage: UsageSummary | None
+    raw_output: Any
+
+
 class SubagentResult:
     """Normalised outcome of one ``run_subagent`` call.
 
@@ -154,16 +316,111 @@ class SubagentResult:
     memory_projection, etc.).
     """
 
-    child_run_id: str
-    parent_run_id: str | None
-    agent_type: str
-    status: RunStatus
-    terminal_reason: TerminalReason | None
-    answer: str | None
-    structured_output: dict[str, Any] | None
-    tool_trace: tuple[ToolTrace, ...]
-    usage: UsageSummary | None
-    raw_output: Any  # AgentRunOutput, kept as Any to avoid circular import
+    __slots__ = ("_identity", "_outcome", "_artifacts", "_frozen")
+    _identity: SubagentResultIdentity
+    _outcome: SubagentResultOutcome
+    _artifacts: SubagentResultArtifacts
+
+    def __init__(
+        self,
+        *,
+        child_run_id: str,
+        parent_run_id: str | None,
+        agent_type: str,
+        status: RunStatus,
+        terminal_reason: TerminalReason | None,
+        answer: str | None,
+        structured_output: dict[str, Any] | None,
+        tool_trace: tuple[ToolTrace, ...],
+        usage: UsageSummary | None,
+        raw_output: Any,
+    ) -> None:
+        object.__setattr__(
+            self,
+            "_identity",
+            SubagentResultIdentity(
+                child_run_id=child_run_id,
+                parent_run_id=parent_run_id,
+                agent_type=agent_type,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "_outcome",
+            SubagentResultOutcome(
+                status=status,
+                terminal_reason=terminal_reason,
+                answer=answer,
+                structured_output=structured_output,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "_artifacts",
+            SubagentResultArtifacts(
+                tool_trace=tool_trace,
+                usage=usage,
+                raw_output=raw_output,
+            ),
+        )
+        object.__setattr__(self, "_frozen", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_frozen", False):
+            raise AttributeError(
+                f"can't set attribute {name!r} on frozen SubagentResult"
+            )
+        object.__setattr__(self, name, value)
+
+    @property
+    def child_run_id(self) -> str:
+        """Child run id."""
+        return self._identity.child_run_id
+
+    @property
+    def parent_run_id(self) -> str | None:
+        """Parent run id, if supplied."""
+        return self._identity.parent_run_id
+
+    @property
+    def agent_type(self) -> str:
+        """Free-form child agent type."""
+        return self._identity.agent_type
+
+    @property
+    def status(self) -> RunStatus:
+        """Terminal child status."""
+        return self._outcome.status
+
+    @property
+    def terminal_reason(self) -> TerminalReason | None:
+        """Terminal child reason, if available."""
+        return self._outcome.terminal_reason
+
+    @property
+    def answer(self) -> str | None:
+        """Child answer text."""
+        return self._outcome.answer
+
+    @property
+    def structured_output(self) -> dict[str, Any] | None:
+        """Parsed structured output when requested and valid."""
+        return self._outcome.structured_output
+
+    @property
+    def tool_trace(self) -> tuple[ToolTrace, ...]:
+        """Child tool trace."""
+        return self._artifacts.tool_trace
+
+    @property
+    def usage(self) -> UsageSummary | None:
+        """Child usage summary."""
+        return self._artifacts.usage
+
+    @property
+    def raw_output(self) -> Any:
+        """Full AgentRunOutput, kept as Any to avoid a circular import."""
+        return self._artifacts.raw_output
 
 
 async def run_subagent(
@@ -225,15 +482,17 @@ async def run_subagent(
 
     tool_policy = ToolPolicyInput(
         mode=ToolPolicyMode.ALLOW_TOOLS,
-        allowed_tools=list(spec.allowed_tools) if spec.allowed_tools is not None else None,
+        allowed_tools=(
+            list(spec.allowed_tools) if spec.allowed_tools is not None else None
+        ),
         denied_tools=list(spec.denied_tools) if spec.denied_tools else None,
     )
 
     child_input = AgentRunInput(
         messages=messages,
         run_id=f"sub_{uuid4().hex[:12]}",
-        agent_id=f"{parent._defaults.agent_id}.{spec.agent_type}",
-        graph_preset=parent._defaults.graph_preset,
+        agent_id=f"{parent.defaults.agent_id}.{spec.agent_type}",
+        graph_preset=parent.defaults.graph_preset,
         agent_profile=spec.agent_profile,
         stream=False,
         max_tool_calls=spec.max_tool_calls,
@@ -345,7 +604,7 @@ async def _watch_subagent_cost(
     while not abort_handle.is_aborted:
         try:
             events = event_log.list_for_run(run_id, after_seq=after_seq)
-        except Exception:  # pragma: no cover - log + bail on backend error
+        except (RuntimeError, OSError, ValueError, TypeError):
             logger.warning(
                 "subagent cost watchdog: event_log error for run_id=%r; "
                 "skipping enforcement",
@@ -354,8 +613,7 @@ async def _watch_subagent_cost(
             )
             return
         for event in events:
-            if event.seq > after_seq:
-                after_seq = event.seq
+            after_seq = max(after_seq, event.seq)
             if event.type != RuntimeEventType.LLM_CALL_COMPLETED:
                 continue
             usage = (event.payload or {}).get("usage") or {}
@@ -379,4 +637,14 @@ async def _watch_subagent_cost(
         await asyncio.sleep(poll_interval_seconds)
 
 
-__all__ = ["SubagentSpec", "SubagentResult", "run_subagent"]
+__all__ = [
+    "SubagentLimits",
+    "SubagentOutputPolicy",
+    "SubagentResult",
+    "SubagentResultArtifacts",
+    "SubagentResultIdentity",
+    "SubagentResultOutcome",
+    "SubagentSpec",
+    "SubagentToolPolicy",
+    "run_subagent",
+]

@@ -174,8 +174,10 @@ Current state:
 
 Next engineering action:
 
-- Run broad deterministic regression, clean/summarize the large change set,
-  and then do a separate cost-reduction pass for tool-heavy compatible models.
+- For new provider/research changes, run the broad deterministic regression,
+  then the cheap-to-expensive live ladder only when the deterministic signal is
+  clean. Do a cost-reduction pass only when fresh traces show a tool-heavy
+  spend loop.
 
 ## Model Matrix
 
@@ -377,7 +379,7 @@ Known follow-up, not part of the correctness fix:
 
 - Cost-reduction/tuning for compatible but tool-heavy models, especially Qwen
   and Kimi.
-- Broader context-pressure plan from `add-notes.md` / Unified Work Plan Phase 2.
+- Broader context-pressure plan from Unified Work Plan Phase 2.
 - Runtime metadata inventory before larger SDK/refactor phases.
 
 Kimi-specific behavior:

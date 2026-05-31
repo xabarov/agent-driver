@@ -3,7 +3,7 @@
 Status: reference / status page. Keep this page for the completed baseline and
 research evidence decision log; use
 [Unified Work Plan](unified-work-plan-2026-05-31.md) and
-[Deep Research And Skills Analysis](deep-research-and-skills-analysis-2026-05-31.md)
+[Efficient Deep Research Workspace Architecture](efficient-deep-research-workspace-architecture-2026-05-31.md)
 for active next work.
 
 Дата исходного плана: 2026-05-31.
@@ -144,6 +144,6 @@ For future research/provider changes, use the shared verification loop in
 
 Provider/model capability, bounded repair, unknown-tool recovery and provider
 failure semantics are tracked in
-[research-provider-quality-architecture-plan-2026-05-31.md](research-provider-quality-architecture-plan-2026-05-31.md).
+[Research Provider Quality Architecture Plan](archive/2026-05/research-provider-quality-architecture-plan-2026-05-31.md).
 Operational provider/model debugging notes and the OpenRouter live model matrix
 are tracked in [Provider and model debugging](provider-model-debugging.md).

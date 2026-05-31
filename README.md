@@ -10,15 +10,16 @@ Current package version: `0.1.0`
 
 ## What is new in this iteration
 
-- Runtime storage split and factory helpers for `memory` / `sqlite` / `postgres`
-- Tool-surface selection via `ToolSet` and built-in packs
-- Governed tool execution pipeline with policy and output budget handling
-- Context compaction and session memory extraction building blocks
-- Evaluation and replay entry points for deterministic regression checks
-- Code-agent profile primitives and restricted execution contracts
+- SDK entrypoints: `create_agent`, `query`, `Session`, `RunHandle`, `RunStream`
+- Typed provider errors with request IDs when providers expose them
+- SDK trace summaries, support bundles, and context-pressure diagnostics
+- Tool-surface selection via `ToolSet`, built-in packs, and `tool(...)`
+- Durable runtime storage, governed tool execution, context compaction, evals
 
 ## Key capabilities
 
+- **SDK facade**: one-shot queries, sessions, streaming helpers, resume helpers,
+  custom tools, trace summaries, and support bundles
 - **Durable runtime**: checkpoint + event-log abstractions with in-memory, SQLite,
   and PostgreSQL backends
 - **Tool governance**: registry, manifests, risk/side-effect policy, guardrails,
@@ -53,27 +54,33 @@ pip install -e .[postgres]
 ## Quick start
 
 ```python
+import asyncio
+
 from agent_driver.llm import FakeProvider
-from agent_driver.runtime import (
-    RunnerConfig,
-    SingleAgentRunner,
-    create_runtime_store_bundle,
-    preflight_runtime_store,
-    runtime_store_config_from_env,
-)
+from agent_driver.sdk import ToolSet, create_agent, summarize_output
 
-cfg = runtime_store_config_from_env()
-ready = preflight_runtime_store(cfg)
-if not ready.healthy:
-    raise RuntimeError(f"runtime store not ready: {ready.reason}")
 
-bundle = create_runtime_store_bundle(cfg)
-runner = SingleAgentRunner(
-    provider=FakeProvider(),
-    checkpoint_store=bundle.checkpoint_store,
-    event_log=bundle.event_log,
-    config=RunnerConfig(),
-)
+async def main() -> None:
+    agent = create_agent(
+        provider=FakeProvider(response_text="Hello from agent-driver."),
+        tools=ToolSet.only(),
+    )
+    output = await agent.query("Say hello", run_id="demo_run")
+    print(output.answer)
+    print(summarize_output(output).verdict)
+
+
+asyncio.run(main())
+```
+
+Session and streaming helpers use the same facade:
+
+```python
+session = agent.session("user_123")
+stream = session.stream("Draft a concise status update")
+
+async for delta in stream.text_deltas():
+    print(delta, end="")
 ```
 
 ## Development
@@ -94,13 +101,17 @@ AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests
 ## Documentation map
 
 - Main docs index: `docs/README.md`
+- SDK overview: `docs/sdk.md`
+- Sessions: `docs/sdk-sessions.md`
+- Tools: `docs/sdk-tools.md`
+- Streaming: `docs/sdk-streaming.md`
+- Errors: `docs/sdk-errors.md`
 - Runtime overview: `docs/runtime.md`
 - Planning and control: `docs/planning-and-control.md`
 - Chat demo: `docs/chat-demo.md`
 - Testing: `docs/testing.md`
 - Built-in tools overview: `docs/builtin-tools.md`
 - Roadmap: `docs/roadmap.md`
-- OpenClaude improvement plan: `docs/openclaude-improvement-plan-2026-05-29.md`
 
 ## Project status
 

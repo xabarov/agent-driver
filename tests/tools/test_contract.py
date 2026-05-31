@@ -10,6 +10,7 @@ from agent_driver.tools import (
     ToolRegistry,
     manifest_from_contract,
     register_contract_tool,
+    tool,
 )
 
 
@@ -238,3 +239,26 @@ def test_metadata_must_be_mapping() -> None:
     """Non-mapping metadata is rejected."""
     with pytest.raises(TypeError, match="metadata must be a Mapping"):
         manifest_from_contract({"name": "t", "description": "x", "metadata": ["bad"]})
+
+
+def test_tool_helper_uses_docstring_signature_defaults_and_catalog_projection() -> None:
+    """SDK tool helper should infer useful metadata from plain async functions."""
+
+    async def lookup_city(city: str, limit: int = 3) -> dict:
+        """Lookup city facts."""
+        return {"city": city, "limit": limit}
+
+    definition = tool(lookup_city)
+    registry = ToolRegistry()
+    registry.register(definition.manifest, definition.handler)
+
+    assert definition.manifest.description == "Lookup city facts."
+    assert definition.manifest.args_schema is not None
+    limit_schema = definition.manifest.args_schema["properties"]["limit"]
+    assert limit_schema["type"] == "integer"
+    assert limit_schema["default"] == 3
+    assert definition.manifest.remediation_hints
+
+    catalog = registry.catalog()
+    assert catalog[0]["name"] == "lookup_city"
+    assert catalog[0]["risk"] == "low"

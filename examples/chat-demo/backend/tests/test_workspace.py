@@ -14,7 +14,9 @@ from app.workspace import (
     build_chat_app_metadata,
     find_session_id_for_run,
     import_sample_project,
+    list_workspace_artifacts,
     merge_resume_app_metadata,
+    preview_workspace_artifact,
     resolve_session_workspace,
     resolved_workspace_root,
     workspace_status,
@@ -64,6 +66,31 @@ def test_import_sample_project_creates_demo_files(settings) -> None:
     workspace = resolve_session_workspace(settings, "session_sample")
     assert "README.md" in files
     assert (workspace / "src" / "vision_transformer.py").is_file()
+
+
+def test_workspace_artifact_index_and_preview(settings) -> None:
+    workspace = resolve_session_workspace(settings, "session_artifacts")
+    report = workspace / "research" / "report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("hello report", encoding="utf-8")
+
+    artifacts = list_workspace_artifacts(settings, "session_artifacts")
+    artifact, content, truncated = preview_workspace_artifact(
+        settings,
+        "session_artifacts",
+        "research/report.md",
+    )
+
+    assert [item.path for item in artifacts] == ["research/report.md"]
+    assert artifacts[0].kind == "report"
+    assert artifact.path == "research/report.md"
+    assert content == "hello report"
+    assert truncated is False
+
+
+def test_workspace_artifact_preview_rejects_escape(settings) -> None:
+    with pytest.raises(ValueError, match="outside workspace"):
+        preview_workspace_artifact(settings, "session_artifacts", "../secret.txt")
 
 
 def test_find_session_id_for_run(settings) -> None:

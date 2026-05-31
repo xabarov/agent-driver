@@ -35,8 +35,6 @@ this one simple.
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.sdk.agent import Agent
@@ -73,7 +71,7 @@ async def fork_subagent(
     hits surfaces on ``LlmResponse.usage`` when the provider populates
     it (see ``cached_input_tokens`` in the OpenAI-compat adapter).
     """
-    forked_spec = replace(spec, system_prompt=parent_system_prompt)
+    forked_spec = spec.with_system_prompt(parent_system_prompt)
     return await run_subagent(
         parent,
         forked_spec,

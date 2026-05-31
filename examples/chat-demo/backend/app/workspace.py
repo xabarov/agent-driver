@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from app.config import Settings
 from app.schemas.meta import WorkspaceStatusView
@@ -10,6 +12,17 @@ from app.schemas.meta import WorkspaceStatusView
 from agent_driver.cli.sessions import SessionStore
 
 _CHAT_DEMO_ROOT = Path(__file__).resolve().parents[2]
+_ARTIFACT_DIRS = ("research", "tool-results")
+_PREVIEW_MAX_BYTES = 200_000
+
+
+class WorkspaceArtifact(NamedTuple):
+    """One indexed workspace artifact."""
+
+    path: str
+    kind: str
+    size_bytes: int
+    modified_at: str
 
 
 def resolved_workspace_root(settings: Settings) -> Path:
@@ -104,6 +117,81 @@ def import_sample_project(settings: Settings, session_id: str) -> list[str]:
         target.write_text(content, encoding="utf-8")
         written.append(relative)
     return written
+
+
+def list_workspace_artifacts(
+    settings: Settings,
+    session_id: str,
+) -> list[WorkspaceArtifact]:
+    """Return stable artifact index for one session workspace."""
+    workspace = resolve_session_workspace(settings, session_id)
+    artifacts: list[WorkspaceArtifact] = []
+    for dirname in _ARTIFACT_DIRS:
+        root = workspace / dirname
+        if not root.is_dir():
+            continue
+        for item in sorted(root.rglob("*")):
+            if not item.is_file():
+                continue
+            relative = item.relative_to(workspace).as_posix()
+            stat = item.stat()
+            artifacts.append(
+                WorkspaceArtifact(
+                    path=relative,
+                    kind=_artifact_kind(relative),
+                    size_bytes=stat.st_size,
+                    modified_at=datetime.fromtimestamp(
+                        stat.st_mtime, tz=UTC
+                    ).isoformat(),
+                )
+            )
+    return artifacts
+
+
+def preview_workspace_artifact(
+    settings: Settings,
+    session_id: str,
+    artifact_path: str,
+    *,
+    max_bytes: int = _PREVIEW_MAX_BYTES,
+) -> tuple[WorkspaceArtifact, str, bool]:
+    """Return bounded UTF-8 preview for one artifact under session workspace."""
+    workspace = resolve_session_workspace(settings, session_id)
+    target = (workspace / artifact_path).resolve()
+    try:
+        relative = target.relative_to(workspace).as_posix()
+    except ValueError as exc:
+        raise ValueError("artifact path outside workspace") from exc
+    if not _is_artifact_relative_path(relative):
+        raise ValueError("artifact path is not a known artifact")
+    if not target.is_file():
+        raise FileNotFoundError(relative)
+    limit = max(1, int(max_bytes))
+    data = target.read_bytes()
+    truncated = len(data) > limit
+    preview = data[:limit].decode("utf-8", errors="replace")
+    stat = target.stat()
+    artifact = WorkspaceArtifact(
+        path=relative,
+        kind=_artifact_kind(relative),
+        size_bytes=stat.st_size,
+        modified_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+    )
+    return artifact, preview, truncated
+
+
+def _is_artifact_relative_path(path: str) -> bool:
+    return any(path.startswith(f"{dirname}/") for dirname in _ARTIFACT_DIRS)
+
+
+def _artifact_kind(path: str) -> str:
+    if path == "research/report.md":
+        return "report"
+    if path.startswith("research/"):
+        return "research"
+    if path.startswith("tool-results/"):
+        return "tool_result"
+    return "file"
 
 
 def find_session_id_for_run(store: SessionStore, run_id: str) -> str | None:

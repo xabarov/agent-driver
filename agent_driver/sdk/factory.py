@@ -16,7 +16,7 @@ from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import wrap_governed_executor
 from agent_driver.sdk.agent import Agent, AgentDefaults
-from agent_driver.sdk.config import SdkConfig
+from agent_driver.sdk.config import SdkConfig, SdkTransportConfig
 from agent_driver.tools import (
     GovernedToolExecutor,
     ToolRegistry,
@@ -122,6 +122,10 @@ def sdk_config_from_env() -> SdkConfig:
         base_url=os.getenv("AGENT_DRIVER_BASE_URL"),
         model=os.getenv("AGENT_DRIVER_MODEL"),
         api_key=os.getenv("AGENT_DRIVER_API_KEY"),
+        transport=SdkTransportConfig(
+            timeout_s=float(os.getenv("AGENT_DRIVER_TIMEOUT_S", "60")),
+            max_retries=int(os.getenv("AGENT_DRIVER_MAX_RETRIES", "3")),
+        ),
     )
 
 

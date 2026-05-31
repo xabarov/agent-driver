@@ -166,6 +166,20 @@ class AgentRunInput(ContractModel):
         return self
 
 
+class ContextDiagnostics(ContractModel):
+    """SDK-visible context pressure diagnostics for one output."""
+
+    pressure: str = "ok"
+    recommendation: str = "continue"
+    token_pressure: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("token_pressure")
+    @classmethod
+    def validate_token_pressure(cls, value: dict[str, Any]) -> dict[str, Any]:
+        """Ensure context diagnostics remain JSON-compatible."""
+        return ensure_json_serializable(value, field_name="context diagnostics")
+
+
 class AgentRunOutput(ContractModel):
     """Normalized output envelope for sync and streamed runs."""
 
@@ -189,6 +203,7 @@ class AgentRunOutput(ContractModel):
     interrupt: InterruptRequest | None = None
     memory_audit: dict[str, Any] | None = None
     terminal_reason: TerminalReason | None = None
+    context: ContextDiagnostics = Field(default_factory=ContextDiagnostics)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("memory_audit")

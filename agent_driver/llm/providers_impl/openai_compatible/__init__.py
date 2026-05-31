@@ -10,7 +10,12 @@ from typing import Any
 
 import httpx
 
-from agent_driver.llm.base import HttpClientConfig, ProviderBase, StreamRequest
+from agent_driver.llm.base import (
+    HttpClientConfig,
+    ProviderBase,
+    StreamRequest,
+    provider_request_id,
+)
 from agent_driver.llm.contracts import (
     LlmProviderKind,
     LlmRequest,
@@ -182,14 +187,23 @@ class OpenAICompatibleProvider(ProviderBase):
                     body=response.text,
                 )
             response.raise_for_status()
-            return self._with_capability_metadata(
-                normalize_openai_completion_payload(
-                    response.json(),
-                    provider_name=self.name,
-                    fallback_model=str(request.model or self._model),
-                    cost_per_1k_tokens=float(self.status.cost_per_1k_tokens or 0.0),
-                )
+            llm_response = normalize_openai_completion_payload(
+                response.json(),
+                provider_name=self.name,
+                fallback_model=str(request.model or self._model),
+                cost_per_1k_tokens=float(self.status.cost_per_1k_tokens or 0.0),
             )
+            request_id = provider_request_id(response.headers)
+            if request_id:
+                llm_response = llm_response.model_copy(
+                    update={
+                        "metadata": {
+                            **llm_response.metadata,
+                            "provider_request_id": request_id,
+                        }
+                    }
+                )
+            return self._with_capability_metadata(llm_response)
 
         return await self.execute_with_telemetry(
             _op, handled_exceptions=(httpx.HTTPError, ValueError)
