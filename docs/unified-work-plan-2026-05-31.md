@@ -741,6 +741,14 @@ Status on 2026-05-31:
   observability/SDK tests passed after the final extraction. Pylint was used as
   a structural smoke gate; the newly introduced shims are clean, while remaining
   warnings are pre-existing broader debt outside the Phase 6 file moves.
+- Future extension landing zones were prepared after closure: the
+  OpenAI-compatible provider now lives in
+  `llm/providers_impl/openai_compatible/` with `payload.py` and
+  `normalization.py`, and run-trace analyzers now live in
+  `observability/run_trace/`. The old flat module paths remain explicit
+  compatibility shims; new provider/analyzer helpers should be added to the
+  packages first, then re-exported only when an old public path needs to keep
+  working.
 
 ### Phase 7 - SDK P1 And Documentation
 
