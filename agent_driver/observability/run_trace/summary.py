@@ -189,6 +189,9 @@ def summarize_run_trace(
         ],
         "deep_research_full_report_rewrite": research_efficiency["full_report_rewrite"],
         "deep_research_stale_report_edit": research_efficiency["stale_report_edit"],
+        "deep_research_repeated_report_read": research_efficiency[
+            "repeated_report_read"
+        ],
         "deep_research_long_final_after_report": research_efficiency[
             "long_final_after_report"
         ],
@@ -576,6 +579,9 @@ def _research_efficiency_summary(
     stale_report_edit_count = _as_int(
         artifacts.get("report_targeted_edit_without_fresh_read_count")
     )
+    repeated_report_read_count = _as_int(
+        artifacts.get("repeated_unchanged_report_read_count")
+    )
     source_ledger_updated = bool(artifacts.get("source_ledger_updated"))
     assistant_chars = len(assistant_text.strip())
     usage = llm_calls.get("usage")
@@ -589,6 +595,7 @@ def _research_efficiency_summary(
     missing_source_ledger_artifact = deep_expected and not source_ledger_updated
     full_report_rewrite = deep_expected and report_full_write_count > 1
     stale_report_edit = deep_expected and stale_report_edit_count > 0
+    repeated_report_read = deep_expected and repeated_report_read_count > 0
     repeated_tools = sorted(
         name
         for name in set(tool_names)
@@ -600,6 +607,7 @@ def _research_efficiency_summary(
         "missing_source_ledger_artifact": missing_source_ledger_artifact,
         "full_report_rewrite": full_report_rewrite,
         "stale_report_edit": stale_report_edit,
+        "repeated_report_read": repeated_report_read,
         "missing_initial_todo": missing_initial_todo,
         "first_tool": first_tool,
         "tool_chain": " -> ".join(tool_names),
@@ -610,6 +618,7 @@ def _research_efficiency_summary(
         "report_full_write_count": report_full_write_count,
         "report_targeted_edit_count": artifacts.get("report_targeted_edit_count", 0),
         "report_targeted_edit_without_fresh_read_count": stale_report_edit_count,
+        "repeated_unchanged_report_read_count": repeated_report_read_count,
         "source_ledger_update_count": artifacts.get("source_ledger_update_count", 0),
         "source_ledger_record_count": artifacts.get("source_ledger_record_count", 0),
         "long_final_after_report": long_final_after_report,
@@ -690,6 +699,9 @@ def _report_read_edit_flow_summary(events: list[dict[str, object]]) -> dict[str,
     targeted_edits = 0
     stale_targeted_edits = 0
     report_reads = 0
+    repeated_unchanged_reads = 0
+    report_generation = 0
+    read_generations: set[int] = set()
     for event in events:
         event_name = event.get("event")
         if event_name == "tool_call_completed":
@@ -701,6 +713,9 @@ def _report_read_edit_flow_summary(events: list[dict[str, object]]) -> dict[str,
                         args.get("path")
                     ):
                         report_reads += 1
+                        if report_generation in read_generations:
+                            repeated_unchanged_reads += 1
+                        read_generations.add(report_generation)
                         fresh_read = True
         if event_name not in {"artifact_created", "artifact_updated"}:
             continue
@@ -709,14 +724,17 @@ def _report_read_edit_flow_summary(events: list[dict[str, object]]) -> dict[str,
             continue
         tool_name = data.get("tool_name")
         if tool_name == "file_write":
+            report_generation += 1
             fresh_read = False
         elif tool_name in {"file_edit", "file_patch"}:
             targeted_edits += 1
             if not fresh_read:
                 stale_targeted_edits += 1
+            report_generation += 1
             fresh_read = False
     return {
         "report_read_count": report_reads,
+        "repeated_unchanged_report_read_count": repeated_unchanged_reads,
         "report_targeted_edit_count": targeted_edits,
         "report_targeted_edit_without_fresh_read_count": stale_targeted_edits,
     }
@@ -824,6 +842,10 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "deep_research_stale_report_edit",
         "research/report.md was edited without a fresh read/preview after the previous write.",
+    ),
+    (
+        "deep_research_repeated_report_read",
+        "research/report.md was read repeatedly without an intervening artifact update.",
     ),
     (
         "deep_research_long_final_after_report",

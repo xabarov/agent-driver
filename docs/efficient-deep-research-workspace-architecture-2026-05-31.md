@@ -974,3 +974,25 @@ Focused checks:
 - `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
   deep-research-artifact`.
+
+## Implementation Slice P10-repeated-report-read-signal - 2026-05-31
+
+Added repeated unchanged report-read detection:
+
+- trace summary tracks a report generation counter for `research/report.md`;
+- `read_file`, `artifact_read`, and `artifact_preview` of the same report
+  generation count as duplicate reads after the first one;
+- writes/patches/edits advance the generation, so reading after an update is
+  allowed and useful;
+- Deep Research efficiency exposes `repeated_unchanged_report_read_count` and
+  `repeated_report_read`;
+- failure flag `deep_research_repeated_report_read` marks wasteful rereads of
+  unchanged report content;
+- live scorecards print `repeat_reads`.
+
+Focused checks:
+
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact`.

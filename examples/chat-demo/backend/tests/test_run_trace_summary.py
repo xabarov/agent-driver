@@ -428,6 +428,128 @@ def test_trace_summary_allows_report_patch_after_fresh_read() -> None:
     assert summary["failures"]["deep_research_stale_report_edit"] is False
 
 
+def test_trace_summary_flags_repeated_unchanged_report_read() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово, отчет в research/report.md",
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search"),
+            _completed_tool("web_fetch"),
+            _completed_tool("file_write"),
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "operation": "write",
+                    "mode": "overwrite",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tool_name": "artifact_preview",
+                    "status": "completed",
+                    "args": {"path": "research/report.md"},
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tool_name": "artifact_read",
+                    "status": "completed",
+                    "args": {"path": "research/report.md"},
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "kind": "research",
+                    "operation": "write",
+                    "record_count": 2,
+                    "tool_name": "source_ledger",
+                },
+            },
+            {"event": "llm_call_completed", "data": {}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["repeated_unchanged_report_read_count"] == 1
+    assert summary["research_efficiency"]["repeated_report_read"] is True
+    assert summary["failures"]["deep_research_repeated_report_read"] is True
+
+
+def test_trace_summary_allows_report_read_after_intervening_write() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово, отчет в research/report.md",
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search"),
+            _completed_tool("web_fetch"),
+            _completed_tool("file_write"),
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "operation": "write",
+                    "mode": "overwrite",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tool_name": "artifact_preview",
+                    "status": "completed",
+                    "args": {"path": "research/report.md"},
+                },
+            },
+            _completed_tool("file_patch"),
+            {
+                "event": "artifact_updated",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "operation": "patch",
+                    "tool_name": "file_patch",
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tool_name": "artifact_preview",
+                    "status": "completed",
+                    "args": {"path": "research/report.md"},
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "kind": "research",
+                    "operation": "write",
+                    "record_count": 2,
+                    "tool_name": "source_ledger",
+                },
+            },
+            {"event": "llm_call_completed", "data": {}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["repeated_unchanged_report_read_count"] == 0
+    assert summary["research_efficiency"]["repeated_report_read"] is False
+    assert summary["failures"]["deep_research_repeated_report_read"] is False
+
+
 def test_trace_summary_flags_long_final_after_report_artifact() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
