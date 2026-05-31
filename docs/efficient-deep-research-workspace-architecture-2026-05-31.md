@@ -709,3 +709,25 @@ Focused checks:
 - `examples/chat-demo/backend/tests/test_workspace.py`;
 - frontend `tests/WorkspaceArtifactsPanel.test.tsx`;
 - frontend `tsc -b`.
+
+## Implementation Slice P2-scorecard - 2026-05-31
+
+Added deterministic trace-summary diagnostics for Deep Research efficiency:
+
+- `research_efficiency` reports whether an artifact-backed Deep Research run was
+  expected, the first tool used, full tool chain, repeated non-search tools,
+  report update counts, assistant character count, total/output tokens, and
+  output tokens spent after the first `research/report.md` update;
+- summary failures now flag three token-waste patterns:
+  `deep_research_no_report_artifact`,
+  `deep_research_missing_initial_todo`, and
+  `deep_research_long_final_after_report`;
+- the heuristic is intentionally narrow: ordinary sourced reports may still
+  finish in chat, while explicit `deep research`/`глубок...` tasks and task
+  contracts can require the artifact path.
+
+Focused checks:
+
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `tests/observability/test_run_trace_summary.py`;
+- `tests/cli/test_eval_harness.py`.

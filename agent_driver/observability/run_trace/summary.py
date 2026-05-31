@@ -97,6 +97,17 @@ def summarize_run_trace(
     provider_rejected = _provider_rejected(events)
     unknown_tools = _unknown_tool_summary(events)
     artifacts = _artifact_summary(events)
+    research_efficiency = _research_efficiency_summary(
+        events,
+        tool_names=tool_names,
+        assistant_text=text,
+        user_prompt=user_prompt,
+        task_contract=task_contract,
+        requires_research=requires_research,
+        research=research,
+        artifacts=artifacts,
+        llm_calls=llm_calls,
+    )
     research_final_covers_plan = _research_final_answer_covers_plan_todos(
         requires_research=requires_research,
         research=research,
@@ -167,6 +178,15 @@ def summarize_run_trace(
             and not python["final_after_python"]
         ),
         "unknown_tool_call": unknown_tools["count"] > 0,
+        "deep_research_no_report_artifact": research_efficiency[
+            "missing_report_artifact"
+        ],
+        "deep_research_long_final_after_report": research_efficiency[
+            "long_final_after_report"
+        ],
+        "deep_research_missing_initial_todo": research_efficiency[
+            "missing_initial_todo"
+        ],
     }
     notes = _notes(
         failures=failures,
@@ -185,6 +205,7 @@ def summarize_run_trace(
         "tool_names": tool_names,
         "tool_chain": " -> ".join(tool_names),
         "artifacts": artifacts,
+        "research_efficiency": research_efficiency,
         "runtime_markers": runtime_markers,
         "research": {
             "required": requires_research,
@@ -511,6 +532,108 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
     }
 
 
+def _research_efficiency_summary(
+    events: list[dict[str, object]],
+    *,
+    tool_names: list[str],
+    assistant_text: str,
+    user_prompt: str | None,
+    task_contract: dict[str, Any] | None,
+    requires_research: bool,
+    research: dict[str, Any],
+    artifacts: dict[str, Any],
+    llm_calls: dict[str, Any],
+) -> dict[str, Any]:
+    deep_expected = _deep_research_artifact_expected(
+        user_prompt=user_prompt,
+        task_contract=task_contract,
+        requires_research=requires_research,
+        research=research,
+    )
+    report_updated = bool(artifacts.get("report_updated"))
+    assistant_chars = len(assistant_text.strip())
+    usage = llm_calls.get("usage")
+    total_tokens = usage.get("total_tokens") if isinstance(usage, dict) else 0
+    output_tokens = usage.get("output_tokens") if isinstance(usage, dict) else 0
+    completion_after_report = _output_tokens_after_first_report_update(events)
+    first_tool = tool_names[0] if tool_names else None
+    missing_initial_todo = deep_expected and first_tool not in {None, "todo_write"}
+    long_final_after_report = report_updated and assistant_chars > 2000
+    missing_report_artifact = deep_expected and not report_updated
+    repeated_tools = sorted(
+        name
+        for name in set(tool_names)
+        if tool_names.count(name) > 1 and name not in {"web_search", "web_fetch"}
+    )
+    return {
+        "deep_research_artifact_expected": deep_expected,
+        "missing_report_artifact": missing_report_artifact,
+        "missing_initial_todo": missing_initial_todo,
+        "first_tool": first_tool,
+        "tool_chain": " -> ".join(tool_names),
+        "unique_tool_count": len(set(tool_names)),
+        "repeated_tools": repeated_tools,
+        "artifact_update_count": artifacts.get("update_count", 0),
+        "report_update_count": artifacts.get("report_update_count", 0),
+        "long_final_after_report": long_final_after_report,
+        "assistant_chars": assistant_chars,
+        "total_tokens": total_tokens if isinstance(total_tokens, int) else 0,
+        "output_tokens": output_tokens if isinstance(output_tokens, int) else 0,
+        "output_tokens_after_first_report_update": completion_after_report,
+    }
+
+
+def _deep_research_artifact_expected(
+    *,
+    user_prompt: str | None,
+    task_contract: dict[str, Any] | None,
+    requires_research: bool,
+    research: dict[str, Any],
+) -> bool:
+    if isinstance(task_contract, dict):
+        if task_contract.get("deep_research") is True:
+            return True
+        if task_contract.get("artifact_required") is True:
+            return True
+    text = " ".join((user_prompt or "").lower().split())
+    if any(
+        marker in text
+        for marker in (
+            "deep research",
+            "глубок",
+            "research report",
+            "long report",
+        )
+    ):
+        return requires_research
+    return False
+
+
+def _output_tokens_after_first_report_update(events: list[dict[str, object]]) -> int:
+    saw_report = False
+    output_tokens = 0
+    for event in events:
+        if event.get("event") in {"artifact_created", "artifact_updated"}:
+            data = _event_data(event)
+            if data.get("path") == "research/report.md":
+                saw_report = True
+            continue
+        if not saw_report or event.get("event") != "llm_call_completed":
+            continue
+        data = _event_data(event)
+        usage = data.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        value = usage.get("output_tokens", usage.get("completion_tokens"))
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            output_tokens += max(0, value)
+        elif isinstance(value, float):
+            output_tokens += max(0, int(value))
+    return output_tokens
+
+
 def _dedupe_paths(paths: list[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
@@ -578,6 +701,18 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "final_missing_source_links",
         "Source-verified research produced a final answer without concrete source links.",
+    ),
+    (
+        "deep_research_no_report_artifact",
+        "Deep Research/report-like task finished without a research/report.md artifact update.",
+    ),
+    (
+        "deep_research_long_final_after_report",
+        "Final answer is long even though research/report.md was already available.",
+    ),
+    (
+        "deep_research_missing_initial_todo",
+        "Deep Research did not start with todo_write before data/artifact tools.",
     ),
     (
         "plan_todos_incomplete_on_final",

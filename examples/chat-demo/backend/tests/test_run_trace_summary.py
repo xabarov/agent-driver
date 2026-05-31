@@ -133,6 +133,62 @@ def test_trace_summary_exposes_tool_chain_usage_and_artifact_updates() -> None:
     assert summary["artifacts"]["update_count"] == 1
     assert summary["artifacts"]["report_updated"] is True
     assert summary["artifacts"]["paths"] == ["research/report.md"]
+    assert summary["research_efficiency"]["first_tool"] == "todo_write"
+    assert (
+        summary["research_efficiency"]["output_tokens_after_first_report_update"] == 40
+    )
+
+
+def test_trace_summary_flags_deep_research_without_report_artifact() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай глубокий research report по очередям fork-join",
+        assistant_text="Краткий отчет без файла.",
+        events=[
+            _completed_tool("web_search"),
+            _completed_tool("web_fetch"),
+            {"event": "llm_call_completed", "data": {}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["research_efficiency"]["deep_research_artifact_expected"] is True
+    assert summary["research_efficiency"]["missing_report_artifact"] is True
+    assert summary["failures"]["deep_research_no_report_artifact"] is True
+    assert summary["failures"]["deep_research_missing_initial_todo"] is True
+
+
+def test_trace_summary_flags_long_final_after_report_artifact() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово.\n" + ("длинный финальный дубль. " * 120),
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search"),
+            _completed_tool("file_write"),
+            {
+                "event": "artifact_updated",
+                "data": {"path": "research/report.md", "operation": "write"},
+            },
+            {
+                "event": "llm_call_completed",
+                "data": {
+                    "usage": {
+                        "input_tokens": 500,
+                        "output_tokens": 900,
+                        "total_tokens": 1400,
+                    }
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["long_final_after_report"] is True
+    assert summary["failures"]["deep_research_long_final_after_report"] is True
+    assert summary["research_efficiency"]["output_tokens_after_first_report_update"] == 900
 
 
 def test_trace_summary_flags_search_only_report_research() -> None:
