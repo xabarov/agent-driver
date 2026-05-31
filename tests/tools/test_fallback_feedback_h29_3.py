@@ -30,9 +30,9 @@ from agent_driver.tools.fallback_feedback import (
     build_arguments_parse_feedback,
     build_missing_tool_name_feedback,
     build_unknown_tool_feedback,
+    classify_unknown_tool,
     closest_tool_names,
 )
-
 
 # --- closest_tool_names ----------------------------------------------------
 
@@ -118,6 +118,25 @@ def test_unknown_tool_feedback_truncates_long_available_list():
     assert "Available tools:" in msg
     # Limit is 30 — should mention the rest as "+20 more"
     assert "+20 more" in msg
+
+
+def test_unknown_tool_feedback_for_read_url_points_to_web_fetch():
+    msg = build_unknown_tool_feedback("read_url", ["web_fetch", "web_search"])
+    assert "Use the registered tool 'web_fetch'" in msg
+    assert '{"url": "https://example.com/page"}' in msg
+    assert classify_unknown_tool("read_url", ["web_fetch"]) == {
+        "kind": "unavailable_alias_for_web_fetch",
+        "recommended_tool": "web_fetch",
+    }
+
+
+def test_unknown_tool_feedback_for_internal_reasoning_tool():
+    msg = build_unknown_tool_feedback("thought", ["web_search"])
+    assert "hidden reasoning" in msg
+    assert classify_unknown_tool("thought", ["web_search"]) == {
+        "kind": "hidden_reasoning_tool",
+        "recommended_tool": None,
+    }
 
 
 def test_unknown_tool_feedback_filters_non_string_available():

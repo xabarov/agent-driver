@@ -55,12 +55,7 @@ logger = logging.getLogger(__name__)
 # read-only fan-out (e.g. 30 file_reads). Mirrors openclaude
 # ``CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY``.
 DEFAULT_CONCURRENCY_LIMIT = 8
-_TOOL_ALIASES: dict[str, str] = {
-    "fetch_url": "web_fetch",
-    "open_url": "web_fetch",
-    "read_url": "web_fetch",
-    "read_webpage": "web_fetch",
-}
+_TOOL_ALIASES: dict[str, str] = {}
 _URL_ARG_ALIASES = ("url", "uri", "href")
 
 
@@ -69,11 +64,9 @@ def _normalize_tool_alias(
 ) -> ToolCall:
     """Map common model-emitted tool synonyms onto registered tool names.
 
-    Open-weight models sometimes call browser-like tools such as
-    ``read_url`` after a web search. The engine's reusable contract is
-    ``web_fetch``; normalizing the small alias set here keeps prompts
-    clean and prevents a recoverable naming mismatch from becoming a
-    denied tool turn.
+    Kept as a narrowly scoped compatibility hook, but intentionally empty by
+    default. Obvious hallucinated aliases such as ``read_url`` should receive a
+    corrective tool observation instead of silently executing another tool.
     """
     target_name = _TOOL_ALIASES.get(call.tool_name)
     if target_name is None or target_name not in available_tool_names:

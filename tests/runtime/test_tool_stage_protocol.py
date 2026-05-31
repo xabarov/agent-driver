@@ -158,7 +158,7 @@ def test_update_tool_protocol_messages_compacts_web_fetch_payload() -> None:
     assert len(payload["excerpt"]) <= 2500
 
 
-def test_update_tool_protocol_messages_uses_normalized_alias_name() -> None:
+def test_update_tool_protocol_messages_keeps_original_unknown_tool_name() -> None:
     llm_response = LlmResponse(
         message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
         finish_reason=LlmFinishReason.TOOL_CALLS,
@@ -177,19 +177,16 @@ def test_update_tool_protocol_messages_uses_normalized_alias_name() -> None:
     )
     envelope = ToolResultEnvelope(
         call=ToolCall(
-            tool_name="web_fetch",
+            tool_name="read_url",
             tool_call_id="call_f1",
             args={"url": "https://example.com"},
-            metadata={
-                "original_tool_name": "read_url",
-                "tool_alias_normalized": True,
-            },
         ),
-        decision=ToolPolicyDecision.ALLOW,
-        structured_output={
-            "summary": "fetched https://example.com",
-            "url": "https://example.com",
-        },
+        decision=ToolPolicyDecision.DENY,
+        error=ToolError(
+            code="tool_not_registered",
+            message="Tool 'read_url' is not registered.",
+        ),
+        structured_output={},
         truncated=False,
     )
     context = SimpleNamespace(
@@ -207,7 +204,57 @@ def test_update_tool_protocol_messages_uses_normalized_alias_name() -> None:
     ]
     assert assistant_rows
     tool_calls = assistant_rows[-1]["metadata"]["tool_calls"]
-    assert tool_calls[0]["function"]["name"] == "web_fetch"
+    assert tool_calls[0]["function"]["name"] == "read_url"
+
+
+def test_update_tool_protocol_messages_forces_final_after_repeated_unknown_tool() -> (
+    None
+):
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="read_url",
+                    tool_call_id="call_unknown",
+                    args={"url": "https://example.com"},
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    envelope = ToolResultEnvelope(
+        call=ToolCall(
+            tool_name="read_url",
+            tool_call_id="call_unknown",
+            args={"url": "https://example.com"},
+        ),
+        decision=ToolPolicyDecision.DENY,
+        error=ToolError(
+            code="tool_not_registered",
+            message="Tool 'read_url' is not registered.",
+        ),
+        structured_output={},
+        truncated=False,
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        run_input=SimpleNamespace(messages=(), input="hello"),
+        metadata={"unknown_tool_counts": {"read_url": 1}},
+    )
+
+    _update_tool_protocol_messages(
+        context=context, result=ToolExecutionResult(envelopes=[envelope], traces=[])
+    )
+
+    assert context.metadata["force_final_answer"] is True
+    assert context.metadata["force_final_answer_reason"] == "repeated_unknown_tool"
+    rows = context.metadata["protocol_messages"]
+    user_rows = [row for row in rows if row.get("role") == ChatRole.USER.value]
+    assert "Unknown tool(s) repeated" in user_rows[-1]["content"]
 
 
 def test_update_tool_protocol_messages_adds_web_fetch_verification_hint() -> None:
@@ -550,6 +597,7 @@ def test_research_satisfied_forces_final_even_with_synthesis_todo_pending() -> N
     )
 
     assert _should_force_final_answer(context) is True
+    assert context.metadata["final_readiness"] == "allowed"
 
 
 def test_research_deliverable_waits_for_source_verified_fetches() -> None:

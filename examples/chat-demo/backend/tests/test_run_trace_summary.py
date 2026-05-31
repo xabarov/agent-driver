@@ -112,6 +112,8 @@ def test_trace_summary_flags_search_only_report_research() -> None:
     assert summary["verdict"] == "fail"
     assert summary["research"]["depth"] == "source_verified_report"
     assert summary["research"]["fetch_required_but_missing"] is True
+    assert summary["research"]["final_readiness"] == "repair_needed"
+    assert "missing_fetched_sources" in summary["repair_required_reasons"]
     assert summary["failures"]["search_only_research_report"] is True
 
 
@@ -198,6 +200,8 @@ def test_trace_summary_marks_missing_final_links_as_research_diagnostic() -> Non
     assert summary["verdict"] == "fail"
     assert summary["research"]["final_has_source_links"] is False
     assert summary["research"]["final_missing_source_links"] is True
+    assert summary["final_readiness"] == "repair_needed"
+    assert summary["repair_required_reasons"] == ["final_missing_source_links"]
     assert summary["failures"]["final_missing_source_links"] is True
 
 
@@ -442,6 +446,8 @@ def test_trace_summary_flags_incomplete_plan_on_final() -> None:
 
     assert summary["verdict"] == "fail"
     assert summary["failures"]["plan_todos_incomplete_on_final"] is True
+    assert summary["final_readiness"] == "repair_needed"
+    assert summary["repair_required_reasons"] == ["unfinished_todos"]
 
 
 def test_trace_summary_flags_progress_only_final() -> None:

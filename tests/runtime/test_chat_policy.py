@@ -91,4 +91,10 @@ def test_chat_tool_policy_does_not_mark_simple_greeting_for_python() -> None:
     policy = build_chat_tool_policy("привет, ответь коротко")
 
     assert is_python_reliability_request("привет, ответь коротко") is False
+    assert (
+        is_python_reliability_request(
+            "Поручи субагенту сравнить Jazzmaster и Stratocaster в 3 пункта"
+        )
+        is False
+    )
     assert "python_reliability_request" not in policy.metadata

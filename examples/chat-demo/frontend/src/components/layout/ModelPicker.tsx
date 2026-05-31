@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { AlertTriangle, Brain, Check, ChevronDown, Search, Wrench } from "lucide-react";
 
 import { controlRun, fetchModels, fetchProviders } from "../../lib/api";
 import { useChatStore } from "../../store/chatStore";
@@ -18,6 +18,16 @@ import {
 
 const RECENT_MODELS_KEY = "chat-demo-recent-models";
 const MAX_RECENT_MODELS = 5;
+const POPULAR_MODEL_HINTS = [
+  "openai/gpt-5.5",
+  "openai/gpt-5",
+  "anthropic/claude",
+  "google/gemini",
+  "qwen/qwen3",
+  "deepseek/deepseek-r1",
+  "meta-llama/llama",
+  "x-ai/grok",
+];
 
 function readRecentModels(): string[] {
   try {
@@ -42,6 +52,37 @@ function modelLabel(entry: ModelView): string {
   return entry.name && entry.name !== entry.id ? entry.name : entry.id;
 }
 
+function modelSupports(entry: ModelView, key: string): boolean | undefined {
+  const value = entry.capability_profile?.[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function CapabilityBadges({ entry }: { entry: ModelView }) {
+  const supportsTools = modelSupports(entry, "supports_tool_calls");
+  const supportsReasoning = modelSupports(entry, "supports_reasoning");
+  return (
+    <span className="mt-1 flex min-w-0 flex-wrap gap-1">
+      {supportsTools === false ? (
+        <span className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-200">
+          <AlertTriangle className="h-3 w-3" aria-hidden />
+          tools uncertain
+        </span>
+      ) : (
+        <span className="inline-flex items-center gap-1 rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-200">
+          <Wrench className="h-3 w-3" aria-hidden />
+          tools
+        </span>
+      )}
+      {supportsReasoning ? (
+        <span className="inline-flex items-center gap-1 rounded border border-sky-500/20 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-200">
+          <Brain className="h-3 w-3" aria-hidden />
+          reasoning
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function ModelRow({
   entry,
   selected,
@@ -64,6 +105,7 @@ function ModelRow({
           </span>
           <span className="truncate font-mono text-[11px] text-muted-foreground">{entry.id}</span>
         </span>
+        <CapabilityBadges entry={entry} />
       </span>
       {selected ? <Check className="mt-1 h-4 w-4 text-primary" aria-hidden /> : null}
     </DropdownMenuItem>
@@ -92,6 +134,7 @@ export function ModelPicker() {
   const setModel = useSettingsStore((state) => state.setModel);
   const runId = useChatStore((state) => state.runId);
   const streaming = useChatStore((state) => state.streaming);
+  const lastError = useChatStore((state) => state.lastError);
   const [search, setSearch] = useState("");
   const [recentIds, setRecentIds] = useState<string[]>(() => readRecentModels());
 
@@ -125,6 +168,17 @@ export function ModelPicker() {
     .filter((id) => id !== selectedId)
     .map((id) => modelById.get(id))
     .filter((entry): entry is ModelView => Boolean(entry));
+  const popularModels = useMemo(() => {
+    const selected = new Set([selectedId, ...recentModels.map((entry) => entry.id)]);
+    const scored = models
+      .filter((entry) => !selected.has(entry.id))
+      .filter((entry) => {
+        const id = entry.id.toLowerCase();
+        const name = (entry.name ?? "").toLowerCase();
+        return POPULAR_MODEL_HINTS.some((hint) => id.includes(hint) || name.includes(hint));
+      });
+    return scored.slice(0, 12);
+  }, [models, recentModels, selectedId]);
 
   const filtered = useMemo(() => {
     const list = modelsQuery.data?.models ?? [];
@@ -140,9 +194,26 @@ export function ModelPicker() {
   }, [modelsQuery.data?.models, search]);
 
   const allModels = filtered.filter(
-    (entry) => entry.id !== selectedId && !recentModels.some((recent) => recent.id === entry.id),
+    (entry) =>
+      entry.id !== selectedId &&
+      !recentModels.some((recent) => recent.id === entry.id) &&
+      (Boolean(search.trim()) ||
+        !popularModels.some((popular) => popular.id === entry.id)),
   );
   const label = model || defaultModel || "Select model";
+  const selectedWarnings = selectedEntry
+    ? [
+        modelSupports(selectedEntry, "supports_tool_calls") === false
+          ? "Tool calls are not confirmed for this model."
+          : null,
+        modelSupports(selectedEntry, "supports_streaming") === false
+          ? "Streaming is not confirmed for this model."
+          : null,
+        lastError?.includes("402")
+          ? "Last request was rejected with HTTP 402. Check credits or choose another model."
+          : null,
+      ].filter((item): item is string => Boolean(item))
+    : [];
   const selectModel = (id: string) => {
     setModel(id);
     writeRecentModel(id);
@@ -195,6 +266,7 @@ export function ModelPicker() {
               <p className="text-sm font-medium">Model</p>
               <p className="text-xs text-muted-foreground">
                 {providers.data?.name ?? modelsQuery.data?.provider ?? "provider"}
+                {models.length ? ` · ${models.length} models` : ""}
               </p>
             </div>
             {selectedId ? (
@@ -213,6 +285,11 @@ export function ModelPicker() {
               onKeyDown={(event) => event.stopPropagation()}
             />
           </div>
+          {selectedWarnings.length > 0 ? (
+            <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-100">
+              {selectedWarnings[0]}
+            </div>
+          ) : null}
         </div>
         <div className="max-h-[min(28rem,70vh)] overflow-y-auto p-1">
           {modelsQuery.isLoading ? (
@@ -231,6 +308,21 @@ export function ModelPicker() {
               <DropdownMenuSeparator />
               <Section title="Recent">
                 {recentModels.map((entry) => (
+                  <ModelRow
+                    key={entry.id}
+                    entry={entry}
+                    selected={entry.id === selectedId}
+                    onSelect={selectModel}
+                  />
+                ))}
+              </Section>
+            </>
+          ) : null}
+          {!search.trim() && popularModels.length > 0 ? (
+            <>
+              <DropdownMenuSeparator />
+              <Section title="Popular">
+                {popularModels.map((entry) => (
                   <ModelRow
                     key={entry.id}
                     entry={entry}

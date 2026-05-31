@@ -208,7 +208,9 @@ export function useRunStream(): RunStreamController {
         await runner(assistantId, controller.signal);
       } catch (error) {
         const store = useChatStore.getState();
-        store.setLastError(formatStreamError(error));
+        const message = formatStreamError(error);
+        store.replaceAssistantContent(assistantId, `**Run failed**\n\n${message}`);
+        store.setLastError(message);
         store.finishTurn(assistantId);
         store.setStreaming(false);
       } finally {

@@ -43,7 +43,7 @@ _PYTHON_RELIABILITY_MARKERS = (
     "average",
     "median",
 )
-_PYTHON_RELIABILITY_SYMBOLS = frozenset("0123456789*/%=+")
+_PYTHON_RELIABILITY_SYMBOLS = frozenset("*/%=+")
 
 
 def is_deliverable_request(message: str) -> bool:

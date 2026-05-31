@@ -39,6 +39,7 @@ def summarize_run_trace(
         task_contract=task_contract,
         user_prompt=user_prompt,
     )
+    planning = _planning_summary(events, tool_names)
     research = _research_summary(
         events,
         tool_names=tool_names,
@@ -46,8 +47,8 @@ def summarize_run_trace(
         user_prompt=user_prompt,
         assistant_text=text,
         task_contract=task_contract,
+        planning=planning,
     )
-    planning = _planning_summary(events, tool_names)
     llm_calls = _llm_call_summary(events)
     provider_profile = _provider_profile_summary(events)
     prompt_surface = _prompt_surface_summary(events)
@@ -164,6 +165,8 @@ def summarize_run_trace(
         "compaction": compaction,
         "unknown_tools": unknown_tools,
         "provider_rejected": provider_rejected,
+        "final_readiness": research["final_readiness"],
+        "repair_required_reasons": research["repair_required_reasons"],
         "interrupts": interrupt_reasons,
         "continuation_reason": continuation.reason,
         "failures": failures,
@@ -397,6 +400,7 @@ def _research_summary(
     user_prompt: str | None,
     assistant_text: str,
     task_contract: dict[str, Any] | None,
+    planning: dict[str, Any],
 ) -> dict[str, Any]:
     depth = _research_depth(
         task_contract=task_contract,
@@ -411,7 +415,9 @@ def _research_summary(
     ]
     fetch_count = len(fetch_payloads)
     domains = _unique_domains(fetch_payloads)
-    final_has_source_links = _has_source_links(assistant_text)
+    final_has_source_links = _has_source_links(assistant_text) or _has_tool_sources(
+        fetch_payloads
+    )
     fetch_required_but_missing = (
         depth == RESEARCH_DEPTH_SOURCE_VERIFIED
         and search_count > 0
@@ -428,6 +434,18 @@ def _research_summary(
         and len(domains) >= SOURCE_VERIFIED_DOMAINS
         and not final_has_source_links
     )
+    repair_reasons: list[str] = []
+    if _planning_todos_incomplete(planning):
+        repair_reasons.append("unfinished_todos")
+    if requires_research and search_count == 0 and fetch_count == 0:
+        repair_reasons.append("missing_research_evidence")
+    if fetch_required_but_missing:
+        repair_reasons.append("missing_fetched_sources")
+    if insufficient_source_diversity:
+        repair_reasons.append("insufficient_source_diversity")
+    if final_missing_source_links:
+        repair_reasons.append("final_missing_source_links")
+    final_readiness = "repair_needed" if repair_reasons else "allowed"
     return {
         "depth": depth,
         "search_count": search_count,
@@ -442,6 +460,8 @@ def _research_summary(
         "unique_domains": domains,
         "final_has_source_links": final_has_source_links,
         "final_missing_source_links": final_missing_source_links,
+        "final_readiness": final_readiness,
+        "repair_required_reasons": repair_reasons,
     }
 
 
@@ -506,6 +526,13 @@ def _tool_payload_succeeded(payload: dict[str, Any]) -> bool:
     ):
         return False
     return True
+
+
+def _has_tool_sources(payloads: list[dict[str, Any]]) -> bool:
+    return any(
+        isinstance(payload.get("sources"), list) and payload["sources"]
+        for payload in payloads
+    )
 
 
 def _has_source_links(text: str) -> bool:

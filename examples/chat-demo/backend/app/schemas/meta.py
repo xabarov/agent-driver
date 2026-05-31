@@ -83,6 +83,7 @@ class ModelView(BaseModel):
     name: str | None = None
     description: str | None = None
     context_length: int | None = None
+    capability_profile: dict[str, object] | None = None
 
 
 class ModelsResponse(BaseModel):

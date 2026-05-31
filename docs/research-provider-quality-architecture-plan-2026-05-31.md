@@ -210,60 +210,68 @@ Each scenario must store:
 - [x] Preserve provider-specific reasoning metadata when present, without
   leaking chain-of-thought to UI.
 - [x] Add backend tests for Qwen/OpenRouter/GPT profile defaults.
-- [ ] Extend profile usage into chat model picker capability warnings and
+- [x] Extend profile usage into chat model picker capability warnings and
   provider failure UX.
 
 ### Phase B — Research Contract Object
 
-- [ ] Extract research readiness from scattered helpers into
+- [x] Extract research readiness from scattered helpers into
   `ResearchSessionContract`.
-- [ ] Include visible todo completeness and source evidence completeness in one
+- [x] Include visible todo completeness and source evidence completeness in one
   readiness result.
-- [ ] Add trace summary fields:
+- [x] Add trace summary fields:
   `final_readiness`, `repair_required_reasons`, `provider_profile`.
-- [ ] Keep chat demo unchanged except consuming new metadata.
+- [x] Keep chat demo unchanged except consuming new metadata.
 
 ### Phase C — Bounded Repair
 
-- [ ] Add one bounded repair continuation for final answers that violate
+- [x] Add one bounded repair continuation for final answers that violate
   research/todo/source contract.
-- [ ] Add deterministic tests:
+- [x] Add deterministic tests:
   missing links -> repair reminder;
   incomplete todo -> repair reminder;
   second violation -> terminal partial/failure with clear reason.
-- [ ] Verify no infinite loops and no modal planning approval for pure research.
+- [x] Verify no infinite loops and no modal planning approval for pure research.
 
 ### Phase D — Unknown Tool Guardrail
 
-- [ ] Add unknown-tool classifier:
+- [x] Add unknown-tool classifier:
   `read_url -> unavailable_alias_for_web_fetch`,
   `synthesize_findings -> todo_id_or_internal_step`,
   `thought/reason/scratchpad -> hidden_reasoning_tool`.
-- [ ] Surface corrective observation to the model and trace failure to Phoenix.
-- [ ] Add repeated unknown-tool guard inspired by OpenClaude
+- [x] Surface corrective observation to the model and trace failure to Phoenix.
+- [x] Add repeated unknown-tool guard inspired by OpenClaude
   `toolFailureLoopGuard`.
 
 ### Phase E — Provider Failure UX
 
-- [ ] Replace stuck “Writing” on provider 4xx/stream error with terminal chat
+- [x] Replace stuck “Writing” on provider 4xx/stream error with terminal chat
   error card and retry hint.
-- [ ] Model picker should expose capability/health warnings:
+- [x] Model picker should expose capability/health warnings:
   “tool calls unknown”, “reasoning metadata unsupported”, “last request 402”.
-- [ ] Fix model list loading/search so popular models after `G` are discoverable
+- [x] Fix model list loading/search so popular models after `G` are discoverable
   and not hidden by pagination/search state.
 
 ### Phase F — Live Phoenix Gate
 
-- [ ] Run the expanded scenario suite on default Qwen and one reasoning model.
-- [ ] Mark a scenario successful only when:
+- [x] Run the expanded scenario suite on default Qwen and one reasoning model.
+- [x] Mark a scenario successful only when:
   terminal event exists;
   no unknown tools;
   required source evidence exists;
   visible plan/todo is complete or intentionally not used;
   final answer includes citations/cards when research used web.
-- [ ] If Phase A-D still leave repeated failures, design a minimal
+- [x] If Phase A-D still leave repeated failures, design a minimal
   state-machine runner for research only. Do not generalize to all tasks until
   traces justify it.
+
+Phase F result: live probes passed on the running dev stack for
+`simple-direct`, `python-count-letters`, `research-report`,
+`subagent-explicit-delegation`, and the heavy
+`research-report-requires-fetch` scenario. The first heavy run exposed two
+runtime issues: forced-final blocked repair tools, and source cards were not
+counted as final citations in trace summary. Both were fixed without adding a
+research DAG/state-machine layer.
 
 ## Acceptance Criteria
 

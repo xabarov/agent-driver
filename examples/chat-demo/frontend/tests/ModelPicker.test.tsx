@@ -108,7 +108,7 @@ describe("ModelPicker", () => {
     await openPicker(/openai\/gpt-4.1-mini/i);
 
     expect(await screen.findByText("Selected")).toBeInTheDocument();
-    expect(screen.getByText("openrouter")).toBeInTheDocument();
+    expect(screen.getByText(/openrouter.*3 models/)).toBeInTheDocument();
     expect(screen.getByText("GPT 4.1 Mini")).toBeInTheDocument();
     expect(screen.getAllByText("openai/gpt-4.1-mini").length).toBeGreaterThan(0);
   });

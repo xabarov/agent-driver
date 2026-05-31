@@ -23,6 +23,10 @@ from agent_driver.runtime.research_evidence import (
     SOURCE_VERIFIED_FETCHES,
     research_evidence_from_tool_results,
 )
+from agent_driver.runtime.research_session_contract import (
+    FINAL_READINESS_ALLOWED,
+    build_research_session_contract_from_context,
+)
 from agent_driver.runtime.single_agent.pending import (
     pending_interrupt_from_execution_result,
     serialize_pending_interrupt,
@@ -38,7 +42,6 @@ from agent_driver.runtime.single_agent.step_planning import (
 )
 from agent_driver.runtime.single_agent.todo_reminders import (
     append_todo_progress_hint_after_substantive_tool,
-    has_unfinished_todos,
     increment_tool_loops_since_todo_write,
 )
 from agent_driver.runtime.single_agent.types import (
@@ -622,6 +625,7 @@ def _update_tool_protocol_messages(
             )
         )
     _append_denial_recovery_message(context, result, messages)
+    _append_unknown_tool_recovery_message(context, result, messages)
     _append_python_policy_recovery_hint(context, result, messages)
     _append_tool_call_parse_error_feedback(context, result, messages)
     append_todo_progress_hint_after_substantive_tool(context, result, messages)
@@ -1014,6 +1018,57 @@ def _append_denial_recovery_message(
     context.metadata["last_denied_signature"] = denied_signature
 
 
+def _append_unknown_tool_recovery_message(
+    context: RunContext, result: ToolExecutionResult, messages: list[ChatMessage]
+) -> None:
+    """Add bounded recovery guidance for hallucinated tool names."""
+    unknown_names: list[str] = []
+    for envelope in result.envelopes:
+        error = envelope.error
+        if error is None or error.code != "tool_not_registered":
+            continue
+        unknown_names.append(envelope.call.tool_name)
+    if not unknown_names:
+        return
+    counts = context.metadata.get("unknown_tool_counts")
+    if not isinstance(counts, dict):
+        counts = {}
+    repeated: list[str] = []
+    for name in unknown_names:
+        prior = int(counts.get(name, 0))
+        counts[name] = prior + 1
+        if counts[name] >= 2:
+            repeated.append(name)
+    context.metadata["unknown_tool_counts"] = counts
+    if repeated:
+        context.metadata["force_final_answer"] = True
+        context.metadata["tool_choice_override"] = "none"
+        context.metadata["force_final_answer_reason"] = "repeated_unknown_tool"
+        names = ", ".join(sorted(set(repeated)))
+        messages.append(
+            ChatMessage(
+                role=ChatRole.USER,
+                content=(
+                    f"Unknown tool(s) repeated: {names}. Stop trying those names. "
+                    "Use only the registered tools already listed in the tool error, "
+                    "or answer with a clear partial result."
+                ),
+            )
+        )
+        return
+    names = ", ".join(sorted(set(unknown_names)))
+    messages.append(
+        ChatMessage(
+            role=ChatRole.USER,
+            content=(
+                f"Tool name correction needed for: {names}. Do not invent tool "
+                "names. Use the registered tool names shown in the previous tool "
+                "error and retry only if a real tool is needed."
+            ),
+        )
+    )
+
+
 def _normalize_protocol_messages(messages: list[ChatMessage]) -> None:
     normalized: list[ChatMessage] = []
     total = len(messages)
@@ -1153,12 +1208,6 @@ def _force_final_reason(context: RunContext) -> str | None:
     loop_detected = _has_repeated_recent_tool_call(context)
     zero_streak = int(context.metadata.get("web_search_zero_streak", 0))
     zero_results_triggered = zero_streak >= 1
-    unfinished_plan = has_unfinished_todos(context)
-    deliverable_requested = _deliverable_request_should_force_final(context)
-    research_satisfied = _research_request_should_force_final(
-        context
-    ) and not _python_reliability_request_pending(context)
-    python_result_ready = _python_request_should_force_final(context)
     if near_tool_budget:
         return "near_tool_budget"
     if near_step_budget:
@@ -1167,10 +1216,27 @@ def _force_final_reason(context: RunContext) -> str | None:
         return "repeated_tool_call"
     if zero_results_triggered:
         return "web_search_zero_results"
+    contract = build_research_session_contract_from_context(
+        context,
+        enforce_final_source_links=False,
+        enforce_todos=not _source_verified_task_contract(context),
+    )
+    context.metadata["research_session_contract"] = contract.model_dump()
+    if contract.final_readiness.status != FINAL_READINESS_ALLOWED:
+        context.metadata["final_readiness"] = contract.final_readiness.status
+        context.metadata["repair_required_reasons"] = list(
+            contract.final_readiness.reasons
+        )
+        return None
+    context.metadata["final_readiness"] = contract.final_readiness.status
+    context.metadata["repair_required_reasons"] = []
+    deliverable_requested = _deliverable_request_should_force_final(context)
+    research_satisfied = _research_request_should_force_final(
+        context
+    ) and not _python_reliability_request_pending(context)
+    python_result_ready = _python_request_should_force_final(context)
     if research_satisfied:
         return "research_request_satisfied"
-    if unfinished_plan:
-        return None
     if deliverable_requested:
         return "deliverable_request_satisfied"
     if python_result_ready:
@@ -1289,6 +1355,15 @@ def _task_contract_metadata(context: RunContext) -> object:
     if not isinstance(metadata, dict):
         return None
     return metadata.get("task_contract")
+
+
+def _source_verified_task_contract(context: RunContext) -> bool:
+    task_contract = _task_contract_metadata(context)
+    return (
+        isinstance(task_contract, dict)
+        and task_contract.get("requires_research") is True
+        and task_contract.get("research_depth") == RESEARCH_DEPTH_SOURCE_VERIFIED
+    )
 
 
 def _tool_available(context: RunContext, tool_name: str) -> bool:

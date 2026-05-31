@@ -623,8 +623,8 @@ async def test_react_loop_recovers_from_text_form_tool_call_answer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deliverable_request_forces_final_after_plan_only_tool() -> None:
-    """A deliverable turn should not continue planning after todo_write."""
+async def test_deliverable_request_repairs_unfinished_plan_before_final() -> None:
+    """A deliverable turn should not finalize with visible todos still open."""
     provider = _DeliverablePlanOnlyProvider()
     agent = create_agent(provider=provider, tools=ToolSet.only("todo_write"))
     output = await agent.run(
@@ -641,11 +641,9 @@ async def test_deliverable_request_forces_final_after_plan_only_tool() -> None:
         )
     )
     assert output.answer == "Вот готовый черновик."
-    assert len(provider.requests) == 2
-    assert provider.requests[1].tool_choice == "none"
-    assert (
-        "Produce the requested deliverable" in provider.requests[1].messages[-1].content
-    )
+    assert len(provider.requests) == 3
+    assert "Contract repair required" in provider.requests[2].messages[-1].content
+    assert "todo/checklist" in provider.requests[2].messages[-1].content
 
 
 @pytest.mark.asyncio
@@ -702,7 +700,8 @@ async def test_react_loop_continues_after_premature_final_with_unfinished_todos(
     )
     assert output.answer == "Финальный ответ после закрытия всех пунктов."
     assert len(provider.requests) == 5
-    assert "checklist still has pending" in provider.requests[3].messages[-1].content
+    assert "Contract repair required" in provider.requests[3].messages[-1].content
+    assert "todo/checklist" in provider.requests[3].messages[-1].content
 
 
 @pytest.mark.asyncio
@@ -732,7 +731,8 @@ async def test_research_contract_continues_when_final_answer_has_no_web_results(
     )
     assert output.answer == "Финал после поиска."
     assert len(provider.requests) == 3
-    assert "no web/data tool results" in provider.requests[1].messages[-1].content
+    assert "Contract repair required" in provider.requests[1].messages[-1].content
+    assert "no web evidence" in provider.requests[1].messages[-1].content
 
 
 @pytest.mark.asyncio

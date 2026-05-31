@@ -6,10 +6,13 @@ import time
 from typing import Any
 
 import httpx
+from app.deps import get_settings
+from app.schemas.meta import ModelsResponse, ModelView
 from fastapi import APIRouter, HTTPException
 
-from app.deps import get_settings
-from app.schemas.meta import ModelView, ModelsResponse
+from agent_driver.llm.provider_capabilities import (
+    resolve_openai_compatible_capabilities,
+)
 
 router = APIRouter(tags=["meta"])
 
@@ -17,7 +20,22 @@ _CACHE: dict[str, Any] = {"expires_at": 0.0, "payload": None}
 _CACHE_TTL_SECONDS = 600.0
 
 
-def _parse_models_payload(raw: dict[str, Any]) -> list[ModelView]:
+def _model_capabilities(
+    *, provider: str, base_url: str, model_id: str
+) -> dict[str, object]:
+    return resolve_openai_compatible_capabilities(
+        provider_name=provider,
+        base_url=base_url,
+        model=model_id,
+    ).to_metadata()
+
+
+def _parse_models_payload(
+    raw: dict[str, Any],
+    *,
+    provider: str,
+    base_url: str,
+) -> list[ModelView]:
     data = raw.get("data")
     if not isinstance(data, list):
         return []
@@ -33,10 +51,17 @@ def _parse_models_payload(raw: dict[str, Any]) -> list[ModelView]:
             ModelView(
                 id=model_id,
                 name=item.get("name") if isinstance(item.get("name"), str) else None,
-                description=item.get("description")
-                if isinstance(item.get("description"), str)
-                else None,
+                description=(
+                    item.get("description")
+                    if isinstance(item.get("description"), str)
+                    else None
+                ),
                 context_length=context if isinstance(context, int) else None,
+                capability_profile=_model_capabilities(
+                    provider=provider,
+                    base_url=base_url,
+                    model_id=model_id,
+                ),
             )
         )
     models.sort(key=lambda entry: entry.id)
@@ -51,12 +76,24 @@ async def list_models() -> ModelsResponse:
         default_model = settings.model or "default"
         return ModelsResponse(
             provider=settings.provider,
-            models=[ModelView(id=default_model, name=default_model)],
+            models=[
+                ModelView(
+                    id=default_model,
+                    name=default_model,
+                    capability_profile=_model_capabilities(
+                        provider=settings.provider,
+                        base_url=settings.base_url or "",
+                        model_id=default_model,
+                    ),
+                )
+            ],
         )
 
     api_key = settings.api_key
     if not api_key:
-        raise HTTPException(status_code=400, detail="AGENT_DRIVER_API_KEY is required for models")
+        raise HTTPException(
+            status_code=400, detail="AGENT_DRIVER_API_KEY is required for models"
+        )
 
     now = time.monotonic()
     cached = _CACHE.get("payload")
@@ -72,12 +109,21 @@ async def list_models() -> ModelsResponse:
             response.raise_for_status()
             payload = response.json()
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"failed to fetch models: {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail=f"failed to fetch models: {exc}"
+        ) from exc
 
     if not isinstance(payload, dict):
         raise HTTPException(status_code=502, detail="invalid models response")
 
-    result = ModelsResponse(provider="openrouter", models=_parse_models_payload(payload))
+    result = ModelsResponse(
+        provider="openrouter",
+        models=_parse_models_payload(
+            payload,
+            provider="openrouter",
+            base_url=base_url,
+        ),
+    )
     _CACHE["payload"] = result
     _CACHE["expires_at"] = now + _CACHE_TTL_SECONDS
     return result

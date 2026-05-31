@@ -191,6 +191,7 @@ export interface ModelView {
   name: string | null;
   description: string | null;
   context_length: number | null;
+  capability_profile?: Record<string, unknown> | null;
 }
 
 export interface ModelsResponse {

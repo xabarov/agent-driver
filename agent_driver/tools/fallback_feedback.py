@@ -37,9 +37,11 @@ from __future__ import annotations
 
 from difflib import get_close_matches
 
-
 _DEFAULT_MAX_SUGGESTIONS = 3
 _DEFAULT_CUTOFF = 0.6  # difflib's default, kept explicit for transparency.
+_WEB_FETCH_ALIASES = frozenset({"read_url", "open_url", "fetch_url", "read_webpage"})
+_INTERNAL_THOUGHT_TOOLS = frozenset({"thought", "reason", "scratchpad"})
+_TODO_INTERNAL_TOOLS = frozenset({"synthesize_findings", "synthesis", "next_step"})
 
 
 def closest_tool_names(
@@ -95,15 +97,51 @@ def build_unknown_tool_feedback(
     least one passes the cutoff), then a compact catalog so the model
     has the option to pick a non-fuzzy alternative.
     """
+    classification = classify_unknown_tool(tool_name, available)
     suggestions = closest_tool_names(
         tool_name, available, max_suggestions=max_suggestions
     )
     parts = [f"Tool '{tool_name}' is not registered."]
+    if classification["kind"] == "unavailable_alias_for_web_fetch":
+        parts.append(
+            "Use the registered tool 'web_fetch' instead, with arguments like "
+            '`{"url": "https://example.com/page"}`.'
+        )
+    elif classification["kind"] == "hidden_reasoning_tool":
+        parts.append(
+            "Do not call tools for hidden reasoning. Think internally, then call "
+            "a real tool only when external data or computation is needed."
+        )
+    elif classification["kind"] == "todo_id_or_internal_step":
+        parts.append(
+            "This looks like an internal step name, not a tool. Use todo_write "
+            "to update the visible plan, or answer directly after synthesis."
+        )
     if suggestions:
         quoted = ", ".join(f"'{name}'" for name in suggestions)
         parts.append(f"Did you mean: {quoted}?")
     parts.append(f"Available tools: {_format_tool_list(available)}.")
     return " ".join(parts)
+
+
+def classify_unknown_tool(
+    tool_name: str,
+    available: list[str] | tuple[str, ...],
+) -> dict[str, str | None]:
+    """Classify hallucinated tool names into model-repair categories."""
+    name = (tool_name or "").strip().lower()
+    available_set = {item for item in available if isinstance(item, str)}
+    if name in _WEB_FETCH_ALIASES and "web_fetch" in available_set:
+        return {
+            "kind": "unavailable_alias_for_web_fetch",
+            "recommended_tool": "web_fetch",
+        }
+    if name in _INTERNAL_THOUGHT_TOOLS:
+        return {"kind": "hidden_reasoning_tool", "recommended_tool": None}
+    if name in _TODO_INTERNAL_TOOLS:
+        recommended = "todo_write" if "todo_write" in available_set else None
+        return {"kind": "todo_id_or_internal_step", "recommended_tool": recommended}
+    return {"kind": "unknown", "recommended_tool": None}
 
 
 def build_arguments_parse_feedback(
@@ -144,6 +182,7 @@ def build_missing_tool_name_feedback() -> str:
 
 __all__ = [
     "closest_tool_names",
+    "classify_unknown_tool",
     "build_unknown_tool_feedback",
     "build_arguments_parse_feedback",
     "build_missing_tool_name_feedback",

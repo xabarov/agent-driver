@@ -8,6 +8,15 @@ from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalRe
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.control.dispatcher import drain_step_boundary_controls
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.research_session_contract import (
+    FINAL_READINESS_ALLOWED,
+    REPAIR_FINAL_MISSING_SOURCE_LINKS,
+    REPAIR_INSUFFICIENT_SOURCE_DIVERSITY,
+    REPAIR_MISSING_FETCHED_SOURCES,
+    REPAIR_MISSING_RESEARCH_EVIDENCE,
+    REPAIR_UNFINISHED_TODOS,
+    build_research_session_contract_from_context,
+)
 from agent_driver.runtime.single_agent.compaction_stage import (
     apply_compaction_if_eligible,
 )
@@ -17,7 +26,6 @@ from agent_driver.runtime.single_agent.step_planning import build_planning_snaps
 from agent_driver.runtime.single_agent.subagent_stage import (
     maybe_execute_subagent_group,
 )
-from agent_driver.runtime.single_agent.todo_reminders import has_unfinished_todos
 from agent_driver.runtime.single_agent.tool_stage import execute_tool_stage_step
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
@@ -261,23 +269,70 @@ def _maybe_build_continuation_transition(
     context: RunContext,
 ) -> RuntimeStepResult | None:
     """Continue when final text itself says there is a next step."""
-    count = int(context.metadata.get("continuation_nudge_count", 0))
-    if count >= 2:
-        return None
     if context.llm_response is None:
         return None
     text = context.llm_response.message.content or ""
+    contract = build_research_session_contract_from_context(
+        context,
+        assistant_text=text,
+    )
+    context.metadata["research_session_contract"] = contract.model_dump()
+    readiness = contract.final_readiness
+    if readiness.status != FINAL_READINESS_ALLOWED:
+        repair_count = int(context.metadata.get("contract_repair_nudge_count", 0))
+        if repair_count >= 1:
+            context.metadata["final_readiness"] = "repair_exhausted"
+            context.metadata["repair_required_reasons"] = list(readiness.reasons)
+            return None
+        from agent_driver.runtime.single_agent.continuation import ContinuationIntent
+
+        intent = ContinuationIntent(True, "contract_repair_required")
+        nudge = _research_contract_repair_nudge(readiness.reasons)
+        context.metadata.pop("force_final_answer", None)
+        context.metadata.pop("tool_choice_override", None)
+        context.metadata.pop("force_final_answer_reason", None)
+        return _build_continuation_transition(
+            context,
+            text=text,
+            nudge=nudge,
+            reason=intent.reason,
+            count_key="contract_repair_nudge_count",
+        )
+    count = int(context.metadata.get("continuation_nudge_count", 0))
+    if count >= 2:
+        return None
     intent = analyze_continuation_intent(text)
-    if not intent.should_continue and _research_requirement_missing(context):
-        from agent_driver.runtime.single_agent.continuation import ContinuationIntent
-
-        intent = ContinuationIntent(True, "research_requirement_missing")
-    if not intent.should_continue and has_unfinished_todos(context):
-        from agent_driver.runtime.single_agent.continuation import ContinuationIntent
-
-        intent = ContinuationIntent(True, "unfinished_todos")
     if not intent.should_continue:
         return None
+    nudge = (
+        "Continue with the task. If you were about to proceed to the next "
+        "step, do it now instead of only reporting progress. Reply in the "
+        "user's language."
+    )
+    if intent.reason == "text_form_tool_call":
+        nudge = (
+            "The previous assistant message printed a tool call as text. Do not "
+            "print JSON or <tool_call> blocks. If a tool is needed, call it using "
+            "native function/tool-calling now; otherwise answer the user directly "
+            "in the user's language."
+        )
+    return _build_continuation_transition(
+        context,
+        text=text,
+        nudge=nudge,
+        reason=intent.reason,
+        count_key="continuation_nudge_count",
+    )
+
+
+def _build_continuation_transition(
+    context: RunContext,
+    *,
+    text: str,
+    nudge: str,
+    reason: str,
+    count_key: str,
+) -> RuntimeStepResult:
     from agent_driver.contracts.enums import ChatRole
     from agent_driver.contracts.messages import ChatMessage
 
@@ -296,31 +351,6 @@ def _maybe_build_continuation_transition(
     messages.append(
         ChatMessage(role=ChatRole.ASSISTANT, content=text).model_dump(mode="json")
     )
-    nudge = (
-        "Continue with the task. If you were about to proceed to the next "
-        "step, do it now instead of only reporting progress. Reply in the "
-        "user's language."
-    )
-    if intent.reason == "text_form_tool_call":
-        nudge = (
-            "The previous assistant message printed a tool call as text. Do not "
-            "print JSON or <tool_call> blocks. If a tool is needed, call it using "
-            "native function/tool-calling now; otherwise answer the user directly "
-            "in the user's language."
-        )
-    elif intent.reason == "research_requirement_missing":
-        nudge = (
-            "The user explicitly requested internet/search/source research, but "
-            "there are no web/data tool results in the context. Use native "
-            "web_search/web_fetch tool calls now before giving the final answer."
-        )
-    elif intent.reason == "unfinished_todos":
-        nudge = (
-            "The session checklist still has pending or in-progress items. "
-            "Continue with the next unfinished todo now; use tools if needed, "
-            "update statuses with todo_write, and only give the final answer "
-            "after the requested plan is complete. Reply in the user's language."
-        )
     messages.append(
         ChatMessage(
             role=ChatRole.USER,
@@ -328,30 +358,38 @@ def _maybe_build_continuation_transition(
         ).model_dump(mode="json")
     )
     context.metadata["protocol_messages"] = messages
-    context.metadata["continuation_nudge_count"] = count + 1
-    context.metadata["continuation_nudge_reason"] = intent.reason
+    context.metadata[count_key] = int(context.metadata.get(count_key, 0)) + 1
+    context.metadata["continuation_nudge_reason"] = reason
     return RuntimeStepResult(next_step="llm_call")
 
 
-def _research_requirement_missing(context: RunContext) -> bool:
-    """Return whether a research contract is about to finish without evidence."""
-    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
-    if not isinstance(task_contract, dict):
-        return False
-    if task_contract.get("requires_research") is not True:
-        return False
-    results = context.metadata.get("tool_results")
-    if not isinstance(results, list):
-        return True
-    for item in results:
-        if not isinstance(item, dict):
-            continue
-        call = item.get("call")
-        if not isinstance(call, dict):
-            continue
-        if call.get("tool_name") in {"web_search", "web_fetch"}:
-            return False
-    return True
+def _research_contract_repair_nudge(reasons: tuple[str, ...]) -> str:
+    """Return a compact one-shot repair instruction for contract violations."""
+    fragments: list[str] = []
+    if REPAIR_UNFINISHED_TODOS in reasons:
+        fragments.append(
+            "the visible todo/checklist still has pending or in-progress items"
+        )
+    if REPAIR_MISSING_RESEARCH_EVIDENCE in reasons:
+        fragments.append("the user requested research but no web evidence was used")
+    if REPAIR_MISSING_FETCHED_SOURCES in reasons:
+        fragments.append(
+            "source-verified work needs fetched/read pages, not search results only"
+        )
+    if REPAIR_INSUFFICIENT_SOURCE_DIVERSITY in reasons:
+        fragments.append("the fetched evidence needs at least two distinct domains")
+    if REPAIR_FINAL_MISSING_SOURCE_LINKS in reasons:
+        fragments.append("the final answer must include visible source links")
+    reason_text = (
+        "; ".join(fragments) if fragments else "the run contract is incomplete"
+    )
+    return (
+        "Contract repair required before the final answer: "
+        f"{reason_text}. Continue now using only the real available tools "
+        "(todo_write, web_search, web_fetch, python, agent_tool when useful). "
+        "Update the visible todo state when a step is done, cite fetched URLs in "
+        "the final response, and reply in the user's language."
+    )
 
 
 __all__ = ["SingleAgentStepMixin"]

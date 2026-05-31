@@ -163,8 +163,10 @@ async def test_governed_executor_unknown_tool_without_fuzzy_match() -> None:
 
 
 @pytest.mark.asyncio
-async def test_governed_executor_normalizes_read_url_alias_to_web_fetch() -> None:
-    """Common browser-style URL tool aliases should execute as web_fetch."""
+async def test_governed_executor_returns_corrective_feedback_for_read_url_alias() -> (
+    None
+):
+    """Browser-style aliases should not silently execute as web_fetch."""
     registry = ToolRegistry()
 
     async def _web_fetch(args):
@@ -204,14 +206,12 @@ async def test_governed_executor_normalizes_read_url_alias_to_web_fetch() -> Non
     result = await executor.execute(run_input, response)
 
     assert result.interrupt is None
-    assert result.envelopes[0].call.tool_name == "web_fetch"
+    assert result.envelopes[0].call.tool_name == "read_url"
     assert result.envelopes[0].call.tool_call_id == "call_read"
-    assert result.envelopes[0].call.metadata["original_tool_name"] == "read_url"
-    assert result.traces[0].tool_name == "web_fetch"
-    assert result.envelopes[0].structured_output == {
-        "summary": "fetched https://example.com",
-        "url": "https://example.com",
-    }
+    assert result.envelopes[0].error is not None
+    assert result.envelopes[0].error.code == "tool_not_registered"
+    assert "Use the registered tool 'web_fetch'" in result.envelopes[0].error.message
+    assert result.traces[0].tool_name == "read_url"
 
 
 @pytest.mark.asyncio

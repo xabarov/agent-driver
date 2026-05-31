@@ -612,20 +612,21 @@ describe("chatStore", () => {
 });
 
 describe("parseToolStatesFromEvent", () => {
-  test("parses tools array from tool_call_started", () => {
+  test("parses tools array from tool_call_completed", () => {
     const event: RunStreamEvent<Record<string, unknown>> = {
       schema_version: "1.0",
       stream_id: "run_1:1",
       run_id: "run_1",
       attempt_id: "att_1",
       seq: 1,
-      event: "tool_call_started",
+      event: "tool_call_completed",
       source: "runtime_event",
       data: {
         tools: [
           {
             tool_name: "read_file",
             tool_call_id: "call_a",
+            status: "completed",
             args: { path: "README.md" },
             sources: [
               {
@@ -646,7 +647,7 @@ describe("parseToolStatesFromEvent", () => {
     expect(tools[0]).toMatchObject({
       name: "read_file",
       toolCallId: "call_a",
-      status: "running",
+      status: "done",
     });
     expect(tools[0].argsSummary).toBe("path: README.md");
     expect(tools[0].sources?.[0]).toMatchObject({
