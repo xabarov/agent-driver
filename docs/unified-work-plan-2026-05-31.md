@@ -704,6 +704,10 @@ Status on 2026-05-31:
 - LLM request-building and streaming helpers were folded into the
   `runtime/single_agent/llm_step/` package as `build.py` and `streaming.py`;
   old `llm` and `streaming` module paths remain compatibility shims.
+- Tool observation shaping and subagent group execution were folded into the
+  `runtime/single_agent/tool_stage/` package as `observations.py` and
+  `subagent_execution.py`; old `step_observations` and `subagent_stage` module
+  paths remain compatibility shims.
 - `GovernedToolExecutor.execute()` now runs through explicit stages:
   normalize planned calls, apply pre-hooks, add policy hints, partition
   serial/parallel units, execute units and collect ordered results.
