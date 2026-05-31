@@ -369,6 +369,70 @@ def test_deep_parallel_research_uses_readiness_contract_and_mode_payload() -> No
     assert payload["deep_research"]["final_readiness_authority"] == (
         "ResearchSessionContract"
     )
+    assert payload["deep_research"]["phase"] == "write"
+    assert payload["deep_research"]["next_allowed_tools"] == [
+        "file_write",
+        "read_file",
+        "artifact_list",
+    ]
+
+
+def test_deep_parallel_research_phase_starts_with_plan_tools() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        tool_results=[],
+    )
+
+    payload = contract.model_dump()["deep_research"]
+    assert payload["phase"] == "plan"
+    assert payload["next_allowed_tools"] == ["todo_write"]
+
+
+def test_deep_parallel_research_phase_verifies_after_search() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        planning_state={
+            "run_id": "run_todo",
+            "todos": [
+                {
+                    "todo_id": "search",
+                    "content": "Search sources",
+                    "status": "in_progress",
+                }
+            ],
+        },
+        tool_results=[_tool_result("web_search")],
+    )
+
+    payload = contract.model_dump()["deep_research"]
+    assert payload["phase"] == "verify"
+    assert "web_fetch" in payload["next_allowed_tools"]
+
+
+def test_deep_parallel_research_phase_final_after_report_and_verified_sources() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        tool_results=[
+            _tool_result("web_search"),
+            _tool_result("web_fetch", url="https://example.com/a"),
+            _tool_result("web_fetch", url="https://example.org/b"),
+        ],
+        assistant_text="[A](https://example.com/a), [B](https://example.org/b)",
+        report_artifact_exists=True,
+    )
+
+    payload = contract.model_dump()["deep_research"]
+    assert payload["phase"] == "final"
+    assert payload["next_allowed_tools"] == []
 
 
 def test_deep_parallel_research_treats_blocked_fetches_as_fallback() -> None:

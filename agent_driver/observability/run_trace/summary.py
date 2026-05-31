@@ -653,8 +653,21 @@ def _research_efficiency_summary(
         and bool(assistant_text.strip())
         and not _assistant_declares_preliminary(assistant_text)
     )
+    phase_contract = _deep_research_phase_contract_from_events(events)
+    deep_research_phase = _deep_research_phase_from_contract_or_trace(
+        phase_contract=phase_contract,
+        deep_expected=deep_expected,
+        first_tool=first_tool,
+        search_call_count=search_diagnostics["search_call_count"],
+        verified_read_count=verified_read_count,
+        required_verified_reads=required_verified_reads,
+        report_updated=report_updated,
+        report_status=report_status,
+    )
     return {
         "deep_research_artifact_expected": deep_expected,
+        "deep_research_phase": deep_research_phase,
+        "deep_research_phase_next_allowed_tools": _phase_allowed_tools(phase_contract),
         "missing_report_artifact": missing_report_artifact,
         "missing_source_ledger_artifact": missing_source_ledger_artifact,
         "full_report_rewrite": full_report_rewrite,
@@ -692,6 +705,71 @@ def _research_efficiency_summary(
         "output_tokens": output_tokens if isinstance(output_tokens, int) else 0,
         "output_tokens_after_first_report_update": completion_after_report,
     }
+
+
+def _deep_research_phase_contract_from_events(
+    events: list[dict[str, object]],
+) -> dict[str, Any] | None:
+    for event in reversed(events):
+        data = _event_data(event)
+        payload = data.get("research_session_contract")
+        if isinstance(payload, dict):
+            return payload
+        metadata = data.get("metadata")
+        if isinstance(metadata, dict):
+            payload = metadata.get("research_session_contract")
+            if isinstance(payload, dict):
+                return payload
+    return None
+
+
+def _deep_research_phase_from_contract_or_trace(
+    *,
+    phase_contract: dict[str, Any] | None,
+    deep_expected: bool,
+    first_tool: str | None,
+    search_call_count: int,
+    verified_read_count: int,
+    required_verified_reads: int,
+    report_updated: bool,
+    report_status: str,
+) -> str:
+    deep_payload = (
+        phase_contract.get("deep_research")
+        if isinstance(phase_contract, dict)
+        else None
+    )
+    if isinstance(deep_payload, dict):
+        phase = deep_payload.get("phase")
+        if isinstance(phase, str) and phase.strip():
+            return phase.strip()
+    if not deep_expected:
+        return "not_applicable"
+    if first_tool not in {None, "todo_write"} and search_call_count == 0:
+        return "plan"
+    if search_call_count == 0:
+        return "discover"
+    if verified_read_count < required_verified_reads and report_status != "fallback":
+        return "verify"
+    if not report_updated:
+        return "write"
+    if report_status not in {"verified", "fallback"}:
+        return "review"
+    return "final"
+
+
+def _phase_allowed_tools(phase_contract: dict[str, Any] | None) -> list[str]:
+    deep_payload = (
+        phase_contract.get("deep_research")
+        if isinstance(phase_contract, dict)
+        else None
+    )
+    if not isinstance(deep_payload, dict):
+        return []
+    tools = deep_payload.get("next_allowed_tools")
+    if not isinstance(tools, list):
+        return []
+    return [str(item) for item in tools if isinstance(item, str) and item.strip()]
 
 
 def _deep_research_search_diagnostics(

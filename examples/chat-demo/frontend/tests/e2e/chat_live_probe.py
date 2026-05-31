@@ -1022,6 +1022,7 @@ def render_scenario_scorecard(
         (
             "- deep_research: "
             f"expected=`{efficiency.get('deep_research_artifact_expected', False)}`, "
+            f"phase=`{efficiency.get('deep_research_phase') or '-'}`, "
             f"status=`{efficiency.get('report_status') or '-'}`, "
             f"verified=`{efficiency.get('verified_read_count', 0)}`, "
             f"search_budget=`{efficiency.get('search_budget_status') or '-'}`, "

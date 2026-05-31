@@ -213,6 +213,42 @@ def test_source_verified_research_suggests_curated_skills_when_available() -> No
     assert "Do not auto-load hidden instructions" in attachment_text
 
 
+def test_runtime_attachments_include_deep_research_phase_contract() -> None:
+    context = SimpleNamespace(
+        run_input=AgentRunInput(
+            input="сделай deep research отчет",
+            agent_id="agent",
+            graph_preset="single_react",
+            app_metadata={"chat_mode": True},
+            tool_policy=ToolPolicyInput(
+                allowed_tools=[
+                    "todo_write",
+                    "web_search",
+                    "web_fetch",
+                    "file_write",
+                ],
+                metadata={
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                        "research_depth": "deep_parallel_research",
+                        "goal": "сделай deep research отчет",
+                    }
+                },
+            ),
+        ),
+        metadata={},
+    )
+
+    attachment_text = "\n".join(
+        message.content for message in _runtime_attachment_messages(context)
+    )
+
+    assert "deep_research_phase_contract" in attachment_text
+    assert "Current phase=plan" in attachment_text
+    assert "Prefer next tool(s): todo_write" in attachment_text
+
+
 def test_runtime_attachments_include_research_fetch_fallback_reminder() -> None:
     context = SimpleNamespace(
         run_input=AgentRunInput(

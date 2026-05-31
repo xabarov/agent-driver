@@ -21,6 +21,9 @@ from agent_driver.runtime.research_evidence import (
     RESEARCH_DEPTH_DEEP_PARALLEL,
     RESEARCH_DEPTH_SOURCE_VERIFIED,
 )
+from agent_driver.runtime.research_session_contract import (
+    build_research_session_contract_from_context,
+)
 from agent_driver.runtime.single_agent.llm_step.build import (
     effective_tool_names_from_registry,
 )
@@ -234,6 +237,27 @@ def chat_mode_runtime_reminders(context: RunContext) -> list[str]:
         isinstance(task_contract, dict)
         and task_contract.get("research_depth") == RESEARCH_DEPTH_DEEP_PARALLEL
     ):
+        deep_contract = build_research_session_contract_from_context(
+            context,
+            enforce_final_source_links=False,
+            allow_final_deliverable_todos=True,
+        ).model_dump()["deep_research"]
+        if isinstance(deep_contract, dict):
+            phase = str(deep_contract.get("phase") or "").strip()
+            tools = deep_contract.get("next_allowed_tools")
+            tool_text = (
+                ", ".join(str(item) for item in tools)
+                if isinstance(tools, list)
+                else ""
+            )
+            reminders.append(
+                "Runtime reminder: deep_research_phase_contract. "
+                f"Current phase={phase or 'unknown'}. "
+                f"Prefer next tool(s): {tool_text or 'none; produce final handoff'}. "
+                "Move one phase at a time: plan -> discover -> verify -> write -> "
+                "review -> final. Do not expand search after verify/write unless "
+                "the source ledger shows a concrete coverage gap."
+            )
         reminders.append(
             "Runtime reminder: deep_research_artifact_mode. Durable research "
             "output belongs in research/report.md inside the workspace. Keep chat "

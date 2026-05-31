@@ -39,6 +39,36 @@ REPAIR_INSUFFICIENT_SOURCE_DIVERSITY = "insufficient_source_diversity"
 REPAIR_FINAL_MISSING_SOURCE_LINKS = "final_missing_source_links"
 REPAIR_UNFINISHED_TODOS = "unfinished_todos"
 
+DEEP_RESEARCH_PHASE_PLAN = "plan"
+DEEP_RESEARCH_PHASE_DISCOVER = "discover"
+DEEP_RESEARCH_PHASE_VERIFY = "verify"
+DEEP_RESEARCH_PHASE_WRITE = "write"
+DEEP_RESEARCH_PHASE_REVIEW = "review"
+DEEP_RESEARCH_PHASE_FINAL = "final"
+
+_DEEP_RESEARCH_PHASE_TOOLS: dict[str, tuple[str, ...]] = {
+    DEEP_RESEARCH_PHASE_PLAN: ("todo_write",),
+    DEEP_RESEARCH_PHASE_DISCOVER: (
+        "skill_tool",
+        "skill_view",
+        "web_search",
+        "glob_search",
+        "grep_search",
+        "read_file",
+    ),
+    DEEP_RESEARCH_PHASE_VERIFY: ("web_fetch", "web_search", "read_file"),
+    DEEP_RESEARCH_PHASE_WRITE: ("file_write", "read_file", "artifact_list"),
+    DEEP_RESEARCH_PHASE_REVIEW: (
+        "artifact_preview",
+        "artifact_read",
+        "read_file",
+        "file_patch",
+        "file_edit",
+        "todo_write",
+    ),
+    DEEP_RESEARCH_PHASE_FINAL: (),
+}
+
 
 @dataclass(frozen=True)
 class ResearchFinalReadiness:
@@ -67,6 +97,8 @@ class ResearchSessionContract:
     enforce_final_source_links: bool = True
     enforce_todos: bool = True
     fetch_fallback_required: bool = False
+    report_artifact_exists: bool = False
+    plan_created: bool = False
 
     @property
     def final_readiness(self) -> ResearchFinalReadiness:
@@ -144,6 +176,7 @@ def build_research_session_contract(
     enforce_final_source_links: bool = True,
     enforce_todos: bool = True,
     allow_final_deliverable_todos: bool = False,
+    report_artifact_exists: bool = False,
 ) -> ResearchSessionContract:
     """Build the final-readiness contract from current runtime state."""
     requires_research = (
@@ -157,6 +190,7 @@ def build_research_session_contract(
         tool_results,
         assistant_text=assistant_text,
     )
+    plan_created = _plan_created(planning_state)
     fetch_fallback_required = (
         research_depth in _SOURCE_VERIFIED_DEPTHS
         and web_fetch_available
@@ -195,6 +229,8 @@ def build_research_session_contract(
         enforce_final_source_links=enforce_final_source_links,
         enforce_todos=enforce_todos,
         fetch_fallback_required=fetch_fallback_required,
+        report_artifact_exists=report_artifact_exists,
+        plan_created=plan_created,
     )
 
 
@@ -207,6 +243,10 @@ def build_research_session_contract_from_context(
     allow_final_deliverable_todos: bool = False,
 ) -> ResearchSessionContract:
     """Build a research contract from a single-agent run context."""
+    from agent_driver.runtime.research_artifacts import (
+        deep_research_report_artifact_exists,
+    )
+
     return build_research_session_contract(
         task_contract=_task_contract_from_context(context),
         tool_results=get_tool_loop_state(context).tool_results(),
@@ -216,6 +256,7 @@ def build_research_session_contract_from_context(
         enforce_final_source_links=enforce_final_source_links,
         enforce_todos=enforce_todos,
         allow_final_deliverable_todos=allow_final_deliverable_todos,
+        report_artifact_exists=deep_research_report_artifact_exists(context),
     )
 
 
@@ -362,8 +403,13 @@ def _deep_research_contract_payload(
 ) -> dict[str, Any] | None:
     if contract.research_depth != RESEARCH_DEPTH_DEEP_PARALLEL:
         return None
+    phase = _deep_research_phase(contract)
+    allowed_tools = _DEEP_RESEARCH_PHASE_TOOLS[phase]
     return {
         "mode": RESEARCH_DEPTH_DEEP_PARALLEL,
+        "phase": phase,
+        "next_allowed_tools": list(allowed_tools),
+        "phase_contract": "soft_guidance",
         "progress_event_types": [
             "research_progress",
             "source_ledger_updated",
@@ -380,8 +426,35 @@ def _deep_research_contract_payload(
             "assistant_link_count": len(contract.source_ledger.assistant_links),
             "final_has_source_links": contract.final_has_source_links,
         },
+        "report_artifact_exists": contract.report_artifact_exists,
+        "plan_created": contract.plan_created,
         "final_readiness_authority": "ResearchSessionContract",
     }
+
+
+def _deep_research_phase(contract: ResearchSessionContract) -> str:
+    if not contract.plan_created and contract.evidence.search_calls == 0:
+        return DEEP_RESEARCH_PHASE_PLAN
+    if contract.evidence.search_calls == 0:
+        return DEEP_RESEARCH_PHASE_DISCOVER
+    if (
+        contract.web_fetch_available
+        and not contract.fetch_fallback_required
+        and contract.evidence.successful_fetches < SOURCE_VERIFIED_FETCHES
+    ):
+        return DEEP_RESEARCH_PHASE_VERIFY
+    if not contract.report_artifact_exists:
+        return DEEP_RESEARCH_PHASE_WRITE
+    if contract.final_readiness.status != FINAL_READINESS_ALLOWED:
+        return DEEP_RESEARCH_PHASE_REVIEW
+    return DEEP_RESEARCH_PHASE_FINAL
+
+
+def _plan_created(planning_state: object) -> bool:
+    if not isinstance(planning_state, dict):
+        return False
+    todos = planning_state.get("todos")
+    return isinstance(todos, list) and bool(todos)
 
 
 def _task_contract_from_context(context: RunContext) -> dict[str, Any] | None:
@@ -404,6 +477,12 @@ __all__ = [
     "FINAL_READINESS_ALLOWED",
     "FINAL_READINESS_BLOCKED_BY_PROVIDER",
     "FINAL_READINESS_REPAIR_NEEDED",
+    "DEEP_RESEARCH_PHASE_DISCOVER",
+    "DEEP_RESEARCH_PHASE_FINAL",
+    "DEEP_RESEARCH_PHASE_PLAN",
+    "DEEP_RESEARCH_PHASE_REVIEW",
+    "DEEP_RESEARCH_PHASE_VERIFY",
+    "DEEP_RESEARCH_PHASE_WRITE",
     "REPAIR_FINAL_MISSING_SOURCE_LINKS",
     "REPAIR_INSUFFICIENT_SOURCE_DIVERSITY",
     "REPAIR_MISSING_FETCHED_SOURCES",

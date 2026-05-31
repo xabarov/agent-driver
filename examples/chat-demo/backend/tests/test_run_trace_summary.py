@@ -566,6 +566,62 @@ def test_trace_summary_allows_adaptive_deep_research_search_expansion() -> None:
     assert summary["failures"]["deep_research_tool_entropy_high"] is False
 
 
+def test_trace_summary_exposes_deep_research_phase_from_terminal_contract() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово: полный отчет сохранен в research/report.md.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search"),
+            _completed_tool("web_fetch", args={"url": "https://example.com/a"}),
+            {
+                "event": "source_ledger_updated",
+                "data": {
+                    "verified_reads": [{"url": "https://example.com/a"}],
+                    "failed_reads": [],
+                    "blocked_reads": [],
+                    "search_candidates": [],
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 1},
+            },
+            {
+                "event": "run_completed",
+                "data": {
+                    "metadata": {
+                        "research_session_contract": {
+                            "deep_research": {
+                                "phase": "final",
+                                "next_allowed_tools": [],
+                            }
+                        }
+                    }
+                },
+            },
+        ],
+    )
+
+    assert summary["research_efficiency"]["deep_research_phase"] == "final"
+    assert (
+        summary["research_efficiency"]["deep_research_phase_next_allowed_tools"] == []
+    )
+
+
 def test_trace_summary_flags_repeated_full_report_write() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

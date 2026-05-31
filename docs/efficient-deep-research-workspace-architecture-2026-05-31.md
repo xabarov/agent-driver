@@ -956,6 +956,34 @@ Focused checks:
 - `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
 - `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`.
 
+## Implementation Slice P14.4-soft-phase-contract - 2026-05-31
+
+Started the phase-controller layer as a soft runtime contract before enforcing
+hard tool gating:
+
+- `ResearchSessionContract` now computes a Deep Research phase:
+  `plan`, `discover`, `verify`, `write`, `review`, or `final`;
+- each phase carries `next_allowed_tools` so the model sees the intended
+  narrow tool surface for the next step;
+- the phase payload is included under `research_session_contract.deep_research`
+  and persisted in terminal metadata when available;
+- chat runtime attachments now include a compact `deep_research_phase_contract`
+  reminder with the current phase and preferred next tools;
+- trace summaries expose `research_efficiency.deep_research_phase` and
+  `deep_research_phase_next_allowed_tools`;
+- live scorecards print the phase in the Deep Research row.
+
+This is intentionally a soft contract: it guides and measures tool order first.
+Hard runtime gating can follow once the fake/live lanes confirm the phase
+classifier is stable across normal, fallback, and repair runs.
+
+Focused checks:
+
+- `tests/runtime/test_research_session_contract.py`;
+- `tests/runtime/test_llm_step_system_prompt.py`;
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`.
+
 ## Implementation Slice P8-full-report-rewrite-guard - 2026-05-31
 
 Added trace-level detection for the original waste loop class:

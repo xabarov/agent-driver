@@ -303,9 +303,11 @@ class SingleAgentOutputMixin:
         )
         source_ledger = research_source_ledger_from_tool_results(
             normalized_tool_results,
-            assistant_text=context.llm_response.message.content
-            if context.llm_response is not None
-            else "",
+            assistant_text=(
+                context.llm_response.message.content
+                if context.llm_response is not None
+                else ""
+            ),
         ).model_dump()
         compaction_projection = get_compaction_runtime_state(
             context
@@ -334,6 +336,9 @@ class SingleAgentOutputMixin:
         research_artifacts = context.metadata.get("deep_research_artifacts")
         if isinstance(research_artifacts, dict):
             metadata["deep_research_artifacts"] = dict(research_artifacts)
+        research_contract = context.metadata.get("research_session_contract")
+        if isinstance(research_contract, dict):
+            metadata["research_session_contract"] = dict(research_contract)
         return metadata
 
     def _approval_payload_from_context(
