@@ -865,3 +865,26 @@ Focused checks:
 - `tests/tools/test_builtin_registry.py`;
 - `examples/chat-demo/backend/tests/test_tools.py`;
 - `examples/chat-demo/backend/tests/test_chat_deep_research_sse.py`.
+
+## Implementation Slice P5-file-patch - 2026-05-31
+
+Added `file_patch` as a batched exact-replacement workspace write tool:
+
+- applies multiple ordered `old_text` -> `new_text` replacements to one UTF-8
+  file in a single call;
+- checks `expected_occurrences` per patch before committing the final file;
+- supports `dry_run`, bounded previews, and `max_bytes` like `file_edit`;
+- returns structured `operation=patch`, total `replacements`, and per-patch
+  replacement metadata for trace analysis;
+- is included in `filesystem_write`, artifact event projection, and the deep
+  research prompt reminder so agents can revise several report sections without
+  full rewrites.
+
+Focused checks:
+
+- `tests/tools/test_builtin_filesystem_tools.py`;
+- `tests/tools/test_toolset.py`;
+- `tests/tools/test_toolset_docs_sync.py`;
+- `tests/tools/test_builtin_registry.py`;
+- `tests/runtime/test_artifact_events.py`;
+- `tests/runtime/test_llm_step_system_prompt.py`.

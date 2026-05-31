@@ -27,6 +27,8 @@ from agent_driver.tools.builtin.filesystem.search import (
 from agent_driver.tools.builtin.filesystem.write import (
     file_edit_handler,
     file_edit_manifest,
+    file_patch_handler,
+    file_patch_manifest,
     file_write_handler,
     file_write_manifest,
 )
@@ -40,6 +42,7 @@ def register_filesystem_tools(registry: ToolRegistry) -> None:
     registry.register(grep_search_manifest(), grep_search_handler)
     registry.register(file_write_manifest(), file_write_handler)
     registry.register(file_edit_manifest(), file_edit_handler)
+    registry.register(file_patch_manifest(), file_patch_handler)
     registry.register(notebook_edit_manifest(), notebook_edit_handler)
     registry.register(artifact_list_manifest(), artifact_list_handler)
     registry.register(artifact_read_manifest(), artifact_read_handler)

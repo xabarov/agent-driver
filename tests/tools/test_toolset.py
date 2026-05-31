@@ -68,6 +68,13 @@ def test_toolset_supports_artifacts_pack() -> None:
     }
 
 
+def test_toolset_filesystem_write_pack_includes_file_patch() -> None:
+    """filesystem_write pack should expose batched exact replacement edits."""
+    registry = _registry_with_defaults()
+    filtered = ToolSet.packs("filesystem_write").apply(registry)
+    assert "file_patch" in filtered.list_names()
+
+
 def test_toolset_filters_by_application_tags() -> None:
     """Application tags should narrow model-visible and executable surface."""
     registry = _registry_with_defaults()

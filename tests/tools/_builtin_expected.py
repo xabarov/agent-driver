@@ -10,6 +10,7 @@ EXPECTED_BUILTIN_TOOL_NAMES = {
     "task_create",
     "workflow_tool",
     "file_edit",
+    "file_patch",
     "mcp_tool",
     "team_create_tool",
     "web_search",

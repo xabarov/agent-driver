@@ -16,7 +16,7 @@ _RISK_RANK = {
 
 _BUILTIN_PACKS: dict[str, tuple[str, ...]] = {
     "filesystem_read": ("read_file", "glob_search", "grep_search"),
-    "filesystem_write": ("file_write", "file_edit", "notebook_edit"),
+    "filesystem_write": ("file_write", "file_edit", "file_patch", "notebook_edit"),
     "artifacts": ("artifact_list", "artifact_read", "artifact_preview"),
     "web": ("web_fetch", "web_search"),
     "shell": ("bash", "powershell_tool"),

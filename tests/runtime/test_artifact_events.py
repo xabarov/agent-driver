@@ -41,6 +41,7 @@ def _envelope(
     path: Path,
     created: bool,
     dry_run: bool = False,
+    operation: str | None = None,
 ) -> ToolResultEnvelope:
     return ToolResultEnvelope(
         call=ToolCall(
@@ -50,7 +51,8 @@ def _envelope(
         ),
         structured_output={
             "path": str(path),
-            "operation": "write" if tool_name == "file_write" else "edit",
+            "operation": operation
+            or ("write" if tool_name == "file_write" else "edit"),
             "dry_run": dry_run,
             "created": created,
             "size_bytes": 1234,
@@ -89,6 +91,27 @@ def test_file_edit_projects_artifact_updated_event(tmp_path: Path) -> None:
     event_type, payload = event
     assert event_type == RuntimeEventType.ARTIFACT_UPDATED
     assert payload["operation"] == "edit"
+    assert payload["replacements"] == 1
+
+
+def test_file_patch_projects_artifact_updated_event(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    report = tmp_path / "research" / "report.md"
+
+    event = artifact_event_from_tool_result(
+        context,
+        _envelope(
+            tool_name="file_patch",
+            path=report,
+            created=False,
+            operation="patch",
+        ),
+    )
+
+    assert event is not None
+    event_type, payload = event
+    assert event_type == RuntimeEventType.ARTIFACT_UPDATED
+    assert payload["operation"] == "patch"
     assert payload["replacements"] == 1
 
 

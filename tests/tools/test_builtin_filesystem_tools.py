@@ -558,6 +558,104 @@ async def test_file_edit_fails_on_occurrence_mismatch(tmp_path) -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_file_patch_applies_multiple_replacements(tmp_path) -> None:
+    """file_patch should apply ordered exact replacements in one call."""
+    target = tmp_path / "report.md"
+    target.write_text("alpha\nbeta\nalpha\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_patch")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "patches": [
+                {
+                    "old_text": "alpha",
+                    "new_text": "ALPHA",
+                    "expected_occurrences": 2,
+                },
+                {"old_text": "beta", "new_text": "BETA"},
+            ],
+        }
+    )
+    assert out["operation"] == "patch"
+    assert out["replacements"] == 3
+    assert [item["replacements"] for item in out["patches_applied"]] == [2, 1]
+    assert target.read_text(encoding="utf-8") == "ALPHA\nBETA\nALPHA\n"
+
+
+@pytest.mark.asyncio
+async def test_file_patch_dry_run_preserves_file(tmp_path) -> None:
+    """file_patch dry_run should expose preview without writing the patch."""
+    target = tmp_path / "report.md"
+    target.write_text("one\ntwo\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_patch")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "patches": [
+                {"old_text": "one", "new_text": "ONE"},
+                {"old_text": "two", "new_text": "TWO"},
+            ],
+            "dry_run": True,
+        }
+    )
+    assert out["dry_run"] is True
+    assert out["preview"]["after"] == "ONE\nTWO\n"
+    assert target.read_text(encoding="utf-8") == "one\ntwo\n"
+
+
+@pytest.mark.asyncio
+async def test_file_patch_fails_on_patch_occurrence_mismatch(tmp_path) -> None:
+    """file_patch should stop before writing when any patch count mismatches."""
+    target = tmp_path / "report.md"
+    target.write_text("alpha\nbeta\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_patch")
+    assert tool is not None
+    with pytest.raises(ValueError, match="index=1"):
+        await tool.handler(
+            {
+                "path": str(target),
+                "patches": [
+                    {"old_text": "alpha", "new_text": "ALPHA"},
+                    {
+                        "old_text": "beta",
+                        "new_text": "BETA",
+                        "expected_occurrences": 2,
+                    },
+                ],
+            }
+        )
+    assert target.read_text(encoding="utf-8") == "alpha\nbeta\n"
+
+
+@pytest.mark.asyncio
+async def test_file_patch_rejects_too_many_patch_items(tmp_path) -> None:
+    """file_patch should enforce its schema-sized batch limit at runtime."""
+    target = tmp_path / "report.md"
+    target.write_text("alpha\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_patch")
+    assert tool is not None
+    with pytest.raises(ValueError, match="at most 50"):
+        await tool.handler(
+            {
+                "path": str(target),
+                "patches": [
+                    {"old_text": "alpha", "new_text": "alpha"} for _ in range(51)
+                ],
+            }
+        )
+
+
 def _write_notebook(path, *, code: str = "print('a')\n") -> None:
     payload = {
         "cells": [

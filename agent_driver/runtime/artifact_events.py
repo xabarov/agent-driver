@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from agent_driver.runtime.single_agent.types import RunContext
 
 
-_ARTIFACT_WRITE_TOOLS = {"file_write", "file_edit", "notebook_edit"}
+_ARTIFACT_WRITE_TOOLS = {"file_write", "file_edit", "file_patch", "notebook_edit"}
 
 
 def artifact_event_from_tool_result(
