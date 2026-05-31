@@ -45,6 +45,9 @@ def artifact_event_from_tool_result(
     replacements = _as_non_negative_int(structured.get("replacements"))
     if replacements is not None:
         payload["replacements"] = replacements
+    mode = structured.get("mode")
+    if isinstance(mode, str) and mode:
+        payload["mode"] = mode
     event_type = (
         RuntimeEventType.ARTIFACT_CREATED
         if structured.get("created") is True

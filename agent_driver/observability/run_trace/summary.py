@@ -186,6 +186,7 @@ def summarize_run_trace(
         "deep_research_no_source_ledger_artifact": research_efficiency[
             "missing_source_ledger_artifact"
         ],
+        "deep_research_full_report_rewrite": research_efficiency["full_report_rewrite"],
         "deep_research_long_final_after_report": research_efficiency[
             "long_final_after_report"
         ],
@@ -521,6 +522,7 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
                 "path": path,
                 "kind": kind if isinstance(kind, str) else None,
                 "operation": operation if isinstance(operation, str) else None,
+                "mode": data.get("mode") if isinstance(data.get("mode"), str) else None,
                 "size_bytes": data.get("size_bytes", data.get("bytes")),
                 "tool_name": data.get("tool_name"),
                 "tool_call_id": data.get("tool_call_id"),
@@ -541,6 +543,7 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         "paths": _dedupe_paths([item["path"] for item in updates]),
         "report_updated": bool(report_paths),
         "report_update_count": len(report_paths),
+        "report_full_write_count": _report_full_write_count(updates),
         "source_ledger_updated": bool(source_ledger_paths),
         "source_ledger_update_count": len(source_ledger_paths),
         "source_ledger_record_count": source_ledger_records,
@@ -566,6 +569,7 @@ def _research_efficiency_summary(
         research=research,
     )
     report_updated = bool(artifacts.get("report_updated"))
+    report_full_write_count = _as_int(artifacts.get("report_full_write_count"))
     source_ledger_updated = bool(artifacts.get("source_ledger_updated"))
     assistant_chars = len(assistant_text.strip())
     usage = llm_calls.get("usage")
@@ -577,6 +581,7 @@ def _research_efficiency_summary(
     long_final_after_report = report_updated and assistant_chars > 2000
     missing_report_artifact = deep_expected and not report_updated
     missing_source_ledger_artifact = deep_expected and not source_ledger_updated
+    full_report_rewrite = deep_expected and report_full_write_count > 1
     repeated_tools = sorted(
         name
         for name in set(tool_names)
@@ -586,6 +591,7 @@ def _research_efficiency_summary(
         "deep_research_artifact_expected": deep_expected,
         "missing_report_artifact": missing_report_artifact,
         "missing_source_ledger_artifact": missing_source_ledger_artifact,
+        "full_report_rewrite": full_report_rewrite,
         "missing_initial_todo": missing_initial_todo,
         "first_tool": first_tool,
         "tool_chain": " -> ".join(tool_names),
@@ -593,6 +599,7 @@ def _research_efficiency_summary(
         "repeated_tools": repeated_tools,
         "artifact_update_count": artifacts.get("update_count", 0),
         "report_update_count": artifacts.get("report_update_count", 0),
+        "report_full_write_count": report_full_write_count,
         "source_ledger_update_count": artifacts.get("source_ledger_update_count", 0),
         "source_ledger_record_count": artifacts.get("source_ledger_record_count", 0),
         "long_final_after_report": long_final_after_report,
@@ -652,6 +659,30 @@ def _output_tokens_after_first_report_update(events: list[dict[str, object]]) ->
         elif isinstance(value, float):
             output_tokens += max(0, int(value))
     return output_tokens
+
+
+def _report_full_write_count(updates: list[dict[str, Any]]) -> int:
+    count = 0
+    for item in updates:
+        if item.get("path") != "research/report.md":
+            continue
+        if item.get("tool_name") != "file_write":
+            continue
+        mode = item.get("mode")
+        if mode == "append":
+            continue
+        count += 1
+    return count
+
+
+def _as_int(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, float):
+        return max(0, int(value))
+    return 0
 
 
 def _dedupe_paths(paths: list[str]) -> list[str]:
@@ -729,6 +760,10 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "deep_research_no_source_ledger_artifact",
         "Deep Research finished without a durable research/sources.jsonl ledger.",
+    ),
+    (
+        "deep_research_full_report_rewrite",
+        "research/report.md was fully written more than once; use file_edit/file_patch after the first draft.",
     ),
     (
         "deep_research_long_final_after_report",

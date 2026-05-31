@@ -930,3 +930,25 @@ Focused checks:
 - `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
   deep-research-artifact`.
+
+## Implementation Slice P8-full-report-rewrite-guard - 2026-05-31
+
+Added trace-level detection for the original waste loop class:
+
+- artifact events now preserve `file_write` mode (`overwrite` vs `append`);
+- trace summaries count full `file_write` updates to `research/report.md`;
+- Deep Research efficiency now exposes `report_full_write_count` and
+  `full_report_rewrite`;
+- failure flag `deep_research_full_report_rewrite` fires when a Deep Research
+  run fully writes `research/report.md` more than once;
+- append writes are not counted as full rewrites, but targeted `file_edit` and
+  `file_patch` remain the preferred path after the initial draft;
+- live scorecards print `full_writes` next to artifact update counts.
+
+Focused checks:
+
+- `tests/runtime/test_artifact_events.py`;
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact`.

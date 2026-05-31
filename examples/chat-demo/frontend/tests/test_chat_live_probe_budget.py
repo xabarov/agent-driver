@@ -148,8 +148,10 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
                 "deep_research_artifact_expected": True,
                 "first_tool": "todo_write",
                 "long_final_after_report": False,
+                "full_report_rewrite": False,
                 "output_tokens_after_first_report_update": 7,
                 "report_update_count": 1,
+                "report_full_write_count": 1,
                 "source_ledger_record_count": 2,
             },
         },
@@ -172,5 +174,6 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
     assert "after_report=`7`" in scorecard
     assert "domains=`2`" in scorecard
     assert "workspace=`research/report.md, research/sources.jsonl`" in scorecard
+    assert "full_writes=`1`" in scorecard
     assert "source_records=`2`" in scorecard
     assert "first_tool=`todo_write`" in scorecard

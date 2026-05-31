@@ -42,22 +42,25 @@ def _envelope(
     created: bool,
     dry_run: bool = False,
     operation: str | None = None,
+    mode: str | None = None,
 ) -> ToolResultEnvelope:
+    structured_output = {
+        "path": str(path),
+        "operation": operation or ("write" if tool_name == "file_write" else "edit"),
+        "dry_run": dry_run,
+        "created": created,
+        "size_bytes": 1234,
+        "replacements": 1,
+    }
+    if mode is not None:
+        structured_output["mode"] = mode
     return ToolResultEnvelope(
         call=ToolCall(
             tool_name=tool_name,
             tool_call_id=f"call_{tool_name}",
             args={"path": str(path)},
         ),
-        structured_output={
-            "path": str(path),
-            "operation": operation
-            or ("write" if tool_name == "file_write" else "edit"),
-            "dry_run": dry_run,
-            "created": created,
-            "size_bytes": 1234,
-            "replacements": 1,
-        },
+        structured_output=structured_output,
     )
 
 
@@ -76,6 +79,25 @@ def test_file_write_created_projects_report_artifact_event(tmp_path: Path) -> No
     assert payload["path"] == "research/report.md"
     assert payload["kind"] == "report"
     assert payload["size_bytes"] == 1234
+
+
+def test_file_write_artifact_event_preserves_write_mode(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    report = tmp_path / "research" / "report.md"
+
+    event = artifact_event_from_tool_result(
+        context,
+        _envelope(
+            tool_name="file_write",
+            path=report,
+            created=False,
+            mode="append",
+        ),
+    )
+
+    assert event is not None
+    _, payload = event
+    assert payload["mode"] == "append"
 
 
 def test_file_edit_projects_artifact_updated_event(tmp_path: Path) -> None:
