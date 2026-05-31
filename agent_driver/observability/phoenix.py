@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Any
 
 from agent_driver.contracts.runtime import AgentRunInput
 
