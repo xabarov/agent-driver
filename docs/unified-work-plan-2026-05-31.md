@@ -674,6 +674,10 @@ Status on 2026-05-31:
 - ReAct system-prompt composition, chat/runtime attachment reminders, prompt
   surface metadata capture and effective code-agent import resolution moved to
   `runtime/single_agent/llm_step_prompt.py`.
+- Forced-final source reminders, partial-stream tombstoning, forced-final
+  stream recovery and no-tools retry assistant event projection moved to
+  `runtime/single_agent/llm_step_stream_recovery.py`; `llm_step.py` is down to
+  the call orchestration/request-trimming layer plus compatibility aliases.
 - `tool_stage.py` remains the compatibility entrypoint for
   `execute_tool_stage_step`; focused planning, subagent and chat-demo Deep
   Research/Skills SSE tests pass after the extraction.
