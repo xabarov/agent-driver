@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -40,6 +41,7 @@ from agent_driver.contracts.context import (
 )
 from agent_driver.contracts.enums import ArtifactKind, SensitivityLevel
 from agent_driver.context.artifacts.protocols import ArtifactStore
+from agent_driver.tools.context import get_workspace_jail_root
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +88,9 @@ def should_spill_payload(
     return len(encoded) > max_result_size_chars
 
 
-def _build_preview_text(encoded: str, *, limit: int = PREVIEW_MAX_CHARS) -> ArtifactPreview:
+def _build_preview_text(
+    encoded: str, *, limit: int = PREVIEW_MAX_CHARS
+) -> ArtifactPreview:
     """Trim ``encoded`` to ``limit`` chars + add ellipsis marker.
 
     Preview is text-only (no semantic parsing): the model sees the
@@ -175,22 +179,61 @@ def spill_payload_to_artifact(
             len(encoded),
         )
         return None
+    persisted_artifact = {
+        "artifact_id": persisted_ref.artifact_id,
+        "kind": ArtifactKind.TOOL_RESULT.value,
+        "size_bytes": persisted_ref.size_bytes,
+        "tool_name": tool_name,
+    }
+    workspace_path = _mirror_tool_result_to_workspace(
+        encoded,
+        artifact_id=persisted_ref.artifact_id,
+        tool_name=tool_name,
+        tool_call_id=tool_call_id,
+    )
+    if workspace_path is not None:
+        persisted_artifact["workspace_path"] = workspace_path
     replacement: dict[str, Any] = {
         "summary": (
             f"<persisted-output> {len(encoded):,} chars stored as "
             f"artifact {persisted_ref.artifact_id}; preview follows"
         ),
-        "persisted_artifact": {
-            "artifact_id": persisted_ref.artifact_id,
-            "kind": ArtifactKind.TOOL_RESULT.value,
-            "size_bytes": persisted_ref.size_bytes,
-            "tool_name": tool_name,
-        },
+        "persisted_artifact": persisted_artifact,
         "preview": preview.text,
         "persisted": True,
         "truncated": False,
     }
+    if workspace_path is not None:
+        replacement["workspace_artifact_path"] = workspace_path
     return replacement, persisted_ref
+
+
+def _mirror_tool_result_to_workspace(
+    encoded: str,
+    *,
+    artifact_id: str,
+    tool_name: str,
+    tool_call_id: str | None,
+) -> str | None:
+    root = get_workspace_jail_root()
+    if root is None:
+        return None
+    filename_seed = tool_call_id or artifact_id or tool_name or "tool_result"
+    filename = f"{_safe_filename(filename_seed)}.json"
+    target_dir = (root / "tool-results").resolve()
+    target = (target_dir / filename).resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError:
+        return None
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target.write_text(encoded, encoding="utf-8")
+    return target.relative_to(root.resolve()).as_posix()
+
+
+def _safe_filename(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())[:120].strip("._-")
+    return cleaned or uuid.uuid4().hex[:12]
 
 
 __all__ = [

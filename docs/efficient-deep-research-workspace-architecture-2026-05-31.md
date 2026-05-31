@@ -996,3 +996,22 @@ Focused checks:
 - `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
   deep-research-artifact`.
+
+## Implementation Slice P11-tool-result-workspace-spill - 2026-05-31
+
+Connected oversized tool output spill to the session workspace:
+
+- existing executor spill still persists the full payload to `ArtifactStore`
+  and returns a small model-visible preview;
+- when a workspace is active, the same encoded payload is mirrored to
+  `tool-results/<tool_call_id>.json`;
+- the in-context replacement includes `workspace_artifact_path` and
+  `persisted_artifact.workspace_path`;
+- `tool_call_completed` rows expose the persisted artifact pointer and preview
+  path, letting traces and UI diagnostics route users to the durable file;
+- fixed spill metadata to use the actual `tool_call_id` instead of the runtime
+  attempt id for filenames.
+
+Focused checks:
+
+- `tests/tools/test_output_spill.py`.

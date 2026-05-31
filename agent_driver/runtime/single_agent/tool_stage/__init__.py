@@ -341,6 +341,12 @@ def _emit_tool_completed_if_needed(
                 remediation = structured.get("remediation")
                 if isinstance(remediation, str) and remediation.strip():
                     row["remediation"] = remediation.strip()
+                persisted_artifact = structured.get("persisted_artifact")
+                if isinstance(persisted_artifact, dict):
+                    row["persisted_artifact"] = dict(persisted_artifact)
+                    workspace_path = persisted_artifact.get("workspace_path")
+                    if isinstance(workspace_path, str) and workspace_path:
+                        row["result_preview_paths"] = [workspace_path]
                 if trace.status.value == "completed":
                     sources = source_evidence_from_tool_result(
                         tool_name=envelope.call.tool_name,

@@ -220,7 +220,7 @@ async def execute_allowed_path(
                 store=spec.artifact_store,
                 tool_name=spec.call.tool_name,
                 run_id=str(spec.run_metadata.get("run_id") or ""),
-                tool_call_id=str(spec.run_metadata.get("attempt_id") or ""),
+                tool_call_id=spec.call.tool_call_id,
             )
             if spilled is not None:
                 raw = spilled[0]
