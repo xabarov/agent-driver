@@ -694,6 +694,9 @@ Status on 2026-05-31:
   aliases kept in `openai_compatible.py`.
 - OpenAI-compatible chat/completions wire payload construction and tool-choice
   normalization moved to `llm/providers_impl/openai_compatible_payload.py`.
+- Run trace compaction/context-pressure and provider/LLM-call/prompt-surface
+  analyzers moved to `observability/run_trace_compaction.py` and
+  `observability/run_trace_provider.py`.
 - `tool_stage.py` remains the compatibility entrypoint for
   `execute_tool_stage_step`; focused planning, subagent and chat-demo Deep
   Research/Skills SSE tests pass after the extraction.

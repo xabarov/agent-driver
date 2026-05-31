@@ -6,6 +6,16 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+from agent_driver.observability.run_trace_compaction import (
+    compaction_summary as _compaction_summary,
+    context_pressure_summary as _context_pressure_summary,
+)
+from agent_driver.observability.run_trace_provider import (
+    llm_call_summary as _llm_call_summary,
+    prompt_surface_summary as _prompt_surface_summary,
+    provider_profile_summary as _provider_profile_summary,
+    provider_rejected as _provider_rejected,
+)
 from agent_driver.runtime.planning_check import (
     EXIT_PLAN_MODE_TOOL_NAMES,
     PLANNING_TOOL_NAMES,
@@ -201,136 +211,6 @@ def summarize_run_trace(
 
 def _count_events(events: list[dict[str, object]], event_name: str) -> int:
     return sum(1 for event in events if event.get("event") == event_name)
-
-
-def _provider_rejected(events: list[dict[str, object]]) -> bool:
-    return any(event.get("event") == "llm_request_rejected" for event in events)
-
-
-def _provider_profile_summary(events: list[dict[str, object]]) -> dict[str, Any] | None:
-    """Return latest provider capability profile recorded by the LLM layer."""
-    for event in reversed(events):
-        if event.get("event") != "llm_call_completed":
-            continue
-        data = event.get("data")
-        if not isinstance(data, dict):
-            continue
-        profile = data.get("provider_profile")
-        if isinstance(profile, dict):
-            return profile
-    return None
-
-
-def _compaction_summary(events: list[dict[str, object]]) -> dict[str, Any]:
-    compaction_events = [
-        event
-        for event in events
-        if event.get("event") in {"memory_compaction_started", "memory_compacted"}
-    ]
-    started = [
-        event
-        for event in compaction_events
-        if event.get("event") == "memory_compaction_started"
-    ]
-    outcomes = [
-        _event_data(event)
-        for event in compaction_events
-        if event.get("event") == "memory_compacted"
-    ]
-    outcome_counts = {
-        "successful": sum(
-            1 for data in outcomes if data.get("outcome") == "successful"
-        ),
-        "failed": sum(1 for data in outcomes if data.get("outcome") == "failed"),
-        "skipped": sum(1 for data in outcomes if data.get("outcome") == "skipped"),
-    }
-    modes: list[str] = []
-    for event in compaction_events:
-        mode = _event_data(event).get("mode")
-        if isinstance(mode, str) and mode and mode not in modes:
-            modes.append(mode)
-    latest_data = _event_data(compaction_events[-1]) if compaction_events else {}
-    latest_state = latest_data.get("compaction_state")
-    latest = None
-    if compaction_events:
-        latest = {
-            "event": compaction_events[-1].get("event"),
-            "outcome": latest_data.get("outcome"),
-            "mode": latest_data.get("mode"),
-            "compaction_id": latest_data.get("compaction_id"),
-            "failure_kind": latest_data.get("failure_kind"),
-            "summarized_message_count": latest_data.get("summarized_message_count"),
-        }
-    return {
-        "attempts": max(
-            len(started), outcome_counts["successful"] + outcome_counts["failed"]
-        ),
-        "started": len(started),
-        **outcome_counts,
-        "modes": modes,
-        "circuit_breaker_open": (
-            latest_state.get("circuit_breaker_open")
-            if isinstance(latest_state, dict)
-            else False
-        ),
-        "latest": latest,
-    }
-
-
-def _context_pressure_summary(
-    events: list[dict[str, object]],
-    *,
-    tool_names: list[str],
-    compaction: dict[str, Any],
-) -> dict[str, Any]:
-    """Summarize pressure diagnostics and whether the run reacted."""
-    diagnostics: list[dict[str, Any]] = []
-    for event in events:
-        if event.get("event") != "warning":
-            continue
-        data = _event_data(event)
-        if data.get("kind") != "token_pressure":
-            continue
-        state = data.get("state")
-        signal_id = data.get("signal_id")
-        if not isinstance(state, str) or not isinstance(signal_id, str):
-            continue
-        diagnostics.append(
-            {
-                "state": state,
-                "signal_id": signal_id,
-                "severity": data.get("severity"),
-                "recommendation": data.get("recommendation"),
-                "context_usage_ratio": data.get("context_usage_ratio"),
-            }
-        )
-    states = [item["state"] for item in diagnostics]
-    recommendations = [
-        str(item["recommendation"])
-        for item in diagnostics
-        if isinstance(item.get("recommendation"), str)
-    ]
-    latest = diagnostics[-1] if diagnostics else None
-    delegated = "agent_tool" in tool_names
-    compaction_attempted = int(compaction.get("attempts") or 0) > 0
-    ignored = False
-    if latest is not None:
-        latest_recommendation = latest.get("recommendation")
-        if latest_recommendation in {"compact_recommended", "blocking"}:
-            ignored = not compaction_attempted
-        elif latest_recommendation == "delegate_or_summarize":
-            ignored = not delegated and not compaction_attempted
-    return {
-        "diagnostic_count": len(diagnostics),
-        "states": states,
-        "recommendations": recommendations,
-        "latest": latest,
-        "delegated_after_recommendation": delegated if diagnostics else False,
-        "compaction_attempted_after_recommendation": (
-            compaction_attempted if diagnostics else False
-        ),
-        "ignored_latest_recommendation": ignored,
-    }
 
 
 def _last_event_name(
@@ -738,54 +618,6 @@ def _planning_summary(
         "data_tool_calls": data_tool_count,
         "snapshots": snapshots,
         "latest_snapshot": latest_snapshot,
-    }
-
-
-def _llm_call_summary(events: list[dict[str, object]]) -> dict[str, Any]:
-    tool_choices: list[Any] = []
-    force_final_reasons: list[str] = []
-    continuation_reasons: list[str] = []
-    for event in events:
-        if event.get("event") != "llm_call_started":
-            continue
-        data = _event_data(event)
-        if "tool_choice_effective" in data:
-            tool_choices.append(data.get("tool_choice_effective"))
-        force_final_reason = data.get("force_final_reason")
-        if isinstance(force_final_reason, str) and force_final_reason:
-            force_final_reasons.append(force_final_reason)
-        continuation_reason = data.get("continuation_reason")
-        if isinstance(continuation_reason, str) and continuation_reason:
-            continuation_reasons.append(continuation_reason)
-    return {
-        "started": _count_events(events, "llm_call_started"),
-        "completed": _count_events(events, "llm_call_completed"),
-        "tool_choice_effective": tool_choices,
-        "force_final_reasons": force_final_reasons,
-        "continuation_reasons": continuation_reasons,
-    }
-
-
-def _prompt_surface_summary(events: list[dict[str, object]]) -> dict[str, Any]:
-    effective_tool_names: list[str] = []
-    prompt_fragments: list[str] = []
-    for event in events:
-        if event.get("event") != "llm_call_completed":
-            continue
-        data = _event_data(event)
-        tools = data.get("effective_tool_names")
-        if isinstance(tools, list):
-            effective_tool_names.extend(
-                item for item in tools if isinstance(item, str) and item
-            )
-        fragments = data.get("prompt_fragments")
-        if isinstance(fragments, list):
-            prompt_fragments.extend(
-                item for item in fragments if isinstance(item, str) and item
-            )
-    return {
-        "effective_tool_names": _dedupe_preserve_order(effective_tool_names),
-        "prompt_fragments": _dedupe_preserve_order(prompt_fragments),
     }
 
 
