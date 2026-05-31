@@ -267,7 +267,7 @@ Purpose: stop new work from deepening the metadata bag problem.
   `CompactionRuntimeState`.
   Initial metadata views exist in `agent_driver/runtime/metadata_state.py`;
   migration of direct reads/writes is intentionally incremental.
-- [ ] Add contract snapshots for public shapes:
+- [x] Add contract snapshots for public shapes:
   `AgentRunInput`, `AgentRunOutput`, `RuntimeEvent`, `ToolManifest`,
   `ToolTrace`, interrupt/resume payloads.
 - [ ] Define a canonical planning tool contract before SDK freeze:
