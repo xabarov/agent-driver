@@ -11,9 +11,11 @@ from agent_driver.cli.evals import (
     EvalScenario,
     _is_transient_eval_error,
     _merge_eval_outputs,
+    _write_scorecard,
     assert_eval_scenario_tool_packs_are_tuples,
     live_scenarios_for_suite,
     run_live_evaluation,
+    summarize_run,
 )
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.cli.providers import (
@@ -22,7 +24,8 @@ from agent_driver.cli.providers import (
     provider_config_for_eval,
 )
 from agent_driver.cli.tools import CliToolConfig
-from agent_driver.contracts.enums import RunStatus, TerminalReason
+from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
+from agent_driver.contracts.events import RuntimeEvent
 from agent_driver.contracts.runtime import AgentRunOutput
 from agent_driver.runtime import RuntimeStoreFactoryConfig
 
@@ -74,8 +77,116 @@ def test_merge_eval_outputs_joins_turn_answers() -> None:
     assert "def main" in (merged.answer or "")
 
 
+def _event(
+    seq: int, event_type: RuntimeEventType, payload: dict[str, object] | None = None
+) -> RuntimeEvent:
+    return RuntimeEvent.model_construct(
+        event_id=f"evt_{seq}",
+        type=event_type,
+        run_id="run_eval_deep",
+        attempt_id="attempt_1",
+        seq=seq,
+        created_at="2026-05-31T12:00:00Z",
+        payload=payload or {},
+    )
+
+
+def test_eval_summary_embeds_deep_research_efficiency_diagnostics() -> None:
+    output = AgentRunOutput.model_construct(
+        run_id="run_eval_deep",
+        status=RunStatus.COMPLETED,
+        terminal_reason=TerminalReason.FINAL_ANSWER,
+        attempt_id="attempt_1",
+        answer="Готово.\n" + ("длинный дубль. " * 180),
+        events=[
+            _event(
+                1,
+                RuntimeEventType.TOOL_CALL_COMPLETED,
+                {"tools": [{"tool_name": "web_search", "status": "completed"}]},
+            ),
+            _event(
+                2,
+                RuntimeEventType.ARTIFACT_UPDATED,
+                {"path": "research/report.md", "operation": "write"},
+            ),
+            _event(
+                3,
+                RuntimeEventType.LLM_CALL_COMPLETED,
+                {
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 900,
+                        "total_tokens": 1000,
+                    }
+                },
+            ),
+            _event(4, RuntimeEventType.RUN_COMPLETED, {}),
+        ],
+        tool_trace=[],
+    )
+    scenario = EvalScenario(
+        scenario_id="deep_report",
+        prompt="сделай deep research отчет",
+        tags=("deep_research",),
+    )
+
+    summary = summarize_run(scenario=scenario, output=output, elapsed_ms=123)
+
+    assert summary.llm_usage["total_tokens"] == 1000
+    assert summary.research_efficiency["report_update_count"] == 1
+    assert summary.research_efficiency["output_tokens_after_first_report_update"] == 900
+    assert "deep_research_missing_initial_todo" in summary.bug_tags
+    assert "deep_research_long_final_after_report" in summary.bug_tags
+    assert summary.efficiency == "fail"
+
+
+def test_eval_scorecard_renders_research_efficiency(tmp_path) -> None:
+    summary = evals_module.EvalSummary(
+        scenario_id="deep_report",
+        run_id="run_1",
+        status="completed",
+        terminal_reason="final_answer",
+        steps_total=4,
+        llm_calls=1,
+        tool_calls=3,
+        tools_by_status={"completed": 3},
+        tools_by_name_status={},
+        repeated_tools=[],
+        repeated_tool_arguments=[],
+        empty_tool_results=0,
+        interrupts_or_denials=0,
+        answer_length=42,
+        answer_language="ru",
+        elapsed_ms=100,
+        expected_tools_missing=[],
+        forbidden_tools_used=[],
+        answer_relevance="pass",
+        tool_use_correctness="pass",
+        efficiency="pass",
+        notes="ok",
+        bug_tags=["none"],
+        actual_tool_chain=["todo_write", "web_search", "file_write"],
+        llm_usage={"input_tokens": 10, "output_tokens": 20, "total_tokens": 30},
+        research_efficiency={
+            "deep_research_artifact_expected": True,
+            "report_update_count": 1,
+            "first_tool": "todo_write",
+            "output_tokens_after_first_report_update": 20,
+        },
+    )
+
+    _write_scorecard(target_dir=tmp_path, summaries=[summary], scenarios=[])
+
+    report = (tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "tool_chain: `todo_write -> web_search -> file_write`" in report
+    assert "after_report=`20`" in report
+    assert "artifact_expected=`True`" in report
+
+
 @pytest.mark.asyncio
-async def test_run_eval_scenario_with_retry_on_transient_error(tmp_path, monkeypatch) -> None:
+async def test_run_eval_scenario_with_retry_on_transient_error(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setenv("AGENT_DRIVER_RUN_LIVE_CLI_EVALS", "1")
     calls = {"count": 0}
     original = evals_module._run_eval_scenario

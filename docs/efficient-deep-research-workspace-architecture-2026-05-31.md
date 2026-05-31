@@ -731,3 +731,22 @@ Focused checks:
 - `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
 - `tests/observability/test_run_trace_summary.py`;
 - `tests/cli/test_eval_harness.py`.
+
+## Implementation Slice P2-cli-report - 2026-05-31
+
+Projected the Deep Research efficiency diagnostics into CLI eval artifacts:
+
+- `EvalSummary` now carries aggregated `llm_usage` and the
+  `research_efficiency` block from run-trace summary;
+- CLI eval `report.md` prints tool chain, input/output/total token counts,
+  tokens emitted after the first `research/report.md` update, artifact expected
+  state, report update count, and first tool;
+- Deep Research trace failures are copied into eval `bug_tags`, and efficiency
+  becomes `fail` when the run misses the artifact contract, skips the initial
+  todo, or emits a long final duplicate after the report exists.
+
+Focused checks:
+
+- `tests/cli/test_eval_harness.py`;
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `tests/observability/test_run_trace_summary.py`.
