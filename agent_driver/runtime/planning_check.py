@@ -31,20 +31,32 @@ from collections.abc import Iterable
 from agent_driver.contracts.runtime import AgentRunOutput
 
 
+CANONICAL_EXIT_PLAN_MODE_TOOL = "exit_plan_mode_v2"
+LEGACY_EXIT_PLAN_MODE_TOOL_ALIASES: frozenset[str] = frozenset({"exit_plan_mode"})
+EXIT_PLAN_MODE_TOOL_NAMES: frozenset[str] = frozenset(
+    {CANONICAL_EXIT_PLAN_MODE_TOOL, *LEGACY_EXIT_PLAN_MODE_TOOL_ALIASES}
+)
+
 # Built-in planning tools registered by
 # ``agent_driver.tools.planning.register_planning_tool``. We intentionally
 # leave ``ask_user_question`` out — it's a HITL clarification pause, not
 # a planning step in the "plan vs. execution" sense the validator cares
-# about. Callers can extend this set via the ``planning_tool_names``
-# argument.
+# about. ``exit_plan_mode_v2`` is the canonical registered approval-exit
+# tool; ``exit_plan_mode`` is kept here only as a trace/history alias.
+# Callers can extend this set via the ``planning_tool_names`` argument.
 PLANNING_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "todo_write",
         "planning_state_update",
         "enter_plan_mode",
-        "exit_plan_mode",
+        *EXIT_PLAN_MODE_TOOL_NAMES,
     }
 )
+
+
+def is_exit_plan_mode_tool(name: str) -> bool:
+    """Return True for canonical approval-exit tool or legacy trace aliases."""
+    return name in EXIT_PLAN_MODE_TOOL_NAMES
 
 
 def _tool_names_in(output: AgentRunOutput) -> list[str]:
@@ -139,8 +151,12 @@ def planning_executed_across(
 
 
 __all__ = [
+    "CANONICAL_EXIT_PLAN_MODE_TOOL",
+    "EXIT_PLAN_MODE_TOOL_NAMES",
+    "LEGACY_EXIT_PLAN_MODE_TOOL_ALIASES",
     "PLANNING_TOOL_NAMES",
     "data_tool_called",
+    "is_exit_plan_mode_tool",
     "planning_executed",
     "planning_executed_across",
     "planning_tool_called",

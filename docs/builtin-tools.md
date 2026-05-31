@@ -147,6 +147,8 @@ optional preview и 2-4 уникальными вариантами ответа
 `enter_plan_mode` и `exit_plan_mode_v2` меняют metadata planning state между
 режимами `plan` и `agent`. Они полезны, когда runtime поддерживает явное
 разделение проектирования и исполнения.
+`exit_plan_mode_v2` является canonical public approval-exit tool name;
+`exit_plan_mode` остается только legacy trace alias.
 
 ## Tasking
 

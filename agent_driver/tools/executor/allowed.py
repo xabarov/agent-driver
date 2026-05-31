@@ -14,6 +14,7 @@ from agent_driver.contracts.enums import (
 )
 from agent_driver.contracts.interrupts import InterruptRequest
 from agent_driver.contracts.tools import ToolError, ToolResultEnvelope
+from agent_driver.runtime.planning_check import is_exit_plan_mode_tool
 from agent_driver.tools.context import (
     tool_call_context_scope,
     tool_progress_scope,
@@ -198,7 +199,7 @@ async def execute_allowed_path(
             raw = _planning_update_payload(raw if isinstance(raw, dict) else {})
         if spec.call.tool_name == "ask_user_question":
             return _append_clarification_interrupt(spec=spec, raw=raw)
-        if spec.call.tool_name == "exit_plan_mode_v2" and not spec.call.metadata.get(
+        if is_exit_plan_mode_tool(spec.call.tool_name) and not spec.call.metadata.get(
             "approved_interrupt_id"
         ):
             return _append_plan_approval_interrupt(spec=spec, raw=raw)
@@ -355,7 +356,7 @@ def _append_clarification_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) -
 
 
 def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
-    """Append plan approval interrupt when exit_plan_mode_v2 has plan content."""
+    """Append plan approval interrupt when approval-exit tool has plan content."""
     if not isinstance(raw, dict):
         return False
     plan_raw = raw.get("plan_approval")

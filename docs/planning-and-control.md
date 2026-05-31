@@ -11,6 +11,8 @@ There are two different planning concepts:
   visible checklist and current step. This is progress telemetry, not approval.
 - Modal approval planning: `enter_plan_mode` and `exit_plan_mode_v2` produce a
   plan artifact that can pause execution for user approval before risky work.
+  `exit_plan_mode_v2` is the canonical public approval-exit tool name;
+  `exit_plan_mode` is only a legacy trace alias.
 
 Public chat presets use live progress planning. Approval planning is reserved
 for implementation/dev/risky side-effect contexts.

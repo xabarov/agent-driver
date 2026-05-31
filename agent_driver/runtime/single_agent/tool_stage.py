@@ -27,6 +27,7 @@ from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
     build_research_session_contract_from_context,
 )
+from agent_driver.runtime.planning_check import is_exit_plan_mode_tool
 from agent_driver.runtime.single_agent.pending import (
     pending_interrupt_from_execution_result,
     serialize_pending_interrupt,
@@ -113,7 +114,7 @@ def _emit_plan_lifecycle_events(
                 },
             )
             continue
-        if envelope.call.tool_name != "exit_plan_mode_v2":
+        if not is_exit_plan_mode_tool(envelope.call.tool_name):
             continue
         structured = envelope.structured_output
         if not isinstance(structured, dict):

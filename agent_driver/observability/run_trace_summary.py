@@ -6,7 +6,10 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from agent_driver.runtime.planning_check import PLANNING_TOOL_NAMES
+from agent_driver.runtime.planning_check import (
+    EXIT_PLAN_MODE_TOOL_NAMES,
+    PLANNING_TOOL_NAMES,
+)
 from agent_driver.runtime.research_evidence import (
     RESEARCH_DEPTH_SOURCE_VERIFIED,
     SOURCE_VERIFIED_DOMAINS,
@@ -651,7 +654,7 @@ def _planning_summary(
 ) -> dict[str, Any]:
     planning_tool_count = sum(1 for name in tool_names if name in PLANNING_TOOL_NAMES)
     enter_plan_count = tool_names.count("enter_plan_mode")
-    exit_plan_count = tool_names.count("exit_plan_mode_v2")
+    exit_plan_count = sum(1 for name in tool_names if name in EXIT_PLAN_MODE_TOOL_NAMES)
     data_tool_count = sum(1 for name in tool_names if name not in PLANNING_TOOL_NAMES)
     snapshots = 0
     latest_snapshot: dict[str, Any] | None = None

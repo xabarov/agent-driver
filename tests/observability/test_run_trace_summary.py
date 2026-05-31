@@ -189,6 +189,22 @@ def test_trace_summary_flags_repeated_approval_planning() -> None:
     assert summary["verdict"] == "fail"
 
 
+def test_trace_summary_counts_legacy_exit_plan_mode_alias() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Реализуй изменение",
+        assistant_text="План готов.",
+        events=[
+            _completed_tool("enter_plan_mode"),
+            _completed_tool("exit_plan_mode"),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["planning"]["approval_cycles"] == 1
+    assert summary["planning"]["exit_plan_mode_calls"] == 1
+
+
 def test_trace_summary_flags_extra_question_for_research_deliverable() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

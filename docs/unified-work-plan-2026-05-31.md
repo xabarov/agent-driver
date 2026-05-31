@@ -270,12 +270,11 @@ Purpose: stop new work from deepening the metadata bag problem.
 - [x] Add contract snapshots for public shapes:
   `AgentRunInput`, `AgentRunOutput`, `RuntimeEvent`, `ToolManifest`,
   `ToolTrace`, interrupt/resume payloads.
-- [ ] Define a canonical planning tool contract before SDK freeze:
-  choose whether the public tool name should be stable
-  `exit_plan_mode` with schema-versioned payloads, or keep
-  `exit_plan_mode_v2` as the canonical name and document old names strictly as
-  trace-only aliases. Update prompts, `PLANNING_TOOL_NAMES`, trace summaries,
-  tests and docs to use one canonical vocabulary.
+- [x] Define a canonical planning tool contract before SDK freeze:
+  `exit_plan_mode_v2` stays the canonical public approval-exit tool name;
+  `exit_plan_mode` is documented and handled only as a legacy trace alias.
+  Prompts, `PLANNING_TOOL_NAMES`, trace summaries, tests and docs now use that
+  vocabulary.
 - [ ] Add a rule: new runtime state must go through owned helpers, not fresh
   ad hoc metadata keys.
 
