@@ -124,6 +124,21 @@ That means:
   UI needs a new event, state or trace field, add it to runtime contracts before
   rendering it in the demo.
 
+### Problem Escalation Principle
+
+Do not ignore principle violations or architectural drift.
+
+- If a problem is clear and the fix is local, low-risk and fits the current
+  context, fix it immediately.
+- If the fix is clear but not part of the current slice, add it to the
+  appropriate later phase or status doc with enough detail that it cannot be
+  forgotten.
+- If the problem violates these principles but the right fix is ambiguous,
+  risky, product-sensitive or needs ownership/tradeoff decisions, stop and
+  surface it for human decision instead of silently choosing a direction.
+- Do not let "not now" become "never": every observed principle violation must
+  be fixed, explicitly scheduled or explicitly escalated.
+
 Principle audit:
 
 | Principle | Current plan fit | Required guardrail |
