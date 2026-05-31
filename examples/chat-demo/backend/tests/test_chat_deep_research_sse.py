@@ -120,6 +120,39 @@ async def test_chat_deep_research_sse_emits_report_artifact(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_chat_deep_research_sse_emits_blocked_fetch_ledger(monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENT_DRIVER_PROVIDER", "fake")
+    monkeypatch.setenv("CHAT_DEMO_FAKE_SCENARIO", "deep_research_blocked_fetch")
+    monkeypatch.setenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "memory")
+    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "web")
+    monkeypatch.setenv("CHAT_DEMO_SESSIONS_PATH", str(tmp_path / "sessions.json"))
+    monkeypatch.setenv("CHAT_DEMO_WORKSPACE_ROOT", str(tmp_path / "workspace"))
+    reset_dependency_caches()
+    try:
+        events = await _collect_chat_events(
+            message="run a blocked fetch deep research artifact probe",
+            research_depth="deep_parallel_research",
+        )
+    finally:
+        reset_dependency_caches()
+
+    ledger = next(
+        event for event in events if event["event"] == "source_ledger_updated"
+    )
+    data = ledger["data"]
+    assert isinstance(data, dict)
+    assert len(data["blocked_reads"]) == 2
+    assert not data["verified_reads"]
+    completed = next(event for event in events if event["event"] == "run_completed")
+    metadata = completed["data"]
+    assert isinstance(metadata, dict)
+    artifacts = metadata["deep_research_artifacts"]
+    assert isinstance(artifacts, dict)
+    assert artifacts["report_path"] == "research/report.md"
+    assert artifacts["source_ledger_path"] == "research/sources.jsonl"
+
+
+@pytest.mark.asyncio
 async def test_chat_deep_research_sse_emits_untrusted_skill_warning(
     monkeypatch, tmp_path
 ):

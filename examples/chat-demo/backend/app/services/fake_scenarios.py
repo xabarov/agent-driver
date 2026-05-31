@@ -642,6 +642,234 @@ class DeepResearchArtifactFakeProvider(FakeProvider):
         )
 
 
+class DeepResearchTargetedPatchFakeProvider(DeepResearchArtifactFakeProvider):
+    """Fake provider that writes, previews, then patches a Deep Research report."""
+
+    def _planned_calls(self) -> list[dict[str, object]]:
+        calls = super()._planned_calls()
+        calls.append(
+            ToolCall(
+                tool_name="artifact_preview",
+                tool_call_id="fake_deep_preview_before_patch",
+                args={"path": "research/report.md", "max_bytes": 4000},
+            ).model_dump(mode="json")
+        )
+        calls.append(
+            ToolCall(
+                tool_name="file_patch",
+                tool_call_id="fake_deep_patch",
+                args={
+                    "path": "research/report.md",
+                    "patches": [
+                        {
+                            "old_text": "## Findings",
+                            "new_text": "## Findings\n\n_Updated after preview._",
+                            "expected_occurrences": 1,
+                        }
+                    ],
+                },
+            ).model_dump(mode="json")
+        )
+        return calls
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            return LlmResponse(
+                message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                provider=self.name,
+                model=request.model or "fake-model",
+                metadata={
+                    "provider_kind": "fake",
+                    "planned_tool_calls": self._planned_calls(),
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(
+                role=ChatRole.ASSISTANT,
+                content=(
+                    "Готово: полный отчет обновлен точечным patch и сохранен "
+                    "в research/report.md."
+                ),
+            ),
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+            provider=self.name,
+            model=request.model or "fake-model",
+            metadata={"provider_kind": "fake"},
+        )
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            yield LlmStreamEvent(
+                event="tool_calls",
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                metadata={"planned_tool_calls": self._planned_calls()},
+            )
+            return
+        for chunk in (
+            "Готово: полный отчет обновлен точечным patch ",
+            "и сохранен в research/report.md.",
+        ):
+            yield LlmStreamEvent(event="delta", delta_text=chunk)
+        yield LlmStreamEvent(
+            event="done",
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+        )
+
+
+class DeepResearchBlockedFetchFakeProvider(DeepResearchArtifactFakeProvider):
+    """Fake provider that exercises blocked-source fallback in Deep Research."""
+
+    def _planned_calls(self) -> list[dict[str, object]]:
+        return [
+            ToolCall(
+                tool_name="todo_write",
+                tool_call_id="fake_blocked_todo",
+                args={
+                    "merge": False,
+                    "todos": [
+                        {
+                            "id": "plan",
+                            "content": "Сформировать план исследования",
+                            "status": "completed",
+                        },
+                        {
+                            "id": "blocked",
+                            "content": "Проверить заблокированные источники",
+                            "status": "completed",
+                        },
+                        {
+                            "id": "report",
+                            "content": "Записать caveat в отчет",
+                            "status": "completed",
+                        },
+                    ],
+                },
+            ).model_dump(mode="json"),
+            ToolCall(
+                tool_name="web_search",
+                tool_call_id="fake_blocked_search",
+                args={
+                    "query": "fork-join queueing models blocked sources",
+                    "mock_results": [
+                        {
+                            "title": "Blocked source A",
+                            "url": "https://example.com/blocked-a",
+                            "snippet": "Candidate source requires access.",
+                        },
+                        {
+                            "title": "Blocked source B",
+                            "url": "https://example.org/blocked-b",
+                            "snippet": "Candidate source blocks automated reads.",
+                        },
+                    ],
+                },
+            ).model_dump(mode="json"),
+            ToolCall(
+                tool_name="web_fetch",
+                tool_call_id="fake_blocked_fetch_a",
+                args={
+                    "url": "https://example.com/blocked-a",
+                    "mock_status_code": 403,
+                    "mock_content": "<html><head><title>Blocked A</title></head></html>",
+                    "mock_content_type": "text/html",
+                },
+            ).model_dump(mode="json"),
+            ToolCall(
+                tool_name="web_fetch",
+                tool_call_id="fake_blocked_fetch_b",
+                args={
+                    "url": "https://example.org/blocked-b",
+                    "mock_status_code": 403,
+                    "mock_content": "<html><head><title>Blocked B</title></head></html>",
+                    "mock_content_type": "text/html",
+                },
+            ).model_dump(mode="json"),
+            ToolCall(
+                tool_name="file_write",
+                tool_call_id="fake_blocked_report",
+                args={
+                    "path": "research/report.md",
+                    "create_parent": True,
+                    "content": "\n".join(
+                        [
+                            "# Fork-join blocked-source fallback",
+                            "",
+                            "Both candidate sources blocked automated reads with HTTP 403.",
+                            "The report records the limitation instead of pretending the pages were read.",
+                            "",
+                            "## Blocked candidates",
+                            "",
+                            "- https://example.com/blocked-a",
+                            "- https://example.org/blocked-b",
+                            "",
+                        ]
+                    ),
+                },
+            ).model_dump(mode="json"),
+        ]
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            return LlmResponse(
+                message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                provider=self.name,
+                model=request.model or "fake-model",
+                metadata={
+                    "provider_kind": "fake",
+                    "planned_tool_calls": self._planned_calls(),
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(
+                role=ChatRole.ASSISTANT,
+                content=(
+                    "Готово: полный отчет с caveat по заблокированным источникам "
+                    "сохранен в research/report.md."
+                ),
+            ),
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+            provider=self.name,
+            model=request.model or "fake-model",
+            metadata={"provider_kind": "fake"},
+        )
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            yield LlmStreamEvent(
+                event="tool_calls",
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                metadata={"planned_tool_calls": self._planned_calls()},
+            )
+            return
+        for chunk in (
+            "Готово: полный отчет с caveat по заблокированным ",
+            "источникам сохранен в research/report.md.",
+        ):
+            yield LlmStreamEvent(event="delta", delta_text=chunk)
+        yield LlmStreamEvent(
+            event="done",
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+        )
+
+
 class UntrustedSkillWarningFakeProvider(FakeProvider):
     """Fake provider that loads a skill outside trusted roots."""
 
@@ -950,6 +1178,10 @@ def build_fake_scenario_provider(scenario: str | None) -> FakeProvider | None:
         return DeepResearchSkillsFakeProvider()
     if normalized == "deep_research_artifact":
         return DeepResearchArtifactFakeProvider()
+    if normalized == "deep_research_targeted_patch":
+        return DeepResearchTargetedPatchFakeProvider()
+    if normalized == "deep_research_blocked_fetch":
+        return DeepResearchBlockedFetchFakeProvider()
     if normalized == "untrusted_skill_warning":
         return UntrustedSkillWarningFakeProvider()
     if normalized == "compaction_after_skill_invocation":

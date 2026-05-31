@@ -205,10 +205,15 @@ def _tool_result_failed(item: dict[str, Any]) -> bool:
         return True
     structured = item.get("structured_output")
     if isinstance(structured, dict):
+        if structured.get("blocked") is True or structured.get("unavailable") is True:
+            return True
         if structured.get("error") or structured.get("error_code"):
             return True
         status = str(structured.get("status") or "").lower()
         if status in {"error", "failed", "denied"}:
+            return True
+        status_code = _int_or_none(structured.get("status_code"))
+        if status_code is not None and status_code >= 400:
             return True
     return False
 
@@ -219,9 +224,27 @@ def _tool_result_blocked(item: dict[str, Any]) -> bool:
         return True
     structured = item.get("structured_output")
     if isinstance(structured, dict):
+        if structured.get("blocked") is True:
+            return True
         status = str(structured.get("status") or "").lower()
-        return status == "denied"
+        if status == "denied":
+            return True
+        status_code = _int_or_none(structured.get("status_code"))
+        return status_code in {401, 403, 407, 429, 451}
     return False
+
+
+def _int_or_none(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
 
 
 def _tool_result_url(item: dict[str, Any]) -> str | None:

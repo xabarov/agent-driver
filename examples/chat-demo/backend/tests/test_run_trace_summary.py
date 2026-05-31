@@ -208,6 +208,87 @@ def test_trace_summary_flags_deep_research_without_source_ledger_artifact() -> N
     assert summary["failures"]["deep_research_no_source_ledger_artifact"] is True
 
 
+def test_trace_summary_flags_deep_research_final_without_report_reference() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово: вот краткие выводы по теме.",
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search"),
+            _completed_tool("web_fetch"),
+            _completed_tool("file_write"),
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "operation": "write",
+                    "mode": "overwrite",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "kind": "research",
+                    "operation": "write",
+                    "record_count": 2,
+                    "tool_name": "source_ledger",
+                },
+            },
+            {"event": "llm_call_completed", "data": {}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["verdict"] == "fail"
+    assert summary["research_efficiency"]["final_references_report_artifact"] is False
+    assert summary["research_efficiency"]["final_missing_report_reference"] is True
+    assert summary["failures"]["deep_research_final_missing_report_reference"] is True
+
+
+def test_trace_summary_allows_deep_research_final_report_reference() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово: полный отчет сохранен в research/report.md.",
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search"),
+            _completed_tool("web_fetch"),
+            _completed_tool("file_write"),
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "operation": "write",
+                    "mode": "overwrite",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "kind": "research",
+                    "operation": "write",
+                    "record_count": 2,
+                    "tool_name": "source_ledger",
+                },
+            },
+            {"event": "llm_call_completed", "data": {}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["final_references_report_artifact"] is True
+    assert summary["research_efficiency"]["final_missing_report_reference"] is False
+    assert summary["failures"]["deep_research_final_missing_report_reference"] is False
+
+
 def test_trace_summary_flags_repeated_full_report_write() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
@@ -749,6 +830,61 @@ def test_trace_summary_ignores_blocked_fetches_for_research_depth() -> None:
     assert summary["research"]["fetch_count"] == 1
     assert summary["research"]["unique_domains"] == ["example.com"]
     assert summary["failures"]["search_only_research_report"] is True
+
+
+def test_trace_summary_allows_blocked_fetch_fallback_for_deep_research() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет по найденным источникам",
+        assistant_text=(
+            "Источники заблокировали чтение: https://example.com/blocked-a и "
+            "https://example.org/blocked-b. Полный отчет сохранен в research/report.md."
+        ),
+        events=[
+            _completed_tool("web_search"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "status_code": 403,
+                            "result_summary": "web_fetch blocked by upstream HTTP 403",
+                            "args": {"url": "https://example.com/blocked-a"},
+                        },
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "status_code": 403,
+                            "result_summary": "web_fetch blocked by upstream HTTP 403",
+                            "args": {"url": "https://example.org/blocked-b"},
+                        },
+                    ],
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "tool_name": "file_write",
+                    "tool_call_id": "write_report",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl"},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research"]["fetch_count"] == 0
+    assert summary["research"]["fetch_attempt_count"] == 2
+    assert summary["research"]["failed_fetch_count"] == 2
+    assert summary["research"]["fetch_fallback_required"] is True
+    assert summary["failures"]["search_only_research_report"] is False
+    assert summary["final_readiness"] == "allowed"
 
 
 def test_message_metadata_collects_tool_source_evidence() -> None:

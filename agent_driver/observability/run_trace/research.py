@@ -89,10 +89,12 @@ def research_summary(
         requires_research=requires_research,
     )
     search_count = tool_names.count("web_search")
+    all_fetch_payloads = list(tool_payloads(events, "web_fetch"))
     fetch_payloads = [
-        payload
-        for payload in tool_payloads(events, "web_fetch")
-        if tool_payload_succeeded(payload)
+        payload for payload in all_fetch_payloads if tool_payload_succeeded(payload)
+    ]
+    failed_fetch_payloads = [
+        payload for payload in all_fetch_payloads if not tool_payload_succeeded(payload)
     ]
     research_payloads = [
         payload
@@ -101,6 +103,8 @@ def research_summary(
         if tool_payload_succeeded(payload)
     ]
     fetch_count = len(fetch_payloads)
+    failed_fetch_count = len(failed_fetch_payloads)
+    fetch_attempt_count = len(all_fetch_payloads)
     domains = unique_domains(fetch_payloads)
     final_has_source_links = has_source_links(assistant_text) or has_tool_sources(
         research_payloads
@@ -109,10 +113,17 @@ def research_summary(
         task_contract=task_contract,
         user_prompt=user_prompt,
     )
+    fetch_fallback_required = (
+        depth == RESEARCH_DEPTH_SOURCE_VERIFIED
+        and failed_fetch_count >= SOURCE_VERIFIED_FETCHES
+        and fetch_count == 0
+        and (search_count > 0 or fetch_attempt_count > 0)
+    )
     fetch_required_but_missing = (
         (depth == RESEARCH_DEPTH_SOURCE_VERIFIED or fetch_required)
         and search_count > 0
         and fetch_count < (SOURCE_VERIFIED_FETCHES if not fetch_required else 1)
+        and not fetch_fallback_required
     )
     insufficient_source_diversity = (
         depth == RESEARCH_DEPTH_SOURCE_VERIFIED
@@ -152,6 +163,9 @@ def research_summary(
         "depth": depth,
         "search_count": search_count,
         "fetch_count": fetch_count,
+        "fetch_attempt_count": fetch_attempt_count,
+        "failed_fetch_count": failed_fetch_count,
+        "fetch_fallback_required": fetch_fallback_required,
         "required_fetch_count": (
             SOURCE_VERIFIED_FETCHES
             if depth == RESEARCH_DEPTH_SOURCE_VERIFIED

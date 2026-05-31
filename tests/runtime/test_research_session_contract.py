@@ -369,3 +369,51 @@ def test_deep_parallel_research_uses_readiness_contract_and_mode_payload() -> No
     assert payload["deep_research"]["final_readiness_authority"] == (
         "ResearchSessionContract"
     )
+
+
+def test_deep_parallel_research_treats_blocked_fetches_as_fallback() -> None:
+    """Blocked HTTP fetches should not masquerade as verified source reads."""
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        tool_results=[
+            _tool_result("web_search"),
+            {
+                "call": {
+                    "tool_name": "web_fetch",
+                    "tool_call_id": "blocked_a",
+                    "args": {"url": "https://example.com/blocked-a"},
+                },
+                "structured_output": {
+                    "url": "https://example.com/blocked-a",
+                    "status_code": 403,
+                    "blocked": True,
+                },
+            },
+            {
+                "call": {
+                    "tool_name": "web_fetch",
+                    "tool_call_id": "blocked_b",
+                    "args": {"url": "https://example.org/blocked-b"},
+                },
+                "structured_output": {
+                    "url": "https://example.org/blocked-b",
+                    "status_code": 403,
+                    "blocked": True,
+                },
+            },
+        ],
+        assistant_text=(
+            "Источники заблокировали чтение: https://example.com/blocked-a и "
+            "https://example.org/blocked-b. Отчет явно помечает этот caveat."
+        ),
+        web_fetch_available=True,
+    )
+
+    assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
+    assert contract.fetch_fallback_required is True
+    assert contract.evidence.successful_fetches == 0
+    assert contract.evidence.failed_fetches == 2
+    assert len(contract.source_ledger.blocked_reads) == 2

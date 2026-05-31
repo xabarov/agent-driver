@@ -1015,3 +1015,78 @@ Connected oversized tool output spill to the session workspace:
 Focused checks:
 
 - `tests/tools/test_output_spill.py`.
+
+## Implementation Slice P12-final-handoff-and-patch-lane - 2026-05-31
+
+Closed the remaining final-handoff acceptance gap and added a second
+deterministic Deep Research live lane:
+
+- Deep Research efficiency now checks whether the final answer points users to
+  `research/report.md` or clearly says the full report is saved there;
+- failure flag `deep_research_final_missing_report_reference` catches final
+  handoffs that leave the durable report hidden;
+- live scorecards print `final_refs_report`;
+- added fake provider scenario `deep_research_targeted_patch`, which writes the
+  report, previews it, and applies a targeted `file_patch`;
+- added Playwright scenario `deep-research-targeted-patch` to verify the
+  efficient edit path (`file_write -> artifact_preview -> file_patch`) without
+  stale edits, repeated reads, or full rewrites;
+- report-flow analysis now aligns artifact updates with `tool_call_id`, so
+  parallel tool batches preserve logical tool order in trace diagnostics.
+
+Focused checks:
+
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
+- `examples/chat-demo/backend/tests/test_chat_deep_research_sse.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-targeted-patch` with `CHAT_DEMO_FAKE_SCENARIO=deep_research_targeted_patch`.
+
+## Implementation Slice P13-blocked-fetch-and-live-scorecards - 2026-05-31
+
+Closed the blocked-source fallback lane and made live scorecards more useful
+for debugging entropy:
+
+- `web_fetch` now supports deterministic mock HTTP payloads via
+  `mock_status_code`, `mock_content`, and `mock_content_type`, so tests can
+  exercise HTTP 403/429/451 behavior without depending on external sites;
+- research evidence treats structured `blocked: true`, unavailable payloads,
+  and HTTP `4xx/5xx` status codes as failed reads, while blocked HTTP statuses
+  are also placed in `source_ledger.blocked_reads`;
+- trace research summaries now distinguish successful `fetch_count` from
+  `fetch_attempt_count` and `failed_fetch_count`;
+- source-verified/deep runs with enough blocked fetch attempts and zero
+  successful reads enter `fetch_fallback_required` instead of being mislabeled
+  as `search_only_research_report`;
+- added fake provider scenario `deep_research_blocked_fetch`;
+- added Playwright scenario `deep-research-blocked-fetch`, which verifies
+  `todo_write -> web_search -> web_fetch -> web_fetch -> file_write`, a visible
+  report artifact, source ledger artifact, and explicit caveat in
+  `research/report.md`;
+- live scorecards now print fetch attempts alongside successful fetches and
+  persist `/api/health` to `health.json`;
+- scorecards include Phoenix tracing status as `phoenix: enabled/configured/error`.
+  The fake local runs keep Phoenix disabled, but the same scorecard field will
+  surface tracing setup problems when the Docker/Phoenix stack is enabled.
+
+Current live ladder:
+
+1. `deep-research-artifact`: baseline durable report write.
+2. `deep-research-targeted-patch`: efficient preview plus targeted patch.
+3. `deep-research-blocked-fetch`: blocked-source fallback with explicit caveat.
+
+Focused checks:
+
+- `tests/tools/test_builtin_web_tools.py`;
+- `tests/runtime/test_research_session_contract.py`;
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
+- `examples/chat-demo/backend/tests/test_chat_deep_research_sse.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-targeted-patch`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-blocked-fetch`.

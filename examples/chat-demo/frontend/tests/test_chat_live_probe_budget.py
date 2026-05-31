@@ -141,6 +141,7 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
             "research": {
                 "search_count": 1,
                 "fetch_count": 2,
+                "fetch_attempt_count": 2,
                 "unique_domains": ["example.com", "example.org"],
             },
             "artifacts": {"paths": ["research/report.md", "research/sources.jsonl"]},
@@ -151,6 +152,7 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
                 "full_report_rewrite": False,
                 "stale_report_edit": False,
                 "repeated_report_read": False,
+                "final_references_report_artifact": True,
                 "output_tokens_after_first_report_update": 7,
                 "report_update_count": 1,
                 "report_full_write_count": 1,
@@ -170,16 +172,26 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
             "content": "# Report\nBody",
             "truncated": False,
         },
+        health_status={
+            "tracing": {
+                "enabled": True,
+                "configured": True,
+                "error": None,
+            }
+        },
     )
 
     assert (
         "tool_chain: `todo_write -> web_search -> web_fetch -> file_write`" in scorecard
     )
     assert "after_report=`7`" in scorecard
+    assert "attempts=`2`" in scorecard
     assert "domains=`2`" in scorecard
     assert "workspace=`research/report.md, research/sources.jsonl`" in scorecard
     assert "full_writes=`1`" in scorecard
     assert "stale_edits=`0`" in scorecard
     assert "repeat_reads=`0`" in scorecard
     assert "source_records=`2`" in scorecard
+    assert "final_refs_report=`True`" in scorecard
     assert "first_tool=`todo_write`" in scorecard
+    assert "phoenix: enabled=`True`, configured=`True`, error=`-`" in scorecard

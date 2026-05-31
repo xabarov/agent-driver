@@ -42,7 +42,9 @@ class _DummyClient:
         """No-op async context manager exit."""
         return None
 
-    async def get(self, url: str, headers: dict[str, str] | None = None) -> _DummyResponse:
+    async def get(
+        self, url: str, headers: dict[str, str] | None = None
+    ) -> _DummyResponse:
         """Return configured response for each GET request."""
         _ = (url, headers)
         return self._response
@@ -60,7 +62,9 @@ async def test_web_fetch_returns_text_payload(monkeypatch) -> None:
     def _client_factory(*_args, **_kwargs):
         return _DummyClient(response)
 
-    monkeypatch.setattr("agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory)
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
     registry = ToolRegistry()
     register_web_tools(registry)
     tool = registry.get("web_fetch")
@@ -85,7 +89,9 @@ async def test_web_fetch_rejects_binary_content_type(monkeypatch) -> None:
     def _client_factory(*_args, **_kwargs):
         return _DummyClient(response)
 
-    monkeypatch.setattr("agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory)
+    monkeypatch.setattr(
+        "agent_driver.tools.builtin.web.httpx.AsyncClient", _client_factory
+    )
     registry = ToolRegistry()
     register_web_tools(registry)
     tool = registry.get("web_fetch")
@@ -213,7 +219,9 @@ async def test_web_fetch_extract_mode_text_for_html(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_web_fetch_extracts_og_metadata_and_strips_script_style(monkeypatch) -> None:
+async def test_web_fetch_extracts_og_metadata_and_strips_script_style(
+    monkeypatch,
+) -> None:
     """web_fetch should preserve OG metadata and remove embedded script/style content."""
     html = (
         "<html><head>"
@@ -311,7 +319,9 @@ async def test_web_fetch_wraps_http_errors(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_web_fetch_returns_blocked_payload_for_forbidden_text(monkeypatch) -> None:
+async def test_web_fetch_returns_blocked_payload_for_forbidden_text(
+    monkeypatch,
+) -> None:
     """403 text pages should guide the model to try another source, not hard-fail."""
     response = _DummyResponse(
         url="https://example.com/blocked",
@@ -339,7 +349,34 @@ async def test_web_fetch_returns_blocked_payload_for_forbidden_text(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_web_fetch_returns_unavailable_payload_after_timeouts(monkeypatch) -> None:
+async def test_web_fetch_supports_mock_blocked_payload() -> None:
+    """mock_status_code should let deterministic probes exercise blocked fetches."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("web_fetch")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "url": "https://example.com/blocked",
+            "mock_status_code": 403,
+            "mock_content": (
+                "<html><head>"
+                '<meta property="og:title" content="Blocked" />'
+                "</head></html>"
+            ),
+            "mock_content_type": "text/html",
+        }
+    )
+    assert out["status_code"] == 403
+    assert out["blocked"] is True
+    assert out["content"] == ""
+    assert out["metadata"]["title"] == "Blocked"
+
+
+@pytest.mark.asyncio
+async def test_web_fetch_returns_unavailable_payload_after_timeouts(
+    monkeypatch,
+) -> None:
     """Persistent fetch timeouts should guide the model to another source."""
 
     class _TimeoutClient:
@@ -377,7 +414,7 @@ async def test_web_fetch_returns_unavailable_payload_after_timeouts(monkeypatch)
 async def test_web_search_parses_duckduckgo_html(monkeypatch) -> None:
     """web_search should parse at least one result from DDG-like HTML."""
     html = (
-        '<html><body>'
+        "<html><body>"
         '<a class="result-link" href="https://example.com/page">Example Title</a>'
         "</body></html>"
     )
@@ -410,7 +447,7 @@ async def test_web_search_parses_duckduckgo_html(monkeypatch) -> None:
 async def test_web_search_parses_alternate_duckduckgo_anchor_class(monkeypatch) -> None:
     """web_search should support result__a anchor fallback parsing."""
     html = (
-        '<html><body>'
+        "<html><body>"
         '<a class="result__a" href="https://example.com/alt">Alt Title</a>'
         "</body></html>"
     )
@@ -439,7 +476,7 @@ async def test_web_search_parses_alternate_duckduckgo_anchor_class(monkeypatch) 
 async def test_web_search_unwraps_duckduckgo_redirect_url(monkeypatch) -> None:
     """web_search should normalize DDG redirect href into target URL."""
     html = (
-        '<html><body>'
+        "<html><body>"
         '<a class="result-link" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Ftarget">Target</a>'
         "</body></html>"
     )
@@ -465,12 +502,12 @@ async def test_web_search_unwraps_duckduckgo_redirect_url(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_web_search_relaxes_site_operator_when_ddg_returns_no_links(monkeypatch) -> None:
+async def test_web_search_relaxes_site_operator_when_ddg_returns_no_links(
+    monkeypatch,
+) -> None:
     """site: queries often yield empty DDG html; server should retry without site:."""
     empty_html = "<html><body><div>no links</div></body></html>"
-    results_html = (
-        '<a class="result-link" href="https://ai.meta.com/sam3/">SAM 3</a>'
-    )
+    results_html = '<a class="result-link" href="https://ai.meta.com/sam3/">SAM 3</a>'
     calls: list[str] = []
 
     def _client_factory(*_args, **_kwargs):
@@ -512,7 +549,9 @@ async def test_web_search_relaxes_site_operator_when_ddg_returns_no_links(monkey
 
 
 @pytest.mark.asyncio
-async def test_web_search_includes_diagnostic_when_no_results_parsed(monkeypatch) -> None:
+async def test_web_search_includes_diagnostic_when_no_results_parsed(
+    monkeypatch,
+) -> None:
     """web_search should provide diagnostic metadata for empty parsed results."""
     html = "<html><body><div>no links</div></body></html>"
     response = _DummyResponse(
@@ -540,7 +579,9 @@ async def test_web_search_includes_diagnostic_when_no_results_parsed(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_web_search_returns_upstream_error_payload_on_provider_failure(monkeypatch) -> None:
+async def test_web_search_returns_upstream_error_payload_on_provider_failure(
+    monkeypatch,
+) -> None:
     """web_search should return graceful empty payload when upstream fails."""
     response = _DummyResponse(
         url="https://duckduckgo.com/html/?q=test",

@@ -48,7 +48,9 @@ _RESULT_LINK_ALT_RE = re.compile(
 )
 _SITE_OPERATOR_RE = re.compile(r"\bsite:\S+\b", re.IGNORECASE)
 _TAG_RE = re.compile(r"<[^>]+>")
-_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+_SCRIPT_STYLE_RE = re.compile(
+    r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL
+)
 _META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
 _META_ATTR_RE = re.compile(
     r'([A-Za-z_:.-]+)\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))',
@@ -115,6 +117,23 @@ def _web_fetch_manifest() -> ToolManifest:
                     "type": "boolean",
                     "description": "Allow localhost/private host targets",
                 },
+                "mock_status_code": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 599,
+                    "description": (
+                        "Optional offline HTTP status for deterministic tests; "
+                        "when present, no network call is made"
+                    ),
+                },
+                "mock_content": {
+                    "type": "string",
+                    "description": "Optional offline response body for tests",
+                },
+                "mock_content_type": {
+                    "type": "string",
+                    "description": "Optional offline content type for tests",
+                },
             },
             "required": ["url"],
             "additionalProperties": False,
@@ -178,22 +197,25 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
     requested_max_chars = _as_int(args.get("max_chars"), default=5_000, minimum=64)
     max_chars = min(requested_max_chars, _WEB_FETCH_MAX_CHARS_CAP)
     extract_mode = _extract_mode(args.get("extract_mode"))
-    try:
-        payload = await _fetch_url_text_with_retry(
-            url=url,
-            timeout_seconds=timeout_seconds,
-            max_bytes=max_bytes,
-        )
-    except httpx.TimeoutException as exc:
-        return _web_fetch_unavailable_payload(
-            url=url,
-            extract_mode=extract_mode,
-            timeout_seconds=timeout_seconds,
-            max_chars=max_chars,
-            reason=f"timeout: {_error_message(exc)}",
-        )
-    except (httpx.HTTPError, ValueError) as exc:
-        raise ValueError(f"web_fetch failed: {exc}") from exc
+    if args.get("mock_status_code") is not None:
+        payload = _mock_fetch_payload(url, args)
+    else:
+        try:
+            payload = await _fetch_url_text_with_retry(
+                url=url,
+                timeout_seconds=timeout_seconds,
+                max_bytes=max_bytes,
+            )
+        except httpx.TimeoutException as exc:
+            return _web_fetch_unavailable_payload(
+                url=url,
+                extract_mode=extract_mode,
+                timeout_seconds=timeout_seconds,
+                max_chars=max_chars,
+                reason=f"timeout: {_error_message(exc)}",
+            )
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ValueError(f"web_fetch failed: {exc}") from exc
     if not _is_text_content_type(payload.content_type):
         raise ValueError(f"unsupported content type: {payload.content_type}")
     if payload.status_code in _BLOCKED_STATUS_CODES:
@@ -479,7 +501,9 @@ def _normalize_mock_results(
 
 
 def _resolve_search_backend() -> str:
-    raw = str(os.environ.get("AGENT_DRIVER_WEB_SEARCH_BACKEND") or "ddg").strip().lower()
+    raw = (
+        str(os.environ.get("AGENT_DRIVER_WEB_SEARCH_BACKEND") or "ddg").strip().lower()
+    )
     if raw in {"ddg", "tavily", "brave"}:
         return raw
     return "ddg"
@@ -539,7 +563,9 @@ async def _fetch_url_text(
     max_bytes: int,
 ) -> _HttpPayload:
     headers = {"User-Agent": _DEFAULT_USER_AGENT}
-    async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_seconds) as client:
+    async with httpx.AsyncClient(
+        follow_redirects=True, timeout=timeout_seconds
+    ) as client:
         response = await client.get(url, headers=headers)
     if response.status_code not in _BLOCKED_STATUS_CODES:
         response.raise_for_status()
@@ -556,6 +582,27 @@ async def _fetch_url_text(
         text=text,
         bytes_total=bytes_total,
         bytes_loaded=bytes_loaded,
+    )
+
+
+def _mock_fetch_payload(url: str, args: dict[str, Any]) -> _HttpPayload:
+    status_code = _as_int(args.get("mock_status_code"), default=200, minimum=100)
+    if status_code > 599:
+        raise ValueError("mock_status_code must be <= 599")
+    content = args.get("mock_content")
+    if not isinstance(content, str):
+        content = ""
+    content_type = args.get("mock_content_type")
+    if not isinstance(content_type, str) or not content_type.strip():
+        content_type = "text/html; charset=utf-8"
+    size = len(content.encode("utf-8"))
+    return _HttpPayload(
+        url=url,
+        status_code=status_code,
+        content_type=content_type.lower(),
+        text=content,
+        bytes_total=size,
+        bytes_loaded=size,
     )
 
 
@@ -665,7 +712,9 @@ async def _brave_search(
     raw_payload = response.json()
     payload = raw_payload if isinstance(raw_payload, dict) else {}
     web_payload = payload.get("web", {}) if isinstance(payload.get("web"), dict) else {}
-    rows = _normalize_mock_results(web_payload.get("results", []), max_results=max_results)
+    rows = _normalize_mock_results(
+        web_payload.get("results", []), max_results=max_results
+    )
     return _search_payload(
         query=query,
         source="brave",
@@ -729,7 +778,9 @@ def _extract_payload_text(*, text: str, content_type: str, mode: str) -> str:
         body = _clean_html_text(html_without_embeds)
         return _prepend_metadata_text(body=body, metadata=metadata)
     normalized = _TAG_RE.sub("\n", html_without_embeds)
-    cleaned = "\n".join(line.strip() for line in normalized.splitlines() if line.strip())
+    cleaned = "\n".join(
+        line.strip() for line in normalized.splitlines() if line.strip()
+    )
     body = unescape(cleaned)
     return _prepend_metadata_text(body=body, metadata=metadata)
 
@@ -764,11 +815,11 @@ def _extract_tag_attributes(raw_tag: str) -> dict[str, str]:
         value = (
             match.group(3)
             if match.group(3) is not None
-            else match.group(4)
-            if match.group(4) is not None
-            else match.group(5)
-            if match.group(5) is not None
-            else ""
+            else (
+                match.group(4)
+                if match.group(4) is not None
+                else match.group(5) if match.group(5) is not None else ""
+            )
         )
         if name:
             attrs[name] = value

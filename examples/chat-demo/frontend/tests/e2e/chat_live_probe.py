@@ -50,6 +50,7 @@ class LiveScenario:
     requires_steering: bool = False
     requires_compaction: bool = False
     min_research_fetch_count: int | None = None
+    min_research_fetch_attempt_count: int | None = None
     min_research_domain_count: int | None = None
     max_research_search_count_without_min_domains: int | None = None
     max_research_fetch_count_without_min_domains: int | None = None
@@ -264,6 +265,99 @@ SCENARIOS: dict[str, LiveScenario] = {
             "deep_research_full_report_rewrite",
             "deep_research_stale_report_edit",
             "deep_research_repeated_report_read",
+            "deep_research_final_missing_report_reference",
+            "deep_research_missing_initial_todo",
+            "deep_research_long_final_after_report",
+        ),
+        requires_research=True,
+    ),
+    "deep-research-targeted-patch": LiveScenario(
+        name="deep-research-targeted-patch",
+        prompt=(
+            "Сделай deep research отчет по fork-join очередям, затем проверь "
+            "черновик и внеси точечное уточнение без полной перезаписи."
+        ),
+        required_tools=(
+            "todo_write",
+            "web_search",
+            "web_fetch",
+            "file_write",
+            "artifact_preview",
+            "file_patch",
+        ),
+        forbidden_tools=("bash", "python"),
+        tool_preset="deep_research",
+        research_depth="deep_parallel_research",
+        required_prompt_fragments=(
+            "react_chat_tool_policy_research_discipline.txt",
+            "react_chat_tool_policy_web_search.txt",
+            "react_chat_tool_policy_web_fetch.txt",
+        ),
+        required_artifact_path="research/report.md",
+        required_artifact_preview="Updated after preview.",
+        require_artifact_panel=True,
+        require_research_efficiency=True,
+        timeout_ms=240000,
+        forbidden_failures=(
+            "stuck_on_interrupt",
+            "missing_terminal_event",
+            "run_failed_or_cancelled",
+            "missing_required_research_evidence",
+            "progress_only_final",
+            "text_form_tool_call",
+            "fabricated_planning",
+            "repeated_approval_planning",
+            "extra_ask_user_question",
+            "search_only_research_report",
+            "deep_research_no_report_artifact",
+            "deep_research_no_source_ledger_artifact",
+            "deep_research_full_report_rewrite",
+            "deep_research_stale_report_edit",
+            "deep_research_repeated_report_read",
+            "deep_research_final_missing_report_reference",
+            "deep_research_missing_initial_todo",
+            "deep_research_long_final_after_report",
+        ),
+        requires_research=True,
+    ),
+    "deep-research-blocked-fetch": LiveScenario(
+        name="deep-research-blocked-fetch",
+        prompt=(
+            "Сделай deep research отчет по fork-join очередям, но явно "
+            "зафиксируй caveat, если источники заблокируют чтение."
+        ),
+        required_tools=("todo_write", "web_search", "web_fetch", "file_write"),
+        forbidden_tools=("bash", "python"),
+        tool_preset="deep_research",
+        research_depth="deep_parallel_research",
+        required_prompt_fragments=(
+            "react_chat_tool_policy_research_discipline.txt",
+            "react_chat_tool_policy_web_search.txt",
+            "react_chat_tool_policy_web_fetch.txt",
+        ),
+        min_research_fetch_attempt_count=2,
+        required_artifact_path="research/report.md",
+        required_artifact_preview="blocked automated reads",
+        require_artifact_panel=True,
+        require_research_efficiency=True,
+        timeout_ms=240000,
+        forbidden_failures=(
+            "stuck_on_interrupt",
+            "missing_terminal_event",
+            "run_failed_or_cancelled",
+            "missing_required_research_evidence",
+            "progress_only_final",
+            "text_form_tool_call",
+            "fabricated_planning",
+            "repeated_approval_planning",
+            "extra_ask_user_question",
+            "search_only_research_report",
+            "deep_research_no_report_artifact",
+            "deep_research_no_source_ledger_artifact",
+            "deep_research_full_report_rewrite",
+            "deep_research_stale_report_edit",
+            "deep_research_repeated_report_read",
+            "deep_research_final_missing_report_reference",
             "deep_research_missing_initial_todo",
             "deep_research_long_final_after_report",
         ),
@@ -502,6 +596,18 @@ def fetch_workspace_artifact_preview(
     )
 
 
+def fetch_health_status(page: Page) -> dict[str, Any]:
+    return page.evaluate(
+        """async () => {
+            const response = await fetch(`/api/health`);
+            if (!response.ok) {
+                throw new Error(`health failed: ${response.status}`);
+            }
+            return await response.json();
+        }""",
+    )
+
+
 def queue_steering_message(page: Page, run_id: str, message: str) -> dict[str, Any]:
     return page.evaluate(
         """async ({runId, message}) => {
@@ -714,6 +820,8 @@ def assert_trace_acceptance(
                 failures.append("research report was edited without a fresh read")
             if efficiency.get("repeated_report_read") is True:
                 failures.append("research report was read repeatedly without changes")
+            if efficiency.get("final_missing_report_reference") is True:
+                failures.append("final answer did not reference research/report.md")
             if efficiency.get("long_final_after_report") is True:
                 failures.append("long final answer was emitted after report artifact")
             if efficiency.get("first_tool") != "todo_write":
@@ -739,6 +847,19 @@ def assert_trace_acceptance(
             failures.append(
                 "research.fetch_count below minimum: "
                 f"{fetch_count!r} < {scenario.min_research_fetch_count}"
+            )
+    if scenario.min_research_fetch_attempt_count is not None:
+        fetch_attempt_count = (
+            research.get("fetch_attempt_count") if isinstance(research, dict) else None
+        )
+        if (
+            not isinstance(fetch_attempt_count, int)
+            or fetch_attempt_count < scenario.min_research_fetch_attempt_count
+        ):
+            failures.append(
+                "research.fetch_attempt_count below minimum: "
+                f"{fetch_attempt_count!r} < "
+                f"{scenario.min_research_fetch_attempt_count}"
             )
     if scenario.min_research_domain_count is not None:
         domains = research.get("unique_domains") if isinstance(research, dict) else None
@@ -796,6 +917,7 @@ def render_scenario_scorecard(
     failures: list[str],
     workspace_artifacts: dict[str, Any] | None = None,
     workspace_preview: dict[str, Any] | None = None,
+    health_status: dict[str, Any] | None = None,
 ) -> str:
     """Render a compact markdown scorecard for one live probe run."""
     llm = summary.get("llm") if isinstance(summary.get("llm"), dict) else {}
@@ -825,6 +947,12 @@ def render_scenario_scorecard(
         if isinstance(content, str):
             preview_size = len(content)
         preview_truncated = workspace_preview.get("truncated")
+    tracing = (
+        health_status.get("tracing")
+        if isinstance(health_status, dict)
+        and isinstance(health_status.get("tracing"), dict)
+        else {}
+    )
     rows = [
         f"# Live Probe Scorecard: {scenario.name}",
         "",
@@ -843,6 +971,7 @@ def render_scenario_scorecard(
             "- research: "
             f"search=`{research.get('search_count', 0)}`, "
             f"fetch=`{research.get('fetch_count', 0)}`, "
+            f"attempts=`{research.get('fetch_attempt_count', research.get('fetch_count', 0))}`, "
             f"domains=`{len(research.get('unique_domains') or [])}`, "
             f"readiness=`{summary.get('final_readiness')}`"
         ),
@@ -865,7 +994,14 @@ def render_scenario_scorecard(
             "- deep_research: "
             f"expected=`{efficiency.get('deep_research_artifact_expected', False)}`, "
             f"first_tool=`{efficiency.get('first_tool') or '-'}`, "
+            f"final_refs_report=`{efficiency.get('final_references_report_artifact', False)}`, "
             f"long_final_after_report=`{efficiency.get('long_final_after_report', False)}`"
+        ),
+        (
+            "- phoenix: "
+            f"enabled=`{tracing.get('enabled', False)}`, "
+            f"configured=`{tracing.get('configured', False)}`, "
+            f"error=`{tracing.get('error') or '-'}`"
         ),
         "",
     ]
@@ -880,6 +1016,7 @@ def write_scenario_artifacts(
     failures: list[str],
     workspace_artifacts: dict[str, Any] | None = None,
     workspace_preview: dict[str, Any] | None = None,
+    health_status: dict[str, Any] | None = None,
 ) -> Path:
     """Persist enough context to debug a live scenario without reopening the UI."""
     artifact_base = ARTIFACT_DIR / scenario.name
@@ -911,6 +1048,11 @@ def write_scenario_artifacts(
             json.dumps(workspace_preview, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+    if health_status is not None:
+        (artifact_base / "health.json").write_text(
+            json.dumps(health_status, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     (artifact_base / "scorecard.md").write_text(
         render_scenario_scorecard(
             scenario=scenario,
@@ -918,6 +1060,7 @@ def write_scenario_artifacts(
             failures=failures,
             workspace_artifacts=workspace_artifacts,
             workspace_preview=workspace_preview,
+            health_status=health_status,
         ),
         encoding="utf-8",
     )
@@ -972,6 +1115,11 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
     failures = assert_trace_acceptance(scenario, summary)
     workspace_artifacts: dict[str, Any] | None = None
     workspace_preview: dict[str, Any] | None = None
+    health_status: dict[str, Any] | None = None
+    try:
+        health_status = fetch_health_status(page)
+    except Exception as exc:
+        failures.append(f"health status check failed: {exc}")
     if scenario.required_artifact_path is not None:
         try:
             workspace_artifacts = fetch_workspace_artifacts(page, ids.session_id)
@@ -1012,6 +1160,7 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
         failures=failures,
         workspace_artifacts=workspace_artifacts,
         workspace_preview=workspace_preview,
+        health_status=health_status,
     )
     if failures:
         raise AssertionError("; ".join(failures))

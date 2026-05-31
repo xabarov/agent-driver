@@ -192,6 +192,9 @@ def summarize_run_trace(
         "deep_research_repeated_report_read": research_efficiency[
             "repeated_report_read"
         ],
+        "deep_research_final_missing_report_reference": research_efficiency[
+            "final_missing_report_reference"
+        ],
         "deep_research_long_final_after_report": research_efficiency[
             "long_final_after_report"
         ],
@@ -596,6 +599,10 @@ def _research_efficiency_summary(
     full_report_rewrite = deep_expected and report_full_write_count > 1
     stale_report_edit = deep_expected and stale_report_edit_count > 0
     repeated_report_read = deep_expected and repeated_report_read_count > 0
+    final_references_report = _final_references_report_artifact(assistant_text)
+    final_missing_report_reference = (
+        deep_expected and report_updated and not final_references_report
+    )
     repeated_tools = sorted(
         name
         for name in set(tool_names)
@@ -608,6 +615,8 @@ def _research_efficiency_summary(
         "full_report_rewrite": full_report_rewrite,
         "stale_report_edit": stale_report_edit,
         "repeated_report_read": repeated_report_read,
+        "final_references_report_artifact": final_references_report,
+        "final_missing_report_reference": final_missing_report_reference,
         "missing_initial_todo": missing_initial_todo,
         "first_tool": first_tool,
         "tool_chain": " -> ".join(tool_names),
@@ -653,6 +662,26 @@ def _deep_research_artifact_expected(
     ):
         return requires_research
     return False
+
+
+def _final_references_report_artifact(assistant_text: str) -> bool:
+    text = " ".join((assistant_text or "").lower().split())
+    if not text:
+        return False
+    markers = (
+        "research/report.md",
+        "report.md",
+        "отчет сохранен",
+        "отчёт сохранен",
+        "отчет в",
+        "отчёт в",
+        "полный отчет",
+        "полный отчёт",
+        "full report",
+        "saved in",
+        "saved to",
+    )
+    return any(marker in text for marker in markers)
 
 
 def _output_tokens_after_first_report_update(events: list[dict[str, object]]) -> int:
@@ -702,27 +731,15 @@ def _report_read_edit_flow_summary(events: list[dict[str, object]]) -> dict[str,
     repeated_unchanged_reads = 0
     report_generation = 0
     read_generations: set[int] = set()
-    for event in events:
-        event_name = event.get("event")
-        if event_name == "tool_call_completed":
-            for tool in event_tools(_event_data(event)):
-                tool_name = tool.get("tool_name") or tool.get("name")
-                if tool_name in {"read_file", "artifact_read", "artifact_preview"}:
-                    args = tool.get("args")
-                    if isinstance(args, dict) and _path_targets_report(
-                        args.get("path")
-                    ):
-                        report_reads += 1
-                        if report_generation in read_generations:
-                            repeated_unchanged_reads += 1
-                        read_generations.add(report_generation)
-                        fresh_read = True
-        if event_name not in {"artifact_created", "artifact_updated"}:
+    for action in _report_flow_actions(events):
+        if action["kind"] == "read":
+            report_reads += 1
+            if report_generation in read_generations:
+                repeated_unchanged_reads += 1
+            read_generations.add(report_generation)
+            fresh_read = True
             continue
-        data = _event_data(event)
-        if data.get("path") != "research/report.md":
-            continue
-        tool_name = data.get("tool_name")
+        tool_name = action.get("tool_name")
         if tool_name == "file_write":
             report_generation += 1
             fresh_read = False
@@ -738,6 +755,57 @@ def _report_read_edit_flow_summary(events: list[dict[str, object]]) -> dict[str,
         "report_targeted_edit_count": targeted_edits,
         "report_targeted_edit_without_fresh_read_count": stale_targeted_edits,
     }
+
+
+def _report_flow_actions(events: list[dict[str, object]]) -> list[dict[str, str]]:
+    updates_by_call_id: dict[str, list[dict[str, str]]] = {}
+    for event in events:
+        if event.get("event") not in {"artifact_created", "artifact_updated"}:
+            continue
+        data = _event_data(event)
+        if data.get("path") != "research/report.md":
+            continue
+        tool_name = data.get("tool_name")
+        if not isinstance(tool_name, str):
+            continue
+        action = {"kind": "write", "tool_name": tool_name}
+        call_id = data.get("tool_call_id")
+        if isinstance(call_id, str) and call_id:
+            updates_by_call_id.setdefault(call_id, []).append(action)
+
+    actions: list[dict[str, str]] = []
+    paired_update_ids: set[int] = set()
+    for event in events:
+        if event.get("event") in {"artifact_created", "artifact_updated"}:
+            data = _event_data(event)
+            if data.get("path") != "research/report.md":
+                continue
+            call_id = data.get("tool_call_id")
+            if isinstance(call_id, str) and call_id:
+                continue
+            tool_name = data.get("tool_name")
+            if isinstance(tool_name, str):
+                actions.append({"kind": "write", "tool_name": tool_name})
+            continue
+        if event.get("event") != "tool_call_completed":
+            continue
+        for tool in event_tools(_event_data(event)):
+            tool_name = tool.get("tool_name") or tool.get("name")
+            if tool_name in {"read_file", "artifact_read", "artifact_preview"}:
+                args = tool.get("args")
+                if isinstance(args, dict) and _path_targets_report(args.get("path")):
+                    actions.append({"kind": "read", "tool_name": str(tool_name)})
+            call_id = tool.get("tool_call_id")
+            if isinstance(call_id, str) and call_id:
+                for update in updates_by_call_id.get(call_id, []):
+                    actions.append(update)
+                    paired_update_ids.add(id(update))
+
+    for updates in updates_by_call_id.values():
+        for update in updates:
+            if id(update) not in paired_update_ids:
+                actions.append(update)
+    return actions
 
 
 def _path_targets_report(value: object) -> bool:
@@ -846,6 +914,10 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "deep_research_repeated_report_read",
         "research/report.md was read repeatedly without an intervening artifact update.",
+    ),
+    (
+        "deep_research_final_missing_report_reference",
+        "Final Deep Research handoff did not point the user to research/report.md.",
     ),
     (
         "deep_research_long_final_after_report",
