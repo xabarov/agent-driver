@@ -42,7 +42,7 @@ not a public SDK contract.
 | `resume_action`, `resume_message`, `resume_target_step`, `pending_interrupt`, `interrupt_payload` | resume/interrupt flow, output builder | checkpoint/output | yes for resume/interrupt UI | `LoopControlState` plus interrupt contract |
 | `tool_results`, `tool_trace`, `tool_calls`, `tool_loop_iterations`, `max_tool_calls` | tool stage, output, research contract | output/checkpoint | yes, trace/debug | `ToolLoopState` |
 | `unknown_tool_counts`, `denied_tool_counts`, `last_denied_signature`, `approved_tool_call` | tool governance and repair loops | checkpoint mostly | diagnostics | `ToolLoopState` |
-| `effective_tool_names`, `tool_choice_override`, `forced_tool_choice_retry`, `forced_tool_catalog` | llm/tool-call preparation and repair | checkpoint | diagnostics | `ToolLoopState` or `ProviderRuntimeState` |
+| `effective_tool_names`, `tool_choice_override`, `force_final_answer`, `force_final_answer_reason`, `forced_tool_choice_retry`, `forced_tool_catalog` | llm/tool-call preparation and repair | checkpoint | diagnostics | `ToolLoopState` or `ProviderRuntimeState` |
 | `planning_state`, `planning_step`, `planning_state_seed` | step planning, output, research contract | output/checkpoint | yes | `PlanningRuntimeState` |
 | `approved_plan`, `clarification`, `last_todo_write_signature`, `todo_write_deduped` | planning tools, approval flow, output | output/checkpoint | yes for planning UI | `PlanningRuntimeState` |
 | `last_in_progress_id`, `todo_hint_count_step1`, `todo_reminder_tool_loops`, `tool_loops_since_todo_write` | todo nudges and reminders | checkpoint | diagnostics | `PlanningRuntimeState` |
@@ -59,7 +59,7 @@ not a public SDK contract.
 | `active_compaction_id`, `compaction_decision`, `compaction_audit`, `compaction_result`, `compaction_failures` | compaction stage/orchestrator | output/checkpoint | yes for compaction UI | `CompactionRuntimeState` |
 | `session_memory_extraction`, `retained_artifact_ids`, `retained_digest_ids` | output/memory compaction | output/checkpoint | trace/debug | `CompactionRuntimeState` |
 | `planned_subagent_group`, `subagent_groups`, `subagent_runs`, `subagent_merge_summary`, `subagent_origin` | subagent stage/output | output/checkpoint | yes for subagent UI | `SubagentRuntimeState` |
-| `artifact_refs`, `digest_refs`, `observations`, `protocol_messages` | output builder, context stores, protocol validation | output/checkpoint | yes for diagnostics | `OutputRuntimeState` |
+| `artifact_refs`, `digest_refs`, `observations`, `protocol_messages`, `parse_error_feedback_sent_keys` | output builder, context stores, protocol validation | output/checkpoint | yes for diagnostics | `OutputRuntimeState` |
 | `prompt_fragments`, `code_tool_docs`, `python_policy_hint_sent` | prompt/profile policy | checkpoint | diagnostics | `OutputRuntimeState` or prompt-render state |
 | `last_provider_error`, `max_tokens_retry`, `empty_forced_final_retry`, `forced_final_retry`, `reasoning_echo_retry` | provider retry/recovery | checkpoint | provider diagnostics | `ProviderRuntimeState` |
 | `applied_controls`, `workspace_cwd`, `eval_sandbox_dir` | control dispatcher / runner env | output/checkpoint | diagnostics | `LoopControlState` or run input metadata |
@@ -94,5 +94,6 @@ state boundary:
    shape.
 4. Decide which keys graduate to documented SDK diagnostics and which remain
    internal trace fields.
-5. Add a lint/review rule: new metadata keys must be added to this inventory
-   or to a typed state contract in the same change.
+5. Done: `tests/runtime/test_runtime_metadata_inventory.py` requires new
+   literal runtime `context.metadata` keys to be added to this inventory in the
+   same change.

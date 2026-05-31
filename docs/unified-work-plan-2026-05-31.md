@@ -275,7 +275,7 @@ Purpose: stop new work from deepening the metadata bag problem.
   `exit_plan_mode` is documented and handled only as a legacy trace alias.
   Prompts, `PLANNING_TOOL_NAMES`, trace summaries, tests and docs now use that
   vocabulary.
-- [ ] Add a rule: new runtime state must go through owned helpers, not fresh
+- [x] Add a rule: new runtime state must go through owned helpers, not fresh
   ad hoc metadata keys.
 
 Acceptance:
