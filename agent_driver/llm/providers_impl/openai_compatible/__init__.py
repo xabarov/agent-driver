@@ -22,7 +22,7 @@ from agent_driver.llm.payload_debug import (
     debug_llm_payload_enabled,
     format_payload_debug_line,
 )
-from agent_driver.llm.providers_impl.openai_compatible_payload import (
+from agent_driver.llm.providers_impl.openai_compatible.payload import (
     build_openai_completion_payload,
     normalize_tool_choice_for_openai as _normalize_tool_choice_for_openai,
 )
@@ -31,7 +31,7 @@ from agent_driver.llm.provider_capabilities import (
     resolve_openai_compatible_capabilities,
 )
 from agent_driver.llm.tool_call_parser import extract_text_form_tool_calls
-from agent_driver.llm.providers_impl.openai_compatible_normalization import (
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
     first_choice as _first_choice,
     forced_tool_choice_name as _forced_tool_choice_name,
     map_finish_reason as _map_finish_reason,
@@ -42,7 +42,7 @@ from agent_driver.llm.providers_impl.openai_compatible_normalization import (
     planned_tool_calls_from_openai as _planned_tool_calls_from_openai,
     suppress_text_form_tool_calls_when_tools_disabled as _suppress_text_form_tool_calls_when_tools_disabled,
 )
-from agent_driver.llm.providers_impl.openai_compatible_normalization import (
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
     estimate_cost_usd as _estimate_cost_usd,
     extract_reasoning_metadata as _extract_reasoning_metadata,
     extract_usage as _extract_usage,
