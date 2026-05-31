@@ -667,6 +667,10 @@ Status on 2026-05-31:
   event projection to `runtime/single_agent/llm_step_context_pressure.py` while
   preserving the existing `llm_step.py` private helper imports used by focused
   tests.
+- Provider HTTP error parsing, forced-tool request narrowing, reasoning-echo
+  stripping, max-token retry shaping and no-tools retry request shaping moved to
+  `runtime/single_agent/llm_step_provider_requests.py`; the LLM step keeps the
+  retry loop and runtime event emission.
 - `tool_stage.py` remains the compatibility entrypoint for
   `execute_tool_stage_step`; focused planning, subagent and chat-demo Deep
   Research/Skills SSE tests pass after the extraction.
