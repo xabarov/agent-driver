@@ -18,7 +18,9 @@ from agent_driver.runtime.metadata_state import (
     get_research_runtime_state,
 )
 from agent_driver.runtime.research_evidence import RESEARCH_DEPTH_SOURCE_VERIFIED
-from agent_driver.runtime.single_agent.llm import effective_tool_names_from_registry
+from agent_driver.runtime.single_agent.llm_step.build import (
+    effective_tool_names_from_registry,
+)
 from agent_driver.runtime.single_agent.types import RunContext, RunnerConfig, RunnerDeps
 from agent_driver.runtime.task_contract import render_task_contract_reminder
 from agent_driver.skills import CURATED_RESEARCH_SKILL_NAMES, curated_skills_dir

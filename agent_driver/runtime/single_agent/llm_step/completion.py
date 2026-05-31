@@ -23,7 +23,7 @@ from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     should_retry_empty_forced_final_non_stream,
 )
 from agent_driver.runtime.single_agent.step_events import emit_step_event
-from agent_driver.runtime.single_agent.streaming import (
+from agent_driver.runtime.single_agent.llm_step.streaming import (
     LlmStreamIdleTimeout,
     complete_streaming_request,
     is_stream_enabled,

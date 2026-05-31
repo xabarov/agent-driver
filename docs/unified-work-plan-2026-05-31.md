@@ -701,6 +701,9 @@ Status on 2026-05-31:
   and runtime config sections were grouped under
   `runtime/single_agent/lifecycle/`; old `steps`, `resume`, `journal`,
   `pending` and `config_sections` module paths remain compatibility shims.
+- LLM request-building and streaming helpers were folded into the
+  `runtime/single_agent/llm_step/` package as `build.py` and `streaming.py`;
+  old `llm` and `streaming` module paths remain compatibility shims.
 - `GovernedToolExecutor.execute()` now runs through explicit stages:
   normalize planned calls, apply pre-hooks, add policy hints, partition
   serial/parallel units, execute units and collect ordered results.
