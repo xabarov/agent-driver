@@ -32,7 +32,7 @@ from agent_driver.runtime.single_agent.context_management.compaction_stage impor
 )
 from agent_driver.runtime.single_agent.continuation import analyze_continuation_intent
 from agent_driver.runtime.single_agent.llm_step import execute_llm_call_step
-from agent_driver.runtime.single_agent.step_planning import build_planning_snapshot
+from agent_driver.runtime.single_agent.planning.state import build_planning_snapshot
 from agent_driver.runtime.single_agent.subagent_stage import (
     maybe_execute_subagent_group,
 )
@@ -123,7 +123,7 @@ class SingleAgentStepMixin:
         )
 
     async def _execute_run_started(self, context: RunContext) -> RuntimeStepResult:
-        from agent_driver.runtime.single_agent.step_planning import (
+        from agent_driver.runtime.single_agent.planning.state import (
             apply_planning_state_seed_from_metadata,
         )
 

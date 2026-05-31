@@ -35,7 +35,7 @@ from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.step_observations import (
     build_observations_from_tool_result,
 )
-from agent_driver.runtime.single_agent.step_planning import (
+from agent_driver.runtime.single_agent.planning.state import (
     apply_planning_updates_from_envelopes,
     build_planning_snapshot,
     update_planning_state_from_tool_results,

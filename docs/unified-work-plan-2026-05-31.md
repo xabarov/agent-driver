@@ -693,6 +693,10 @@ Status on 2026-05-31:
   `runtime/single_agent/context_management/`: compaction lifecycle,
   context-window recovery, protocol validation and todo reminders. The old
   module paths remain thin compatibility shims.
+- Planning-state helpers were grouped under `runtime/single_agent/planning/`,
+  and terminal output builders/mixins under
+  `runtime/single_agent/finalization/`; old `step_planning`, `output` and
+  `output_builders` module paths remain compatibility shims.
 - `GovernedToolExecutor.execute()` now runs through explicit stages:
   normalize planned calls, apply pre-hooks, add policy hints, partition
   serial/parallel units, execute units and collect ordered results.

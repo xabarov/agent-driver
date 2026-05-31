@@ -54,7 +54,7 @@ from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     recover_force_final_stream_response as _recover_force_final_stream_response,
 )
 from agent_driver.runtime.single_agent.step_events import emit_step_event
-from agent_driver.runtime.single_agent.step_planning import build_planning_snapshot
+from agent_driver.runtime.single_agent.planning.state import build_planning_snapshot
 from agent_driver.runtime.single_agent.streaming import (
     LlmStreamIdleTimeout,
     emit_token_delta_events,
