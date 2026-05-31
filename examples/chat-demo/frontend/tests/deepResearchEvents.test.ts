@@ -61,4 +61,50 @@ describe("deep research stream events", () => {
       );
     }
   });
+
+  test("replay messages carry deep research report artifact", () => {
+    const messages = eventsToMessages([
+      event(1, "run_started", {}),
+      event(2, "token_delta", { delta_text: "Done" }),
+      event(3, "run_completed", {
+        deep_research_artifacts: {
+          report_exists: true,
+          report_path: "research/report.md",
+          report_size_bytes: 2048,
+          captured_long_answers: 1,
+        },
+      }),
+    ]);
+    const assistant = messages.find((item) => item.role === "assistant");
+
+    expect(assistant?.role).toBe("assistant");
+    if (assistant?.role === "assistant") {
+      expect(assistant.deepResearch?.artifact?.reportPath).toBe(
+        "research/report.md",
+      );
+      expect(assistant.deepResearch?.artifact?.reportSizeBytes).toBe(2048);
+    }
+  });
+
+  test("replay messages update report artifact from live artifact event", () => {
+    const messages = eventsToMessages([
+      event(1, "run_started", {}),
+      event(2, "token_delta", { delta_text: "Working" }),
+      event(3, "artifact_created", {
+        path: "research/report.md",
+        kind: "report",
+        size_bytes: 512,
+      }),
+      event(4, "run_completed", {}),
+    ]);
+    const assistant = messages.find((item) => item.role === "assistant");
+
+    expect(assistant?.role).toBe("assistant");
+    if (assistant?.role === "assistant") {
+      expect(assistant.deepResearch?.artifact?.reportPath).toBe(
+        "research/report.md",
+      );
+      expect(assistant.deepResearch?.artifact?.reportSizeBytes).toBe(512);
+    }
+  });
 });

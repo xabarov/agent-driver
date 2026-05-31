@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.api.chat import _chat_tool_policy
+from app.api.chat import _chat_tool_policy, _effective_chat_preset
 from app.config import Settings
 from app.schemas.chat import ChatMessageRequest
 from app.services.agent_factory import _tool_config_from_preset
@@ -174,6 +174,32 @@ def test_chat_tool_policy_accepts_deep_research_mode() -> None:
         "deep_parallel_research"
     )
     assert policy.metadata["task_contract"]["requires_research"] is True
+
+
+def test_deep_research_mode_uses_artifact_tool_preset() -> None:
+    body = ChatMessageRequest(
+        message="найди источники и подготовь отчет",
+        tool_preset="web",
+        research_depth="deep_parallel_research",
+    )
+
+    assert _effective_chat_preset(body) == "deep_research"
+
+
+def test_deep_research_preset_includes_scoped_artifact_tools() -> None:
+    config = _tool_config_from_preset("deep_research")
+
+    assert set(config.tools) == {"agent_tool", "skill_tool", "skill_view"}
+    assert set(config.tool_packs) == {
+        "web",
+        "planning_progress",
+        "filesystem_read",
+        "filesystem_write",
+    }
+    assert "shell" not in config.tool_packs
+    assert "discovery" not in config.tool_packs
+    assert config.allow_dangerous_tools is True
+    assert config.enable_python is False
 
 
 def test_chat_tool_policy_denies_web_tools_for_plan_only() -> None:

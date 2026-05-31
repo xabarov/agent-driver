@@ -1,4 +1,4 @@
-import { BookOpenCheck, CircleAlert, FileSearch, Radio } from "lucide-react";
+import { BookOpenCheck, CircleAlert, FileText, FileSearch, Radio } from "lucide-react";
 
 import type { DeepResearchState } from "../../lib/events";
 import { Badge } from "../ui/badge";
@@ -9,7 +9,8 @@ interface DeepResearchPanelProps {
 
 export function DeepResearchPanel({ state }: DeepResearchPanelProps) {
   const ledger = state?.ledger;
-  if (!ledger && !state?.progress.length) {
+  const artifact = state?.artifact;
+  if (!ledger && !artifact && !state?.progress.length) {
     return null;
   }
   const verified = ledger?.verifiedReads.length ?? 0;
@@ -34,12 +35,24 @@ export function DeepResearchPanel({ state }: DeepResearchPanelProps) {
         <Badge variant="outline">{verified} verified</Badge>
         <Badge variant="outline">{candidates} candidates</Badge>
         {domains ? <Badge variant="outline">{domains} domains</Badge> : null}
+        {artifact ? <Badge variant="outline">{artifact.reportPath}</Badge> : null}
         {failed ? (
           <Badge variant="secondary" className="bg-amber-500/15 text-amber-700">
             {failed} blocked
           </Badge>
         ) : null}
       </div>
+      {artifact ? (
+        <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+          <FileText className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />
+          <span className="truncate">{artifact.reportPath}</span>
+          {artifact.reportSizeBytes ? (
+            <span className="shrink-0 tabular-nums">
+              {formatBytes(artifact.reportSizeBytes)}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {state?.progress.length ? (
         <ol className="mt-2 grid gap-1.5 text-xs text-muted-foreground">
           {state.progress.slice(-4).map((item) => (
@@ -58,4 +71,14 @@ export function DeepResearchPanel({ state }: DeepResearchPanelProps) {
       ) : null}
     </section>
   );
+}
+
+function formatBytes(value: number): string {
+  if (value >= 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  if (value >= 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+  return `${Math.round(value)} B`;
 }

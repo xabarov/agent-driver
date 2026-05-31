@@ -13,6 +13,13 @@ from agent_driver.runtime.metadata_state import (
     get_research_runtime_state,
     get_tool_loop_state,
 )
+from agent_driver.runtime.research_artifacts import (
+    captured_draft_protocol_text,
+    deep_research_artifact_repair_hint,
+    deep_research_report_artifact_exists,
+    ensure_deep_research_report_artifact_metadata,
+    maybe_capture_deep_research_draft,
+)
 from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
     REPAIR_FINAL_MISSING_SOURCE_LINKS,
@@ -200,6 +207,9 @@ class SingleAgentStepMixin:
         continuation_reason = context.metadata.get("continuation_nudge_reason")
         if isinstance(continuation_reason, str) and continuation_reason:
             completed_payload["continuation_reason"] = continuation_reason
+        research_artifacts = ensure_deep_research_report_artifact_metadata(context)
+        if isinstance(research_artifacts, dict):
+            completed_payload["deep_research_artifacts"] = dict(research_artifacts)
         if context.llm_response is not None and context.llm_response.usage is not None:
             completed_payload["usage"] = context.llm_response.usage.model_dump(
                 mode="json"
@@ -275,6 +285,10 @@ def _maybe_build_continuation_transition(
     research_state.set_contract_payload(contract.model_dump())
     readiness = contract.final_readiness
     if readiness.status != FINAL_READINESS_ALLOWED:
+        protocol_text = text
+        capture_payload = maybe_capture_deep_research_draft(context, text)
+        if capture_payload is not None:
+            protocol_text = captured_draft_protocol_text(capture_payload)
         reason_signature = ",".join(readiness.reasons)
         repair_count = research_state.contract_repair_nudge_count()
         previous_signature = research_state.contract_repair_reason_signature()
@@ -292,7 +306,7 @@ def _maybe_build_continuation_transition(
         research_state.set_contract_repair_reason_signature(reason_signature)
         return _build_continuation_transition(
             context,
-            text=text,
+            text=protocol_text,
             nudge=nudge,
             reason=intent.reason,
             count_key="contract_repair_nudge_count",
@@ -385,6 +399,13 @@ def _force_research_repair_tool_choice(
             )
             return
     if REPAIR_UNFINISHED_TODOS in reasons:
+        if deep_research_report_artifact_exists(context) and _tool_available_for_repair(
+            context, "todo_write"
+        ):
+            get_tool_loop_state(context).set_tool_choice_override(
+                {"type": "tool", "name": "todo_write"}
+            )
+            return
         if _research_evidence_ready_for_final_repair(context):
             get_tool_loop_state(context).force_final_answer(
                 reason="contract_repair_final_answer"
@@ -462,6 +483,9 @@ def _research_contract_repair_nudge(
         fragments.append(message)
     if REPAIR_FINAL_MISSING_SOURCE_LINKS in reasons:
         fragments.append("the final answer must include visible source links")
+    artifact_hint = deep_research_artifact_repair_hint(context)
+    if artifact_hint:
+        fragments.append(artifact_hint)
     reason_text = (
         "; ".join(fragments) if fragments else "the run contract is incomplete"
     )

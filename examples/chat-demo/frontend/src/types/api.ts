@@ -101,6 +101,8 @@ export interface AssistantMessageMetadataView {
   estimated?: boolean;
   source_evidence?: unknown[];
   sourceEvidence?: unknown[];
+  deep_research_artifacts?: Record<string, unknown>;
+  deepResearchArtifacts?: Record<string, unknown>;
   steering_controls?: SteeringControlView[];
   steeringControls?: SteeringControlView[];
   compaction?: CompactionNoticeView;

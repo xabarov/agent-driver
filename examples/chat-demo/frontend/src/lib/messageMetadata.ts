@@ -22,6 +22,8 @@ export interface AssistantMessageMetadata {
   provider?: string;
   estimated?: boolean;
   planningExecuted?: PlanningExecutedVerdict;
+  deep_research_artifacts?: Record<string, unknown>;
+  deepResearchArtifacts?: Record<string, unknown>;
 }
 
 export interface LlmCompletedPatch {
@@ -224,11 +226,18 @@ export function normalizeMetadataFromApi(
   if (typeof raw.provider === "string") {
     patch.provider = raw.provider;
   }
-  if (Object.keys(patch).length === 0) {
+  const artifacts = record.deep_research_artifacts ?? record.deepResearchArtifacts;
+  if (Object.keys(patch).length === 0 && !isRecord(artifacts)) {
     return undefined;
   }
-  patch.estimated = true;
-  return mergeAssistantMetadata(undefined, patch);
+  const metadata =
+    Object.keys(patch).length > 0
+      ? mergeAssistantMetadata(undefined, { ...patch, estimated: true })
+      : {};
+  if (isRecord(artifacts)) {
+    metadata.deep_research_artifacts = artifacts;
+  }
+  return metadata;
 }
 
 export function pickMetadata(
@@ -252,6 +261,12 @@ export function hasMetadataContent(metadata: AssistantMessageMetadata | undefine
     (metadata.totalTokens ?? 0) > 0 ||
     (metadata.completionTokens ?? 0) > 0 ||
     (metadata.durationMs ?? 0) > 0 ||
-    metadata.costUsd !== undefined
+    metadata.costUsd !== undefined ||
+    metadata.deep_research_artifacts !== undefined ||
+    metadata.deepResearchArtifacts !== undefined
   );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

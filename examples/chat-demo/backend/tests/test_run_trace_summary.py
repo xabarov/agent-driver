@@ -94,6 +94,47 @@ def test_trace_summary_passes_research_with_web_tool() -> None:
     assert summary["research"]["tools_used"] == ["web_search"]
 
 
+def test_trace_summary_exposes_tool_chain_usage_and_artifact_updates() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="подготовь deep research отчет",
+        assistant_text="Готово, отчет в research/report.md",
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search"),
+            _completed_tool("file_write"),
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "operation": "write",
+                    "size_bytes": 4096,
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "llm_call_completed",
+                "data": {
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 40,
+                        "total_tokens": 140,
+                        "cost_usd_estimate": 0.002,
+                    }
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["tool_chain"] == "todo_write -> web_search -> file_write"
+    assert summary["llm"]["usage"]["total_tokens"] == 140
+    assert summary["artifacts"]["update_count"] == 1
+    assert summary["artifacts"]["report_updated"] is True
+    assert summary["artifacts"]["paths"] == ["research/report.md"]
+
+
 def test_trace_summary_flags_search_only_report_research() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

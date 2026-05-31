@@ -7,12 +7,14 @@ import {
   type AssistantMessageMetadata,
   type LlmCompletedPatch,
 } from "../lib/messageMetadata";
-import type {
-  ParsedCompactionNotice,
-  DeepResearchState,
-  ParsedSubagentLifecycleEvent,
-  ParsedToolState,
-  SourceLedger,
+import {
+  parseDeepResearchArtifactPayload,
+  type ParsedCompactionNotice,
+  type DeepResearchArtifact,
+  type DeepResearchState,
+  type ParsedSubagentLifecycleEvent,
+  type ParsedToolState,
+  type SourceLedger,
 } from "../lib/events";
 import type { PlanningSnapshot } from "../lib/planning";
 import {
@@ -175,6 +177,17 @@ function sourceEvidenceFromRawMetadata(raw: unknown): SourceEvidence[] {
   }
   const record = raw as Record<string, unknown>;
   return normalizeSourceEvidenceList(record.source_evidence ?? record.sourceEvidence);
+}
+
+function deepResearchFromRawMetadata(raw: unknown): DeepResearchState | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  const artifact = parseDeepResearchArtifactPayload(
+    record.deep_research_artifacts ?? record.deepResearchArtifacts,
+  );
+  return artifact ? { artifact, progress: [] } : undefined;
 }
 
 function compactionNoticeFromRawMetadata(
@@ -406,7 +419,11 @@ interface ChatState {
   ) => void;
   updateDeepResearch: (
     assistantId: string,
-    patch: { ledger?: SourceLedger; progress?: DeepResearchState["progress"][number] },
+    patch: {
+      ledger?: SourceLedger;
+      progress?: DeepResearchState["progress"][number];
+      artifact?: DeepResearchArtifact;
+    },
   ) => void;
   finishTurn: (assistantId: string) => void;
   setStreaming: (value: boolean) => void;
@@ -627,6 +644,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ...message,
           deepResearch: {
             ledger: patch.ledger ?? current.ledger,
+            artifact: patch.artifact ?? current.artifact,
             progress: patch.progress
               ? [...current.progress, patch.progress].slice(-6)
               : current.progress,
@@ -813,6 +831,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const runSources = runMetadata ? sourceEvidenceFromRawMetadata(runMetadata) : [];
         const fromTranscript = normalizeMetadataFromApi(item.metadata ?? undefined);
         const transcriptSources = sourceEvidenceFromRawMetadata(item.metadata);
+        const deepResearch =
+          deepResearchFromRawMetadata(runMetadata) ??
+          deepResearchFromRawMetadata(item.metadata);
         const serverMetadata = fromTranscript ?? fromRun;
         const localMetadata =
           (runId ? priorByRunId.get(runId) : undefined) ??
@@ -827,6 +848,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           runId,
           metadata: pickMetadata(serverMetadata, localMetadata),
           sources,
+          deepResearch,
         });
         const compactionNotice = compactionNoticeFromRawMetadata(
           runMetadata ?? item.metadata,

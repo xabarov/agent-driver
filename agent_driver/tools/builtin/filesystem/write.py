@@ -162,8 +162,9 @@ async def file_write_handler(args: dict[str, Any]) -> dict[str, Any]:
     if mode not in {"overwrite", "append"}:
         raise ValueError("mode must be one of: overwrite, append")
     max_bytes = as_int(args.get("max_bytes"), default=MAX_BYTES_DEFAULT, minimum=1)
+    existed_before = path.exists()
     existing = (
-        read_text_with_size_guard(path, max_bytes=max_bytes) if path.exists() else ""
+        read_text_with_size_guard(path, max_bytes=max_bytes) if existed_before else ""
     )
     new_text = content if mode == "overwrite" else f"{existing}{content}"
     ensure_text_size(new_text, max_bytes=max_bytes)
@@ -179,6 +180,8 @@ async def file_write_handler(args: dict[str, Any]) -> dict[str, Any]:
         "operation": "write",
         "mode": mode,
         "dry_run": dry_run,
+        "created": not dry_run and not existed_before,
+        "existed_before": existed_before,
         "bytes_written": len(content.encode("utf-8")),
         "replacements": 0,
         "size_bytes": len(new_text.encode("utf-8")),
@@ -220,6 +223,8 @@ async def file_edit_handler(args: dict[str, Any]) -> dict[str, Any]:
         "path": str(path),
         "operation": "edit",
         "dry_run": dry_run,
+        "created": False,
+        "existed_before": True,
         "replacements": expected,
         "size_bytes": len(updated.encode("utf-8")),
         "preview": _preview(before=source, after=updated, max_chars=preview_chars),

@@ -96,6 +96,7 @@ def summarize_run_trace(
     )
     provider_rejected = _provider_rejected(events)
     unknown_tools = _unknown_tool_summary(events)
+    artifacts = _artifact_summary(events)
     research_final_covers_plan = _research_final_answer_covers_plan_todos(
         requires_research=requires_research,
         research=research,
@@ -182,6 +183,8 @@ def summarize_run_trace(
         "prompt_surface": prompt_surface,
         "tool_calls": len(tool_names),
         "tool_names": tool_names,
+        "tool_chain": " -> ".join(tool_names),
+        "artifacts": artifacts,
         "runtime_markers": runtime_markers,
         "research": {
             "required": requires_research,
@@ -470,6 +473,53 @@ def _control_semantic_route(kind: object, priority: object) -> str | None:
     else:
         route = kind
     return route
+
+
+def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    updates: list[dict[str, Any]] = []
+    report_paths: list[str] = []
+    for event in events:
+        if event.get("event") not in {"artifact_created", "artifact_updated"}:
+            continue
+        data = _event_data(event)
+        path = data.get("path")
+        if not isinstance(path, str) or not path:
+            continue
+        operation = data.get("operation")
+        kind = data.get("kind")
+        updates.append(
+            {
+                "event": event.get("event"),
+                "path": path,
+                "kind": kind if isinstance(kind, str) else None,
+                "operation": operation if isinstance(operation, str) else None,
+                "size_bytes": data.get("size_bytes", data.get("bytes")),
+                "tool_name": data.get("tool_name"),
+                "tool_call_id": data.get("tool_call_id"),
+            }
+        )
+        if path == "research/report.md":
+            report_paths.append(path)
+    return {
+        "updates": updates,
+        "update_count": len(updates),
+        "created_count": _count_events(events, "artifact_created"),
+        "updated_count": _count_events(events, "artifact_updated"),
+        "paths": _dedupe_paths([item["path"] for item in updates]),
+        "report_updated": bool(report_paths),
+        "report_update_count": len(report_paths),
+    }
+
+
+def _dedupe_paths(paths: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        result.append(path)
+    return result
 
 
 def _runtime_markers(events: list[dict[str, object]]) -> dict[str, list[str]]:

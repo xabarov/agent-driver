@@ -27,7 +27,32 @@ def llm_call_summary(events: list[dict[str, object]]) -> dict[str, Any]:
     tool_choices: list[Any] = []
     force_final_reasons: list[str] = []
     continuation_reasons: list[str] = []
+    usage = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "cost_usd_estimate": 0.0,
+    }
+    saw_usage = False
     for event in events:
+        if event.get("event") == "llm_call_completed":
+            data = event_data(event)
+            event_usage = data.get("usage")
+            if isinstance(event_usage, dict):
+                saw_usage = True
+                usage["input_tokens"] += _usage_int(
+                    event_usage.get("input_tokens", event_usage.get("prompt_tokens"))
+                )
+                usage["output_tokens"] += _usage_int(
+                    event_usage.get(
+                        "output_tokens", event_usage.get("completion_tokens")
+                    )
+                )
+                usage["total_tokens"] += _usage_int(event_usage.get("total_tokens"))
+                usage["cost_usd_estimate"] += _usage_float(
+                    event_usage.get("cost_usd_estimate")
+                )
+            continue
         if event.get("event") != "llm_call_started":
             continue
         data = event_data(event)
@@ -45,6 +70,7 @@ def llm_call_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         "tool_choice_effective": tool_choices,
         "force_final_reasons": force_final_reasons,
         "continuation_reasons": continuation_reasons,
+        "usage": usage if saw_usage else None,
     }
 
 
@@ -89,6 +115,22 @@ def dedupe_preserve_order(items: list[str]) -> list[str]:
         seen.add(item)
         result.append(item)
     return result
+
+
+def _usage_int(value: object) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, float):
+        return max(0, int(value))
+    return 0
+
+
+def _usage_float(value: object) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return max(0.0, float(value))
+    return 0.0
 
 
 __all__ = [

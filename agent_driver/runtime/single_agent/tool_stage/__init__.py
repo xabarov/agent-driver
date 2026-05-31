@@ -15,6 +15,7 @@ from agent_driver.llm.contracts import LlmFinishReason
 from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.observability.source_evidence import source_evidence_from_tool_result
 from agent_driver.prompts import force_final_answer_tool_message
+from agent_driver.runtime.artifact_events import artifact_event_from_tool_result
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.metadata_state import (
     get_research_runtime_state,
@@ -360,6 +361,7 @@ def _emit_tool_completed_if_needed(
         event_type=RuntimeEventType.TOOL_CALL_COMPLETED,
         payload=payload,
     )
+    _emit_artifact_events_from_tool_result(host, context, result)
     source_ledger = research_source_ledger_from_tool_results(
         get_tool_loop_state(context).tool_results()
     ).model_dump()
@@ -374,6 +376,17 @@ def _emit_tool_completed_if_needed(
             event_type=RuntimeEventType.SOURCE_LEDGER_UPDATED,
             payload=source_ledger,
         )
+
+
+def _emit_artifact_events_from_tool_result(
+    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
+) -> None:
+    for envelope in result.envelopes:
+        event = artifact_event_from_tool_result(context, envelope)
+        if event is None:
+            continue
+        event_type, payload = event
+        emit_step_event(host, context, event_type=event_type, payload=payload)
 
 
 def _emit_tool_started_if_needed(host: ToolStageHost, context: RunContext) -> None:

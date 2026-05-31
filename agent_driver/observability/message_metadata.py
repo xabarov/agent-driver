@@ -233,6 +233,16 @@ def aggregate_message_metadata_from_events(
         if not isinstance(data, dict):
             continue
         metadata = merge_message_metadata(metadata, _parse_llm_completed(data))
+    for event in events:
+        if str(event.get("event")) != "run_completed":
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            continue
+        artifacts = data.get("deep_research_artifacts")
+        if isinstance(artifacts, dict):
+            metadata = metadata or {}
+            metadata["deep_research_artifacts"] = dict(artifacts)
     verdict = _planning_verdict(events)
     if verdict is not None:
         metadata = metadata or {}

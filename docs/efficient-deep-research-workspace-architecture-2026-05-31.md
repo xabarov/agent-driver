@@ -1,0 +1,688 @@
+# Efficient Deep Research Workspace Architecture
+
+Status: active proposal. Implementation order is tracked in
+[Unified Work Plan](unified-work-plan-2026-05-31.md) phases 1-4.
+
+This document fixes the bug class where Deep Research writes a large draft in
+chat, the runtime notices unfinished todos, then the model is forced to produce
+the same long answer again token by token. The target behavior is simple:
+long-lived research output must be a session artifact on disk, not only an
+assistant message in the transcript.
+
+## Problem
+
+In the fork-join queue test, the model created a visible plan and then wrote a
+large partial article during step 2. The UI still had unfinished todos, so the
+runtime treated the answer as not final and pushed the model back into the loop.
+Because the draft existed only in chat text, the next LLM call had no cheap,
+authoritative place to resume from. The model rewrote the article instead of
+patching the existing draft.
+
+The immediate architectural smell:
+
+- chat text is doing three jobs at once: user-visible progress, scratchpad, and
+  final deliverable;
+- todo state is separate from the produced draft;
+- Deep Research has no required write-through artifact contract;
+- the frontend can show source ledgers, but not the evolving report file;
+- filesystem write tools exist but are not enabled for the normal research
+  preset.
+
+## Current Local Baseline
+
+Relevant pieces already exist:
+
+- `examples/chat-demo/backend/app/workspace.py` creates a per-session workspace
+  and passes `workspace_cwd` through `app_metadata`.
+- `ToolSet.packs("filesystem_read")` exposes `read_file`, `glob_search`,
+  `grep_search`; `filesystem_write` exposes `file_write`, `file_edit`,
+  `notebook_edit`.
+- The `workspace` preset currently enables `web`, `planning_progress`, and
+  `filesystem_read`, but not `filesystem_write`.
+- `ResearchSessionContract` tracks research evidence, source ledger, source
+  links, and unfinished todos.
+- `DeepResearchPanel` shows source/citation diagnostics, but no artifact tree or
+  report preview.
+
+This means the minimum viable fix is not "invent files"; it is "make files the
+first-class output surface for research".
+
+## External Reference Points
+
+OpenAI Deep Research frames long research as a tool-using, long-running task
+over web search, file search, remote MCP, and code interpreter, and recommends
+background mode for work that can take tens of minutes. It also supports
+`max_tool_calls` as the main cost/latency control.
+Source: https://developers.openai.com/api/docs/guides/deep-research
+
+OpenAI Agents SDK separates hosted tools, local runtime tools, function tools,
+agents-as-tools, and workspace-scoped Codex tasks. The important pattern for us
+is that local/runtime tools are executed by the application environment, while
+the model only decides when to call them.
+Source: https://openai.github.io/openai-agents-python/tools/
+
+Anthropic Managed Agents include a pragmatic filesystem/web/shell toolset:
+`bash`, `read`, `write`, `edit`, `glob`, `grep`, `web_fetch`, `web_search`.
+They also spill tool outputs over 100K tokens into sandbox files and give the
+model a path plus preview.
+Source: https://platform.claude.com/docs/en/managed-agents/tools
+
+Claude Code documents the core failure mode: the context window contains
+conversation history, file contents, command outputs, skills, and instructions;
+when context fills, older tool outputs are cleared and conversation is
+summarized. If large outputs refill context after compaction, it stops instead
+of looping. That is exactly why durable artifacts and resumable reads are
+needed for large research drafts.
+Source: https://code.claude.com/docs/en/how-claude-code-works
+
+MCP roots formalize the idea that clients expose bounded filesystem roots to
+servers. Our per-session research workspace should behave like a root: tools
+may operate inside it by default and must not escape without explicit policy.
+Source: https://modelcontextprotocol.io/specification/2025-06-18/client/roots
+
+## Local Comparisons
+
+### OpenClaude
+
+Observed useful patterns in `/home/roman/pyprojects/ML/openclaude`:
+
+- Read/write/edit are separate tools. Write explicitly says it overwrites and
+  should be used for new files or full rewrites; Edit is for targeted exact
+  replacements.
+- Grep prompt says to use the dedicated Grep tool instead of `grep`/`rg` through
+  Bash, because permissions and access are modeled there.
+- Glob is optimized for large codebases and returns paths.
+- Tool history compression keeps recent tool results full, truncates mid-tier
+  results, and replaces old bulk with explicit stubs that say how many chars
+  were omitted.
+- Permissions distinguish read-only tools from shell and file modification.
+
+Takeaway: native read/search/edit tools should be preferred over bash for
+routine research artifact work, and old tool output compression must be
+explicit rather than silent.
+
+### Hermes Agent
+
+Observed useful patterns in `/home/roman/pyprojects/ML/hermes-agent`:
+
+- Core tools include `read_file`, `write_file`, `patch`, `search_files`,
+  `terminal`, `todo`, `session_search`, `execute_code`, and `delegate_task`.
+- The `file` toolset groups read/write/patch/search as one capability.
+- `tool_result_storage.py` persists oversized tool results into sandbox files
+  and returns a preview plus `read_file` instructions.
+- `file_tools.py` has read deduplication: repeated reads of the same unchanged
+  region return a stub, then eventually block the loop.
+- `patch` supports exact replacement and V4A patch format, with path and stale
+  write guards.
+
+Takeaway: for long research, a patch/diff tool is more token-efficient than
+full-file writes, and large outputs should spill to files with readable paths.
+
+## Target Architecture
+
+### 1. Session Workspace As Product Primitive
+
+Every chat session must have a server-side workspace:
+
+```text
+workspace/
+  <session_id>/
+    research/
+      report.md
+      notes.md
+      sources.jsonl
+      outline.md
+      checks.md
+    tool-results/
+      <tool_call_id>.txt
+    uploads/
+    .agent-driver/
+      manifest.json
+      artifact-index.json
+```
+
+Rules:
+
+- `workspace_cwd` is created when the session is created, not lazily only when
+  tools are used.
+- Deep Research creates `research/report.md` before the first long synthesis.
+- The assistant is instructed to update this file incrementally and keep chat
+  messages short.
+- All file paths exposed to tools are relative to the session root unless a
+  trusted admin preset allows wider roots.
+- The runtime records artifact metadata in session/run metadata and streams
+  artifact events to the frontend.
+
+### 2. Research Artifact Contract
+
+Add a `ResearchArtifactContract` beside `ResearchSessionContract`:
+
+```python
+ResearchArtifactContract(
+    enabled=True,
+    workspace_root=...,
+    report_path="research/report.md",
+    source_ledger_path="research/sources.jsonl",
+    outline_path="research/outline.md",
+    required_before_long_answer=True,
+    final_answer_mode="summarize_artifact_with_link",
+)
+```
+
+The contract is satisfied when:
+
+- `research/report.md` exists and has non-trivial content;
+- the current todo state is either complete or the remaining open todos are
+  explicitly marked as final-polish/source-check items;
+- source ledger has verified reads when research depth requires it;
+- final chat answer references the artifact path and gives a short summary,
+  not a full duplicate of the artifact.
+
+Critical behavior: if the model emits a long answer while Deep Research artifact
+mode is enabled and no report artifact was updated, the runtime should store
+that answer as `research/report.md` before any repair turn. This turns the
+current bug into a recoverable write-through event.
+
+### 3. Tool Surface For Deep Research
+
+Deep Research should not get unrestricted dev tools by default. It should get a
+research-safe filesystem surface:
+
+Required:
+
+- `glob_search`
+- `grep_search`
+- `read_file`
+- `file_write`
+- `file_edit`
+- `web_search`
+- `web_fetch`
+- `todo_write`
+- `agent_tool` for parallel source discovery
+- `skill_tool` and `skill_view` for curated research skills
+
+Add next:
+
+- `file_patch`: structured patch/diff application, safer than bash redirection
+  and cheaper than full overwrite.
+- `artifact_list`: list session artifacts with path, size, mtime, kind.
+- `artifact_read`: bounded read by path, offset, limit.
+- `artifact_preview`: markdown/html preview metadata for UI.
+- `source_ledger_write`: append normalized source/evidence records without
+  forcing the model to rewrite JSON manually.
+
+Keep gated/off by default:
+
+- `bash` or broad shell tools;
+- `python` unless the query needs computation/data analysis;
+- `file_delete`;
+- arbitrary absolute path writes.
+
+### 4. Artifact-First Runtime Loop
+
+Deep Research loop should be:
+
+1. classify request as `deep_parallel_research`;
+2. create workspace and artifact manifest;
+3. force or strongly prefer initial `todo_write`;
+4. create `research/outline.md` and `research/report.md`;
+5. discover sources in parent or subagents;
+6. write notes/source ledger incrementally;
+7. update `report.md` section by section via `file_edit` or `file_patch`;
+8. run final-readiness contract over artifact + todos + source ledger;
+9. final chat answer is short: summary, caveats, source count, artifact link.
+
+The runtime should treat a long assistant message as a signal:
+
+- if length exceeds `deep_research_inline_answer_max_chars`, intercept and store
+  it into `research/report.md`;
+- append a tiny assistant-visible message: "Draft captured to
+  research/report.md. Continue from that file; do not rewrite from scratch.";
+- continue repair with `read_file(report.md, offset=-N)` or artifact summary,
+  not with full transcript text.
+
+### 5. Final-Readiness Rules
+
+The current force-final path is too willing to ignore todos for research. Change
+the policy:
+
+- For normal chat deliverables, a final synthesis todo may be auto-covered by a
+  meaningful final answer.
+- For Deep Research artifact mode, unfinished todos do not require rewriting the
+  answer if `report.md` exists. They require either a targeted artifact patch or
+  a todo status update.
+- If final readiness fails only because todos are stale, force `todo_write`, not
+  a full final answer.
+- If final readiness fails because source links are missing, ask the model to
+  patch citations into `report.md`, not regenerate the whole report.
+- If near budget and report artifact exists, final answer must summarize the
+  artifact; if no artifact exists, write-through current draft first.
+
+### 6. Frontend Projection
+
+Add a workspace/artifacts panel to the chat UI:
+
+- show `research/report.md`, `outline.md`, `sources.jsonl`, generated files;
+- show size, last updated time, and producing tool/run;
+- render `report.md` preview in a side panel;
+- expose download/copy/open actions;
+- show artifact update events inline near tool calls;
+- keep `DeepResearchPanel` for source coverage, but add artifact status:
+  `report updated`, `N sections`, `last patch`, `final ready`.
+
+SSE/runtime events:
+
+```json
+{"event":"artifact_created","data":{"path":"research/report.md","kind":"report"}}
+{"event":"artifact_updated","data":{"path":"research/report.md","bytes":12345,"operation":"patch"}}
+{"event":"artifact_index_updated","data":{"count":4}}
+{"event":"research_artifact_ready","data":{"report_path":"research/report.md"}}
+```
+
+Backend endpoints:
+
+- `GET /api/workspace/{session_id}/files`
+- `GET /api/workspace/{session_id}/files/{path}`
+- `GET /api/workspace/{session_id}/artifacts`
+- `GET /api/workspace/{session_id}/artifacts/{artifact_id}/preview`
+
+All endpoints must path-normalize under the session root and deny traversal.
+
+### 7. Context And Token Policy
+
+Research artifacts change context policy:
+
+- never put full `report.md` back into the prompt automatically;
+- include only artifact index, outline, latest section headings, and tail
+  excerpts;
+- use `read_file` only for targeted sections;
+- spill oversized tool outputs into `tool-results/<tool_call_id>.txt`;
+- compress old tool results into explicit stubs with tool name, args, size, and
+  path if available.
+
+For prompts, add:
+
+> In Deep Research mode, write durable research output to `research/report.md`.
+> Chat messages should summarize progress. If you need to revise long text,
+> read the relevant section and patch/edit the file. Do not rewrite the full
+> report in chat.
+
+### 8. Persistence Model
+
+Session store should persist:
+
+- `workspace_root`
+- artifact index
+- report path
+- last artifact digest/hash
+- source ledger path
+- per-run artifact updates
+- final artifact selected for answer
+
+Runtime metadata should expose:
+
+```json
+{
+  "deep_research_artifacts": {
+    "workspace_root": "...",
+    "report_path": "research/report.md",
+    "report_exists": true,
+    "report_size_bytes": 18234,
+    "last_update_seq": 92
+  }
+}
+```
+
+### 9. Migration Plan
+
+P0: stop the waste loop
+
+- Add deep-research prompt rule: use `file_write`/`file_edit` for report drafts.
+- Enable `filesystem_write` for `deep_parallel_research` only, scoped to session
+  workspace.
+- Add write-through guard for long assistant messages in Deep Research.
+- If report artifact exists and todos are unfinished, force `todo_write` or
+  artifact patch, not full answer regeneration.
+
+P1: visible artifacts
+
+- Add artifact index builder over the session workspace.
+- Add backend list/read endpoints.
+- Add frontend artifact panel and markdown preview.
+- Emit `artifact_created`/`artifact_updated` events from filesystem write tools.
+
+P2: efficient editing
+
+- Add `file_patch` based on the Hermes/OpenAI apply-patch shape.
+- Add stale-read guard: require `read_file` before editing existing report
+  sections and warn when editing a file last read before another write.
+- Add repeated-read dedupe for unchanged regions.
+
+P3: research-specific storage
+
+- Add `source_ledger_write` and durable `sources.jsonl`.
+- Persist oversized web/tool outputs into `tool-results`.
+- Add artifact-aware compaction and context projection.
+
+P4: evals and regression suite
+
+- Reproduce the fork-join deep research case.
+- Assert no assistant message over threshold is emitted before a report artifact
+  update.
+- Assert no full-report rewrite after unfinished todo repair.
+- Assert final chat answer links/summarizes `research/report.md`.
+
+## Testing Strategy
+
+The test suite should climb from deterministic contracts to live product traces.
+The goal is not merely "the answer looks good"; the goal is to prove the agent
+uses a low-entropy tool trajectory: planned search, bounded verification,
+durable artifact writes, targeted edits, short final handoff.
+
+### Layer 0: Pure Contracts
+
+Fast unit tests, no provider:
+
+- `ResearchArtifactContract`: report existence, size threshold, last update seq,
+  final answer mode, and workspace path normalization.
+- `ResearchSessionContract`: unfinished todo behavior when a report artifact
+  exists versus when it does not.
+- path safety: `research/report.md` allowed, `../escape.md` denied, absolute
+  paths denied unless an admin preset explicitly allows them.
+- long-answer threshold classifier: a long assistant message in Deep Research
+  mode must be categorized as "capture to artifact before repair".
+- artifact index builder: stable ordering, digest/hash, size, mtime, kind.
+
+Expected command shape:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/runtime/test_research_session_contract.py \
+  tests/context/test_artifact_store_conformance.py \
+  tests/tools/test_builtin_filesystem_tools.py -q
+```
+
+New tests to add:
+
+- `tests/runtime/test_research_artifact_contract.py`
+- `tests/runtime/test_deep_research_write_through.py`
+- `tests/tools/test_research_workspace_path_policy.py`
+
+### Layer 1: Tool Unit And Governance Tests
+
+These tests verify that Deep Research exposes exactly the right tools and no
+ambient power:
+
+- preset includes `web_search`, `web_fetch`, `todo_write`, `glob_search`,
+  `grep_search`, `read_file`, `file_write`, `file_edit`, `agent_tool`,
+  `skill_tool`, `skill_view`;
+- preset does not include `bash` or `powershell_tool`;
+- `python` is off by default and enabled only by a computation/data-analysis
+  classifier;
+- `file_write`/`file_edit` are allowed only under the session workspace;
+- write/edit events emit artifact metadata.
+
+Tool entropy checks:
+
+- repeated identical `read_file` on unchanged regions is warned or deduped;
+- repeated identical `web_search` with no new domains is flagged;
+- repeated full `file_write` to `research/report.md` after initial creation is
+  flagged; prefer `file_edit`/`file_patch`;
+- `bash` for `grep`, `cat`, or redirection is forbidden in research preset.
+
+### Layer 2: Deterministic Fake-Provider Runtime Scenarios
+
+Use fake providers to replay exact bad and good trajectories:
+
+1. **bad-old-loop reproduction**: model writes a 10K+ char report in assistant
+   text while todos remain open. Runtime captures it to `research/report.md`,
+   then asks for todo/artifact repair without re-streaming the report.
+2. **good artifact-first run**: model calls `todo_write`, `web_search`,
+   `web_fetch`, `file_write(report.md)`, `file_edit(report.md)`, `todo_write`,
+   final short answer.
+3. **missing source repair**: report exists, source coverage is insufficient;
+   next forced step must be `web_fetch` or citation patch, not full answer.
+4. **stale todo repair**: report exists and evidence is enough, but todo is
+   stale; next forced step must be `todo_write`.
+5. **path escape attempt**: model tries to write outside workspace; tool is
+   denied and run continues with a safe path.
+
+Assertions:
+
+- artifact exists and contains the captured/generated report;
+- final answer length is bounded;
+- `tool_trace` contains expected subsequences;
+- no second assistant message repeats more than a small similarity threshold of
+  the captured report;
+- metadata contains `deep_research_artifacts`.
+
+### Layer 3: Deterministic Browser/Frontend Tests
+
+Use chat-demo fake scenarios with Playwright:
+
+- Deep Research button starts a run with research depth metadata.
+- Workspace/artifact panel appears when `artifact_created` arrives.
+- `research/report.md` preview updates after `artifact_updated`.
+- Source ledger and artifact status coexist in `DeepResearchPanel`.
+- Reload/replay reconstructs artifact metadata from the session.
+- Mobile view keeps artifact panel reachable without breaking chat layout.
+
+Expected command shape:
+
+```bash
+make test-chat-concepts CHAT_DEMO_URL=http://localhost:5174
+.venv/bin/python examples/chat-demo/frontend/tests/e2e/chat_concepts_smoke.py \
+  --scenario deep-research-artifact
+```
+
+### Layer 4: Trace Summary Evaluators
+
+Extend `/api/chat/runs/{run_id}/trace-summary` and eval reports with a research
+efficiency block:
+
+```json
+{
+  "research_efficiency": {
+    "tool_chain": ["todo_write", "web_search", "web_fetch", "file_write"],
+    "tool_switches": 6,
+    "repeated_tool_args": 0,
+    "full_report_rewrites": 0,
+    "artifact_updates": 3,
+    "max_assistant_message_chars": 1800,
+    "captured_long_answers": 1,
+    "prompt_tokens": 13700,
+    "completion_tokens": 4817,
+    "tokens_per_verified_source": 925,
+    "tokens_per_report_kb": 640,
+    "estimated_wasted_tokens": 0
+  }
+}
+```
+
+Suggested failure flags:
+
+- `deep_research_no_report_artifact`
+- `deep_research_long_answer_not_captured`
+- `deep_research_full_report_rewrite`
+- `deep_research_no_artifact_update_before_final`
+- `deep_research_bash_used_for_file_work`
+- `deep_research_tool_entropy_high`
+- `deep_research_repeated_search_args`
+- `deep_research_tokens_over_budget`
+
+Entropy heuristic:
+
+- allow repeated `web_search` only when query/domain strategy changes;
+- allow repeated `web_fetch` only for new URLs;
+- allow one initial full `file_write(report.md)`, then prefer edits/patches;
+- penalize long assistant messages after report artifact exists;
+- penalize tool chains that bounce between search and final synthesis without
+  artifact updates.
+
+### Layer 5: Live Playwright + Phoenix Lanes
+
+Live tests should be few, diverse, and expensive enough to be informative:
+
+1. **short research**: one source-verified answer, expected
+   `web_search -> web_fetch -> file_write -> final`.
+2. **medium comparison**: compare 3-4 approaches, expected multiple domains and
+   at least one artifact edit.
+3. **long report with todos**: intentionally multi-section report; verifies no
+   rewrite loop and final answer summarizes `research/report.md`.
+4. **blocked fetch fallback**: one source fails/403s; verifies source ledger
+   marks blocked reads and final caveat is explicit.
+5. **parallel delegation**: subagents discover sources; parent synthesizes and
+   writes final report artifact.
+6. **computation add-on**: web research plus `python` only when numeric
+   calculation is actually needed.
+
+Run shape:
+
+```bash
+CHAT_DEMO_URL=http://localhost:5174 \
+CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-deep-research \
+  .venv/bin/python examples/chat-demo/frontend/tests/e2e/chat_live_probe.py \
+  --scenario deep-research-long-report \
+  --scenario deep-research-blocked-fetch \
+  --scenario deep-research-parallel
+```
+
+For each live run, inspect:
+
+- browser screenshot: artifact panel visible, report preview readable;
+- backend trace summary: required tools, forbidden tools, failure flags;
+- Phoenix trace: LLM spans, tool spans, latency gaps, retries, provider errors;
+- token usage: prompt/completion totals, tokens per verified source, tokens per
+  report KB, extra completion after artifact exists;
+- artifact files: `research/report.md`, `research/sources.jsonl`,
+  `tool-results/*`;
+- replay: reload session and verify artifact metadata survives.
+
+The live gate should produce a small markdown scorecard per scenario:
+
+```text
+scenario: deep-research-long-report
+status: pass
+tool_chain: todo_write -> web_search -> web_fetch -> file_write -> file_edit -> todo_write -> final
+usage: prompt=13700 completion=4817 total=18517
+artifact_updates: 2
+verified_sources: 3 domains=3
+failure_flags: none
+notes: no full rewrite after stale todo repair
+```
+
+## Efficiency Budgets
+
+Initial soft budgets, tuned after baseline runs:
+
+- final chat answer after artifact exists: <= 2,000 chars;
+- max assistant message before artifact capture: <=
+  `deep_research_inline_answer_max_chars`;
+- repeated identical tool args: 0 for `web_fetch`, <= 1 for `web_search`;
+- full report rewrites after initial write: 0;
+- artifact updates before final: >= 1;
+- verified source domains for deep mode: >= 2;
+- `bash` in default Deep Research preset: 0;
+- token regression: candidate run should stay within +20 percent of baseline
+  for the same scenario unless quality improves and the scorecard records why.
+
+## Acceptance Tests
+
+1. A deep research run creates a per-session workspace immediately.
+2. The first long synthesis writes `research/report.md`.
+3. The frontend shows the report artifact while the run is still active.
+4. If a todo remains open after a long draft, the next step updates todo state
+   or patches the artifact; it does not re-stream the whole draft.
+5. Reconnecting/replaying the session reconstructs artifact metadata.
+6. Attempts to write outside the session workspace are denied.
+7. Large tool results are spilled to files and can be read back with
+   `read_file`.
+8. Final answer is concise and references the artifact, while the full report
+   is visible/downloadable from the UI.
+
+## Recommended Default Tool Preset
+
+Add a new preset instead of overloading `workspace`:
+
+```python
+if preset == "deep_research":
+    return CliToolConfig(
+        tools_mode="default",
+        tools=("agent_tool", "skill_tool", "skill_view"),
+        tool_packs=(
+            "web",
+            "planning_progress",
+            "filesystem_read",
+            "filesystem_write",
+        ),
+        allow_dangerous_tools=True,
+        enable_python=False,
+    )
+```
+
+Then enforce policy at the tool gate:
+
+- `file_write`, `file_edit`, `file_patch`: allowed only under session workspace;
+- `bash`: not included;
+- `python`: opt-in only for numeric/data analysis prompts;
+- `web_fetch`: allowed with source ledger tracking.
+
+## Design Principle
+
+Deep Research should behave like a careful writer with a working directory:
+search and notes are tools, the report is a file, the chat is progress and final
+handoff. The model should never need to spend thousands of tokens rewriting a
+draft just because runtime state and visible todo state temporarily disagree.
+
+## Implementation Slice P0 - 2026-05-31
+
+Implemented first vertical slice:
+
+- `deep_research` chat preset upgrades `deep_parallel_research` runs to a scoped
+  tool surface: `web`, `planning_progress`, `filesystem_read`,
+  `filesystem_write`, plus `agent_tool`, `skill_tool`, `skill_view`;
+- `shell`, `python`, and broad `discovery` are not part of the default deep
+  research preset;
+- long inline drafts in Deep Research mode are captured to
+  `research/report.md` before contract-repair continuation, so the next LLM turn
+  receives a compact artifact pointer instead of the full draft;
+- if `research/report.md` was written through `file_write`, finalization observes
+  the existing report and records artifact metadata;
+- stale todo repair after a report exists forces `todo_write` instead of
+  `force_final_answer`, avoiding the destructive rewrite loop;
+- `run_completed` and persisted assistant metadata carry
+  `deep_research_artifacts`;
+- the chat frontend parses that metadata and shows the report path/size in the
+  existing Deep Research panel, including replay/session reload paths.
+
+Focused checks:
+
+- `tests/runtime/test_deep_research_artifacts.py`;
+- `tests/runtime/test_research_contract_repair_tool_choice.py`;
+- `examples/chat-demo/backend/tests/test_message_metadata.py`;
+- focused synchronous `examples/chat-demo/backend/tests/test_tools.py` preset
+  checks;
+- frontend `vitest` suite and `tsc -b`.
+
+## Implementation Slice P1-mini - 2026-05-31
+
+Added live artifact instrumentation and scorecard signals:
+
+- `file_write` and `file_edit` structured outputs now expose
+  `created`/`existed_before` so the runtime can distinguish first writes from
+  patches;
+- runtime projects successful workspace file writes into `artifact_created` and
+  `artifact_updated` events with relative path, kind, operation, size, tool name
+  and tool call id;
+- `DeepResearchPanel` updates from live artifact events as well as final
+  `deep_research_artifacts` metadata;
+- trace summary exposes `tool_chain`, aggregated `llm.usage`, and an
+  `artifacts` block with update counts and `research/report.md` coverage.
+
+Focused checks:
+
+- `tests/runtime/test_artifact_events.py`;
+- `tests/tools/test_builtin_filesystem_tools.py`;
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- frontend `tests/deepResearchEvents.test.ts`;
+- frontend `tsc -b`.

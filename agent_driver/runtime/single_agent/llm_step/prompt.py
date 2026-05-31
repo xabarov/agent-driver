@@ -17,7 +17,10 @@ from agent_driver.runtime.metadata_state import (
     get_planning_runtime_state,
     get_research_runtime_state,
 )
-from agent_driver.runtime.research_evidence import RESEARCH_DEPTH_SOURCE_VERIFIED
+from agent_driver.runtime.research_evidence import (
+    RESEARCH_DEPTH_DEEP_PARALLEL,
+    RESEARCH_DEPTH_SOURCE_VERIFIED,
+)
 from agent_driver.runtime.single_agent.llm_step.build import (
     effective_tool_names_from_registry,
 )
@@ -229,7 +232,20 @@ def chat_mode_runtime_reminders(context: RunContext) -> list[str]:
     task_contract = context.run_input.tool_policy.metadata.get("task_contract")
     if (
         isinstance(task_contract, dict)
-        and task_contract.get("research_depth") == RESEARCH_DEPTH_SOURCE_VERIFIED
+        and task_contract.get("research_depth") == RESEARCH_DEPTH_DEEP_PARALLEL
+    ):
+        reminders.append(
+            "Runtime reminder: deep_research_artifact_mode. Durable research "
+            "output belongs in research/report.md inside the workspace. Keep chat "
+            "messages concise progress/final handoff. For long drafts, call "
+            "file_write to create research/report.md, then use read_file plus "
+            "file_edit for targeted revisions instead of rewriting the full "
+            "report in chat."
+        )
+    if (
+        isinstance(task_contract, dict)
+        and task_contract.get("research_depth")
+        in {RESEARCH_DEPTH_SOURCE_VERIFIED, RESEARCH_DEPTH_DEEP_PARALLEL}
         and "web_fetch" not in policy_denied
         and (policy_allowed is None or "web_fetch" in policy_allowed)
     ):

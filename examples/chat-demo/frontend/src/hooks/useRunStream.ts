@@ -12,6 +12,7 @@ import {
   isToolCallCompleted,
   isToolCallStarted,
   parseCompactionNotice,
+  parseDeepResearchArtifactEvent,
   parseDeepResearchProgress,
   parseSourceLedgerEvent,
   parseSubagentLifecycleEvent,
@@ -94,10 +95,12 @@ function applyStreamEvent(
   }
   const sourceLedger = parseSourceLedgerEvent(event);
   const researchProgress = parseDeepResearchProgress(event);
-  if (sourceLedger || researchProgress) {
+  const researchArtifact = parseDeepResearchArtifactEvent(event);
+  if (sourceLedger || researchProgress || researchArtifact) {
     store.updateDeepResearch(assistantId, {
       ledger: sourceLedger,
       progress: researchProgress,
+      artifact: researchArtifact,
     });
   }
   if (event.event === "llm_call_completed" || event.event === "run_completed") {

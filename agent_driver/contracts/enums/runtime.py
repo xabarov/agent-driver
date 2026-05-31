@@ -86,6 +86,7 @@ class RuntimeEventType(StrEnum):
     SUBAGENT_MERGE_COMPLETED = "subagent_merge_completed"
     SUBAGENT_GROUP_FAILED = "subagent_group_failed"
     ARTIFACT_CREATED = "artifact_created"
+    ARTIFACT_UPDATED = "artifact_updated"
     MEMORY_COMPACTION_STARTED = "memory_compaction_started"
     MEMORY_COMPACTED = "memory_compacted"
     WARNING = "warning"

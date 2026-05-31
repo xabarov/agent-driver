@@ -214,6 +214,14 @@ def _bundle_for_request(preset: ToolPreset, model: str | None = None) -> AgentBu
     return get_agent_bundle_for_request(preset, model)
 
 
+def _effective_chat_preset(body: ChatMessageRequest) -> ToolPreset:
+    """Return runtime tool preset, upgrading Deep Research to artifact tools."""
+    preset = resolve_tool_preset(body.tool_preset)
+    if body.research_depth == "deep_parallel_research":
+        return "deep_research"
+    return preset
+
+
 def get_resume_bundle(body: ResumeRequest) -> AgentBundle:
     """Resolve agent bundle for resume (injectable in tests)."""
     return get_agent_bundle_for_request(
@@ -294,7 +302,7 @@ async def chat_messages(
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     """Start one run and stream normalized runtime events as SSE."""
-    preset = resolve_tool_preset(body.tool_preset)
+    preset = _effective_chat_preset(body)
     bundle = _bundle_for_request(preset, body.model)
     session_id = body.session_id or f"session_{uuid.uuid4().hex[:8]}"
     record = bundle.session_store.get(session_id)

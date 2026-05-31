@@ -23,7 +23,15 @@ export interface SourceLedger {
 
 export interface DeepResearchState {
   ledger?: SourceLedger;
+  artifact?: DeepResearchArtifact;
   progress: Array<{ seq: number; event: string; label: string }>;
+}
+
+export interface DeepResearchArtifact {
+  reportPath: string;
+  reportSizeBytes?: number;
+  capturedLongAnswers?: number;
+  lastUpdateReason?: string;
 }
 
 const CONTROL_TOOL_NAMES = new Set([
@@ -177,6 +185,57 @@ export function parseDeepResearchProgress(
     textValue(event.data.reason) ??
     event.event.replaceAll("_", " ");
   return { seq: event.seq, event: event.event, label };
+}
+
+export function parseDeepResearchArtifactPayload(
+  raw: unknown,
+): DeepResearchArtifact | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  const exists = record.report_exists ?? record.reportExists;
+  if (exists === false) {
+    return undefined;
+  }
+  const path = textValue(record.report_path) ?? textValue(record.reportPath);
+  if (!path) {
+    return undefined;
+  }
+  return {
+    reportPath: path,
+    reportSizeBytes: numberValue(
+      record.report_size_bytes ?? record.reportSizeBytes,
+    ),
+    capturedLongAnswers: numberValue(
+      record.captured_long_answers ?? record.capturedLongAnswers,
+    ),
+    lastUpdateReason:
+      textValue(record.last_update_reason) ?? textValue(record.lastUpdateReason),
+  };
+}
+
+export function parseDeepResearchArtifactEvent(
+  event: RunStreamEvent<Record<string, unknown>>,
+): DeepResearchArtifact | undefined {
+  if (
+    event.event !== "run_completed" &&
+    event.event !== "artifact_created" &&
+    event.event !== "artifact_updated"
+  ) {
+    return undefined;
+  }
+  if (event.event === "artifact_created" || event.event === "artifact_updated") {
+    return parseDeepResearchArtifactPayload({
+      report_exists: true,
+      report_path: event.data.path,
+      report_size_bytes: event.data.size_bytes ?? event.data.bytes,
+      last_update_reason: event.event,
+    });
+  }
+  return parseDeepResearchArtifactPayload(
+    event.data.deep_research_artifacts ?? event.data.deepResearchArtifacts,
+  );
 }
 
 export function isTokenDelta(event: RunStreamEvent<Record<string, unknown>>): boolean {
@@ -829,10 +888,12 @@ export function eventsToMessages(
     }
     const ledger = parseSourceLedgerEvent(event);
     const progress = parseDeepResearchProgress(event);
-    if (ledger || progress) {
+    const artifact = parseDeepResearchArtifactEvent(event);
+    if (ledger || progress || artifact) {
       const current = assistantDeepResearch as DeepResearchState | undefined;
       assistantDeepResearch = {
         ledger: ledger ?? current?.ledger,
+        artifact: artifact ?? current?.artifact,
         progress: progress
           ? [...(current?.progress ?? []), progress].slice(-6)
           : (current?.progress ?? []),
