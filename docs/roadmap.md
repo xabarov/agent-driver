@@ -73,5 +73,6 @@ convergence and optional SDK gateway/tool-server productization.
 - [Provider and model debugging](provider-model-debugging.md)
 - [Research quality summary](research-quality-improvement-plan-2026-05-31.md)
 - [Efficient Deep Research workspace architecture](efficient-deep-research-workspace-architecture-2026-05-31.md)
+- [Deep Research live hardening plan](deep-research-live-hardening-plan-2026-05-31.md)
 - [Runtime metadata inventory](runtime-metadata.md)
 - [Testing](testing.md)

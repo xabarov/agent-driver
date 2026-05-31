@@ -1,7 +1,9 @@
 # Efficient Deep Research Workspace Architecture
 
 Status: active proposal. Implementation order is tracked in
-[Unified Work Plan](unified-work-plan-2026-05-31.md) phases 1-4.
+[Unified Work Plan](unified-work-plan-2026-05-31.md) phases 1-4. The current
+live hardening and benchmark plan is tracked in
+[Deep Research live hardening plan](deep-research-live-hardening-plan-2026-05-31.md).
 
 This document fixes the bug class where Deep Research writes a large draft in
 chat, the runtime notices unfinished todos, then the model is forced to produce
