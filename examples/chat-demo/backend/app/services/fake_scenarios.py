@@ -471,6 +471,177 @@ class DeepResearchSkillsFakeProvider(FakeProvider):
         )
 
 
+class DeepResearchArtifactFakeProvider(FakeProvider):
+    """Fake provider that writes a durable Deep Research report artifact."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="Deep research artifact probe completed.")
+        self._calls = 0
+
+    def _usage(self, request: LlmRequest) -> UsageSummary:
+        return UsageSummary(
+            input_tokens=max(
+                1, sum(len(message.content) for message in request.messages) // 4
+            ),
+            output_tokens=24,
+            total_tokens=48,
+            model_provider=self.name,
+            model_name=request.model or "fake-model",
+        )
+
+    def _planned_calls(self) -> list[dict[str, object]]:
+        return [
+            ToolCall(
+                tool_name="todo_write",
+                tool_call_id="fake_deep_todo",
+                args={
+                    "merge": False,
+                    "todos": [
+                        {
+                            "id": "plan",
+                            "content": "Сформировать план исследования",
+                            "status": "completed",
+                        },
+                        {
+                            "id": "sources",
+                            "content": "Проверить источники",
+                            "status": "completed",
+                        },
+                        {
+                            "id": "report",
+                            "content": "Записать отчет в artifact",
+                            "status": "completed",
+                        },
+                    ],
+                },
+            ).model_dump(mode="json"),
+            ToolCall(
+                tool_name="web_search",
+                tool_call_id="fake_deep_search",
+                args={
+                    "query": "fork-join queueing models computer networks",
+                    "mock_results": [
+                        {
+                            "title": "Fork-join queue",
+                            "url": "https://example.com/fork-join",
+                            "snippet": "Fork-join queues model split and join workloads.",
+                        },
+                        {
+                            "title": "Queueing networks",
+                            "url": "https://example.org/queueing-networks",
+                            "snippet": "Queueing networks estimate delay and throughput.",
+                        },
+                    ],
+                },
+            ).model_dump(mode="json"),
+            ToolCall(
+                tool_name="web_fetch",
+                tool_call_id="fake_deep_fetch_example_com",
+                args={
+                    "url": "https://example.com",
+                    "extract_mode": "text",
+                    "max_chars": 500,
+                },
+            ).model_dump(mode="json"),
+            ToolCall(
+                tool_name="web_fetch",
+                tool_call_id="fake_deep_fetch_example_org",
+                args={
+                    "url": "https://example.org",
+                    "extract_mode": "text",
+                    "max_chars": 500,
+                },
+            ).model_dump(mode="json"),
+            ToolCall(
+                tool_name="file_write",
+                tool_call_id="fake_deep_report",
+                args={
+                    "path": "research/report.md",
+                    "create_parent": True,
+                    "content": "\n".join(
+                        [
+                            "# Fork-join queueing models",
+                            "",
+                            "This deterministic Deep Research probe keeps the "
+                            "full report in a workspace artifact.",
+                            "",
+                            "## Findings",
+                            "",
+                            "- Fork-join models describe jobs split into parallel "
+                            "branches and joined after all branches complete.",
+                            "- They are useful for estimating latency in systems "
+                            "with fan-out/fan-in request paths.",
+                            "- Computer network calculations can use the model to "
+                            "reason about synchronization delay and throughput.",
+                            "",
+                            "## Sources",
+                            "",
+                            "- https://example.com/fork-join",
+                            "- https://example.org/queueing-networks",
+                            "",
+                        ]
+                    ),
+                },
+            ).model_dump(mode="json"),
+        ]
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            return LlmResponse(
+                message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                provider=self.name,
+                model=request.model or "fake-model",
+                metadata={
+                    "provider_kind": "fake",
+                    "planned_tool_calls": self._planned_calls(),
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(
+                role=ChatRole.ASSISTANT,
+                content=(
+                    "Готово: полный отчет сохранен в research/report.md. "
+                    "Проверен источник example.com; ключевые выводы: fork-join "
+                    "моделирует fan-out/fan-in, задержку синхронизации и "
+                    "пропускную способность."
+                ),
+            ),
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+            provider=self.name,
+            model=request.model or "fake-model",
+            metadata={"provider_kind": "fake"},
+        )
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self._calls += 1
+        usage = self._usage(request)
+        if self._calls == 1:
+            yield LlmStreamEvent(
+                event="tool_calls",
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                metadata={"planned_tool_calls": self._planned_calls()},
+            )
+            return
+        for chunk in (
+            "Готово: полный отчет сохранен в research/report.md. ",
+            "Проверен источник example.com; ключевые выводы: fork-join ",
+            "моделирует fan-out/fan-in, задержку синхронизации и ",
+            "пропускную способность.",
+        ):
+            yield LlmStreamEvent(event="delta", delta_text=chunk)
+        yield LlmStreamEvent(
+            event="done",
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+        )
+
+
 class UntrustedSkillWarningFakeProvider(FakeProvider):
     """Fake provider that loads a skill outside trusted roots."""
 
@@ -777,6 +948,8 @@ def build_fake_scenario_provider(scenario: str | None) -> FakeProvider | None:
         return CompactionNoticeFakeProvider()
     if normalized == "deep_research_skills":
         return DeepResearchSkillsFakeProvider()
+    if normalized == "deep_research_artifact":
+        return DeepResearchArtifactFakeProvider()
     if normalized == "untrusted_skill_warning":
         return UntrustedSkillWarningFakeProvider()
     if normalized == "compaction_after_skill_invocation":

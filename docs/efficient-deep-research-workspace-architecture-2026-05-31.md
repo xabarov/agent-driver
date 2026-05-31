@@ -768,3 +768,25 @@ Focused checks:
 
 - `tests/cli/test_eval_suite_membership.py`;
 - `tests/cli/test_eval_harness.py`.
+
+## Implementation Slice P3-live-probe - 2026-05-31
+
+Extended the chat-demo Playwright probe for artifact-backed Deep Research:
+
+- added deterministic fake provider scenario `deep_research_artifact`, which
+  calls `todo_write`, `web_search`, two `web_fetch` reads, and `file_write` to
+  create `research/report.md`;
+- `chat_live_probe.py --scenario deep-research-artifact` now sends
+  `research_depth=deep_parallel_research` and `tool_preset=deep_research`;
+- the probe checks trace-summary failures, `research_efficiency`, artifact
+  paths in trace, workspace artifact listing, bounded preview content, and the
+  browser Artifacts panel;
+- artifacts saved under the probe output now include `workspace-artifacts.json`
+  and `workspace-preview.json` alongside screenshot, transcript, and
+  `trace-summary.json`.
+
+Focused checks:
+
+- `examples/chat-demo/backend/tests/test_chat_deep_research_sse.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact` against local fake backend/frontend on isolated ports.

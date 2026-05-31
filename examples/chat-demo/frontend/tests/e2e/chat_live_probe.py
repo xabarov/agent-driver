@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import time
 from dataclasses import dataclass
@@ -52,6 +53,11 @@ class LiveScenario:
     min_research_domain_count: int | None = None
     max_research_search_count_without_min_domains: int | None = None
     max_research_fetch_count_without_min_domains: int | None = None
+    research_depth: str | None = None
+    required_artifact_path: str | None = None
+    required_artifact_preview: str | None = None
+    require_artifact_panel: bool = False
+    require_research_efficiency: bool = False
     timeout_ms: int = 180000
     forbidden_failures: tuple[str, ...] = (
         "stuck_on_interrupt",
@@ -222,6 +228,43 @@ SCENARIOS: dict[str, LiveScenario] = {
         timeout_ms=600000,
         requires_research=True,
     ),
+    "deep-research-artifact": LiveScenario(
+        name="deep-research-artifact",
+        prompt=(
+            "Сделай deep research отчет по fork-join очередям и применению "
+            "для расчета компьютерных сетей."
+        ),
+        required_tools=("todo_write", "web_search", "web_fetch", "file_write"),
+        forbidden_tools=("bash", "python"),
+        tool_preset="deep_research",
+        research_depth="deep_parallel_research",
+        required_prompt_fragments=(
+            "react_chat_tool_policy_research_discipline.txt",
+            "react_chat_tool_policy_web_search.txt",
+            "react_chat_tool_policy_web_fetch.txt",
+        ),
+        required_artifact_path="research/report.md",
+        required_artifact_preview="Fork-join queueing models",
+        require_artifact_panel=True,
+        require_research_efficiency=True,
+        timeout_ms=240000,
+        forbidden_failures=(
+            "stuck_on_interrupt",
+            "missing_terminal_event",
+            "run_failed_or_cancelled",
+            "missing_required_research_evidence",
+            "progress_only_final",
+            "text_form_tool_call",
+            "fabricated_planning",
+            "repeated_approval_planning",
+            "extra_ask_user_question",
+            "search_only_research_report",
+            "deep_research_no_report_artifact",
+            "deep_research_missing_initial_todo",
+            "deep_research_long_final_after_report",
+        ),
+        requires_research=True,
+    ),
     "research-compare-frameworks": LiveScenario(
         name="research-compare-frameworks",
         prompt=(
@@ -382,7 +425,15 @@ def open_new_chat(page: Page) -> None:
     expect(page.get_by_role("heading", name="Chat")).to_be_visible(timeout=5000)
 
 
-def send_message_and_capture_run_id(page: Page, text: str) -> str:
+@dataclass(frozen=True, slots=True)
+class ChatRunIds:
+    """Identifiers returned by the chat message endpoint."""
+
+    run_id: str
+    session_id: str
+
+
+def send_message_and_capture_run_ids(page: Page, text: str) -> ChatRunIds:
     textbox = page.get_by_role("textbox", name="Message the assistant…")
     textbox.fill(text)
     with page.expect_response(
@@ -394,7 +445,10 @@ def send_message_and_capture_run_id(page: Page, text: str) -> str:
     run_id = response_info.value.headers.get("x-run-id")
     if not run_id:
         raise AssertionError("chat/messages response did not include x-run-id")
-    return run_id
+    session_id = response_info.value.headers.get("x-session-id")
+    if not session_id:
+        raise AssertionError("chat/messages response did not include x-session-id")
+    return ChatRunIds(run_id=run_id, session_id=session_id)
 
 
 def fetch_trace_summary(page: Page, run_id: str) -> dict[str, Any]:
@@ -407,6 +461,40 @@ def fetch_trace_summary(page: Page, run_id: str) -> dict[str, Any]:
             return await response.json();
         }""",
         run_id,
+    )
+
+
+def fetch_workspace_artifacts(page: Page, session_id: str) -> dict[str, Any]:
+    return page.evaluate(
+        """async (sessionId) => {
+            const response = await fetch(`/api/workspace/${sessionId}/artifacts`);
+            if (!response.ok) {
+                throw new Error(`workspace artifacts failed: ${response.status}`);
+            }
+            return await response.json();
+        }""",
+        session_id,
+    )
+
+
+def fetch_workspace_artifact_preview(
+    page: Page,
+    *,
+    session_id: str,
+    path: str,
+) -> dict[str, Any]:
+    return page.evaluate(
+        """async ({sessionId, path}) => {
+            const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+            const response = await fetch(
+                `/api/workspace/${sessionId}/artifacts/${encodedPath}`
+            );
+            if (!response.ok) {
+                throw new Error(`workspace preview failed: ${response.status}`);
+            }
+            return await response.json();
+        }""",
+        {"sessionId": session_id, "path": path},
     )
 
 
@@ -603,6 +691,28 @@ def assert_trace_acceptance(
         required = summary.get("research", {}).get("required")
         if required is not scenario.requires_research:
             failures.append(f"research.required={required!r}")
+    if scenario.require_research_efficiency:
+        efficiency = summary.get("research_efficiency")
+        if not isinstance(efficiency, dict):
+            failures.append("research_efficiency summary missing")
+        else:
+            if efficiency.get("deep_research_artifact_expected") is not True:
+                failures.append("deep research artifact was not expected")
+            if efficiency.get("missing_report_artifact") is True:
+                failures.append("research report artifact is missing")
+            if efficiency.get("long_final_after_report") is True:
+                failures.append("long final answer was emitted after report artifact")
+            if efficiency.get("first_tool") != "todo_write":
+                failures.append(
+                    f"first tool is {efficiency.get('first_tool')!r}, expected todo_write"
+                )
+    artifacts = summary.get("artifacts") or {}
+    if scenario.required_artifact_path is not None:
+        paths = artifacts.get("paths") if isinstance(artifacts, dict) else None
+        if not isinstance(paths, list) or scenario.required_artifact_path not in paths:
+            failures.append(
+                f"required artifact missing from trace: {scenario.required_artifact_path}"
+            )
     research = summary.get("research") or {}
     if scenario.min_research_fetch_count is not None:
         fetch_count = (
@@ -632,6 +742,30 @@ def assert_trace_acceptance(
     return failures
 
 
+def assert_artifact_panel(
+    page: Page,
+    *,
+    scenario: LiveScenario,
+) -> None:
+    if not scenario.require_artifact_panel:
+        return
+    if scenario.required_artifact_path is None:
+        raise AssertionError("artifact panel assertion requires artifact path")
+    trigger = page.get_by_role("button", name=re.compile(r"Artifacts"))
+    expect(trigger).to_be_visible(timeout=10000)
+    trigger.click()
+    refresh = page.get_by_role("button", name="Refresh artifacts")
+    expect(refresh).to_be_visible(timeout=10000)
+    refresh.click()
+    expect(page.get_by_text(scenario.required_artifact_path).first).to_be_visible(
+        timeout=10000
+    )
+    if scenario.required_artifact_preview:
+        expect(
+            page.get_by_text(scenario.required_artifact_preview).first
+        ).to_be_visible(timeout=10000)
+
+
 def transcript_excerpt(page: Page, *, max_chars: int = 6000) -> str:
     """Return a bounded visible transcript excerpt for failed live probes."""
     text = page.locator("main").inner_text(timeout=5000)
@@ -647,6 +781,8 @@ def write_scenario_artifacts(
     scenario: LiveScenario,
     summary: dict[str, Any],
     failures: list[str],
+    workspace_artifacts: dict[str, Any] | None = None,
+    workspace_preview: dict[str, Any] | None = None,
 ) -> Path:
     """Persist enough context to debug a live scenario without reopening the UI."""
     artifact_base = ARTIFACT_DIR / scenario.name
@@ -668,6 +804,16 @@ def write_scenario_artifacts(
         ),
         encoding="utf-8",
     )
+    if workspace_artifacts is not None:
+        (artifact_base / "workspace-artifacts.json").write_text(
+            json.dumps(workspace_artifacts, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    if workspace_preview is not None:
+        (artifact_base / "workspace-preview.json").write_text(
+            json.dumps(workspace_preview, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     (artifact_base / "transcript-excerpt.txt").write_text(
         transcript_excerpt(page),
         encoding="utf-8",
@@ -696,12 +842,18 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
                         if scenario.tool_preset
                         else {}
                     ),
+                    **(
+                        {"research_depth": scenario.research_depth}
+                        if scenario.research_depth
+                        else {}
+                    ),
                 },
                 ensure_ascii=False,
             )
         ),
     )
-    run_id = send_message_and_capture_run_id(page, scenario.prompt)
+    ids = send_message_and_capture_run_ids(page, scenario.prompt)
+    run_id = ids.run_id
     if scenario.steering_message:
         queue_steering_message(page, run_id, scenario.steering_message)
     summary = wait_until_run_idle(
@@ -711,11 +863,48 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
         timeout_ms=scenario.timeout_ms,
     )
     failures = assert_trace_acceptance(scenario, summary)
+    workspace_artifacts: dict[str, Any] | None = None
+    workspace_preview: dict[str, Any] | None = None
+    if scenario.required_artifact_path is not None:
+        try:
+            workspace_artifacts = fetch_workspace_artifacts(page, ids.session_id)
+            artifact_paths = [
+                item.get("path")
+                for item in workspace_artifacts.get("artifacts", [])
+                if isinstance(item, dict)
+            ]
+            if scenario.required_artifact_path not in artifact_paths:
+                failures.append(
+                    "required artifact missing from workspace API: "
+                    f"{scenario.required_artifact_path}"
+                )
+            workspace_preview = fetch_workspace_artifact_preview(
+                page,
+                session_id=ids.session_id,
+                path=scenario.required_artifact_path,
+            )
+            if scenario.required_artifact_preview and (
+                scenario.required_artifact_preview
+                not in str(workspace_preview.get("content") or "")
+            ):
+                failures.append(
+                    "required artifact preview text missing: "
+                    f"{scenario.required_artifact_preview}"
+                )
+        except Exception as exc:
+            failures.append(f"workspace artifact API check failed: {exc}")
+    if scenario.require_artifact_panel and not failures:
+        try:
+            assert_artifact_panel(page, scenario=scenario)
+        except Exception as exc:
+            failures.append(f"artifact panel check failed: {exc}")
     write_scenario_artifacts(
         page=page,
         scenario=scenario,
         summary=summary,
         failures=failures,
+        workspace_artifacts=workspace_artifacts,
+        workspace_preview=workspace_preview,
     )
     if failures:
         raise AssertionError("; ".join(failures))

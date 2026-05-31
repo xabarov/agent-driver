@@ -62,10 +62,47 @@ async def test_chat_deep_research_sse_emits_skill_and_ledger(monkeypatch, tmp_pa
     names = [event["event"] for event in events]
     assert "skill_invoked" in names
     assert "source_ledger_updated" in names
-    ledger = next(event for event in events if event["event"] == "source_ledger_updated")
+    ledger = next(
+        event for event in events if event["event"] == "source_ledger_updated"
+    )
     data = ledger["data"]
     assert isinstance(data, dict)
     assert data["verified_reads"]
+
+
+@pytest.mark.asyncio
+async def test_chat_deep_research_sse_emits_report_artifact(monkeypatch, tmp_path):
+    monkeypatch.setenv("AGENT_DRIVER_PROVIDER", "fake")
+    monkeypatch.setenv("CHAT_DEMO_FAKE_SCENARIO", "deep_research_artifact")
+    monkeypatch.setenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "memory")
+    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "web")
+    monkeypatch.setenv("CHAT_DEMO_SESSIONS_PATH", str(tmp_path / "sessions.json"))
+    workspace_root = tmp_path / "workspace"
+    monkeypatch.setenv("CHAT_DEMO_WORKSPACE_ROOT", str(workspace_root))
+    reset_dependency_caches()
+    try:
+        events = await _collect_chat_events(
+            message="run a deep research artifact probe",
+            research_depth="deep_parallel_research",
+        )
+    finally:
+        reset_dependency_caches()
+
+    names = [event["event"] for event in events]
+    assert "artifact_created" in names
+    artifact_event = next(
+        event for event in events if event["event"] == "artifact_created"
+    )
+    data = artifact_event["data"]
+    assert isinstance(data, dict)
+    assert data["path"] == "research/report.md"
+    assert data["tool_name"] == "file_write"
+    completed = next(event for event in events if event["event"] == "run_completed")
+    metadata = completed["data"]
+    assert isinstance(metadata, dict)
+    artifacts = metadata["deep_research_artifacts"]
+    assert isinstance(artifacts, dict)
+    assert artifacts["report_path"] == "research/report.md"
 
 
 @pytest.mark.asyncio
