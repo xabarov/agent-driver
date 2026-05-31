@@ -810,3 +810,32 @@ Focused checks:
 - `tests/cli/test_eval_harness.py`;
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
   deep-research-artifact` against local fake backend/frontend on isolated ports.
+
+## Implementation Slice P3-probe-scorecard - 2026-05-31
+
+Added a human-readable markdown scorecard to each chat-demo live probe artifact
+directory:
+
+- `scorecard.md` summarizes run id, verdict, terminal event, failures, tool
+  chain, input/output/total tokens, tokens after first report update, research
+  search/fetch/domain counts, artifact paths, preview size/truncation, and
+  Deep Research efficiency flags;
+- the scorecard is written next to `trace-summary.json`, `workspace-artifacts.json`,
+  `workspace-preview.json`, transcript excerpt, and screenshot;
+- the deterministic `deep-research-artifact` probe now produces a compact report
+  suitable for quick regression review without opening raw JSON.
+
+Latest deterministic probe scorecard:
+
+```text
+tool_chain: todo_write -> web_search -> web_fetch -> web_fetch -> file_write
+tokens: input=2922, output=72, total=144, after_report=48
+research: search=1, fetch=2, domains=2, readiness=allowed
+artifacts: trace=research/report.md, workspace=research/report.md
+```
+
+Focused checks:
+
+- `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact` against local fake backend/frontend on isolated ports.

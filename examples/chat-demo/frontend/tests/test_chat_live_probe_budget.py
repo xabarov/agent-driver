@@ -114,3 +114,58 @@ def test_research_budget_stop_allows_budget_after_diversity() -> None:
     )
 
     assert reason is None
+
+
+def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None:
+    live_probe = _load_live_probe_module()
+    scenario = live_probe.LiveScenario(
+        name="deep-research-artifact",
+        prompt="deep research",
+    )
+
+    scorecard = live_probe.render_scenario_scorecard(
+        scenario=scenario,
+        summary={
+            "run_id": "run_1",
+            "verdict": "pass",
+            "terminal_event": "run_completed",
+            "tool_chain": "todo_write -> web_search -> web_fetch -> file_write",
+            "final_readiness": "allowed",
+            "llm": {
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 20,
+                    "total_tokens": 30,
+                }
+            },
+            "research": {
+                "search_count": 1,
+                "fetch_count": 2,
+                "unique_domains": ["example.com", "example.org"],
+            },
+            "artifacts": {"paths": ["research/report.md"]},
+            "research_efficiency": {
+                "deep_research_artifact_expected": True,
+                "first_tool": "todo_write",
+                "long_final_after_report": False,
+                "output_tokens_after_first_report_update": 7,
+                "report_update_count": 1,
+            },
+        },
+        failures=[],
+        workspace_artifacts={
+            "artifacts": [{"path": "research/report.md", "kind": "report"}],
+        },
+        workspace_preview={
+            "content": "# Report\nBody",
+            "truncated": False,
+        },
+    )
+
+    assert (
+        "tool_chain: `todo_write -> web_search -> web_fetch -> file_write`" in scorecard
+    )
+    assert "after_report=`7`" in scorecard
+    assert "domains=`2`" in scorecard
+    assert "workspace=`research/report.md`" in scorecard
+    assert "first_tool=`todo_write`" in scorecard

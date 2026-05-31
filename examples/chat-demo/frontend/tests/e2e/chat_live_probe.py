@@ -775,6 +775,85 @@ def transcript_excerpt(page: Page, *, max_chars: int = 6000) -> str:
     return compact[-max_chars:]
 
 
+def render_scenario_scorecard(
+    *,
+    scenario: LiveScenario,
+    summary: dict[str, Any],
+    failures: list[str],
+    workspace_artifacts: dict[str, Any] | None = None,
+    workspace_preview: dict[str, Any] | None = None,
+) -> str:
+    """Render a compact markdown scorecard for one live probe run."""
+    llm = summary.get("llm") if isinstance(summary.get("llm"), dict) else {}
+    usage = llm.get("usage") if isinstance(llm, dict) else None
+    if not isinstance(usage, dict):
+        usage = {}
+    research = (
+        summary.get("research") if isinstance(summary.get("research"), dict) else {}
+    )
+    artifacts = (
+        summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    )
+    efficiency = (
+        summary.get("research_efficiency")
+        if isinstance(summary.get("research_efficiency"), dict)
+        else {}
+    )
+    workspace_paths = []
+    if isinstance(workspace_artifacts, dict):
+        for item in workspace_artifacts.get("artifacts", []):
+            if isinstance(item, dict) and isinstance(item.get("path"), str):
+                workspace_paths.append(item["path"])
+    preview_size = None
+    preview_truncated = None
+    if isinstance(workspace_preview, dict):
+        content = workspace_preview.get("content")
+        if isinstance(content, str):
+            preview_size = len(content)
+        preview_truncated = workspace_preview.get("truncated")
+    rows = [
+        f"# Live Probe Scorecard: {scenario.name}",
+        "",
+        f"- run_id: `{summary.get('run_id')}`",
+        f"- verdict: `{summary.get('verdict')}` terminal=`{summary.get('terminal_event')}`",
+        f"- failures: `{', '.join(failures) if failures else '-'}`",
+        f"- tool_chain: `{summary.get('tool_chain') or '-'}`",
+        (
+            "- tokens: "
+            f"input=`{usage.get('input_tokens', 0)}`, "
+            f"output=`{usage.get('output_tokens', 0)}`, "
+            f"total=`{usage.get('total_tokens', 0)}`, "
+            f"after_report=`{efficiency.get('output_tokens_after_first_report_update', 0)}`"
+        ),
+        (
+            "- research: "
+            f"search=`{research.get('search_count', 0)}`, "
+            f"fetch=`{research.get('fetch_count', 0)}`, "
+            f"domains=`{len(research.get('unique_domains') or [])}`, "
+            f"readiness=`{summary.get('final_readiness')}`"
+        ),
+        (
+            "- artifacts: "
+            f"trace=`{', '.join(artifacts.get('paths') or []) or '-'}`, "
+            f"workspace=`{', '.join(workspace_paths) if workspace_paths else '-'}`, "
+            f"report_updates=`{efficiency.get('report_update_count', 0)}`"
+        ),
+        (
+            "- artifact_preview: "
+            f"chars=`{preview_size if preview_size is not None else 0}`, "
+            f"truncated=`{preview_truncated if preview_truncated is not None else False}`"
+        ),
+        (
+            "- deep_research: "
+            f"expected=`{efficiency.get('deep_research_artifact_expected', False)}`, "
+            f"first_tool=`{efficiency.get('first_tool') or '-'}`, "
+            f"long_final_after_report=`{efficiency.get('long_final_after_report', False)}`"
+        ),
+        "",
+    ]
+    return "\n".join(rows)
+
+
 def write_scenario_artifacts(
     *,
     page: Page,
@@ -814,6 +893,16 @@ def write_scenario_artifacts(
             json.dumps(workspace_preview, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+    (artifact_base / "scorecard.md").write_text(
+        render_scenario_scorecard(
+            scenario=scenario,
+            summary=summary,
+            failures=failures,
+            workspace_artifacts=workspace_artifacts,
+            workspace_preview=workspace_preview,
+        ),
+        encoding="utf-8",
+    )
     (artifact_base / "transcript-excerpt.txt").write_text(
         transcript_excerpt(page),
         encoding="utf-8",
