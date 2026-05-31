@@ -63,6 +63,38 @@ def test_trace_summary_passes_research_with_web_tool() -> None:
     ]
 
 
+def test_trace_summary_does_not_double_count_started_and_completed_tools() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Открой https://example.com и дай итог со ссылкой",
+        assistant_text="Итог: [Example](https://example.com).",
+        events=[
+            {
+                "event": "tool_call_started",
+                "data": {
+                    "tool_name": "web_fetch",
+                    "args": {"url": "https://example.com"},
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tool_name": "web_fetch",
+                    "status": "completed",
+                    "args": {"url": "https://example.com"},
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["tool_names"] == ["web_fetch"]
+    assert summary["tool_chain"] == "web_fetch"
+    assert summary["tool_calls"] == 1
+    assert summary["research"]["fetch_count"] == 1
+    assert summary["research"]["unique_domains"] == ["example.com"]
+
+
 def test_trace_summary_flags_progress_only_final() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

@@ -26,23 +26,10 @@ def event_tools(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 def tool_names(events: list[dict[str, object]]) -> list[str]:
     names: list[str] = []
-    for event in events:
-        name = event.get("event")
-        if name not in {"tool_call_started", "tool_call_completed"}:
-            continue
-        data = event_data(event)
-        direct = data.get("tool_name")
-        if isinstance(direct, str) and direct:
-            names.append(direct)
-        tools = data.get("tools")
-        if not isinstance(tools, list):
-            continue
-        for tool in tools:
-            if not isinstance(tool, dict):
-                continue
-            tool_name = tool.get("tool_name") or tool.get("name")
-            if isinstance(tool_name, str) and tool_name:
-                names.append(tool_name)
+    for tool in _preferred_tool_payloads(events):
+        tool_name = tool.get("tool_name") or tool.get("name")
+        if isinstance(tool_name, str) and tool_name:
+            names.append(tool_name)
     return names
 
 
@@ -51,22 +38,28 @@ def tool_payloads(
     tool_name: str,
 ) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
+    for tool in _preferred_tool_payloads(events):
+        if tool.get("tool_name") == tool_name or tool.get("name") == tool_name:
+            payloads.append(tool)
+    return payloads
+
+
+def _preferred_tool_payloads(events: list[dict[str, object]]) -> list[dict[str, Any]]:
+    completed = _tool_payloads_for_event(events, "tool_call_completed")
+    if completed:
+        return completed
+    return _tool_payloads_for_event(events, "tool_call_started")
+
+
+def _tool_payloads_for_event(
+    events: list[dict[str, object]],
+    event_name: str,
+) -> list[dict[str, Any]]:
+    payloads: list[dict[str, Any]] = []
     for event in events:
-        if event.get("event") not in {"tool_call_started", "tool_call_completed"}:
+        if event.get("event") != event_name:
             continue
-        data = event_data(event)
-        if data.get("tool_name") == tool_name:
-            payloads.append(data)
-        tools = data.get("tools")
-        if isinstance(tools, list):
-            payloads.extend(
-                tool
-                for tool in tools
-                if isinstance(tool, dict)
-                and (
-                    tool.get("tool_name") == tool_name or tool.get("name") == tool_name
-                )
-            )
+        payloads.extend(event_tools(event_data(event)))
     return payloads
 
 

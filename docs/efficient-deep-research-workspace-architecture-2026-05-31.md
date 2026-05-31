@@ -790,3 +790,23 @@ Focused checks:
 - `examples/chat-demo/backend/tests/test_chat_deep_research_sse.py`;
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
   deep-research-artifact` against local fake backend/frontend on isolated ports.
+
+## Implementation Slice P3-scorecard-cleanup - 2026-05-31
+
+Fixed trace-summary tool accounting after the first live probe:
+
+- `tool_names` and `tool_payloads` now prefer `tool_call_completed` payloads and
+  only fall back to `tool_call_started` when no completed payload exists;
+- this prevents scorecards from double-counting a single tool execution as both
+  started and completed;
+- the deterministic Deep Research probe now reports the expected chain:
+  `todo_write -> web_search -> web_fetch -> web_fetch -> file_write`,
+  `tool_calls=5`, `search_count=1`, and `fetch_count=2`.
+
+Focused checks:
+
+- `tests/observability/test_run_trace_summary.py`;
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `tests/cli/test_eval_harness.py`;
+- `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
+  deep-research-artifact` against local fake backend/frontend on isolated ports.
