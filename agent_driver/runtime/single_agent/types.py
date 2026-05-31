@@ -8,7 +8,7 @@ from time import monotonic
 from typing import Any
 
 from agent_driver.code_agent.executor import CodeActionExecutor
-from agent_driver.runtime.single_agent.config_sections import (
+from agent_driver.runtime.single_agent.lifecycle.config_sections import (
     CodeAgentSettings,
     CompactionSettings,
     PythonToolSettings,

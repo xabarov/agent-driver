@@ -20,10 +20,10 @@ from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.abort import RunAbortHandle  # noqa: F401
 from agent_driver.runtime.metadata_state import get_loop_control_state
 from agent_driver.runtime.tool_gate import ToolGate  # noqa: F401 (re-exported via runtime/__init__)
-from agent_driver.runtime.single_agent.journal import SingleAgentJournalMixin
+from agent_driver.runtime.single_agent.lifecycle.journal import SingleAgentJournalMixin
 from agent_driver.runtime.single_agent.finalization.output import SingleAgentOutputMixin
-from agent_driver.runtime.single_agent.resume import SingleAgentResumeMixin
-from agent_driver.runtime.single_agent.steps import SingleAgentStepMixin
+from agent_driver.runtime.single_agent.lifecycle.resume import SingleAgentResumeMixin
+from agent_driver.runtime.single_agent.lifecycle.steps import SingleAgentStepMixin
 
 # isort: off
 from agent_driver.runtime.single_agent.types import (

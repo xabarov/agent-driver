@@ -697,6 +697,10 @@ Status on 2026-05-31:
   and terminal output builders/mixins under
   `runtime/single_agent/finalization/`; old `step_planning`, `output` and
   `output_builders` module paths remain compatibility shims.
+- Lifecycle mixins, resume handling, run journaling, pending-interrupt helpers
+  and runtime config sections were grouped under
+  `runtime/single_agent/lifecycle/`; old `steps`, `resume`, `journal`,
+  `pending` and `config_sections` module paths remain compatibility shims.
 - `GovernedToolExecutor.execute()` now runs through explicit stages:
   normalize planned calls, apply pre-hooks, add policy hints, partition
   serial/parallel units, execute units and collect ordered results.

@@ -27,7 +27,7 @@ from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
     build_research_session_contract_from_context,
 )
-from agent_driver.runtime.single_agent.pending import (
+from agent_driver.runtime.single_agent.lifecycle.pending import (
     pending_interrupt_from_execution_result,
     serialize_pending_interrupt,
 )
