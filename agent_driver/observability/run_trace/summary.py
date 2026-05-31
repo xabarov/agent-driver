@@ -201,6 +201,10 @@ def summarize_run_trace(
         "deep_research_missing_initial_todo": research_efficiency[
             "missing_initial_todo"
         ],
+        "deep_research_unexpected_agent_tool": research_efficiency[
+            "unexpected_agent_tool"
+        ],
+        "deep_research_skill_denied": research_efficiency["skill_denied"],
     }
     notes = _notes(
         failures=failures,
@@ -608,6 +612,8 @@ def _research_efficiency_summary(
         for name in set(tool_names)
         if tool_names.count(name) > 1 and name not in {"web_search", "web_fetch"}
     )
+    unexpected_agent_tool = deep_expected and "agent_tool" in tool_names
+    skill_denied = deep_expected and _skill_tool_denied(events)
     return {
         "deep_research_artifact_expected": deep_expected,
         "missing_report_artifact": missing_report_artifact,
@@ -618,6 +624,8 @@ def _research_efficiency_summary(
         "final_references_report_artifact": final_references_report,
         "final_missing_report_reference": final_missing_report_reference,
         "missing_initial_todo": missing_initial_todo,
+        "unexpected_agent_tool": unexpected_agent_tool,
+        "skill_denied": skill_denied,
         "first_tool": first_tool,
         "tool_chain": " -> ".join(tool_names),
         "unique_tool_count": len(set(tool_names)),
@@ -636,6 +644,25 @@ def _research_efficiency_summary(
         "output_tokens": output_tokens if isinstance(output_tokens, int) else 0,
         "output_tokens_after_first_report_update": completion_after_report,
     }
+
+
+def _skill_tool_denied(events: list[dict[str, object]]) -> bool:
+    for name in ("skill_tool", "skill_view"):
+        for payload in _tool_payloads(events, name):
+            status = str(payload.get("status") or "").lower()
+            decision = str(payload.get("decision") or "").lower()
+            summary = str(payload.get("result_summary") or "").lower()
+            error = str(payload.get("error") or "").lower()
+            error_code = str(payload.get("error_code") or "").lower()
+            if status in {"denied", "failed", "error"}:
+                return True
+            if decision in {"deny", "denied"}:
+                return True
+            if "path outside workspace" in summary or "path outside workspace" in error:
+                return True
+            if error_code in {"guardrail_blocked", "tool_not_registered"}:
+                return True
+    return False
 
 
 def _deep_research_artifact_expected(
@@ -926,6 +953,14 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "deep_research_missing_initial_todo",
         "Deep Research did not start with todo_write before data/artifact tools.",
+    ),
+    (
+        "deep_research_unexpected_agent_tool",
+        "Default Deep Research used agent_tool; keep worker delegation opt-in.",
+    ),
+    (
+        "deep_research_skill_denied",
+        "Deep Research hit a denied/failed skill_tool or skill_view call.",
     ),
     (
         "plan_todos_incomplete_on_final",

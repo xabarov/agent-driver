@@ -8,6 +8,7 @@ from typing import Any
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
 from agent_driver.skills import list_skill_manifests, skill_manifest_payload, view_skill
 from agent_driver.tools.builtin.filesystem._paths import as_int, resolve_base_dir
+from agent_driver.tools.context import get_workspace_cwd, get_workspace_jail_root
 from agent_driver.tools.registry import ToolRegistry
 
 _SKILL_TOOL = "skill_tool"
@@ -154,10 +155,10 @@ def _skill_view_manifest() -> ToolManifest:
 
 
 async def _skill_tool_handler(args: dict[str, Any]) -> dict[str, Any]:
-    base = resolve_base_dir(args.get("base_dir"))
     max_results = as_int(args.get("max_results"), _DEFAULT_MAX_RESULTS, minimum=1)
     include_hidden = bool(args.get("include_hidden", False))
     trusted_roots = _normalize_trusted_roots(args.get("trusted_roots"))
+    base = _resolve_skill_base_dir(args.get("base_dir"), trusted_roots=trusted_roots)
     manifests, truncated = list_skill_manifests(
         base_dir=base,
         trusted_roots=tuple(trusted_roots),
@@ -184,8 +185,8 @@ async def _skill_tool_handler(args: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _skill_view_handler(args: dict[str, Any]) -> dict[str, Any]:
-    base = resolve_base_dir(args.get("base_dir"))
     trusted_roots = _normalize_trusted_roots(args.get("trusted_roots"))
+    base = _resolve_skill_base_dir(args.get("base_dir"), trusted_roots=trusted_roots)
     max_chars = as_int(args.get("max_chars"), _DEFAULT_MAX_CHARS, minimum=1000)
     viewed = view_skill(
         base_dir=base,
@@ -199,9 +200,7 @@ async def _skill_view_handler(args: dict[str, Any]) -> dict[str, Any]:
     )
     skill = skill_manifest_payload(viewed.manifest)
     return {
-        "summary": (
-            f"Loaded {viewed.content_kind} for skill '{viewed.manifest.name}'"
-        ),
+        "summary": (f"Loaded {viewed.content_kind} for skill '{viewed.manifest.name}'"),
         "skill": skill,
         "skill_dir": viewed.manifest.skill_dir,
         "supporting_files": viewed.manifest.supporting_files,
@@ -214,6 +213,45 @@ async def _skill_view_handler(args: dict[str, Any]) -> dict[str, Any]:
         "truncated": viewed.truncated,
         "skill_invocation": viewed.invocation.model_dump(mode="json"),
     }
+
+
+def _resolve_skill_base_dir(raw: Any, *, trusted_roots: list[Path]) -> Path:
+    """Resolve skill roots, allowing explicit trusted roots outside workspace jail."""
+    if raw is None:
+        return resolve_base_dir(raw)
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("base_dir must be a non-empty string when provided")
+    base = Path(raw).expanduser()
+    if not base.is_absolute():
+        base = (get_workspace_cwd() / base).resolve()
+    if not base.is_absolute():
+        raise ValueError("base_dir must be absolute")
+    if not base.exists():
+        raise ValueError(f"base_dir does not exist: {base}")
+    if not base.is_dir():
+        raise ValueError(f"base_dir is not a directory: {base}")
+    resolved = base.resolve()
+    if _is_under_trusted_root(resolved, trusted_roots):
+        return resolved
+    jail_root = get_workspace_jail_root()
+    if jail_root is not None:
+        try:
+            resolved.relative_to(jail_root.resolve())
+        except ValueError as exc:
+            raise ValueError(
+                f"path outside workspace ({jail_root.resolve()}): {resolved}"
+            ) from exc
+    return resolved
+
+
+def _is_under_trusted_root(path: Path, trusted_roots: list[Path]) -> bool:
+    for root in trusted_roots:
+        try:
+            path.relative_to(root)
+        except ValueError:
+            continue
+        return True
+    return False
 
 
 def _normalize_trusted_roots(raw: Any) -> list[Path]:

@@ -289,6 +289,86 @@ def test_trace_summary_allows_deep_research_final_report_reference() -> None:
     assert summary["failures"]["deep_research_final_missing_report_reference"] is False
 
 
+def test_trace_summary_flags_unexpected_agent_tool_in_deep_research() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово, отчет в research/report.md",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 1},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["unexpected_agent_tool"] is True
+    assert summary["failures"]["deep_research_unexpected_agent_tool"] is True
+    assert summary["verdict"] == "fail"
+
+
+def test_trace_summary_flags_denied_skill_tool_in_deep_research() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово, отчет в research/report.md",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "skill_tool",
+                            "status": "denied",
+                            "result_summary": (
+                                "path outside workspace "
+                                "(/workspace/session): /workspace/agent_driver/skills/curated"
+                            ),
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 1},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["skill_denied"] is True
+    assert summary["failures"]["deep_research_skill_denied"] is True
+    assert summary["verdict"] == "fail"
+
+
 def test_trace_summary_flags_repeated_full_report_write() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

@@ -55,6 +55,15 @@ async def test_tools_agents_preset_shows_agent_tool(client) -> None:
     assert names == {"agent_tool", "python"}
 
 
+async def test_tools_deep_research_preset_hides_agent_tool(client) -> None:
+    response = await client.get("/api/tools", params={"preset": "deep_research"})
+    assert response.status_code == 200
+    names = {item["name"] for item in response.json()["tools"]}
+    assert "agent_tool" not in names
+    assert "python" not in names
+    assert {"skill_tool", "skill_view", "web_fetch", "web_search"}.issubset(names)
+
+
 async def test_tools_legacy_dev_preset_still_hides_filesystem_from_public_endpoint(
     client,
 ) -> None:
@@ -189,7 +198,7 @@ def test_deep_research_mode_uses_artifact_tool_preset() -> None:
 def test_deep_research_preset_includes_scoped_artifact_tools() -> None:
     config = _tool_config_from_preset("deep_research")
 
-    assert set(config.tools) == {"agent_tool", "skill_tool", "skill_view"}
+    assert set(config.tools) == {"skill_tool", "skill_view"}
     assert set(config.tool_packs) == {
         "web",
         "planning_progress",
@@ -197,6 +206,7 @@ def test_deep_research_preset_includes_scoped_artifact_tools() -> None:
         "filesystem_write",
         "artifacts",
     }
+    assert "agent_tool" not in config.tools
     assert "shell" not in config.tool_packs
     assert "discovery" not in config.tool_packs
     assert config.allow_dangerous_tools is True

@@ -371,11 +371,10 @@ def _deep_research_contract_payload(
         ],
         "source_ledger_enabled": True,
         "context_pressure_recommendations": [
-            "compact_or_delegate_before_blocking_pressure",
-            "prefer_child_tasks_for_parallel_source_discovery",
+            "write_incremental_findings_to_workspace_before_blocking_pressure",
             "parent_keeps_final_synthesis_and_citation_coverage",
         ],
-        "optional_child_strategy": "trusted_skill_preload_with_compact_findings",
+        "workspace_strategy": "use_research_report_md_and_source_ledger_for_long_outputs",
         "final_citation_coverage": {
             "verified_read_count": len(contract.source_ledger.verified_reads),
             "assistant_link_count": len(contract.source_ledger.assistant_links),

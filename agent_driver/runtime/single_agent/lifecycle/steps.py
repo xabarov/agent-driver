@@ -37,7 +37,9 @@ from agent_driver.runtime.research_evidence import (
 from agent_driver.runtime.single_agent.context_management.compaction_stage import (
     apply_compaction_if_eligible,
 )
-from agent_driver.runtime.single_agent.lifecycle.continuation import analyze_continuation_intent
+from agent_driver.runtime.single_agent.lifecycle.continuation import (
+    analyze_continuation_intent,
+)
 from agent_driver.runtime.single_agent.llm_step import execute_llm_call_step
 from agent_driver.runtime.single_agent.planning.state import build_planning_snapshot
 from agent_driver.runtime.single_agent.tool_stage.subagent_execution import (
@@ -297,7 +299,9 @@ def _maybe_build_continuation_transition(
         ):
             research_state.set_repair_exhausted(list(readiness.reasons))
             return None
-        from agent_driver.runtime.single_agent.lifecycle.continuation import ContinuationIntent
+        from agent_driver.runtime.single_agent.lifecycle.continuation import (
+            ContinuationIntent,
+        )
 
         intent = ContinuationIntent(True, "contract_repair_required")
         nudge = _research_contract_repair_nudge(context, readiness.reasons)
@@ -492,7 +496,8 @@ def _research_contract_repair_nudge(
     return (
         "Contract repair required before the final answer: "
         f"{reason_text}. Continue now using only the real available tools "
-        "(todo_write, web_search, web_fetch, python, agent_tool when useful). "
+        "(todo_write, web_search, web_fetch, read_file, artifact_preview, "
+        "file_write, file_patch when available). "
         "Update the visible todo state when a step is done, cite fetched URLs in "
         "the final response, and reply in the user's language."
     )

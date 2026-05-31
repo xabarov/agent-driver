@@ -1090,3 +1090,247 @@ Focused checks:
   deep-research-targeted-patch`;
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
   deep-research-blocked-fetch`.
+
+## Corrective Plan P14-real-model-regression - 2026-05-31
+
+This section supersedes the earlier assumption that Deep Research can be made
+reliable by exposing a larger tool bag plus trace guards. The real OpenRouter
+run showed that deterministic fake lanes are not enough: the model can hit a
+tool-policy edge case, recover chaotically, and still produce a plausible
+preliminary report.
+
+Observed regression:
+
+- `skill_tool` was called with `base_dir=/workspace/agent_driver/skills/curated`
+  while the active session workspace jail was
+  `/workspace/examples/chat-demo/workspace/session_*`;
+- the trusted curated skill path was therefore denied as outside workspace;
+- after the denied skill lookup, the model retried skill discovery, expanded
+  into repeated `web_search`, and spawned delegated work through `agent_tool`;
+- `research/report.md` existed, but the Deep Research panel showed `0 verified`;
+- the chat answer looked like a useful article even though it explicitly said
+  pages still needed verification;
+- token usage rose quickly while the run spent work on recovery, repeated
+  search, and delegation instead of controlled verification plus artifact
+  synthesis.
+
+Root cause:
+
+- Deep Research is still too close to free-form ReAct.
+- The default tool surface includes too many recovery paths (`agent_tool`,
+  skill discovery, broad web search) at the same time.
+- Curated skills are runtime assets, but `skill_tool` treats their absolute path
+  like ordinary workspace filesystem input.
+- Report artifact existence is treated as a positive signal even when source
+  coverage is still preliminary.
+- Fake/live lanes validated ideal tool order, but not denied-tool recovery,
+  real-model over-delegation, or preliminary-final behavior.
+
+Recommended architecture:
+
+Deep Research should become a small runtime state machine that uses the LLM for
+judgment and writing, while the runtime controls phase, allowed tools, budgets,
+and readiness.
+
+Default mode: `deep_research`
+
+- no `agent_tool` by default;
+- no shell/python by default;
+- curated research skill loaded by name or attached by runtime, not by asking
+  the model to construct an absolute path;
+- parent run owns source selection, verification, report writing, and final
+  handoff;
+- subagents move to a separate opt-in mode,
+  `deep_parallel_research_with_workers`, after the base lane is stable.
+
+Phases and tool surface:
+
+1. `setup`
+   - allowed: `todo_write`, `skill_view` by name;
+   - goal: create visible todo plan, load the research workflow;
+   - failure if curated skill lookup is denied or retried with an absolute path.
+
+2. `discovery`
+   - allowed: `web_search`;
+   - starts with a small query budget, but the budget is adaptive rather than
+     fixed;
+   - if source coverage is still weak after the first pass, the controller may
+     open a bounded expansion pass with new query angles and excluded already
+     covered domains;
+   - bounded by expansion count, repeated-query guard, and domain dedupe;
+   - output is candidate URLs only, never verified evidence.
+
+3. `verification`
+   - allowed: `web_fetch`;
+   - fetch selected candidate URLs from diverse domains;
+   - classify each read as `verified`, `blocked`, or `failed`;
+   - if pages block access, enter explicit fallback mode instead of retry loops.
+
+4. `workspace_draft`
+   - allowed: `file_write`, `artifact_preview`;
+   - write `research/report.md` and `research/sources.jsonl`;
+   - long synthesis belongs in the report artifact, not inline chat.
+
+5. `audit_patch`
+   - allowed: `artifact_preview`, `read_file`, `file_patch`;
+   - patch the report after preview/read;
+   - repeated full `file_write` to `research/report.md` remains a failure.
+
+6. `final_handoff`
+   - allowed: final answer only;
+   - answer must be short, link to `research/report.md`, state verified source
+     count, and include fallback caveats when applicable.
+
+Report status model:
+
+- `draft`: report exists but verification is incomplete;
+- `verified`: required source coverage is satisfied;
+- `fallback`: enough fetch attempts were blocked/failed and the report clearly
+  states the limitation;
+- `invalid`: report exists but source ledger is missing or contradicts the
+  final handoff.
+
+The UI must not present a report with `0 verified` as a completed Deep Research
+result unless it is explicitly marked `fallback`.
+
+Implementation work plan:
+
+P14.1 Trusted curated skills
+
+- Treat bundled curated skills as trusted runtime assets.
+- Allow `skill_tool`/`skill_view` to read trusted roots outside the session
+  workspace jail.
+- Keep untrusted absolute paths outside workspace denied.
+- Prefer `skill_view(name="deep-research-report")` or runtime attachment over
+  model-generated absolute paths.
+
+P14.2 Default deep research tool surface
+
+- Remove `agent_tool` from the default `deep_research` preset.
+- Disable runtime subagent execution for default Deep Research.
+- Remove prompt/runtime recommendations that encourage delegation in the base
+  mode.
+- Add a separate opt-in preset for worker-based parallel research later.
+
+P14.3 Phase controller
+
+- Persist `deep_research_phase` in run metadata.
+- Compute phase transitions from trace/evidence state, not only model text.
+- Restrict allowed tools per phase.
+- Add adaptive budgets:
+  - initial search budget, e.g. 3-6 queries for normal tasks;
+  - controlled expansion budget, e.g. another 3-6 queries only when coverage
+    gaps are explicit;
+  - hard search cap per run/profile to prevent infinite discovery loops;
+  - repeated search query count;
+  - fetch attempts;
+  - output tokens after first report artifact update.
+- Make the transition out of `discovery` depend on source coverage, not on a
+  fixed number of sources. Coverage includes verified reads, distinct domains
+  or publishers, missing plan aspects, and whether primary sources are required
+  for the task type.
+
+P14.4 Readiness and report status
+
+- Final readiness must include report status and source ledger consistency.
+- A report with `0 verified` is not complete unless fallback criteria are met.
+- Final answer is blocked or repaired if it presents preliminary material as a
+  final report.
+
+P14.5 Observability failures
+
+Add trace failure flags:
+
+- `deep_research_skill_denied`;
+- `deep_research_unexpected_agent_tool`;
+- `deep_research_preliminary_final`;
+- `deep_research_low_verified_coverage`;
+- `deep_research_tool_entropy_high`;
+- `deep_research_repeated_search_args`;
+- `deep_research_search_without_fetch_progress`.
+
+Testing plan:
+
+1. Unit tests
+   - trusted curated skill outside workspace is allowed;
+   - untrusted outside-workspace skill path is denied;
+   - default `deep_research` preset excludes `agent_tool`;
+   - deep report status is `draft`, `verified`, `fallback`, or `invalid`
+     based on source ledger state.
+
+2. Runtime contract tests
+   - final readiness denies a report with `0 verified` and no fallback;
+   - repeated search without fetch progress triggers repair;
+   - denied skill lookup does not lead to repeated skill retries;
+   - phase controller chooses the next allowed tool set deterministically.
+
+3. Fake regression lanes
+   - `deep_research_skill_denied_recovery`: model attempts denied curated path;
+     expected behavior is runtime repair or safe skill load by name, not chaotic
+     search/delegation;
+   - `deep_research_unexpected_agent_tool`: fake provider tries `agent_tool`;
+     expected behavior is tool unavailable or flagged failure in default mode;
+   - `deep_research_preliminary_final`: report exists with candidates but no
+     verified reads; expected status is `draft`, not completed final.
+
+4. Playwright fake live lanes
+   - assert tool order by phase;
+   - assert artifact panel shows report status and verified/fallback counts;
+   - assert scorecard captures phase transitions, budgets, tool entropy, and
+     failure flags.
+
+5. Real-model live lanes
+   - run the original fork-join prompt against the real OpenRouter provider;
+   - require no `agent_tool` in default mode;
+   - require adaptive-but-bounded search: expansion is allowed only when the
+     scorecard records explicit coverage gaps and new query angles;
+   - require at least two fetch attempts unless fallback is reached;
+   - require `research/report.md`, `research/sources.jsonl`, short final
+     handoff, and accurate report status;
+   - persist Playwright screenshots, trace summary, workspace artifacts,
+     scorecard, and Phoenix trace status.
+
+6. Phoenix/deep evaluation
+   - score tool sequence, token usage, repeated search args, failed/blocked
+     fetches, source coverage, and output tokens after first report write;
+   - compare real-provider runs against fake lanes so deterministic tests do not
+     hide real-model recovery failures.
+
+Acceptance criteria:
+
+- default Deep Research follows this shape:
+  `todo_write -> skill_view -> web_search* -> web_fetch* -> file_write ->
+  artifact_preview/read_file -> optional file_patch -> final`;
+- no `agent_tool` in default Deep Research;
+- no completed final with `0 verified` unless fallback status is explicit;
+- no long final answer after `research/report.md` exists;
+- no repeated full rewrite of `research/report.md`;
+- no fixed "six sources is enough" assumption: final readiness is based on
+  evidence coverage and fallback status, while search expansion remains bounded;
+- live OpenRouter fork-join prompt passes the same scorecard used by fake lanes.
+
+## Implementation Slice P14.1-trusted-skills-and-default-surface - 2026-05-31
+
+Started the corrective plan with the two changes that directly address the real
+OpenRouter regression:
+
+- `skill_tool` and `skill_view` may now read an explicitly trusted skill root
+  outside the session workspace jail, allowing bundled curated skills such as
+  `deep-research-report` to work from per-session workspaces;
+- untrusted absolute paths outside the session workspace remain denied;
+- the default `deep_research` chat preset no longer exposes `agent_tool`;
+- runtime subagent execution is disabled for the default `deep_research` preset;
+- Deep Research contract hints no longer recommend delegation as the pressure
+  strategy in the base mode;
+- contract-repair nudges list workspace/file tools instead of encouraging
+  `agent_tool`;
+- trace summaries now flag `deep_research_unexpected_agent_tool` and
+  `deep_research_skill_denied`;
+- Playwright Deep Research scorecards treat those new failures as forbidden.
+
+Focused checks:
+
+- `tests/tools/test_builtin_skill_tools.py`;
+- `tests/runtime/test_research_session_contract.py`;
+- `examples/chat-demo/backend/tests/test_tools.py`;
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`.
