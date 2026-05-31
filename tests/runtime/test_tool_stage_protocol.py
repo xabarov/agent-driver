@@ -540,7 +540,7 @@ def test_source_verified_research_requires_distinct_fetched_domains() -> None:
     assert _should_force_final_answer(context) is False
 
 
-def test_research_satisfied_forces_final_even_with_synthesis_todo_pending() -> None:
+def test_research_satisfied_waits_for_synthesis_todo_completion() -> None:
     context = SimpleNamespace(
         tool_calls=3,
         llm_step_count=3,
@@ -596,8 +596,72 @@ def test_research_satisfied_forces_final_even_with_synthesis_todo_pending() -> N
         },
     )
 
-    assert _should_force_final_answer(context) is True
-    assert context.metadata["final_readiness"] == "allowed"
+    assert _should_force_final_answer(context) is False
+    assert context.metadata["final_readiness"] == "repair_needed"
+    assert context.metadata["repair_required_reasons"] == ["unfinished_todos"]
+
+
+def test_zero_result_force_final_does_not_bypass_unfinished_todos() -> None:
+    context = SimpleNamespace(
+        tool_calls=4,
+        llm_step_count=4,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                        "research_depth": "source_verified_report",
+                    }
+                },
+                allowed_tools=None,
+                denied_tools=[],
+            ),
+        ),
+        metadata={
+            "web_search_zero_streak": 1,
+            "effective_tool_names": ("web_search", "web_fetch", "todo_write"),
+            "planning_state": {
+                "run_id": "run_research",
+                "todos": [
+                    {"todo_id": "search", "content": "Search", "status": "completed"},
+                    {
+                        "todo_id": "synthesize",
+                        "content": "Write final synthesis",
+                        "status": "in_progress",
+                    },
+                ],
+                "metadata": {},
+            },
+            "tool_results": [
+                {"call": {"tool_name": "web_search", "args": {"query": "q"}}},
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.com/a"},
+                    },
+                    "structured_output": {"url": "https://example.com/a", "text": "a"},
+                    "error": None,
+                },
+                {
+                    "call": {
+                        "tool_name": "web_fetch",
+                        "args": {"url": "https://example.org/b"},
+                    },
+                    "structured_output": {"url": "https://example.org/b", "text": "b"},
+                    "error": None,
+                },
+            ],
+        },
+    )
+
+    assert _should_force_final_answer(context) is False
+    assert (
+        context.metadata.get("force_final_answer_reason") != "web_search_zero_results"
+    )
+    assert context.metadata["repair_required_reasons"] == ["unfinished_todos"]
 
 
 def test_research_deliverable_waits_for_source_verified_fetches() -> None:

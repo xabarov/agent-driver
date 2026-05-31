@@ -145,7 +145,7 @@ def build_research_session_contract(
         research_depth=research_depth,
         evidence=evidence,
         web_fetch_available=web_fetch_available,
-        unfinished_todos=tuple(_unfinished_todo_labels(planning_state)),
+        unfinished_todos=tuple(_unfinished_todo_labels(planning_state, assistant_text)),
         final_has_source_links=has_source_links(assistant_text),
         enforce_final_source_links=enforce_final_source_links,
         enforce_todos=enforce_todos,
@@ -177,6 +177,13 @@ def has_source_links(text: str) -> bool:
     return bool(re.search(r"https?://|\[[^\]]+\]\(https?://", text or ""))
 
 
+def unfinished_todo_labels(
+    planning_state: object, *, assistant_text: str = ""
+) -> list[str]:
+    """Return visible todos that still require tool/model progress."""
+    return _unfinished_todo_labels(planning_state, assistant_text)
+
+
 def _research_depth_from_task_contract(task_contract: dict[str, Any] | None) -> str:
     if not isinstance(task_contract, dict):
         return RESEARCH_DEPTH_NONE
@@ -194,7 +201,9 @@ def _research_depth_from_task_contract(task_contract: dict[str, Any] | None) -> 
     )
 
 
-def _unfinished_todo_labels(planning_state: object) -> list[str]:
+def _unfinished_todo_labels(
+    planning_state: object, assistant_text: str = ""
+) -> list[str]:
     if not isinstance(planning_state, dict):
         return []
     state = PlanningState.model_validate(planning_state)
@@ -205,8 +214,46 @@ def _unfinished_todo_labels(planning_state: object) -> list[str]:
             PlanningTodoStatus.IN_PROGRESS,
         }:
             continue
+        if _final_answer_covers_todo(
+            todo_id=item.todo_id,
+            content=item.content,
+            assistant_text=assistant_text,
+        ):
+            continue
         labels.append(f"{item.todo_id}: {item.content}")
     return labels
+
+
+_FINAL_DELIVERABLE_TODO_MARKERS = (
+    "summary",
+    "summar",
+    "synthesis",
+    "synthesize",
+    "report",
+    "output",
+    "final",
+    "answer",
+    "итог",
+    "свод",
+    "обобщ",
+    "вывод",
+    "ответ",
+    "отчет",
+    "отчёт",
+)
+
+
+def _final_answer_covers_todo(
+    *,
+    todo_id: str,
+    content: str,
+    assistant_text: str,
+) -> bool:
+    """Treat a meaningful final answer as completing a final synthesis todo."""
+    if len((assistant_text or "").strip()) < 200:
+        return False
+    haystack = f"{todo_id} {content}".lower()
+    return any(marker in haystack for marker in _FINAL_DELIVERABLE_TODO_MARKERS)
 
 
 def _task_contract_from_context(context: RunContext) -> dict[str, Any] | None:
@@ -239,4 +286,5 @@ __all__ = [
     "build_research_session_contract",
     "build_research_session_contract_from_context",
     "has_source_links",
+    "unfinished_todo_labels",
 ]

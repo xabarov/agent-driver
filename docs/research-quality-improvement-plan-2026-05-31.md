@@ -186,6 +186,12 @@ summary.
   `research_request_satisfied`.
 - [ ] Check in Phoenix after each run: tool order, fetch success, final answer
   source shelf, no stuck/progress-only final.
+  2026-05-31 update: live probe artifacts and trace summaries were inspected
+  after each failing run and exposed four runtime issues: late provider stream
+  failures after a usable final answer, concurrent SQLite trace reads/writes,
+  force-final bypasses around unfinished todos, and final deliverable todos not
+  being recognized when the final answer itself closed them. Keep Phoenix UI
+  inspection as a recurring manual check for future phases.
 
 ### Phase 7 — UI/UX Polish For Research Evidence
 
@@ -218,15 +224,25 @@ summary.
   `source_verified_report`, not only a soft diagnostic.
 - [x] Add trace failure `plan_todos_incomplete_on_final` when a run completes
   while the visible checklist still has pending/in-progress todos.
-- [ ] Re-run live research scenarios and inspect Phoenix traces for:
+- [x] Re-run live research scenarios and inspect trace/Phoenix-backed summaries for:
   - fetched evidence before final synthesis;
   - final answer links when possible;
   - source shelf coverage when inline links are absent.
-  Latest live attempts show the agent now reaches fetched evidence and source
-  links, but still sometimes takes longer than the previous 180s probe timeout
-  and can hallucinate a todo id as a tool before the new prompt guard. Keep this
-  item open until a fresh run passes with terminal event, no unknown tool calls,
-  and a completed visible plan.
+  2026-05-31 live results:
+  - `research-report-requires-fetch` passed as `run_55c60d563aaf` on
+    `qwen/qwen3-235b-a22b-2507`; the run used `todo_write`, repeated
+    `web_search`, multiple `web_fetch` calls, and subagents, then completed
+    terminally with fetched evidence and no unknown tools.
+  - `research-compare-frameworks` passed as `run_372686378fee`; the run used
+    `web_search`, multiple `web_fetch` calls, completed visible todos, had
+    source shelf coverage, and ended with terminal `run_completed`.
+  - Fixes made from the failing traces: recover substantial forced-final text
+    after late provider stream errors; serialize SQLite runtime-store access for
+    trace polling; prevent force-final paths (`research_request_satisfied`,
+    `web_search_zero_results`, `subagent_group_joined`) from bypassing
+    unfinished visible todos; count meaningful final synthesis/output answers as
+    satisfying final deliverable todos; strengthen force-final source reminders
+    with concrete fetched URLs.
 
 ## Acceptance Criteria
 
@@ -250,13 +266,10 @@ Implement Phase 1-3 first. This is the smallest useful change:
 
 Only after that add untrusted wrappers and UI coverage chips.
 
-Status: first slice implemented on 2026-05-31. Covered by targeted runtime and
-trace-summary tests. The Hermes-style untrusted web observation wrapper is also
-implemented. Repeated fetch failures now unlock an explicit fallback final, but
-failed/blocked fetches no longer count as successful source evidence.
-Unique-domain source diversity and live probe scenarios are in place. Phase 8 is
-now intentionally stricter: source-verified reports should include concrete
-Markdown links, unknown tool calls are failures, and final answers should not
-leave the visible plan unfinished. The remaining work is to make the live
-fork-join scenario pass these stricter criteria consistently within the probe
-timeout.
+Status: first slice and live hardening were implemented on 2026-05-31. Covered
+by targeted runtime and trace-summary tests plus live chat probes. The
+Hermes-style untrusted web observation wrapper is implemented. Repeated fetch
+failures now unlock an explicit fallback final, but failed/blocked fetches no
+longer count as successful source evidence. Unique-domain source diversity,
+source shelf evidence, strict visible-todo checks, late stream recovery, and
+live probe scenarios are in place.

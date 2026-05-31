@@ -1212,14 +1212,9 @@ def _force_final_reason(context: RunContext) -> str | None:
         return "near_tool_budget"
     if near_step_budget:
         return "near_step_budget"
-    if loop_detected:
-        return "repeated_tool_call"
-    if zero_results_triggered:
-        return "web_search_zero_results"
     contract = build_research_session_contract_from_context(
         context,
         enforce_final_source_links=False,
-        enforce_todos=not _source_verified_task_contract(context),
     )
     context.metadata["research_session_contract"] = contract.model_dump()
     if contract.final_readiness.status != FINAL_READINESS_ALLOWED:
@@ -1230,6 +1225,10 @@ def _force_final_reason(context: RunContext) -> str | None:
         return None
     context.metadata["final_readiness"] = contract.final_readiness.status
     context.metadata["repair_required_reasons"] = []
+    if loop_detected:
+        return "repeated_tool_call"
+    if zero_results_triggered:
+        return "web_search_zero_results"
     deliverable_requested = _deliverable_request_should_force_final(context)
     research_satisfied = _research_request_should_force_final(
         context
@@ -1355,15 +1354,6 @@ def _task_contract_metadata(context: RunContext) -> object:
     if not isinstance(metadata, dict):
         return None
     return metadata.get("task_contract")
-
-
-def _source_verified_task_contract(context: RunContext) -> bool:
-    task_contract = _task_contract_metadata(context)
-    return (
-        isinstance(task_contract, dict)
-        and task_contract.get("requires_research") is True
-        and task_contract.get("research_depth") == RESEARCH_DEPTH_SOURCE_VERIFIED
-    )
 
 
 def _tool_available(context: RunContext, tool_name: str) -> bool:

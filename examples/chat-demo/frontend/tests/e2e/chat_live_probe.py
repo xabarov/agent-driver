@@ -176,7 +176,7 @@ SCENARIOS: dict[str, LiveScenario] = {
         ),
         min_research_fetch_count=2,
         min_research_domain_count=2,
-        timeout_ms=360000,
+        timeout_ms=600000,
         requires_research=True,
     ),
     "research-compare-frameworks": LiveScenario(

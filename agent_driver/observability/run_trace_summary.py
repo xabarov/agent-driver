@@ -14,6 +14,7 @@ from agent_driver.runtime.research_evidence import (
     SOURCE_VERIFIED_FETCHES,
     classify_research_depth,
 )
+from agent_driver.runtime.research_session_contract import unfinished_todo_labels
 from agent_driver.runtime.single_agent.continuation import analyze_continuation_intent
 
 _RESEARCH_TOOLS = frozenset({"web_search", "web_fetch"})
@@ -97,7 +98,8 @@ def summarize_run_trace(
         ),
         "repeated_approval_planning": planning["approval_cycles"] > 1,
         "plan_todos_incomplete_on_final": (
-            terminal_event == "run_completed" and _planning_todos_incomplete(planning)
+            terminal_event == "run_completed"
+            and _planning_todos_incomplete(planning, assistant_text=text)
         ),
         "extra_ask_user_question": _extra_ask_user_question(
             tool_names=tool_names,
@@ -413,10 +415,16 @@ def _research_summary(
         for payload in _tool_payloads(events, "web_fetch")
         if _tool_payload_succeeded(payload)
     ]
+    research_payloads = [
+        payload
+        for tool_name in _RESEARCH_TOOLS
+        for payload in _tool_payloads(events, tool_name)
+        if _tool_payload_succeeded(payload)
+    ]
     fetch_count = len(fetch_payloads)
     domains = _unique_domains(fetch_payloads)
     final_has_source_links = _has_source_links(assistant_text) or _has_tool_sources(
-        fetch_payloads
+        research_payloads
     )
     fetch_required_but_missing = (
         depth == RESEARCH_DEPTH_SOURCE_VERIFIED
@@ -719,15 +727,29 @@ def _subagent_summary(
     }
 
 
-def _planning_todos_incomplete(planning: dict[str, Any]) -> bool:
+def _planning_todos_incomplete(
+    planning: dict[str, Any], *, assistant_text: str = ""
+) -> bool:
     latest = planning.get("latest_snapshot")
     if not isinstance(latest, dict):
         return False
-    completed = latest.get("completed")
-    total = latest.get("total")
-    if not isinstance(completed, int) or not isinstance(total, int):
+    todos = latest.get("todos")
+    if not isinstance(todos, list):
         return False
-    return total > 0 and completed < total
+    normalized_todos: list[dict[str, Any]] = []
+    for todo in todos:
+        if not isinstance(todo, dict):
+            continue
+        item = dict(todo)
+        if "todo_id" not in item and "id" in item:
+            item["todo_id"] = item.pop("id")
+        normalized_todos.append(item)
+    planning_state = {
+        "run_id": "trace_summary",
+        "todos": normalized_todos,
+        "metadata": {},
+    }
+    return bool(unfinished_todo_labels(planning_state, assistant_text=assistant_text))
 
 
 def _python_summary(

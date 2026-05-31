@@ -100,6 +100,85 @@ def test_research_contract_blocks_unfinished_visible_todos() -> None:
     assert contract.final_readiness.reasons == (REPAIR_UNFINISHED_TODOS,)
 
 
+def test_research_contract_allows_final_answer_to_cover_synthesis_todo() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "source_verified_report",
+        },
+        tool_results=[
+            _tool_result("web_search"),
+            _tool_result("web_fetch", url="https://example.com/a"),
+            _tool_result("web_fetch", url="https://example.org/b"),
+        ],
+        planning_state={
+            "run_id": "run_todo",
+            "todos": [
+                {
+                    "todo_id": "search",
+                    "content": "Search sources",
+                    "status": "completed",
+                },
+                {
+                    "todo_id": "summary",
+                    "content": "Сводка полученной информации с указанием источников",
+                    "status": "in_progress",
+                },
+            ],
+        },
+        assistant_text=(
+            "Итоговый отчет с обобщением найденных данных и ссылками на "
+            "[A](https://example.com/a), [B](https://example.org/b). "
+            "Текст достаточно длинный, чтобы считаться реальным финальным "
+            "ответом, а не коротким progress update."
+        ),
+        web_fetch_available=True,
+    )
+
+    assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
+    assert contract.final_readiness.reasons == ()
+
+
+def test_research_contract_allows_final_answer_to_cover_output_todo() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "source_verified_report",
+        },
+        tool_results=[
+            _tool_result("web_search"),
+            _tool_result("web_fetch", url="https://example.com/a"),
+            _tool_result("web_fetch", url="https://example.org/b"),
+        ],
+        planning_state={
+            "run_id": "run_todo",
+            "todos": [
+                {
+                    "todo_id": "research",
+                    "content": "Собрать источники",
+                    "status": "completed",
+                },
+                {
+                    "todo_id": "output",
+                    "content": "Подготовить краткий вывод со ссылками",
+                    "status": "in_progress",
+                },
+            ],
+        },
+        assistant_text=(
+            "Краткий вывод: FastAPI лучше подходит для API-first сервисов, "
+            "а Django удобнее для приложений с ORM и админкой. Подробности "
+            "подтверждаются источниками [A](https://example.com/a) и "
+            "[B](https://example.org/b), поэтому этот ответ закрывает "
+            "финальный пункт плана."
+        ),
+        web_fetch_available=True,
+    )
+
+    assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
+    assert contract.final_readiness.reasons == ()
+
+
 def test_research_contract_allows_verified_research_with_links_and_done_todos() -> None:
     contract = build_research_session_contract(
         task_contract={

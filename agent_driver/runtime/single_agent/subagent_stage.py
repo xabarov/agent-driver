@@ -17,6 +17,10 @@ from agent_driver.contracts.subagent_mailbox import (
     SubagentMailboxItem,
     SubagentMailboxKind,
 )
+from agent_driver.runtime.research_session_contract import (
+    FINAL_READINESS_ALLOWED,
+    build_research_session_contract_from_context,
+)
 from agent_driver.runtime.single_agent.step_events import emit_step_event
 from agent_driver.runtime.single_agent.types import RunContext, RunnerConfig, RunnerDeps
 from agent_driver.subagents import (
@@ -143,10 +147,29 @@ async def maybe_execute_subagent_group(
             "child_runs": len(result.runs),
         },
     )
-    if group_event_type == RuntimeEventType.SUBAGENT_GROUP_JOINED:
+    if group_event_type == RuntimeEventType.SUBAGENT_GROUP_JOINED and (
+        _final_answer_ready_after_subagent(context)
+    ):
         context.metadata["force_final_answer"] = True
         context.metadata["tool_choice_override"] = "none"
         context.metadata["force_final_answer_reason"] = "subagent_group_joined"
+
+
+def _final_answer_ready_after_subagent(context: RunContext) -> bool:
+    """Subagent completion should not bypass research/todo readiness."""
+    contract = build_research_session_contract_from_context(
+        context,
+        enforce_final_source_links=False,
+    )
+    context.metadata["research_session_contract"] = contract.model_dump()
+    if contract.final_readiness.status == FINAL_READINESS_ALLOWED:
+        return True
+    context.metadata["final_readiness"] = contract.final_readiness.status
+    context.metadata["repair_required_reasons"] = list(contract.final_readiness.reasons)
+    context.metadata.pop("force_final_answer", None)
+    context.metadata.pop("tool_choice_override", None)
+    context.metadata.pop("force_final_answer_reason", None)
+    return False
 
 
 def _group_spec_from_planned(

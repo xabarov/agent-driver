@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 import httpx
 
@@ -20,7 +21,7 @@ from agent_driver.contracts.enums import (
     TerminalReason,
 )
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.llm.contracts import LlmResponse
+from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.llm.payload_debug import (
     debug_llm_payload_enabled,
     summarize_llm_request_payload,
@@ -78,6 +79,74 @@ class LlmStepHost(CompactionStageHost, Protocol):
     def _maybe_fail_after_step(self, step_name: str) -> None: ...
 
 
+def _force_final_answer_message(context: RunContext) -> str:
+    message = force_final_answer_user_message()
+    source_links = _fetched_source_links(context)
+    if not source_links:
+        return message
+    bullets = "\n".join(f"- {title}: {url}" for title, url in source_links[:5])
+    return (
+        f"{message}\n\n"
+        "You used fetched web sources. Include concrete Markdown links in the "
+        "final answer and base the synthesis on these URLs:\n"
+        f"{bullets}"
+    )
+
+
+def _fetched_source_links(context: RunContext) -> list[tuple[str, str]]:
+    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
+    if not (
+        isinstance(task_contract, dict)
+        and task_contract.get("research_depth") == RESEARCH_DEPTH_SOURCE_VERIFIED
+    ):
+        return []
+    tool_results = context.metadata.get("tool_results")
+    if not isinstance(tool_results, list):
+        return []
+    links: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict) or call.get("tool_name") != "web_fetch":
+            continue
+        url = _tool_result_url(item)
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        links.append((_source_label(item, url), url))
+    return links
+
+
+def _tool_result_url(item: dict[str, Any]) -> str | None:
+    structured = item.get("structured_output")
+    if isinstance(structured, dict):
+        url = structured.get("url")
+        if isinstance(url, str) and url:
+            return url
+    call = item.get("call")
+    if isinstance(call, dict):
+        args = call.get("args")
+        if isinstance(args, dict):
+            url = args.get("url")
+            if isinstance(url, str) and url:
+                return url
+    return None
+
+
+def _source_label(item: dict[str, Any], url: str) -> str:
+    structured = item.get("structured_output")
+    if isinstance(structured, dict):
+        metadata = structured.get("metadata")
+        if isinstance(metadata, dict):
+            title = metadata.get("title")
+            if isinstance(title, str) and title.strip():
+                return title.strip()
+    domain = urlparse(url).netloc.lower()
+    return domain[4:] if domain.startswith("www.") else domain or "source"
+
+
 def _emit_partial_assistant_tombstone(
     host: LlmStepHost,
     context: RunContext,
@@ -103,6 +172,67 @@ def _emit_partial_assistant_tombstone(
         },
     )
     context.metadata["assistant_stream_tombstoned"] = True
+
+
+def _recover_force_final_stream_response(
+    host: LlmStepHost,
+    context: RunContext,
+    *,
+    reason: str,
+) -> LlmResponse | None:
+    """Preserve a late-stream final answer when provider transport drops.
+
+    OpenAI-compatible streaming providers can occasionally fail after a long
+    final-answer delta was already emitted. When runtime itself forced a final
+    answer, keeping that text is better than tombstoning a useful sourced
+    report. Early/short partials still fail normally.
+    """
+    if context.metadata.get("force_final_answer") is not True:
+        return None
+    if context.metadata.get("assistant_stream_completed"):
+        return None
+    content = context.metadata.get("assistant_stream_content")
+    if not isinstance(content, str) or len(content.strip()) < 200:
+        return None
+    context.metadata["assistant_stream_completed"] = True
+    context.metadata["assistant_stream_recovered"] = True
+    context.metadata["assistant_stream_recovery_reason"] = reason
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.WARNING,
+        payload={
+            "warning": "Recovered partial final answer after provider stream error.",
+            "signal_id": "provider_stream_partial_final_recovered",
+            "severity": "warning",
+            "transition_reason": reason,
+            "chars": len(content),
+        },
+    )
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.ASSISTANT_MESSAGE_COMPLETED,
+        payload={
+            "content": content,
+            "finish_reason": LlmFinishReason.UNKNOWN.value,
+            "provider": host._deps.provider.name,
+            "model": "stream-model",
+            "recovered_partial": True,
+            "transition_reason": reason,
+        },
+    )
+    return LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=content),
+        finish_reason=LlmFinishReason.UNKNOWN,
+        provider=host._deps.provider.name,
+        model="stream-model",
+        metadata={
+            "token_chunks_emitted": True,
+            "provider_stream_partial_final_recovered": True,
+            "transition_reason": reason,
+        },
+    )
 
 
 async def execute_llm_call_step(
@@ -187,34 +317,47 @@ async def execute_llm_call_step(
             if isinstance(exc, LlmStreamIdleTimeout)
             else TerminalReason.MODEL_ERROR.value
         )
-        _emit_partial_assistant_tombstone(host, context, reason=transition_reason)
-        host._emit(
-            EventSpec(
-                run_id=context.run_id,
-                attempt_id=context.attempt_id,
-                event_type=RuntimeEventType.RUN_FAILED,
-                payload={
-                    "reason": TerminalReason.MODEL_ERROR.value,
-                    "transition_reason": transition_reason,
-                },
-            )
+        recovered = _recover_force_final_stream_response(
+            host, context, reason=transition_reason
         )
-        context.metadata["last_provider_error"] = transition_reason
-        raise RuntimeExecutionError("LLM completion failed") from exc
+        if recovered is not None:
+            context.llm_response = recovered
+        else:
+            _emit_partial_assistant_tombstone(host, context, reason=transition_reason)
+            host._emit(
+                EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType.RUN_FAILED,
+                    payload={
+                        "reason": TerminalReason.MODEL_ERROR.value,
+                        "transition_reason": transition_reason,
+                    },
+                )
+            )
+            context.metadata["last_provider_error"] = transition_reason
+            raise RuntimeExecutionError("LLM completion failed") from exc
     except (RuntimeError, ValueError) as exc:
-        _emit_partial_assistant_tombstone(host, context, reason="provider_stream_error")
-        host._emit(
-            EventSpec(
-                run_id=context.run_id,
-                attempt_id=context.attempt_id,
-                event_type=RuntimeEventType.RUN_FAILED,
-                payload={
-                    "reason": TerminalReason.MODEL_ERROR.value,
-                    "transition_reason": "provider_stream_error",
-                },
-            )
+        transition_reason = "provider_stream_error"
+        recovered = _recover_force_final_stream_response(
+            host, context, reason=transition_reason
         )
-        raise RuntimeExecutionError("LLM completion failed") from exc
+        if recovered is not None:
+            context.llm_response = recovered
+        else:
+            _emit_partial_assistant_tombstone(host, context, reason=transition_reason)
+            host._emit(
+                EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType.RUN_FAILED,
+                    payload={
+                        "reason": TerminalReason.MODEL_ERROR.value,
+                        "transition_reason": transition_reason,
+                    },
+                )
+            )
+            raise RuntimeExecutionError("LLM completion failed") from exc
     token_chunks = context.llm_response.metadata.get("token_chunks")
     if isinstance(token_chunks, list) and not bool(
         context.llm_response.metadata.get("token_chunks_emitted")
@@ -368,7 +511,7 @@ def _build_trimmed_request(
         protocol_messages = protocol_messages + (
             ChatMessage(
                 role=ChatRole.USER,
-                content=force_final_answer_user_message(),
+                content=_force_final_answer_message(context),
             ),
         )
     return build_single_agent_llm_request(
