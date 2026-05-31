@@ -41,6 +41,8 @@ from agent_driver.runtime.single_agent.lifecycle.continuation import (
 
 _PYTHON_TOOL = "python"
 _TERMINAL_EVENTS = frozenset({"run_completed", "run_failed", "run_cancelled"})
+_DEEP_RESEARCH_INITIAL_SEARCH_BUDGET = 6
+_DEEP_RESEARCH_HARD_SEARCH_CAP = 15
 
 
 def summarize_run_trace(
@@ -209,6 +211,13 @@ def summarize_run_trace(
             "low_verified_coverage"
         ],
         "deep_research_preliminary_final": research_efficiency["preliminary_final"],
+        "deep_research_repeated_search_args": research_efficiency[
+            "repeated_search_args"
+        ],
+        "deep_research_search_without_fetch_progress": research_efficiency[
+            "search_without_fetch_progress"
+        ],
+        "deep_research_tool_entropy_high": research_efficiency["tool_entropy_high"],
     }
     notes = _notes(
         failures=failures,
@@ -617,6 +626,13 @@ def _research_efficiency_summary(
         for name in set(tool_names)
         if tool_names.count(name) > 1 and name not in {"web_search", "web_fetch"}
     )
+    search_diagnostics = _deep_research_search_diagnostics(
+        events,
+        tool_names=tool_names,
+        deep_expected=deep_expected,
+        research=research,
+        source_ledger_counts=source_ledger_counts,
+    )
     unexpected_agent_tool = deep_expected and "agent_tool" in tool_names
     skill_denied = deep_expected and _skill_tool_denied(events)
     required_verified_reads = _as_int(research.get("required_fetch_count"))
@@ -661,6 +677,7 @@ def _research_efficiency_summary(
         "tool_chain": " -> ".join(tool_names),
         "unique_tool_count": len(set(tool_names)),
         "repeated_tools": repeated_tools,
+        **search_diagnostics,
         "artifact_update_count": artifacts.get("update_count", 0),
         "report_update_count": artifacts.get("report_update_count", 0),
         "report_full_write_count": report_full_write_count,
@@ -675,6 +692,92 @@ def _research_efficiency_summary(
         "output_tokens": output_tokens if isinstance(output_tokens, int) else 0,
         "output_tokens_after_first_report_update": completion_after_report,
     }
+
+
+def _deep_research_search_diagnostics(
+    events: list[dict[str, object]],
+    *,
+    tool_names: list[str],
+    deep_expected: bool,
+    research: dict[str, Any],
+    source_ledger_counts: dict[str, int],
+) -> dict[str, Any]:
+    search_queries = _web_search_queries(events)
+    repeated_queries = sorted(
+        query for query in set(search_queries) if search_queries.count(query) > 1
+    )
+    search_count = _as_int(research.get("search_count"))
+    if search_count <= 0:
+        search_count = tool_names.count("web_search")
+    fetch_attempt_count = _as_int(research.get("fetch_attempt_count"))
+    if fetch_attempt_count <= 0:
+        fetch_attempt_count = tool_names.count("web_fetch")
+    evidence_progress_count = (
+        source_ledger_counts["verified_reads"]
+        + source_ledger_counts["blocked_reads"]
+        + source_ledger_counts["failed_reads"]
+    )
+    discovery_expansion_count = max(
+        0, search_count - _DEEP_RESEARCH_INITIAL_SEARCH_BUDGET
+    )
+    if search_count <= _DEEP_RESEARCH_INITIAL_SEARCH_BUDGET:
+        search_budget_status = "within_initial"
+    elif search_count <= _DEEP_RESEARCH_HARD_SEARCH_CAP:
+        search_budget_status = "expanded"
+    else:
+        search_budget_status = "over_hard_cap"
+
+    repeated_search_args = deep_expected and bool(repeated_queries)
+    search_without_fetch_progress = (
+        deep_expected
+        and search_count > _DEEP_RESEARCH_INITIAL_SEARCH_BUDGET
+        and fetch_attempt_count == 0
+        and evidence_progress_count == 0
+    )
+    tool_entropy_high = deep_expected and (
+        search_count > _DEEP_RESEARCH_HARD_SEARCH_CAP
+        or (len(tool_names) > 24 and evidence_progress_count == 0)
+    )
+    return {
+        "search_call_count": search_count,
+        "fetch_attempt_count": fetch_attempt_count,
+        "search_initial_budget": _DEEP_RESEARCH_INITIAL_SEARCH_BUDGET,
+        "search_hard_cap": _DEEP_RESEARCH_HARD_SEARCH_CAP,
+        "search_budget_status": search_budget_status,
+        "discovery_expansion_count": discovery_expansion_count,
+        "web_search_query_count": len(search_queries),
+        "repeated_search_query_count": len(repeated_queries),
+        "repeated_search_queries": repeated_queries,
+        "repeated_search_args": repeated_search_args,
+        "search_without_fetch_progress": search_without_fetch_progress,
+        "tool_entropy_high": tool_entropy_high,
+    }
+
+
+def _web_search_queries(events: list[dict[str, object]]) -> list[str]:
+    queries: list[str] = []
+    for payload in _tool_payloads(events, "web_search"):
+        query = _tool_payload_string_arg(payload, "query")
+        if query is None:
+            query = _tool_payload_string_arg(payload, "q")
+        if query is None:
+            continue
+        normalized = " ".join(query.lower().split())
+        if normalized:
+            queries.append(normalized)
+    return queries
+
+
+def _tool_payload_string_arg(payload: dict[str, Any], key: str) -> str | None:
+    args = payload.get("args")
+    if isinstance(args, dict):
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    value = payload.get(key)
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
 
 
 def _source_ledger_counts(events: list[dict[str, object]]) -> dict[str, int]:
@@ -1056,6 +1159,18 @@ _FAILURE_NOTE_MESSAGES = (
     (
         "deep_research_preliminary_final",
         "Deep Research handed off a draft report as if it were final.",
+    ),
+    (
+        "deep_research_repeated_search_args",
+        "Deep Research repeated identical web_search queries instead of refining or fetching.",
+    ),
+    (
+        "deep_research_search_without_fetch_progress",
+        "Deep Research expanded search past the initial budget without fetch/ledger progress.",
+    ),
+    (
+        "deep_research_tool_entropy_high",
+        "Deep Research exceeded the hard search/tool budget without enough evidence progress.",
     ),
     (
         "plan_todos_incomplete_on_final",

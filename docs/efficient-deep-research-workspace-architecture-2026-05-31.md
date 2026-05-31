@@ -931,6 +931,31 @@ Focused checks:
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario
   deep-research-artifact`.
 
+## Implementation Slice P14.3-search-budget-diagnostics - 2026-05-31
+
+Added the measurement layer for adaptive-but-bounded discovery before adding a
+hard phase controller:
+
+- trace summaries now expose Deep Research search budget diagnostics:
+  `search_initial_budget`, `search_hard_cap`, `search_budget_status`,
+  `discovery_expansion_count`, `search_call_count`, `fetch_attempt_count`,
+  `repeated_search_query_count`, and repeated normalized queries;
+- `deep_research_repeated_search_args` fires when identical web search queries
+  are repeated instead of refined or followed by fetches;
+- `deep_research_search_without_fetch_progress` fires when discovery expands
+  beyond the initial budget without fetch attempts or source-ledger progress;
+- `deep_research_tool_entropy_high` fires when the hard search cap is exceeded
+  or a large tool loop happens with no evidence progress;
+- adaptive expansion is explicitly allowed when there is fetch/ledger progress,
+  so "six sources" remains an initial budget, not a correctness assumption;
+- live Deep Research scorecards now show search budget status and repeated query
+  counts, and Playwright acceptance treats these new flags as forbidden.
+
+Focused checks:
+
+- `examples/chat-demo/backend/tests/test_run_trace_summary.py`;
+- `examples/chat-demo/frontend/tests/test_chat_live_probe_budget.py`.
+
 ## Implementation Slice P8-full-report-rewrite-guard - 2026-05-31
 
 Added trace-level detection for the original waste loop class:

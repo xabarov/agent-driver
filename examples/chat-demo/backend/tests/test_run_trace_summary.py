@@ -9,11 +9,18 @@ from agent_driver.observability.message_metadata import (
 )
 
 
-def _completed_tool(name: str) -> dict[str, object]:
+def _completed_tool(
+    name: str,
+    *,
+    args: dict[str, object] | None = None,
+) -> dict[str, object]:
+    tool: dict[str, object] = {"tool_name": name, "status": "completed"}
+    if args is not None:
+        tool["args"] = args
     return {
         "event": "tool_call_completed",
         "data": {
-            "tools": [{"tool_name": name, "status": "completed"}],
+            "tools": [tool],
         },
     }
 
@@ -417,6 +424,146 @@ def test_trace_summary_flags_deep_research_report_with_only_candidates() -> None
     assert summary["failures"]["deep_research_low_verified_coverage"] is True
     assert summary["failures"]["deep_research_preliminary_final"] is True
     assert summary["verdict"] == "fail"
+
+
+def test_trace_summary_flags_repeated_deep_research_search_args() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Черновик сохранен в research/report.md.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool(
+                "web_search",
+                args={"query": "fork join queueing models"},
+            ),
+            _completed_tool(
+                "web_search",
+                args={"query": "  Fork   Join Queueing Models  "},
+            ),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["repeated_search_args"] is True
+    assert summary["research_efficiency"]["repeated_search_query_count"] == 1
+    assert summary["failures"]["deep_research_repeated_search_args"] is True
+    assert summary["verdict"] == "fail"
+
+
+def test_trace_summary_flags_deep_research_search_without_fetch_progress() -> None:
+    events = [_completed_tool("todo_write")]
+    for index in range(7):
+        events.append(
+            _completed_tool(
+                "web_search",
+                args={"query": f"fork join queueing models topic {index}"},
+            )
+        )
+    events.append({"event": "run_completed", "data": {}})
+
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Черновик сохранен в research/report.md.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        events=events,
+    )
+
+    assert summary["research_efficiency"]["search_budget_status"] == "expanded"
+    assert summary["research_efficiency"]["search_without_fetch_progress"] is True
+    assert summary["failures"]["deep_research_search_without_fetch_progress"] is True
+    assert summary["verdict"] == "fail"
+
+
+def test_trace_summary_flags_deep_research_tool_entropy_high() -> None:
+    events = [_completed_tool("todo_write")]
+    for index in range(16):
+        events.append(
+            _completed_tool(
+                "web_search",
+                args={"query": f"fork join queueing models branch {index}"},
+            )
+        )
+    events.append({"event": "run_completed", "data": {}})
+
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Черновик сохранен в research/report.md.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        events=events,
+    )
+
+    assert summary["research_efficiency"]["search_budget_status"] == "over_hard_cap"
+    assert summary["research_efficiency"]["tool_entropy_high"] is True
+    assert summary["failures"]["deep_research_tool_entropy_high"] is True
+    assert summary["verdict"] == "fail"
+
+
+def test_trace_summary_allows_adaptive_deep_research_search_expansion() -> None:
+    events = [_completed_tool("todo_write")]
+    for index in range(7):
+        events.append(
+            _completed_tool(
+                "web_search",
+                args={"query": f"fork join queueing models source {index}"},
+            )
+        )
+    events.extend(
+        [
+            _completed_tool("web_fetch", args={"url": "https://example.com/a"}),
+            {
+                "event": "source_ledger_updated",
+                "data": {
+                    "search_candidates": [],
+                    "verified_reads": [{"url": "https://example.com/a"}],
+                    "failed_reads": [],
+                    "blocked_reads": [],
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 1},
+            },
+            {"event": "run_completed", "data": {}},
+        ]
+    )
+
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово: полный отчет сохранен в research/report.md.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        events=events,
+    )
+
+    assert summary["research_efficiency"]["search_budget_status"] == "expanded"
+    assert summary["research_efficiency"]["search_without_fetch_progress"] is False
+    assert summary["research_efficiency"]["tool_entropy_high"] is False
+    assert summary["failures"]["deep_research_search_without_fetch_progress"] is False
+    assert summary["failures"]["deep_research_tool_entropy_high"] is False
 
 
 def test_trace_summary_flags_repeated_full_report_write() -> None:

@@ -271,6 +271,9 @@ SCENARIOS: dict[str, LiveScenario] = {
             "deep_research_skill_denied",
             "deep_research_low_verified_coverage",
             "deep_research_preliminary_final",
+            "deep_research_repeated_search_args",
+            "deep_research_search_without_fetch_progress",
+            "deep_research_tool_entropy_high",
             "deep_research_long_final_after_report",
         ),
         requires_research=True,
@@ -324,6 +327,9 @@ SCENARIOS: dict[str, LiveScenario] = {
             "deep_research_skill_denied",
             "deep_research_low_verified_coverage",
             "deep_research_preliminary_final",
+            "deep_research_repeated_search_args",
+            "deep_research_search_without_fetch_progress",
+            "deep_research_tool_entropy_high",
             "deep_research_long_final_after_report",
         ),
         requires_research=True,
@@ -371,6 +377,9 @@ SCENARIOS: dict[str, LiveScenario] = {
             "deep_research_skill_denied",
             "deep_research_low_verified_coverage",
             "deep_research_preliminary_final",
+            "deep_research_repeated_search_args",
+            "deep_research_search_without_fetch_progress",
+            "deep_research_tool_entropy_high",
             "deep_research_long_final_after_report",
         ),
         requires_research=True,
@@ -836,6 +845,14 @@ def assert_trace_acceptance(
                 failures.append("final answer did not reference research/report.md")
             if efficiency.get("long_final_after_report") is True:
                 failures.append("long final answer was emitted after report artifact")
+            if efficiency.get("repeated_search_args") is True:
+                failures.append("deep research repeated identical search queries")
+            if efficiency.get("search_without_fetch_progress") is True:
+                failures.append(
+                    "deep research expanded search without fetch/ledger progress"
+                )
+            if efficiency.get("tool_entropy_high") is True:
+                failures.append("deep research exceeded search/tool entropy budget")
             if efficiency.get("first_tool") != "todo_write":
                 failures.append(
                     f"first tool is {efficiency.get('first_tool')!r}, expected todo_write"
@@ -1007,6 +1024,8 @@ def render_scenario_scorecard(
             f"expected=`{efficiency.get('deep_research_artifact_expected', False)}`, "
             f"status=`{efficiency.get('report_status') or '-'}`, "
             f"verified=`{efficiency.get('verified_read_count', 0)}`, "
+            f"search_budget=`{efficiency.get('search_budget_status') or '-'}`, "
+            f"repeat_queries=`{efficiency.get('repeated_search_query_count', 0)}`, "
             f"first_tool=`{efficiency.get('first_tool') or '-'}`, "
             f"final_refs_report=`{efficiency.get('final_references_report_artifact', False)}`, "
             f"long_final_after_report=`{efficiency.get('long_final_after_report', False)}`"
