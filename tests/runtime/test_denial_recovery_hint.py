@@ -126,7 +126,8 @@ def test_parent_synthesis_gate_denial_forces_file_write_recovery() -> None:
         "reason": "parent_synthesis_gate_denied",
     }
     content = messages[-1].content or ""
-    assert "Call file_write" in content
+    assert "call file_write" in content
+    assert "Use web_fetch" in content
     assert "research/report.md" in content
     assert "artifact_list" in content
     assert "agent_tool" in content

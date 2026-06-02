@@ -13,6 +13,7 @@ from agent_driver.runtime.metadata_state import (
     get_streaming_runtime_state,
     get_tool_loop_state,
 )
+from agent_driver.runtime.research_artifacts import deep_research_report_artifact_exists
 from agent_driver.runtime.research_evidence import RESEARCH_DEPTH_SOURCE_VERIFIED
 from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.llm_step.streaming import emit_token_delta_events
@@ -30,6 +31,15 @@ class StreamRecoveryHost(Protocol):
 def force_final_answer_message(context: RunContext) -> str:
     """Return force-final message, enriched with fetched source links."""
     message = force_final_answer_user_message()
+    if deep_research_report_artifact_exists(context):
+        message = (
+            f"{message}\n\n"
+            "Deep Research artifact handoff: research/report.md already exists "
+            "in the workspace. Keep the chat final concise: say that the report "
+            "is ready at `research/report.md`, mention `research/sources.jsonl` "
+            "if present, include 1-3 short caveats if verification is incomplete, "
+            "and do not paste or rewrite the full report in chat."
+        )
     source_links = fetched_source_links(context)
     if not source_links:
         return message

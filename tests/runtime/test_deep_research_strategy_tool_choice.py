@@ -86,6 +86,7 @@ def test_pending_child_synthesis_narrows_request_tools_before_report() -> None:
     assert _deep_research_request_allowed_tools(context) == (
         "file_write",
         "todo_write",
+        "web_fetch",
     )
 
 

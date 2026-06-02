@@ -188,7 +188,7 @@ def _deep_research_request_allowed_tools(
         return None
     if deep_research_report_artifact_exists(context):
         return None
-    return ("file_write", "todo_write")
+    return ("file_write", "todo_write", "web_fetch")
 
 
 def _deep_research_strategy_tool_choice(

@@ -308,6 +308,21 @@ def test_force_final_message_includes_fetched_sources_for_verified_research() ->
     assert "Example A: https://example.com/a" in message
 
 
+def test_force_final_message_uses_deep_research_artifact_handoff() -> None:
+    context = _force_final_stream_context("Финальный ответ. " * 20)
+    context.metadata["deep_research_artifacts"] = {
+        "report_exists": True,
+        "report_path": "research/report.md",
+        "source_ledger_path": "research/sources.jsonl",
+    }
+
+    message = _force_final_answer_message(context)
+
+    assert "research/report.md" in message
+    assert "research/sources.jsonl" in message
+    assert "do not paste or rewrite the full report in chat" in message
+
+
 @pytest.mark.asyncio
 async def test_runner_stream_idle_timeout_fails_after_partial_delta() -> None:
     """Idle provider streams should fail terminally instead of leaving SSE pending."""

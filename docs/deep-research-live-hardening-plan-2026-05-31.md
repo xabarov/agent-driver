@@ -2365,6 +2365,21 @@ Live triage updates from 2026-06-02:
      the second becomes `research/sources.jsonl` with candidate URLs extracted
      from the same notes. The draft is explicitly marked verification-pending,
      so later contract repair must still fetch/verify sources before a final.
+   - 2026-06-02 filewrite-repair rerun:
+     `/tmp/chat-demo-live-observed-medium-filewrite-repair-20260602`.
+     Preflight passed as `run_6da301474d5f`. Medium `run_adc07dd01e34`
+     reached a real terminal `run_completed`, created visible workspace
+     artifacts (`research/report.md`, `research/sources.jsonl`), and showed
+     them through the workspace API. Remaining failures moved to quality and
+     control: three `web_fetch` calls were denied by the parent-synthesis gate,
+     the final chat pasted a long answer instead of a concise artifact handoff,
+     and the scorecard flagged a full report rewrite after the repaired draft.
+     Fixes: parent-synthesis create mode now allows `web_fetch` for concrete
+     candidate URLs in addition to `file_write` and `todo_write`; request-level
+     narrowing matches that same surface; denial recovery no longer forbids
+     `web_fetch`; forced-final messages now use a Deep Research artifact
+     handoff when `research/report.md` exists and explicitly tell the model not
+     to paste or rewrite the full report in chat.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

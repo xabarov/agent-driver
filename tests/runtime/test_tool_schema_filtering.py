@@ -225,11 +225,16 @@ def test_tool_policy_empty_allowlist_yields_zero_tools_in_request() -> None:
 
 def test_request_allowlist_narrows_unrestricted_policy_tools() -> None:
     """Runtime phase gates can narrow the LLM-visible schema per request."""
-    registry = _FakeRegistry(["file_write", "todo_write", "artifact_list", "web_search"])
-    ctx = _make_build_ctx(registry, request_allowed=("file_write", "todo_write"))
+    registry = _FakeRegistry(
+        ["file_write", "todo_write", "web_fetch", "artifact_list", "web_search"]
+    )
+    ctx = _make_build_ctx(
+        registry,
+        request_allowed=("file_write", "todo_write", "web_fetch"),
+    )
     request, _ = build_single_agent_llm_request(ctx)
     names = [t["function"]["name"] for t in request.tools]
-    assert names == ["file_write", "todo_write"]
+    assert names == ["file_write", "todo_write", "web_fetch"]
 
 
 def test_request_allowlist_intersects_policy_allowlist() -> None:

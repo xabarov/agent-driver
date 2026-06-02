@@ -230,6 +230,8 @@ async def test_parent_synthesis_gate_blocks_artifact_list_before_report() -> Non
     ] == "artifact_list"
     file_write = await gate(_gate_context("file_write"))
     assert isinstance(file_write, ToolGateAllow)
+    web_fetch = await gate(_gate_context("web_fetch"))
+    assert isinstance(web_fetch, ToolGateAllow)
 
 
 @pytest.mark.asyncio

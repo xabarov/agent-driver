@@ -63,7 +63,7 @@ from agent_driver.runtime.single_agent.types import (
 )
 from agent_driver.runtime.tools import ToolExecutionResult
 
-_PARENT_SYNTHESIS_CREATE_TOOLS = frozenset({"file_write", "todo_write"})
+_PARENT_SYNTHESIS_CREATE_TOOLS = frozenset({"file_write", "todo_write", "web_fetch"})
 _PARENT_SYNTHESIS_UPDATE_TOOLS = frozenset(
     {
         "artifact_preview",
