@@ -38,6 +38,7 @@ REPAIR_MISSING_FETCHED_SOURCES = "missing_fetched_sources"
 REPAIR_INSUFFICIENT_SOURCE_DIVERSITY = "insufficient_source_diversity"
 REPAIR_FINAL_MISSING_SOURCE_LINKS = "final_missing_source_links"
 REPAIR_UNFINISHED_TODOS = "unfinished_todos"
+REPAIR_CHILD_SYNTHESIS_PENDING = "child_synthesis_pending"
 
 DEEP_RESEARCH_PHASE_PLAN = "plan"
 DEEP_RESEARCH_PHASE_DISCOVER = "discover"
@@ -118,6 +119,8 @@ class ResearchSessionContract:
     @property
     def final_readiness(self) -> ResearchFinalReadiness:
         reasons: list[str] = []
+        if self.child_synthesis_pending:
+            reasons.append(REPAIR_CHILD_SYNTHESIS_PENDING)
         if self.enforce_todos and self.unfinished_todos:
             reasons.append(REPAIR_UNFINISHED_TODOS)
         if self.requires_research:
@@ -518,6 +521,7 @@ __all__ = [
     "DEEP_RESEARCH_PHASE_VERIFY",
     "DEEP_RESEARCH_PHASE_WRITE",
     "REPAIR_FINAL_MISSING_SOURCE_LINKS",
+    "REPAIR_CHILD_SYNTHESIS_PENDING",
     "REPAIR_INSUFFICIENT_SOURCE_DIVERSITY",
     "REPAIR_MISSING_FETCHED_SOURCES",
     "REPAIR_MISSING_RESEARCH_EVIDENCE",

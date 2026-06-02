@@ -22,6 +22,7 @@ from agent_driver.runtime.research_artifacts import (
 )
 from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
+    REPAIR_CHILD_SYNTHESIS_PENDING,
     REPAIR_FINAL_MISSING_SOURCE_LINKS,
     REPAIR_INSUFFICIENT_SOURCE_DIVERSITY,
     REPAIR_MISSING_FETCHED_SOURCES,
@@ -384,6 +385,27 @@ def _force_research_repair_tool_choice(
     context: RunContext, reasons: tuple[str, ...]
 ) -> None:
     """Force the concrete research tool when a model tries to finish too early."""
+    if REPAIR_CHILD_SYNTHESIS_PENDING in reasons:
+        if not deep_research_report_artifact_exists(context):
+            if _tool_available_for_repair(context, "file_write"):
+                get_tool_loop_state(context).set_tool_choice_override(
+                    {"type": "tool", "name": "file_write"}
+                )
+                context.metadata["deep_research_parent_synthesis_required"] = {
+                    "tool": "file_write",
+                    "path": "research/report.md",
+                }
+                return
+        for tool_name in ("artifact_preview", "read_file", "file_patch", "file_edit"):
+            if _tool_available_for_repair(context, tool_name):
+                get_tool_loop_state(context).set_tool_choice_override(
+                    {"type": "tool", "name": tool_name}
+                )
+                context.metadata["deep_research_parent_synthesis_required"] = {
+                    "tool": tool_name,
+                    "path": "research/report.md",
+                }
+                return
     if REPAIR_MISSING_RESEARCH_EVIDENCE in reasons:
         if _tool_available_for_repair(context, "web_search"):
             get_tool_loop_state(context).set_tool_choice_override(
@@ -463,6 +485,12 @@ def _research_contract_repair_nudge(
 ) -> str:
     """Return a compact one-shot repair instruction for contract violations."""
     fragments: list[str] = []
+    if REPAIR_CHILD_SYNTHESIS_PENDING in reasons:
+        fragments.append(
+            "joined child research notes are waiting for parent-owned synthesis; "
+            "do not search again or spawn another child; write or patch "
+            "research/report.md and research/sources.jsonl from the child notes"
+        )
     if REPAIR_UNFINISHED_TODOS in reasons:
         fragments.append(
             "the visible todo/checklist still has pending or in-progress items"
@@ -490,6 +518,12 @@ def _research_contract_repair_nudge(
     artifact_hint = deep_research_artifact_repair_hint(context)
     if artifact_hint:
         fragments.append(artifact_hint)
+    if REPAIR_CHILD_SYNTHESIS_PENDING in reasons:
+        handoff = context.metadata.get("deep_research_child_synthesis")
+        if isinstance(handoff, dict):
+            summary = str(handoff.get("summary") or "").strip()
+            if summary:
+                fragments.append(f"child notes preview: {summary[:1200]}")
     reason_text = (
         "; ".join(fragments) if fragments else "the run contract is incomplete"
     )

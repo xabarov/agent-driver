@@ -7,6 +7,7 @@ from agent_driver.runtime.research_session_contract import (
     DEEP_RESEARCH_PHASE_WRITE,
     FINAL_READINESS_ALLOWED,
     FINAL_READINESS_REPAIR_NEEDED,
+    REPAIR_CHILD_SYNTHESIS_PENDING,
     REPAIR_FINAL_MISSING_SOURCE_LINKS,
     REPAIR_MISSING_FETCHED_SOURCES,
     REPAIR_MISSING_RESEARCH_EVIDENCE,
@@ -55,6 +56,7 @@ def test_deep_research_child_synthesis_pending_moves_phase_to_write() -> None:
     )
 
     assert contract.model_dump()["deep_research"]["phase"] == DEEP_RESEARCH_PHASE_WRITE
+    assert REPAIR_CHILD_SYNTHESIS_PENDING in contract.final_readiness.reasons
 
 
 def test_deep_research_child_synthesis_with_report_moves_phase_to_review() -> None:

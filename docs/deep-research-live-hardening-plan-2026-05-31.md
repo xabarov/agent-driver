@@ -1246,6 +1246,9 @@ Checklist:
     `unexpected_tool_after_child_synthesis_pending` in trace-summary, and make
     the live probe stop medium runs that start another search/delegation path
     after child join before parent artifact projection.
+  - [x] Add contract-repair reason `child_synthesis_pending` and force the
+    next repair turn toward parent `file_write` before falling back to
+    report preview/patch tools.
   - [ ] Enforce or repair the actual parent `file_write`/`file_patch` call and
     verify it in a live medium trace.
 - [ ] Make parent trace-summary optionally show child evidence separately
@@ -2071,7 +2074,10 @@ parent-owned synthesis after bounded child joins.
      remaining work is the repair/enforcement layer that turns this pending
      state into an observed parent `file_write`/`file_patch` before another long
      assistant message. The pending state is now also visible in trace-summary
-     as `subagents.child_synthesis_pending`.
+     as `subagents.child_synthesis_pending`. The repair layer now sets a
+     `file_write` tool-choice override when a model tries to finish while child
+     synthesis is pending; the remaining check is a live medium trace proving
+     the parent actually writes or patches the artifacts.
 2. Add trace-summary and scorecard fields that distinguish parent evidence from
    child evidence:
    - `parent_search_count`, `parent_fetch_count`, `parent_verified_read_count`;

@@ -13,6 +13,7 @@ def _context(
     *,
     tool_results: list[dict[str, object]],
     planning_state: dict[str, object] | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         llm_response=SimpleNamespace(
@@ -38,6 +39,7 @@ def _context(
         metadata={
             "tool_results": tool_results,
             "effective_tool_names": ("web_search", "web_fetch", "todo_write"),
+            **(metadata or {}),
             **(
                 {"planning_state": planning_state} if planning_state is not None else {}
             ),
@@ -56,6 +58,45 @@ def test_contract_repair_forces_web_search_when_no_research_evidence() -> None:
         "type": "tool",
         "name": "web_search",
     }
+
+
+def test_contract_repair_forces_parent_file_write_after_child_synthesis() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "effective_tool_names": (
+                "web_search",
+                "web_fetch",
+                "todo_write",
+                "file_write",
+                "artifact_preview",
+            ),
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child note: https://example.com/source",
+            },
+        },
+    )
+    context.run_input.tool_policy.metadata["task_contract"] = {
+        "requires_research": True,
+        "research_mode": "deep",
+        "research_depth": "deep_parallel_research",
+    }
+
+    result = _maybe_build_continuation_transition(context)
+
+    assert result is not None
+    assert context.metadata["tool_choice_override"] == {
+        "type": "tool",
+        "name": "file_write",
+    }
+    assert context.metadata["deep_research_parent_synthesis_required"] == {
+        "tool": "file_write",
+        "path": "research/report.md",
+    }
+    messages = context.metadata["protocol_messages"]
+    assert "joined child research notes" in messages[-1]["content"]
+    assert "child note: https://example.com/source" in messages[-1]["content"]
 
 
 def test_contract_repair_forces_web_fetch_after_search_only_evidence() -> None:
