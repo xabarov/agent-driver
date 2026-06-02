@@ -174,6 +174,34 @@ def test_research_budget_stop_detects_token_runaway_before_report_projection() -
     )
 
 
+def test_research_budget_stop_detects_unexpected_tool_after_child_synthesis() -> None:
+    live_probe = _load_live_probe_module()
+    scenario = live_probe.LiveScenario(
+        name="deep",
+        prompt="deep research",
+        require_research_efficiency=True,
+    )
+
+    reason = live_probe.research_budget_stop_reason(
+        scenario,
+        {
+            "research_efficiency": {
+                "report_trace_update_seen": False,
+                "report_write_seen": False,
+            },
+            "subagents": {
+                "child_synthesis_pending": True,
+                "unexpected_tool_after_child_synthesis_pending": "agent_tool",
+            },
+        },
+    )
+
+    assert reason == (
+        "deep research parent synthesis contract violated after child join: "
+        "agent_tool"
+    )
+
+
 def test_research_budget_stop_detects_medium_subagent_fanout() -> None:
     live_probe = _load_live_probe_module()
     scenario = live_probe.LiveScenario(

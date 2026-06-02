@@ -1242,6 +1242,10 @@ Checklist:
     or spawn another child wave before writing/patching parent artifacts.
   - [x] Emit a trace-visible `research_progress` marker and expose
     `subagents.child_synthesis_pending` in trace-summary for live scorecards.
+  - [x] Expose `first_tool_after_child_synthesis_pending` and
+    `unexpected_tool_after_child_synthesis_pending` in trace-summary, and make
+    the live probe stop medium runs that start another search/delegation path
+    after child join before parent artifact projection.
   - [ ] Enforce or repair the actual parent `file_write`/`file_patch` call and
     verify it in a live medium trace.
 - [ ] Make parent trace-summary optionally show child evidence separately

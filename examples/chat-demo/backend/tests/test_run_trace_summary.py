@@ -1549,7 +1549,39 @@ def test_trace_summary_exposes_pending_child_synthesis() -> None:
     assert summary["subagents"]["groups_joined"] == 1
     assert summary["subagents"]["child_synthesis_pending"] is True
     assert summary["subagents"]["child_synthesis_summary_chars"] == 321
+    assert summary["subagents"]["first_tool_after_child_synthesis_pending"] is None
     assert summary["failures"]["child_result_not_used"] is True
+
+
+def test_trace_summary_flags_unexpected_tool_after_child_synthesis() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research с субагентами",
+        assistant_text="Ищу дальше.",
+        events=[
+            _completed_tool("agent_tool"),
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "grp", "join_state": "done"},
+            },
+            {
+                "event": "research_progress",
+                "data": {
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "summary_chars": 100,
+                },
+            },
+            _completed_tool("web_search"),
+        ],
+    )
+
+    assert summary["subagents"]["first_tool_after_child_synthesis_pending"] == (
+        "web_search"
+    )
+    assert summary["subagents"]["unexpected_tool_after_child_synthesis_pending"] == (
+        "web_search"
+    )
 
 
 def test_trace_summary_flags_unknown_tool_calls() -> None:

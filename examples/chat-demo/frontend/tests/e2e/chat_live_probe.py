@@ -797,6 +797,23 @@ def research_budget_stop_reason(
                 "deep research subagent fan-out budget exhausted: "
                 f"{started_children} > {max_subagents}"
             )
+        unexpected_after_child = subagents.get(
+            "unexpected_tool_after_child_synthesis_pending"
+        )
+        report_seen = (
+            efficiency.get("report_trace_update_seen") is True
+            or efficiency.get("report_write_seen") is True
+        )
+        if (
+            subagents.get("child_synthesis_pending") is True
+            and not report_seen
+            and isinstance(unexpected_after_child, str)
+            and unexpected_after_child
+        ):
+            return (
+                "deep research parent synthesis contract violated after child "
+                f"join: {unexpected_after_child}"
+            )
         phase_violations = efficiency.get("phase_violation_count")
         max_phase_violations = scenario.max_phase_violations_before_stop
         if (

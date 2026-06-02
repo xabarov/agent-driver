@@ -45,6 +45,18 @@ _DEEP_RESEARCH_INITIAL_SEARCH_BUDGET = 6
 _DEEP_RESEARCH_HARD_SEARCH_CAP = 15
 _DEEP_RESEARCH_PHASE_FETCH_ATTEMPTS = 2
 _DEEP_RESEARCH_LONG_CHAT_BEFORE_REPORT_CHARS = 1_500
+_PARENT_SYNTHESIS_TOOLS = frozenset(
+    {
+        "file_write",
+        "file_edit",
+        "file_patch",
+        "read_file",
+        "artifact_list",
+        "artifact_read",
+        "artifact_preview",
+        "todo_write",
+    }
+)
 _DEEP_RESEARCH_PHASE_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
     "plan": frozenset({"todo_write", "skill_tool", "skill_view"}),
     "discover": frozenset(
@@ -327,8 +339,15 @@ def _subagent_summary(
     join_states: list[str] = []
     child_synthesis_pending = False
     child_synthesis_summary_chars = 0
+    marker_seen = False
+    tools_after_child_synthesis_pending: list[str] = []
     for event in events:
         data = _event_data(event)
+        if marker_seen:
+            for tool in event_tools(data):
+                tool_name = tool.get("tool_name") or tool.get("name")
+                if isinstance(tool_name, str) and tool_name:
+                    tools_after_child_synthesis_pending.append(tool_name)
         if event.get("event") == "subagent_completed":
             status = data.get("status")
             if isinstance(status, str) and status:
@@ -341,6 +360,7 @@ def _subagent_summary(
             kind = data.get("kind")
             if kind == "deep_research_child_synthesis_pending":
                 child_synthesis_pending = data.get("pending") is True
+                marker_seen = True
                 raw_chars = data.get("summary_chars")
                 if isinstance(raw_chars, int) and not isinstance(raw_chars, bool):
                     child_synthesis_summary_chars = max(
@@ -374,6 +394,20 @@ def _subagent_summary(
         "parent_synthesized_final": parent_synthesized_final,
         "child_synthesis_pending": child_synthesis_pending,
         "child_synthesis_summary_chars": child_synthesis_summary_chars,
+        "tools_after_child_synthesis_pending": tools_after_child_synthesis_pending,
+        "first_tool_after_child_synthesis_pending": (
+            tools_after_child_synthesis_pending[0]
+            if tools_after_child_synthesis_pending
+            else None
+        ),
+        "unexpected_tool_after_child_synthesis_pending": next(
+            (
+                name
+                for name in tools_after_child_synthesis_pending
+                if name not in _PARENT_SYNTHESIS_TOOLS
+            ),
+            None,
+        ),
         "statuses": statuses,
         "join_states": join_states,
     }
