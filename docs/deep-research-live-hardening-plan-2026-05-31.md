@@ -2457,6 +2457,22 @@ Live triage updates from 2026-06-02:
      `todo_write` for local child planning while still denying parent artifact
      writes. This should unblock child source discovery without widening child
      access to `research/report.md` or `research/sources.jsonl`.
+   - 2026-06-02 child-todo rerun:
+     `/tmp/chat-demo-live-observed-medium-child-todo-20260602`.
+     The observed runner skipped preflight because the cache fingerprint did
+     not include `agent_driver/subagents/workers.py`; fix in progress adds that
+     file to the fingerprint list. Medium `run_1c070d40d468` showed real
+     progress: the child completed, parent created both `research/report.md`
+     and `research/sources.jsonl`, and coverage reached `fetch=3`,
+     `unique_domains=2`, readiness `allowed`. The run still failed after
+     58,441 tokens because the model attempted unknown `file_read` after the
+     report, missed the terminal event, and the final answer did not reference
+     `research/report.md`. The trace also showed one `file_write` rewriting
+     `research/sources.jsonl` after ledger creation instead of moving directly
+     to report synthesis. Fix in progress: parent-synthesis `file_write` calls
+     targeting anything other than `research/report.md` are retargeted to
+     `research/report.md` when the ledger already exists and no report exists;
+     the next live run should verify the remaining terminal handoff clamp.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

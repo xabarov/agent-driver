@@ -27,6 +27,8 @@ from agent_driver.runtime.research_evidence import (
     research_source_ledger_from_tool_results,
 )
 from agent_driver.runtime.research_artifacts import (
+    deep_research_report_artifact_exists,
+    deep_research_source_ledger_artifact_exists,
     persist_deep_research_source_ledger,
 )
 from agent_driver.runtime.research_session_contract import (
@@ -144,7 +146,27 @@ def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
     repaired_count = 0
     file_write_index = 0
     for call in planned_calls:
-        if call.tool_name != "file_write" or _has_file_write_args(call.args):
+        if call.tool_name != "file_write":
+            repaired_payload.append(call.model_dump(mode="json"))
+            continue
+        if _should_retarget_parent_file_write_to_report(context, call.args):
+            args = _deep_research_parent_file_write_args(context, target="report")
+            repaired = call.model_copy(
+                update={
+                    "args": args,
+                    "metadata": {
+                        **call.metadata,
+                        "deep_research_args_repaired": True,
+                        "deep_research_repair_reason": (
+                            "parent_synthesis_report_required"
+                        ),
+                    },
+                }
+            )
+            repaired_payload.append(repaired.model_dump(mode="json"))
+            repaired_count += 1
+            continue
+        if _has_file_write_args(call.args):
             repaired_payload.append(call.model_dump(mode="json"))
             continue
         file_write_index += 1
@@ -169,8 +191,27 @@ def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
     response.metadata["planned_tool_calls"] = repaired_payload
     context.metadata["deep_research_file_write_args_repaired"] = {
         "count": repaired_count,
-        "reason": "parent_synthesis_empty_file_write",
+        "reason": "parent_synthesis_file_write_repair",
     }
+
+
+def _should_retarget_parent_file_write_to_report(
+    context: RunContext,
+    args: dict[str, Any],
+) -> bool:
+    if deep_research_report_artifact_exists(context):
+        return False
+    if not deep_research_source_ledger_artifact_exists(context):
+        recovery = context.metadata.get("deep_research_parent_synthesis_recovery")
+        if not isinstance(recovery, dict):
+            return False
+    path = str(args.get("path") or "").strip()
+    if not path:
+        return False
+    normalized = path.replace("\\", "/").strip("/")
+    return normalized != "research/report.md" and not normalized.endswith(
+        "/research/report.md"
+    )
 
 
 def _has_file_write_args(args: dict[str, Any]) -> bool:

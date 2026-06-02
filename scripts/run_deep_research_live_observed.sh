@@ -89,6 +89,7 @@ set +e
             agent_driver/runtime/single_agent/tool_stage/subagents.py \
             agent_driver/runtime/single_agent/tool_stage/subagent_execution.py \
             agent_driver/runtime/single_agent/tool_stage/planning.py \
+            agent_driver/subagents/workers.py \
             agent_driver/runtime/single_agent/lifecycle/steps.py \
             agent_driver/runtime/research_session_contract.py \
             agent_driver/runtime/research_artifacts.py \
