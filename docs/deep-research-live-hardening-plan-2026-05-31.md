@@ -2313,6 +2313,18 @@ Live triage updates from 2026-06-02:
      force-final is now gated by the full Deep Research session contract. If
      fetched sources, parent-owned artifacts, or child-synthesis projection are
      missing, repair/gates must continue instead of forcing a final answer.
+   - 2026-06-02 contract-final rerun:
+     `/tmp/chat-demo-live-observed-medium-contract-final-fix-20260602`.
+     Preflight passed as `run_012b152f5046`. Medium `run_e2150ba31ede` proved
+     the early force-final reason was gone (`force_final_reasons=[]`), but the
+     parent still looped on empty `artifact_list` calls after child join. Trace
+     showed no strategy-level forced `file_write` even though
+     `deep_research_child_synthesis.pending=true`. Root cause: the strategy
+     gate only recognized the older `research_depth=deep_parallel_research`
+     contract, while chat-demo now uses `research_mode=deep` with
+     `research_depth=source_verified_report`. Fix: Deep Research strategy
+     forcing now accepts `research_mode=deep` and should force `file_write` or
+     `file_patch` after child synthesis under the current contract.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

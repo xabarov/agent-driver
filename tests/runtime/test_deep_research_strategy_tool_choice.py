@@ -13,6 +13,8 @@ from agent_driver.runtime.single_agent.llm_step.request import (
 def _context(
     *,
     profile: str = "medium",
+    research_depth: str = "deep_parallel_research",
+    research_mode: str | None = None,
     max_subagent_requests: int = 1,
     tool_results: list[dict[str, object]] | None = None,
     planning_state: dict[str, object] | None = None,
@@ -31,9 +33,14 @@ def _context(
                 metadata={
                     "task_contract": {
                         "requires_research": True,
-                        "research_depth": "deep_parallel_research",
+                        "research_depth": research_depth,
                         "research_profile": profile,
                         "max_subagent_requests": max_subagent_requests,
+                        **(
+                            {"research_mode": research_mode}
+                            if research_mode is not None
+                            else {}
+                        ),
                     }
                 },
             ),
@@ -149,6 +156,29 @@ def test_strategy_forces_file_write_after_child_budget_exhausted() -> None:
         "path": "research/report.md",
         "reason": "child_synthesis_pending_budget_exhausted",
     }
+
+
+def test_strategy_forces_file_write_for_deep_source_verified_contract() -> None:
+    context = _context(
+        research_depth="source_verified_report",
+        research_mode="deep",
+        tool_results=[
+            _tool_result("todo_write"),
+            _tool_result("agent_tool"),
+        ],
+    )
+    context.metadata["subagent_runs"] = [{"run_id": "child_1"}]
+    context.metadata["deep_research_child_synthesis"] = {
+        "pending": True,
+        "summary": "child notes",
+    }
+
+    choice = _deep_research_strategy_tool_choice(context, None)
+
+    assert choice == {"type": "tool", "name": "file_write"}
+    assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
+        "child_synthesis_pending_budget_exhausted"
+    )
 
 
 def test_strategy_forces_patch_when_child_notes_pending_with_captured_report() -> None:

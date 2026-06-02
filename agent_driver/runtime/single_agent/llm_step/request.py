@@ -182,7 +182,9 @@ def _deep_research_strategy_tool_choice(
     task_contract = context.run_input.tool_policy.metadata.get("task_contract")
     if not isinstance(task_contract, dict):
         return None
-    if task_contract.get("research_depth") != "deep_parallel_research":
+    if task_contract.get("research_mode") != "deep" and task_contract.get(
+        "research_depth"
+    ) != "deep_parallel_research":
         return None
     profile = str(task_contract.get("research_profile") or "medium").strip().lower()
     if profile == "light":
