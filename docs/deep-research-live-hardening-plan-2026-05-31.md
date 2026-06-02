@@ -2391,6 +2391,18 @@ Live triage updates from 2026-06-02:
      `file_write`/`todo_write`, and strategy-level repair selects
      `file_write` for `research/report.md` instead of allowing more fetch/search
      drift.
+   - 2026-06-02 post-fetch-write rerun:
+     `/tmp/chat-demo-live-observed-medium-post-fetch-write-20260602`.
+     Preflight passed as `run_f26bff5e59f0`. Medium `run_c6d5410f3ba8`
+     fetched three sources across two domains and created
+     `research/sources.jsonl`, but the live probe cancelled the run before the
+     next LLM call could complete because the benchmark still classified
+     `web_fetch` after child join as a parent-synthesis contract violation.
+     Fix: the live budget stop rule now treats `web_fetch`, `file_write`, and
+     `todo_write` as allowed post-child/pre-report tools. This keeps the
+     benchmark aligned with the chosen architecture: parent synthesis may verify
+     concrete child/source URLs before writing the report, but must not launch
+     more subagents, browse artifacts, or restart open-ended discovery.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

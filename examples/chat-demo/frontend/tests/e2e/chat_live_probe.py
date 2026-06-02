@@ -800,6 +800,7 @@ def research_budget_stop_reason(
         unexpected_after_child = subagents.get(
             "unexpected_tool_after_child_synthesis_pending"
         )
+        allowed_after_child_before_report = {"file_write", "todo_write", "web_fetch"}
         report_seen = (
             efficiency.get("report_trace_update_seen") is True
             or efficiency.get("report_write_seen") is True
@@ -809,6 +810,7 @@ def research_budget_stop_reason(
             and not report_seen
             and isinstance(unexpected_after_child, str)
             and unexpected_after_child
+            and unexpected_after_child not in allowed_after_child_before_report
         ):
             return (
                 "deep research parent synthesis contract violated after child "
