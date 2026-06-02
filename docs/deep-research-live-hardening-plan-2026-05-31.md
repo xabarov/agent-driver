@@ -2446,6 +2446,17 @@ Live triage updates from 2026-06-02:
      than the earlier `file_write`/`todo_write` pair because live traces showed
      the extra `todo_write` escape hatch lets the model keep planning and
      searching instead of writing the artifact.
+   - 2026-06-02 report-write-force rerun:
+     `/tmp/chat-demo-live-observed-medium-report-write-force-20260602`.
+     Preflight passed as `run_92a6d6cf7790`. Medium `run_c81256979647`
+     did not reach the parent report-writing gate because the sync child
+     `child_d00242329ba5` attempted `todo_write`, but researcher children did
+     not have `todo_write` in their role-restricted tool surface. The child
+     received a policy denial and then failed with `deadline_exceeded`, leaving
+     the parent run to time out. Fix in progress: researcher workers now allow
+     `todo_write` for local child planning while still denying parent artifact
+     writes. This should unblock child source discovery without widening child
+     access to `research/report.md` or `research/sources.jsonl`.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

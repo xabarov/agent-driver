@@ -49,6 +49,7 @@ def test_worker_tool_surface_intersects_parent_allowlist() -> None:
         "source": "parent",
         "worker_type": "researcher",
         "worker_allowed_tools": [
+            "todo_write",
             "web_search",
             "web_fetch",
             "grep_search",

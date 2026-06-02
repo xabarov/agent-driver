@@ -208,7 +208,7 @@ async def test_sync_child_execution_strips_parent_deep_research_contract() -> No
     )
 
     policy = seen["tool_policy"]
-    assert policy.allowed_tools == ["web_search", "web_fetch"]
+    assert policy.allowed_tools == ["todo_write", "web_search", "web_fetch"]
     assert "deep_research_mode" not in policy.metadata
     assert "deep_research_phase_gate" not in policy.metadata
     assert "task_contract" not in policy.metadata

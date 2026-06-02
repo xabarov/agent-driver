@@ -37,7 +37,13 @@ DEFAULT_WORKER_DEFINITIONS: tuple[WorkerDefinition, ...] = (
         display_name="Researcher",
         profile=AgentProfile.REACT_TEXT,
         purpose="Independent research, comparison, and source gathering.",
-        allowed_tools=("web_search", "web_fetch", "grep_search", "read_file"),
+        allowed_tools=(
+            "todo_write",
+            "web_search",
+            "web_fetch",
+            "grep_search",
+            "read_file",
+        ),
         handoff_rules=(
             "Cite concrete URLs or file paths for every important claim.",
             "Separate facts from interpretation.",
