@@ -779,7 +779,18 @@ def _append_denial_recovery_message(
     denied_code: str | None = None
     for envelope in result.envelopes:
         error = envelope.error
-        if error is None or error.code != "tool_handler_error":
+        if error is None:
+            continue
+        if (
+            error.code == "policy_denied"
+            and "deep_research_parent_synthesis_gate" in (error.message or "")
+        ):
+            denied_tool_name = envelope.call.tool_name
+            denied_code = error.code
+            denied_message = (error.message or "").strip()
+            denied_signature = f"{denied_tool_name}:{error.code}:{denied_message}"
+            break
+        if error.code != "tool_handler_error":
             continue
         denied_tool_name = envelope.call.tool_name
         denied_code = error.code
@@ -791,6 +802,24 @@ def _append_denial_recovery_message(
     if context.metadata.get("last_denied_signature") == denied_signature:
         return
     reason = denied_message or "tool handler policy denied this call"
+    if (
+        denied_code == "policy_denied"
+        and "deep_research_parent_synthesis_gate" in reason
+    ):
+        messages.append(
+            ChatMessage(
+                role=ChatRole.USER,
+                content=(
+                    f"Deep Research parent synthesis gate denied '{denied_tool_name}'. "
+                    "Joined child research notes are already available. Do not call "
+                    "web_search, glob_search, grep_search, or agent_tool now. Use "
+                    "artifact_list/read or read_file if needed, then file_write or "
+                    "file_patch research/report.md and research/sources.jsonl."
+                ),
+            )
+        )
+        context.metadata["last_denied_signature"] = denied_signature
+        return
     denied_counts = context.metadata.get("denied_tool_counts")
     if not isinstance(denied_counts, dict):
         denied_counts = {}

@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.runtime.single_agent.steps import _maybe_build_continuation_transition
+from agent_driver.runtime.single_agent.lifecycle.steps import (
+    _maybe_build_continuation_transition,
+    _tool_gate_for_context,
+)
+from agent_driver.runtime.tool_gate import ToolGateAllow, ToolGateContext, ToolGateDeny
 
 
 def _context(
@@ -25,6 +31,7 @@ def _context(
         run_input=SimpleNamespace(
             input="исследуй fork-join очереди",
             messages=[],
+            app_metadata={},
             tool_policy=SimpleNamespace(
                 metadata={
                     "task_contract": {
@@ -44,6 +51,20 @@ def _context(
                 {"planning_state": planning_state} if planning_state is not None else {}
             ),
         },
+        tool_gate=None,
+    )
+
+
+def _gate_context(tool_name: str) -> ToolGateContext:
+    return ToolGateContext(
+        tool_name=tool_name,
+        args={},
+        run_id="run",
+        thread_id="thread",
+        agent_id="agent",
+        risk="low",
+        side_effect="read",
+        current_tool_calls=3,
     )
 
 
@@ -97,6 +118,77 @@ def test_contract_repair_forces_parent_file_write_after_child_synthesis() -> Non
     messages = context.metadata["protocol_messages"]
     assert "joined child research notes" in messages[-1]["content"]
     assert "child note: https://example.com/source" in messages[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_parent_synthesis_gate_blocks_discovery_after_child_handoff() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "subagent_runs": [{"run_id": "child_1"}, {"run_id": "child_2"}],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child notes",
+            },
+        },
+    )
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    decision = await gate(_gate_context("glob_search"))
+    assert isinstance(decision, ToolGateDeny)
+    assert "deep_research_parent_synthesis_gate denied" in decision.reason
+    assert context.metadata["deep_research_parent_synthesis_gate"][
+        "blocked_tool"
+    ] == "glob_search"
+
+
+@pytest.mark.asyncio
+async def test_parent_synthesis_gate_allows_second_medium_child_before_lock() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "subagent_runs": [{"run_id": "child_1"}],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child notes",
+            },
+        },
+    )
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is None
+
+
+@pytest.mark.asyncio
+async def test_parent_synthesis_gate_allows_write_and_preserves_existing_gate() -> None:
+    seen: list[str] = []
+
+    async def existing_gate(gate_context: ToolGateContext):
+        seen.append(gate_context.tool_name)
+        return ToolGateAllow(reason="existing")
+
+    context = _context(
+        tool_results=[],
+        metadata={
+            "subagent_runs": [{"run_id": "child_1"}, {"run_id": "child_2"}],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child notes",
+            },
+        },
+    )
+    context.tool_gate = existing_gate
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    decision = await gate(_gate_context("file_write"))
+    assert isinstance(decision, ToolGateAllow)
+    assert decision.reason == "existing"
+    assert seen == ["file_write"]
 
 
 def test_contract_repair_forces_web_fetch_after_search_only_evidence() -> None:

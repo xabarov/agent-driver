@@ -2061,6 +2061,24 @@ research guidance, and Deep Research Bench. The plan is still directionally
 correct, but the next bottleneck is no longer "enable subagents"; it is
 parent-owned synthesis after bounded child joins.
 
+Live triage updates from 2026-06-02:
+
+- `run_fe4335ccfc80` stopped at 35,460 tokens after child join because the
+  parent continued discovery with `glob_search` instead of writing the report.
+  This validated the parent-synthesis stop condition.
+- `run_3832a3af0f87` stopped at 25,073 tokens after the first child join because
+  the first parent-synthesis gate denied the second medium `agent_tool` too
+  early. The correct rule is budget-aware: medium may launch up to 2 children,
+  then must synthesize.
+- `run_0efeea087fa4` stopped at 31,900 tokens because trace-summary counted the
+  same second `agent_tool` twice from started/completed events. Scorecards must
+  reason over completed tool calls for post-handoff budget checks.
+- `run_eaa417457f2f` stopped at 21,793 tokens with a useful source ledger
+  (`research/sources.jsonl`, 44 records) but no subagents and no report. This is
+  the next architecture blocker: medium/hard need a strategy gate that makes
+  bounded subagents mandatory when requested, then forces a write-phase
+  transition once source discovery has enough evidence or exhausts the budget.
+
 1. Finish the Phase 0.5 parent-synthesis handoff before another medium live
    spend:
    - after child joins, the parent must summarize child notes into
@@ -2076,35 +2094,46 @@ parent-owned synthesis after bounded child joins.
      assistant message. The pending state is now also visible in trace-summary
      as `subagents.child_synthesis_pending`. The repair layer now sets a
      `file_write` tool-choice override when a model tries to finish while child
-     synthesis is pending; the remaining check is a live medium trace proving
-     the parent actually writes or patches the artifacts.
-2. Add trace-summary and scorecard fields that distinguish parent evidence from
+     synthesis is pending. The tool stage now also denies non-synthesis tools
+     after the medium/hard child budget is exhausted, while still allowing the
+     second medium child if the first child joined early.
+2. Add a strategy gate for Deep Research profiles before the next full medium
+   spend:
+   - `light` must never force subagents or report artifacts;
+   - `medium` must call `agent_tool` before broad serial web discovery unless
+     the task contract explicitly disables subagents;
+   - if `medium` skips `agent_tool`, the live probe should stop early with
+     `missed_explicit_delegation`, before a search/fetch loop burns tokens;
+   - after enough verified sources or repeated blocked fetches, force
+     `file_write`/`file_patch` for `research/report.md` instead of allowing more
+     `web_search`.
+3. Add trace-summary and scorecard fields that distinguish parent evidence from
    child evidence:
    - `parent_search_count`, `parent_fetch_count`, `parent_verified_read_count`;
    - `child_search_count`, `child_fetch_count`, `child_verified_read_count`;
    - `child_summary_chars`, `duplicated_child_queries`, `child_count`.
-3. Add a medium live abort if child joins are complete but the next parent LLM
+4. Add a medium live abort if child joins are complete but the next parent LLM
    step does not call `file_write`, `file_patch`, `file_edit`, `read_file`,
    `artifact_preview`, or a ledger-writing tool before producing long prose.
-4. Re-run the short model/tool preflight only if the fingerprint changed.
-5. Re-run one observed `light` canary with SQLite/Phoenix/logs/screenshots:
+5. Re-run the short model/tool preflight only if the fingerprint changed.
+6. Re-run one observed `light` canary with SQLite/Phoenix/logs/screenshots:
    expect short answer, no subagents, no report, no Deep Research skill unless
    explicitly requested, and profile-specific source thresholds.
-6. Re-run one observed `medium` fork-join canary:
+7. Re-run one observed `medium` fork-join canary:
    expect report visible in workspace, trace-summary, and UI; no unknown tools;
    no child artifact substitution; no 100k-token runaway; any remaining failure
    should be source quality or research completeness, not runtime contract.
-7. After the medium canary passes twice, continue Phase 1/2 implementation work:
+8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.
-8. Implement `source_read` over existing `web_fetch` and source ledger before
+9. Implement `source_read` over existing `web_fetch` and source ledger before
    adding any browser fallback.
-9. Add `pdf_read` with validation/page-range extraction and hard-profile trace
+10. Add `pdf_read` with validation/page-range extraction and hard-profile trace
    metrics.
-10. Add raw Markdown/PDF endpoints and download buttons.
-11. Add `browser_read` only as hard fallback with security tests and live
+11. Add raw Markdown/PDF endpoints and download buttons.
+12. Add `browser_read` only as hard fallback with security tests and live
     screenshot artifacts.
-12. Compare architecture variants A/B/C only after the medium baseline is
+13. Compare architecture variants A/B/C only after the medium baseline is
     contract-correct and passes the fork-join canary twice.
-13. Run hard profile with verifier/auditor, PDF, browser-read fallback, and
+14. Run hard profile with verifier/auditor, PDF, browser-read fallback, and
     export checks.

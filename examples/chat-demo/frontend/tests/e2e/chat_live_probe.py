@@ -1039,9 +1039,9 @@ def assert_trace_acceptance(
                 failures.append("deep research exceeded search/tool entropy budget")
             if efficiency.get("phase_violation") is True:
                 failures.append("deep research violated the phase tool contract")
-            if efficiency.get("first_tool") != "todo_write":
+            if efficiency.get("missing_initial_todo") is True:
                 failures.append(
-                    f"first tool is {efficiency.get('first_tool')!r}, expected todo_write"
+                    "deep research did not create an initial todo before discovery"
                 )
     artifacts = summary.get("artifacts") or {}
     if scenario.required_artifact_path is not None:

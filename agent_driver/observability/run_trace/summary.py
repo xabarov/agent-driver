@@ -136,6 +136,7 @@ def summarize_run_trace(
         events,
         tool_names=tool_names,
         user_prompt=user_prompt,
+        task_contract=task_contract,
         assistant_text=text,
         continuation_reason=continuation.reason,
     )
@@ -332,6 +333,7 @@ def _subagent_summary(
     *,
     tool_names: list[str],
     user_prompt: str | None,
+    task_contract: dict[str, Any] | None,
     assistant_text: str,
     continuation_reason: str | None,
 ) -> dict[str, Any]:
@@ -340,14 +342,17 @@ def _subagent_summary(
     child_synthesis_pending = False
     child_synthesis_summary_chars = 0
     marker_seen = False
+    runs_started_before_child_synthesis = 0
     tools_after_child_synthesis_pending: list[str] = []
     for event in events:
         data = _event_data(event)
-        if marker_seen:
+        if marker_seen and event.get("event") == "tool_call_completed":
             for tool in event_tools(data):
                 tool_name = tool.get("tool_name") or tool.get("name")
                 if isinstance(tool_name, str) and tool_name:
                     tools_after_child_synthesis_pending.append(tool_name)
+        if event.get("event") == "subagent_started" and not marker_seen:
+            runs_started_before_child_synthesis += 1
         if event.get("event") == "subagent_completed":
             status = data.get("status")
             if isinstance(status, str) and status:
@@ -369,6 +374,17 @@ def _subagent_summary(
                     )
     agent_tool_used = "agent_tool" in tool_names
     groups_joined = _count_events(events, "subagent_group_joined")
+    max_subagent_requests = _deep_research_max_subagent_requests_from_contract(
+        task_contract=task_contract,
+        user_prompt=user_prompt,
+    )
+    unexpected_tool_after_child_synthesis = (
+        _unexpected_tool_after_child_synthesis(
+            tools_after_child_synthesis_pending,
+            runs_started_before_child_synthesis=runs_started_before_child_synthesis,
+            max_subagent_requests=max_subagent_requests,
+        )
+    )
     child_error_count = sum(
         1
         for status in statuses
@@ -400,13 +416,8 @@ def _subagent_summary(
             if tools_after_child_synthesis_pending
             else None
         ),
-        "unexpected_tool_after_child_synthesis_pending": next(
-            (
-                name
-                for name in tools_after_child_synthesis_pending
-                if name not in _PARENT_SYNTHESIS_TOOLS
-            ),
-            None,
+        "unexpected_tool_after_child_synthesis_pending": (
+            unexpected_tool_after_child_synthesis
         ),
         "statuses": statuses,
         "join_states": join_states,
@@ -464,6 +475,55 @@ def _python_summary(
             for marker in ("python policy", "unauthorized import", "sandbox")
         ),
     }
+
+
+def _unexpected_tool_after_child_synthesis(
+    tool_names: list[str],
+    *,
+    runs_started_before_child_synthesis: int,
+    max_subagent_requests: int,
+) -> str | None:
+    remaining_agent_tool_allowance = max(
+        0,
+        max_subagent_requests - max(0, runs_started_before_child_synthesis),
+    )
+    for name in tool_names:
+        if name in _PARENT_SYNTHESIS_TOOLS:
+            continue
+        if name == "agent_tool" and remaining_agent_tool_allowance > 0:
+            remaining_agent_tool_allowance -= 1
+            continue
+        return name
+    return None
+
+
+def _deep_research_max_subagent_requests_from_contract(
+    *,
+    task_contract: dict[str, Any] | None,
+    user_prompt: str | None,
+) -> int:
+    if isinstance(task_contract, dict):
+        raw = task_contract.get("max_subagent_requests")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            return max(0, raw)
+        profile = task_contract.get("research_profile")
+        if isinstance(profile, str):
+            return _deep_research_max_subagent_requests_for_profile(profile)
+    text = " ".join((user_prompt or "").lower().split())
+    if "hard deep research" in text or "hard research" in text:
+        return 4
+    if "light deep research" in text or "light research" in text:
+        return 0
+    return 2
+
+
+def _deep_research_max_subagent_requests_for_profile(profile: str) -> int:
+    normalized = profile.strip().lower()
+    if normalized == "light":
+        return 0
+    if normalized == "hard":
+        return 4
+    return 2
 
 
 def _delegation_requested(user_prompt: str | None) -> bool:
@@ -712,7 +772,9 @@ def _research_efficiency_summary(
     output_tokens = usage.get("output_tokens") if isinstance(usage, dict) else 0
     completion_after_report = _output_tokens_after_first_report_update(events)
     first_tool = tool_names[0] if tool_names else None
-    missing_initial_todo = deep_expected and first_tool not in {None, "todo_write"}
+    missing_initial_todo = deep_expected and not _has_initial_deep_research_todo(
+        tool_names
+    )
     long_final_after_report = report_updated and assistant_chars > 2000
     missing_report_artifact = deep_expected and not report_updated
     missing_source_ledger_artifact = deep_expected and not source_ledger_updated
@@ -1094,6 +1156,19 @@ def _deep_research_report_status(
     if fetch_fallback_required:
         return "fallback"
     return "draft"
+
+
+def _has_initial_deep_research_todo(tool_names: list[str]) -> bool:
+    """Allow a successful skill lookup before the initial research todo."""
+    if not tool_names:
+        return True
+    for name in tool_names:
+        if name == "todo_write":
+            return True
+        if name in {"skill_tool", "skill_view"}:
+            continue
+        return False
+    return False
 
 
 def _assistant_declares_preliminary(assistant_text: str) -> bool:

@@ -190,6 +190,24 @@ def test_trace_summary_flags_deep_research_without_report_artifact() -> None:
     assert summary["failures"]["deep_research_missing_initial_todo"] is True
 
 
+def test_trace_summary_allows_skill_lookup_before_deep_research_todo() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай глубокий research report по очередям fork-join",
+        assistant_text="Краткий отчет без файла.",
+        events=[
+            _completed_tool("skill_tool"),
+            _completed_tool("todo_write"),
+            _completed_tool("web_search"),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["first_tool"] == "skill_tool"
+    assert summary["research_efficiency"]["missing_initial_todo"] is False
+    assert summary["failures"]["deep_research_missing_initial_todo"] is False
+
+
 def test_trace_summary_flags_deep_research_without_source_ledger_artifact() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
@@ -1581,6 +1599,97 @@ def test_trace_summary_flags_unexpected_tool_after_child_synthesis() -> None:
     )
     assert summary["subagents"]["unexpected_tool_after_child_synthesis_pending"] == (
         "web_search"
+    )
+
+
+def test_trace_summary_allows_remaining_agent_tool_after_child_synthesis() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай medium deep research с субагентами",
+        assistant_text="Запускаю второго исследователя.",
+        events=[
+            {"event": "subagent_started", "data": {"run_id": "child_1"}},
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "grp", "join_state": "done"},
+            },
+            {
+                "event": "research_progress",
+                "data": {
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "summary_chars": 100,
+                },
+            },
+            _completed_tool("agent_tool"),
+        ],
+    )
+
+    assert summary["subagents"]["first_tool_after_child_synthesis_pending"] == (
+        "agent_tool"
+    )
+    assert summary["subagents"]["unexpected_tool_after_child_synthesis_pending"] is None
+
+
+def test_trace_summary_counts_completed_tool_once_after_child_synthesis() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай medium deep research с субагентами",
+        assistant_text="Запускаю второго исследователя.",
+        events=[
+            {"event": "subagent_started", "data": {"run_id": "child_1"}},
+            {
+                "event": "research_progress",
+                "data": {
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "summary_chars": 100,
+                },
+            },
+            {
+                "event": "tool_call_started",
+                "data": {
+                    "tools": [
+                        {"tool_name": "agent_tool", "tool_call_id": "call_agent_2"}
+                    ]
+                },
+            },
+            _completed_tool("agent_tool"),
+        ],
+    )
+
+    assert summary["subagents"]["tools_after_child_synthesis_pending"] == [
+        "agent_tool"
+    ]
+    assert summary["subagents"]["unexpected_tool_after_child_synthesis_pending"] is None
+
+
+def test_trace_summary_flags_agent_tool_after_child_budget_exhausted() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай medium deep research с субагентами",
+        assistant_text="Запускаю лишнего исследователя.",
+        events=[
+            {"event": "subagent_started", "data": {"run_id": "child_1"}},
+            {"event": "subagent_started", "data": {"run_id": "child_2"}},
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "grp", "join_state": "done"},
+            },
+            {
+                "event": "research_progress",
+                "data": {
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "summary_chars": 100,
+                },
+            },
+            _completed_tool("agent_tool"),
+        ],
+    )
+
+    assert summary["subagents"]["unexpected_tool_after_child_synthesis_pending"] == (
+        "agent_tool"
     )
 
 

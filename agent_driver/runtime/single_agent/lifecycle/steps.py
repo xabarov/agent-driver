@@ -35,6 +35,12 @@ from agent_driver.runtime.research_evidence import (
     SOURCE_VERIFIED_FETCHES,
     research_evidence_from_tool_results,
 )
+from agent_driver.runtime.tool_gate import (
+    ToolGate,
+    ToolGateAllow,
+    ToolGateContext,
+    ToolGateDeny,
+)
 from agent_driver.runtime.single_agent.context_management.compaction_stage import (
     apply_compaction_if_eligible,
 )
@@ -56,6 +62,19 @@ from agent_driver.runtime.single_agent.types import (
     TerminalResult,
 )
 from agent_driver.runtime.tools import ToolExecutionResult
+
+_PARENT_SYNTHESIS_ALLOWED_TOOLS = frozenset(
+    {
+        "artifact_list",
+        "artifact_preview",
+        "artifact_read",
+        "file_edit",
+        "file_patch",
+        "file_write",
+        "read_file",
+        "todo_write",
+    }
+)
 
 
 class SingleAgentStepMixin:
@@ -103,9 +122,8 @@ class SingleAgentStepMixin:
         # llm_response)`` signatures and would reject an unknown kwarg;
         # the new contract documented in ``runtime/tools.py`` allows
         # ``tool_gate`` but we don't force it on the wire when None.
-        gate_kwargs = (
-            {"tool_gate": context.tool_gate} if context.tool_gate is not None else {}
-        )
+        tool_gate = _tool_gate_for_context(context)
+        gate_kwargs = {"tool_gate": tool_gate} if tool_gate is not None else {}
         if isinstance(approved_call, dict):
             request = context.llm_response.model_copy(
                 update={
@@ -455,6 +473,88 @@ def _tool_available_for_repair(context: RunContext, tool_name: str) -> bool:
     if effective is not None and tool_name not in set(effective):
         return False
     return True
+
+
+def _tool_gate_for_context(context: RunContext) -> ToolGate | None:
+    """Wrap caller gate with Deep Research parent-synthesis enforcement."""
+    existing_gate = context.tool_gate
+    if not _deep_research_parent_synthesis_gate_active(context):
+        return existing_gate
+
+    async def _gate(gate_context: ToolGateContext):
+        if _deep_research_parent_synthesis_gate_active(context):
+            if gate_context.tool_name not in _PARENT_SYNTHESIS_ALLOWED_TOOLS:
+                payload = {
+                    "blocked_tool": gate_context.tool_name,
+                    "allowed_tools": sorted(_PARENT_SYNTHESIS_ALLOWED_TOOLS),
+                    "reason": "child_synthesis_pending",
+                }
+                context.metadata["deep_research_parent_synthesis_gate"] = payload
+                return ToolGateDeny(
+                    reason=(
+                        "deep_research_parent_synthesis_gate denied "
+                        f"{gate_context.tool_name!r}: joined child research notes "
+                        "are pending parent synthesis. Create or update "
+                        "research/report.md and research/sources.jsonl before "
+                        "continuing discovery."
+                    )
+                )
+        if existing_gate is not None:
+            return await existing_gate(gate_context)
+        return ToolGateAllow(reason="deep_research_parent_synthesis_gate")
+
+    return _gate
+
+
+def _deep_research_parent_synthesis_gate_active(context: RunContext) -> bool:
+    handoff = context.metadata.get("deep_research_child_synthesis")
+    return (
+        isinstance(handoff, dict)
+        and handoff.get("pending") is True
+        and not deep_research_report_artifact_exists(context)
+        and not _deep_research_subagent_budget_remaining(context)
+    )
+
+
+def _deep_research_subagent_budget_remaining(context: RunContext) -> bool:
+    return _deep_research_planned_or_started_subagent_count(
+        context
+    ) < _deep_research_max_subagent_requests(context)
+
+
+def _deep_research_planned_or_started_subagent_count(context: RunContext) -> int:
+    count = 0
+    planned = context.metadata.get("planned_subagent_group")
+    if isinstance(planned, dict) and isinstance(planned.get("tasks"), list):
+        count += len([item for item in planned["tasks"] if isinstance(item, dict)])
+    runs = context.metadata.get("subagent_runs")
+    if isinstance(runs, list):
+        count += len([item for item in runs if isinstance(item, dict)])
+    return count
+
+
+def _deep_research_max_subagent_requests(context: RunContext) -> int:
+    metadata = context.run_input.tool_policy.metadata
+    task_contract = metadata.get("task_contract")
+    if isinstance(task_contract, dict):
+        raw = task_contract.get("max_subagent_requests")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            return max(0, raw)
+    mode = metadata.get("deep_research_mode")
+    profile = None
+    if isinstance(mode, dict):
+        raw_profile = mode.get("research_profile")
+        if isinstance(raw_profile, str):
+            profile = raw_profile.strip().lower()
+    if profile is None and isinstance(task_contract, dict):
+        raw_profile = task_contract.get("research_profile")
+        if isinstance(raw_profile, str):
+            profile = raw_profile.strip().lower()
+    if profile == "light":
+        return 0
+    if profile == "hard":
+        return 4
+    return 2
 
 
 def _research_evidence_ready_for_final_repair(context: RunContext) -> bool:

@@ -75,8 +75,13 @@ set +e
             agent_driver/runtime/single_agent/tool_stage/__init__.py \
             agent_driver/runtime/single_agent/tool_stage/research.py \
             agent_driver/runtime/single_agent/tool_stage/subagents.py \
+            agent_driver/runtime/single_agent/tool_stage/subagent_execution.py \
             agent_driver/runtime/single_agent/tool_stage/planning.py \
+            agent_driver/runtime/single_agent/lifecycle/steps.py \
+            agent_driver/runtime/research_session_contract.py \
+            agent_driver/runtime/research_artifacts.py \
             agent_driver/runtime/deep_research_phase_gate.py \
+            agent_driver/observability/run_trace/summary.py \
             examples/chat-demo/backend/app/api/chat.py \
             examples/chat-demo/backend/app/api/tools.py \
             examples/chat-demo/backend/app/sse_relay.py \
