@@ -2107,6 +2107,11 @@ Live triage updates from 2026-06-02:
    - after enough verified sources or repeated blocked fetches, force
      `file_write`/`file_patch` for `research/report.md` instead of allowing more
      `web_search`.
+   - implementation progress: deterministic request-prep strategy choice now
+     forces `agent_tool` for medium/hard after an initial todo/plan, respects
+     explicit tool-choice overrides and `light`, and forces `file_write` after
+     subagent use plus a small discovery budget. This still needs one observed
+     medium live validation with Phoenix/SQLite/logs/screenshots.
 3. Add trace-summary and scorecard fields that distinguish parent evidence from
    child evidence:
    - `parent_search_count`, `parent_fetch_count`, `parent_verified_read_count`;

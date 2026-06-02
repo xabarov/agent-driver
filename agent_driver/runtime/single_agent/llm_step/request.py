@@ -16,6 +16,7 @@ from agent_driver.runtime.metadata_state import (
     get_planning_runtime_state,
     get_tool_loop_state,
 )
+from agent_driver.runtime.research_artifacts import deep_research_report_artifact_exists
 from agent_driver.runtime.single_agent.llm_step.build import (
     LlmRequestBuildContext,
     build_single_agent_llm_request,
@@ -109,6 +110,7 @@ def build_trimmed_request(
             tool_choice = None
         else:
             tool_choice = context.run_input.tool_choice
+    tool_choice = _deep_research_strategy_tool_choice(context, tool_choice)
     system_instruction = react_system_instruction(host, context)
     if (
         tool_loop_state.force_final_answer_enabled()
@@ -166,6 +168,104 @@ def build_trimmed_request(
             ),
         )
     )
+
+
+def _deep_research_strategy_tool_choice(
+    context: RunContext, tool_choice: object | None
+) -> object | None:
+    """Force high-level Deep Research profile strategy when prompts drift."""
+    if tool_choice is not None:
+        return tool_choice
+    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
+    if not isinstance(task_contract, dict):
+        return None
+    if task_contract.get("research_depth") != "deep_parallel_research":
+        return None
+    profile = str(task_contract.get("research_profile") or "medium").strip().lower()
+    if profile == "light":
+        return None
+    if _deep_research_tool_used(context, "agent_tool"):
+        return _deep_research_write_strategy_tool_choice(context)
+    if not _deep_research_initial_plan_seen(context):
+        return None
+    max_subagents = task_contract.get("max_subagent_requests")
+    if isinstance(max_subagents, int) and max_subagents <= 0:
+        return _deep_research_write_strategy_tool_choice(context)
+    if not _deep_research_tool_available(context, "agent_tool"):
+        return _deep_research_write_strategy_tool_choice(context)
+    choice = {"type": "tool", "name": "agent_tool"}
+    context.metadata["deep_research_strategy_tool_choice"] = {
+        "tool": "agent_tool",
+        "reason": "medium_hard_requires_bounded_subagents",
+    }
+    return choice
+
+
+def _deep_research_write_strategy_tool_choice(context: RunContext) -> object | None:
+    if deep_research_report_artifact_exists(context):
+        return None
+    if not _deep_research_tool_available(context, "file_write"):
+        return None
+    if not _deep_research_discovery_budget_reached(context):
+        return None
+    choice = {"type": "tool", "name": "file_write"}
+    context.metadata["deep_research_strategy_tool_choice"] = {
+        "tool": "file_write",
+        "path": "research/report.md",
+        "reason": "deep_research_discovery_budget_reached",
+    }
+    return choice
+
+
+def _deep_research_initial_plan_seen(context: RunContext) -> bool:
+    planning_state = context.metadata.get("planning_state")
+    if isinstance(planning_state, dict):
+        todos = planning_state.get("todos")
+        if isinstance(todos, list) and todos:
+            return True
+    return _deep_research_tool_used(context, "todo_write")
+
+
+def _deep_research_discovery_budget_reached(context: RunContext) -> bool:
+    counts = _deep_research_tool_counts(context)
+    if counts.get("web_fetch", 0) >= 2:
+        return True
+    if counts.get("web_search", 0) >= 6:
+        return True
+    artifacts = context.metadata.get("deep_research_artifacts")
+    if isinstance(artifacts, dict) and artifacts.get("source_ledger_exists") is True:
+        return True
+    return False
+
+
+def _deep_research_tool_used(context: RunContext, tool_name: str) -> bool:
+    return _deep_research_tool_counts(context).get(tool_name, 0) > 0
+
+
+def _deep_research_tool_counts(context: RunContext) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    results = context.metadata.get("tool_results")
+    if not isinstance(results, list):
+        return counts
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        name = call.get("tool_name")
+        if not isinstance(name, str) or not name:
+            continue
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def _deep_research_tool_available(context: RunContext, tool_name: str) -> bool:
+    policy = context.run_input.tool_policy
+    if tool_name in set(policy.denied_tools or []):
+        return False
+    allowed = policy.allowed_tools
+    return allowed is None or tool_name in set(allowed)
 
 
 def protocol_messages_from_metadata(
