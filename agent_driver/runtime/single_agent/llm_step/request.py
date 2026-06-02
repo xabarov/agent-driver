@@ -188,6 +188,8 @@ def _deep_research_request_allowed_tools(
         return None
     if deep_research_report_artifact_exists(context):
         return None
+    if _deep_research_verified_fetch_count(context) > 0:
+        return ("file_write", "todo_write")
     return ("file_write", "todo_write", "web_fetch")
 
 
@@ -208,6 +210,8 @@ def _deep_research_strategy_tool_choice(
     if profile == "light":
         return None
     if _deep_research_child_synthesis_pending(context):
+        if _deep_research_verified_fetch_count(context) > 0:
+            return _deep_research_write_strategy_tool_choice(context, force=True)
         if _deep_research_subagent_budget_remaining(context):
             return _deep_research_record_strategy_choice(
                 context,
@@ -353,6 +357,24 @@ def _deep_research_max_subagent_requests(context: RunContext) -> int:
 
 def _deep_research_tool_used(context: RunContext, tool_name: str) -> bool:
     return _deep_research_tool_counts(context).get(tool_name, 0) > 0
+
+
+def _deep_research_verified_fetch_count(context: RunContext) -> int:
+    count = 0
+    results = context.metadata.get("tool_results")
+    if not isinstance(results, list):
+        return 0
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict) or call.get("tool_name") != "web_fetch":
+            continue
+        status = str(item.get("status") or "completed").strip().lower()
+        if status in {"denied", "failed", "error", "timed_out", "timeout"}:
+            continue
+        count += 1
+    return count
 
 
 def _deep_research_tool_counts(context: RunContext) -> dict[str, int]:

@@ -2380,6 +2380,17 @@ Live triage updates from 2026-06-02:
      `web_fetch`; forced-final messages now use a Deep Research artifact
      handoff when `research/report.md` exists and explicitly tell the model not
      to paste or rewrite the full report in chat.
+   - 2026-06-02 verify-synthesis rerun:
+     `/tmp/chat-demo-live-observed-medium-verify-synthesis-20260602`.
+     Preflight passed as `run_352312badbe4`. Medium `run_6bbe5bd2fa40`
+     proved `web_fetch` is now allowed in parent synthesis and successfully
+     fetched one source (`en.wikipedia.org`). The remaining failure was
+     progress-only drift after the first verified fetch: the run stopped before
+     writing `research/report.md`. Fix: once child synthesis is pending and at
+     least one `web_fetch` completed, the request surface narrows again to
+     `file_write`/`todo_write`, and strategy-level repair selects
+     `file_write` for `research/report.md` instead of allowing more fetch/search
+     drift.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

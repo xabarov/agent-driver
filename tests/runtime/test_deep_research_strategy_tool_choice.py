@@ -90,6 +90,31 @@ def test_pending_child_synthesis_narrows_request_tools_before_report() -> None:
     )
 
 
+def test_pending_child_synthesis_narrows_to_write_after_fetch() -> None:
+    context = _context(
+        tool_results=[
+            {
+                "status": "completed",
+                "call": {
+                    "tool_name": "web_fetch",
+                    "args": {"url": "https://example.com"},
+                },
+            }
+        ]
+    )
+    context.metadata["deep_research_child_synthesis"] = {
+        "pending": True,
+        "summary": "child notes",
+    }
+
+    assert _deep_research_request_allowed_tools(context) == (
+        "file_write",
+        "todo_write",
+    )
+    choice = _deep_research_strategy_tool_choice(context, None)
+    assert choice == {"type": "tool", "name": "file_write"}
+
+
 def test_strategy_does_not_override_explicit_choice_or_light_profile() -> None:
     explicit = {"type": "tool", "name": "web_search"}
     assert _deep_research_strategy_tool_choice(_context(), explicit) is explicit
