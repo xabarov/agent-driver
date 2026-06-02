@@ -110,6 +110,11 @@ def build_trimmed_request(
             tool_choice = None
         else:
             tool_choice = context.run_input.tool_choice
+    request_allowed_tools = _deep_research_request_allowed_tools(context)
+    if request_allowed_tools is not None:
+        context.metadata["llm_request_allowed_tools"] = request_allowed_tools
+    else:
+        context.metadata.pop("llm_request_allowed_tools", None)
     tool_choice = _provider_safe_tool_choice(
         context,
         _deep_research_strategy_tool_choice(context, tool_choice),
@@ -169,8 +174,21 @@ def build_trimmed_request(
                 if isinstance(tool_choice, str)
                 else (tool_choice if isinstance(tool_choice, dict) else None)
             ),
+            request_allowed_tools=request_allowed_tools,
         )
     )
+
+
+def _deep_research_request_allowed_tools(
+    context: RunContext,
+) -> tuple[str, ...] | None:
+    """Narrow the LLM-visible tool surface during fragile synthesis states."""
+    handoff = context.metadata.get("deep_research_child_synthesis")
+    if not isinstance(handoff, dict) or handoff.get("pending") is not True:
+        return None
+    if deep_research_report_artifact_exists(context):
+        return None
+    return ("file_write", "todo_write")
 
 
 def _deep_research_strategy_tool_choice(

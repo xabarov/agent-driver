@@ -816,18 +816,28 @@ def _append_denial_recovery_message(
         denied_code == "policy_denied"
         and "deep_research_parent_synthesis_gate" in reason
     ):
+        get_tool_loop_state(context).set_tool_choice_override(
+            {"type": "tool", "name": "file_write"}
+        )
         messages.append(
             ChatMessage(
                 role=ChatRole.USER,
                 content=(
                     f"Deep Research parent synthesis gate denied '{denied_tool_name}'. "
-                    "Joined child research notes are already available. Do not call "
-                    "web_search, glob_search, grep_search, or agent_tool now. Use "
-                    "artifact_list/read or read_file if needed, then file_write or "
-                    "file_patch research/report.md and research/sources.jsonl."
+                    "Joined child research notes are already embedded in this "
+                    "conversation. Do not call web_search, web_fetch, glob_search, "
+                    "grep_search, artifact_list, artifact_read, read_file, "
+                    "skill_tool, skill_view, or agent_tool now. Call file_write "
+                    "to create research/report.md from the embedded child notes, "
+                    "then call file_write for research/sources.jsonl if source "
+                    "ledger facts are available."
                 ),
             )
         )
+        context.metadata["deep_research_parent_synthesis_recovery"] = {
+            "tool": "file_write",
+            "reason": "parent_synthesis_gate_denied",
+        }
         context.metadata["last_denied_signature"] = denied_signature
         return
     if (

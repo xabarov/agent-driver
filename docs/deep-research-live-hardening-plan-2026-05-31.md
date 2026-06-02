@@ -2338,6 +2338,20 @@ Live triage updates from 2026-06-02:
      child notes are pending and no report exists, the allowed path is
      `file_write` (plus `todo_write`); report read/patch/preview tools are only
      allowed after a parent report exists.
+   - 2026-06-02 parent-gate rerun:
+     `/tmp/chat-demo-live-observed-medium-parent-gate-fix-20260602`.
+     Preflight passed as `run_f1c899ffcb03`. Medium `run_5bbf8debadf4`
+     proved the gate was active: `artifact_list` and repeated `artifact_read`
+     calls were denied by `deep_research_parent_synthesis_gate`. However, the
+     model did not recover into `file_write`; it kept trying artifact reads
+     because the LLM-visible schema and denial recovery hint still exposed or
+     suggested artifact tools. Fix: while joined child notes are pending and
+     no parent report exists, the request builder now narrows the model-visible
+     tool schema to `file_write` and `todo_write`, and the denial recovery hint
+     explicitly forces `file_write research/report.md` from the embedded child
+     preview. This is the preferred OpenClaude-style boundary: prevent the
+     model from seeing invalid tools before it spends another round trip on a
+     denied call.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

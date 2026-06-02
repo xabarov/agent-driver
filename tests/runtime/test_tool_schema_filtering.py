@@ -140,6 +140,7 @@ def _make_build_ctx(
     *,
     allowed: list[str] | None = None,
     denied: list[str] | None = None,
+    request_allowed: tuple[str, ...] | None = None,
 ) -> LlmRequestBuildContext:
     run_input = AgentRunInput(
         input="hello",
@@ -173,6 +174,7 @@ def _make_build_ctx(
         system_instruction=None,
         protocol_messages=None,
         tool_choice=None,
+        request_allowed_tools=request_allowed,
     )
 
 
@@ -219,3 +221,24 @@ def test_tool_policy_empty_allowlist_yields_zero_tools_in_request() -> None:
     ctx = _make_build_ctx(registry, allowed=[])
     request, _ = build_single_agent_llm_request(ctx)
     assert request.tools == []
+
+
+def test_request_allowlist_narrows_unrestricted_policy_tools() -> None:
+    """Runtime phase gates can narrow the LLM-visible schema per request."""
+    registry = _FakeRegistry(["file_write", "todo_write", "artifact_list", "web_search"])
+    ctx = _make_build_ctx(registry, request_allowed=("file_write", "todo_write"))
+    request, _ = build_single_agent_llm_request(ctx)
+    names = [t["function"]["name"] for t in request.tools]
+    assert names == ["file_write", "todo_write"]
+
+
+def test_request_allowlist_intersects_policy_allowlist() -> None:
+    registry = _FakeRegistry(["file_write", "todo_write", "artifact_list"])
+    ctx = _make_build_ctx(
+        registry,
+        allowed=["file_write", "artifact_list"],
+        request_allowed=("file_write", "todo_write"),
+    )
+    request, _ = build_single_agent_llm_request(ctx)
+    names = [t["function"]["name"] for t in request.tools]
+    assert names == ["file_write"]

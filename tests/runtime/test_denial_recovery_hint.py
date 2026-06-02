@@ -98,3 +98,35 @@ def test_initial_subagent_gate_denial_forces_agent_tool_recovery() -> None:
     }
     assert "Call agent_tool now" in (messages[-1].content or "")
     assert "do not call web_search" in (messages[-1].content or "")
+
+
+def test_parent_synthesis_gate_denial_forces_file_write_recovery() -> None:
+    """After joined child notes, recovery should write, not read artifacts."""
+    context = SimpleNamespace(metadata={})
+    messages = [ChatMessage(role="user", content="start")]
+
+    _append_denial_recovery_message(
+        context,
+        _policy_denied_result(
+            tool_name="artifact_list",
+            message=(
+                "deep_research_parent_synthesis_gate denied 'artifact_list': "
+                "joined child research notes are pending parent synthesis."
+            ),
+        ),
+        messages,
+    )
+
+    assert context.metadata.get("tool_choice_override") == {
+        "type": "tool",
+        "name": "file_write",
+    }
+    assert context.metadata["deep_research_parent_synthesis_recovery"] == {
+        "tool": "file_write",
+        "reason": "parent_synthesis_gate_denied",
+    }
+    content = messages[-1].content or ""
+    assert "Call file_write" in content
+    assert "research/report.md" in content
+    assert "artifact_list" in content
+    assert "agent_tool" in content

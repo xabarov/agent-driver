@@ -111,11 +111,27 @@ def effective_request_tool_names(
 ) -> tuple[str, ...]:
     """Return effective tool names after request policy filtering."""
     policy = context.run_input.tool_policy
+    request_allowed = context.metadata.get("llm_request_allowed_tools")
+    allowed_override: tuple[str, ...] | None = None
+    if isinstance(request_allowed, tuple) and all(
+        isinstance(item, str) for item in request_allowed
+    ):
+        allowed_override = request_allowed
+    elif isinstance(request_allowed, list) and all(
+        isinstance(item, str) for item in request_allowed
+    ):
+        allowed_override = tuple(request_allowed)
+    policy_allowed = (
+        tuple(policy.allowed_tools) if policy.allowed_tools is not None else None
+    )
+    if allowed_override is not None and policy_allowed is not None:
+        allowed_set = set(allowed_override)
+        policy_allowed = tuple(name for name in policy_allowed if name in allowed_set)
+    elif allowed_override is not None:
+        policy_allowed = allowed_override
     return effective_tool_names_from_registry(
         host._deps.tool_registry,
-        allowed=(
-            tuple(policy.allowed_tools) if policy.allowed_tools is not None else None
-        ),
+        allowed=policy_allowed,
         denied=tuple(policy.denied_tools) if policy.denied_tools else None,
     )
 

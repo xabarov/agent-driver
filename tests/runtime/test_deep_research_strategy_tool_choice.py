@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from agent_driver.runtime.single_agent.llm_step.request import (
+    _deep_research_request_allowed_tools,
     _deep_research_strategy_tool_choice,
     _provider_safe_tool_choice,
 )
@@ -72,6 +73,19 @@ def test_medium_strategy_forces_agent_tool_after_initial_plan() -> None:
     assert choice == {"type": "tool", "name": "agent_tool"}
     assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
         "medium_hard_requires_bounded_subagents"
+    )
+
+
+def test_pending_child_synthesis_narrows_request_tools_before_report() -> None:
+    context = _context()
+    context.metadata["deep_research_child_synthesis"] = {
+        "pending": True,
+        "summary": "child notes",
+    }
+
+    assert _deep_research_request_allowed_tools(context) == (
+        "file_write",
+        "todo_write",
     )
 
 

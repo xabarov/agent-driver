@@ -53,6 +53,7 @@ class LlmRequestBuildContext:
     protocol_messages: tuple[ChatMessage, ...] | None = None
     tool_choice: str | dict[str, Any] | None = None
     response_format: dict[str, Any] | None = None
+    request_allowed_tools: tuple[str, ...] | None = None
 
 
 def _normalize_trimmed_messages(
@@ -293,6 +294,10 @@ def build_single_agent_llm_request(
     # keeps the legacy "show everything" default; explicit tuples flow
     # into the filter.
     policy_allowed = run_input.tool_policy.allowed_tools
+    request_allowed = _intersect_allowed_tools(
+        tuple(policy_allowed) if policy_allowed is not None else None,
+        ctx.request_allowed_tools,
+    )
     policy_denied = run_input.tool_policy.denied_tools
     # Caller-supplied response_format (Phase 1 / 0.1) flows through to
     # LlmRequest. Inner-loop never overrides it — schema enforcement
@@ -307,7 +312,7 @@ def build_single_agent_llm_request(
         stream=ctx.stream,
         tools=_request_tools_from_registry(
             ctx.registry,
-            allowed=tuple(policy_allowed) if policy_allowed is not None else None,
+            allowed=request_allowed,
             denied=tuple(policy_denied) if policy_denied else None,
         ),
         tool_choice=ctx.tool_choice,
@@ -358,8 +363,22 @@ def build_single_agent_llm_request(
     }
 
 
+def _intersect_allowed_tools(
+    policy_allowed: tuple[str, ...] | None,
+    request_allowed: tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
+    """Return the effective request-level allowlist."""
+    if request_allowed is None:
+        return policy_allowed
+    if policy_allowed is None:
+        return request_allowed
+    request_set = set(request_allowed)
+    return tuple(name for name in policy_allowed if name in request_set)
+
+
 __all__ = [
     "LlmRequestBuildContext",
+    "_intersect_allowed_tools",
     "_provider_compatible_json_schema",
     "_request_tools_from_registry",
     "build_single_agent_llm_request",
