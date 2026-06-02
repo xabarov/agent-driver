@@ -12,10 +12,49 @@ from agent_driver.contracts.usage import UsageSummary
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.runtime.single_agent.tool_stage import (
     _force_web_fetch_for_source_verified_research,
+    _repair_deep_research_parent_file_write_args,
     _should_force_final_answer,
     _update_tool_protocol_messages,
 )
 from agent_driver.runtime.tools import ToolExecutionResult
+
+
+def test_deep_research_repairs_empty_parent_file_write_args() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="file_write",
+                    tool_call_id="call_1",
+                    args={},
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={
+            "tool_results": [],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "Candidate source: https://example.com/paper",
+            },
+        },
+    )
+
+    _repair_deep_research_parent_file_write_args(context)
+
+    planned = llm_response.metadata["planned_tool_calls"][0]
+    assert planned["args"]["path"] == "research/report.md"
+    assert planned["args"]["create_parent"] is True
+    assert "https://example.com/paper" in planned["args"]["content"]
+    assert planned["metadata"]["deep_research_args_repaired"] is True
+    assert context.metadata["deep_research_file_write_args_repaired"]["count"] == 1
 
 
 def test_update_tool_protocol_messages_includes_truncated_and_error_code() -> None:

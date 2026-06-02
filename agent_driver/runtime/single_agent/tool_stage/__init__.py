@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Protocol
 
 from agent_driver.contracts.enums import (
@@ -105,6 +106,7 @@ async def execute_tool_stage_step(
     host: ToolStageHost, context: RunContext
 ) -> RuntimeStepResult:
     """Execute tool stage and route to interrupt, code-agent loop, or finalize."""
+    _repair_deep_research_parent_file_write_args(context)
     _emit_tool_started_if_needed(host, context)
     result = await host._tool_result_with_approved_override(context)
     host._store_tool_stage_outputs(context, result)
@@ -117,6 +119,133 @@ async def execute_tool_stage_step(
     if code_loop is not None:
         return code_loop
     return await _finalize_tool_stage_transition(host, context, result)
+
+
+def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
+    """Fill empty forced file_write calls during parent synthesis.
+
+    Some providers/models correctly select the narrowed ``file_write`` tool but
+    emit ``{}`` arguments. In the parent-synthesis state, the safe target and
+    content source are known: create a draft report from the embedded child
+    handoff, then let the normal research contract repair loop verify/fetch.
+    """
+    response = context.llm_response
+    if response is None:
+        return
+    handoff = context.metadata.get("deep_research_child_synthesis")
+    if not isinstance(handoff, dict) or handoff.get("pending") is not True:
+        return
+    if _report_artifact_path_seen(context):
+        return
+    planned_calls = extract_planned_tool_calls(response)
+    if not planned_calls:
+        return
+    repaired_payload: list[dict[str, Any]] = []
+    repaired_count = 0
+    file_write_index = 0
+    for call in planned_calls:
+        if call.tool_name != "file_write" or _has_file_write_args(call.args):
+            repaired_payload.append(call.model_dump(mode="json"))
+            continue
+        file_write_index += 1
+        args = _deep_research_parent_file_write_args(
+            context,
+            target="sources" if file_write_index > 1 else "report",
+        )
+        repaired = call.model_copy(
+            update={
+                "args": args,
+                "metadata": {
+                    **call.metadata,
+                    "deep_research_args_repaired": True,
+                    "deep_research_repair_reason": "parent_synthesis_empty_file_write",
+                },
+            }
+        )
+        repaired_payload.append(repaired.model_dump(mode="json"))
+        repaired_count += 1
+    if repaired_count == 0:
+        return
+    response.metadata["planned_tool_calls"] = repaired_payload
+    context.metadata["deep_research_file_write_args_repaired"] = {
+        "count": repaired_count,
+        "reason": "parent_synthesis_empty_file_write",
+    }
+
+
+def _has_file_write_args(args: dict[str, Any]) -> bool:
+    return isinstance(args.get("path"), str) and bool(args["path"].strip()) and (
+        isinstance(args.get("content"), str)
+    )
+
+
+def _deep_research_parent_file_write_args(
+    context: RunContext,
+    *,
+    target: str,
+) -> dict[str, Any]:
+    if target == "sources":
+        return {
+            "path": "research/sources.jsonl",
+            "content": _deep_research_sources_jsonl_from_child_notes(context),
+            "mode": "overwrite",
+            "create_parent": True,
+        }
+    return {
+        "path": "research/report.md",
+        "content": _deep_research_report_from_child_notes(context),
+        "mode": "overwrite",
+        "create_parent": True,
+    }
+
+
+def _deep_research_report_from_child_notes(context: RunContext) -> str:
+    handoff = context.metadata.get("deep_research_child_synthesis")
+    summary = ""
+    if isinstance(handoff, dict):
+        summary = str(handoff.get("summary") or "").strip()
+    if not summary:
+        summary = "No child summary was available in the parent handoff."
+    return (
+        "# Research Report\n\n"
+        "Status: draft from joined child research notes. Source verification "
+        "and fetched-page checks are still pending.\n\n"
+        "## Child Research Notes\n\n"
+        f"{summary}\n\n"
+        "## Next Verification Steps\n\n"
+        "- Fetch and verify the candidate URLs before treating this report as final.\n"
+        "- Replace or patch this draft with cited facts from fetched pages.\n"
+    )
+
+
+def _deep_research_sources_jsonl_from_child_notes(context: RunContext) -> str:
+    notes = _deep_research_report_from_child_notes(context)
+    urls = list(dict.fromkeys(re.findall(r"https?://[^\\s)\\]>\"']+", notes)))
+    rows = [
+        {
+            "url": url.rstrip(".,;"),
+            "status": "candidate",
+            "source": "child_summary",
+            "notes": "Candidate URL from child research notes; fetch verification pending.",
+        }
+        for url in urls
+    ]
+    return "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+
+
+def _report_artifact_path_seen(context: RunContext) -> bool:
+    for item in context.metadata.get("tool_results") or []:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        if call.get("tool_name") not in {"file_write", "file_patch", "file_edit"}:
+            continue
+        args = call.get("args")
+        if isinstance(args, dict) and args.get("path") == "research/report.md":
+            return True
+    return False
 
 
 def _post_process_tool_result(

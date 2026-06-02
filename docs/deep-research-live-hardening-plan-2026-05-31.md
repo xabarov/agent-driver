@@ -2352,6 +2352,19 @@ Live triage updates from 2026-06-02:
      preview. This is the preferred OpenClaude-style boundary: prevent the
      model from seeing invalid tools before it spends another round trip on a
      denied call.
+   - 2026-06-02 schema-narrowing rerun:
+     `/tmp/chat-demo-live-observed-medium-schema-narrowing-20260602`.
+     Preflight passed as `run_dea97e924c6d`. Medium `run_0f8d100ad872`
+     proved the artifact loop was broken: the tool chain reached
+     `file_write -> file_write`. The remaining failure was argument quality:
+     both `file_write` calls emitted `{}` and were denied with
+     `path must be a non-empty string`, so no workspace artifacts were created.
+     Fix: in the narrow parent-synthesis state only, empty `file_write` planned
+     calls are repaired before tool execution. The first empty call becomes
+     `research/report.md` with a transparent draft from embedded child notes;
+     the second becomes `research/sources.jsonl` with candidate URLs extracted
+     from the same notes. The draft is explicitly marked verification-pending,
+     so later contract repair must still fetch/verify sources before a final.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.
