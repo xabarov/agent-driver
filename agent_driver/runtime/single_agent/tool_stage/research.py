@@ -16,6 +16,10 @@ from agent_driver.runtime.research_evidence import (
     SOURCE_VERIFIED_FETCHES,
     research_evidence_from_tool_results,
 )
+from agent_driver.runtime.research_session_contract import (
+    FINAL_READINESS_ALLOWED,
+    build_research_session_contract_from_context,
+)
 from agent_driver.runtime.single_agent.types import RunContext
 from agent_driver.runtime.tools import ToolExecutionResult
 
@@ -222,6 +226,14 @@ def research_request_should_force_final(context: RunContext) -> bool:
         return False
     if task_contract.get("requires_research") is not True:
         return False
+    if task_contract.get("research_mode") == "deep":
+        contract = build_research_session_contract_from_context(
+            context,
+            enforce_final_source_links=False,
+            allow_final_deliverable_todos=True,
+        )
+        if contract.final_readiness.status != FINAL_READINESS_ALLOWED:
+            return False
     tool_results = get_tool_loop_state(context).tool_results()
     if task_contract.get("research_depth") == RESEARCH_DEPTH_SOURCE_VERIFIED:
         if not tool_available(context, "web_fetch"):

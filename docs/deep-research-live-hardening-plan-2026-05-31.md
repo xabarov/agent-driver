@@ -2300,6 +2300,19 @@ Live triage updates from 2026-06-02:
      gaps may include missing `web_fetch` coverage, but the parent must stop
      searching/reading phantom child files and start projecting durable
      artifacts.
+   - 2026-06-02 zero-denial rerun:
+     `/tmp/chat-demo-live-observed-medium-zero-denial-fix-20260602`.
+     Preflight passed as `run_e374675049aa` with `web_search -> web_fetch`.
+     Medium `run_c44d44313126` reduced total tokens again (25,835), preserved a
+     useful child preview (`child_synthesis_summary_chars=854`), and no longer
+     classified denied web searches as zero-result failures. The next blocker
+     became an over-eager `research_request_satisfied` force-final reason:
+     after only search/delegation and without `research/report.md`,
+     `research/sources.jsonl`, or fetched evidence, the runtime still set
+     `tool_choice=none`. Fix: for `research_mode=deep`, research-satisfied
+     force-final is now gated by the full Deep Research session contract. If
+     fetched sources, parent-owned artifacts, or child-synthesis projection are
+     missing, repair/gates must continue instead of forcing a final answer.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

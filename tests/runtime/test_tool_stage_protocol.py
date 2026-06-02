@@ -939,6 +939,78 @@ def test_zero_result_force_final_does_not_bypass_unfinished_todos() -> None:
     ]
 
 
+def test_deep_research_search_only_does_not_force_research_satisfied() -> None:
+    context = SimpleNamespace(
+        tool_calls=2,
+        llm_step_count=2,
+        run_input=SimpleNamespace(
+            max_tool_calls=20,
+            max_steps=20,
+            tool_policy=SimpleNamespace(
+                metadata={
+                    "deep_research_mode": {"enabled": True},
+                    "task_contract": {
+                        "kind": "research",
+                        "requires_research": True,
+                        "research_mode": "deep",
+                        "research_depth": "source_verified_report",
+                        "research_profile": "medium",
+                    },
+                },
+                allowed_tools=None,
+                denied_tools=[],
+            ),
+        ),
+        metadata={
+            "effective_tool_names": (
+                "web_search",
+                "web_fetch",
+                "file_write",
+                "todo_write",
+            ),
+            "planning_state": {
+                "run_id": "run_deep_search_only",
+                "todos": [
+                    {
+                        "todo_id": "discover",
+                        "content": "Discover sources",
+                        "status": "in_progress",
+                    },
+                    {
+                        "todo_id": "write",
+                        "content": "Write report",
+                        "status": "pending",
+                    },
+                ],
+                "metadata": {},
+            },
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "web_search",
+                        "args": {"query": "fork join"},
+                    },
+                    "structured_output": {
+                        "results": [
+                            {
+                                "title": "Fork-join queue",
+                                "url": "https://example.test/fork",
+                            }
+                        ]
+                    },
+                    "error": None,
+                }
+            ],
+        },
+    )
+
+    assert _should_force_final_answer(context) is False
+    assert "missing_fetched_sources" in context.metadata["repair_required_reasons"]
+    assert context.metadata.get("force_final_answer_reason") != (
+        "research_request_satisfied"
+    )
+
+
 def test_research_deliverable_waits_for_source_verified_fetches() -> None:
     context = SimpleNamespace(
         tool_calls=1,
