@@ -9,6 +9,7 @@ from agent_driver.contracts.enums import (
     AgentProfile,
     ChatRole,
     RuntimeEventType,
+    ToolPolicyDecision,
 )
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmFinishReason
@@ -1003,6 +1004,8 @@ def _update_zero_result_policy(
         if envelope.call.tool_name != "web_search":
             continue
         saw_web_search = True
+        if envelope.decision != ToolPolicyDecision.ALLOW or envelope.error is not None:
+            continue
         rows = (
             envelope.structured_output.get("results")
             if isinstance(envelope.structured_output, dict)

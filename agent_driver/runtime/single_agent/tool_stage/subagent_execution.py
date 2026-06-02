@@ -195,6 +195,11 @@ def _record_deep_research_child_synthesis_handoff(
         run_summary = (
             metadata.get("summary") if isinstance(metadata, dict) else None
         )
+        source_ledger = (
+            metadata.get("child_source_ledger") if isinstance(metadata, dict) else None
+        )
+        if not run_summary and isinstance(source_ledger, dict):
+            run_summary = _child_source_ledger_preview(source_ledger)
         completed_children.append(
             {
                 "subagent_run_id": getattr(run, "subagent_run_id", None),
@@ -205,8 +210,17 @@ def _record_deep_research_child_synthesis_handoff(
                     or str(getattr(run, "status", "") or "")
                 ),
                 "summary": str(run_summary or "")[:1_200],
+                "source_ledger": _bounded_child_source_ledger(source_ledger),
             }
         )
+    if summary == "No successful child outputs.":
+        summary = ""
+    if not summary:
+        summary = "\n".join(
+            str(item.get("summary") or "").strip()
+            for item in completed_children
+            if str(item.get("summary") or "").strip()
+        ).strip()
     payload: dict[str, object] = {
         "pending": True,
         "source": "subagent_group_joined",
@@ -222,6 +236,43 @@ def _record_deep_research_child_synthesis_handoff(
     }
     context.metadata["deep_research_child_synthesis"] = payload
     return payload
+
+
+def _child_source_ledger_preview(source_ledger: dict[str, object]) -> str:
+    candidates = source_ledger.get("search_candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return ""
+    lines = ["Child source candidates collected before final notes:"]
+    for item in candidates[:6]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "untitled").strip()
+        url = str(item.get("url") or "").strip()
+        domain = str(item.get("domain") or "").strip()
+        if not url:
+            continue
+        suffix = f" ({domain})" if domain else ""
+        lines.append(f"- {title}{suffix}: {url}")
+    return "\n".join(lines)
+
+
+def _bounded_child_source_ledger(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "search_candidates": _bounded_dict_rows(
+            value.get("search_candidates"),
+            max_rows=8,
+        ),
+        "verified_reads": _bounded_dict_rows(value.get("verified_reads"), max_rows=5),
+        "failed_reads": _bounded_dict_rows(value.get("failed_reads"), max_rows=5),
+    }
+
+
+def _bounded_dict_rows(value: object, *, max_rows: int) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value[:max_rows] if isinstance(item, dict)]
 
 
 def _final_answer_ready_after_subagent(context: RunContext) -> bool:

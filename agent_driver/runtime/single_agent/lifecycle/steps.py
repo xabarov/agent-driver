@@ -741,6 +741,10 @@ def _research_contract_repair_nudge(
             summary = str(handoff.get("summary") or "").strip()
             if summary:
                 fragments.append(f"child notes preview: {summary[:1200]}")
+                fragments.append(
+                    "use this embedded preview directly; do not read child "
+                    "transcript or skill files by absolute path"
+                )
     reason_text = (
         "; ".join(fragments) if fragments else "the run contract is incomplete"
     )

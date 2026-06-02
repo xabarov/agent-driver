@@ -6,7 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_driver.contracts import AgentRunInput, ToolCall, ToolPolicyInput
+from agent_driver.contracts import (
+    AgentRunInput,
+    ToolCall,
+    ToolError,
+    ToolPolicyDecision,
+    ToolPolicyInput,
+)
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.tools import ToolManifest, ToolResultEnvelope
 from agent_driver.llm.contracts import (
@@ -817,6 +823,28 @@ def test_upstream_web_search_error_does_not_trigger_zero_result_force_final() ->
                     "results": [],
                     "parse_status": "upstream_error",
                 },
+            )
+        ]
+    )
+    _update_zero_result_policy(context, result)
+    assert context.metadata["web_search_zero_streak"] == 0
+    assert "force_final_answer" not in context.metadata
+
+
+def test_denied_web_search_does_not_trigger_zero_result_force_final() -> None:
+    """Policy/tool denials are not empty search results."""
+    context = SimpleNamespace(metadata={})
+    result = ToolExecutionResult(
+        envelopes=[
+            ToolResultEnvelope(
+                call=ToolCall(tool_name="web_search", args={"query": "news"}),
+                decision=ToolPolicyDecision.DENY,
+                error=ToolError(
+                    code="policy_denied",
+                    message="phase gate denied web_search",
+                    retryable=True,
+                ),
+                structured_output={"results": []},
             )
         ]
     )

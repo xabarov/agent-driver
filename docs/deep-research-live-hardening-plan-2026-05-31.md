@@ -1259,12 +1259,18 @@ Checklist:
   they do not enter parent repair loops or try `todo_write`.
 - [x] Enforce bounded medium child fan-out:
   - light max child requests: 0;
-  - medium max child requests: 2;
+  - medium max child requests: 1;
   - hard max child requests: 4;
   - extra `agent_tool` requests are recorded as subagent backpressure instead
     of opening another child wave.
 - [x] Add matching live-probe early stop for subagent fan-out so profile
   runaway is cancelled before another expensive child wave.
+- [x] Give child runs explicit loop limits. A missing child
+  `max_tool_calls` was effectively treated by the runtime as a one-tool budget,
+  so a child that performed only `web_search` immediately entered forced-final
+  mode and could block the parent while summarizing. Deep Research notes-only
+  children now receive bounded defaults: enough budget for `web_search`, up to
+  three `web_fetch` calls, and compact final notes, plus a child deadline.
 - [ ] Ensure the parent creates or patches `research/report.md` and
   `research/sources.jsonl` after child join, even when children return useful
   notes.
@@ -1401,8 +1407,9 @@ Goal: use subagents for breadth without turning the run into entropy soup.
 
 Checklist:
 
-- [ ] Add medium planner rule: spawn 2-3 children only if the task has
-  independent subtopics or source families.
+- [ ] Add medium planner rule: default to one child for breadth discovery, and
+  spawn 2-3 children only under an explicit hard profile or an explicit task
+  contract with clearly independent subtopics/source families.
 - [ ] Child prompts must include:
   - exact subtopic;
   - max searches;
@@ -2261,7 +2268,38 @@ Live triage updates from 2026-06-02:
      named forced tool choice. The remaining blocker moved to child completion:
      `child_16e3fff9e023` performed a `web_search`, then the matrix hit command
      timeout while waiting for child final/summary, before any parent report
-     artifact was created.
+     artifact was created. Root cause found after trace/code inspection: child
+     `AgentRunInput` had no explicit `max_tool_calls`/`max_steps`, so the
+     runtime interpreted the effective tool budget as one tool and forced a
+     final answer immediately after the first child search. Fix: subagent
+     executor now passes explicit bounded child loop limits and a default child
+     deadline.
+   - 2026-06-02 child-limit rerun:
+     `/tmp/chat-demo-live-observed-medium-child-limits-20260602`.
+     Medium `run_9a0f1c37f9ae` improved from a quiet hang to a completed
+     diagnostic failure. Child `child_202b2f477794` performed two successful
+     `web_search` calls and emitted `source_ledger_updated`, but then timed out
+     during forced final notes. Parent had only a 28-character child summary and
+     started trying to read skill/child-note paths that were outside or absent
+     from the session workspace. Fix: carry child `source_ledger_updated`
+     candidates into `SubagentRun.metadata` and into the parent synthesis
+     handoff, even for timed-out child runs.
+   - 2026-06-02 child-ledger rerun:
+     `/tmp/chat-demo-live-observed-medium-child-ledger-20260602`.
+     Preflight passed as `run_d8736d07e0f7` with `web_search -> web_fetch`.
+     Medium `run_2e418d662321` now had a useful embedded child preview
+     (`child_synthesis_summary_chars=944`) and a lower total token count
+     (42,225 vs 62,173), but still failed before `research/report.md`.
+     Trace showed a denied parent `web_search` was misclassified as
+     `web_search_zero_results`, causing `tool_choice=none` and preventing
+     repair via `file_write`. Fix: zero-result policy now ignores denied or
+     errored `web_search` envelopes; only successful empty search results count
+     toward zero-result forced final.
+   - Next live rerun must prove the parent performs `file_write` or
+     `file_patch` for `research/report.md` after child join. Remaining expected
+     gaps may include missing `web_fetch` coverage, but the parent must stop
+     searching/reading phantom child files and start projecting durable
+     artifacts.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

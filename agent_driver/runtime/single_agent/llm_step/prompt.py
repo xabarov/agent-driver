@@ -291,6 +291,8 @@ def chat_mode_runtime_reminders(context: RunContext) -> list[str]:
                 "child wave. The next parent step should write or patch "
                 "research/sources.jsonl and research/report.md using file_write, "
                 "file_patch, file_edit, read_file, or artifact_preview. "
+                "Use the embedded child notes preview in this message; do not "
+                "try to read child transcript or skill files by absolute path. "
                 "Only the parent-run artifact write counts as medium Deep "
                 f"Research synthesis.{summary_fragment}"
             )

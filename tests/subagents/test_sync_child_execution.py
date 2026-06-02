@@ -216,6 +216,145 @@ async def test_sync_child_execution_strips_parent_deep_research_contract() -> No
 
 
 @pytest.mark.asyncio
+async def test_sync_deep_research_child_receives_bounded_loop_limits() -> None:
+    """Deep Research child runs need enough tools for search/fetch/final notes."""
+    store = InMemorySubagentStore()
+    seen = {}
+
+    async def _runner(run_input):
+        seen["max_steps"] = run_input.max_steps
+        seen["max_tool_calls"] = run_input.max_tool_calls
+        seen["deadline_seconds"] = run_input.deadline_seconds
+        return await _ok_child_runner(run_input)
+
+    await execute_subagent_group_sync(
+        parent=default_parent_handoff(answer="parent summary"),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_parent",
+            purpose="analysis",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="task_1",
+                    task="research",
+                    description="desc",
+                    metadata={
+                        "worker_type": "researcher",
+                        "deep_research_child_notes_only": True,
+                    },
+                ),
+            ),
+        ),
+        store=store,
+        child_runner=_runner,
+        max_child_runs=4,
+    )
+
+    assert seen == {
+        "max_steps": 10,
+        "max_tool_calls": 6,
+        "deadline_seconds": 90.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_child_execution_preserves_explicit_loop_limits() -> None:
+    """Explicit task limits should override executor defaults."""
+    store = InMemorySubagentStore()
+    seen = {}
+
+    async def _runner(run_input):
+        seen["max_steps"] = run_input.max_steps
+        seen["max_tool_calls"] = run_input.max_tool_calls
+        seen["deadline_seconds"] = run_input.deadline_seconds
+        return await _ok_child_runner(run_input)
+
+    await execute_subagent_group_sync(
+        parent=default_parent_handoff(answer="parent summary"),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_parent",
+            purpose="analysis",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="task_1",
+                    task="research",
+                    description="desc",
+                    deadline_seconds=12.0,
+                    metadata={"max_steps": 3, "max_tool_calls": 2},
+                ),
+            ),
+        ),
+        store=store,
+        child_runner=_runner,
+        max_child_runs=4,
+    )
+
+    assert seen == {
+        "max_steps": 3,
+        "max_tool_calls": 2,
+        "deadline_seconds": 12.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_child_execution_carries_source_ledger_metadata() -> None:
+    """Parent handoff should retain child source candidates even without files."""
+    store = InMemorySubagentStore()
+
+    async def _runner(run_input):
+        output = await _ok_child_runner(run_input)
+        return output.model_copy(
+            update={
+                "events": [
+                    *output.events,
+                    new_runtime_event(
+                        event_type=RuntimeEventType.SOURCE_LEDGER_UPDATED,
+                        context={
+                            "run_id": run_input.run_id or "child",
+                            "attempt_id": "att_child",
+                            "seq": 2,
+                        },
+                        options={
+                            "payload": {
+                                "search_candidates": [
+                                    {
+                                        "title": "Fork-join survey",
+                                        "url": "https://example.test/fork",
+                                        "domain": "example.test",
+                                    }
+                                ],
+                                "verified_reads": [],
+                                "failed_reads": [],
+                            }
+                        },
+                    ),
+                ]
+            }
+        )
+
+    result = await execute_subagent_group_sync(
+        parent=default_parent_handoff(answer="parent summary"),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_parent",
+            purpose="analysis",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="task_1",
+                    task="research",
+                    description="desc",
+                    metadata={"deep_research_child_notes_only": True},
+                ),
+            ),
+        ),
+        store=store,
+        child_runner=_runner,
+        max_child_runs=4,
+    )
+
+    ledger = result.runs[0].metadata["child_source_ledger"]
+    assert ledger["search_candidates"][0]["url"] == "https://example.test/fork"
+
+
+@pytest.mark.asyncio
 async def test_sync_child_execution_applies_validated_cwd_override(tmp_path) -> None:
     """Child workspace cwd overrides should stay inside parent workspace."""
     store = InMemorySubagentStore()

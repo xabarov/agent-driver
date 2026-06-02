@@ -58,6 +58,11 @@ _TERMINAL_STATUSES = {
     SubagentStatus.TIMED_OUT,
 }
 _MAX_CHILD_OUTPUT_ARTIFACT_REFS = 8
+_DEFAULT_CHILD_DEADLINE_SECONDS = 90.0
+_DEFAULT_CHILD_MAX_STEPS = 8
+_DEFAULT_CHILD_MAX_TOOL_CALLS = 6
+_DEFAULT_DEEP_RESEARCH_CHILD_MAX_STEPS = 10
+_DEFAULT_DEEP_RESEARCH_CHILD_MAX_TOOL_CALLS = 6
 
 
 def _safe_emit(
@@ -136,22 +141,13 @@ async def _run_single_child_task(
         task_metadata=task.metadata,
     )
     try:
-        child_input = AgentRunInput(
-            input=task.task,
-            run_id=f"child_{uuid4().hex[:12]}",
-            thread_id=parent.thread_id,
-            agent_id=f"{parent.agent_id}.child",
-            graph_preset=parent.graph_preset,
-            model_role=parent.model_role,
-            agent_profile=task.profile,
-            tool_policy=_child_tool_policy(parent=parent, task=task),
-            deadline_seconds=task.deadline_seconds,
-            app_metadata=_child_app_metadata(
-                parent=parent,
-                group=group,
-                child_app_metadata=child_app_metadata,
-                workspace=workspace,
-            ),
+        child_input = _build_child_input(
+            parent=parent,
+            group=group,
+            task=task,
+            child_run_id=f"child_{uuid4().hex[:12]}",
+            child_app_metadata=child_app_metadata,
+            workspace=workspace,
         )
         output_any = _call_child_runner(
             child_runner,
@@ -197,6 +193,7 @@ async def _run_single_child_task(
             "summary": output.answer or "",
             "child_artifact_refs": artifact_refs,
             "child_artifact_audit": _child_artifact_audit(output, artifact_refs),
+            "child_source_ledger": _child_source_ledger_from_output(output),
             "status": output.status.value,
             "terminal_reason": (
                 output.terminal_reason.value if output.terminal_reason else None
@@ -352,7 +349,9 @@ def _build_child_input(
         model_role=parent.model_role,
         agent_profile=task.profile,
         tool_policy=_child_tool_policy(parent=parent, task=task),
-        deadline_seconds=task.deadline_seconds,
+        deadline_seconds=_child_deadline_seconds(task),
+        max_steps=_child_max_steps(task),
+        max_tool_calls=_child_max_tool_calls(task),
         app_metadata=_child_app_metadata(
             parent=parent,
             group=group,
@@ -360,6 +359,30 @@ def _build_child_input(
             workspace=workspace,
         ),
     )
+
+
+def _child_deadline_seconds(task: SubagentTaskSpec) -> float | None:
+    if task.deadline_seconds is not None:
+        return task.deadline_seconds
+    return _DEFAULT_CHILD_DEADLINE_SECONDS
+
+
+def _child_max_steps(task: SubagentTaskSpec) -> int:
+    raw = task.metadata.get("max_steps")
+    if isinstance(raw, int) and raw > 0:
+        return raw
+    if task.metadata.get("deep_research_child_notes_only") is True:
+        return _DEFAULT_DEEP_RESEARCH_CHILD_MAX_STEPS
+    return _DEFAULT_CHILD_MAX_STEPS
+
+
+def _child_max_tool_calls(task: SubagentTaskSpec) -> int:
+    raw = task.metadata.get("max_tool_calls")
+    if isinstance(raw, int) and raw > 0:
+        return raw
+    if task.metadata.get("deep_research_child_notes_only") is True:
+        return _DEFAULT_DEEP_RESEARCH_CHILD_MAX_TOOL_CALLS
+    return _DEFAULT_CHILD_MAX_TOOL_CALLS
 
 
 def _cancelled_child_run(
@@ -854,12 +877,56 @@ def _completed_child_run_from_output(
             "summary": output.answer or "",
             "child_artifact_refs": artifact_refs,
             "child_artifact_audit": _child_artifact_audit(output, artifact_refs),
+            "child_source_ledger": _child_source_ledger_from_output(output),
             "status": output.status.value,
             "terminal_reason": (
                 output.terminal_reason.value if output.terminal_reason else None
             ),
         },
     )
+
+
+def _child_source_ledger_from_output(
+    output: AgentRunOutput,
+    *,
+    max_candidates: int = 12,
+    max_verified_reads: int = 6,
+    max_failed_reads: int = 6,
+) -> dict[str, object]:
+    ledger: dict[str, object] = {}
+    for event in output.events:
+        event_type = getattr(event, "type", None)
+        event_name = getattr(event_type, "value", None) or str(event_type or "")
+        if event_name != "source_ledger_updated":
+            continue
+        payload = getattr(event, "payload", None)
+        if not isinstance(payload, dict):
+            continue
+        ledger = {
+            "search_candidates": _bounded_dict_rows(
+                payload.get("search_candidates"),
+                max_rows=max_candidates,
+            ),
+            "verified_reads": _bounded_dict_rows(
+                payload.get("verified_reads"),
+                max_rows=max_verified_reads,
+            ),
+            "failed_reads": _bounded_dict_rows(
+                payload.get("failed_reads"),
+                max_rows=max_failed_reads,
+            ),
+        }
+    return ledger
+
+
+def _bounded_dict_rows(value: object, *, max_rows: int) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, object]] = []
+    for item in value[:max_rows]:
+        if isinstance(item, dict):
+            rows.append(dict(item))
+    return rows
 
 
 def _failed_child_run(
