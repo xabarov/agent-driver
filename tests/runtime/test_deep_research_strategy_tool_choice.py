@@ -90,6 +90,23 @@ def test_pending_child_synthesis_narrows_request_tools_before_report() -> None:
     )
 
 
+def test_medium_after_plan_narrows_request_tools_to_first_subagent() -> None:
+    context = _context(
+        research_mode="deep",
+        tool_results=[_tool_result("todo_write")],
+        planning_state={
+            "todos": [
+                {"todo_id": "discover", "content": "Find sources", "status": "in_progress"}
+            ]
+        },
+    )
+
+    assert _deep_research_request_allowed_tools(context) == (
+        "agent_tool",
+        "todo_write",
+    )
+
+
 def test_pending_child_synthesis_narrows_to_write_after_fetch() -> None:
     context = _context(
         tool_results=[

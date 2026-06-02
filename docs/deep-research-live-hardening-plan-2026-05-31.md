@@ -2403,6 +2403,18 @@ Live triage updates from 2026-06-02:
      benchmark aligned with the chosen architecture: parent synthesis may verify
      concrete child/source URLs before writing the report, but must not launch
      more subagents, browse artifacts, or restart open-ended discovery.
+   - 2026-06-02 aligned-budget rerun:
+     `/tmp/chat-demo-live-observed-medium-aligned-budget-20260602`.
+     Preflight passed as `run_32305f78d796`. Medium `run_3525d8631dfb`
+     failed early because the model hallucinated an unregistered `bash` call
+     while trying to discover skills. Trace showed the strategy had selected
+     `agent_tool`, but named tool forcing was disabled after a prior provider
+     rejection (`forced_tool_choice_retry=removed_after_provider_rejection`),
+     leaving the full schema visible. Fix: after the initial todo plan in
+     medium/hard Deep Research, before the first child has run, the request
+     schema narrows to `agent_tool` and `todo_write`. This mirrors the
+     parent-synthesis narrowing and keeps provider-safe runs from drifting into
+     unavailable shell/skill-discovery behavior.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.
