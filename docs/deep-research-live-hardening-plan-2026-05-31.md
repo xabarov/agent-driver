@@ -2415,6 +2415,22 @@ Live triage updates from 2026-06-02:
      schema narrows to `agent_tool` and `todo_write`. This mirrors the
      parent-synthesis narrowing and keeps provider-safe runs from drifting into
      unavailable shell/skill-discovery behavior.
+   - 2026-06-02 strict-agent rerun after narrowing initial delegation:
+     `/tmp/chat-demo-live-observed-medium-strict-agent-20260602`.
+     Preflight passed as `run_e473b9e96f58`. Medium `run_d681f5921032`
+     made real architectural progress: it used `agent_tool`, created
+     `research/report.md` (~16 KB), and created `research/sources.jsonl`.
+     The run still failed because it spent 96,785 tokens, missed a terminal
+     event, did not emit a final handoff referencing `research/report.md`, and
+     had weak verified coverage (`fetch_count=2`, `unique_domains=1`). The
+     after-report trace reopened the full tool surface and called
+     `artifact_preview`, proving that `tool_choice="none"` is not enough for
+     this provider route. Fix in progress: once both `research/report.md` and
+     `research/sources.jsonl` exist, the Deep Research request surface must be
+     empty so the next model response is a concise no-tools artifact handoff.
+     If the report exists but the source ledger is still missing, the surface
+     stays narrowly limited to `file_write`/`todo_write` so the ledger can be
+     written without opening search, preview, or artifact-browsing loops.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

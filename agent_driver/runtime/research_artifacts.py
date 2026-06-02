@@ -43,6 +43,21 @@ def deep_research_report_artifact_exists(context: "RunContext") -> bool:
     return report is not None and report.is_file() and report.stat().st_size > 0
 
 
+def deep_research_source_ledger_artifact_exists(context: "RunContext") -> bool:
+    """Return whether this run already has a non-empty source ledger artifact."""
+    payload = context.metadata.get("deep_research_artifacts")
+    if isinstance(payload, dict):
+        if payload.get("source_ledger_exists") is True:
+            return True
+        if (
+            isinstance(payload.get("source_ledger_path"), str)
+            and int(payload.get("source_ledger_size_bytes") or 0) > 0
+        ):
+            return True
+    ledger = _source_ledger_path(context)
+    return ledger is not None and ledger.is_file() and ledger.stat().st_size > 0
+
+
 def ensure_deep_research_report_artifact_metadata(
     context: "RunContext",
 ) -> dict[str, Any] | None:
@@ -178,6 +193,18 @@ def _report_path(context: "RunContext") -> Path | None:
     return report
 
 
+def _source_ledger_path(context: "RunContext") -> Path | None:
+    root = _workspace_root(context)
+    if root is None:
+        return None
+    ledger = (root / SOURCE_LEDGER_RELATIVE_PATH).resolve()
+    try:
+        ledger.relative_to(root)
+    except ValueError:
+        return None
+    return ledger
+
+
 def _inline_answer_max_chars(context: "RunContext") -> int:
     app_metadata = getattr(context.run_input, "app_metadata", None)
     raw = (
@@ -250,6 +277,7 @@ def _record_source_ledger_metadata(
     artifacts = dict(previous) if isinstance(previous, dict) else {}
     artifacts.update(
         {
+            "source_ledger_exists": True,
             "source_ledger_path": payload["path"],
             "source_ledger_absolute_path": payload["absolute_path"],
             "source_ledger_size_bytes": payload["size_bytes"],
@@ -289,6 +317,7 @@ __all__ = [
     "deep_research_artifact_mode",
     "deep_research_artifact_repair_hint",
     "deep_research_report_artifact_exists",
+    "deep_research_source_ledger_artifact_exists",
     "ensure_deep_research_report_artifact_metadata",
     "maybe_capture_deep_research_draft",
     "persist_deep_research_source_ledger",

@@ -9,6 +9,7 @@ from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.runtime.research_artifacts import (
     REPORT_RELATIVE_PATH,
     SOURCE_LEDGER_RELATIVE_PATH,
+    deep_research_source_ledger_artifact_exists,
     ensure_deep_research_report_artifact_metadata,
     maybe_capture_deep_research_draft,
     persist_deep_research_source_ledger,
@@ -181,8 +182,21 @@ def test_deep_research_source_ledger_is_persisted_to_jsonl(tmp_path: Path) -> No
     assert '"ledger_section": "verified_reads"' in content
     assert '"ledger_section": "search_candidates"' in content
     artifacts = context.metadata["deep_research_artifacts"]
+    assert artifacts["source_ledger_exists"] is True
     assert artifacts["source_ledger_path"] == SOURCE_LEDGER_RELATIVE_PATH
     assert artifacts["source_ledger_record_count"] == 2
+    assert deep_research_source_ledger_artifact_exists(context) is True
+
+
+def test_deep_research_source_ledger_exists_from_workspace_file(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    source_ledger = tmp_path / SOURCE_LEDGER_RELATIVE_PATH
+    source_ledger.parent.mkdir(parents=True)
+    source_ledger.write_text('{"url": "https://example.com"}\n', encoding="utf-8")
+
+    assert deep_research_source_ledger_artifact_exists(context) is True
 
 
 def test_contract_repair_uses_captured_report_instead_of_full_prompt(

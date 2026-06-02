@@ -16,7 +16,10 @@ from agent_driver.runtime.metadata_state import (
     get_planning_runtime_state,
     get_tool_loop_state,
 )
-from agent_driver.runtime.research_artifacts import deep_research_report_artifact_exists
+from agent_driver.runtime.research_artifacts import (
+    deep_research_report_artifact_exists,
+    deep_research_source_ledger_artifact_exists,
+)
 from agent_driver.runtime.single_agent.llm_step.build import (
     LlmRequestBuildContext,
     build_single_agent_llm_request,
@@ -183,6 +186,10 @@ def _deep_research_request_allowed_tools(
     context: RunContext,
 ) -> tuple[str, ...] | None:
     """Narrow the LLM-visible tool surface during fragile synthesis states."""
+    if deep_research_report_artifact_exists(context):
+        if deep_research_source_ledger_artifact_exists(context):
+            return tuple()
+        return ("file_write", "todo_write")
     task_contract = context.run_input.tool_policy.metadata.get("task_contract")
     deep_medium_or_hard = (
         isinstance(task_contract, dict)
@@ -192,8 +199,6 @@ def _deep_research_request_allowed_tools(
     )
     handoff = context.metadata.get("deep_research_child_synthesis")
     if isinstance(handoff, dict) and handoff.get("pending") is True:
-        if deep_research_report_artifact_exists(context):
-            return None
         if _deep_research_verified_fetch_count(context) > 0:
             return ("file_write", "todo_write")
         return ("file_write", "todo_write", "web_fetch")

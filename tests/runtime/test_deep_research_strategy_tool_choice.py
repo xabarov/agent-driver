@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from agent_driver.runtime.single_agent.llm_step.request import (
@@ -142,6 +143,35 @@ def test_medium_initial_subagent_recovery_narrows_request_to_agent_tool_only() -
     }
 
     assert _deep_research_request_allowed_tools(context) == ("agent_tool",)
+
+
+def test_deep_research_with_report_only_narrows_to_ledger_write(
+    tmp_path: Path,
+) -> None:
+    context = _context(research_mode="deep")
+    context.metadata["workspace_cwd"] = str(tmp_path)
+    report = tmp_path / "research" / "report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("ready report", encoding="utf-8")
+
+    assert _deep_research_request_allowed_tools(context) == (
+        "file_write",
+        "todo_write",
+    )
+
+
+def test_deep_research_with_report_and_ledger_disables_tools(
+    tmp_path: Path,
+) -> None:
+    context = _context(research_mode="deep")
+    context.metadata["workspace_cwd"] = str(tmp_path)
+    report = tmp_path / "research" / "report.md"
+    ledger = tmp_path / "research" / "sources.jsonl"
+    report.parent.mkdir(parents=True)
+    report.write_text("ready report", encoding="utf-8")
+    ledger.write_text('{"url": "https://example.com"}\n', encoding="utf-8")
+
+    assert _deep_research_request_allowed_tools(context) == tuple()
 
 
 def test_pending_child_synthesis_narrows_to_write_after_fetch() -> None:
