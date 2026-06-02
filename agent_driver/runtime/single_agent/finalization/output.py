@@ -336,6 +336,9 @@ class SingleAgentOutputMixin:
         research_artifacts = context.metadata.get("deep_research_artifacts")
         if isinstance(research_artifacts, dict):
             metadata["deep_research_artifacts"] = dict(research_artifacts)
+        child_synthesis = context.metadata.get("deep_research_child_synthesis")
+        if isinstance(child_synthesis, dict):
+            metadata["deep_research_child_synthesis"] = dict(child_synthesis)
         research_contract = context.metadata.get("research_session_contract")
         if isinstance(research_contract, dict):
             metadata["research_session_contract"] = dict(research_contract)

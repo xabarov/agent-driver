@@ -1513,6 +1513,45 @@ def test_trace_summary_reports_effective_prompt_surface() -> None:
     }
 
 
+def test_trace_summary_exposes_pending_child_synthesis() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research с субагентами",
+        assistant_text="Теперь подготовлю отчет.",
+        events=[
+            _completed_tool("agent_tool"),
+            {"event": "subagent_group_started", "data": {"group_id": "grp"}},
+            {
+                "event": "subagent_completed",
+                "data": {
+                    "group_id": "grp",
+                    "status": "completed",
+                    "task_id": "one",
+                },
+            },
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "grp", "join_state": "done"},
+            },
+            {
+                "event": "research_progress",
+                "data": {
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "group_id": "grp",
+                    "child_count": 1,
+                    "summary_chars": 321,
+                },
+            },
+        ],
+    )
+
+    assert summary["subagents"]["groups_joined"] == 1
+    assert summary["subagents"]["child_synthesis_pending"] is True
+    assert summary["subagents"]["child_synthesis_summary_chars"] == 321
+    assert summary["failures"]["child_result_not_used"] is True
+
+
 def test_trace_summary_flags_unknown_tool_calls() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

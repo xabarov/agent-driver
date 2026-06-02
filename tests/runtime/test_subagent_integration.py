@@ -370,6 +370,72 @@ async def test_runtime_with_subagents_executes_group_from_agent_tool() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_deep_research_subagent_join_records_parent_synthesis_handoff() -> None:
+    """Joined Deep Research child notes must become pending parent synthesis."""
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    provider = _AgentToolSpawnProvider()
+    runner = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            enable_subagents=True,
+            max_child_runs=2,
+            command_queue_store=InMemoryCommandQueueStore(),
+            subagent_mailbox_store=InMemorySubagentMailboxStore(),
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            ),
+        ),
+    )
+
+    output = await runner.run(
+        AgentRunInput(
+            input="deep research with child notes",
+            run_id="run_deep_child_handoff",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(
+                mode=ToolPolicyMode.ALLOW_TOOLS,
+                metadata={
+                    "deep_research_mode": {
+                        "enabled": True,
+                        "research_profile": "medium",
+                    },
+                    "task_contract": {
+                        "requires_research": True,
+                        "research_mode": "deep",
+                        "research_depth": "deep_parallel_research",
+                        "research_profile": "medium",
+                        "max_subagent_requests": 2,
+                    },
+                },
+            ),
+        )
+    )
+
+    handoff = output.metadata["deep_research_child_synthesis"]
+    assert handoff["pending"] is True
+    assert handoff["source"] == "subagent_group_joined"
+    assert handoff["child_count"] == 1
+    assert "child answer" in handoff["summary"]
+    assert handoff["required_parent_artifacts"] == [
+        "research/report.md",
+        "research/sources.jsonl",
+    ]
+    progress_events = [
+        event
+        for event in output.events
+        if event.type == RuntimeEventType.RESEARCH_PROGRESS
+    ]
+    assert progress_events[-1].payload["kind"] == (
+        "deep_research_child_synthesis_pending"
+    )
+    assert progress_events[-1].payload["pending"] is True
+
+
 def test_deep_research_agent_tool_children_default_to_researcher_notes() -> None:
     """Deep Research agent_tool children should not inherit report write duties."""
     context = _subagent_context(

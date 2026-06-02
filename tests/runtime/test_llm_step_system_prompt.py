@@ -119,6 +119,47 @@ def test_runtime_attachments_skip_python_reminder_when_python_denied() -> None:
     assert "python_reliability_request" not in attachment_text
 
 
+def test_runtime_attachments_include_child_synthesis_pending_reminder() -> None:
+    context = SimpleNamespace(
+        run_input=AgentRunInput(
+            input="deep research",
+            agent_id="agent",
+            graph_preset="single_react",
+            app_metadata={"chat_mode": True},
+            tool_policy=ToolPolicyInput(
+                metadata={
+                    "deep_research_mode": {
+                        "enabled": True,
+                        "research_profile": "medium",
+                    },
+                    "task_contract": {
+                        "requires_research": True,
+                        "research_mode": "deep",
+                        "research_depth": "deep_parallel_research",
+                        "max_subagent_requests": 2,
+                    },
+                }
+            ),
+        ),
+        metadata={
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child found https://example.com/source",
+            },
+        },
+    )
+
+    attachment_text = "\n".join(
+        message.content for message in _runtime_attachment_messages(context)
+    )
+
+    assert "deep_research_child_synthesis_pending" in attachment_text
+    assert "Do not answer with long prose" in attachment_text
+    assert "do not spawn another child wave" in attachment_text
+    assert "research/report.md" in attachment_text
+    assert "child found https://example.com/source" in attachment_text
+
+
 def test_runtime_attachments_include_task_contract_reminder() -> None:
     """Chat mode should surface the lightweight task contract to the model."""
     context = SimpleNamespace(

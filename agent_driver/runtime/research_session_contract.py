@@ -113,6 +113,7 @@ class ResearchSessionContract:
     fetch_fallback_required: bool = False
     report_artifact_exists: bool = False
     plan_created: bool = False
+    child_synthesis_pending: bool = False
 
     @property
     def final_readiness(self) -> ResearchFinalReadiness:
@@ -191,6 +192,7 @@ def build_research_session_contract(
     enforce_todos: bool = True,
     allow_final_deliverable_todos: bool = False,
     report_artifact_exists: bool = False,
+    child_synthesis_pending: bool = False,
 ) -> ResearchSessionContract:
     """Build the final-readiness contract from current runtime state."""
     requires_research = (
@@ -245,6 +247,7 @@ def build_research_session_contract(
         fetch_fallback_required=fetch_fallback_required,
         report_artifact_exists=report_artifact_exists,
         plan_created=plan_created,
+        child_synthesis_pending=child_synthesis_pending,
     )
 
 
@@ -271,6 +274,7 @@ def build_research_session_contract_from_context(
         enforce_todos=enforce_todos,
         allow_final_deliverable_todos=allow_final_deliverable_todos,
         report_artifact_exists=deep_research_report_artifact_exists(context),
+        child_synthesis_pending=_child_synthesis_pending(context),
     )
 
 
@@ -442,11 +446,16 @@ def _deep_research_contract_payload(
         },
         "report_artifact_exists": contract.report_artifact_exists,
         "plan_created": contract.plan_created,
+        "child_synthesis_pending": contract.child_synthesis_pending,
         "final_readiness_authority": "ResearchSessionContract",
     }
 
 
 def _deep_research_phase(contract: ResearchSessionContract) -> str:
+    if contract.child_synthesis_pending and not contract.report_artifact_exists:
+        return DEEP_RESEARCH_PHASE_WRITE
+    if contract.child_synthesis_pending and contract.report_artifact_exists:
+        return DEEP_RESEARCH_PHASE_REVIEW
     if not contract.plan_created and contract.evidence.search_calls == 0:
         return DEEP_RESEARCH_PHASE_PLAN
     if contract.evidence.search_calls == 0:
@@ -475,6 +484,17 @@ def _task_contract_from_context(context: RunContext) -> dict[str, Any] | None:
     metadata = context.run_input.tool_policy.metadata
     task_contract = metadata.get("task_contract")
     return task_contract if isinstance(task_contract, dict) else None
+
+
+def _child_synthesis_pending(context: RunContext) -> bool:
+    payload = context.metadata.get("deep_research_child_synthesis")
+    if not isinstance(payload, dict) or payload.get("pending") is not True:
+        return False
+    from agent_driver.runtime.research_artifacts import (
+        deep_research_report_artifact_exists,
+    )
+
+    return not deep_research_report_artifact_exists(context)
 
 
 def _tool_available(context: RunContext, tool_name: str) -> bool:

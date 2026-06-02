@@ -1234,6 +1234,16 @@ Checklist:
 - [ ] Ensure the parent creates or patches `research/report.md` and
   `research/sources.jsonl` after child join, even when children return useful
   notes.
+  - [x] Record a run-level `deep_research_child_synthesis` handoff when a
+    Deep Research child group joins.
+  - [x] Move the Deep Research phase contract to `write` while child notes are
+    pending and no parent-owned report exists.
+  - [x] Add a runtime attachment that tells the parent not to write long prose
+    or spawn another child wave before writing/patching parent artifacts.
+  - [x] Emit a trace-visible `research_progress` marker and expose
+    `subagents.child_synthesis_pending` in trace-summary for live scorecards.
+  - [ ] Enforce or repair the actual parent `file_write`/`file_patch` call and
+    verify it in a live medium trace.
 - [ ] Make parent trace-summary optionally show child evidence separately
   (`child_search_count`, `child_fetch_count`, `child_verified_read_count`) while
   keeping medium readiness gated on parent-owned synthesis.
@@ -2051,6 +2061,13 @@ parent-owned synthesis after bounded child joins.
    - the parent must create or patch `research/report.md` itself;
    - medium readiness must reject child final auto-capture, child artifacts, and
      unsynthesized child notes.
+   - implementation progress: joined child notes now create
+     `deep_research_child_synthesis.pending=true`, force the phase contract
+     toward `write`, and inject a parent-only artifact-write reminder. The
+     remaining work is the repair/enforcement layer that turns this pending
+     state into an observed parent `file_write`/`file_patch` before another long
+     assistant message. The pending state is now also visible in trace-summary
+     as `subagents.child_synthesis_pending`.
 2. Add trace-summary and scorecard fields that distinguish parent evidence from
    child evidence:
    - `parent_search_count`, `parent_fetch_count`, `parent_verified_read_count`;

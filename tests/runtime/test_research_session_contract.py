@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from agent_driver.runtime.research_session_contract import (
+    DEEP_RESEARCH_PHASE_REVIEW,
+    DEEP_RESEARCH_PHASE_WRITE,
     FINAL_READINESS_ALLOWED,
     FINAL_READINESS_REPAIR_NEEDED,
     REPAIR_FINAL_MISSING_SOURCE_LINKS,
@@ -40,6 +42,33 @@ def test_research_contract_requires_web_evidence() -> None:
 
     assert contract.final_readiness.status == FINAL_READINESS_REPAIR_NEEDED
     assert contract.final_readiness.reasons == (REPAIR_MISSING_RESEARCH_EVIDENCE,)
+
+
+def test_deep_research_child_synthesis_pending_moves_phase_to_write() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        tool_results=[],
+        child_synthesis_pending=True,
+    )
+
+    assert contract.model_dump()["deep_research"]["phase"] == DEEP_RESEARCH_PHASE_WRITE
+
+
+def test_deep_research_child_synthesis_with_report_moves_phase_to_review() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        tool_results=[],
+        child_synthesis_pending=True,
+        report_artifact_exists=True,
+    )
+
+    assert contract.model_dump()["deep_research"]["phase"] == DEEP_RESEARCH_PHASE_REVIEW
 
 
 def test_research_contract_requires_fetch_when_user_requested_open_url() -> None:

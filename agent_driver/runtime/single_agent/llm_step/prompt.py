@@ -276,6 +276,24 @@ def chat_mode_runtime_reminders(context: RunContext) -> list[str]:
                 "research/report.md and research/sources.jsonl and must synthesize "
                 "child findings into those artifacts."
             )
+        child_synthesis = context.metadata.get("deep_research_child_synthesis")
+        if isinstance(child_synthesis, dict) and child_synthesis.get("pending") is True:
+            summary = str(child_synthesis.get("summary") or "").strip()
+            summary_fragment = (
+                f" Child notes preview: {summary[:1200]}"
+                if summary
+                else ""
+            )
+            reminders.append(
+                "Runtime reminder: deep_research_child_synthesis_pending. "
+                "A child research group has joined and returned compact source "
+                "notes. Do not answer with long prose and do not spawn another "
+                "child wave. The next parent step should write or patch "
+                "research/sources.jsonl and research/report.md using file_write, "
+                "file_patch, file_edit, read_file, or artifact_preview. "
+                "Only the parent-run artifact write counts as medium Deep "
+                f"Research synthesis.{summary_fragment}"
+            )
     if (
         isinstance(task_contract, dict)
         and task_contract.get("research_depth")

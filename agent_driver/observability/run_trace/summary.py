@@ -325,6 +325,8 @@ def _subagent_summary(
 ) -> dict[str, Any]:
     statuses: list[str] = []
     join_states: list[str] = []
+    child_synthesis_pending = False
+    child_synthesis_summary_chars = 0
     for event in events:
         data = _event_data(event)
         if event.get("event") == "subagent_completed":
@@ -335,6 +337,16 @@ def _subagent_summary(
             join_state = data.get("join_state")
             if isinstance(join_state, str) and join_state:
                 join_states.append(join_state)
+        if event.get("event") == "research_progress":
+            kind = data.get("kind")
+            if kind == "deep_research_child_synthesis_pending":
+                child_synthesis_pending = data.get("pending") is True
+                raw_chars = data.get("summary_chars")
+                if isinstance(raw_chars, int) and not isinstance(raw_chars, bool):
+                    child_synthesis_summary_chars = max(
+                        child_synthesis_summary_chars,
+                        raw_chars,
+                    )
     agent_tool_used = "agent_tool" in tool_names
     groups_joined = _count_events(events, "subagent_group_joined")
     child_error_count = sum(
@@ -360,6 +372,8 @@ def _subagent_summary(
         "runs_completed": _count_events(events, "subagent_completed"),
         "child_error_count": child_error_count,
         "parent_synthesized_final": parent_synthesized_final,
+        "child_synthesis_pending": child_synthesis_pending,
+        "child_synthesis_summary_chars": child_synthesis_summary_chars,
         "statuses": statuses,
         "join_states": join_states,
     }

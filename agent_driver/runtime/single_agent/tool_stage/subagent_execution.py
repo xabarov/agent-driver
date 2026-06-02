@@ -144,6 +144,26 @@ async def maybe_execute_subagent_group(
         if result.join_state == "background_running"
         else RuntimeEventType.SUBAGENT_GROUP_JOINED
     )
+    if group_event_type == RuntimeEventType.SUBAGENT_GROUP_JOINED:
+        handoff_payload = _record_deep_research_child_synthesis_handoff(
+            context, result
+        )
+        if handoff_payload is not None:
+            emit_step_event(
+                host,
+                context,
+                event_type=RuntimeEventType.RESEARCH_PROGRESS,
+                payload={
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "group_id": handoff_payload.get("group_id"),
+                    "child_count": handoff_payload.get("child_count"),
+                    "summary_chars": len(str(handoff_payload.get("summary") or "")),
+                    "required_parent_artifacts": handoff_payload.get(
+                        "required_parent_artifacts"
+                    ),
+                },
+            )
     emit_step_event(
         host,
         context,
@@ -158,6 +178,50 @@ async def maybe_execute_subagent_group(
         _final_answer_ready_after_subagent(context)
     ):
         get_tool_loop_state(context).force_final_answer(reason="subagent_group_joined")
+
+
+def _record_deep_research_child_synthesis_handoff(
+    context: RunContext,
+    result: object,
+) -> dict[str, object] | None:
+    """Record that joined child notes must be synthesized by the parent."""
+    if not _deep_research_mode(context):
+        return None
+    summary = str(getattr(result, "merged_summary", "") or "").strip()
+    runs = list(getattr(result, "runs", []) or [])
+    completed_children: list[dict[str, object]] = []
+    for run in runs[:8]:
+        metadata = getattr(run, "metadata", None)
+        run_summary = (
+            metadata.get("summary") if isinstance(metadata, dict) else None
+        )
+        completed_children.append(
+            {
+                "subagent_run_id": getattr(run, "subagent_run_id", None),
+                "child_run_id": getattr(run, "child_run_id", None),
+                "task_id": getattr(run, "task_id", None),
+                "status": (
+                    getattr(getattr(run, "status", None), "value", None)
+                    or str(getattr(run, "status", "") or "")
+                ),
+                "summary": str(run_summary or "")[:1_200],
+            }
+        )
+    payload: dict[str, object] = {
+        "pending": True,
+        "source": "subagent_group_joined",
+        "group_id": getattr(getattr(result, "group", None), "group_id", None),
+        "join_state": str(getattr(result, "join_state", "") or ""),
+        "child_count": len(runs),
+        "summary": summary[:4_000],
+        "children": completed_children,
+        "required_parent_artifacts": [
+            "research/report.md",
+            "research/sources.jsonl",
+        ],
+    }
+    context.metadata["deep_research_child_synthesis"] = payload
+    return payload
 
 
 def _final_answer_ready_after_subagent(context: RunContext) -> bool:
@@ -177,6 +241,18 @@ def _final_answer_ready_after_subagent(context: RunContext) -> bool:
     )
     get_tool_loop_state(context).clear_force_final_answer()
     return False
+
+
+def _deep_research_mode(context: RunContext) -> bool:
+    metadata = context.run_input.tool_policy.metadata
+    deep_mode = metadata.get("deep_research_mode")
+    if isinstance(deep_mode, dict) and deep_mode.get("enabled") is True:
+        return True
+    task_contract = metadata.get("task_contract")
+    return (
+        isinstance(task_contract, dict)
+        and task_contract.get("research_mode") == "deep"
+    )
 
 
 def _group_spec_from_planned(
