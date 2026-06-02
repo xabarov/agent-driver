@@ -2431,6 +2431,21 @@ Live triage updates from 2026-06-02:
      If the report exists but the source ledger is still missing, the surface
      stays narrowly limited to `file_write`/`todo_write` so the ledger can be
      written without opening search, preview, or artifact-browsing loops.
+   - 2026-06-02 terminal-clamp rerun:
+     `/tmp/chat-demo-live-observed-medium-terminal-clamp-20260602`.
+     Preflight passed as `run_e9f3e3f87229`. Medium `run_848c181733a5`
+     failed before report creation. It used one child and created
+     `research/sources.jsonl`, but then repeatedly emitted hidden
+     `agent_tool`/`web_search`/`web_fetch` calls while the effective request
+     schema was already narrowed to synthesis tools. The run spent 37,919
+     tokens and ended without `research/report.md`. Fix in progress: once a
+     source ledger exists without a report, or once parent-synthesis recovery
+     has been triggered, the request surface narrows to `file_write` only.
+     After at least one parent verification fetch in child-synthesis mode, the
+     surface also narrows to `file_write` only. This is intentionally stricter
+     than the earlier `file_write`/`todo_write` pair because live traces showed
+     the extra `todo_write` escape hatch lets the model keep planning and
+     searching instead of writing the artifact.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

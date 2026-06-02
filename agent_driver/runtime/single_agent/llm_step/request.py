@@ -190,6 +190,8 @@ def _deep_research_request_allowed_tools(
         if deep_research_source_ledger_artifact_exists(context):
             return tuple()
         return ("file_write", "todo_write")
+    if deep_research_source_ledger_artifact_exists(context):
+        return ("file_write",)
     task_contract = context.run_input.tool_policy.metadata.get("task_contract")
     deep_medium_or_hard = (
         isinstance(task_contract, dict)
@@ -199,8 +201,13 @@ def _deep_research_request_allowed_tools(
     )
     handoff = context.metadata.get("deep_research_child_synthesis")
     if isinstance(handoff, dict) and handoff.get("pending") is True:
+        parent_synthesis_recovery = context.metadata.get(
+            "deep_research_parent_synthesis_recovery"
+        )
+        if isinstance(parent_synthesis_recovery, dict):
+            return ("file_write",)
         if _deep_research_verified_fetch_count(context) > 0:
-            return ("file_write", "todo_write")
+            return ("file_write",)
         return ("file_write", "todo_write", "web_fetch")
     initial_subagent_recovery = context.metadata.get(
         "deep_research_initial_subagent_recovery"

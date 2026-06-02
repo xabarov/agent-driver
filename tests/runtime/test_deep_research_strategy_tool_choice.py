@@ -174,6 +174,32 @@ def test_deep_research_with_report_and_ledger_disables_tools(
     assert _deep_research_request_allowed_tools(context) == tuple()
 
 
+def test_deep_research_with_ledger_only_forces_report_write(
+    tmp_path: Path,
+) -> None:
+    context = _context(research_mode="deep")
+    context.metadata["workspace_cwd"] = str(tmp_path)
+    ledger = tmp_path / "research" / "sources.jsonl"
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text('{"url": "https://example.com"}\n', encoding="utf-8")
+
+    assert _deep_research_request_allowed_tools(context) == ("file_write",)
+
+
+def test_parent_synthesis_recovery_narrows_to_report_write() -> None:
+    context = _context()
+    context.metadata["deep_research_child_synthesis"] = {
+        "pending": True,
+        "summary": "child notes",
+    }
+    context.metadata["deep_research_parent_synthesis_recovery"] = {
+        "tool": "file_write",
+        "reason": "parent_synthesis_gate_denied",
+    }
+
+    assert _deep_research_request_allowed_tools(context) == ("file_write",)
+
+
 def test_pending_child_synthesis_narrows_to_write_after_fetch() -> None:
     context = _context(
         tool_results=[
@@ -191,10 +217,7 @@ def test_pending_child_synthesis_narrows_to_write_after_fetch() -> None:
         "summary": "child notes",
     }
 
-    assert _deep_research_request_allowed_tools(context) == (
-        "file_write",
-        "todo_write",
-    )
+    assert _deep_research_request_allowed_tools(context) == ("file_write",)
     choice = _deep_research_strategy_tool_choice(context, None)
     assert choice == {"type": "tool", "name": "file_write"}
 
