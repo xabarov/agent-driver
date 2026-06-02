@@ -59,6 +59,20 @@ def _context(tmp_path: Path, *, text: str = "draft") -> RunContext:
     )
 
 
+def test_deep_research_default_capture_threshold_is_artifact_first(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    context.run_input.app_metadata.pop("deep_research_inline_answer_max_chars", None)
+    draft = "Deep research draft.\n" + ("section text\n" * 150)
+
+    payload = maybe_capture_deep_research_draft(context, draft)
+
+    assert payload is not None
+    assert payload["captured_text_chars"] == len(draft)
+    assert (tmp_path / REPORT_RELATIVE_PATH).is_file()
+
+
 def test_deep_research_long_inline_draft_is_captured_to_report(tmp_path: Path) -> None:
     context = _context(tmp_path)
     draft = "Deep research draft.\n" + ("section text\n" * 200)

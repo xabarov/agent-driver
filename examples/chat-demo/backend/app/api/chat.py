@@ -19,6 +19,7 @@ from app.schemas.chat import (
     ChatControlRequest,
     ChatControlResponse,
     ChatMessageRequest,
+    HardResearchOptions,
     InterruptView,
     ResumeRequest,
 )
@@ -218,12 +219,76 @@ def _bundle_for_request(preset: ToolPreset, model: str | None = None) -> AgentBu
     return get_agent_bundle_for_request(preset, model)
 
 
+def _effective_research_mode(body: ChatMessageRequest) -> str:
+    if body.research_mode in {"chat", "web", "deep"}:
+        return body.research_mode
+    if body.research_depth == "deep_parallel_research":
+        return "deep"
+    preset = resolve_tool_preset(body.tool_preset)
+    if preset in {"web", "web_search", "web_fetch"}:
+        return "web"
+    return "chat"
+
+
+def _effective_research_profile(body: ChatMessageRequest) -> str:
+    mode = _effective_research_mode(body)
+    if mode == "deep":
+        if body.research_profile in {"medium", "hard"}:
+            return body.research_profile
+        return "medium"
+    if mode == "web":
+        return "light"
+    return "light"
+
+
+def _effective_profile_source(body: ChatMessageRequest) -> str:
+    if body.profile_source in {
+        "user_selected",
+        "auto_suggested",
+        "backend_classified",
+        "scenario_forced",
+    }:
+        return body.profile_source
+    if body.research_mode is None and body.research_depth == "deep_parallel_research":
+        return "backend_classified"
+    return "user_selected"
+
+
+def _effective_hard_options(body: ChatMessageRequest) -> dict[str, bool]:
+    options = body.hard_options or HardResearchOptions()
+    payload = options.model_dump(mode="json")
+    if _effective_research_profile(body) != "hard":
+        payload["allow_browser_action"] = False
+    return {
+        "allow_pdf_read": bool(payload.get("allow_pdf_read")),
+        "allow_browser_read": bool(payload.get("allow_browser_read")),
+        "allow_browser_action": bool(payload.get("allow_browser_action")),
+    }
+
+
+def _research_request_metadata(body: ChatMessageRequest) -> dict[str, object]:
+    mode = _effective_research_mode(body)
+    profile = _effective_research_profile(body)
+    return {
+        "research_mode": mode,
+        "research_profile": profile,
+        "profile_source": _effective_profile_source(body),
+        "hard_options": _effective_hard_options(body),
+        "research_depth": (
+            "deep_parallel_research" if mode == "deep" else body.research_depth
+        ),
+    }
+
+
 def _effective_chat_preset(body: ChatMessageRequest) -> ToolPreset:
     """Return runtime tool preset, upgrading Deep Research to artifact tools."""
-    preset = resolve_tool_preset(body.tool_preset)
-    if body.research_depth == "deep_parallel_research":
+    if body.research_mode == "deep" or body.research_depth == "deep_parallel_research":
         return "deep_research"
-    return preset
+    if body.research_mode == "web":
+        return "web"
+    if body.research_mode == "chat":
+        return "off"
+    return resolve_tool_preset(body.tool_preset)
 
 
 def get_resume_bundle(body: ResumeRequest) -> AgentBundle:
@@ -274,15 +339,20 @@ def _chat_tool_policy(
         force_planning=force_planning,
         force_planning_mode=settings.force_planning_mode,
     )
-    if body.research_depth != "deep_parallel_research":
+    if _effective_research_mode(body) != "deep":
         return policy
     metadata = dict(policy.metadata)
     task_contract = dict(metadata.get("task_contract") or {})
+    request_metadata = _research_request_metadata(body)
     task_contract.update(
         {
             "kind": "research",
             "requires_research": True,
             "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": request_metadata["research_profile"],
+            "profile_source": request_metadata["profile_source"],
+            "hard_options": request_metadata["hard_options"],
             "goal": task_contract.get("goal") or body.message,
             "approach": (
                 "Use the shared Deep Research runtime contract: discover "
@@ -295,21 +365,32 @@ def _chat_tool_policy(
     metadata["deep_research_mode"] = {
         "enabled": True,
         "research_depth": "deep_parallel_research",
+        "research_mode": "deep",
+        "research_profile": request_metadata["research_profile"],
+        "profile_source": request_metadata["profile_source"],
+        "hard_options": request_metadata["hard_options"],
     }
     if settings.deep_research_phase_gate_enabled:
         metadata["deep_research_phase_gate"] = {
             "enabled": True,
-            "required_fetch_attempts": 2,
+            "required_fetch_attempts": (
+                4 if request_metadata["research_profile"] == "hard" else 2
+            ),
         }
     return policy.model_copy(update={"metadata": metadata})
 
 
 def _chat_tool_gate(*, body: ChatMessageRequest, settings: Settings) -> ToolGate | None:
-    if body.research_depth != "deep_parallel_research":
+    if _effective_research_mode(body) != "deep":
         return None
     if not settings.deep_research_phase_gate_enabled:
         return None
-    return create_deep_research_phase_gate(required_fetch_attempts=2)
+    required_fetch_attempts = (
+        4 if _effective_research_profile(body) == "hard" else 2
+    )
+    return create_deep_research_phase_gate(
+        required_fetch_attempts=required_fetch_attempts
+    )
 
 
 @router.post("/chat/messages")
@@ -367,6 +448,7 @@ async def chat_messages(
     transcript.append(("user", body.message))
     run_id = f"run_{uuid.uuid4().hex[:12]}"
     run_ids.append(run_id)
+    request_run_metadata = _research_request_metadata(body)
     if request_key:
         client_requests[request_key] = {
             "run_id": run_id,
@@ -377,6 +459,7 @@ async def chat_messages(
         thread_id=thread_id,
         run_ids=run_ids,
         transcript=transcript,
+        metadata_by_run={run_id: request_run_metadata},
         client_requests=client_requests,
     )
     tool_policy = _chat_tool_policy(body=body, settings=settings)
@@ -398,6 +481,7 @@ async def chat_messages(
             settings,
             session_id,
             scenario_id=body.scenario_id,
+            research_metadata=request_run_metadata,
         ),
     )
 
@@ -408,7 +492,10 @@ async def chat_messages(
             next_transcript.append(("assistant", assistant_text))
         elif _terminal_event == "run_failed":
             next_transcript.append(("assistant", _run_failed_message(events)))
-        run_metadata = aggregate_metadata_from_events(events)
+        run_metadata = {
+            **request_run_metadata,
+            **aggregate_metadata_from_events(events),
+        }
         metadata_patch = {run_id: run_metadata} if run_metadata else None
         bundle.session_store.upsert(
             session_id=session_id,

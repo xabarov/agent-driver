@@ -17,6 +17,7 @@ _PHASE_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
     "plan": frozenset({"todo_write"}),
     "discover": frozenset(
         {
+            "agent_tool",
             "skill_tool",
             "skill_view",
             "web_search",

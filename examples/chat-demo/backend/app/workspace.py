@@ -207,6 +207,7 @@ def build_chat_app_metadata(
     session_id: str,
     *,
     scenario_id: str | None = None,
+    research_metadata: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Metadata passed into AgentRunInput for chat-demo runs."""
     metadata: dict[str, object] = {
@@ -216,6 +217,8 @@ def build_chat_app_metadata(
         "session_id": session_id,
         "workspace_cwd": str(resolve_session_workspace(settings, session_id)),
     }
+    if research_metadata:
+        metadata.update(research_metadata)
     if isinstance(scenario_id, str) and scenario_id.strip():
         metadata["scenario_id"] = scenario_id.strip()
     return metadata

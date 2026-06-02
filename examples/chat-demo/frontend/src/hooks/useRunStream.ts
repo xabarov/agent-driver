@@ -181,6 +181,10 @@ export function useRunStream(): RunStreamController {
   const queryClient = useQueryClient();
   const toolPreset = normalizeToolPreset(useSettingsStore((state) => state.toolPreset));
   const researchDepth = useSettingsStore((state) => state.researchDepth);
+  const researchMode = useSettingsStore((state) => state.researchMode);
+  const researchProfile = useSettingsStore((state) => state.researchProfile);
+  const profileSource = useSettingsStore((state) => state.profileSource);
+  const hardResearchOptions = useSettingsStore((state) => state.hardResearchOptions);
   const model = useSettingsStore((state) => state.model);
   const abortRef = useRef<AbortController | null>(null);
   const activeAssistantRef = useRef<string | null>(null);
@@ -243,11 +247,23 @@ export function useRunStream(): RunStreamController {
         await startChatStream({
           message: trimmed,
           sessionId: state.sessionId,
-          toolPreset,
+          toolPreset:
+            researchMode === "chat"
+              ? "off"
+              : researchMode === "web"
+                ? "web"
+                : "deep_research",
           model: model || undefined,
           researchDepth:
-            researchDepth === "deep_parallel_research"
+            researchMode === "deep" || researchDepth === "deep_parallel_research"
               ? "deep_parallel_research"
+              : undefined,
+          researchMode,
+          researchProfile: researchMode === "deep" ? researchProfile : "light",
+          profileSource,
+          hardResearchOptions:
+            researchMode === "deep" && researchProfile === "hard"
+              ? hardResearchOptions
               : undefined,
           retryFromRunId,
           clientRequestId,
@@ -274,7 +290,17 @@ export function useRunStream(): RunStreamController {
         });
       });
     },
-    [invalidateAfterTerminal, model, researchDepth, runStream, toolPreset],
+    [
+      hardResearchOptions,
+      invalidateAfterTerminal,
+      model,
+      profileSource,
+      researchDepth,
+      researchMode,
+      researchProfile,
+      runStream,
+      toolPreset,
+    ],
   );
 
   const sendMessage = useCallback(

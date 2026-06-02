@@ -55,11 +55,11 @@ async def test_tools_agents_preset_shows_agent_tool(client) -> None:
     assert names == {"agent_tool", "python"}
 
 
-async def test_tools_deep_research_preset_hides_agent_tool(client) -> None:
+async def test_tools_deep_research_preset_shows_agent_tool(client) -> None:
     response = await client.get("/api/tools", params={"preset": "deep_research"})
     assert response.status_code == 200
     names = {item["name"] for item in response.json()["tools"]}
-    assert "agent_tool" not in names
+    assert "agent_tool" in names
     assert "python" not in names
     assert {"skill_tool", "skill_view", "web_fetch", "web_search"}.issubset(names)
 
@@ -182,7 +182,27 @@ def test_chat_tool_policy_accepts_deep_research_mode() -> None:
     assert policy.metadata["task_contract"]["research_depth"] == (
         "deep_parallel_research"
     )
+    assert policy.metadata["task_contract"]["research_profile"] == "medium"
     assert policy.metadata["task_contract"]["requires_research"] is True
+
+
+def test_chat_tool_policy_accepts_hard_research_profile() -> None:
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="сделай глубокий аудит источников и отчет",
+            research_mode="deep",
+            research_profile="hard",
+            profile_source="user_selected",
+        ),
+        settings=Settings(),
+    )
+
+    task_contract = policy.metadata["task_contract"]
+    deep_mode = policy.metadata["deep_research_mode"]
+    assert task_contract["research_profile"] == "hard"
+    assert task_contract["profile_source"] == "user_selected"
+    assert task_contract["hard_options"]["allow_browser_action"] is False
+    assert deep_mode["research_profile"] == "hard"
 
 
 def test_deep_research_mode_uses_artifact_tool_preset() -> None:
@@ -195,10 +215,29 @@ def test_deep_research_mode_uses_artifact_tool_preset() -> None:
     assert _effective_chat_preset(body) == "deep_research"
 
 
+def test_legacy_web_search_preset_is_not_widened_to_full_web() -> None:
+    body = ChatMessageRequest(
+        message="найди быстрые ссылки",
+        tool_preset="web_search",
+    )
+
+    assert _effective_chat_preset(body) == "web_search"
+
+
+def test_research_mode_web_maps_to_full_web() -> None:
+    body = ChatMessageRequest(
+        message="найди быстрые ссылки",
+        tool_preset="off",
+        research_mode="web",
+    )
+
+    assert _effective_chat_preset(body) == "web"
+
+
 def test_deep_research_preset_includes_scoped_artifact_tools() -> None:
     config = _tool_config_from_preset("deep_research")
 
-    assert set(config.tools) == {"skill_tool", "skill_view"}
+    assert set(config.tools) == {"agent_tool", "skill_tool", "skill_view"}
     assert set(config.tool_packs) == {
         "web",
         "planning_progress",
@@ -206,7 +245,6 @@ def test_deep_research_preset_includes_scoped_artifact_tools() -> None:
         "filesystem_write",
         "artifacts",
     }
-    assert "agent_tool" not in config.tools
     assert "shell" not in config.tool_packs
     assert "discovery" not in config.tool_packs
     assert config.allow_dangerous_tools is True

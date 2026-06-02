@@ -391,6 +391,30 @@ def test_deep_parallel_research_phase_starts_with_plan_tools() -> None:
     assert payload["next_allowed_tools"] == ["todo_write"]
 
 
+def test_deep_parallel_research_phase_allows_agent_tool_after_plan() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        planning_state={
+            "run_id": "run_todo",
+            "todos": [
+                {
+                    "todo_id": "discover",
+                    "content": "Discover source families",
+                    "status": "in_progress",
+                }
+            ],
+        },
+        tool_results=[],
+    )
+
+    payload = contract.model_dump()["deep_research"]
+    assert payload["phase"] == "discover"
+    assert "agent_tool" in payload["next_allowed_tools"]
+
+
 def test_deep_parallel_research_phase_verifies_after_search() -> None:
     contract = build_research_session_contract(
         task_contract={

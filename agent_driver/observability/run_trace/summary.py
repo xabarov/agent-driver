@@ -44,10 +44,12 @@ _TERMINAL_EVENTS = frozenset({"run_completed", "run_failed", "run_cancelled"})
 _DEEP_RESEARCH_INITIAL_SEARCH_BUDGET = 6
 _DEEP_RESEARCH_HARD_SEARCH_CAP = 15
 _DEEP_RESEARCH_PHASE_FETCH_ATTEMPTS = 2
+_DEEP_RESEARCH_LONG_CHAT_BEFORE_REPORT_CHARS = 1_500
 _DEEP_RESEARCH_PHASE_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
     "plan": frozenset({"todo_write"}),
     "discover": frozenset(
         {
+            "agent_tool",
             "skill_tool",
             "skill_view",
             "web_search",
@@ -596,6 +598,7 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         "report_updated": bool(report_paths),
         "report_update_count": len(report_paths),
         "report_full_write_count": _report_full_write_count(updates),
+        "report_patch_count": _report_patch_count(updates),
         **_report_read_edit_flow_summary(events),
         "source_ledger_updated": bool(source_ledger_paths),
         "source_ledger_update_count": len(source_ledger_paths),
@@ -623,6 +626,7 @@ def _research_efficiency_summary(
     )
     report_updated = bool(artifacts.get("report_updated"))
     report_full_write_count = _as_int(artifacts.get("report_full_write_count"))
+    report_patch_count = _as_int(artifacts.get("report_patch_count"))
     stale_report_edit_count = _as_int(
         artifacts.get("report_targeted_edit_without_fresh_read_count")
     )
@@ -632,6 +636,10 @@ def _research_efficiency_summary(
     source_ledger_updated = bool(artifacts.get("source_ledger_updated"))
     source_ledger_counts = _source_ledger_counts(events)
     assistant_chars = len(assistant_text.strip())
+    long_chat_before_report_chars = _long_chat_before_first_report_update(events)
+    first_report_update_before_long_chat = report_updated and (
+        long_chat_before_report_chars < _DEEP_RESEARCH_LONG_CHAT_BEFORE_REPORT_CHARS
+    )
     usage = llm_calls.get("usage")
     total_tokens = usage.get("total_tokens") if isinstance(usage, dict) else 0
     output_tokens = usage.get("output_tokens") if isinstance(usage, dict) else 0
@@ -660,7 +668,7 @@ def _research_efficiency_summary(
         research=research,
         source_ledger_counts=source_ledger_counts,
     )
-    unexpected_agent_tool = deep_expected and "agent_tool" in tool_names
+    unexpected_agent_tool = False
     skill_denied = deep_expected and _skill_tool_denied(events)
     required_verified_reads = _as_int(research.get("required_fetch_count"))
     if required_verified_reads <= 0:
@@ -726,6 +734,7 @@ def _research_efficiency_summary(
         "artifact_update_count": artifacts.get("update_count", 0),
         "report_update_count": artifacts.get("report_update_count", 0),
         "report_full_write_count": report_full_write_count,
+        "report_patch_count": report_patch_count,
         "report_targeted_edit_count": artifacts.get("report_targeted_edit_count", 0),
         "report_targeted_edit_without_fresh_read_count": stale_report_edit_count,
         "repeated_unchanged_report_read_count": repeated_report_read_count,
@@ -733,6 +742,8 @@ def _research_efficiency_summary(
         "source_ledger_record_count": artifacts.get("source_ledger_record_count", 0),
         "long_final_after_report": long_final_after_report,
         "assistant_chars": assistant_chars,
+        "first_report_update_before_long_chat": first_report_update_before_long_chat,
+        "long_chat_before_report_chars": long_chat_before_report_chars,
         "total_tokens": total_tokens if isinstance(total_tokens, int) else 0,
         "output_tokens": output_tokens if isinstance(output_tokens, int) else 0,
         "output_tokens_after_first_report_update": completion_after_report,
@@ -1136,6 +1147,35 @@ def _report_full_write_count(updates: list[dict[str, Any]]) -> int:
     return count
 
 
+def _report_patch_count(updates: list[dict[str, Any]]) -> int:
+    count = 0
+    for item in updates:
+        if item.get("path") != "research/report.md":
+            continue
+        tool_name = item.get("tool_name")
+        operation = item.get("operation")
+        if tool_name in {"file_edit", "file_patch"} or operation in {"edit", "patch"}:
+            count += 1
+    return count
+
+
+def _long_chat_before_first_report_update(events: list[dict[str, object]]) -> int:
+    chars = 0
+    for event in events:
+        event_name = event.get("event")
+        if event_name in {"artifact_created", "artifact_updated"}:
+            data = _event_data(event)
+            if data.get("path") == "research/report.md":
+                break
+        if event_name != "token_delta":
+            continue
+        data = _event_data(event)
+        chunk = data.get("delta_text") or data.get("text") or data.get("content")
+        if isinstance(chunk, str):
+            chars += len(chunk)
+    return chars
+
+
 def _report_read_edit_flow_summary(events: list[dict[str, object]]) -> dict[str, int]:
     fresh_read = False
     targeted_edits = 0
@@ -1342,7 +1382,7 @@ _FAILURE_NOTE_MESSAGES = (
     ),
     (
         "deep_research_unexpected_agent_tool",
-        "Default Deep Research used agent_tool; keep worker delegation opt-in.",
+        "Deep Research used agent_tool where the active profile forbids delegation.",
     ),
     (
         "deep_research_skill_denied",

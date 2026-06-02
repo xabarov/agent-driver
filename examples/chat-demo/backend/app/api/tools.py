@@ -21,7 +21,7 @@ PUBLIC_TOOL_NAMES = {
 
 
 @router.get("/tools", response_model=ToolsResponse)
-def tools(
+async def tools(
     preset: ToolPreset | None = None, session_id: str | None = None
 ) -> ToolsResponse:
     """List tool manifests for the requested or default preset."""

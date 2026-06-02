@@ -68,3 +68,21 @@ async def test_deep_research_phase_gate_denies_search_before_todo() -> None:
     assert isinstance(denied, ToolGateDeny)
     assert "phase 'plan'" in denied.reason
     assert "todo_write" in denied.reason
+
+
+@pytest.mark.asyncio
+async def test_deep_research_phase_gate_allows_agent_tool_after_todo() -> None:
+    gate = create_deep_research_phase_gate(required_fetch_attempts=2)
+
+    assert isinstance(await gate(_ctx("todo_write")), ToolGateAllow)
+    result = await gate(
+        _ctx(
+            "agent_tool",
+            {
+                "description": "Source discovery",
+                "task": "Find independent source families for fork-join queues.",
+            },
+        )
+    )
+
+    assert isinstance(result, ToolGateAllow)

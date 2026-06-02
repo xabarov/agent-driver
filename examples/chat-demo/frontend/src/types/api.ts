@@ -128,6 +128,16 @@ export interface AssistantMessageMetadataView {
   deepResearchArtifacts?: Record<string, unknown>;
   steering_controls?: SteeringControlView[];
   steeringControls?: SteeringControlView[];
+  research_mode?: string;
+  researchMode?: string;
+  research_profile?: string;
+  researchProfile?: string;
+  profile_source?: string;
+  profileSource?: string;
+  hard_options?: Record<string, unknown>;
+  hardOptions?: Record<string, unknown>;
+  research_depth?: string;
+  researchDepth?: string;
   compaction?: CompactionNoticeView;
 }
 

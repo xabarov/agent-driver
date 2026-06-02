@@ -49,6 +49,7 @@ DEEP_RESEARCH_PHASE_FINAL = "final"
 _DEEP_RESEARCH_PHASE_TOOLS: dict[str, tuple[str, ...]] = {
     DEEP_RESEARCH_PHASE_PLAN: ("todo_write",),
     DEEP_RESEARCH_PHASE_DISCOVER: (
+        "agent_tool",
         "skill_tool",
         "skill_view",
         "web_search",

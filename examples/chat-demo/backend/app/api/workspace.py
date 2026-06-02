@@ -22,7 +22,7 @@ router = APIRouter(tags=["workspace"])
 
 
 @router.post("/workspace/sample", response_model=WorkspaceImportResponse)
-def import_workspace_sample(session_id: str) -> WorkspaceImportResponse:
+async def import_workspace_sample(session_id: str) -> WorkspaceImportResponse:
     """Import a tiny sample project into one session workspace."""
     clean_session_id = session_id.strip()
     if not clean_session_id:
@@ -39,7 +39,7 @@ def import_workspace_sample(session_id: str) -> WorkspaceImportResponse:
     "/workspace/{session_id}/artifacts",
     response_model=WorkspaceArtifactsResponse,
 )
-def workspace_artifacts(session_id: str) -> WorkspaceArtifactsResponse:
+async def workspace_artifacts(session_id: str) -> WorkspaceArtifactsResponse:
     """Return session artifact index."""
     clean_session_id = session_id.strip()
     if not clean_session_id:
@@ -61,7 +61,7 @@ def workspace_artifacts(session_id: str) -> WorkspaceArtifactsResponse:
     "/workspace/{session_id}/artifacts/{artifact_path:path}",
     response_model=WorkspaceArtifactPreviewResponse,
 )
-def workspace_artifact_preview(
+async def workspace_artifact_preview(
     session_id: str,
     artifact_path: str,
 ) -> WorkspaceArtifactPreviewResponse:

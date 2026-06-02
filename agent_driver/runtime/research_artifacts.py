@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from agent_driver.runtime.single_agent.types import RunContext
 
 
-DEFAULT_INLINE_ANSWER_MAX_CHARS = 6_000
+DEFAULT_INLINE_ANSWER_MAX_CHARS = 1_800
 REPORT_RELATIVE_PATH = "research/report.md"
 SOURCE_LEDGER_RELATIVE_PATH = "research/sources.jsonl"
 

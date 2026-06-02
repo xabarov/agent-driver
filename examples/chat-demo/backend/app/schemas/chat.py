@@ -2,12 +2,29 @@
 
 from __future__ import annotations
 
-from app.config import ToolPreset
 from typing import Literal
 
+from app.config import ToolPreset
 from pydantic import BaseModel, Field
 
 from agent_driver.contracts import ControlKind, ControlPriority
+
+ResearchMode = Literal["chat", "web", "deep"]
+ResearchProfile = Literal["light", "medium", "hard"]
+ProfileSource = Literal[
+    "user_selected",
+    "auto_suggested",
+    "backend_classified",
+    "scenario_forced",
+]
+
+
+class HardResearchOptions(BaseModel):
+    """Explicit opt-ins for high-cost hard research fallbacks."""
+
+    allow_pdf_read: bool = True
+    allow_browser_read: bool = False
+    allow_browser_action: bool = False
 
 
 class ChatMessageRequest(BaseModel):
@@ -22,6 +39,10 @@ class ChatMessageRequest(BaseModel):
     client_request_id: str | None = None
     scenario_id: str | None = None
     research_depth: Literal["deep_parallel_research"] | None = None
+    research_mode: ResearchMode | None = None
+    research_profile: ResearchProfile | None = None
+    profile_source: ProfileSource | None = None
+    hard_options: HardResearchOptions | None = None
 
 
 class ResumeRequest(BaseModel):

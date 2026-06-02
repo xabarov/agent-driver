@@ -296,7 +296,7 @@ def test_trace_summary_allows_deep_research_final_report_reference() -> None:
     assert summary["failures"]["deep_research_final_missing_report_reference"] is False
 
 
-def test_trace_summary_flags_unexpected_agent_tool_in_deep_research() -> None:
+def test_trace_summary_allows_agent_tool_in_deep_research() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
         user_prompt="сделай deep research отчет",
@@ -324,9 +324,8 @@ def test_trace_summary_flags_unexpected_agent_tool_in_deep_research() -> None:
         ],
     )
 
-    assert summary["research_efficiency"]["unexpected_agent_tool"] is True
-    assert summary["failures"]["deep_research_unexpected_agent_tool"] is True
-    assert summary["verdict"] == "fail"
+    assert summary["research_efficiency"]["unexpected_agent_tool"] is False
+    assert summary["failures"]["deep_research_unexpected_agent_tool"] is False
 
 
 def test_trace_summary_flags_denied_skill_tool_in_deep_research() -> None:
@@ -915,6 +914,70 @@ def test_trace_summary_allows_report_patch_after_fresh_read() -> None:
     )
     assert summary["research_efficiency"]["stale_report_edit"] is False
     assert summary["failures"]["deep_research_stale_report_edit"] is False
+    assert summary["research_efficiency"]["report_patch_count"] == 1
+
+
+def test_trace_summary_tracks_long_chat_before_report_artifact() -> None:
+    long_chunk = "длинный черновик до файла. " * 80
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово, отчет в research/report.md",
+        events=[
+            _completed_tool("todo_write"),
+            {"event": "token_delta", "data": {"delta_text": long_chunk}},
+            _completed_tool("file_write"),
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "operation": "write",
+                    "tool_name": "file_write",
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert (
+        summary["research_efficiency"]["long_chat_before_report_chars"]
+        == len(long_chunk)
+    )
+    assert (
+        summary["research_efficiency"]["first_report_update_before_long_chat"]
+        is False
+    )
+
+
+def test_trace_summary_allows_report_artifact_before_long_chat() -> None:
+    long_chunk = "длинный текст уже после файла. " * 80
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово, отчет в research/report.md",
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("file_write"),
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "operation": "write",
+                    "tool_name": "file_write",
+                },
+            },
+            {"event": "token_delta", "data": {"delta_text": long_chunk}},
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["long_chat_before_report_chars"] == 0
+    assert (
+        summary["research_efficiency"]["first_report_update_before_long_chat"]
+        is True
+    )
 
 
 def test_trace_summary_flags_repeated_unchanged_report_read() -> None:

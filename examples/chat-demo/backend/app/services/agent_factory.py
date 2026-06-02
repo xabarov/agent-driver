@@ -121,7 +121,7 @@ def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
     if preset == "deep_research":
         return CliToolConfig(
             tools_mode="default",
-            tools=("skill_tool", "skill_view"),
+            tools=("agent_tool", "skill_tool", "skill_view"),
             tool_packs=(
                 "web",
                 "planning_progress",
@@ -208,7 +208,7 @@ def create_agent_bundle(
             limits=CodeAgentLimits(max_exec_ms=3_000, max_output_chars=2_000),
         ),
         subagents=SubagentSettings(
-            enable_subagents=effective_preset != "deep_research",
+            enable_subagents=True,
             max_child_runs=settings.max_child_runs,
         ),
     )

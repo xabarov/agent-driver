@@ -21,9 +21,12 @@ Use a three-profile Deep Research architecture and compare them live:
 - `hard`: medium plus verifier/auditor workers, claim-source matrix, broader
   source budget, optional computation, and PDF export from the report artifact.
 
-The recommended product default is `medium`. `light` is a fast lookup mode, not
-Deep Research. `hard` is opt-in for broad, ambiguous, high-value questions where
-the token cost earns its keep.
+The recommended Deep Research profile default is `medium` after the user has
+chosen Deep Research. The composer itself should stay lightweight by default
+(`chat` or `web`, depending on product settings) so ordinary questions do not
+silently become expensive research runs. `light` is a fast lookup mode, not Deep
+Research. `hard` is opt-in for broad, ambiguous, high-value questions where the
+token cost earns its keep.
 
 ## Current Truth In This Codebase
 
@@ -48,6 +51,9 @@ These facts come from local code inspection on 2026-05-31.
   `file_edit`, `file_patch`, or artifact tools.
 - The chat-demo workspace API currently has artifact list and preview endpoints
   only. There is no raw download endpoint and no Markdown-to-PDF export.
+- There is no unified `source_read`, `pdf_read`, or `browser_read` tool yet.
+  Evidence currently comes from `web_search`, `web_fetch`, and the source ledger
+  reconstructed from their results.
 - `examples/chat-demo/frontend/tests/e2e/chat_live_probe.py` is already a real
   Playwright live probe. It sends messages through the UI, captures run IDs,
   fetches `/api/chat/runs/{run_id}/trace-summary`, checks workspace artifacts,
@@ -112,6 +118,29 @@ tool-level guardrails. Deep Research needs tool-level guardrails around
 phase/order, artifact writes, repeated searches, and final answer length:
 https://openai.github.io/openai-agents-js/guides/guardrails
 
+OpenAI's Deep Research API is optimized around search/fetch-style data access,
+not arbitrary tool use. For remote MCP data sources, the compatible interface is
+explicitly `search` plus `fetch`; `max_tool_calls` is the primary cost/latency
+control, and long tasks should run in background mode:
+https://developers.openai.com/api/docs/guides/deep-research
+
+Anthropic's Web Fetch tool is a useful design reference for `source_read`: it
+is a dedicated URL-reading capability rather than a full browser, and Claude
+Code permission rules can scope `WebFetch` by domain:
+https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool
+https://code.claude.com/docs/ru/settings
+
+Anthropic citations documentation is the right reference for PDF handling:
+PDFs should be extracted/chunked with page-aware citations when possible; scanned
+PDFs without extractable text need a different fallback path and should not be
+presented as citable text evidence:
+https://platform.claude.com/docs/en/build-with-claude/citations
+
+Browser control is materially riskier than fetch/read tools. Anthropic's Chrome
+safety guidance calls out prompt injection from web content and recommends
+starting with trusted sites and confirming sensitive/high-risk tasks:
+https://support.claude.com/en/articles/12902428-using-claude-in-chrome-safely
+
 Anthropic's multi-agent research writeup uses a lead agent that plans and
 launches parallel subagents for independent search paths. It also warns by
 example: multi-agent systems buy breadth and coverage with much higher token
@@ -152,6 +181,12 @@ Useful patterns from `/home/roman/pyprojects/ML/openclaude`:
   a preview and a path.
 - The agent list can be injected as a message rather than embedded in the tool
   schema, which avoids cache churn from dynamic tool descriptions.
+- `WebFetchTool` is read-only, concurrency-safe, validates URL shape, scopes
+  permissions by hostname, supports provider-specific scraping, and applies a
+  result-size cap.
+- PDF utilities validate magic bytes, reject oversized/invalid PDFs before they
+  enter model context, expose structured PDF errors, and use poppler tools for
+  page count/render fallback.
 
 Adopt:
 
@@ -159,6 +194,11 @@ Adopt:
 - Prefer `file_patch`/`file_edit` after initial `file_write`.
 - Keep subagent outputs summarized; parent synthesizes.
 - Persist large tool outputs and expose only previews in context.
+- Build `source_read` as a narrow read-only evidence tool that wraps ordinary
+  URL fetch, PDF extraction, and later rendered-page fallback behind one ledger
+  contract.
+- Build `pdf_read` with OpenClaude-like validation, size limits, page ranges,
+  structured errors, and optional page-image fallback for scanned documents.
 
 ### Hermes Agent
 
@@ -175,6 +215,11 @@ Useful patterns from `/home/roman/pyprojects/ML/hermes-agent`:
   results to sandbox files, and enforce aggregate per-turn output budget.
 - Subagents cannot recursively delegate unless explicitly granted an
   orchestrator role.
+- Browser tooling is a configurable provider-backed toolset, separate from
+  ordinary web extraction. It can route through local Chromium, Browserbase,
+  Browser Use, or Firecrawl-like providers.
+- Browser tests explicitly cover secret exfiltration, snapshot redaction, SSRF,
+  cloud metadata endpoints, redirect safety, and local-vs-cloud routing.
 
 Adopt:
 
@@ -184,6 +229,9 @@ Adopt:
 - Parent owns `research/report.md`; children write notes only or return compact
   summaries.
 - Add stale artifact edit detection and repeated-read/search loop guards.
+- Keep browser capability off by default and introduce it as hard-only fallback
+  with provider isolation, URL safety, secret redaction, SSRF/IMDS blocks,
+  screenshot artifacts, and strict step budgets.
 
 ### Skill.md Discipline
 
@@ -256,6 +304,7 @@ Allowed tools:
 
 - `todo_write`.
 - `web_search`, `web_fetch`.
+- Future `source_read` if implemented; otherwise use `web_fetch`.
 - `read_file`, `glob_search`, `grep_search`.
 - `file_write`, `file_edit`, `file_patch`.
 - `artifact_list`, `artifact_read`, `artifact_preview`.
@@ -314,7 +363,18 @@ Allowed tools:
 - Everything in `medium`.
 - Optional `python` only when computation, table extraction, or chart/data
   processing is part of the task.
-- Optional browser/PDF readers if later added.
+- `source_read` when implemented: preferred evidence reader for URL/search
+  result IDs.
+- `pdf_read` when implemented: page-range extraction for PDF sources and source
+  citation support.
+- `browser_read` when implemented: rendered DOM/text/screenshot fallback for
+  JS-heavy pages or fetch-blocked pages.
+
+Hard-only tools that are not part of the default path:
+
+- `browser_action` / full browser automation: navigate, click, type, scroll, or
+  login-like workflows. This requires explicit opt-in, separate security gates,
+  and live browser safety tests before release.
 
 Subagent policy:
 
@@ -343,6 +403,12 @@ Acceptance metrics:
 
 - `web_fetch` successful count >= 6.
 - Distinct fetched domains >= 3.
+- If `source_read` exists, verified source count comes from `source_read`
+  ledger records, not only raw `web_fetch` count.
+- If `pdf_read` is used, claims cite page numbers or page ranges when the
+  extractor can provide them.
+- If `browser_read` is used, the scorecard records why `web_fetch`/`pdf_read`
+  were insufficient and stores a screenshot/snapshot artifact.
 - At least one verifier/auditor subagent.
 - Claim-source matrix exists.
 - PDF export endpoint returns a file when requested.
@@ -355,7 +421,98 @@ Failure examples:
 - Hard mode is selected for quick lookup.
 - Multiple children duplicate the same search query.
 - Verifier never reads the report or sources.
+- The model jumps to browser automation before trying search/fetch/PDF read.
+- Browser or PDF output is cited as verified without ledger status and content
+  location.
 - PDF export is simulated in text instead of returning a file.
+
+### Source Reading Ladder
+
+Deep Research should not expose a large browser surface as the normal way to
+read the web. The healthy path is a narrow evidence ladder:
+
+1. `web_search`: find candidates and deduplicate domains.
+2. `source_read`: read a candidate URL or search result ID and write a durable
+   source ledger row. Internally it may call `web_fetch`, PDF extraction, or
+   later rendered-page fallback, but the model sees one evidence contract.
+3. `pdf_read`: use only when the source is a PDF or `source_read` classifies the
+   URL as PDF/needs PDF extraction.
+4. `browser_read`: use only when the page requires rendered DOM, JS execution,
+   visual inspection, or fetch/PDF tools cannot provide enough evidence.
+5. `browser_action`: use only for explicit hard-mode tasks that require
+   interaction. It is not needed for ordinary source verification.
+
+`source_read` output contract:
+
+```text
+source_read(url_or_source_id, purpose, max_chars?, page_range?)
+  -> source_id: string
+     url: string
+     final_url: string
+     title?: string
+     kind: html | pdf | rendered_page | text | unknown
+     status: verified | candidate | blocked | failed | partial
+     evidence_text: string
+     excerpt: string
+     content_hash: string
+     location_hints: [{ page?, section?, char_range? }]
+     ledger_path: research/sources.jsonl
+     artifact_path?: tool-results/... | research/source-cache/...
+     screenshot_artifact_path?: ...
+     warnings: string[]
+```
+
+`pdf_read` output contract:
+
+```text
+pdf_read(path_or_url, page_range?, purpose, max_chars?)
+  -> source_id: string
+     kind: pdf
+     status: verified | blocked | failed | partial
+     pages_total?: int
+     pages_read: [int]
+     text: string
+     citations: [{ page: int, quote: string }]
+     extracted_with: native_pdf_text | poppler_text | page_image_ocr | unavailable
+     ledger_path: research/sources.jsonl
+     warnings: string[]
+```
+
+`browser_read` output contract:
+
+```text
+browser_read(url, purpose, max_steps=3, max_chars?)
+  -> source_id: string
+     kind: rendered_page
+     status: verified | blocked | failed | partial
+     final_url: string
+     title?: string
+     rendered_text: string
+     screenshot_artifact_path: string
+     accessibility_snapshot_path?: string
+     ledger_path: research/sources.jsonl
+     reason_used: fetch_failed | js_required | table_rendering | visual_evidence
+     warnings: string[]
+```
+
+Guardrails:
+
+- `source_read` is preferred over direct `web_fetch` once implemented.
+- `browser_read` is hard-only and requires prior failed/partial
+  `source_read`/`pdf_read`, unless the user explicitly asks for rendered-page
+  inspection.
+- `browser_action` is not part of medium or normal hard research. It requires a
+  separate profile flag and a per-run step budget.
+- Browser tools use an isolated profile with no user cookies, no local secrets,
+  no private network by default, no cloud metadata endpoints, and redaction
+  before auxiliary summarization.
+- Browser snapshots and screenshots are artifacts. The model should cite the
+  source ledger row, not paste large browser snapshots into chat.
+- PDF tools validate magic bytes/content type, size, page count when available,
+  and return structured errors: `empty`, `too_large`, `password_protected`,
+  `corrupted`, `scanned_no_text`, `unavailable`.
+- Scanned PDFs without OCR/text extraction are not "verified text evidence"
+  unless a vision/OCR path extracts citable text.
 
 ## Runtime Design
 
@@ -373,7 +530,8 @@ Add a small runtime controller instead of relying only on prompt text:
 5. Apply a phase gate:
    - `plan`: `todo_write`
    - `discover`: `skill_tool`, `skill_view`, `web_search`, `agent_tool`
-   - `verify`: `web_fetch`, `read_file`, child joins
+   - `verify`: `source_read` when implemented, otherwise `web_fetch`;
+     `pdf_read`/`browser_read` for hard fallback; `read_file`; child joins
    - `write`: `file_write`, `file_patch`, `file_edit`, `read_file`
    - `review`: `artifact_preview`, `artifact_read`, `todo_write`,
      verifier/auditor
@@ -396,6 +554,14 @@ Required guardrails:
 - `web_search` duplicate query guard: repeated exact queries count as entropy
   failure unless a fetch or ledger update happened between them.
 - `web_fetch` coverage guard: search-only synthesis is not final evidence.
+- `source_read` ledger guard: verified claims require a source ledger row with
+  `status=verified` or an explicit caveat for `blocked/partial`.
+- `pdf_read` citation guard: PDF-backed claims should carry page hints when the
+  extractor provides page locations.
+- `browser_read` fallback guard: browser reads require a recorded reason and a
+  prior insufficient `source_read`/`pdf_read`, unless explicitly requested.
+- `browser_action` approval guard: full browser interaction is disabled unless
+  hard profile plus explicit browser-action flag are both set.
 - `file_write` report guard: initial create is allowed; full rewrites after
   report exists require explicit controller reason.
 - `file_edit/file_patch` stale-read guard: edit requires a fresh report read or
@@ -405,6 +571,255 @@ Required guardrails:
 - final answer guard: medium/hard final answer cannot duplicate the report.
 
 ### Frontend Contract
+
+Current UI truth on 2026-06-02:
+
+- `ChatComposer` currently exposes web tools through a `Tools` popover and a
+  separate binary `Deep` button.
+- The binary `Deep` button toggles `researchDepth` between `standard` and
+  `deep_parallel_research`. It does not expose `light`, `medium`, `hard`, cost
+  expectations, artifact expectations, or source-verification expectations.
+- `settingsStore` currently persists `toolPreset` and `researchDepth`.
+  `toolPreset` is `off | web_search | web_fetch | web`; `researchDepth` is only
+  `standard | deep_parallel_research`.
+- `startChatStream` sends `tool_preset` and optional
+  `research_depth=deep_parallel_research`; there is no typed
+  `research_mode`, `research_profile`, `profile_source`, or hard-mode opt-in in
+  the request contract.
+- `ChatPage` shows an `Artifacts (N)` popover in the top-right session toolbar.
+- `WorkspaceArtifactsPanel` can list session artifacts, prefer
+  `research/report.md`, preview Markdown/text, show kind and size, and refresh
+  manually.
+- `DeepResearchPanel` can appear inside an assistant message and show verified
+  count, candidate count, domain count, blocked count, report path/size, and
+  the last few research progress events.
+- `MessageList` hides duplicate `todo_write`/planning tool cards when the
+  assistant bubble already contains a planning snapshot.
+- Subagent lifecycle is visible through tool/delegated-work cards, but it is
+  not summarized as one durable research timeline.
+
+Architectural gaps found in the current UI/runtime contract:
+
+- Deep Research state is currently attached to the latest assistant message,
+  not to the run/session. That makes a persistent cockpit, reload recovery, and
+  multi-run comparison fragile.
+- The frontend reconstructs research state directly from SSE events. It does
+  not have a typed canonical `DeepResearchViewState`.
+- Replay can rebuild message bubbles from persisted events, but there is no
+  dedicated state hydration endpoint for "what does this run look like now?"
+- `/api/chat/runs/{run_id}/trace-summary` already exposes much of the needed
+  truth, but frontend `RunTraceSummaryResponse` is typed only as
+  `run_id/verdict/terminal_event/compaction`, so research diagnostics are
+  effectively untyped in the UI.
+- Phase exists in several places (`DeepResearchPhaseGateState`,
+  `ResearchSessionContract`, trace summary), but there is no single UI-facing
+  phase authority.
+- Artifact lifecycle is binary-ish in the UI: "report exists" plus size/path.
+  It does not distinguish `created`, `captured_inline`, `patched`, `edited`,
+  `ready`, `stale`, or `failed_preview`.
+- Source ledger counts are shown, but ledger rows are not promoted to a
+  first-class UI model with verified/candidate/blocked/failed sections.
+- Subagent state is displayed as tool card detail. There is no parent-level
+  rollup of child task purpose, status, sources found, duplication, and compact
+  findings.
+- Raw/PDF download is planned, but path safety, size limits,
+  `Content-Disposition`, conversion failure state, and UI fallback are not yet
+  specified.
+- Deep Research mode selection is under-specified. A binary `Deep` toggle cannot
+  explain when the run will be a quick web lookup, artifact-first medium
+  research, or high-cost hard research with auditors/PDF/browser fallbacks.
+- Mode choice is not locked into run/session metadata in a UI-visible way. After
+  the run starts, it is hard to tell whether behavior came from user selection,
+  auto-routing, persisted settings, or backend classification.
+- The current UI can allow confusing mental models: `Tools · Web` can be on
+  while `Deep` is off, but `Deep` does not clearly state that it implies a
+  different workflow and artifact contract, not merely "more web".
+- Accessibility and responsive layout are not yet specified for the cockpit.
+
+The current experience is technically useful but not yet a good research
+cockpit: artifacts are discoverable only through a small popover, evidence
+coverage is fragmented across cards, and the user cannot easily answer:
+"what phase are we in, what evidence is verified, what report exists, and what
+will I get at the end?"
+
+Deep Research UI must make the process observable without forcing the user to
+read raw tool logs:
+
+- **Conversation lane**: concise status and final handoff only. Long prose must
+  move to `research/report.md`.
+- **Plan lane**: visible todo progress, current phase, blocked/pending steps,
+  and explicit "ready for final" state.
+- **Evidence lane**: verified sources, candidate-only sources, blocked reads,
+  failed reads, distinct domains, and source ledger path.
+- **Subagent lane**: child tasks grouped by purpose, status, source counts,
+  compact child output previews, and duplication warnings.
+- **Artifact lane**: current report path, size, last update time, update mode
+  (`created`, `patched`, `edited`, `captured`), source ledger, claims file, raw
+  Markdown download, and PDF export when available.
+- **Health lane**: token spend, search/fetch counts, repeated search warnings,
+  long-chat-before-report warnings, stale todo warnings, and Phoenix/trace
+  summary link for debugging.
+
+Recommended first-viewport layout:
+
+- Keep chat as the primary surface.
+- Promote Deep Research state to a persistent right-side drawer or top sticky
+  compact bar when `deep_research_mode.enabled=true`.
+- The compact bar should show phase, todo progress, verified/candidate/blocked
+  counts, report status, and a single button to open the full research drawer.
+- The drawer should have tabs: `Overview`, `Sources`, `Artifacts`, `Subagents`,
+  `Trace`.
+- Tool cards remain expandable details, not the primary way to understand the
+  run.
+
+#### Deep Research Mode Switching UX
+
+Mode selection must be boringly explicit. The user should understand before
+sending what kind of run will start, what it may cost, and what artifact they
+will get.
+
+Recommended control model:
+
+- Replace the standalone binary `Deep` button with a compact `Mode` selector in
+  the composer toolbar.
+- Top-level modes:
+  - `Chat`: no web/research unless manually enabled by a tool preset.
+  - `Web`: quick search/fetch-backed answer, maps to `light`.
+  - `Deep`: artifact-first research, opens a profile selector.
+- Deep profiles:
+  - `Medium` is the default selected Deep profile and should be labeled
+    `Recommended`.
+  - `Hard` is explicit opt-in and should show a compact warning about higher
+    time/token cost and stricter verification.
+  - `Light` should not be presented as "Deep"; it belongs to `Web` or `Quick
+    research` because it has no report artifact or subagents.
+- The active mode chip should be visible in the composer and in the run header:
+  `Web`, `Deep: Medium`, or `Deep: Hard`.
+- The selector must show the expected deliverable in one short line:
+  - `Web`: short answer with links.
+  - `Deep: Medium`: live `research/report.md` plus source ledger.
+  - `Deep: Hard`: audited report, claim checks, broader source budget, optional
+    PDF/browser-read fallback.
+- Hard mode should require a deliberate click in the profile selector. It
+  should not be silently selected by auto-routing.
+- While a run is streaming, mode/profile controls are disabled. Changes made
+  during an active run, if allowed later, apply only to the next user message
+  and must be visually marked as queued for next run.
+- Auto-routing may suggest a mode from the prompt, but it must be transparent:
+  show `Suggested: Deep Medium` or `Suggested: Web` before send or in the run
+  header after send. Auto-routing must never silently escalate to `Hard`.
+- Persist the user's last selected mode/profile per browser, but also store the
+  chosen values in run metadata so replay, screenshots, Phoenix, and scorecards
+  can answer "what profile actually ran?"
+
+Recommended request/settings contract:
+
+```text
+research_mode: chat | web | deep
+research_profile: light | medium | hard | null
+profile_source: user_selected | auto_suggested | backend_classified | scenario_forced
+hard_options:
+  allow_pdf_read: bool
+  allow_browser_read: bool
+  allow_browser_action: bool
+```
+
+Temporary compatibility mapping while backend is migrated:
+
+- `research_mode=chat` -> `tool_preset=off`, no `research_depth`.
+- `research_mode=web` -> `tool_preset=web`, no `research_depth`,
+  trace profile `light`.
+- `research_mode=deep`, `research_profile=medium` ->
+  `tool_preset=deep_research`, `research_depth=deep_parallel_research`, trace
+  profile `medium`.
+- `research_mode=deep`, `research_profile=hard` ->
+  `tool_preset=deep_research`, `research_depth=deep_parallel_research`, trace
+  profile `hard`, hard fallback flags explicit.
+
+The long-term backend API should stop overloading `research_depth` and accept
+the typed mode/profile fields directly. `tool_preset` should describe
+capability surface; `research_profile` should describe workflow, budgets,
+artifact expectations, and guardrails.
+
+User-facing states:
+
+- `Starting`: workspace created, plan not yet written.
+- `Planning`: todo/checklist is being created.
+- `Discovering`: searches and/or subagents are finding candidates.
+- `Verifying`: URLs are being fetched/read and classified.
+- `Writing`: `research/report.md` is being created or patched.
+- `Reviewing`: report/source coverage is being checked.
+- `Ready`: report exists, source ledger exists, todos closed or reconciled.
+- `Needs attention`: blocked fetches, stale todos, missing report, high token
+  spend, repeated searches, or user approval needed.
+
+Canonical UI state contract:
+
+The frontend cockpit should render from one normalized object, not by scanning
+message bubbles:
+
+```text
+DeepResearchViewState
+  run_id: string
+  session_id: string
+  research_mode: chat | web | deep | unknown
+  profile: light | medium | hard | unknown
+  profile_source: user_selected | auto_suggested | backend_classified | scenario_forced | unknown
+  phase: starting | planning | discovering | verifying | writing | reviewing | ready | needs_attention | failed | cancelled
+  phase_source: contract | trace_summary | sse | inferred
+  readiness: ready | blocked | needs_more_sources | needs_report | needs_review
+  todos: { done: int, total: int, current?: string, stale: bool }
+  artifacts:
+    report?: { path, size_bytes, modified_at, lifecycle, preview_available, markdown_download_url?, pdf_download_url? }
+    source_ledger?: { path, record_count, modified_at }
+    claims?: { path, record_count, modified_at }
+  sources:
+    verified: SourceRow[]
+    candidates: SourceRow[]
+    blocked: SourceRow[]
+    failed: SourceRow[]
+    distinct_domains: int
+  subagents:
+    groups: SubagentGroupView[]
+    total_children: int
+    running_children: int
+    completed_children: int
+    failed_children: int
+    duplicated_queries: int
+  metrics:
+    prompt_tokens?: int
+    completion_tokens?: int
+    total_tokens?: int
+    web_search_count: int
+    web_fetch_count: int
+    report_full_write_count: int
+    report_patch_count: int
+    long_chat_before_report_chars: int
+  warnings: WarningView[]
+  trace:
+    run_id: string
+    verdict?: pass | warn | fail
+    failure_flags: string[]
+    phoenix_url?: string
+```
+
+State authority order:
+
+1. Live SSE events update the in-memory view state during an active run.
+2. A backend view-state projection endpoint rebuilds the same shape from
+   replay events, trace summary, session metadata, and workspace artifacts.
+3. Frontend reload/hydration uses the projection endpoint first, then resumes
+   SSE if the run is still active.
+4. Message-level `DeepResearchPanel` may remain as a compact inline summary,
+   but it must be derived from the run-level view state.
+
+Recommended backend endpoint:
+
+- `GET /api/chat/runs/{run_id}/deep-research-state`.
+- Response shape is `DeepResearchViewState`.
+- It should be generated from stored stream events plus workspace artifact
+  inspection, not from frontend-only state.
+- It should include typed subsets of trace summary fields needed by UI.
 
 Artifact panel must support:
 
@@ -422,6 +837,25 @@ PDF export should be server-side:
 - Endpoint: `GET /api/workspace/{session_id}/artifacts/{path}/pdf`.
 - PDF conversion should be deterministic and log conversion errors.
 - Frontend button is disabled until `research/report.md` exists.
+
+UX acceptance metrics:
+
+- A user can choose `Web`, `Deep: Medium`, or `Deep: Hard` before sending and
+  can see the chosen mode in the run after sending.
+- `Medium` is the default Deep profile, but a fresh ordinary chat does not
+  silently run medium Deep Research unless the user selects Deep or accepts an
+  explicit suggestion.
+- `Hard` cannot be selected by hidden auto-routing and cannot start without a
+  visible opt-in state in the UI and run metadata.
+- A user can tell the current Deep Research phase within 3 seconds without
+  opening raw tool cards.
+- A user can open `research/report.md` from the research UI while the run is
+  still active.
+- A user can distinguish verified sources from search candidates.
+- A user can see whether subagents are running, completed, failed, or redundant.
+- A user can see why the agent is not finished yet.
+- A user can download Markdown/PDF once the report exists.
+- Playwright screenshots show no long report prose above a `0/N` plan state.
 
 ## Implementation Phases
 
@@ -457,10 +891,10 @@ Checklist:
   - `research_light`
   - `deep_research_medium`
   - `deep_research_hard`
-- [ ] Enable subagents for medium/hard Deep Research.
-- [ ] Include `agent_tool` in medium/hard tool surface.
+- [x] Enable subagents for medium/hard Deep Research.
+- [x] Include `agent_tool` in medium/hard tool surface.
 - [ ] Keep `bash` off for medium; keep `python` off unless hard allows it.
-- [ ] Update `deep-research-report/SKILL.md` to list real tools:
+- [x] Update `deep-research-report/SKILL.md` to list real tools:
   `web_search`, `web_fetch`, `todo_write`, `agent_tool`, `read_file`,
   `file_write`, `file_edit`, `file_patch`, `artifact_preview`,
   `artifact_read`, `artifact_list`.
@@ -470,6 +904,16 @@ Checklist:
   - hard: verifier/auditor and export.
 - [ ] Add a prompt/contract check that rejects non-existent tool names in skill
   metadata during startup or tests.
+
+Execution note 2026-06-02:
+
+- `deep_research` now exposes `agent_tool` and enables subagents.
+- The phase gate, research contract, and trace summary allow `agent_tool` during
+  discovery.
+- Skill metadata tests now reject the stale `run_subagent` name for the bundled
+  Deep Research skill.
+- Dedicated `research_light` / `deep_research_medium` /
+  `deep_research_hard` presets are still pending.
 
 Live check:
 
@@ -500,12 +944,20 @@ Checklist:
 - [ ] Add a hard nudge when report exists and todos are stale: allowed next
   tool is `todo_write`, `artifact_preview`, `read_file`, `file_patch`, or
   `file_edit`, not another long final answer.
-- [ ] Add a trace field:
+- [x] Add a trace field:
   `first_report_update_before_long_chat: bool`.
-- [ ] Add a trace field:
+- [x] Add a trace field:
   `long_chat_before_report_chars: int`.
-- [ ] Add a trace field:
+- [x] Add a trace field:
   `report_full_write_count` and `report_patch_count`.
+
+Execution note 2026-06-02:
+
+- Default inline Deep Research draft capture threshold is now 1,800 chars.
+- Trace summary now reports pre-report chat length, whether the report appeared
+  before long chat prose, and report patch/edit count.
+- A separate metadata/tool event for draft capture is still pending, so the
+  threshold checklist item remains open.
 
 Live check:
 
@@ -563,14 +1015,202 @@ Gate:
 - Parent final answer references the report and does not paste child summaries
   verbatim.
 
+### Phase 3.5: User Observation UX
+
+Goal: make live Deep Research understandable to a user while it is running.
+
+Checklist:
+
+- [x] Replace the binary composer `Deep` toggle with an explicit mode/profile
+  selector:
+  - top-level `Chat`, `Web`, `Deep`;
+  - Deep profile selector with `Medium (Recommended)` and `Hard`;
+  - concise deliverable/cost hints for each choice.
+- [x] Add typed frontend settings:
+  - `researchMode: chat | web | deep`;
+  - `researchProfile: light | medium | hard | null`;
+  - `profileSource: user_selected | auto_suggested | backend_classified |
+    scenario_forced`.
+- [x] Add temporary compatibility mapping from the new frontend settings to the
+  existing backend fields until the backend accepts typed mode/profile directly.
+- [x] Add backend request/run metadata for selected mode/profile so replay,
+  trace summary, Phoenix, and scorecards can show what actually ran.
+- [x] Lock mode/profile at run start. Disable switching while streaming, or mark
+  changes as applying to the next run only.
+- [x] Require visible hard-mode opt-in. Auto-routing may suggest `Hard` only as
+  a user-confirmed choice; it must never silently start hard research.
+- [ ] Show the active mode/profile chip in the composer, run header, compact
+  research bar, and final handoff.
+- [ ] Add Playwright request/DOM assertions:
+  - `Web` sends light-compatible settings and shows no report requirement;
+  - `Deep: Medium` sends medium profile metadata and expects report artifact;
+  - `Deep: Hard` requires explicit selection and sends hard flags;
+  - controls are disabled or next-run-marked during streaming;
+  - reload preserves the run's chosen mode/profile in the cockpit.
+
+Execution note 2026-06-02:
+
+- The composer now uses an explicit mode selector instead of the binary `Deep`
+  toggle.
+- Frontend settings now persist `researchMode`, `researchProfile`,
+  `profileSource`, and hard fallback options.
+- `startChatStream` sends `research_mode`, `research_profile`,
+  `profile_source`, `hard_options`, and compatibility
+  `research_depth=deep_parallel_research`.
+- Deep mode sends `tool_preset=deep_research`; legacy `web_search` /
+  `web_fetch` presets are not widened by backend compatibility code.
+- Backend request/run metadata stores selected mode/profile and propagates it
+  into `app_metadata` and the Deep Research task contract.
+- Manual Playwright checks verified the selector and payload. Screenshot:
+  `/tmp/chat-demo-mode-selector.png`.
+- Remaining UI work: run header/cockpit/final-handoff chips, durable
+  run-level projection endpoint, reload hydration, and committed Playwright e2e
+  assertions.
+- [ ] Define one normalized run-level state object for Deep Research UI:
+  - phase;
+  - todo progress;
+  - report artifact status;
+  - source ledger counts;
+  - subagent group summaries;
+  - warning/health flags;
+  - trace-summary/run ids.
+- [ ] Add backend projection endpoint:
+  `GET /api/chat/runs/{run_id}/deep-research-state`.
+- [ ] Build the projection from stored stream events, trace summary, session
+  metadata, and workspace artifact inspection.
+- [ ] Add typed frontend API/schema for `DeepResearchViewState`; do not leave
+  research diagnostics as `Record<string, unknown>`.
+- [ ] Add a run-level store slice for Deep Research view state. Message-level
+  panels should consume a derived compact summary, not own the canonical state.
+- [ ] Add reload/hydration behavior:
+  - opening an existing session fetches replay plus deep research state;
+  - active runs merge SSE updates into the same state;
+  - completed runs show the last projected state without needing SSE.
+- [ ] Define artifact lifecycle states:
+  - `not_started`;
+  - `created`;
+  - `captured_inline`;
+  - `patched`;
+  - `edited`;
+  - `ready`;
+  - `stale`;
+  - `preview_failed`;
+  - `export_failed`.
+- [ ] Promote source ledger rows into UI sections:
+  - verified;
+  - candidate;
+  - blocked;
+  - failed;
+  - assistant links.
+- [ ] Add parent-level subagent rollups:
+  - purpose;
+  - status;
+  - child counts;
+  - sources found;
+  - tools used;
+  - compact findings;
+  - duplication warnings.
+- [ ] Promote Deep Research state from per-message diagnostics to a persistent
+  research cockpit when a deep run is active.
+- [ ] Add compact sticky status bar:
+  - current phase;
+  - `N/M` todos done;
+  - verified/candidate/blocked counts;
+  - report state (`not started`, `draft`, `patched`, `ready`);
+  - token count if available.
+- [ ] Add full research drawer with tabs:
+  - `Overview`: phase timeline, todo state, readiness, warnings;
+  - `Sources`: verified/candidate/blocked/failed URLs and domains;
+  - `Artifacts`: report/source ledger/claims previews and downloads;
+  - `Subagents`: child task cards, status, tools used, compact outputs;
+  - `Trace`: run id, Phoenix link/export placeholder, trace-summary flags.
+- [ ] Make artifact access first-class:
+  - report preview can open from the compact bar and from final message;
+  - report is visible while run is active, not only after completion;
+  - refresh/invalidation happens on `artifact_created`/`artifact_updated`
+    events.
+- [ ] Add human-readable warnings:
+  - long chat before report;
+  - plan stale or `0/N` after report text appears;
+  - report missing;
+  - source ledger missing;
+  - too many repeated searches;
+  - subagent duplication;
+  - final answer too long after report exists.
+- [ ] Add empty/loading/error states:
+  - "workspace created, waiting for first artifact";
+  - "report exists but preview failed";
+  - "PDF export unavailable";
+  - "source verification blocked by fetch errors".
+- [ ] Add download/PDF UX safety:
+  - server validates artifact path under session workspace;
+  - response uses safe filename and `Content-Disposition`;
+  - large files have size limits and clear UI errors;
+  - Markdown download works even when PDF conversion fails;
+  - PDF conversion failures are surfaced as `export_failed`, not hidden.
+- [ ] Add accessibility and responsive behavior:
+  - keyboard navigation through compact bar/drawer/tabs;
+  - aria-live updates for phase changes;
+  - accessible labels for source status and warnings;
+  - mobile layout uses a full-height bottom sheet or full-screen drawer;
+  - chat text and cockpit controls do not overlap.
+- [ ] Add Playwright checks that inspect screenshots and DOM state:
+  - compact bar visible for deep runs;
+  - phase changes from planning/discovering to writing/reviewing/ready;
+  - artifact preview opens during active run;
+  - source counts match trace summary;
+  - subagent cards roll up into the cockpit;
+  - reload preserves cockpit state for a completed run;
+  - Markdown download appears when report exists and PDF failure state is
+    visible when export fails;
+  - no long assistant report is visible while todo progress remains `0/N`.
+
+Live check:
+
+```bash
+CHAT_DEMO_URL=http://localhost:5174 \
+  .venv/bin/python scripts/deep_research_live_matrix.py \
+  --profiles medium \
+  --question-id fork-join-canary \
+  --limit 1 \
+  --screenshots
+```
+
+Gate:
+
+- In a Playwright screenshot, the user can see phase, todo progress, source
+  counts, report status, and active artifacts without expanding raw tool cards.
+- The research cockpit updates during SSE streaming.
+- Final answer references the report and the UI offers report preview/download
+  from the same session.
+
 ### Phase 4: Hard Mode, Citation Audit, And Export
 
 Goal: create a high-confidence mode that justifies extra token spend.
 
 Checklist:
 
-- [ ] Add hard profile metadata and UI selector if needed.
+- [ ] Wire hard profile metadata into the Phase 3.5 selector and backend
+  request contract.
 - [ ] Add verifier/auditor subagent role.
+- [ ] Add `source_read` as the preferred source evidence tool:
+  - accepts URL or source/search-result ID;
+  - writes/updates `research/sources.jsonl`;
+  - returns status, source kind, excerpt, content hash, and artifact path;
+  - internally uses existing `web_fetch` first.
+- [ ] Add `pdf_read` for hard profile:
+  - validates PDF magic bytes/content type and size before model exposure;
+  - supports page ranges;
+  - returns structured PDF errors;
+  - records page-aware citation hints where possible.
+- [ ] Add `browser_read` as hard-only fallback:
+  - read-only rendered DOM/text/screenshot;
+  - isolated browser profile;
+  - no cookies/secrets/private network by default;
+  - SSRF and cloud metadata endpoint blocks;
+  - screenshot/snapshot artifact capture.
+- [ ] Keep full browser automation (`browser_action`) out of default hard mode
+  until there is a separate browser-action safety gate and live eval.
 - [ ] Add `research/claims.md` or `research/claims.jsonl`.
 - [ ] Add source quality rubric:
   - verified;
@@ -583,6 +1223,12 @@ Checklist:
 - [ ] Add server-side PDF export endpoint.
 - [ ] Add frontend buttons for Markdown and PDF download.
 - [ ] Add Playwright assertions that buttons appear only when report exists.
+- [ ] Add Playwright hard fallback scenarios:
+  - PDF source with extractable text and page citation hints;
+  - fetch-blocked/JS-heavy page that requires `browser_read`;
+  - browser safety canary that must block private/metadata URLs;
+  - scanned PDF or unreadable PDF that must become `partial/failed`, not
+    verified evidence.
 
 Live check:
 
@@ -597,6 +1243,9 @@ Gate:
 
 - Hard run creates report, sources, claims/checks artifact, and downloadable PDF
   when requested.
+- Hard run prefers `source_read` over raw browser usage when the tool exists.
+- Browser fallback is observable in trace summary, source ledger, artifacts, and
+  screenshot output.
 
 ### Phase 5: Benchmark Matrix And Regression Policy
 
@@ -617,6 +1266,9 @@ Checklist:
 - [ ] Generate matrix scorecard:
   - tokens;
   - wall-clock;
+  - requested research mode/profile;
+  - profile source (`user_selected`, `auto_suggested`, `scenario_forced`,
+    `backend_classified`);
   - tool chain;
   - search/fetch/domain counts;
   - child count;
@@ -625,17 +1277,164 @@ Checklist:
   - failure flags.
 - [ ] Compare profiles on the same questions.
 
+Benchmark quality gaps found on 2026-06-02:
+
+- `scripts/deep_research_live_matrix.py` still treats matrix success mostly as
+  `expected_answer_regex` found in transcript/workspace preview. That is useful
+  as one correctness signal, but it is not enough for Deep Research.
+- The current trace probe checks many runtime risks, but the matrix summary does
+  not expose a full acceptance breakdown. A run can look green in the matrix
+  while still being hard to debug or compare.
+- The public FRAMES cases are good exact-answer canaries, but they are not
+  report-quality tasks. They do not prove that the agent writes an artifact
+  first, keeps the chat concise, verifies claims, or produces a useful source
+  ledger.
+- Screenshots are currently mostly final-state evidence. We also need milestone
+  screenshots during the run: after plan creation, after first search/fetch,
+  after first report write, after a patch/edit, and at final state.
+- The benchmark does not yet measure reproducibility. One lucky run should not
+  certify medium/hard profiles.
+- The benchmark does not yet separate model failures from infra/provider/UI
+  failures. This makes regressions look noisy and slows root-cause analysis.
+- Source URLs in the manifest are evaluator-only data. They must not be injected
+  into model prompts, otherwise the benchmark becomes a leakage test.
+
+Deep Research benchmark must be multi-axis. A run passes only when all required
+axes for its profile pass:
+
+- Answer correctness:
+  - exact-answer tasks match `expected_answer_regex`;
+  - report-style tasks satisfy a rubric with required claims, caveats, and
+    domain-specific coverage.
+- Evidence correctness:
+  - final claims cite fetched URLs, not only search snippets;
+  - report URLs appear in the source ledger;
+  - blocked or paywalled sources are marked as blocked/preliminary instead of
+    being presented as verified;
+  - evaluator-only `source_urls` are used only by the checker.
+- Process correctness:
+  - first Deep Research action is planning/todo;
+  - medium/hard use bounded subagents when required;
+  - parent owns final synthesis;
+  - report is created early and patched/edited, not rewritten as a long chat
+    message;
+  - phase-gate violations and todo/final mismatch block the run.
+- UX correctness:
+  - selected mode/profile is visible before send and in the run header;
+  - hard profile cannot start without visible opt-in;
+  - user can see current phase, todo progress, source status, subagent status,
+    artifact status, and run health from the chat UI;
+  - artifact preview works during and after the run;
+  - reload/hydration restores the Deep Research view state;
+  - screenshots prove there is no long answer prose above a `0/N` or incomplete
+    plan state.
+- Efficiency:
+  - tokens, wall-clock, search/fetch counts, repeated queries, repeated reads,
+    child count, and output tokens after first report update are under the
+    scenario budget;
+  - light/medium/hard are compared on the same questions instead of only checked
+    independently.
+- Reliability:
+  - medium fork-join canary should pass repeated runs before being trusted;
+  - hard profile can have a higher cost budget, but failures must classify as
+    `model_behavior`, `tool_surface`, `provider`, `backend`, `frontend`,
+    `phoenix`, or `benchmark_assertion`.
+
+Planned manifest extensions:
+
+```json
+{
+  "id": "fork-join-canary",
+  "profile_expectations": {
+    "light": {
+      "max_total_tokens": 12000,
+      "max_wall_clock_seconds": 360,
+      "min_verified_sources": 1,
+      "requires_report": false,
+      "requires_subagents": false
+    },
+    "medium": {
+      "max_total_tokens": 45000,
+      "max_wall_clock_seconds": 720,
+      "min_verified_sources": 3,
+      "min_domains": 2,
+      "requires_report": true,
+      "requires_subagents": true
+    },
+    "hard": {
+      "max_total_tokens": 90000,
+      "max_wall_clock_seconds": 1200,
+      "min_verified_sources": 6,
+      "min_domains": 3,
+      "requires_report": true,
+      "requires_subagents": true,
+      "requires_claim_audit": true,
+      "prefers_source_read": true,
+      "allows_pdf_read": true,
+      "allows_browser_read_fallback": true,
+      "allows_browser_action": false
+    }
+  },
+  "required_claims": [
+    "defines fork-join queueing model",
+    "explains why exact analysis is difficult",
+    "connects model to parallel/distributed/networked systems"
+  ],
+  "ui_expectations": {
+    "requires_artifact_preview": true,
+    "requires_source_ledger_panel": true,
+    "requires_reload_hydration": true
+  },
+  "source_expectations": {
+    "requires_pdf_read": false,
+    "requires_browser_read_fallback": false,
+    "forbids_browser_action": true
+  }
+}
+```
+
+Planned script changes:
+
+- [ ] Change matrix pass/fail to require:
+  `expected/rubric pass AND trace acceptance pass AND artifact checks pass AND
+  UI checks pass AND budget checks pass`.
+- [ ] Persist acceptance details in
+  `deep-research-matrix-summary.json`, not only `ok/error`.
+- [ ] Add `--repetitions N` and report pass rate, median tokens, p95 tokens,
+  median wall-clock, and failure classes.
+- [ ] Add `--max-total-tokens`, `--max-wall-clock-seconds`, and per-scenario
+  manifest budgets.
+- [ ] Add milestone screenshots and DOM snapshots:
+  `plan-created`, `first-source`, `first-report-write`, `first-report-patch`,
+  `final`, and `after-reload`.
+- [ ] Save a compact `environment.json`: git commit, model/provider, profile,
+  prompt/tool preset, Phoenix status, server URL, and benchmark manifest hash.
+- [ ] Add a report quality checker that reads `research/report.md`,
+  `research/sources.jsonl`, and optional `research/claims.jsonl`.
+- [ ] Add source-grounding checks:
+  report cited URLs must be present in the ledger and have fetched/blocked
+  status; verified claims must not cite search-only candidates.
+- [ ] Add hard source-ladder checks:
+  `source_read` before `browser_read`, `pdf_read` for PDF sources,
+  `browser_action` absent unless explicitly allowed by manifest.
+- [ ] Add failure classification to trace audit and matrix output.
+- [ ] Keep a small manual review step: inspect one screenshot, one report, and
+  one Phoenix trace per profile before marking a phase complete.
+
 PR gate:
 
 - 2 light live canaries.
 - 1 medium live Deep Research run.
 - No fake-only pass is allowed for Deep Research behavior changes.
+- Matrix `ok=true` is not allowed to mean only "expected answer found".
 
 Nightly/manual gate:
 
 - 10 benchmark questions x selected profiles.
 - Use `--profiles light,medium` for cost-controlled nightly.
 - Use `--profiles light,medium,hard` before release.
+- At least one medium canary must run twice and pass twice before promoting a
+  prompt/tool/runtime change.
 
 ## Benchmark Seed Set
 
@@ -682,23 +1481,43 @@ not grade a canned transcript.
 Each live run should produce a row with these fields:
 
 - scenario id;
+- requested research mode;
 - profile;
+- profile source;
+- hard opt-in flags;
 - run id;
+- git commit;
+- manifest hash;
+- model;
+- provider;
 - final verdict;
 - terminal event;
+- failure class;
 - tool chain;
 - first tool;
+- wall-clock seconds;
 - prompt tokens;
 - completion tokens;
 - total tokens;
+- token budget;
+- token budget status;
 - output tokens after first report update;
 - search count;
 - fetch count;
 - fetch attempts;
 - unique domains;
+- verified source count;
+- blocked source count;
+- source_read count;
+- pdf_read count;
+- browser_read count;
+- browser_action count;
+- rendered screenshot artifact count;
 - subagent child count;
+- subagent duplicate count;
 - report artifact present;
 - source ledger present;
+- claim audit present;
 - report full writes;
 - report patches/edits;
 - stale edits;
@@ -708,7 +1527,16 @@ Each live run should produce a row with these fields:
 - long final after report;
 - visible plan completion;
 - expected answer found;
+- report rubric score;
+- source grounding score;
+- process score;
+- UX score;
+- efficiency score;
+- reliability/pass-rate bucket;
 - screenshot path;
+- milestone screenshot paths;
+- after-reload screenshot path;
+- workspace preview path;
 - Phoenix enabled/configured status.
 
 ## Failure Flags That Block Progress
@@ -734,6 +1562,10 @@ Any of these should block a phase unless explicitly accepted as known risk:
 - `deep_research_tool_entropy_high`
 - `deep_research_phase_violation`
 - `deep_research_long_final_after_report`
+- `deep_research_browser_used_before_source_read`
+- `deep_research_browser_action_without_opt_in`
+- `deep_research_pdf_verified_without_text`
+- `deep_research_source_claim_without_ledger`
 - `required tool missing: agent_tool` for medium/hard
 - no expected answer in final transcript or report preview
 
@@ -760,6 +1592,12 @@ Before release:
 
 - Run 10 benchmark questions across light and medium.
 - Run at least two hard questions.
+- Run at least one PDF-backed hard question and one browser-read fallback
+  question.
+- Confirm browser-action tools remain unavailable unless the explicit
+  hard-browser-action flag is enabled.
+- Confirm the Deep Research cockpit is understandable from screenshots without
+  expanding raw tool cards.
 - Confirm Markdown and PDF downloads from the UI.
 
 ## Definition Of Done
@@ -768,8 +1606,21 @@ Deep Research is not considered fixed until all are true:
 
 - Medium Deep Research can create and patch `research/report.md`.
 - Medium and hard can use subagents.
+- The user can explicitly select `Web`, `Deep: Medium`, or `Deep: Hard` before
+  sending, and the selected mode/profile is visible in run metadata and UI.
+- Fresh ordinary chats do not silently default to medium Deep Research; medium
+  is the default only after Deep is selected or explicitly accepted.
+- Hard profile requires visible opt-in and cannot be silently chosen by
+  auto-routing.
 - The parent, not children, owns final synthesis.
-- The UI shows artifacts while the run is active.
+- Hard profile has a source-reading ladder: `source_read` first, `pdf_read`
+  for PDFs, `browser_read` only as fallback, and no `browser_action` by default.
+- Backend exposes a typed run-level `DeepResearchViewState` projection that
+  survives reload/replay.
+- The UI shows phase, todo progress, source counts, subagent state, warnings,
+  and artifacts while the run is active.
+- A user can open the live report artifact from the research cockpit before the
+  final assistant handoff.
 - The user can download Markdown and PDF when a report exists.
 - Phoenix and trace-summary show token/tool/source metrics.
 - Live Playwright screenshots show no 0/N plan with long answer prose above it.
@@ -786,5 +1637,20 @@ Deep Research is not considered fixed until all are true:
    artifact/controller gates, not tool availability.
 5. Implement artifact-first controller gates.
 6. Re-run medium fork-join canary until no long chat rewrite occurs.
-7. Add download/PDF endpoints and frontend buttons.
-8. Run hard profile with verifier/auditor and export checks.
+7. Implement typed Deep Research mode/profile settings in the frontend,
+   temporary backend compatibility mapping, and run metadata persistence.
+8. Replace the binary `Deep` toggle with the mode/profile selector and add
+   Playwright assertions for payload, hard opt-in, streaming lock, and reload.
+9. Implement the backend `DeepResearchViewState` projection endpoint and typed
+   frontend state model.
+10. Implement the Deep Research cockpit/compact bar and Playwright screenshot
+   checks.
+11. Implement `source_read` over existing `web_fetch` and source ledger before
+   adding any browser fallback.
+12. Add `pdf_read` with validation/page-range extraction and hard-profile trace
+   metrics.
+13. Add raw Markdown/PDF endpoints and download buttons.
+14. Add `browser_read` only as hard fallback with security tests and live
+   screenshot artifacts.
+15. Run hard profile with verifier/auditor, PDF, browser-read fallback, and
+   export checks.
