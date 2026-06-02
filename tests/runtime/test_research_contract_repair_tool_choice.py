@@ -208,6 +208,31 @@ async def test_parent_synthesis_gate_blocks_second_default_medium_child() -> Non
 
 
 @pytest.mark.asyncio
+async def test_parent_synthesis_gate_blocks_artifact_list_before_report() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "subagent_runs": [{"run_id": "child_1"}],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child notes",
+            },
+        },
+    )
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    artifact_list = await gate(_gate_context("artifact_list"))
+    assert isinstance(artifact_list, ToolGateDeny)
+    assert context.metadata["deep_research_parent_synthesis_gate"][
+        "blocked_tool"
+    ] == "artifact_list"
+    file_write = await gate(_gate_context("file_write"))
+    assert isinstance(file_write, ToolGateAllow)
+
+
+@pytest.mark.asyncio
 async def test_parent_synthesis_gate_allows_second_child_with_explicit_budget() -> None:
     context = _context(
         tool_results=[],

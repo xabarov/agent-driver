@@ -63,9 +63,9 @@ from agent_driver.runtime.single_agent.types import (
 )
 from agent_driver.runtime.tools import ToolExecutionResult
 
-_PARENT_SYNTHESIS_ALLOWED_TOOLS = frozenset(
+_PARENT_SYNTHESIS_CREATE_TOOLS = frozenset({"file_write", "todo_write"})
+_PARENT_SYNTHESIS_UPDATE_TOOLS = frozenset(
     {
-        "artifact_list",
         "artifact_preview",
         "artifact_read",
         "file_edit",
@@ -609,7 +609,11 @@ def _deep_research_parent_synthesis_tool_allowed(
 
 
 def _deep_research_parent_synthesis_allowed_tools(context: RunContext) -> frozenset[str]:
-    allowed = set(_PARENT_SYNTHESIS_ALLOWED_TOOLS)
+    allowed = set(
+        _PARENT_SYNTHESIS_UPDATE_TOOLS
+        if deep_research_report_artifact_exists(context)
+        else _PARENT_SYNTHESIS_CREATE_TOOLS
+    )
     if _deep_research_subagent_budget_remaining(context):
         allowed.add("agent_tool")
     return frozenset(allowed)

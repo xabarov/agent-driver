@@ -2325,6 +2325,19 @@ Live triage updates from 2026-06-02:
      `research_depth=source_verified_report`. Fix: Deep Research strategy
      forcing now accepts `research_mode=deep` and should force `file_write` or
      `file_patch` after child synthesis under the current contract.
+   - 2026-06-02 strategy-mode rerun:
+     `/tmp/chat-demo-live-observed-medium-strategy-mode-fix-20260602`.
+     Preflight passed as `run_f65eb7560e47`. Medium `run_98521528aeb3`
+     finally had a successful child summary (`statuses=["completed"]`,
+     `child_synthesis_summary_chars=1999`) and the strategy metadata recorded
+     `file_write`. However, the provider-safe fallback had disabled named tool
+     choice for the run (`forced_tool_choice_retry=removed_after_provider_rejection`),
+     so `tool_choice_effective` stayed null. The parent then looped on
+     `artifact_list`/`glob_search` instead of writing. Fix: parent-synthesis
+     gate now blocks `artifact_list` before the parent report exists. While
+     child notes are pending and no report exists, the allowed path is
+     `file_write` (plus `todo_write`); report read/patch/preview tools are only
+     allowed after a parent report exists.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.
