@@ -1061,6 +1061,11 @@ Execution note 2026-06-02:
   `web_fetch` presets are not widened by backend compatibility code.
 - Backend request/run metadata stores selected mode/profile and propagates it
   into `app_metadata` and the Deep Research task contract.
+- Session/replay metadata parsing now preserves `research_mode`,
+  `research_profile`, `profile_source`, `hard_options`, and
+  `research_depth`.
+- Assistant messages can show a compact mode/profile chip from run metadata,
+  and the message metadata popover includes research mode/profile details.
 - Manual Playwright checks verified the selector and payload. Screenshot:
   `/tmp/chat-demo-mode-selector.png`.
 - Remaining UI work: run header/cockpit/final-handoff chips, durable

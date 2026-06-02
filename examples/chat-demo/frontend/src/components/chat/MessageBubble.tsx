@@ -1,4 +1,4 @@
-import { AlertTriangle, Bot, User } from "lucide-react";
+import { AlertTriangle, BookOpenCheck, Bot, MessageSquare, Search, User } from "lucide-react";
 
 import { cn } from "../../lib/cn";
 import { MarkdownRenderer, StreamingMarkdownRenderer } from "../../lib/markdown";
@@ -8,6 +8,7 @@ import {
 } from "../../lib/sourceEvidence";
 import type { ChatMessage } from "../../store/chatStore";
 import { useChatStore } from "../../store/chatStore";
+import { Badge } from "../ui/badge";
 import { AssistantStreaming } from "./AssistantStreaming";
 import { CitationShelf } from "./CitationShelf";
 import { CompactionNoticeCard } from "./CompactionNoticeCard";
@@ -70,6 +71,11 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
     ...(message.sources ?? []),
     ...(message.content ? extractAssistantLinkSources(message.content) : []),
   ]);
+  const researchMode = message.metadata?.researchMode ?? message.metadata?.research_mode;
+  const researchProfile =
+    message.metadata?.researchProfile ?? message.metadata?.research_profile;
+  const researchBadge = formatResearchBadge(researchMode, researchProfile);
+  const ResearchBadgeIcon = researchBadge?.Icon;
 
   return (
     <div className="group flex gap-2.5 outline-none" tabIndex={-1}>
@@ -101,6 +107,21 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
             "dark:border-border/80 dark:shadow-none",
           )}
         >
+          {researchBadge && ResearchBadgeIcon ? (
+            <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              <Badge
+                variant="outline"
+                className={cn(
+                  "gap-1.5 border-border/80 bg-background/70 px-2 py-0.5 font-medium",
+                  researchBadge.kind === "deep" &&
+                    "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+                )}
+              >
+                <ResearchBadgeIcon className="h-3.5 w-3.5" />
+                {researchBadge.label}
+              </Badge>
+            </div>
+          ) : null}
           {message.content && message.pending ? (
             <StreamingMarkdownRenderer content={message.content} />
           ) : null}
@@ -131,4 +152,30 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
       </div>
     </div>
   );
+}
+
+function formatResearchBadge(
+  mode: string | undefined,
+  profile: string | undefined,
+):
+  | {
+      label: string;
+      kind: "chat" | "web" | "deep";
+      Icon: typeof Search;
+    }
+  | undefined {
+  if (mode === "deep") {
+    return {
+      label: `Deep: ${profile === "hard" ? "Hard" : "Medium"}`,
+      kind: "deep",
+      Icon: BookOpenCheck,
+    };
+  }
+  if (mode === "web") {
+    return { label: "Web", kind: "web", Icon: Search };
+  }
+  if (mode === "chat") {
+    return { label: "Chat", kind: "chat", Icon: MessageSquare };
+  }
+  return undefined;
 }

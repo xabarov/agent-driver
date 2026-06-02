@@ -24,6 +24,16 @@ export interface AssistantMessageMetadata {
   planningExecuted?: PlanningExecutedVerdict;
   deep_research_artifacts?: Record<string, unknown>;
   deepResearchArtifacts?: Record<string, unknown>;
+  researchMode?: string;
+  research_mode?: string;
+  researchProfile?: string;
+  research_profile?: string;
+  profileSource?: string;
+  profile_source?: string;
+  hardOptions?: Record<string, unknown>;
+  hard_options?: Record<string, unknown>;
+  researchDepth?: string;
+  research_depth?: string;
 }
 
 export interface LlmCompletedPatch {
@@ -227,7 +237,17 @@ export function normalizeMetadataFromApi(
     patch.provider = raw.provider;
   }
   const artifacts = record.deep_research_artifacts ?? record.deepResearchArtifacts;
-  if (Object.keys(patch).length === 0 && !isRecord(artifacts)) {
+  const researchMode = stringValue(record.research_mode ?? record.researchMode);
+  const researchProfile = stringValue(
+    record.research_profile ?? record.researchProfile,
+  );
+  const profileSource = stringValue(record.profile_source ?? record.profileSource);
+  const researchDepth = stringValue(record.research_depth ?? record.researchDepth);
+  const hardOptions = record.hard_options ?? record.hardOptions;
+  const hasResearchMetadata = Boolean(
+    researchMode || researchProfile || profileSource || researchDepth || isRecord(hardOptions),
+  );
+  if (Object.keys(patch).length === 0 && !isRecord(artifacts) && !hasResearchMetadata) {
     return undefined;
   }
   const metadata =
@@ -236,6 +256,26 @@ export function normalizeMetadataFromApi(
       : {};
   if (isRecord(artifacts)) {
     metadata.deep_research_artifacts = artifacts;
+  }
+  if (researchMode) {
+    metadata.researchMode = researchMode;
+    metadata.research_mode = researchMode;
+  }
+  if (researchProfile) {
+    metadata.researchProfile = researchProfile;
+    metadata.research_profile = researchProfile;
+  }
+  if (profileSource) {
+    metadata.profileSource = profileSource;
+    metadata.profile_source = profileSource;
+  }
+  if (researchDepth) {
+    metadata.researchDepth = researchDepth;
+    metadata.research_depth = researchDepth;
+  }
+  if (isRecord(hardOptions)) {
+    metadata.hardOptions = hardOptions;
+    metadata.hard_options = hardOptions;
   }
   return metadata;
 }
@@ -263,10 +303,18 @@ export function hasMetadataContent(metadata: AssistantMessageMetadata | undefine
     (metadata.durationMs ?? 0) > 0 ||
     metadata.costUsd !== undefined ||
     metadata.deep_research_artifacts !== undefined ||
-    metadata.deepResearchArtifacts !== undefined
+    metadata.deepResearchArtifacts !== undefined ||
+    metadata.researchMode !== undefined ||
+    metadata.research_mode !== undefined ||
+    metadata.researchProfile !== undefined ||
+    metadata.research_profile !== undefined
   );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
