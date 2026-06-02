@@ -116,6 +116,84 @@ def test_research_budget_stop_allows_budget_after_diversity() -> None:
     assert reason is None
 
 
+def test_research_budget_stop_detects_unknown_tool_call() -> None:
+    live_probe = _load_live_probe_module()
+    scenario = live_probe.LiveScenario(name="deep", prompt="deep research")
+
+    reason = live_probe.research_budget_stop_reason(
+        scenario,
+        {
+            "failures": {"unknown_tool_call": True},
+            "unknown_tools": {"names": ["artifacts_list"]},
+        },
+    )
+
+    assert "unknown tool call detected" in str(reason)
+
+
+def test_research_budget_stop_detects_phase_violation_budget() -> None:
+    live_probe = _load_live_probe_module()
+    scenario = live_probe.LiveScenario(
+        name="deep",
+        prompt="deep research",
+        require_research_efficiency=True,
+        max_phase_violations_before_stop=4,
+    )
+
+    reason = live_probe.research_budget_stop_reason(
+        scenario,
+        {"research_efficiency": {"phase_violation_count": 5}},
+    )
+
+    assert reason == "deep research phase violation budget exhausted: 5 > 4"
+
+
+def test_research_budget_stop_detects_token_runaway_before_report_projection() -> None:
+    live_probe = _load_live_probe_module()
+    scenario = live_probe.LiveScenario(
+        name="deep",
+        prompt="deep research",
+        require_research_efficiency=True,
+        max_tokens_before_report_projection=60000,
+    )
+
+    reason = live_probe.research_budget_stop_reason(
+        scenario,
+        {
+            "research_efficiency": {
+                "total_tokens": 60001,
+                "report_trace_update_seen": False,
+                "report_write_seen": False,
+            }
+        },
+    )
+
+    assert (
+        reason
+        == "deep research token budget exhausted before report projection: 60001 > 60000"
+    )
+
+
+def test_research_budget_stop_detects_medium_subagent_fanout() -> None:
+    live_probe = _load_live_probe_module()
+    scenario = live_probe.LiveScenario(
+        name="deep",
+        prompt="deep research",
+        research_profile="medium",
+        require_research_efficiency=True,
+    )
+
+    reason = live_probe.research_budget_stop_reason(
+        scenario,
+        {
+            "research_efficiency": {},
+            "subagents": {"runs_started": 3},
+        },
+    )
+
+    assert reason == "deep research subagent fan-out budget exhausted: 3 > 2"
+
+
 def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None:
     live_probe = _load_live_probe_module()
     scenario = live_probe.LiveScenario(
@@ -198,6 +276,10 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
     assert "stale_edits=`0`" in scorecard
     assert "repeat_reads=`0`" in scorecard
     assert "source_records=`2`" in scorecard
+    assert "report_projection: workspace_exists=`True`" in scorecard
+    assert "trace_path_seen=`True`" in scorecard
+    assert "trace_update_seen=`False`" in scorecard
+    assert "write_seen=`False`" in scorecard
     assert "status=`verified`" in scorecard
     assert "phase=`final`" in scorecard
     assert "phase_violations=`0`" in scorecard
@@ -207,3 +289,37 @@ def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None
     assert "final_refs_report=`True`" in scorecard
     assert "first_tool=`todo_write`" in scorecard
     assert "phoenix: enabled=`True`, configured=`True`, error=`-`" in scorecard
+
+
+def test_reconcile_workspace_artifact_failures_marks_projection_mismatch() -> None:
+    live_probe = _load_live_probe_module()
+    scenario = live_probe.LiveScenario(
+        name="deep",
+        prompt="deep research",
+        required_artifact_path="research/report.md",
+    )
+
+    failures = live_probe.reconcile_workspace_artifact_failures(
+        scenario=scenario,
+        summary={
+            "artifacts": {"paths": ["research/sources.jsonl"]},
+            "research_efficiency": {"missing_report_artifact": True},
+        },
+        failures=[
+            "failure flag is set: deep_research_no_report_artifact",
+            "research report artifact is missing",
+            "required artifact missing from trace: research/report.md",
+            "summary verdict is 'fail'",
+        ],
+        workspace_artifacts={
+            "artifacts": [
+                {"path": "research/report.md", "kind": "report"},
+                {"path": "research/sources.jsonl", "kind": "research"},
+            ],
+        },
+    )
+
+    assert "research report artifact is missing" not in failures
+    assert "required artifact missing from trace: research/report.md" not in failures
+    assert "summary verdict is 'fail'" in failures
+    assert any("report artifact projection mismatch" in item for item in failures)

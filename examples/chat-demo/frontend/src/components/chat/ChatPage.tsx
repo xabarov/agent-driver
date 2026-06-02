@@ -1,9 +1,15 @@
 import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, BookOpenCheck, FileText, ListChecks } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { fetchDeepResearchState } from "../../lib/api";
+import { cn } from "../../lib/cn";
 import { useSession } from "../../lib/sessions";
 import { useRunStream } from "../../hooks/useRunStream";
 import { useChatStore } from "../../store/chatStore";
+import type { DeepResearchViewState, WorkspaceArtifactView } from "../../types/api";
+import { Badge } from "../ui/badge";
 import { ChatComposer } from "./ChatComposer";
 import { EmptyState } from "./EmptyState";
 import { FakeProviderBanner } from "./FakeProviderBanner";
@@ -21,12 +27,15 @@ export function ChatPage({ mode }: ChatPageProps) {
   const navigate = useNavigate();
   const params = useParams<{ id: string }>();
   const sessionId = useChatStore((state) => state.sessionId);
+  const runId = useChatStore((state) => state.runId);
   const pendingInterrupt = useChatStore((state) => state.pendingInterrupt);
   const reset = useChatStore((state) => state.reset);
   const loadSession = useChatStore((state) => state.loadSession);
+  const setDeepResearchView = useChatStore((state) => state.setDeepResearchView);
   const messages = useChatStore((state) => state.messages);
   const streaming = useChatStore((state) => state.streaming);
   const steeringControls = useChatStore((state) => state.steeringControls);
+  const deepResearchView = useChatStore((state) => state.deepResearchView);
   const {
     sendMessage,
     steerRun,
@@ -38,6 +47,14 @@ export function ChatPage({ mode }: ChatPageProps) {
   const selectedSessionId = mode === "existing" ? params.id ?? "" : "";
   const artifactSessionId = selectedSessionId || sessionId || "";
   const sessionQuery = useSession(selectedSessionId);
+  const latestRunId = sessionQuery.data?.run_ids.at(-1) ?? runId;
+  const deepResearchStateQuery = useQuery({
+    queryKey: ["deep-research-state", latestRunId ?? "no-run"],
+    queryFn: () => fetchDeepResearchState(latestRunId ?? ""),
+    enabled: Boolean(latestRunId),
+    staleTime: streaming ? 2_000 : 15_000,
+    retry: false,
+  });
 
   useEffect(() => {
     if (mode === "new") {
@@ -73,6 +90,12 @@ export function ChatPage({ mode }: ChatPageProps) {
     loadSession(detail);
   }, [loadSession, mode, pendingInterrupt, sessionQuery.data, stopStreaming]);
 
+  useEffect(() => {
+    if (deepResearchStateQuery.data) {
+      setDeepResearchView(deepResearchStateQuery.data);
+    }
+  }, [deepResearchStateQuery.data, setDeepResearchView]);
+
   if (mode === "existing" && sessionQuery.isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
@@ -99,6 +122,7 @@ export function ChatPage({ mode }: ChatPageProps) {
             <WorkspaceArtifactsPanel
               sessionId={artifactSessionId}
               disabled={streaming && !sessionId && !selectedSessionId}
+              knownArtifacts={deepResearchArtifacts(deepResearchView)}
             />
             {mode === "existing" &&
             sessionQuery.data &&
@@ -113,6 +137,7 @@ export function ChatPage({ mode }: ChatPageProps) {
         <div className="mb-2 space-y-2">
           <FakeProviderBanner />
           <StreamErrorBanner />
+          <DeepResearchCompactBar state={deepResearchView} />
         </div>
         <div className="min-h-0 flex-1">
           {messages.length === 0 ? (
@@ -158,4 +183,79 @@ export function ChatPage({ mode }: ChatPageProps) {
       />
     </div>
   );
+}
+
+function deepResearchArtifacts(
+  state: DeepResearchViewState | undefined,
+): WorkspaceArtifactView[] {
+  if (!state) {
+    return [];
+  }
+  return [
+    state.artifacts.report,
+    state.artifacts.sourceLedger,
+    state.artifacts.claims,
+  ]
+    .filter((artifact): artifact is NonNullable<typeof artifact> => Boolean(artifact))
+    .map((artifact) => ({
+      path: artifact.path,
+      kind: artifact.kind,
+      sizeBytes: artifact.sizeBytes,
+      modifiedAt: artifact.modifiedAt ?? "",
+    }));
+}
+
+function DeepResearchCompactBar({
+  state,
+}: {
+  state?: DeepResearchViewState;
+}) {
+  if (!state || state.researchMode !== "deep") {
+    return null;
+  }
+  const report = state.artifacts.report;
+  const hasWarnings = state.warnings.length > 0 || state.readiness !== "ready";
+  return (
+    <div
+      className={cn(
+        "flex flex-wrap items-center gap-2 rounded-md border px-3 py-2 text-xs",
+        "border-border/80 bg-card/80 text-muted-foreground shadow-sm",
+      )}
+      aria-live="polite"
+    >
+      <Badge
+        variant="outline"
+        className="gap-1.5 border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+      >
+        <BookOpenCheck className="h-3.5 w-3.5" />
+        Deep: {state.profile === "hard" ? "Hard" : "Medium"}
+      </Badge>
+      <span className="inline-flex items-center gap-1.5">
+        <ListChecks className="h-3.5 w-3.5" />
+        {state.phase}
+        {state.todos.total > 0 ? ` · ${state.todos.done}/${state.todos.total}` : ""}
+      </span>
+      <span>
+        sources {state.sources.verified} verified · {state.sources.candidates} candidate
+        {state.sources.blocked ? ` · ${state.sources.blocked} blocked` : ""}
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <FileText className="h-3.5 w-3.5" />
+        {report ? `${report.path} · ${formatBytes(report.sizeBytes)}` : "report not started"}
+      </span>
+      {hasWarnings ? (
+        <span className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          {state.readiness}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  return `${(value / 1024).toFixed(1)} KB`;
 }

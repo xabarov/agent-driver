@@ -1,6 +1,7 @@
 import type {
   CreateSessionRequest,
   DeleteSessionResponse,
+  DeepResearchViewState,
   ChatControlRequest,
   ChatControlResponse,
   HealthResponse,
@@ -123,6 +124,12 @@ export function fetchReplay(sessionId: string, runId: string): Promise<ReplayRes
 
 export function fetchRunTraceSummary(runId: string): Promise<RunTraceSummaryResponse> {
   return request<RunTraceSummaryResponse>(`/api/chat/runs/${runId}/trace-summary`);
+}
+
+export function fetchDeepResearchState(runId: string): Promise<DeepResearchViewState> {
+  return request<DeepResearchViewState>(
+    `/api/chat/runs/${encodeURIComponent(runId)}/deep-research-state`,
+  );
 }
 
 export function listSessions(): Promise<SessionsListResponse> {

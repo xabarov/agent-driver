@@ -157,7 +157,11 @@ def test_trace_summary_exposes_tool_chain_usage_and_artifact_updates() -> None:
         "research/report.md",
         "research/sources.jsonl",
     ]
+    assert summary["artifacts"]["report_trace_update_seen"] is True
+    assert summary["artifacts"]["report_write_seen"] is True
     assert summary["research_efficiency"]["first_tool"] == "todo_write"
+    assert summary["research_efficiency"]["report_trace_update_seen"] is True
+    assert summary["research_efficiency"]["report_write_seen"] is True
     assert summary["research_efficiency"]["missing_source_ledger_artifact"] is False
     assert summary["research_efficiency"]["report_full_write_count"] == 1
     assert summary["research_efficiency"]["full_report_rewrite"] is False

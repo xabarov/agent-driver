@@ -260,6 +260,80 @@ export interface RunTraceSummaryResponse {
   };
 }
 
+export interface DeepResearchArtifactState {
+  path: string;
+  kind: string;
+  sizeBytes: number;
+  modifiedAt?: string | null;
+  lifecycle: string;
+  previewAvailable: boolean;
+}
+
+export interface DeepResearchArtifactsState {
+  report?: DeepResearchArtifactState | null;
+  sourceLedger?: DeepResearchArtifactState | null;
+  claims?: DeepResearchArtifactState | null;
+}
+
+export interface DeepResearchSourceCounts {
+  verified: number;
+  candidates: number;
+  blocked: number;
+  failed: number;
+  distinctDomains: number;
+}
+
+export interface DeepResearchTodoState {
+  done: number;
+  total: number;
+  current?: string | null;
+  stale: boolean;
+}
+
+export interface DeepResearchSubagentState {
+  totalChildren: number;
+  runningChildren: number;
+  completedChildren: number;
+  failedChildren: number;
+  duplicatedQueries: number;
+}
+
+export interface DeepResearchMetricsState {
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  webSearchCount: number;
+  webFetchCount: number;
+  reportFullWriteCount: number;
+  reportPatchCount: number;
+  longChatBeforeReportChars: number;
+}
+
+export interface DeepResearchTraceState {
+  runId: string;
+  verdict?: string | null;
+  terminalEvent?: string | null;
+  failureFlags: string[];
+}
+
+export interface DeepResearchViewState {
+  runId: string;
+  sessionId?: string | null;
+  researchMode: string;
+  profile: string;
+  profileSource: string;
+  phase: string;
+  phaseSource: string;
+  readiness: string;
+  todos: DeepResearchTodoState;
+  artifacts: DeepResearchArtifactsState;
+  sources: DeepResearchSourceCounts;
+  subagents: DeepResearchSubagentState;
+  metrics: DeepResearchMetricsState;
+  warnings: string[];
+  trace: DeepResearchTraceState;
+}
+
 export interface ModelView {
   id: string;
   name: string | null;

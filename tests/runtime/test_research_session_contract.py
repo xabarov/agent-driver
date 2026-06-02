@@ -372,8 +372,13 @@ def test_deep_parallel_research_uses_readiness_contract_and_mode_payload() -> No
     assert payload["deep_research"]["phase"] == "write"
     assert payload["deep_research"]["next_allowed_tools"] == [
         "file_write",
+        "file_edit",
+        "file_patch",
         "read_file",
         "artifact_list",
+        "artifact_read",
+        "artifact_preview",
+        "todo_write",
     ]
 
 
@@ -388,7 +393,7 @@ def test_deep_parallel_research_phase_starts_with_plan_tools() -> None:
 
     payload = contract.model_dump()["deep_research"]
     assert payload["phase"] == "plan"
-    assert payload["next_allowed_tools"] == ["todo_write"]
+    assert payload["next_allowed_tools"] == ["todo_write", "skill_tool", "skill_view"]
 
 
 def test_deep_parallel_research_phase_allows_agent_tool_after_plan() -> None:

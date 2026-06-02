@@ -156,6 +156,66 @@ async def test_sync_child_execution_restricts_worker_tool_surface() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sync_child_execution_strips_parent_deep_research_contract() -> None:
+    """Deep Research child notes workers should not inherit parent repair loops."""
+    store = InMemorySubagentStore()
+    seen = {}
+
+    async def _runner(run_input):
+        seen["tool_policy"] = run_input.tool_policy
+        return await _ok_child_runner(run_input)
+
+    await execute_subagent_group_sync(
+        parent=default_parent_handoff(
+            answer="parent summary",
+            tool_policy={
+                "allowed_tools": [
+                    "agent_tool",
+                    "file_write",
+                    "todo_write",
+                    "web_search",
+                    "web_fetch",
+                ],
+                "metadata": {
+                    "deep_research_mode": {"enabled": True},
+                    "deep_research_phase_gate": {"enabled": True},
+                    "task_contract": {
+                        "research_mode": "deep",
+                        "research_profile": "medium",
+                        "research_depth": "deep_parallel_research",
+                    },
+                },
+            },
+        ),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_parent",
+            purpose="analysis",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="task_1",
+                    task="research",
+                    description="desc",
+                    metadata={
+                        "worker_type": "researcher",
+                        "deep_research_child_notes_only": True,
+                    },
+                ),
+            ),
+        ),
+        store=store,
+        child_runner=_runner,
+        max_child_runs=4,
+    )
+
+    policy = seen["tool_policy"]
+    assert policy.allowed_tools == ["web_search", "web_fetch"]
+    assert "deep_research_mode" not in policy.metadata
+    assert "deep_research_phase_gate" not in policy.metadata
+    assert "task_contract" not in policy.metadata
+    assert policy.metadata["child_contract"] == "deep_research_source_notes"
+
+
+@pytest.mark.asyncio
 async def test_sync_child_execution_applies_validated_cwd_override(tmp_path) -> None:
     """Child workspace cwd overrides should stay inside parent workspace."""
     store = InMemorySubagentStore()

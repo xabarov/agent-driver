@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
+from urllib.parse import urlparse
 
 from app.config import Settings, ToolPreset
 from app.deps import (
@@ -19,6 +20,14 @@ from app.schemas.chat import (
     ChatControlRequest,
     ChatControlResponse,
     ChatMessageRequest,
+    DeepResearchArtifactState,
+    DeepResearchArtifactsState,
+    DeepResearchMetricsState,
+    DeepResearchSourceCounts,
+    DeepResearchSubagentState,
+    DeepResearchTodoState,
+    DeepResearchTraceState,
+    DeepResearchViewState,
     HardResearchOptions,
     InterruptView,
     ResumeRequest,
@@ -28,6 +37,7 @@ from app.services.message_metadata import aggregate_metadata_from_events
 from app.services.run_trace_summary import summarize_run_trace
 from app.sse_relay import ensure_run_task, relay_and_capture
 from app.workspace import build_chat_app_metadata, merge_resume_app_metadata
+from app.workspace import list_workspace_artifacts
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -353,6 +363,9 @@ def _chat_tool_policy(
             "research_profile": request_metadata["research_profile"],
             "profile_source": request_metadata["profile_source"],
             "hard_options": request_metadata["hard_options"],
+            "max_subagent_requests": _deep_research_max_subagent_requests(
+                request_metadata["research_profile"]
+            ),
             "goal": task_contract.get("goal") or body.message,
             "approach": (
                 "Use the shared Deep Research runtime contract: discover "
@@ -380,6 +393,14 @@ def _chat_tool_policy(
     return policy.model_copy(update={"metadata": metadata})
 
 
+def _deep_research_max_subagent_requests(profile: str) -> int:
+    if profile == "light":
+        return 0
+    if profile == "hard":
+        return 4
+    return 2
+
+
 def _chat_tool_gate(*, body: ChatMessageRequest, settings: Settings) -> ToolGate | None:
     if _effective_research_mode(body) != "deep":
         return None
@@ -391,6 +412,234 @@ def _chat_tool_gate(*, body: ChatMessageRequest, settings: Settings) -> ToolGate
     return create_deep_research_phase_gate(
         required_fetch_attempts=required_fetch_attempts
     )
+
+
+def _trace_summary_for_run(
+    *,
+    bundle: AgentBundle,
+    run_id: str,
+    events: list[dict[str, object]],
+) -> dict[str, object]:
+    record = _session_record_for_run(bundle, run_id)
+    user_prompt, assistant_text = _turn_text_for_run(record, run_id)
+    task_contract = (
+        build_chat_task_contract(user_prompt)
+        if isinstance(user_prompt, str) and user_prompt.strip()
+        else None
+    )
+    return summarize_run_trace(
+        run_id=run_id,
+        events=events,
+        user_prompt=user_prompt,
+        assistant_text=assistant_text,
+        task_contract=task_contract,
+    )
+
+
+def _deep_research_artifact_state(
+    *,
+    path: str,
+    artifacts_by_path: dict[str, object],
+    lifecycle: str,
+) -> DeepResearchArtifactState | None:
+    item = artifacts_by_path.get(path)
+    if item is None:
+        return None
+    return DeepResearchArtifactState(
+        path=getattr(item, "path"),
+        kind=getattr(item, "kind"),
+        sizeBytes=getattr(item, "size_bytes"),
+        modifiedAt=getattr(item, "modified_at"),
+        lifecycle=lifecycle,
+        previewAvailable=True,
+    )
+
+
+def _deep_research_artifacts_state(
+    *,
+    settings: Settings,
+    session_id: str | None,
+    trace_summary: dict[str, object],
+) -> DeepResearchArtifactsState:
+    if not session_id:
+        return DeepResearchArtifactsState()
+    artifacts = list_workspace_artifacts(settings, session_id)
+    by_path = {item.path: item for item in artifacts}
+    trace_artifacts = trace_summary.get("artifacts")
+    lifecycle = "created"
+    if isinstance(trace_artifacts, dict):
+        if int(trace_artifacts.get("report_patch_count") or 0) > 0:
+            lifecycle = "patched"
+        elif int(trace_artifacts.get("report_targeted_edit_count") or 0) > 0:
+            lifecycle = "edited"
+    return DeepResearchArtifactsState(
+        report=_deep_research_artifact_state(
+            path="research/report.md",
+            artifacts_by_path=by_path,
+            lifecycle=lifecycle,
+        ),
+        sourceLedger=_deep_research_artifact_state(
+            path="research/sources.jsonl",
+            artifacts_by_path=by_path,
+            lifecycle="updated",
+        ),
+        claims=(
+            _deep_research_artifact_state(
+                path="research/claims.jsonl",
+                artifacts_by_path=by_path,
+                lifecycle="updated",
+            )
+            or _deep_research_artifact_state(
+                path="research/claims.md",
+                artifacts_by_path=by_path,
+                lifecycle="updated",
+            )
+        ),
+    )
+
+
+def _source_domains_from_metadata(metadata: dict[str, object]) -> set[str]:
+    raw_sources = metadata.get("source_evidence") or metadata.get("sourceEvidence")
+    if not isinstance(raw_sources, list):
+        return set()
+    domains: set[str] = set()
+    for item in raw_sources:
+        if not isinstance(item, dict):
+            continue
+        url = item.get("url") or item.get("final_url") or item.get("finalUrl")
+        if not isinstance(url, str) or not url:
+            continue
+        domain = urlparse(url).netloc.lower()
+        if domain:
+            domains.add(domain)
+    return domains
+
+
+def _deep_research_source_counts(
+    *,
+    metadata: dict[str, object],
+    trace_summary: dict[str, object],
+) -> DeepResearchSourceCounts:
+    efficiency = trace_summary.get("research_efficiency")
+    if not isinstance(efficiency, dict):
+        efficiency = {}
+    research = trace_summary.get("research")
+    if not isinstance(research, dict):
+        research = {}
+    return DeepResearchSourceCounts(
+        verified=int(efficiency.get("verified_read_count") or 0),
+        candidates=int(efficiency.get("candidate_count") or 0),
+        blocked=int(efficiency.get("blocked_read_count") or 0),
+        failed=int(efficiency.get("failed_read_count") or 0),
+        distinctDomains=max(
+            len(_source_domains_from_metadata(metadata)),
+            int(research.get("unique_domains") or research.get("distinct_domains") or 0),
+        ),
+    )
+
+
+def _deep_research_todos(trace_summary: dict[str, object]) -> DeepResearchTodoState:
+    planning = trace_summary.get("planning")
+    if not isinstance(planning, dict):
+        return DeepResearchTodoState()
+    done = int(planning.get("done_count") or planning.get("completed_count") or 0)
+    total = int(planning.get("total_count") or planning.get("todo_count") or 0)
+    current = planning.get("current")
+    if not isinstance(current, str):
+        current = planning.get("current_title")
+    return DeepResearchTodoState(
+        done=done,
+        total=total,
+        current=current if isinstance(current, str) and current else None,
+        stale=bool(planning.get("todos_incomplete") or False),
+    )
+
+
+def _deep_research_metrics(trace_summary: dict[str, object]) -> DeepResearchMetricsState:
+    efficiency = trace_summary.get("research_efficiency")
+    if not isinstance(efficiency, dict):
+        efficiency = {}
+    llm = trace_summary.get("llm")
+    usage = llm.get("usage") if isinstance(llm, dict) else None
+    if not isinstance(usage, dict):
+        usage = {}
+    tool_names = trace_summary.get("tool_names")
+    names = [str(name) for name in tool_names] if isinstance(tool_names, list) else []
+    return DeepResearchMetricsState(
+        promptTokens=_int_or_none(usage.get("input_tokens") or usage.get("prompt_tokens")),
+        completionTokens=_int_or_none(
+            usage.get("output_tokens") or usage.get("completion_tokens")
+        ),
+        totalTokens=_int_or_none(usage.get("total_tokens")),
+        webSearchCount=names.count("web_search"),
+        webFetchCount=names.count("web_fetch"),
+        reportFullWriteCount=int(efficiency.get("report_full_write_count") or 0),
+        reportPatchCount=int(efficiency.get("report_patch_count") or 0),
+        longChatBeforeReportChars=int(
+            efficiency.get("long_chat_before_report_chars") or 0
+        ),
+    )
+
+
+def _deep_research_subagents(trace_summary: dict[str, object]) -> DeepResearchSubagentState:
+    subagents = trace_summary.get("subagents")
+    if not isinstance(subagents, dict):
+        return DeepResearchSubagentState()
+    failed = int(subagents.get("child_error_count") or 0)
+    completed = int(subagents.get("runs_completed") or 0)
+    total = max(completed + failed, int(subagents.get("runs_started") or 0))
+    running = max(0, total - completed - failed)
+    return DeepResearchSubagentState(
+        totalChildren=total,
+        runningChildren=running,
+        completedChildren=completed,
+        failedChildren=failed,
+        duplicatedQueries=0,
+    )
+
+
+def _deep_research_phase(trace_summary: dict[str, object]) -> str:
+    efficiency = trace_summary.get("research_efficiency")
+    if isinstance(efficiency, dict):
+        phase = efficiency.get("deep_research_phase")
+        if isinstance(phase, str) and phase:
+            return phase
+    terminal = trace_summary.get("terminal_event")
+    if terminal == "run_completed":
+        return "ready"
+    if terminal in {"run_failed", "run_cancelled"}:
+        return "failed" if terminal == "run_failed" else "cancelled"
+    return "starting"
+
+
+def _deep_research_readiness(trace_summary: dict[str, object]) -> str:
+    final_readiness = trace_summary.get("final_readiness")
+    if isinstance(final_readiness, str) and final_readiness:
+        return final_readiness
+    if trace_summary.get("verdict") == "pass":
+        return "ready"
+    failures = trace_summary.get("failures")
+    if isinstance(failures, dict):
+        if failures.get("deep_research_no_report_artifact"):
+            return "needs_report"
+        if failures.get("deep_research_no_source_ledger_artifact"):
+            return "needs_more_sources"
+    return "needs_review"
+
+
+def _deep_research_warnings(trace_summary: dict[str, object]) -> list[str]:
+    failures = trace_summary.get("failures")
+    if not isinstance(failures, dict):
+        return []
+    return sorted(str(key) for key, value in failures.items() if value)
+
+
+def _int_or_none(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return None
 
 
 @router.post("/chat/messages")
@@ -560,19 +809,71 @@ def get_run_trace_summary(
     events = replay_events_for_run(bundle, run_id)
     if not events:
         raise HTTPException(status_code=404, detail="run not found")
-    record = _session_record_for_run(bundle, run_id)
-    user_prompt, assistant_text = _turn_text_for_run(record, run_id)
-    task_contract = (
-        build_chat_task_contract(user_prompt)
-        if isinstance(user_prompt, str) and user_prompt.strip()
-        else None
-    )
-    return summarize_run_trace(
+    return _trace_summary_for_run(
+        bundle=bundle,
         run_id=run_id,
         events=events,
-        user_prompt=user_prompt,
-        assistant_text=assistant_text,
-        task_contract=task_contract,
+    )
+
+
+@router.get(
+    "/chat/runs/{run_id}/deep-research-state",
+    response_model=DeepResearchViewState,
+)
+def get_deep_research_state(
+    run_id: str,
+    settings: Settings = Depends(get_settings),
+    bundle: AgentBundle = Depends(get_agent_bundle),
+) -> DeepResearchViewState:
+    """Return canonical run-level Deep Research UI projection."""
+    events = replay_events_for_run(bundle, run_id)
+    if not events:
+        raise HTTPException(status_code=404, detail="run not found")
+    record = _session_record_for_run(bundle, run_id)
+    metadata_by_run = _metadata_by_run_dict(record)
+    metadata = dict(metadata_by_run.get(run_id, {}))
+    trace_summary = _trace_summary_for_run(
+        bundle=bundle,
+        run_id=run_id,
+        events=events,
+    )
+    failures = trace_summary.get("failures")
+    failure_flags = (
+        sorted(str(key) for key, value in failures.items() if value)
+        if isinstance(failures, dict)
+        else []
+    )
+    return DeepResearchViewState(
+        runId=run_id,
+        sessionId=getattr(record, "session_id", None),
+        researchMode=str(metadata.get("research_mode") or "unknown"),
+        profile=str(metadata.get("research_profile") or "unknown"),
+        profileSource=str(metadata.get("profile_source") or "unknown"),
+        phase=_deep_research_phase(trace_summary),
+        readiness=_deep_research_readiness(trace_summary),
+        todos=_deep_research_todos(trace_summary),
+        artifacts=_deep_research_artifacts_state(
+            settings=settings,
+            session_id=getattr(record, "session_id", None),
+            trace_summary=trace_summary,
+        ),
+        sources=_deep_research_source_counts(
+            metadata=metadata,
+            trace_summary=trace_summary,
+        ),
+        subagents=_deep_research_subagents(trace_summary),
+        metrics=_deep_research_metrics(trace_summary),
+        warnings=_deep_research_warnings(trace_summary),
+        trace=DeepResearchTraceState(
+            runId=run_id,
+            verdict=trace_summary.get("verdict")
+            if isinstance(trace_summary.get("verdict"), str)
+            else None,
+            terminalEvent=trace_summary.get("terminal_event")
+            if isinstance(trace_summary.get("terminal_event"), str)
+            else None,
+            failureFlags=failure_flags,
+        ),
     )
 
 

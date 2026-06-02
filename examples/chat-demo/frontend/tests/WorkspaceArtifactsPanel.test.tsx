@@ -46,4 +46,37 @@ describe("WorkspaceArtifactsPanel", () => {
     expect(await screen.findAllByText("research/report.md")).not.toHaveLength(0);
     expect(await screen.findByText(/durable draft/i)).toBeInTheDocument();
   });
+
+  test("uses known report artifact while workspace query is stale", async () => {
+    vi.spyOn(api, "fetchWorkspaceArtifacts").mockResolvedValue({
+      ok: true,
+      sessionId: "session_1",
+      artifacts: [],
+    });
+    vi.spyOn(api, "fetchWorkspaceArtifactPreview").mockRejectedValue(
+      new Error("not indexed yet"),
+    );
+
+    renderWithClient(
+      <WorkspaceArtifactsPanel
+        sessionId="session_1"
+        knownArtifacts={[
+          {
+            path: "research/report.md",
+            kind: "report",
+            sizeBytes: 2048,
+            modifiedAt: "2026-06-02T12:00:00Z",
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: /artifacts \(1\)/i }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /artifacts/i }));
+
+    expect(await screen.findAllByText("research/report.md")).not.toHaveLength(0);
+  });
 });

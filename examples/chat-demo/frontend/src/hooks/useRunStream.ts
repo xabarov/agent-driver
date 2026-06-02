@@ -21,6 +21,7 @@ import {
 } from "../lib/events";
 import { invalidateSessions, sessionDetailQueryKey } from "../lib/sessions";
 import { resumeRunStream, startChatStream } from "../lib/sse";
+import { workspaceArtifactsQueryKey } from "../lib/workspaceArtifacts";
 import { parseLlmCompletedData } from "../lib/messageMetadata";
 import { parsePlanningSnapshot } from "../lib/planning";
 import { formatRunFailure, formatStreamError } from "../lib/streamError";
@@ -56,6 +57,10 @@ function applyStreamEvent(
     return;
   }
   store.setLastSeq(event.seq);
+  if (!store.runId && event.run_id) {
+    store.setRunId(event.run_id);
+    store.setAssistantRunId(assistantId, event.run_id);
+  }
   if (event.event === "run_started") {
     store.setStreaming(true);
   }
@@ -197,6 +202,21 @@ export function useRunStream(): RunStreamController {
         queryKey: sessionDetailQueryKey(current.sessionId),
       });
     }
+    if (current.runId) {
+      void queryClient.invalidateQueries({
+        queryKey: ["deep-research-state", current.runId],
+      });
+    }
+  }, [queryClient]);
+
+  const invalidateWorkspaceArtifacts = useCallback(() => {
+    const current = useChatStore.getState();
+    if (!current.sessionId) {
+      return;
+    }
+    void queryClient.invalidateQueries({
+      queryKey: workspaceArtifactsQueryKey(current.sessionId),
+    });
   }, [queryClient]);
 
   const stopStreaming = useCallback(() => {
@@ -281,6 +301,9 @@ export function useRunStream(): RunStreamController {
           },
           onEvent: (event) => {
             applyStreamEvent(event, activeId);
+            if (event.event === "artifact_created" || event.event === "artifact_updated") {
+              invalidateWorkspaceArtifacts();
+            }
             if (isTerminalEvent(event)) {
               useChatStore.getState().finishTurn(activeId);
               useChatStore.getState().setPendingInterrupt(undefined);
@@ -293,6 +316,7 @@ export function useRunStream(): RunStreamController {
     [
       hardResearchOptions,
       invalidateAfterTerminal,
+      invalidateWorkspaceArtifacts,
       model,
       profileSource,
       researchDepth,

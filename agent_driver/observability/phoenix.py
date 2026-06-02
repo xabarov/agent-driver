@@ -27,6 +27,9 @@ class PhoenixTracingConfig:
 
 _TRACING_READY = False
 _TRACING_ERROR: str | None = None
+_TRACING_CONFIGURED = False
+_TRACING_PROJECT_NAME: str | None = None
+_TRACING_ENDPOINT: str | None = None
 
 
 def normalize_phoenix_http_endpoint(endpoint: str) -> str:
@@ -40,10 +43,14 @@ def normalize_phoenix_http_endpoint(endpoint: str) -> str:
 def setup_phoenix_tracing(config: PhoenixTracingConfig) -> dict[str, object]:
     """Initialize Phoenix tracing once and return current status."""
     global _TRACING_READY, _TRACING_ERROR  # pylint: disable=global-statement
+    global _TRACING_CONFIGURED  # pylint: disable=global-statement
+    global _TRACING_PROJECT_NAME, _TRACING_ENDPOINT  # pylint: disable=global-statement
     if _TRACING_READY or _TRACING_ERROR is not None:
         return phoenix_tracing_status()
     if not config.enabled:
         return phoenix_tracing_status()
+    _TRACING_CONFIGURED = True
+    _TRACING_PROJECT_NAME = config.project_name
     try:
         from phoenix.otel import register
 
@@ -53,9 +60,8 @@ def setup_phoenix_tracing(config: PhoenixTracingConfig) -> dict[str, object]:
             "batch": config.batch,
         }
         if config.collector_endpoint:
-            kwargs["endpoint"] = normalize_phoenix_http_endpoint(
-                config.collector_endpoint
-            )
+            _TRACING_ENDPOINT = normalize_phoenix_http_endpoint(config.collector_endpoint)
+            kwargs["endpoint"] = _TRACING_ENDPOINT
             kwargs["protocol"] = "http/protobuf"
         register(**kwargs)
         _TRACING_READY = True
@@ -68,6 +74,9 @@ def phoenix_tracing_status() -> dict[str, object]:
     """Return current Phoenix tracing setup state."""
     return {
         "enabled": _TRACING_READY,
+        "configured": _TRACING_CONFIGURED,
+        "project_name": _TRACING_PROJECT_NAME,
+        "endpoint": _TRACING_ENDPOINT,
         "error": _TRACING_ERROR,
     }
 
@@ -253,8 +262,13 @@ def safe_json(value: object, *, max_chars: int = 1200) -> str:
 def _reset_phoenix_tracing_for_tests() -> None:
     """Reset process singleton state for unit tests."""
     global _TRACING_READY, _TRACING_ERROR  # pylint: disable=global-statement
+    global _TRACING_CONFIGURED  # pylint: disable=global-statement
+    global _TRACING_PROJECT_NAME, _TRACING_ENDPOINT  # pylint: disable=global-statement
     _TRACING_READY = False
     _TRACING_ERROR = None
+    _TRACING_CONFIGURED = False
+    _TRACING_PROJECT_NAME = None
+    _TRACING_ENDPOINT = None
 
 
 __all__ = [

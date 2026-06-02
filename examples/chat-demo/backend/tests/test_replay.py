@@ -101,6 +101,39 @@ async def test_run_trace_summary_returns_scenario_verdict(client) -> None:
     assert "failures" in payload
 
 
+async def test_deep_research_state_returns_run_projection(client) -> None:
+    run_id: str | None = None
+    async with client.stream(
+        "POST",
+        "/api/chat/messages",
+        json={
+            "message": "prepare a deep research report",
+            "research_mode": "deep",
+            "research_profile": "hard",
+            "profile_source": "user_selected",
+        },
+    ) as response:
+        assert response.status_code == 200
+        run_id = response.headers.get("x-run-id")
+        async for line in response.aiter_lines():
+            if line == "event: run_completed":
+                break
+
+    assert run_id is not None
+    response = await client.get(f"/api/chat/runs/{run_id}/deep-research-state")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["runId"] == run_id
+    assert payload["researchMode"] == "deep"
+    assert payload["profile"] == "hard"
+    assert payload["profileSource"] == "user_selected"
+    assert payload["trace"]["runId"] == run_id
+    assert "metrics" in payload
+    assert "artifacts" in payload
+    assert "sources" in payload
+
+
 async def test_fake_compaction_notice_scenario_emits_lifecycle(
     tmp_path, monkeypatch
 ) -> None:

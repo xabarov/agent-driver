@@ -23,7 +23,7 @@ import {
   type SourceEvidence,
 } from "../lib/sourceEvidence";
 import { stripTextFormToolCalls } from "../lib/stripToolCalls";
-import type { SessionDetailView } from "../types/api";
+import type { DeepResearchViewState, SessionDetailView } from "../types/api";
 
 const PLANNING_TOOL_NAMES = new Set(["todo_write", "planning_state_update"]);
 const CONTROL_TOOL_NAMES = new Set([...PLANNING_TOOL_NAMES, "ask_user_question"]);
@@ -402,6 +402,7 @@ interface ChatState {
   runId?: string;
   pendingInterrupt?: PendingInterrupt;
   steeringControls: SteeringControl[];
+  deepResearchView?: DeepResearchViewState;
   lastError?: string;
   beginUserTurn: (text: string) => string;
   appendDelta: (assistantId: string, text: string) => void;
@@ -431,6 +432,7 @@ interface ChatState {
   setSessionId: (sessionId?: string) => void;
   setRunId: (runId?: string) => void;
   setPendingInterrupt: (interrupt?: PendingInterrupt) => void;
+  setDeepResearchView: (state?: DeepResearchViewState) => void;
   addSteeringControl: (control: SteeringControl) => void;
   updateSteeringControl: (queueId: string, status: SteeringControl["status"]) => void;
   appendAssistantMetadata: (assistantId: string, patch: LlmCompletedPatch) => void;
@@ -454,6 +456,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   runId: undefined,
   pendingInterrupt: undefined,
   steeringControls: [],
+  deepResearchView: undefined,
   lastError: undefined,
   beginUserTurn: (text) => {
     const userId = createId("user");
@@ -465,6 +468,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       runId: undefined,
       pendingInterrupt: undefined,
       steeringControls: [],
+      deepResearchView: undefined,
       lastError: undefined,
       messages: [
         ...state.messages,
@@ -677,6 +681,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setSessionId: (sessionId) => set({ sessionId }),
   setRunId: (runId) => set({ runId }),
   setPendingInterrupt: (pendingInterrupt) => set({ pendingInterrupt }),
+  setDeepResearchView: (deepResearchView) => set({ deepResearchView }),
   addSteeringControl: (control) =>
     set((state) => {
       if (state.steeringControls.some((item) => item.queueId === control.queueId)) {
@@ -792,6 +797,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       runId: undefined,
       pendingInterrupt: undefined,
       steeringControls: [],
+      deepResearchView: undefined,
       lastError: undefined,
       messages: [
         ...state.messages.slice(0, index),
@@ -877,6 +883,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       runId: detail.run_ids.at(-1),
       pendingInterrupt: undefined,
       steeringControls: steeringControlsFromSession(detail),
+      deepResearchView: undefined,
       lastError: undefined,
       messages,
     });
@@ -891,6 +898,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       runId: undefined,
       pendingInterrupt: undefined,
       steeringControls: [],
+      deepResearchView: undefined,
       lastError: undefined,
     });
   },

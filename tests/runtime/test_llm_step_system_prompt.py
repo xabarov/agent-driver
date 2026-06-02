@@ -209,6 +209,7 @@ def test_source_verified_research_suggests_curated_skills_when_available() -> No
 
     assert "curated_research_skills_available" in attachment_text
     assert "deep-research-report" in attachment_text
+    assert "trusted_roots=" in attachment_text
     assert "call skill_view" in attachment_text
     assert "Do not auto-load hidden instructions" in attachment_text
 

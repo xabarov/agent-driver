@@ -19,6 +19,7 @@ from agent_driver.contracts import (
 )
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.subagents import SubagentRun
+from agent_driver.contracts.tools import ToolResultEnvelope
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmRequest,
@@ -31,10 +32,15 @@ from agent_driver.runtime import (
     InMemoryCheckpointStore,
     InMemoryEventLog,
     RunnerConfig,
+    ToolExecutionResult,
     wrap_governed_executor,
 )
 from agent_driver.runtime.control import InMemoryCommandQueueStore
+from agent_driver.runtime.single_agent.tool_stage.subagents import (
+    apply_agent_tool_spawn_requests,
+)
 from agent_driver.runtime.single_agent.subagent_stage import _apply_skill_preloads
+from agent_driver.runtime.single_agent.types import RunContext
 from agent_driver.subagents import InMemorySubagentMailboxStore, InMemorySubagentStore
 from agent_driver.subagents.specs import SubagentGroupSpec, SubagentTaskSpec
 from agent_driver.tools import (
@@ -130,6 +136,51 @@ class _SubagentControlProvider(FakeProvider):
             provider="fake",
             model="test",
         )
+
+
+def _subagent_context(metadata: dict[str, object] | None = None) -> RunContext:
+    return RunContext(
+        run_input=AgentRunInput(
+            input="delegate research",
+            run_id="run_subagent_context",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(
+                mode=ToolPolicyMode.ALLOW_TOOLS,
+                metadata=metadata or {},
+            ),
+        ),
+        identifiers={
+            "run_id": "run_subagent_context",
+            "attempt_id": "attempt_subagent_context",
+        },
+    )
+
+
+def _agent_tool_result(
+    *requests: tuple[str, str],
+) -> ToolExecutionResult:
+    envelopes = []
+    for request_id, task in requests:
+        envelopes.append(
+            ToolResultEnvelope(
+                call=ToolCall(
+                    tool_name="agent_tool",
+                    tool_call_id=request_id,
+                    args={"task": task, "description": task},
+                ),
+                structured_output={
+                    "subagent_request": {
+                        "request_id": request_id,
+                        "subagent_run_id": request_id,
+                        "task": task,
+                        "description": task,
+                        "idempotency_key": request_id,
+                    }
+                },
+            )
+        )
+    return ToolExecutionResult(envelopes=envelopes)
 
 
 @pytest.mark.asyncio
@@ -317,6 +368,76 @@ async def test_runtime_with_subagents_executes_group_from_agent_tool() -> None:
         ]
         == "completed"
     )
+
+
+def test_deep_research_agent_tool_children_default_to_researcher_notes() -> None:
+    """Deep Research agent_tool children should not inherit report write duties."""
+    context = _subagent_context(
+        {
+            "deep_research_mode": {
+                "enabled": True,
+                "research_profile": "medium",
+            },
+            "task_contract": {
+                "research_mode": "deep",
+                "research_profile": "medium",
+                "max_subagent_requests": 2,
+            },
+        }
+    )
+
+    apply_agent_tool_spawn_requests(
+        context,
+        _agent_tool_result(
+            (
+                "subreq_a",
+                "Find source A\n- Write a summary to research/theory-sources.md",
+            )
+        ),
+    )
+
+    task = context.metadata["planned_subagent_group"]["tasks"][0]
+    assert task["metadata"]["worker_type"] == "researcher"
+    assert "compact source notes only" in task["task"]
+    assert "Return the summary in your final answer to the parent" in task["task"]
+    assert "Write a summary to research/" not in task["task"]
+    assert "research/report.md" in task["task"]
+
+
+def test_deep_research_agent_tool_respects_total_request_limit() -> None:
+    """Medium Deep Research should not keep opening new child waves."""
+    context = _subagent_context(
+        {
+            "deep_research_mode": {
+                "enabled": True,
+                "research_profile": "medium",
+            },
+            "task_contract": {
+                "research_mode": "deep",
+                "research_profile": "medium",
+                "max_subagent_requests": 2,
+            },
+        }
+    )
+
+    apply_agent_tool_spawn_requests(
+        context,
+        _agent_tool_result(
+            ("subreq_a", "Find source A"),
+            ("subreq_b", "Find source B"),
+            ("subreq_c", "Find source C"),
+        ),
+    )
+    apply_agent_tool_spawn_requests(
+        context,
+        _agent_tool_result(("subreq_d", "Find source D")),
+    )
+
+    tasks = context.metadata["planned_subagent_group"]["tasks"]
+    assert [task["task_id"] for task in tasks] == ["subreq_a", "subreq_b"]
+    skipped = context.metadata["subagent_backpressure"]
+    assert [item["tool_call_id"] for item in skipped] == ["subreq_c", "subreq_d"]
+    assert {item["reason"] for item in skipped} == {"max_subagent_requests"}
 
 
 @pytest.mark.asyncio

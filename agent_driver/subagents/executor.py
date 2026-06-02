@@ -255,10 +255,29 @@ def _child_tool_policy(
     *, parent: SubagentParentHandoff, task: SubagentTaskSpec
 ) -> dict[str, object]:
     worker_type = task.metadata.get("worker_type") or task.metadata.get("role")
-    return apply_worker_tool_surface(
+    policy = apply_worker_tool_surface(
         parent_tool_policy=parent.tool_policy,
         worker_type=str(worker_type) if worker_type is not None else None,
     )
+    if task.metadata.get("deep_research_child_notes_only") is True:
+        policy = _strip_parent_research_contract(policy)
+    return policy
+
+
+def _strip_parent_research_contract(policy: dict[str, object]) -> dict[str, object]:
+    metadata = dict(policy.get("metadata") or {})
+    metadata.pop("deep_research_mode", None)
+    metadata.pop("deep_research_phase_gate", None)
+    task_contract = metadata.get("task_contract")
+    if isinstance(task_contract, dict):
+        metadata["parent_task_contract"] = {
+            "research_profile": task_contract.get("research_profile"),
+            "research_mode": task_contract.get("research_mode"),
+            "research_depth": task_contract.get("research_depth"),
+        }
+    metadata.pop("task_contract", None)
+    metadata["child_contract"] = "deep_research_source_notes"
+    return {**policy, "metadata": metadata}
 
 
 def _child_app_metadata(

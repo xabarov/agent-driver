@@ -11,7 +11,8 @@ Playwright screenshots, backend logs, and per-run trace summaries.
 
 ## Executive Decision
 
-Use a three-profile Deep Research architecture and compare them live:
+Use three Deep Research profiles, but do not confuse profiles with architecture
+variants:
 
 - `light`: single agent, web search plus web fetch only, short answer, no report
   artifact, no subagents.
@@ -28,9 +29,15 @@ silently become expensive research runs. `light` is a fast lookup mode, not Deep
 Research. `hard` is opt-in for broad, ambiguous, high-value questions where the
 token cost earns its keep.
 
+Architecture variants should be compared later, only after the basic
+tool/artifact/trace contract is stable. Until then, failures mostly measure
+contract mismatch rather than research quality.
+
 ## Current Truth In This Codebase
 
-These facts come from local code inspection on 2026-05-31.
+These facts come from local code inspection on 2026-05-31 and a re-check on
+2026-06-02. Items marked fixed are no longer current blockers, but remain here
+so old trace failures are interpreted correctly.
 
 - `deep_research` preset currently enables `web`, `planning_progress`,
   `filesystem_read`, `filesystem_write`, `artifacts`, `skill_tool`, and
@@ -41,14 +48,17 @@ These facts come from local code inspection on 2026-05-31.
   `notebook_edit`.
 - `artifacts` provides `artifact_list`, `artifact_read`, and
   `artifact_preview`.
-- The same factory sets
-  `SubagentSettings(enable_subagents=effective_preset != "deep_research")`.
-  This means Deep Research has no working subagents even though product
-  behavior and screenshots expect parallel research.
-- `deep-research-report/SKILL.md` says `allowed_tools: [web_search, web_fetch,
-  todo_write, run_subagent]`. That is stale: the real tool name is
-  `agent_tool`, and the skill does not mention `file_write`, `read_file`,
-  `file_edit`, `file_patch`, or artifact tools.
+- Fixed on 2026-06-02: the backend now creates
+  `SubagentSettings(enable_subagents=True, max_child_runs=...)`, and
+  `deep_research` exposes `agent_tool`.
+- Fixed on 2026-06-02: `deep-research-report/SKILL.md` now uses
+  `agent_tool`, includes `read_file`, `file_write`, `file_edit`,
+  `file_patch`, and names the canonical artifact tools
+  `artifact_list`/`artifact_read`/`artifact_preview`.
+- Remaining subagent blocker: the parent must consume child notes and create or
+  patch parent-owned `research/report.md` plus `research/sources.jsonl` after
+  child joins. Child-created artifacts and child long finals must not satisfy
+  the medium readiness gate.
 - The chat-demo workspace API currently has artifact list and preview endpoints
   only. There is no raw download endpoint and no Markdown-to-PDF export.
 - There is no unified `source_read`, `pdf_read`, or `browser_read` tool yet.
@@ -145,7 +155,20 @@ Anthropic's multi-agent research writeup uses a lead agent that plans and
 launches parallel subagents for independent search paths. It also warns by
 example: multi-agent systems buy breadth and coverage with much higher token
 usage, so they must be gated by task shape and measured:
-https://www.anthropic.com/engineering/built-multi-agent-research-system
+https://www.anthropic.com/engineering/multi-agent-research-system
+
+Anthropic's current multi-agent research article sharpens two constraints we
+must keep: multi-agent shines on breadth-first research with independent search
+paths, but it can burn roughly an order of magnitude more tokens than ordinary
+chat. It also recommends explicit effort scaling rules, detailed delegation
+prompts, and lead-agent synthesis after subagents return findings:
+https://www.anthropic.com/engineering/multi-agent-research-system
+
+Claude Code subagents are also a useful external UX/tool-surface reference:
+subagents are separate context windows with focused prompts, specific tool
+access, independent permissions, and are meant to keep high-volume search/log
+output out of the main conversation:
+https://code.claude.com/docs/en/sub-agents
 
 OpenAI BrowseComp is useful as a design signal: hard browsing requires
 persistence, search reformulation, short verifiable answers, and the
@@ -162,6 +185,11 @@ and explicitly asks users not to reshare validation/test content. Use it as a
 benchmark family reference only unless a private eval environment is configured:
 https://huggingface.co/datasets/gaia-benchmark/GAIA
 
+Deep Research Bench is a useful benchmark design reference because it combines
+multi-step web tasks, human-worked answers, a frozen RetroSearch environment,
+and trace-level evaluation for hallucinations, tool use, and forgetting:
+https://arxiv.org/abs/2506.06287
+
 ## Best From Neighbor Projects
 
 ### OpenClaude
@@ -177,6 +205,9 @@ Useful patterns from `/home/roman/pyprojects/ML/openclaude`:
   when work is independent.
 - `AgentTool` warns not to read child transcripts just to peek, because that
   pulls tool noise into parent context.
+- `AgentTool` distinguishes fresh subagents from forks: fresh workers need a
+  self-contained brief; fork-like workers inherit context but should still
+  return only what the parent needs.
 - Large tool results are persisted to session-local `tool-results` files with
   a preview and a path.
 - The agent list can be injected as a message rather than embedded in the tool
@@ -229,6 +260,9 @@ Adopt:
 - Parent owns `research/report.md`; children write notes only or return compact
   summaries.
 - Add stale artifact edit detection and repeated-read/search loop guards.
+- Add large-result spill-to-file with a short preview before exposing tool
+  outputs back to the model; do this for web/PDF/browser reads and subagent
+  summaries before raising context budgets.
 - Keep browser capability off by default and introduce it as hard-only fallback
   with provider isolation, URL safety, secret redaction, SSRF/IMDS blocks,
   screenshot artifacts, and strict step budgets.
@@ -248,6 +282,35 @@ become executable:
   thorough".
 
 ## Architecture Profiles
+
+These are workload and cost profiles, not competing architecture variants. The
+same stable runtime contract should support all three profiles. The profiles
+change budgets, allowed tool surface, source thresholds, subagent fan-out, and
+artifact requirements.
+
+Do not benchmark architecture variants until the Phase 0.5 contract triage gate
+passes. A failed run with unknown tools, missing trace projection, or denied
+phase tools tells us the runtime contract is broken; it does not tell us whether
+one Deep Research architecture is better than another.
+
+### Architecture Variants To Compare Later
+
+After the contract is stable, compare these variants under the same
+light/medium/hard profiles:
+
+- Variant A: prompt-led ReAct with artifact tools. This is closest to the
+  current system and is the baseline. The model sees the workflow instructions
+  and tools, then decides the sequence.
+- Variant B: controller-led artifact-first workflow. The runtime reserves
+  report and ledger artifacts, owns phase transitions, inserts mandatory repair
+  tool calls, and blocks long chat prose before the report exists.
+- Variant C: research graph with role-specialized workers. The parent runs a
+  fixed graph of discovery, verification, writing, and audit roles. This is the
+  hard-mode candidate and should be tested only after Variant B is reliable.
+
+Initial recommendation: stabilize Variant B for `medium`. Keep Variant A only
+as a regression baseline, and delay Variant C until `source_read`, report
+editing, subagent summaries, Phoenix links, and UI artifacts are reliable.
 
 ### Profile 1: Light
 
@@ -863,23 +926,323 @@ UX acceptance metrics:
 
 Goal: make the current failure impossible to hand-wave.
 
+Live Deep Research tests are valid only when all observability channels are
+enabled together:
+
+- durable runtime store: `AGENT_DRIVER_RUNTIME_STORE_KIND=sqlite` or `jsonl`;
+  for SQLite use `AGENT_DRIVER_SQLITE_PATH`, not a non-existent
+  `AGENT_DRIVER_RUNTIME_STORE_SQLITE_PATH`;
+- run-scoped sessions/workspace paths under the artifact directory;
+- Phoenix tracing: `CHAT_DEMO_TRACING_ENABLED=true`,
+  `PHOENIX_COLLECTOR_ENDPOINT=...`;
+- backend/frontend/live-probe logs captured to the same artifact directory;
+- Playwright screenshots and transcript excerpts;
+- `/api/chat/runs/{run_id}/trace-summary` and workspace artifact snapshots.
+
+If any of these are missing, the run is a harness failure, not a Deep Research
+baseline. Do not make architecture decisions from a run that used the in-memory
+runtime store or had Phoenix disabled.
+
+Before a Deep Research live run, run one short live model/tool preflight
+scenario, for example `model-preflight-search-fetch`. This verifies provider
+configuration, SSE streaming, tool execution, trace summary, Phoenix export,
+and durable event persistence without the entropy of Deep Research. The
+preflight may be skipped only when a recorded fingerprint of the relevant
+provider/runtime/tool/SSE/probe code is unchanged since the last passing
+preflight.
+
 Checklist:
 
-- [ ] Run the current fork-join prompt in the chat demo with live model.
-- [ ] Save Playwright full-page screenshot.
-- [ ] Save `/api/chat/runs/{run_id}/trace-summary`.
+- [x] Run model/tool preflight or record that the code fingerprint is unchanged
+  from the last passing preflight.
+- [x] Confirm `/api/health` reports a non-memory runtime store.
+- [x] Confirm `/api/health` reports Phoenix tracing enabled.
+- [x] Run the current fork-join prompt in the chat demo with live model.
+- [x] Save Playwright full-page screenshot.
+- [x] Save `/api/chat/runs/{run_id}/trace-summary`.
 - [ ] Save Phoenix trace link or exported trace data.
-- [ ] Save backend logs around run start/end and tool calls.
-- [ ] Confirm whether `deep_research_artifact_expected` is true.
-- [ ] Confirm tool chain contains or lacks `file_write`, `read_file`,
+- [x] Save backend logs around run start/end and tool calls.
+- [x] Confirm whether `deep_research_artifact_expected` is true.
+- [x] Confirm tool chain contains or lacks `file_write`, `read_file`,
   `file_patch`, `agent_tool`.
-- [ ] Confirm visible plan completion state at final.
-- [ ] Record token usage, cost, search/fetch counts, artifact paths.
+- [x] Confirm visible plan completion state at final.
+- [x] Record token usage, cost, search/fetch counts, artifact paths.
 
 Gate:
 
 - Do not change architecture until one current failure and one current pass are
   captured with screenshots and scorecards.
+- A Deep Research run without durable DB, Phoenix, logs, screenshots,
+  trace-summary, and workspace artifacts does not satisfy Phase 0.
+
+Execution note 2026-06-02:
+
+- Added `scripts/run_deep_research_live_observed.sh` as the canonical live
+  runner for this phase. It enables SQLite, Phoenix, run-scoped sessions,
+  run-scoped workspace, Playwright artifacts, and a combined `live-run.log`.
+- The runner performs a model/tool preflight (`model-preflight-search-fetch`)
+  before Deep Research unless the fingerprint of relevant provider/runtime/tool
+  and SSE/probe files matches the last passing preflight. Use
+  `DEEP_RESEARCH_FORCE_PREFLIGHT=1` to force the preflight.
+- Fixed observed-run setup issues found during Phase 0:
+  - Phoenix Python dependency was missing from the active `.venv`; installing
+    the backend package enabled `phoenix.otel`.
+  - Phoenix collector/UI must be running at `http://127.0.0.1:6006`; Docker
+    compose service `phoenix` was started and accepted OTLP posts.
+  - The runtime SQLite env var is `AGENT_DRIVER_SQLITE_PATH`.
+  - Live probe must not reuse the latest old session when response headers are
+    unavailable; it now snapshots known run ids before send and waits for a new
+    persisted run.
+  - Live matrix/profile payloads now use valid `profile_source=scenario_forced`.
+- Observed preflight + light run:
+  - command: `DEEP_RESEARCH_PROFILES=light
+    DEEP_RESEARCH_QUESTION_ID=fork-join-canary
+    DEEP_RESEARCH_FORCE_PREFLIGHT=1
+    CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-observed-light-20260602
+    scripts/run_deep_research_live_observed.sh`;
+  - preflight passed: `run_d7d45bdb25a5`, tools `web_search -> web_fetch`,
+    7,505 tokens;
+  - light fork-join failed despite expected answer present:
+    `run_c609f547c5d6`, 21,563 tokens,
+    `skill_tool -> web_search -> web_search -> web_fetch...`,
+    failure `insufficient_research_source_diversity`;
+  - health confirmed `store_kind=sqlite`, `tracing.enabled=true`,
+    provider healthy.
+- Observed medium run:
+  - command: `DEEP_RESEARCH_PROFILES=medium
+    DEEP_RESEARCH_QUESTION_ID=fork-join-canary
+    CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-observed-medium-20260602
+    scripts/run_deep_research_live_observed.sh`;
+  - preflight was skipped because the fingerprint matched the last passing
+    preflight;
+  - medium fork-join failed: `run_db249d1295d8`, terminal `run_failed`,
+    102,572 tokens, 3 child runs completed;
+  - workspace snapshot did contain `research/report.md` and
+    `research/sources.jsonl`, but trace-summary/scorecard/UI treated the report
+    as missing because no recognized `research/report.md` artifact update or
+    `file_write` report event was recorded;
+  - failures: `run_failed_or_cancelled`, `unknown_tool_call`,
+    `deep_research_no_report_artifact`, `deep_research_missing_initial_todo`,
+    `deep_research_skill_denied`, `deep_research_phase_violation`;
+  - phase violations: 12, first tool was `skill_tool` while phase gate expected
+    `todo_write`;
+  - tool chain included repeated `read_file`/artifact calls and both
+    `artifact_list` and unexpected `artifacts_list`, which should be treated as
+    a capability/prompt mismatch.
+- Phoenix evidence: container logs show repeated `POST /v1/traces 200 OK` while
+  the observed runs executed. Manual review in Phoenix UI remains required for
+  per-span interpretation.
+- Phoenix API note: the local Phoenix UI responded on 2026-06-02 with
+  `platformVersion=13.20.0`, `/healthz=OK`, and GraphQL fields including
+  `projects`, `getTraceByOtelId`, and `getSpanByOtelId`. Phase 0.5 should add a
+  small exporter instead of relying on manual UI screenshots.
+- Implementation note 2026-06-02:
+  - Added `scripts/export_phoenix_evidence.py`, which exports Phoenix GraphQL
+    project counters and selected project evidence to `phoenix-evidence.json`.
+  - `scripts/run_deep_research_live_observed.sh` now writes Phoenix evidence
+    after the live run even when the matrix fails, then returns the original run
+    exit code.
+  - Phoenix health status now distinguishes `configured` from `enabled` and
+    includes project/endpoint metadata.
+  - Trace summaries now expose `report_trace_update_seen` and
+    `report_write_seen`.
+  - Live scorecards now print `report_projection` fields and classify
+    workspace-vs-trace report disagreements as projection mismatches.
+  - Frontend artifact panel now invalidates workspace artifacts on
+    `artifact_created`/`artifact_updated` SSE events and can show known report
+    artifacts from run-level `DeepResearchViewState` while the workspace query
+    is stale.
+  - Live probe now stops doomed runs early on unknown tool calls, excessive
+    phase violations, or token-budget runaway before report projection.
+  - Repository scan found no `artifacts_list` prompt/repair path outside
+    observed-run documentation and the regression test for unknown-tool
+    detection; canonical tool names remain `artifact_list`, `artifact_read`,
+    and `artifact_preview`.
+  - Curated research skill reminder now includes `trusted_roots` alongside
+    `base_dir`, so bundled skills can be discovered/viewed without workspace
+    jail denial.
+  - Deep Research phase allowed tools were relaxed to permit skill bootstrap
+    before todo, todo progress updates after planning, and artifact preview/read
+    during write/review.
+
+Interpretation:
+
+- The preflight pass means provider, basic web tools, SSE, durable store, and
+  Phoenix ingestion can work together.
+- The light failure is expected for the current harness but not acceptable:
+  the profile still spent 21k tokens, loaded `skill_tool`, wrote a long answer,
+  and failed source diversity. That means light needs its own prompt/budget and
+  profile-specific score thresholds instead of inheriting Deep Research
+  expectations.
+- The medium failure is not a research-quality result yet. It is a contract
+  failure: unknown tool vocabulary, phase gate/tool-order mismatch, report
+  artifact projection mismatch, and token-budget runaway happened before we can
+  fairly judge the research architecture.
+- The workspace-vs-trace disagreement is a blocker for benchmark decisions. A
+  run where `research/report.md` exists in the workspace but the scorecard says
+  it is missing must be classified as instrumentation/controller failure until
+  the projection is fixed.
+- Do not compare architecture variants yet. First build one contract-correct
+  medium baseline that can create the report, show it in UI, record it in
+  trace-summary, and stop before wasting 100k tokens on a doomed run.
+
+Observed rerun note 2026-06-02:
+
+- Phase 0.5 light canary passed with SQLite, Phoenix, Playwright, logs, and
+  workspace snapshots enabled:
+  - command: `DEEP_RESEARCH_PROFILES=light
+    DEEP_RESEARCH_QUESTION_ID=fork-join-canary
+    DEEP_RESEARCH_FORCE_PREFLIGHT=1
+    CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-observed-light-phase05-20260602
+    scripts/run_deep_research_live_observed.sh`;
+  - preflight passed with `web_search -> web_fetch`;
+  - light run passed, terminal `run_completed`, no report artifact expected,
+    no failures, 22,625 tokens, chain
+    `skill_tool -> web_search -> web_search -> web_search -> web_fetch...`;
+  - Phoenix evidence was exported to `phoenix-evidence.json`.
+- The light result is contract-correct but still inefficient. It should not
+  load Deep Research skill by default, and its score should reward compact
+  source-backed answers instead of broad Deep Research behavior.
+- Phase 0.5 medium rerun was manually stopped after it exceeded the useful
+  observation window:
+  - command: `DEEP_RESEARCH_PROFILES=medium
+    DEEP_RESEARCH_QUESTION_ID=fork-join-canary
+    CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-observed-medium-phase05-20260602
+    scripts/run_deep_research_live_observed.sh`;
+  - workspace contained `research/report.md` and `research/sources.jsonl`;
+  - parent trace still did not see parent-owned report/source-ledger creation;
+  - partial parent chain was
+    `skill_tool -> todo_write -> skill_view -> glob_search -> glob_search ->
+    todo_write -> agent_tool -> agent_tool -> agent_tool`;
+  - parent started another child wave after earlier children completed;
+  - partial failures remained `missing_terminal_event`,
+    `missing_required_research_evidence`, `subagent_no_final`,
+    `deep_research_no_report_artifact`,
+    `deep_research_no_source_ledger_artifact`,
+    `deep_research_missing_initial_todo`, and `deep_research_skill_denied`.
+- Interpretation: the medium blocker is no longer only unknown tool names. The
+  controller must enforce parent-owned artifacts and bounded child fan-out.
+  Children may gather compact source notes, but the parent must create/update
+  `research/report.md` and `research/sources.jsonl` in its own run trace.
+- Follow-up medium rerun after bounded-child fixes:
+  - command: `DEEP_RESEARCH_PROFILES=medium
+    DEEP_RESEARCH_QUESTION_ID=fork-join-canary
+    DEEP_RESEARCH_LIMIT=1
+    CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-observed-medium-phase05b-20260602
+    scripts/run_deep_research_live_observed.sh`;
+  - preflight passed again because the code fingerprint changed;
+  - result still failed, but differently: no unknown tools, no unbounded child
+    wave, `runs_started=2`, `runs_completed=2`, `groups_joined=1`;
+  - total tokens: 66,944, which is still too high for a failed medium canary;
+  - workspace contained `research/report.md` and `research/sources.jsonl`, but
+    parent trace still had no recognized `file_write`/artifact update and no
+    parent-owned source ledger;
+  - `research/report.md` was a child long-final auto-capture, not a real parent
+    synthesis. It contained “ready-to-save Markdown” and `Fetched/Read: No`
+    entries, so it must not count as a successful medium report;
+  - child prompts still contained stale “Write a summary to research/...”
+    instructions, causing a denied `write_file` attempt and another LLM retry;
+  - UI still showed `Artifacts (0)` / report not started while workspace
+    preview could read the file, confirming the projection/ownership problem.
+- Follow-up medium rerun after disabling child artifact capture:
+  - command: `DEEP_RESEARCH_PROFILES=medium
+    DEEP_RESEARCH_QUESTION_ID=fork-join-canary
+    DEEP_RESEARCH_LIMIT=1
+    CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-observed-medium-phase05c-20260602
+    scripts/run_deep_research_live_observed.sh`;
+  - run was stopped manually after it exposed the next contract bug;
+  - child no longer created workspace files or attempted `write_file`;
+  - child still inherited parent Deep Research repair metadata, so the runtime
+    tried to force child `web_fetch`/`todo_write` repair loops even though the
+    child worker surface intentionally excludes `todo_write`;
+  - fix: `deep_research_child_notes_only` children now strip parent
+    `deep_research_mode`, `deep_research_phase_gate`, and parent
+    `task_contract` from the child tool policy. Children keep only their worker
+    role/tool surface and return source notes to the parent.
+
+### Phase 0.5: Observed Contract Triage Before Architecture Comparison
+
+Goal: repair the mismatches exposed by the observed runs before more expensive
+Deep Research benchmarking.
+
+Checklist:
+
+- [x] Export or link at least one Phoenix trace for the observed preflight,
+  light, and medium runs. Container `POST /v1/traces 200 OK` is necessary but
+  not enough.
+- [x] Fix Phoenix status normalization so health, scorecards, and trace-summary
+  agree on `enabled`, `configured`, endpoint, and last-export evidence.
+- [x] Fix report artifact detection:
+  - workspace `research/report.md` existence counts as report existence;
+  - trace artifact updates, `file_write`, `file_edit`, `file_patch`, and
+    artifact preview/read events are reconciled by path;
+  - scorecard reports `workspace_exists`, `trace_update_seen`,
+    `trace_path_seen`, and `report_write_seen` separately.
+- [x] Fix UI artifact projection when the workspace has report artifacts but
+  the run header still shows `Artifacts (0)`.
+- [x] Canonicalize artifact tool vocabulary:
+  - supported names are `artifact_list`, `artifact_read`, `artifact_preview`;
+  - prompts, skills, tests, and error-repair hints must not suggest
+    `artifacts_list`;
+  - unknown artifact tool calls should trigger immediate repair/abort, not
+    another long LLM loop.
+- [x] Revisit phase gate strictness:
+  - decide whether `skill_tool` is allowed before the first `todo_write`;
+  - allow `todo_write` progress updates outside the initial plan phase;
+  - allow verification tools in the real phase where they are required;
+  - start with warn-and-repair mode, then move to hard-deny only after the
+    observed medium canary passes.
+- [x] Add early abort thresholds:
+  - abort/repair after unknown tool call;
+  - abort after more than N phase violations;
+  - abort if medium exceeds the configured token budget before a recognized
+    report artifact exists;
+  - abort if medium/hard starts more child runs than the profile budget allows;
+  - abort if the report exists in workspace but cannot be projected into
+    trace-summary/UI.
+- [ ] Split light scoring from medium/hard scoring:
+  - light may require one fetched source/domain and a short answer;
+  - light must not require report artifacts or subagents;
+  - light should not load Deep Research skill unless explicitly requested.
+- [x] Run the preflight again only if the fingerprint changed; otherwise reuse
+  the recorded passing fingerprint.
+- [x] Re-run one light canary with SQLite, Phoenix, logs, screenshots,
+  trace-summary, and workspace artifacts enabled.
+- [ ] Re-run one medium fork-join canary with SQLite, Phoenix, logs,
+  screenshots, trace-summary, and workspace artifacts enabled after the
+  parent-owned artifact/subagent fan-out fixes.
+- [x] Enforce Deep Research child ownership defaults:
+  - medium children default to `researcher` worker surface;
+  - children do not inherit `file_write`, `file_edit`, `file_patch`, or
+    `agent_tool` unless a later hard profile explicitly opts in;
+  - child prompts say to return compact source notes only.
+- [x] Disable Deep Research artifact auto-capture and source-ledger persistence
+  for child runs. Child final answers must not become parent
+  `research/report.md`.
+- [x] Sanitize child prompts so stale instructions like “write a summary to
+  research/*.md” are rewritten into “return notes to the parent”.
+- [x] Strip parent Deep Research contract metadata from child notes workers so
+  they do not enter parent repair loops or try `todo_write`.
+- [x] Enforce bounded medium child fan-out:
+  - light max child requests: 0;
+  - medium max child requests: 2;
+  - hard max child requests: 4;
+  - extra `agent_tool` requests are recorded as subagent backpressure instead
+    of opening another child wave.
+- [x] Add matching live-probe early stop for subagent fan-out so profile
+  runaway is cancelled before another expensive child wave.
+- [ ] Ensure the parent creates or patches `research/report.md` and
+  `research/sources.jsonl` after child join, even when children return useful
+  notes.
+- [ ] Make parent trace-summary optionally show child evidence separately
+  (`child_search_count`, `child_fetch_count`, `child_verified_read_count`) while
+  keeping medium readiness gated on parent-owned synthesis.
+
+Gate:
+
+- Do not begin architecture-variant comparison until the medium canary fails
+  only for research quality/source coverage, not for unknown tools, missing
+  report projection, phase-policy mismatch, or absent Phoenix evidence.
 
 ### Phase 1: Capability Surface Fix
 
@@ -904,6 +1267,10 @@ Checklist:
   - hard: verifier/auditor and export.
 - [ ] Add a prompt/contract check that rejects non-existent tool names in skill
   metadata during startup or tests.
+- [x] Add profile-level `max_subagent_requests` to the Deep Research task
+  contract and runtime reminders.
+- [x] Default Deep Research `agent_tool` children to the `researcher` worker
+  surface so they can search/fetch/read but cannot write parent artifacts.
 
 Execution note 2026-06-02:
 
@@ -912,6 +1279,8 @@ Execution note 2026-06-02:
   discovery.
 - Skill metadata tests now reject the stale `run_subagent` name for the bundled
   Deep Research skill.
+- Medium `agent_tool` planning now applies a total child-request cap and records
+  skipped requests in `subagent_backpressure`.
 - Dedicated `research_light` / `deep_research_medium` /
   `deep_research_hard` presets are still pending.
 
@@ -1068,10 +1437,37 @@ Execution note 2026-06-02:
   and the message metadata popover includes research mode/profile details.
 - Manual Playwright checks verified the selector and payload. Screenshot:
   `/tmp/chat-demo-mode-selector.png`.
-- Remaining UI work: run header/cockpit/final-handoff chips, durable
-  run-level projection endpoint, reload hydration, and committed Playwright e2e
-  assertions.
-- [ ] Define one normalized run-level state object for Deep Research UI:
+- Remaining UI work: run header/cockpit/final-handoff chips, frontend
+  run-level state, reload hydration, and committed Playwright e2e assertions.
+
+Execution note 2026-06-02:
+
+- Added `GET /api/chat/runs/{run_id}/deep-research-state`.
+- Added typed backend `DeepResearchViewState` response with mode/profile,
+  phase, readiness, todo progress, artifacts, source counts, subagent summary,
+  token/tool metrics, warnings, and trace subset.
+- The projection is built from stored stream events, trace summary, session
+  metadata, and workspace artifact inspection.
+- Added typed frontend `DeepResearchViewState` API models and
+  `fetchDeepResearchState(runId)`.
+- Added backend endpoint coverage through the ASGI test client.
+- Remaining UI work: frontend reload/SSE hydration edge cases, full research
+  drawer, source row sections, subagent rollup cards, and committed Playwright
+  checks against the live UI.
+
+Execution note 2026-06-02:
+
+- Added a run-level `deepResearchView` slice to the chat store.
+- `ChatPage` now fetches `DeepResearchViewState` for the latest run and stores
+  it separately from message-level diagnostics.
+- Terminal run handling invalidates the deep-research-state query so completed
+  runs can refresh the canonical projection.
+- Added a compact Deep Research status bar showing profile, phase/todos, source
+  counts, report status, and readiness warning.
+- Remaining UI work: active SSE merge into the same state, full drawer/tabs,
+  source row sections, subagent rollup cards, and committed Playwright
+  screenshot checks.
+- [x] Define one normalized run-level state object for Deep Research UI:
   - phase;
   - todo progress;
   - report artifact status;
@@ -1079,13 +1475,13 @@ Execution note 2026-06-02:
   - subagent group summaries;
   - warning/health flags;
   - trace-summary/run ids.
-- [ ] Add backend projection endpoint:
+- [x] Add backend projection endpoint:
   `GET /api/chat/runs/{run_id}/deep-research-state`.
-- [ ] Build the projection from stored stream events, trace summary, session
+- [x] Build the projection from stored stream events, trace summary, session
   metadata, and workspace artifact inspection.
-- [ ] Add typed frontend API/schema for `DeepResearchViewState`; do not leave
+- [x] Add typed frontend API/schema for `DeepResearchViewState`; do not leave
   research diagnostics as `Record<string, unknown>`.
-- [ ] Add a run-level store slice for Deep Research view state. Message-level
+- [x] Add a run-level store slice for Deep Research view state. Message-level
   panels should consume a derived compact summary, not own the canonical state.
 - [ ] Add reload/hydration behavior:
   - opening an existing session fetches replay plus deep research state;
@@ -1460,14 +1856,21 @@ into docs, prompts, or public artifacts.
 ### Run Matrix
 
 ```bash
-CHAT_DEMO_URL=http://localhost:5174 \
 CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-deep-research \
-  .venv/bin/python scripts/deep_research_live_matrix.py \
-  --profiles light,medium \
-  --limit 3
+PHOENIX_COLLECTOR_ENDPOINT=http://127.0.0.1:6006/v1/traces \
+DEEP_RESEARCH_PROFILES=light,medium \
+DEEP_RESEARCH_LIMIT=3 \
+  scripts/run_deep_research_live_observed.sh
 ```
 
-Use `--dry-run` to print the matrix without spending model tokens.
+Use `scripts/deep_research_live_matrix.py --dry-run` to print the matrix
+without spending model tokens. Actual Deep Research live runs should use
+`scripts/run_deep_research_live_observed.sh`, because it enables SQLite,
+Phoenix, run-scoped artifacts, logs, and the model/tool preflight gate.
+
+The wrapper runs `model-preflight-search-fetch` before the matrix unless the
+fingerprint of relevant provider/runtime/tool/SSE/probe code matches the last
+passing preflight. Use `DEEP_RESEARCH_FORCE_PREFLIGHT=1` to force it.
 
 ### Audit Trace Artifacts
 
@@ -1635,27 +2038,46 @@ Deep Research is not considered fixed until all are true:
 
 ## Immediate Next Work Order
 
-1. Run `scripts/deep_research_live_matrix.py --dry-run` and confirm the matrix.
-2. Run one `light` live question to validate script plumbing.
-3. Fix Deep Research subagent availability and stale skill metadata.
-4. Run one `medium` live question and expect it to fail only on missing
-   artifact/controller gates, not tool availability.
-5. Implement artifact-first controller gates.
-6. Re-run medium fork-join canary until no long chat rewrite occurs.
-7. Implement typed Deep Research mode/profile settings in the frontend,
-   temporary backend compatibility mapping, and run metadata persistence.
-8. Replace the binary `Deep` toggle with the mode/profile selector and add
-   Playwright assertions for payload, hard opt-in, streaming lock, and reload.
-9. Implement the backend `DeepResearchViewState` projection endpoint and typed
-   frontend state model.
-10. Implement the Deep Research cockpit/compact bar and Playwright screenshot
-   checks.
-11. Implement `source_read` over existing `web_fetch` and source ledger before
+Revalidated on 2026-06-02 against the current code, OpenClaude, Hermes Agent,
+OpenAI Deep Research docs, Claude Code subagent docs, Anthropic multi-agent
+research guidance, and Deep Research Bench. The plan is still directionally
+correct, but the next bottleneck is no longer "enable subagents"; it is
+parent-owned synthesis after bounded child joins.
+
+1. Finish the Phase 0.5 parent-synthesis handoff before another medium live
+   spend:
+   - after child joins, the parent must summarize child notes into
+     `research/sources.jsonl` or an explicit parent notes file;
+   - the parent must create or patch `research/report.md` itself;
+   - medium readiness must reject child final auto-capture, child artifacts, and
+     unsynthesized child notes.
+2. Add trace-summary and scorecard fields that distinguish parent evidence from
+   child evidence:
+   - `parent_search_count`, `parent_fetch_count`, `parent_verified_read_count`;
+   - `child_search_count`, `child_fetch_count`, `child_verified_read_count`;
+   - `child_summary_chars`, `duplicated_child_queries`, `child_count`.
+3. Add a medium live abort if child joins are complete but the next parent LLM
+   step does not call `file_write`, `file_patch`, `file_edit`, `read_file`,
+   `artifact_preview`, or a ledger-writing tool before producing long prose.
+4. Re-run the short model/tool preflight only if the fingerprint changed.
+5. Re-run one observed `light` canary with SQLite/Phoenix/logs/screenshots:
+   expect short answer, no subagents, no report, no Deep Research skill unless
+   explicitly requested, and profile-specific source thresholds.
+6. Re-run one observed `medium` fork-join canary:
+   expect report visible in workspace, trace-summary, and UI; no unknown tools;
+   no child artifact substitution; no 100k-token runaway; any remaining failure
+   should be source quality or research completeness, not runtime contract.
+7. After the medium canary passes twice, continue Phase 1/2 implementation work:
+   capability surface cleanup, artifact-first controller gates, durable UI
+   cockpit, and reload hydration.
+8. Implement `source_read` over existing `web_fetch` and source ledger before
    adding any browser fallback.
-12. Add `pdf_read` with validation/page-range extraction and hard-profile trace
+9. Add `pdf_read` with validation/page-range extraction and hard-profile trace
    metrics.
-13. Add raw Markdown/PDF endpoints and download buttons.
-14. Add `browser_read` only as hard fallback with security tests and live
-   screenshot artifacts.
-15. Run hard profile with verifier/auditor, PDF, browser-read fallback, and
-   export checks.
+10. Add raw Markdown/PDF endpoints and download buttons.
+11. Add `browser_read` only as hard fallback with security tests and live
+    screenshot artifacts.
+12. Compare architecture variants A/B/C only after the medium baseline is
+    contract-correct and passes the fork-join canary twice.
+13. Run hard profile with verifier/auditor, PDF, browser-read fallback, and
+    export checks.

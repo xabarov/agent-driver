@@ -14,27 +14,42 @@ from agent_driver.runtime.tool_gate import (
 DEFAULT_REQUIRED_FETCH_ATTEMPTS = 2
 
 _PHASE_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
-    "plan": frozenset({"todo_write"}),
+    "plan": frozenset({"todo_write", "skill_tool", "skill_view"}),
     "discover": frozenset(
         {
             "agent_tool",
             "skill_tool",
             "skill_view",
             "web_search",
+            "web_fetch",
             "glob_search",
             "grep_search",
             "read_file",
+            "todo_write",
         }
     ),
-    "verify": frozenset({"web_fetch", "web_search", "read_file"}),
-    "write": frozenset({"file_write", "read_file", "artifact_list"}),
+    "verify": frozenset({"web_fetch", "web_search", "read_file", "todo_write"}),
+    "write": frozenset(
+        {
+            "file_write",
+            "file_edit",
+            "file_patch",
+            "read_file",
+            "artifact_list",
+            "artifact_read",
+            "artifact_preview",
+            "todo_write",
+        }
+    ),
     "review": frozenset(
         {
+            "artifact_list",
             "artifact_preview",
             "artifact_read",
             "read_file",
             "file_patch",
             "file_edit",
+            "web_fetch",
             "todo_write",
         }
     ),
@@ -65,6 +80,8 @@ class DeepResearchPhaseGateState:
     def observe_allowed_tool(self, tool_name: str, args: dict[str, object]) -> None:
         if tool_name == "todo_write":
             self.plan_created = True
+        elif tool_name in {"skill_tool", "skill_view"}:
+            return
         elif tool_name == "web_search":
             self.search_seen = True
         elif tool_name == "web_fetch":

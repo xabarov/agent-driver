@@ -49,7 +49,13 @@ def test_setup_phoenix_tracing_uses_optional_register(monkeypatch) -> None:
         )
     )
 
-    assert status == {"enabled": True, "error": None}
+    assert status == {
+        "enabled": True,
+        "configured": True,
+        "project_name": "agent-driver-test",
+        "endpoint": "http://phoenix:6006/v1/traces",
+        "error": None,
+    }
     assert calls == [
         {
             "project_name": "agent-driver-test",
@@ -65,7 +71,13 @@ def test_setup_phoenix_tracing_disabled_is_noop() -> None:
     _reset_phoenix_tracing_for_tests()
     status = setup_phoenix_tracing(PhoenixTracingConfig(enabled=False))
 
-    assert status == {"enabled": False, "error": None}
+    assert status == {
+        "enabled": False,
+        "configured": False,
+        "project_name": None,
+        "endpoint": None,
+        "error": None,
+    }
     assert phoenix_tracing_status() == status
 
 

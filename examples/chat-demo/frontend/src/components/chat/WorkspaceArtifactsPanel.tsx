@@ -21,16 +21,18 @@ import { ScrollArea } from "../ui/scroll-area";
 interface WorkspaceArtifactsPanelProps {
   sessionId: string;
   disabled?: boolean;
+  knownArtifacts?: WorkspaceArtifactView[];
 }
 
 export function WorkspaceArtifactsPanel({
   sessionId,
   disabled,
+  knownArtifacts = [],
 }: WorkspaceArtifactsPanelProps) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const artifactsQuery = useWorkspaceArtifacts(sessionId);
-  const artifacts = artifactsQuery.data?.artifacts ?? [];
+  const artifacts = mergeArtifacts(artifactsQuery.data?.artifacts ?? [], knownArtifacts);
   const [selectedPath, setSelectedPath] = useState<string | undefined>();
   const activePath = selectedPath ?? preferredArtifactPath(artifacts);
   const previewQuery = useWorkspaceArtifactPreview(
@@ -158,6 +160,28 @@ function preferredArtifactPath(artifacts: WorkspaceArtifactView[]): string | und
     artifacts.find((item) => item.path === "research/report.md")?.path ??
     artifacts[0]?.path
   );
+}
+
+function mergeArtifacts(
+  workspaceArtifacts: WorkspaceArtifactView[],
+  knownArtifacts: WorkspaceArtifactView[],
+): WorkspaceArtifactView[] {
+  const byPath = new Map<string, WorkspaceArtifactView>();
+  for (const artifact of knownArtifacts) {
+    byPath.set(artifact.path, artifact);
+  }
+  for (const artifact of workspaceArtifacts) {
+    byPath.set(artifact.path, artifact);
+  }
+  return Array.from(byPath.values()).sort((left, right) => {
+    if (left.path === "research/report.md") {
+      return -1;
+    }
+    if (right.path === "research/report.md") {
+      return 1;
+    }
+    return left.path.localeCompare(right.path);
+  });
 }
 
 function previewText(

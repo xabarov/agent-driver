@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from playwright.sync_api import Page, expect, sync_playwright
 
@@ -30,6 +31,10 @@ ARTIFACT_DIR = Path(
     os.environ.get("CHAT_DEMO_LIVE_ARTIFACT_DIR", "/tmp/chat-demo-live")
 )
 MODEL_OVERRIDE = os.environ.get("CHAT_DEMO_LIVE_MODEL")
+REQUIRE_OBSERVABILITY = (
+    os.environ.get("CHAT_DEMO_LIVE_REQUIRE_OBSERVABILITY", "1").strip().lower()
+    not in {"0", "false", "no"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +46,9 @@ class LiveScenario:
     required_tools: tuple[str, ...] = ()
     forbidden_tools: tuple[str, ...] = ()
     tool_preset: str | None = None
+    research_mode: str | None = None
+    research_profile: str | None = None
+    profile_source: str | None = None
     requires_subagent: bool = False
     requires_parent_synthesis: bool = False
     required_prompt_fragments: tuple[str, ...] = ()
@@ -59,6 +67,9 @@ class LiveScenario:
     required_artifact_preview: str | None = None
     require_artifact_panel: bool = False
     require_research_efficiency: bool = False
+    max_phase_violations_before_stop: int | None = 4
+    max_tokens_before_report_projection: int | None = 60000
+    max_subagent_runs_before_stop: int | None = None
     timeout_ms: int = 180000
     forbidden_failures: tuple[str, ...] = (
         "stuck_on_interrupt",
@@ -238,6 +249,9 @@ SCENARIOS: dict[str, LiveScenario] = {
         required_tools=("todo_write", "web_search", "web_fetch", "file_write"),
         forbidden_tools=("bash", "python"),
         tool_preset="deep_research",
+        research_mode="deep",
+        research_profile="medium",
+        profile_source="scenario_forced",
         research_depth="deep_parallel_research",
         required_prompt_fragments=(
             "react_chat_tool_policy_research_discipline.txt",
@@ -295,6 +309,9 @@ SCENARIOS: dict[str, LiveScenario] = {
         ),
         forbidden_tools=("bash", "python"),
         tool_preset="deep_research",
+        research_mode="deep",
+        research_profile="medium",
+        profile_source="scenario_forced",
         research_depth="deep_parallel_research",
         required_prompt_fragments=(
             "react_chat_tool_policy_research_discipline.txt",
@@ -345,6 +362,9 @@ SCENARIOS: dict[str, LiveScenario] = {
         required_tools=("todo_write", "web_search", "web_fetch", "file_write"),
         forbidden_tools=("bash", "python"),
         tool_preset="deep_research",
+        research_mode="deep",
+        research_profile="medium",
+        profile_source="scenario_forced",
         research_depth="deep_parallel_research",
         required_prompt_fragments=(
             "react_chat_tool_policy_research_discipline.txt",
@@ -556,6 +576,7 @@ class ChatRunIds:
 
 
 def send_message_and_capture_run_ids(page: Page, text: str) -> ChatRunIds:
+    existing_run_ids = fetch_known_run_ids(page)
     textbox = page.get_by_role("textbox", name="Message the assistant…")
     textbox.fill(text)
     with page.expect_response(
@@ -564,39 +585,117 @@ def send_message_and_capture_run_ids(page: Page, text: str) -> ChatRunIds:
         timeout=15000,
     ) as response_info:
         page.get_by_role("button", name="Send").click()
-    run_id = response_info.value.headers.get("x-run-id")
+    response = response_info.value
+    if not response.ok:
+        try:
+            body = response.text()[:1000]
+        except Exception as exc:
+            body = f"<response body unavailable: {exc}>"
+        raise AssertionError(
+            f"chat/messages failed: status={response.status} body={body}"
+        )
+    run_id = response.headers.get("x-run-id")
+    session_id = response.headers.get("x-session-id")
+    if not run_id or not session_id:
+        fallback_ids = wait_for_run_ids_from_sessions(
+            page,
+            existing_run_ids=existing_run_ids,
+        )
+        run_id = run_id or fallback_ids.run_id
+        session_id = session_id or fallback_ids.session_id
     if not run_id:
-        raise AssertionError("chat/messages response did not include x-run-id")
-    session_id = response_info.value.headers.get("x-session-id")
+        raise AssertionError("chat/messages response did not include or expose x-run-id")
     if not session_id:
-        raise AssertionError("chat/messages response did not include x-session-id")
+        raise AssertionError("chat/messages response did not include or expose x-session-id")
     return ChatRunIds(run_id=run_id, session_id=session_id)
 
 
+def fetch_known_run_ids(page: Page) -> set[str]:
+    run_ids: set[str] = set()
+    try:
+        sessions_response = page.context.request.get(
+            f"{BASE_URL}/api/sessions",
+            timeout=10000,
+        )
+        if not sessions_response.ok:
+            return run_ids
+        sessions_payload = sessions_response.json()
+        for item in sessions_payload.get("sessions", []):
+            if not isinstance(item, dict):
+                continue
+            session_id = item.get("session_id") or item.get("sessionId")
+            if not session_id:
+                continue
+            detail_response = page.context.request.get(
+                f"{BASE_URL}/api/sessions/{quote(str(session_id), safe='')}",
+                timeout=10000,
+            )
+            if not detail_response.ok:
+                continue
+            detail = detail_response.json()
+            for run_id in detail.get("run_ids", []):
+                if isinstance(run_id, str):
+                    run_ids.add(run_id)
+    except Exception:
+        return run_ids
+    return run_ids
+
+
+def wait_for_run_ids_from_sessions(
+    page: Page,
+    *,
+    existing_run_ids: set[str],
+    timeout_ms: int = 15000,
+) -> ChatRunIds:
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        try:
+            sessions_response = page.context.request.get(
+                f"{BASE_URL}/api/sessions",
+                timeout=10000,
+            )
+            if sessions_response.ok:
+                sessions_payload = sessions_response.json()
+                for item in sessions_payload.get("sessions", []):
+                    if not isinstance(item, dict):
+                        continue
+                    session_id = item.get("session_id") or item.get("sessionId")
+                    if not session_id:
+                        continue
+                    detail_response = page.context.request.get(
+                        f"{BASE_URL}/api/sessions/{quote(str(session_id), safe='')}",
+                        timeout=10000,
+                    )
+                    if not detail_response.ok:
+                        continue
+                    detail = detail_response.json()
+                    for run_id in reversed(detail.get("run_ids", [])):
+                        if isinstance(run_id, str) and run_id not in existing_run_ids:
+                            return ChatRunIds(run_id=run_id, session_id=str(session_id))
+        except Exception:
+            pass
+        time.sleep(0.25)
+    return ChatRunIds(run_id="", session_id="")
+
+
 def fetch_trace_summary(page: Page, run_id: str) -> dict[str, Any]:
-    return page.evaluate(
-        """async (runId) => {
-            const response = await fetch(`/api/chat/runs/${runId}/trace-summary`);
-            if (!response.ok) {
-                throw new Error(`trace summary failed: ${response.status}`);
-            }
-            return await response.json();
-        }""",
-        run_id,
+    response = page.context.request.get(
+        f"{BASE_URL}/api/chat/runs/{quote(run_id, safe='')}/trace-summary",
+        timeout=10000,
     )
+    if not response.ok:
+        raise RuntimeError(f"trace summary failed: {response.status}")
+    return response.json()
 
 
 def fetch_workspace_artifacts(page: Page, session_id: str) -> dict[str, Any]:
-    return page.evaluate(
-        """async (sessionId) => {
-            const response = await fetch(`/api/workspace/${sessionId}/artifacts`);
-            if (!response.ok) {
-                throw new Error(`workspace artifacts failed: ${response.status}`);
-            }
-            return await response.json();
-        }""",
-        session_id,
+    response = page.context.request.get(
+        f"{BASE_URL}/api/workspace/{quote(session_id, safe='')}/artifacts",
+        timeout=10000,
     )
+    if not response.ok:
+        raise RuntimeError(f"workspace artifacts failed: {response.status}")
+    return response.json()
 
 
 def fetch_workspace_artifact_preview(
@@ -605,73 +704,126 @@ def fetch_workspace_artifact_preview(
     session_id: str,
     path: str,
 ) -> dict[str, Any]:
-    return page.evaluate(
-        """async ({sessionId, path}) => {
-            const encodedPath = path.split("/").map(encodeURIComponent).join("/");
-            const response = await fetch(
-                `/api/workspace/${sessionId}/artifacts/${encodedPath}`
-            );
-            if (!response.ok) {
-                throw new Error(`workspace preview failed: ${response.status}`);
-            }
-            return await response.json();
-        }""",
-        {"sessionId": session_id, "path": path},
+    encoded_path = "/".join(quote(part, safe="") for part in path.split("/"))
+    response = page.context.request.get(
+        f"{BASE_URL}/api/workspace/{quote(session_id, safe='')}/artifacts/{encoded_path}",
+        timeout=10000,
     )
+    if not response.ok:
+        raise RuntimeError(f"workspace preview failed: {response.status}")
+    return response.json()
 
 
 def fetch_health_status(page: Page) -> dict[str, Any]:
-    return page.evaluate(
-        """async () => {
-            const response = await fetch(`/api/health`);
-            if (!response.ok) {
-                throw new Error(`health failed: ${response.status}`);
-            }
-            return await response.json();
-        }""",
+    response = page.context.request.get(
+        f"{BASE_URL}/api/health",
+        timeout=10000,
     )
+    if not response.ok:
+        raise RuntimeError(f"health failed: {response.status}")
+    return response.json()
+
+
+def assert_observability_preflight(page: Page) -> dict[str, Any]:
+    health = fetch_health_status(page)
+    if not REQUIRE_OBSERVABILITY:
+        return health
+    failures: list[str] = []
+    if health.get("store_kind") == "memory":
+        failures.append("runtime store is memory; use sqlite/jsonl for live traces")
+    tracing = health.get("tracing") if isinstance(health.get("tracing"), dict) else {}
+    if tracing.get("enabled") is not True:
+        failures.append(f"Phoenix tracing is not enabled: {tracing}")
+    provider = health.get("provider") if isinstance(health.get("provider"), dict) else {}
+    if provider.get("configured") is not True:
+        failures.append(f"provider is not configured: {provider}")
+    if failures:
+        raise AssertionError("observability preflight failed: " + "; ".join(failures))
+    return health
 
 
 def queue_steering_message(page: Page, run_id: str, message: str) -> dict[str, Any]:
-    return page.evaluate(
-        """async ({runId, message}) => {
-            const response = await fetch(`/api/chat/runs/${runId}/control`, {
-                method: "POST",
-                headers: {"content-type": "application/json"},
-                body: JSON.stringify({
-                    kind: "enqueue_user_message",
-                    priority: "next",
-                    payload: {message}
-                })
-            });
-            if (!response.ok) {
-                throw new Error(`control request failed: ${response.status}`);
-            }
-            return await response.json();
-        }""",
-        {"runId": run_id, "message": message},
+    response = page.context.request.post(
+        f"{BASE_URL}/api/chat/runs/{quote(run_id, safe='')}/control",
+        data={
+            "kind": "enqueue_user_message",
+            "priority": "next",
+            "payload": {"message": message},
+        },
+        timeout=10000,
     )
+    if not response.ok:
+        raise RuntimeError(f"control request failed: {response.status}")
+    return response.json()
 
 
 def cancel_run(page: Page, run_id: str) -> dict[str, Any]:
-    return page.evaluate(
-        """async (runId) => {
-            const response = await fetch(`/api/chat/runs/${runId}/cancel`, {
-                method: "POST"
-            });
-            if (!response.ok) {
-                throw new Error(`cancel request failed: ${response.status}`);
-            }
-            return await response.json();
-        }""",
-        run_id,
+    response = page.context.request.post(
+        f"{BASE_URL}/api/chat/runs/{quote(run_id, safe='')}/cancel",
+        timeout=10000,
     )
+    if not response.ok:
+        raise RuntimeError(f"cancel request failed: {response.status}")
+    return response.json()
 
 
 def research_budget_stop_reason(
     scenario: LiveScenario,
     summary: dict[str, Any],
 ) -> str | None:
+    failures = summary.get("failures") if isinstance(summary.get("failures"), dict) else {}
+    if failures.get("unknown_tool_call") is True:
+        unknown_tools = summary.get("unknown_tools")
+        return f"unknown tool call detected: {unknown_tools or 'see trace-summary'}"
+    efficiency = (
+        summary.get("research_efficiency")
+        if isinstance(summary.get("research_efficiency"), dict)
+        else {}
+    )
+    if scenario.require_research_efficiency and isinstance(efficiency, dict):
+        subagents = (
+            summary.get("subagents")
+            if isinstance(summary.get("subagents"), dict)
+            else {}
+        )
+        max_subagents = _max_subagent_runs_before_stop(scenario)
+        started_children = subagents.get("runs_started")
+        if (
+            isinstance(started_children, int)
+            and max_subagents is not None
+            and started_children > max_subagents
+        ):
+            return (
+                "deep research subagent fan-out budget exhausted: "
+                f"{started_children} > {max_subagents}"
+            )
+        phase_violations = efficiency.get("phase_violation_count")
+        max_phase_violations = scenario.max_phase_violations_before_stop
+        if (
+            isinstance(phase_violations, int)
+            and max_phase_violations is not None
+            and phase_violations > max_phase_violations
+        ):
+            return (
+                "deep research phase violation budget exhausted: "
+                f"{phase_violations} > {max_phase_violations}"
+            )
+        max_tokens = scenario.max_tokens_before_report_projection
+        total_tokens = efficiency.get("total_tokens")
+        report_seen = (
+            efficiency.get("report_trace_update_seen") is True
+            or efficiency.get("report_write_seen") is True
+        )
+        if (
+            isinstance(total_tokens, int)
+            and max_tokens is not None
+            and total_tokens > max_tokens
+            and not report_seen
+        ):
+            return (
+                "deep research token budget exhausted before report projection: "
+                f"{total_tokens} > {max_tokens}"
+            )
     if scenario.min_research_domain_count is None:
         return None
     research = summary.get("research") or {}
@@ -699,6 +851,18 @@ def research_budget_stop_reason(
                 "research fetch budget exhausted before source diversity: "
                 f"{fetch_count} fetches, {domain_count} domains"
             )
+    return None
+
+
+def _max_subagent_runs_before_stop(scenario: LiveScenario) -> int | None:
+    if scenario.max_subagent_runs_before_stop is not None:
+        return scenario.max_subagent_runs_before_stop
+    if scenario.research_profile == "light":
+        return 0
+    if scenario.research_profile == "medium":
+        return 2
+    if scenario.research_profile == "hard":
+        return 4
     return None
 
 
@@ -911,6 +1075,50 @@ def assert_trace_acceptance(
     return failures
 
 
+def reconcile_workspace_artifact_failures(
+    *,
+    scenario: LiveScenario,
+    summary: dict[str, Any],
+    failures: list[str],
+    workspace_artifacts: dict[str, Any] | None,
+) -> list[str]:
+    """Replace false report-missing failures with explicit projection mismatch."""
+    required_path = scenario.required_artifact_path
+    if required_path is None or not isinstance(workspace_artifacts, dict):
+        return failures
+    workspace_paths = {
+        str(item.get("path"))
+        for item in workspace_artifacts.get("artifacts", [])
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
+    if required_path not in workspace_paths:
+        return failures
+
+    missing_report_markers = {
+        "failure flag is set: deep_research_no_report_artifact",
+        "research report artifact is missing",
+        f"required artifact missing from trace: {required_path}",
+    }
+    trace_had_report = (
+        required_path
+        in (
+            (summary.get("artifacts") or {}).get("paths")
+            if isinstance(summary.get("artifacts"), dict)
+            else []
+        )
+    )
+    reconciled = [
+        failure for failure in failures if failure not in missing_report_markers
+    ]
+    if len(reconciled) != len(failures) or not trace_had_report:
+        reconciled.append(
+            "report artifact projection mismatch: "
+            f"workspace has {required_path}, but trace/scorecard did not "
+            "recognize a report artifact update"
+        )
+    return reconciled
+
+
 def assert_artifact_panel(
     page: Page,
     *,
@@ -974,6 +1182,12 @@ def render_scenario_scorecard(
         for item in workspace_artifacts.get("artifacts", []):
             if isinstance(item, dict) and isinstance(item.get("path"), str):
                 workspace_paths.append(item["path"])
+    report_path = scenario.required_artifact_path or "research/report.md"
+    trace_paths = artifacts.get("paths") if isinstance(artifacts, dict) else []
+    if not isinstance(trace_paths, list):
+        trace_paths = []
+    report_workspace_exists = report_path in workspace_paths
+    report_trace_path_seen = report_path in trace_paths
     preview_size = None
     preview_truncated = None
     if isinstance(workspace_preview, dict):
@@ -1011,13 +1225,20 @@ def render_scenario_scorecard(
         ),
         (
             "- artifacts: "
-            f"trace=`{', '.join(artifacts.get('paths') or []) or '-'}`, "
+            f"trace=`{', '.join(trace_paths) or '-'}`, "
             f"workspace=`{', '.join(workspace_paths) if workspace_paths else '-'}`, "
             f"report_updates=`{efficiency.get('report_update_count', 0)}`, "
             f"full_writes=`{efficiency.get('report_full_write_count', 0)}`, "
             f"stale_edits=`{efficiency.get('report_targeted_edit_without_fresh_read_count', 0)}`, "
             f"repeat_reads=`{efficiency.get('repeated_unchanged_report_read_count', 0)}`, "
             f"source_records=`{efficiency.get('source_ledger_record_count', 0)}`"
+        ),
+        (
+            "- report_projection: "
+            f"workspace_exists=`{report_workspace_exists}`, "
+            f"trace_path_seen=`{report_trace_path_seen}`, "
+            f"trace_update_seen=`{efficiency.get('report_trace_update_seen', False)}`, "
+            f"write_seen=`{efficiency.get('report_write_seen', False)}`"
         ),
         (
             "- artifact_preview: "
@@ -1119,6 +1340,7 @@ def write_scenario_artifacts(
 
 def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
     open_new_chat(page)
+    preflight_health = assert_observability_preflight(page)
     page.route(
         "**/api/chat/messages",
         lambda route: route.continue_(
@@ -1135,6 +1357,21 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
                     **(
                         {"research_depth": scenario.research_depth}
                         if scenario.research_depth
+                        else {}
+                    ),
+                    **(
+                        {"research_mode": scenario.research_mode}
+                        if scenario.research_mode
+                        else {}
+                    ),
+                    **(
+                        {"research_profile": scenario.research_profile}
+                        if scenario.research_profile
+                        else {}
+                    ),
+                    **(
+                        {"profile_source": scenario.profile_source}
+                        if scenario.profile_source
                         else {}
                     ),
                 },
@@ -1160,6 +1397,7 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
         health_status = fetch_health_status(page)
     except Exception as exc:
         failures.append(f"health status check failed: {exc}")
+    health_status = health_status or preflight_health
     if scenario.required_artifact_path is not None:
         try:
             workspace_artifacts = fetch_workspace_artifacts(page, ids.session_id)
@@ -1188,6 +1426,12 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
                 )
         except Exception as exc:
             failures.append(f"workspace artifact API check failed: {exc}")
+    failures = reconcile_workspace_artifact_failures(
+        scenario=scenario,
+        summary=summary,
+        failures=failures,
+        workspace_artifacts=workspace_artifacts,
+    )
     if scenario.require_artifact_panel and not failures:
         try:
             assert_artifact_panel(page, scenario=scenario)

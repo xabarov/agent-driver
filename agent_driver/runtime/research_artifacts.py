@@ -20,6 +20,8 @@ SOURCE_LEDGER_RELATIVE_PATH = "research/sources.jsonl"
 
 def deep_research_artifact_mode(context: "RunContext") -> bool:
     """Return whether the current run should use durable research artifacts."""
+    if context.run_input.app_metadata.get("subagent_origin") == "child":
+        return False
     metadata = context.run_input.tool_policy.metadata
     mode = metadata.get("deep_research_mode")
     if isinstance(mode, dict) and mode.get("enabled") is True:

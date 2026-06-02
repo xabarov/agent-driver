@@ -46,27 +46,42 @@ _DEEP_RESEARCH_HARD_SEARCH_CAP = 15
 _DEEP_RESEARCH_PHASE_FETCH_ATTEMPTS = 2
 _DEEP_RESEARCH_LONG_CHAT_BEFORE_REPORT_CHARS = 1_500
 _DEEP_RESEARCH_PHASE_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
-    "plan": frozenset({"todo_write"}),
+    "plan": frozenset({"todo_write", "skill_tool", "skill_view"}),
     "discover": frozenset(
         {
             "agent_tool",
             "skill_tool",
             "skill_view",
             "web_search",
+            "web_fetch",
             "glob_search",
             "grep_search",
             "read_file",
+            "todo_write",
         }
     ),
-    "verify": frozenset({"web_fetch", "web_search", "read_file"}),
-    "write": frozenset({"file_write", "read_file", "artifact_list"}),
+    "verify": frozenset({"web_fetch", "web_search", "read_file", "todo_write"}),
+    "write": frozenset(
+        {
+            "file_write",
+            "file_edit",
+            "file_patch",
+            "read_file",
+            "artifact_list",
+            "artifact_read",
+            "artifact_preview",
+            "todo_write",
+        }
+    ),
     "review": frozenset(
         {
+            "artifact_list",
             "artifact_preview",
             "artifact_read",
             "read_file",
             "file_patch",
             "file_edit",
+            "web_fetch",
             "todo_write",
         }
     ),
@@ -596,6 +611,8 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         "updated_count": _count_events(events, "artifact_updated"),
         "paths": _dedupe_paths([item["path"] for item in updates]),
         "report_updated": bool(report_paths),
+        "report_trace_update_seen": bool(report_paths),
+        "report_write_seen": _report_write_seen(events, updates),
         "report_update_count": len(report_paths),
         "report_full_write_count": _report_full_write_count(updates),
         "report_patch_count": _report_patch_count(updates),
@@ -625,6 +642,8 @@ def _research_efficiency_summary(
         research=research,
     )
     report_updated = bool(artifacts.get("report_updated"))
+    report_trace_update_seen = bool(artifacts.get("report_trace_update_seen"))
+    report_write_seen = bool(artifacts.get("report_write_seen"))
     report_full_write_count = _as_int(artifacts.get("report_full_write_count"))
     report_patch_count = _as_int(artifacts.get("report_patch_count"))
     stale_report_edit_count = _as_int(
@@ -732,6 +751,8 @@ def _research_efficiency_summary(
         "repeated_tools": repeated_tools,
         **search_diagnostics,
         "artifact_update_count": artifacts.get("update_count", 0),
+        "report_trace_update_seen": report_trace_update_seen,
+        "report_write_seen": report_write_seen,
         "report_update_count": artifacts.get("report_update_count", 0),
         "report_full_write_count": report_full_write_count,
         "report_patch_count": report_patch_count,
@@ -1157,6 +1178,24 @@ def _report_patch_count(updates: list[dict[str, Any]]) -> int:
         if tool_name in {"file_edit", "file_patch"} or operation in {"edit", "patch"}:
             count += 1
     return count
+
+
+def _report_write_seen(
+    events: list[dict[str, object]],
+    updates: list[dict[str, Any]],
+) -> bool:
+    for item in updates:
+        if item.get("path") == "research/report.md" and item.get("tool_name") in {
+            "file_write",
+            "file_edit",
+            "file_patch",
+        }:
+            return True
+    for payload in _tool_payloads(events, "file_write"):
+        args = payload.get("args")
+        if isinstance(args, dict) and _path_targets_report(args.get("path")):
+            return True
+    return False
 
 
 def _long_chat_before_first_report_update(events: list[dict[str, object]]) -> int:

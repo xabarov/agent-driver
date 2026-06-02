@@ -27,9 +27,21 @@ def apply_agent_tool_spawn_requests(
     context: RunContext, result: ToolExecutionResult
 ) -> None:
     """Turn successful ``agent_tool`` envelopes into runtime subagent plans."""
+    max_subagent_requests = _max_subagent_requests(context)
+    planned_count = _planned_or_started_subagent_count(context)
     tasks: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
     for envelope in result.envelopes:
         if envelope.call.tool_name != "agent_tool":
+            continue
+        if len(tasks) + planned_count >= max_subagent_requests:
+            skipped.append(
+                {
+                    "tool_call_id": envelope.call.tool_call_id,
+                    "reason": "max_subagent_requests",
+                    "limit": max_subagent_requests,
+                }
+            )
             continue
         structured = envelope.structured_output
         if not isinstance(structured, dict):
@@ -46,16 +58,26 @@ def apply_agent_tool_spawn_requests(
         ).strip()
         task_id = request_id or f"task_{len(tasks) + 1}"
         idempotency_key = request.get("idempotency_key")
+        metadata = request.get("metadata")
+        task_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        task_text = task
+        if _deep_research_mode(context):
+            task_metadata.setdefault("worker_type", "researcher")
+            task_metadata["deep_research_child_notes_only"] = True
+            task_text = _deep_research_child_task(task_text)
         tasks.append(
             {
                 "task_id": task_id,
-                "task": task,
+                "task": task_text,
                 "description": description,
                 "idempotency_key": (
                     str(idempotency_key) if idempotency_key is not None else task_id
                 ),
+                "metadata": task_metadata,
             }
         )
+    if skipped:
+        _record_subagent_backpressure(context, skipped)
     if not tasks:
         return
     existing = context.metadata.get("planned_subagent_group")
@@ -72,6 +94,110 @@ def apply_agent_tool_spawn_requests(
         "tasks": tasks,
         "source": "agent_tool",
     }
+
+
+def _deep_research_mode(context: RunContext) -> bool:
+    metadata = context.run_input.tool_policy.metadata
+    deep_mode = metadata.get("deep_research_mode")
+    if isinstance(deep_mode, dict) and deep_mode.get("enabled") is True:
+        return True
+    task_contract = metadata.get("task_contract")
+    return (
+        isinstance(task_contract, dict)
+        and task_contract.get("research_mode") == "deep"
+    )
+
+
+def _deep_research_profile(context: RunContext) -> str:
+    metadata = context.run_input.tool_policy.metadata
+    deep_mode = metadata.get("deep_research_mode")
+    if isinstance(deep_mode, dict):
+        profile = deep_mode.get("research_profile")
+        if isinstance(profile, str) and profile.strip():
+            return profile.strip()
+    task_contract = metadata.get("task_contract")
+    if isinstance(task_contract, dict):
+        profile = task_contract.get("research_profile")
+        if isinstance(profile, str) and profile.strip():
+            return profile.strip()
+    return "medium"
+
+
+def _max_subagent_requests(context: RunContext) -> int:
+    metadata = context.run_input.tool_policy.metadata
+    task_contract = metadata.get("task_contract")
+    if isinstance(task_contract, dict):
+        raw = task_contract.get("max_subagent_requests")
+        if isinstance(raw, int):
+            return max(0, raw)
+    if not _deep_research_mode(context):
+        return 10_000
+    profile = _deep_research_profile(context)
+    if profile == "light":
+        return 0
+    if profile == "hard":
+        return 4
+    return 2
+
+
+def _planned_or_started_subagent_count(context: RunContext) -> int:
+    count = 0
+    planned = context.metadata.get("planned_subagent_group")
+    if isinstance(planned, dict) and isinstance(planned.get("tasks"), list):
+        count += len([item for item in planned["tasks"] if isinstance(item, dict)])
+    runs = context.metadata.get("subagent_runs")
+    if isinstance(runs, list):
+        count += len([item for item in runs if isinstance(item, dict)])
+    return count
+
+
+def _deep_research_child_task(task: str) -> str:
+    cleaned = _strip_child_file_write_instructions(task)
+    return (
+        f"{cleaned}\n\n"
+        "Deep Research child constraints: return compact source notes only. "
+        "Do not create, overwrite, or edit research/report.md, "
+        "research/sources.jsonl, or any parent report artifact. The parent run "
+        "owns the report and source ledger. Use web_search to find candidates, "
+        "then web_fetch at most 3 best URLs when available. Include concrete "
+        "URLs, whether each source was actually fetched/read, and any coverage "
+        "gaps. Keep the final child answer under 1200 words."
+    )
+
+
+def _record_subagent_backpressure(
+    context: RunContext, skipped: list[dict[str, object]]
+) -> None:
+    existing = context.metadata.get("subagent_backpressure")
+    rows = (
+        [item for item in existing if isinstance(item, dict)]
+        if isinstance(existing, list)
+        else []
+    )
+    rows.extend(skipped)
+    context.metadata["subagent_backpressure"] = rows
+
+
+def _strip_child_file_write_instructions(task: str) -> str:
+    lines: list[str] = []
+    replacement_added = False
+    for line in task.splitlines():
+        normalized = " ".join(line.lower().split())
+        asks_to_write_file = (
+            "write a summary to" in normalized
+            or "save " in normalized
+            or "write " in normalized
+        ) and "research/" in normalized
+        if asks_to_write_file:
+            if not replacement_added:
+                lines.append(
+                    "- Return the summary in your final answer to the parent; "
+                    "do not write files."
+                )
+                replacement_added = True
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip() or task.strip()
 
 
 def apply_subagent_control_tool_outputs(

@@ -86,6 +86,33 @@ def test_deep_research_long_inline_draft_is_captured_to_report(tmp_path: Path) -
     assert context.metadata["deep_research_artifacts"]["captured_long_answers"] == 1
 
 
+def test_deep_research_child_run_does_not_capture_parent_report(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    context.run_input.app_metadata["subagent_origin"] = "child"
+    draft = "Deep research child notes.\n" + ("source note\n" * 200)
+
+    payload = maybe_capture_deep_research_draft(context, draft)
+    ledger_payload = persist_deep_research_source_ledger(
+        context,
+        {
+            "verified_reads": [
+                {
+                    "url": "https://example.com/paper",
+                    "domain": "example.com",
+                    "source_type": "web_fetch",
+                }
+            ]
+        },
+    )
+
+    assert payload is None
+    assert ledger_payload is None
+    assert not (tmp_path / REPORT_RELATIVE_PATH).exists()
+    assert not (tmp_path / SOURCE_LEDGER_RELATIVE_PATH).exists()
+
+
 def test_deep_research_capture_does_not_overwrite_existing_report(
     tmp_path: Path,
 ) -> None:
