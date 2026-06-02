@@ -3,11 +3,25 @@ from __future__ import annotations
 import json
 
 import pytest
+from app.api.chat import _deep_research_source_counts
 from app.deps import reset_dependency_caches
 from app.main import create_app
 from httpx import ASGITransport, AsyncClient
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_deep_research_source_counts_accepts_domain_list() -> None:
+    counts = _deep_research_source_counts(
+        metadata={},
+        trace_summary={
+            "research": {"unique_domains": ["example.com", "example.org"]},
+            "research_efficiency": {"verified_read_count": 1},
+        },
+    )
+
+    assert counts.distinct_domains == 2
+    assert counts.verified == 1
 
 
 async def test_session_replay_returns_events(client) -> None:

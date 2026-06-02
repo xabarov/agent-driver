@@ -11,20 +11,29 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 ARTIFACT_DIR="${CHAT_DEMO_LIVE_ARTIFACT_DIR:-/tmp/chat-demo-live-observed-${STAMP}}"
 BACKEND_PORT="${CHAT_DEMO_BACKEND_PORT:-8010}"
 FRONTEND_PORT="${CHAT_DEMO_FRONTEND_PORT:-5174}"
-PHOENIX_ENDPOINT="${PHOENIX_COLLECTOR_ENDPOINT:-http://127.0.0.1:6006/v1/traces}"
+PHOENIX_ENDPOINT="${PHOENIX_COLLECTOR_ENDPOINT:-http://127.0.0.1:6006}"
+PHOENIX_BASE_URL="${PHOENIX_BASE_URL:-${PHOENIX_ENDPOINT%/v1/traces}}"
 PROFILES="${DEEP_RESEARCH_PROFILES:-medium}"
 QUESTION_ID="${DEEP_RESEARCH_QUESTION_ID:-fork-join-canary}"
 LIMIT="${DEEP_RESEARCH_LIMIT:-1}"
 PREFLIGHT_SCENARIO="${DEEP_RESEARCH_PREFLIGHT_SCENARIO:-model-preflight-search-fetch}"
 PREFLIGHT_CACHE="${DEEP_RESEARCH_PREFLIGHT_CACHE:-${ROOT_DIR}/.agent-driver/live-tool-preflight.sha256}"
+SERVER_TIMEOUT="${DEEP_RESEARCH_SERVER_TIMEOUT:-120}"
+COMMAND_TIMEOUT="${DEEP_RESEARCH_COMMAND_TIMEOUT:-300}"
 
 mkdir -p "${ARTIFACT_DIR}"
+
+if ! curl -fsS "${PHOENIX_BASE_URL}/healthz" >/dev/null; then
+  echo "Shared Phoenix is not healthy at ${PHOENIX_BASE_URL}/healthz" >&2
+  echo "Start the shared local Phoenix before running live Deep Research." >&2
+  exit 2
+fi
 
 export CHAT_DEMO_LIVE_ARTIFACT_DIR="${ARTIFACT_DIR}"
 export CHAT_DEMO_URL="http://127.0.0.1:${FRONTEND_PORT}"
 export CHAT_DEMO_LIVE_REQUIRE_OBSERVABILITY="${CHAT_DEMO_LIVE_REQUIRE_OBSERVABILITY:-1}"
 export CHAT_DEMO_TRACING_ENABLED="${CHAT_DEMO_TRACING_ENABLED:-true}"
-export PHOENIX_PROJECT_NAME="${PHOENIX_PROJECT_NAME:-agent-driver-chat-demo-live}"
+export PHOENIX_PROJECT_NAME="${PHOENIX_PROJECT_NAME:-agent-driver-chat-demo}"
 export PHOENIX_COLLECTOR_ENDPOINT="${PHOENIX_ENDPOINT}"
 export AGENT_DRIVER_RUNTIME_STORE_KIND="${AGENT_DRIVER_RUNTIME_STORE_KIND:-sqlite}"
 export AGENT_DRIVER_SQLITE_PATH="${AGENT_DRIVER_SQLITE_PATH:-${ARTIFACT_DIR}/runtime_store.sqlite3}"
@@ -35,6 +44,7 @@ export CHAT_DEMO_WORKSPACE_ROOT="${CHAT_DEMO_WORKSPACE_ROOT:-${ARTIFACT_DIR}/wor
   echo "artifact_dir=${ARTIFACT_DIR}"
   echo "chat_demo_url=${CHAT_DEMO_URL}"
   echo "phoenix_endpoint=${PHOENIX_COLLECTOR_ENDPOINT}"
+  echo "phoenix_base_url=${PHOENIX_BASE_URL}"
   echo "phoenix_project=${PHOENIX_PROJECT_NAME}"
   echo "runtime_store=${AGENT_DRIVER_RUNTIME_STORE_KIND}:${AGENT_DRIVER_SQLITE_PATH}"
   echo "profiles=${PROFILES}"
@@ -42,12 +52,14 @@ export CHAT_DEMO_WORKSPACE_ROOT="${CHAT_DEMO_WORKSPACE_ROOT:-${ARTIFACT_DIR}/wor
   echo "limit=${LIMIT}"
   echo "preflight_scenario=${PREFLIGHT_SCENARIO}"
   echo "preflight_cache=${PREFLIGHT_CACHE}"
+  echo "server_timeout=${SERVER_TIMEOUT}"
+  echo "command_timeout=${COMMAND_TIMEOUT}"
 } | tee "${ARTIFACT_DIR}/run-env.txt"
 
 set +e
 (
   .venv/bin/python /home/roman/.codex/skills/webapp-testing/scripts/with_server.py \
-    --timeout 120 \
+    --timeout "${SERVER_TIMEOUT}" \
     --server "cd examples/chat-demo/backend && ../../../.venv/bin/python -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port ${BACKEND_PORT}" \
     --port "${BACKEND_PORT}" \
     --server "cd examples/chat-demo/frontend && VITE_API_PROXY_TARGET=http://127.0.0.1:${BACKEND_PORT} npm run dev -- --host 127.0.0.1 --port ${FRONTEND_PORT}" \
@@ -63,7 +75,7 @@ set +e
       PROFILES="${PROFILES}" \
       QUESTION_ID="${QUESTION_ID}" \
       LIMIT="${LIMIT}" \
-      bash -lc '
+      timeout "${COMMAND_TIMEOUT}" bash -lc '
         set -euo pipefail
         cd "${ROOT_DIR}"
         mkdir -p "$(dirname "${PREFLIGHT_CACHE}")"
@@ -108,7 +120,6 @@ set +e
 RUN_STATUS="${PIPESTATUS[0]}"
 set -e
 
-PHOENIX_BASE_URL="${PHOENIX_BASE_URL:-${PHOENIX_ENDPOINT%/v1/traces}}"
 .venv/bin/python scripts/export_phoenix_evidence.py \
   --base-url "${PHOENIX_BASE_URL}" \
   --project "${PHOENIX_PROJECT_NAME}" \

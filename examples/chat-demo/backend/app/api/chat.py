@@ -398,7 +398,7 @@ def _deep_research_max_subagent_requests(profile: str) -> int:
         return 0
     if profile == "hard":
         return 4
-    return 2
+    return 1
 
 
 def _chat_tool_gate(*, body: ChatMessageRequest, settings: Settings) -> ToolGate | None:
@@ -533,9 +533,24 @@ def _deep_research_source_counts(
         failed=int(efficiency.get("failed_read_count") or 0),
         distinctDomains=max(
             len(_source_domains_from_metadata(metadata)),
-            int(research.get("unique_domains") or research.get("distinct_domains") or 0),
+            _domain_count(
+                research.get("unique_domains") or research.get("distinct_domains")
+            ),
         ),
     )
+
+
+def _domain_count(value: object) -> int:
+    if isinstance(value, list):
+        return len([item for item in value if isinstance(item, str) and item.strip()])
+    if isinstance(value, int) and not isinstance(value, bool):
+        return max(0, value)
+    if isinstance(value, str):
+        try:
+            return max(0, int(value))
+        except ValueError:
+            return 0
+    return 0
 
 
 def _deep_research_todos(trace_summary: dict[str, object]) -> DeepResearchTodoState:

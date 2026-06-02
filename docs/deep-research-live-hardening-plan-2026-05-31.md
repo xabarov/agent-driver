@@ -372,15 +372,16 @@ Allowed tools:
 - `file_write`, `file_edit`, `file_patch`.
 - `artifact_list`, `artifact_read`, `artifact_preview`.
 - `skill_tool`, `skill_view`.
-- `agent_tool` with max 2-3 children.
+- `agent_tool`: medium defaults to 1 bounded child, hard defaults to 4 bounded
+  children, and explicit contracts may override these caps.
 
 Subagent policy:
 
 - Parent creates and owns `research/report.md`.
 - Children may search/fetch/read and return compact source notes.
 - Children should not write the parent report.
-- Parent launches children in one tool-call batch when questions are
-  independent.
+- Parent launches children in one tool-call batch only for hard or explicit
+  multi-child contracts. Medium uses one bounded child, then parent synthesis.
 - Parent must synthesize child outputs and cite fetched URLs itself.
 
 Entry criteria:
@@ -934,10 +935,34 @@ enabled together:
   `AGENT_DRIVER_RUNTIME_STORE_SQLITE_PATH`;
 - run-scoped sessions/workspace paths under the artifact directory;
 - Phoenix tracing: `CHAT_DEMO_TRACING_ENABLED=true`,
-  `PHOENIX_COLLECTOR_ENDPOINT=...`;
+  `PHOENIX_COLLECTOR_ENDPOINT=...`,
+  `PHOENIX_PROJECT_NAME=agent-driver-chat-demo`;
 - backend/frontend/live-probe logs captured to the same artifact directory;
 - Playwright screenshots and transcript excerpts;
 - `/api/chat/runs/{run_id}/trace-summary` and workspace artifact snapshots.
+
+Parallel-project testing rule:
+
+- Active local baseline on 2026-06-02: shared Phoenix is already running as
+  Docker container `chat-demo-phoenix-1`. Health check:
+  `curl http://127.0.0.1:6006/healthz` -> `OK`.
+- UI: `http://127.0.0.1:6006`.
+- OTLP HTTP for agent-driver-style clients:
+  `PHOENIX_COLLECTOR_ENDPOINT=http://127.0.0.1:6006` (or `/v1/traces`; the
+  SDK helper normalizes base URLs).
+- OTLP/gRPC for clients that use the Phoenix gRPC collector:
+  `PHOENIX_COLLECTOR_ENDPOINT=http://127.0.0.1:4317`.
+- Do not start another Phoenix from Excel AI or Zion by default. Use distinct
+  `PHOENIX_PROJECT_NAME` values and resource attributes instead.
+- Run one local Phoenix service/collector and separate traces by Phoenix project
+  name plus OpenTelemetry resource attributes, not by starting one Phoenix per
+  repository. Recommended local projects are `agent-driver-chat-demo`,
+  `excel-ai`, and `zion-next` / `zion-recon`. Every live evidence bundle should
+  record the collector endpoint and project name it used.
+- For agent-driver-style OTLP HTTP clients, prefer a base endpoint such as
+  `PHOENIX_COLLECTOR_ENDPOINT=http://127.0.0.1:6006`; the SDK helper normalizes
+  it to `/v1/traces`. Projects using OTLP/gRPC may keep their `:4317` endpoint,
+  but should still write into the same Phoenix server and a distinct project.
 
 If any of these are missing, the run is a harness failure, not a Deep Research
 baseline. Do not make architecture decisions from a run that used the in-memory
@@ -980,6 +1005,15 @@ Execution note 2026-06-02:
 - Added `scripts/run_deep_research_live_observed.sh` as the canonical live
   runner for this phase. It enables SQLite, Phoenix, run-scoped sessions,
   run-scoped workspace, Playwright artifacts, and a combined `live-run.log`.
+- The runner treats Phoenix as shared local infrastructure: it checks
+  `http://127.0.0.1:6006/healthz`, defaults
+  `PHOENIX_COLLECTOR_ENDPOINT=http://127.0.0.1:6006`, and writes agent-driver
+  traces into `PHOENIX_PROJECT_NAME=agent-driver-chat-demo` unless explicitly
+  overridden. Do not start a repo-local Phoenix inside this runner.
+- The runner has two timeouts: `DEEP_RESEARCH_SERVER_TIMEOUT` for server
+  readiness/lifetime under `with_server`, and `DEEP_RESEARCH_COMMAND_TIMEOUT`
+  for the actual preflight + matrix command. A medium canary that exceeds the
+  command timeout is a live failure to analyze, not a reason to keep waiting.
 - The runner performs a model/tool preflight (`model-preflight-search-fetch`)
   before Deep Research unless the fingerprint of relevant provider/runtime/tool
   and SSE/probe files matches the last passing preflight. Use
@@ -1875,6 +1909,7 @@ into docs, prompts, or public artifacts.
 ```bash
 CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-deep-research \
 PHOENIX_COLLECTOR_ENDPOINT=http://127.0.0.1:6006/v1/traces \
+PHOENIX_PROJECT_NAME=agent-driver-chat-demo \
 DEEP_RESEARCH_PROFILES=light,medium \
 DEEP_RESEARCH_LIMIT=3 \
   scripts/run_deep_research_live_observed.sh
@@ -2068,8 +2103,7 @@ Live triage updates from 2026-06-02:
   This validated the parent-synthesis stop condition.
 - `run_3832a3af0f87` stopped at 25,073 tokens after the first child join because
   the first parent-synthesis gate denied the second medium `agent_tool` too
-  early. The correct rule is budget-aware: medium may launch up to 2 children,
-  then must synthesize.
+  early under the then-current two-child medium design.
 - `run_0efeea087fa4` stopped at 31,900 tokens because trace-summary counted the
   same second `agent_tool` twice from started/completed events. Scorecards must
   reason over completed tool calls for post-handoff budget checks.
@@ -2078,6 +2112,56 @@ Live triage updates from 2026-06-02:
   the next architecture blocker: medium/hard need a strategy gate that makes
   bounded subagents mandatory when requested, then forces a write-phase
   transition once source discovery has enough evidence or exhausts the budget.
+- `run_dda601215131` confirmed the request-prep strategy gate reaches the live
+  provider: the run used `agent_tool` after `skill_tool -> todo_write` and
+  stopped cheaply at 11,802 tokens when the parent tried serial `web_search`
+  after a child join.
+- `run_0094f861ea6b` showed OpenRouter/Qwen can reject forced `tool_choice`
+  with HTTP 404; after retry without forced choice, the model hallucinated
+  `skill_search`. We now normalize `skill_search -> skill_tool` instead of
+  treating that as fatal unknown-tool entropy.
+- `run_029cfa3fdc0d` confirmed the improved strategy reaches two medium
+  subagents. The next issue is scorecard/recovery semantics: a denied
+  `agent_chat` from `deep_research_parent_synthesis_gate` is a successful
+  guardrail hit and should allow the next repair turn, not stop the live probe
+  as an immediate parent-synthesis violation.
+- `run_f6a21acced1f` showed the parent can reach the write phase after child
+  joins, but model-emitted argument aliases still caused waste: `file_write`
+  used `file_path` instead of `path`, `todo_write` sometimes serialized todos
+  as JSON strings, and `web_search_tool` appeared as a tool-name alias. These
+  are compatibility repairs, not research-quality wins.
+- `run_c5addca9ffb3` used SQLite/Phoenix and proved a more serious contract
+  gap: `research/report.md` and `research/sources.jsonl` existed in the
+  workspace, but the report was produced through long assistant prose captured
+  by artifact observation, not through a completed parent `file_write`.
+  Scorecard correctly failed it with missing `file_write`, phase violation, and
+  artifact projection mismatch. This means "workspace file exists" is not a
+  medium success unless the trace also has a parent write/edit artifact event.
+- `run_89e4ade1ca28` showed the initial-subagent runtime gate correctly denied
+  direct `web_search`, but the model then looped through `skill_view` and long
+  prose instead of recovering into `agent_tool`. This validated that policy
+  denial alone is insufficient; denials must add a corrective protocol message
+  and a tool-choice recovery toward `agent_tool`.
+- `run_b5c2c14692c7` showed the recovery path can now reach real `agent_tool`
+  and launch a child run. The next blocker moved to provider/tool compatibility:
+  the model used `agent_tool.instructions` before retrying with `task` but no
+  `description`, and later emitted `write`/`read` instead of
+  `file_write`/`read_file`. These observed forms are now normalized by the
+  governed executor. The run still failed because the write/read aliases were
+  denied before this repair landed.
+- `run_29eb70e8e5de` showed that the two-child medium design still created
+  duplicate child work and timed out before a parent-owned report. This changes
+  the medium architecture decision: medium now defaults to exactly one bounded
+  `agent_tool` child plus parent-owned synthesis; hard keeps multi-child
+  parallelism for genuinely broad research.
+- `run_d68f0fa50f04` improved the live path: `skill_tool` succeeded, unknown
+  `bash` disappeared, medium launched one child and joined it. The run still
+  failed because the parent wrote a long inline report that was auto-captured to
+  `research/report.md`; there was no parent `file_write`/`file_patch`, no
+  `web_fetch`, no `research/sources.jsonl`, and the scorecard correctly treated
+  the workspace report as a projection mismatch. This locks the next rule:
+  captured drafts are diagnostic continuity aids, not successful parent
+  synthesis.
 
 1. Finish the Phase 0.5 parent-synthesis handoff before another medium live
    spend:
@@ -2095,8 +2179,9 @@ Live triage updates from 2026-06-02:
      as `subagents.child_synthesis_pending`. The repair layer now sets a
      `file_write` tool-choice override when a model tries to finish while child
      synthesis is pending. The tool stage now also denies non-synthesis tools
-     after the medium/hard child budget is exhausted, while still allowing the
-     second medium child if the first child joined early.
+     after the medium/hard child budget is exhausted. Medium's default budget is
+     one child; hard or an explicit contract may still allow additional child
+     launches.
 2. Add a strategy gate for Deep Research profiles before the next full medium
    spend:
    - `light` must never force subagents or report artifacts;
@@ -2110,8 +2195,29 @@ Live triage updates from 2026-06-02:
    - implementation progress: deterministic request-prep strategy choice now
      forces `agent_tool` for medium/hard after an initial todo/plan, respects
      explicit tool-choice overrides and `light`, and forces `file_write` after
-     subagent use plus a small discovery budget. This still needs one observed
-     medium live validation with Phoenix/SQLite/logs/screenshots.
+     subagent use plus a small discovery budget. Live validation confirmed
+     forced `agent_tool`; later evidence moved medium from two children to one
+     child plus parent synthesis. Because OpenRouter/Qwen can reject forced
+     `tool_choice`, this is now backed by a runtime gate: medium and hard deny
+     direct `web_search`, `web_fetch`, and write tools until at least one
+     bounded `agent_tool` has been planned/started. The remaining validation is
+     parent recovery from a denied direct-discovery/write attempt into
+     `agent_tool`, then `file_write`/`file_patch`.
+   - implementation progress: governed tool execution now normalizes observed
+     provider aliases `skill_search -> skill_tool`, `web_search_tool ->
+     web_search`, filesystem `file_path -> path`, `write -> file_write`,
+     `read -> read_file`, JSON-string todo payloads, and `agent_tool`
+     `instructions/prompt/query/description -> task` plus default
+     `description`. These
+     repairs prevent cheap protocol typos from turning into long self-repair
+     loops.
+   - implementation progress: parent synthesis readiness now requires an
+     observed parent `file_write`, `file_patch`, or `file_edit` for
+     `research/report.md`. A workspace file created by long-answer capture no
+     longer clears child-synthesis pending state; repair/strategy gates force a
+     parent patch/write instead. `agent_tool` is also allowed during verify
+     phase for medium/hard recovery, so the scorecard does not treat required
+     bounded-child recovery as a phase violation.
 3. Add trace-summary and scorecard fields that distinguish parent evidence from
    child evidence:
    - `parent_search_count`, `parent_fetch_count`, `parent_verified_read_count`;
@@ -2128,6 +2234,34 @@ Live triage updates from 2026-06-02:
    expect report visible in workspace, trace-summary, and UI; no unknown tools;
    no child artifact substitution; no 100k-token runaway; any remaining failure
    should be source quality or research completeness, not runtime contract.
+   Passing criteria explicitly require a completed parent `file_write`,
+   `file_edit`, or `file_patch` artifact event for `research/report.md`; an
+   auto-captured long assistant answer is diagnostic evidence, not a pass.
+   The next run must be allowed to complete to a scorecard artifact; a manually
+   killed timeout is not sufficient evidence.
+   - 2026-06-02 shared-Phoenix run:
+     `/tmp/chat-demo-live-observed-shared-phoenix-20260602214826`.
+     Preflight passed against `PHOENIX_PROJECT_NAME=agent-driver-chat-demo`
+     (`run_203b9921426e`, `web_search -> web_fetch`, Phoenix enabled/configured).
+     Medium parent run `run_16dd3620add6` started one child
+     (`child_2f0b13cc4afd`), wrote `research/sources.jsonl`, then hit repeated
+     OpenRouter forced `tool_choice` 404 retries and an empty `file_write` args
+     denial (`path must be a non-empty string`). This confirms the next runtime
+     fix: after provider rejects named forced tool choice once, disable further
+     named forced tool choices for the run and rely on protocol nudge + gates.
+   - 2026-06-02 follow-up shared-Phoenix run:
+     `/tmp/chat-demo-live-observed-shared-phoenix-fixed-20260602215813`.
+     The runner now exits under `DEEP_RESEARCH_COMMAND_TIMEOUT` and exports
+     `phoenix-evidence.json`; Phoenix selected project
+     `agent-driver-chat-demo` with `ok=true`. Preflight passed as
+     `run_e1a105f3269b`, but it also showed a smaller preflight-quality issue:
+     extra empty `web_fetch`/`web_search` calls before final recovery. Medium
+     parent `run_b7e7342f5199` confirmed the forced-choice fix: after the first
+     OpenRouter 404, later parent `llm_call_started` events no longer carried a
+     named forced tool choice. The remaining blocker moved to child completion:
+     `child_16e3fff9e023` performed a `web_search`, then the matrix hit command
+     timeout while waiting for child final/summary, before any parent report
+     artifact was created.
 8. After the medium canary passes twice, continue Phase 1/2 implementation work:
    capability surface cleanup, artifact-first controller gates, durable UI
    cockpit, and reload hydration.

@@ -137,7 +137,7 @@ def _max_subagent_requests(context: RunContext) -> int:
         return 0
     if profile == "hard":
         return 4
-    return 2
+    return 1
 
 
 def _planned_or_started_subagent_count(context: RunContext) -> int:

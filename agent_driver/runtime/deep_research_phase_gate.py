@@ -28,7 +28,9 @@ _PHASE_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
             "todo_write",
         }
     ),
-    "verify": frozenset({"web_fetch", "web_search", "read_file", "todo_write"}),
+    "verify": frozenset(
+        {"agent_tool", "web_fetch", "web_search", "read_file", "todo_write"}
+    ),
     "write": frozenset(
         {
             "file_write",

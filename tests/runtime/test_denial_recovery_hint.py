@@ -23,6 +23,18 @@ def _denied_result(message: str) -> ToolExecutionResult:
     )
 
 
+def _policy_denied_result(*, tool_name: str, message: str) -> ToolExecutionResult:
+    return ToolExecutionResult(
+        envelopes=[
+            ToolResultEnvelope(
+                call=ToolCall(tool_name=tool_name, args={}),
+                decision=ToolPolicyDecision.DENY,
+                error=ToolError(code="policy_denied", message=message, retryable=True),
+            )
+        ]
+    )
+
+
 def test_denial_recovery_hint_added_for_tool_handler_error() -> None:
     """Runtime should append corrective user message after handler denial."""
     context = SimpleNamespace(metadata={})
@@ -56,3 +68,33 @@ def test_denial_recovery_forces_final_after_second_handler_error() -> None:
     assert context.metadata.get("force_final_answer") is True
     assert context.metadata.get("tool_choice_override") == "none"
     assert "failed twice" in (messages[-1].content or "")
+
+
+def test_initial_subagent_gate_denial_forces_agent_tool_recovery() -> None:
+    """Medium/hard Deep Research should recover denied web search into agent_tool."""
+    context = SimpleNamespace(metadata={})
+    messages = [ChatMessage(role="user", content="start")]
+
+    _append_denial_recovery_message(
+        context,
+        _policy_denied_result(
+            tool_name="web_search",
+            message=(
+                "deep_research_initial_subagent_gate denied 'web_search': "
+                "medium/hard Deep Research must first delegate bounded source "
+                "discovery with agent_tool before direct web or write tools."
+            ),
+        ),
+        messages,
+    )
+
+    assert context.metadata.get("tool_choice_override") == {
+        "type": "tool",
+        "name": "agent_tool",
+    }
+    assert context.metadata["deep_research_initial_subagent_recovery"] == {
+        "tool": "agent_tool",
+        "reason": "initial_subagent_gate_denied",
+    }
+    assert "Call agent_tool now" in (messages[-1].content or "")
+    assert "do not call web_search" in (messages[-1].content or "")

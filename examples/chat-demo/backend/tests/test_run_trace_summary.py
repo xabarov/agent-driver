@@ -1605,7 +1605,7 @@ def test_trace_summary_flags_unexpected_tool_after_child_synthesis() -> None:
 def test_trace_summary_allows_remaining_agent_tool_after_child_synthesis() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
-        user_prompt="сделай medium deep research с субагентами",
+        user_prompt="сделай hard deep research с субагентами",
         assistant_text="Запускаю второго исследователя.",
         events=[
             {"event": "subagent_started", "data": {"run_id": "child_1"}},
@@ -1634,7 +1634,7 @@ def test_trace_summary_allows_remaining_agent_tool_after_child_synthesis() -> No
 def test_trace_summary_counts_completed_tool_once_after_child_synthesis() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
-        user_prompt="сделай medium deep research с субагентами",
+        user_prompt="сделай hard deep research с субагентами",
         assistant_text="Запускаю второго исследователя.",
         events=[
             {"event": "subagent_started", "data": {"run_id": "child_1"}},
@@ -1691,6 +1691,46 @@ def test_trace_summary_flags_agent_tool_after_child_budget_exhausted() -> None:
     assert summary["subagents"]["unexpected_tool_after_child_synthesis_pending"] == (
         "agent_tool"
     )
+
+
+def test_trace_summary_ignores_parent_synthesis_gate_denial_after_child_join() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай medium deep research с субагентами",
+        assistant_text="Исправляю маршрут.",
+        events=[
+            {"event": "subagent_started", "data": {"run_id": "child_1"}},
+            {"event": "subagent_started", "data": {"run_id": "child_2"}},
+            {
+                "event": "research_progress",
+                "data": {
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "summary_chars": 100,
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "agent_chat",
+                            "status": "denied",
+                            "error_code": "policy_denied",
+                            "result_summary": (
+                                "tool_gate denied: "
+                                "deep_research_parent_synthesis_gate denied "
+                                "'agent_chat'"
+                            ),
+                        }
+                    ]
+                },
+            },
+        ],
+    )
+
+    assert summary["subagents"]["tools_after_child_synthesis_pending"] == []
+    assert summary["subagents"]["unexpected_tool_after_child_synthesis_pending"] is None
 
 
 def test_trace_summary_flags_unknown_tool_calls() -> None:

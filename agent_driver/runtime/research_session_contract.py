@@ -60,7 +60,13 @@ _DEEP_RESEARCH_PHASE_TOOLS: dict[str, tuple[str, ...]] = {
         "read_file",
         "todo_write",
     ),
-    DEEP_RESEARCH_PHASE_VERIFY: ("web_fetch", "web_search", "read_file", "todo_write"),
+    DEEP_RESEARCH_PHASE_VERIFY: (
+        "agent_tool",
+        "web_fetch",
+        "web_search",
+        "read_file",
+        "todo_write",
+    ),
     DEEP_RESEARCH_PHASE_WRITE: (
         "file_write",
         "file_edit",
@@ -493,11 +499,25 @@ def _child_synthesis_pending(context: RunContext) -> bool:
     payload = context.metadata.get("deep_research_child_synthesis")
     if not isinstance(payload, dict) or payload.get("pending") is not True:
         return False
-    from agent_driver.runtime.research_artifacts import (
-        deep_research_report_artifact_exists,
-    )
+    return not _deep_research_parent_report_write_seen(context)
 
-    return not deep_research_report_artifact_exists(context)
+
+def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
+    for item in get_tool_loop_state(context).tool_results():
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        if call.get("tool_name") not in {"file_write", "file_patch", "file_edit"}:
+            continue
+        args = call.get("args")
+        if not isinstance(args, dict):
+            continue
+        path = str(args.get("path") or args.get("file_path") or "").strip()
+        if path == "research/report.md" or path.endswith("/research/report.md"):
+            return True
+    return False
 
 
 def _tool_available(context: RunContext, tool_name: str) -> bool:

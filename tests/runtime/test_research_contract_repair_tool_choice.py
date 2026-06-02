@@ -120,6 +120,46 @@ def test_contract_repair_forces_parent_file_write_after_child_synthesis() -> Non
     assert "child note: https://example.com/source" in messages[-1]["content"]
 
 
+def test_contract_repair_forces_parent_patch_after_captured_report() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "effective_tool_names": (
+                "file_write",
+                "file_patch",
+                "read_file",
+                "artifact_preview",
+            ),
+            "deep_research_artifacts": {
+                "report_exists": True,
+                "report_path": "research/report.md",
+                "last_update_kind": "capture",
+            },
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child note: https://example.com/source",
+            },
+        },
+    )
+    context.run_input.tool_policy.metadata["task_contract"] = {
+        "requires_research": True,
+        "research_mode": "deep",
+        "research_depth": "deep_parallel_research",
+    }
+
+    result = _maybe_build_continuation_transition(context)
+
+    assert result is not None
+    assert context.metadata["tool_choice_override"] == {
+        "type": "tool",
+        "name": "file_patch",
+    }
+    assert context.metadata["deep_research_parent_synthesis_required"] == {
+        "tool": "file_patch",
+        "path": "research/report.md",
+    }
+
+
 @pytest.mark.asyncio
 async def test_parent_synthesis_gate_blocks_discovery_after_child_handoff() -> None:
     context = _context(
@@ -145,7 +185,7 @@ async def test_parent_synthesis_gate_blocks_discovery_after_child_handoff() -> N
 
 
 @pytest.mark.asyncio
-async def test_parent_synthesis_gate_allows_second_medium_child_before_lock() -> None:
+async def test_parent_synthesis_gate_blocks_second_default_medium_child() -> None:
     context = _context(
         tool_results=[],
         metadata={
@@ -159,7 +199,41 @@ async def test_parent_synthesis_gate_allows_second_medium_child_before_lock() ->
 
     gate = _tool_gate_for_context(context)
 
-    assert gate is None
+    assert gate is not None
+    web_search = await gate(_gate_context("web_search"))
+    assert isinstance(web_search, ToolGateDeny)
+    agent_tool = await gate(_gate_context("agent_tool"))
+    assert isinstance(agent_tool, ToolGateDeny)
+    assert "deep_research_parent_synthesis_gate denied" in agent_tool.reason
+
+
+@pytest.mark.asyncio
+async def test_parent_synthesis_gate_allows_second_child_with_explicit_budget() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "subagent_runs": [{"run_id": "child_1"}],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child notes",
+            },
+        },
+    )
+    context.run_input.tool_policy.metadata["task_contract"] = {
+        "requires_research": True,
+        "research_mode": "deep",
+        "research_depth": "deep_parallel_research",
+        "research_profile": "hard",
+        "max_subagent_requests": 2,
+    }
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    web_search = await gate(_gate_context("web_search"))
+    assert isinstance(web_search, ToolGateDeny)
+    agent_tool = await gate(_gate_context("agent_tool"))
+    assert isinstance(agent_tool, ToolGateAllow)
 
 
 @pytest.mark.asyncio
@@ -189,6 +263,116 @@ async def test_parent_synthesis_gate_allows_write_and_preserves_existing_gate() 
     assert isinstance(decision, ToolGateAllow)
     assert decision.reason == "existing"
     assert seen == ["file_write"]
+
+
+@pytest.mark.asyncio
+async def test_medium_deep_research_gate_requires_initial_subagent() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "effective_tool_names": ("agent_tool", "web_search", "todo_write"),
+        },
+    )
+    context.run_input.tool_policy.metadata["task_contract"] = {
+        "requires_research": True,
+        "research_mode": "deep",
+        "research_profile": "medium",
+        "max_subagent_requests": 2,
+    }
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    web_search = await gate(_gate_context("web_search"))
+    assert isinstance(web_search, ToolGateDeny)
+    assert "deep_research_initial_subagent_gate denied" in web_search.reason
+    agent_tool = await gate(_gate_context("agent_tool"))
+    assert isinstance(agent_tool, ToolGateAllow)
+
+
+@pytest.mark.asyncio
+async def test_medium_deep_research_recovery_gate_blocks_skill_view_loop() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "effective_tool_names": ("agent_tool", "skill_view", "todo_write"),
+            "deep_research_initial_subagent_recovery": {
+                "tool": "agent_tool",
+                "reason": "initial_subagent_gate_denied",
+            },
+        },
+    )
+    context.run_input.tool_policy.metadata["task_contract"] = {
+        "requires_research": True,
+        "research_mode": "deep",
+        "research_profile": "medium",
+        "max_subagent_requests": 2,
+    }
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    skill_view = await gate(_gate_context("skill_view"))
+    assert isinstance(skill_view, ToolGateDeny)
+    assert "deep_research_initial_subagent_gate denied" in skill_view.reason
+    agent_tool = await gate(_gate_context("agent_tool"))
+    assert isinstance(agent_tool, ToolGateAllow)
+
+
+def test_contract_repair_prioritizes_initial_subagent_recovery() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "effective_tool_names": (
+                "agent_tool",
+                "web_search",
+                "web_fetch",
+                "todo_write",
+            ),
+            "deep_research_initial_subagent_recovery": {
+                "tool": "agent_tool",
+                "reason": "initial_subagent_gate_denied",
+            },
+        },
+    )
+    context.run_input.tool_policy.metadata["task_contract"] = {
+        "requires_research": True,
+        "research_mode": "deep",
+        "research_profile": "medium",
+        "max_subagent_requests": 2,
+    }
+
+    result = _maybe_build_continuation_transition(context)
+
+    assert result is not None
+    assert context.metadata["tool_choice_override"] == {
+        "type": "tool",
+        "name": "agent_tool",
+    }
+    assert context.metadata["deep_research_initial_subagent_recovery"] == {
+        "tool": "agent_tool",
+        "reason": "contract_repair_before_initial_subagent",
+    }
+
+
+@pytest.mark.asyncio
+async def test_light_deep_research_gate_allows_direct_web_search() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "effective_tool_names": ("agent_tool", "web_search", "todo_write"),
+        },
+    )
+    context.run_input.tool_policy.metadata["task_contract"] = {
+        "requires_research": True,
+        "research_mode": "deep",
+        "research_profile": "light",
+        "max_subagent_requests": 0,
+    }
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is None
 
 
 def test_contract_repair_forces_web_fetch_after_search_only_evidence() -> None:

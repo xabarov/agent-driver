@@ -110,7 +110,10 @@ def build_trimmed_request(
             tool_choice = None
         else:
             tool_choice = context.run_input.tool_choice
-    tool_choice = _deep_research_strategy_tool_choice(context, tool_choice)
+    tool_choice = _provider_safe_tool_choice(
+        context,
+        _deep_research_strategy_tool_choice(context, tool_choice),
+    )
     system_instruction = react_system_instruction(host, context)
     if (
         tool_loop_state.force_final_answer_enabled()
@@ -184,6 +187,14 @@ def _deep_research_strategy_tool_choice(
     profile = str(task_contract.get("research_profile") or "medium").strip().lower()
     if profile == "light":
         return None
+    if _deep_research_child_synthesis_pending(context):
+        if _deep_research_subagent_budget_remaining(context):
+            return _deep_research_record_strategy_choice(
+                context,
+                tool_name="agent_tool",
+                reason="child_synthesis_pending_with_remaining_subagent_budget",
+            )
+        return _deep_research_write_strategy_tool_choice(context, force=True)
     if _deep_research_tool_used(context, "agent_tool"):
         return _deep_research_write_strategy_tool_choice(context)
     if not _deep_research_initial_plan_seen(context):
@@ -193,28 +204,70 @@ def _deep_research_strategy_tool_choice(
         return _deep_research_write_strategy_tool_choice(context)
     if not _deep_research_tool_available(context, "agent_tool"):
         return _deep_research_write_strategy_tool_choice(context)
-    choice = {"type": "tool", "name": "agent_tool"}
-    context.metadata["deep_research_strategy_tool_choice"] = {
-        "tool": "agent_tool",
-        "reason": "medium_hard_requires_bounded_subagents",
-    }
-    return choice
+    return _deep_research_record_strategy_choice(
+        context,
+        tool_name="agent_tool",
+        reason="medium_hard_requires_bounded_subagents",
+    )
 
 
-def _deep_research_write_strategy_tool_choice(context: RunContext) -> object | None:
-    if deep_research_report_artifact_exists(context):
+def _deep_research_write_strategy_tool_choice(
+    context: RunContext,
+    *,
+    force: bool = False,
+) -> object | None:
+    if _deep_research_parent_report_write_seen(context):
         return None
+    if deep_research_report_artifact_exists(context) and _deep_research_tool_available(
+        context, "file_patch"
+    ):
+        return _deep_research_record_strategy_choice(
+            context,
+            tool_name="file_patch",
+            reason=(
+                "child_synthesis_pending_budget_exhausted"
+                if force
+                else "deep_research_discovery_budget_reached"
+            ),
+            path="research/report.md",
+        )
     if not _deep_research_tool_available(context, "file_write"):
         return None
-    if not _deep_research_discovery_budget_reached(context):
+    if not force and not _deep_research_discovery_budget_reached(context):
         return None
-    choice = {"type": "tool", "name": "file_write"}
-    context.metadata["deep_research_strategy_tool_choice"] = {
-        "tool": "file_write",
-        "path": "research/report.md",
-        "reason": "deep_research_discovery_budget_reached",
-    }
-    return choice
+    return _deep_research_record_strategy_choice(
+        context,
+        tool_name="file_write",
+        reason=(
+            "child_synthesis_pending_budget_exhausted"
+            if force
+            else "deep_research_discovery_budget_reached"
+        ),
+        path="research/report.md",
+    )
+
+
+def _provider_safe_tool_choice(context: RunContext, tool_choice: object | None) -> object | None:
+    """Avoid repeating provider-rejected named forced tool choices."""
+    if context.metadata.get("forced_tool_choice_retry") != (
+        "removed_after_provider_rejection"
+    ):
+        return tool_choice
+    if not _forced_named_tool_choice(tool_choice):
+        return tool_choice
+    context.metadata["forced_tool_choice_disabled"] = (
+        "provider_rejected_named_tool_choice"
+    )
+    return None
+
+
+def _forced_named_tool_choice(tool_choice: object | None) -> str | None:
+    if not isinstance(tool_choice, dict):
+        return None
+    if tool_choice.get("type") != "tool":
+        return None
+    name = tool_choice.get("name")
+    return name if isinstance(name, str) and name.strip() else None
 
 
 def _deep_research_initial_plan_seen(context: RunContext) -> bool:
@@ -236,6 +289,46 @@ def _deep_research_discovery_budget_reached(context: RunContext) -> bool:
     if isinstance(artifacts, dict) and artifacts.get("source_ledger_exists") is True:
         return True
     return False
+
+
+def _deep_research_child_synthesis_pending(context: RunContext) -> bool:
+    handoff = context.metadata.get("deep_research_child_synthesis")
+    return (
+        isinstance(handoff, dict)
+        and handoff.get("pending") is True
+        and not _deep_research_parent_report_write_seen(context)
+    )
+
+
+def _deep_research_subagent_budget_remaining(context: RunContext) -> bool:
+    return _deep_research_planned_or_started_subagent_count(
+        context
+    ) < _deep_research_max_subagent_requests(context)
+
+
+def _deep_research_planned_or_started_subagent_count(context: RunContext) -> int:
+    count = 0
+    planned = context.metadata.get("planned_subagent_group")
+    if isinstance(planned, dict) and isinstance(planned.get("tasks"), list):
+        count += len([item for item in planned["tasks"] if isinstance(item, dict)])
+    runs = context.metadata.get("subagent_runs")
+    if isinstance(runs, list):
+        count += len([item for item in runs if isinstance(item, dict)])
+    return count
+
+
+def _deep_research_max_subagent_requests(context: RunContext) -> int:
+    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
+    if isinstance(task_contract, dict):
+        raw = task_contract.get("max_subagent_requests")
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            return max(0, raw)
+        profile = str(task_contract.get("research_profile") or "").strip().lower()
+    if profile == "light":
+        return 0
+    if profile == "hard":
+        return 4
+    return 1
 
 
 def _deep_research_tool_used(context: RunContext, tool_name: str) -> bool:
@@ -260,12 +353,45 @@ def _deep_research_tool_counts(context: RunContext) -> dict[str, int]:
     return counts
 
 
+def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
+    for item in get_tool_loop_state(context).tool_results():
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        if call.get("tool_name") not in {"file_write", "file_patch", "file_edit"}:
+            continue
+        args = call.get("args")
+        if not isinstance(args, dict):
+            continue
+        path = str(args.get("path") or args.get("file_path") or "").strip()
+        if path == "research/report.md" or path.endswith("/research/report.md"):
+            return True
+    return False
+
+
 def _deep_research_tool_available(context: RunContext, tool_name: str) -> bool:
     policy = context.run_input.tool_policy
     if tool_name in set(policy.denied_tools or []):
         return False
     allowed = policy.allowed_tools
     return allowed is None or tool_name in set(allowed)
+
+
+def _deep_research_record_strategy_choice(
+    context: RunContext,
+    *,
+    tool_name: str,
+    reason: str,
+    path: str | None = None,
+) -> dict[str, str]:
+    choice = {"type": "tool", "name": tool_name}
+    payload = {"tool": tool_name, "reason": reason}
+    if path is not None:
+        payload["path"] = path
+    context.metadata["deep_research_strategy_tool_choice"] = payload
+    return choice
 
 
 def protocol_messages_from_metadata(

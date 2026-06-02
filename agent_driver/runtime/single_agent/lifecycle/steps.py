@@ -75,6 +75,15 @@ _PARENT_SYNTHESIS_ALLOWED_TOOLS = frozenset(
         "todo_write",
     }
 )
+_DEEP_RESEARCH_PRE_SUBAGENT_BLOCKED_TOOLS = frozenset(
+    {
+        "file_edit",
+        "file_patch",
+        "file_write",
+        "web_fetch",
+        "web_search",
+    }
+)
 
 
 class SingleAgentStepMixin:
@@ -403,14 +412,29 @@ def _force_research_repair_tool_choice(
     context: RunContext, reasons: tuple[str, ...]
 ) -> None:
     """Force the concrete research tool when a model tries to finish too early."""
+    if _deep_research_initial_subagent_recovery_required(context):
+        if _tool_available_for_repair(context, "agent_tool"):
+            get_tool_loop_state(context).set_tool_choice_override(
+                {"type": "tool", "name": "agent_tool"}
+            )
+            context.metadata["deep_research_initial_subagent_recovery"] = {
+                "tool": "agent_tool",
+                "reason": "contract_repair_before_initial_subagent",
+            }
+            return
     if REPAIR_CHILD_SYNTHESIS_PENDING in reasons:
-        if not deep_research_report_artifact_exists(context):
-            if _tool_available_for_repair(context, "file_write"):
+        if not _deep_research_parent_report_write_seen(context):
+            tool_name = "file_write"
+            if deep_research_report_artifact_exists(
+                context
+            ) and _tool_available_for_repair(context, "file_patch"):
+                tool_name = "file_patch"
+            if _tool_available_for_repair(context, tool_name):
                 get_tool_loop_state(context).set_tool_choice_override(
-                    {"type": "tool", "name": "file_write"}
+                    {"type": "tool", "name": tool_name}
                 )
                 context.metadata["deep_research_parent_synthesis_required"] = {
-                    "tool": "file_write",
+                    "tool": tool_name,
                     "path": "research/report.md",
                 }
                 return
@@ -461,6 +485,13 @@ def _force_research_repair_tool_choice(
             )
 
 
+def _deep_research_initial_subagent_recovery_required(context: RunContext) -> bool:
+    if not _deep_research_requires_initial_subagent_gate(context):
+        return False
+    recovery = context.metadata.get("deep_research_initial_subagent_recovery")
+    return isinstance(recovery, dict)
+
+
 def _tool_available_for_repair(context: RunContext, tool_name: str) -> bool:
     policy = context.run_input.tool_policy
     denied = set(policy.denied_tools or [])
@@ -478,25 +509,64 @@ def _tool_available_for_repair(context: RunContext, tool_name: str) -> bool:
 def _tool_gate_for_context(context: RunContext) -> ToolGate | None:
     """Wrap caller gate with Deep Research parent-synthesis enforcement."""
     existing_gate = context.tool_gate
-    if not _deep_research_parent_synthesis_gate_active(context):
+    if (
+        not _deep_research_child_synthesis_pending_without_report(context)
+        and not _deep_research_requires_initial_subagent_gate(context)
+    ):
         return existing_gate
 
     async def _gate(gate_context: ToolGateContext):
-        if _deep_research_parent_synthesis_gate_active(context):
-            if gate_context.tool_name not in _PARENT_SYNTHESIS_ALLOWED_TOOLS:
+        if _deep_research_child_synthesis_pending_without_report(context):
+            if _deep_research_parent_synthesis_tool_allowed(
+                context,
+                gate_context.tool_name,
+            ):
+                if existing_gate is not None:
+                    return await existing_gate(gate_context)
+                return ToolGateAllow(reason="deep_research_parent_synthesis_gate")
+            payload = {
+                "blocked_tool": gate_context.tool_name,
+                "allowed_tools": sorted(
+                    _deep_research_parent_synthesis_allowed_tools(context)
+                ),
+                "reason": "child_synthesis_pending",
+            }
+            context.metadata["deep_research_parent_synthesis_gate"] = payload
+            return ToolGateDeny(
+                reason=(
+                    "deep_research_parent_synthesis_gate denied "
+                    f"{gate_context.tool_name!r}: joined child research notes "
+                    "are pending parent synthesis. Launch the remaining bounded "
+                    "agent_tool child if the child budget is not exhausted; "
+                    "otherwise create or update research/report.md and "
+                    "research/sources.jsonl before continuing discovery."
+                )
+            )
+        if _deep_research_requires_initial_subagent_gate(context):
+            blocked_tools = _DEEP_RESEARCH_PRE_SUBAGENT_BLOCKED_TOOLS
+            if isinstance(
+                context.metadata.get("deep_research_initial_subagent_recovery"),
+                dict,
+            ):
+                blocked_tools = blocked_tools | frozenset({"skill_tool", "skill_view"})
+            if gate_context.tool_name in blocked_tools:
                 payload = {
                     "blocked_tool": gate_context.tool_name,
-                    "allowed_tools": sorted(_PARENT_SYNTHESIS_ALLOWED_TOOLS),
-                    "reason": "child_synthesis_pending",
+                    "allowed_tools": [
+                        "agent_tool",
+                        "skill_tool",
+                        "skill_view",
+                        "todo_write",
+                    ],
+                    "reason": "medium_hard_requires_bounded_subagents",
                 }
-                context.metadata["deep_research_parent_synthesis_gate"] = payload
+                context.metadata["deep_research_initial_subagent_gate"] = payload
                 return ToolGateDeny(
                     reason=(
-                        "deep_research_parent_synthesis_gate denied "
-                        f"{gate_context.tool_name!r}: joined child research notes "
-                        "are pending parent synthesis. Create or update "
-                        "research/report.md and research/sources.jsonl before "
-                        "continuing discovery."
+                        "deep_research_initial_subagent_gate denied "
+                        f"{gate_context.tool_name!r}: medium/hard Deep Research "
+                        "must first delegate bounded source discovery with "
+                        "agent_tool before direct web or write tools."
                     )
                 )
         if existing_gate is not None:
@@ -506,14 +576,43 @@ def _tool_gate_for_context(context: RunContext) -> ToolGate | None:
     return _gate
 
 
-def _deep_research_parent_synthesis_gate_active(context: RunContext) -> bool:
+def _deep_research_requires_initial_subagent_gate(context: RunContext) -> bool:
+    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
+    if not isinstance(task_contract, dict):
+        return False
+    if task_contract.get("research_mode") != "deep":
+        return False
+    profile = str(task_contract.get("research_profile") or "").strip().lower()
+    if profile not in {"medium", "hard"}:
+        return False
+    if _deep_research_max_subagent_requests(context) <= 0:
+        return False
+    if _deep_research_planned_or_started_subagent_count(context) > 0:
+        return False
+    return _tool_available_for_repair(context, "agent_tool")
+
+
+def _deep_research_child_synthesis_pending_without_report(context: RunContext) -> bool:
     handoff = context.metadata.get("deep_research_child_synthesis")
     return (
         isinstance(handoff, dict)
         and handoff.get("pending") is True
-        and not deep_research_report_artifact_exists(context)
-        and not _deep_research_subagent_budget_remaining(context)
+        and not _deep_research_parent_report_write_seen(context)
     )
+
+
+def _deep_research_parent_synthesis_tool_allowed(
+    context: RunContext,
+    tool_name: str,
+) -> bool:
+    return tool_name in _deep_research_parent_synthesis_allowed_tools(context)
+
+
+def _deep_research_parent_synthesis_allowed_tools(context: RunContext) -> frozenset[str]:
+    allowed = set(_PARENT_SYNTHESIS_ALLOWED_TOOLS)
+    if _deep_research_subagent_budget_remaining(context):
+        allowed.add("agent_tool")
+    return frozenset(allowed)
 
 
 def _deep_research_subagent_budget_remaining(context: RunContext) -> bool:
@@ -550,11 +649,29 @@ def _deep_research_max_subagent_requests(context: RunContext) -> int:
         raw_profile = task_contract.get("research_profile")
         if isinstance(raw_profile, str):
             profile = raw_profile.strip().lower()
-    if profile == "light":
-        return 0
-    if profile == "hard":
-        return 4
-    return 2
+        if profile == "light":
+            return 0
+        if profile == "hard":
+            return 4
+    return 1
+
+
+def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
+    for item in get_tool_loop_state(context).tool_results():
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        if call.get("tool_name") not in {"file_write", "file_patch", "file_edit"}:
+            continue
+        args = call.get("args")
+        if not isinstance(args, dict):
+            continue
+        path = str(args.get("path") or args.get("file_path") or "").strip()
+        if path == "research/report.md" or path.endswith("/research/report.md"):
+            return True
+    return False
 
 
 def _research_evidence_ready_for_final_repair(context: RunContext) -> bool:

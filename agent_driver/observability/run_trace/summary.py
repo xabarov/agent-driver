@@ -348,6 +348,8 @@ def _subagent_summary(
         data = _event_data(event)
         if marker_seen and event.get("event") == "tool_call_completed":
             for tool in event_tools(data):
+                if _is_parent_synthesis_gate_denial(tool):
+                    continue
                 tool_name = tool.get("tool_name") or tool.get("name")
                 if isinstance(tool_name, str) and tool_name:
                     tools_after_child_synthesis_pending.append(tool_name)
@@ -497,6 +499,21 @@ def _unexpected_tool_after_child_synthesis(
     return None
 
 
+def _is_parent_synthesis_gate_denial(tool: dict[str, Any]) -> bool:
+    status = str(tool.get("status") or "").lower()
+    error_code = str(tool.get("error_code") or "").lower()
+    summary = str(tool.get("result_summary") or "").lower()
+    remediation = str(tool.get("remediation") or "").lower()
+    return (
+        status == "denied"
+        and error_code == "policy_denied"
+        and (
+            "deep_research_parent_synthesis_gate" in summary
+            or "deep_research_parent_synthesis_gate" in remediation
+        )
+    )
+
+
 def _deep_research_max_subagent_requests_from_contract(
     *,
     task_contract: dict[str, Any] | None,
@@ -514,7 +531,7 @@ def _deep_research_max_subagent_requests_from_contract(
         return 4
     if "light deep research" in text or "light research" in text:
         return 0
-    return 2
+    return 1
 
 
 def _deep_research_max_subagent_requests_for_profile(profile: str) -> int:
@@ -523,7 +540,7 @@ def _deep_research_max_subagent_requests_for_profile(profile: str) -> int:
         return 0
     if normalized == "hard":
         return 4
-    return 2
+    return 1
 
 
 def _delegation_requested(user_prompt: str | None) -> bool:

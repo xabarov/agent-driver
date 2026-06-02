@@ -877,7 +877,7 @@ def _max_subagent_runs_before_stop(scenario: LiveScenario) -> int | None:
     if scenario.research_profile == "light":
         return 0
     if scenario.research_profile == "medium":
-        return 2
+        return 1
     if scenario.research_profile == "hard":
         return 4
     return None

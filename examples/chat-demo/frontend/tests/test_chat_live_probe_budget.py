@@ -219,7 +219,7 @@ def test_research_budget_stop_detects_medium_subagent_fanout() -> None:
         },
     )
 
-    assert reason == "deep research subagent fan-out budget exhausted: 3 > 2"
+    assert reason == "deep research subagent fan-out budget exhausted: 3 > 1"
 
 
 def test_render_scenario_scorecard_includes_research_efficiency_fields() -> None:

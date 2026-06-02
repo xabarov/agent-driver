@@ -790,6 +790,15 @@ def _append_denial_recovery_message(
             denied_message = (error.message or "").strip()
             denied_signature = f"{denied_tool_name}:{error.code}:{denied_message}"
             break
+        if (
+            error.code == "policy_denied"
+            and "deep_research_initial_subagent_gate" in (error.message or "")
+        ):
+            denied_tool_name = envelope.call.tool_name
+            denied_code = error.code
+            denied_message = (error.message or "").strip()
+            denied_signature = f"{denied_tool_name}:{error.code}:{denied_message}"
+            break
         if error.code != "tool_handler_error":
             continue
         denied_tool_name = envelope.call.tool_name
@@ -818,6 +827,32 @@ def _append_denial_recovery_message(
                 ),
             )
         )
+        context.metadata["last_denied_signature"] = denied_signature
+        return
+    if (
+        denied_code == "policy_denied"
+        and "deep_research_initial_subagent_gate" in reason
+    ):
+        get_tool_loop_state(context).set_tool_choice_override(
+            {"type": "tool", "name": "agent_tool"}
+        )
+        messages.append(
+            ChatMessage(
+                role=ChatRole.USER,
+                content=(
+                    f"Deep Research initial subagent gate denied '{denied_tool_name}'. "
+                    "This medium/hard research run must delegate bounded source "
+                    "discovery before direct web search or writing. Call agent_tool "
+                    "now with 1-2 focused child research tasks; do not call "
+                    "web_search, web_fetch, skill_view, or write tools until at "
+                    "least one child result has joined."
+                ),
+            )
+        )
+        context.metadata["deep_research_initial_subagent_recovery"] = {
+            "tool": "agent_tool",
+            "reason": "initial_subagent_gate_denied",
+        }
         context.metadata["last_denied_signature"] = denied_signature
         return
     denied_counts = context.metadata.get("denied_tool_counts")
