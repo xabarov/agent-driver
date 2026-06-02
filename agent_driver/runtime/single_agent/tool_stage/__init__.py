@@ -938,13 +938,13 @@ def _append_denial_recovery_message(
         break
     if denied_signature is None:
         return
-    if context.metadata.get("last_denied_signature") == denied_signature:
-        return
     reason = denied_message or "tool handler policy denied this call"
     if (
         denied_code == "policy_denied"
         and "deep_research_parent_synthesis_gate" in reason
     ):
+        if context.metadata.get("last_denied_signature") == denied_signature:
+            return
         get_tool_loop_state(context).set_tool_choice_override(
             {"type": "tool", "name": "file_write"}
         )
@@ -974,8 +974,21 @@ def _append_denial_recovery_message(
         denied_code == "policy_denied"
         and "deep_research_initial_subagent_gate" in reason
     ):
+        denied_counts = context.metadata.get("denied_tool_counts")
+        if not isinstance(denied_counts, dict):
+            denied_counts = {}
+        tool_key = denied_tool_name or "unknown"
+        denied_counts[tool_key] = int(denied_counts.get(tool_key, 0)) + 1
+        context.metadata["denied_tool_counts"] = denied_counts
         get_tool_loop_state(context).set_tool_choice_override(
             {"type": "tool", "name": "agent_tool"}
+        )
+        repeat_clause = (
+            " This is a repeated denied call; the request tool schema now "
+            "contains only agent_tool, so any web_search/web_fetch call will "
+            "be ignored as contract drift."
+            if denied_counts[tool_key] > 1
+            else ""
         )
         messages.append(
             ChatMessage(
@@ -986,7 +999,7 @@ def _append_denial_recovery_message(
                     "discovery before direct web search or writing. Call agent_tool "
                     "now with 1-2 focused child research tasks; do not call "
                     "web_search, web_fetch, skill_view, or write tools until at "
-                    "least one child result has joined."
+                    f"least one child result has joined.{repeat_clause}"
                 ),
             )
         )
@@ -995,6 +1008,8 @@ def _append_denial_recovery_message(
             "reason": "initial_subagent_gate_denied",
         }
         context.metadata["last_denied_signature"] = denied_signature
+        return
+    if context.metadata.get("last_denied_signature") == denied_signature:
         return
     denied_counts = context.metadata.get("denied_tool_counts")
     if not isinstance(denied_counts, dict):

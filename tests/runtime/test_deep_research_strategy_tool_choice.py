@@ -101,10 +101,47 @@ def test_medium_after_plan_narrows_request_tools_to_first_subagent() -> None:
         },
     )
 
-    assert _deep_research_request_allowed_tools(context) == (
-        "agent_tool",
-        "todo_write",
+    assert _deep_research_request_allowed_tools(context) == ("agent_tool",)
+
+
+def test_medium_after_skill_discovery_still_narrows_to_first_subagent() -> None:
+    context = _context(
+        research_mode="deep",
+        tool_results=[_tool_result("todo_write"), _tool_result("skill_tool")],
+        planning_state={
+            "todos": [
+                {
+                    "todo_id": "discover",
+                    "content": "Find sources",
+                    "status": "in_progress",
+                }
+            ]
+        },
     )
+
+    assert _deep_research_request_allowed_tools(context) == ("agent_tool",)
+
+
+def test_medium_initial_subagent_recovery_narrows_request_to_agent_tool_only() -> None:
+    context = _context(
+        research_mode="deep",
+        tool_results=[_tool_result("todo_write")],
+        planning_state={
+            "todos": [
+                {
+                    "todo_id": "discover",
+                    "content": "Find sources",
+                    "status": "in_progress",
+                }
+            ]
+        },
+    )
+    context.metadata["deep_research_initial_subagent_recovery"] = {
+        "tool": "agent_tool",
+        "reason": "initial_subagent_gate_denied",
+    }
+
+    assert _deep_research_request_allowed_tools(context) == ("agent_tool",)
 
 
 def test_pending_child_synthesis_narrows_to_write_after_fetch() -> None:

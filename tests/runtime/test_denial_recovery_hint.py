@@ -100,6 +100,32 @@ def test_initial_subagent_gate_denial_forces_agent_tool_recovery() -> None:
     assert "do not call web_search" in (messages[-1].content or "")
 
 
+def test_repeated_initial_subagent_gate_denial_reemits_stronger_recovery() -> None:
+    """Repeated hidden web-search drift should not be silently deduplicated."""
+    context = SimpleNamespace(metadata={})
+    messages = [ChatMessage(role="user", content="start")]
+    result = _policy_denied_result(
+        tool_name="web_search",
+        message=(
+            "deep_research_initial_subagent_gate denied 'web_search': "
+            "medium/hard Deep Research must first delegate bounded source "
+            "discovery with agent_tool before direct web or write tools."
+        ),
+    )
+
+    _append_denial_recovery_message(context, result, messages)
+    _append_denial_recovery_message(context, result, messages)
+
+    assert len(messages) == 3
+    assert context.metadata["denied_tool_counts"]["web_search"] == 2
+    assert context.metadata.get("tool_choice_override") == {
+        "type": "tool",
+        "name": "agent_tool",
+    }
+    assert "repeated denied call" in (messages[-1].content or "")
+    assert "only agent_tool" in (messages[-1].content or "")
+
+
 def test_parent_synthesis_gate_denial_forces_file_write_recovery() -> None:
     """After joined child notes, recovery should write, not read artifacts."""
     context = SimpleNamespace(metadata={})

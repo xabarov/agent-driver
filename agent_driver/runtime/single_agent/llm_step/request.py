@@ -197,13 +197,23 @@ def _deep_research_request_allowed_tools(
         if _deep_research_verified_fetch_count(context) > 0:
             return ("file_write", "todo_write")
         return ("file_write", "todo_write", "web_fetch")
+    initial_subagent_recovery = context.metadata.get(
+        "deep_research_initial_subagent_recovery"
+    )
+    if (
+        deep_medium_or_hard
+        and isinstance(initial_subagent_recovery, dict)
+        and not _deep_research_tool_used(context, "agent_tool")
+        and _deep_research_tool_available(context, "agent_tool")
+    ):
+        return ("agent_tool",)
     if (
         deep_medium_or_hard
         and _deep_research_initial_plan_seen(context)
         and not _deep_research_tool_used(context, "agent_tool")
         and _deep_research_tool_available(context, "agent_tool")
     ):
-        return ("agent_tool", "todo_write")
+        return ("agent_tool",)
     return None
 
 
