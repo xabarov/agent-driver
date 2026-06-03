@@ -235,6 +235,8 @@ def _effective_research_mode(body: ChatMessageRequest) -> str:
     if body.research_depth == "deep_parallel_research":
         return "deep"
     preset = resolve_tool_preset(body.tool_preset)
+    if preset in {"deep_research", "deep_research_medium", "deep_research_hard"}:
+        return "deep"
     if preset in {"web", "web_search", "web_fetch"}:
         return "web"
     return "chat"
@@ -292,13 +294,15 @@ def _research_request_metadata(body: ChatMessageRequest) -> dict[str, object]:
 
 def _effective_chat_preset(body: ChatMessageRequest) -> ToolPreset:
     """Return runtime tool preset, upgrading Deep Research to artifact tools."""
-    if body.research_mode == "deep" or body.research_depth == "deep_parallel_research":
-        if body.research_profile == "hard":
+    mode = _effective_research_mode(body)
+    profile = _effective_research_profile(body)
+    if mode == "deep":
+        if profile == "hard":
             return "deep_research_hard"
         return "deep_research_medium"
     if body.research_mode == "web":
         return "research_light"
-    if body.research_mode == "chat":
+    if mode == "chat" and body.research_mode == "chat":
         return "off"
     return resolve_tool_preset(body.tool_preset)
 
@@ -408,9 +412,7 @@ def _chat_tool_gate(*, body: ChatMessageRequest, settings: Settings) -> ToolGate
         return None
     if not settings.deep_research_phase_gate_enabled:
         return None
-    required_fetch_attempts = (
-        4 if _effective_research_profile(body) == "hard" else 2
-    )
+    required_fetch_attempts = 4 if _effective_research_profile(body) == "hard" else 2
     return create_deep_research_phase_gate(
         required_fetch_attempts=required_fetch_attempts
     )
@@ -424,10 +426,10 @@ def _trace_summary_for_run(
 ) -> dict[str, object]:
     record = _session_record_for_run(bundle, run_id)
     user_prompt, assistant_text = _turn_text_for_run(record, run_id)
-    task_contract = (
-        build_chat_task_contract(user_prompt)
-        if isinstance(user_prompt, str) and user_prompt.strip()
-        else None
+    task_contract = _task_contract_for_trace_summary(
+        record=record,
+        run_id=run_id,
+        user_prompt=user_prompt,
     )
     return summarize_run_trace(
         run_id=run_id,
@@ -435,6 +437,39 @@ def _trace_summary_for_run(
         user_prompt=user_prompt,
         assistant_text=assistant_text,
         task_contract=task_contract,
+    )
+
+
+def _task_contract_for_trace_summary(
+    *,
+    record: object | None,
+    run_id: str,
+    user_prompt: str | None,
+) -> dict[str, object] | None:
+    metadata = _metadata_by_run_dict(record).get(run_id, {})
+    task_contract = metadata.get("task_contract")
+    if isinstance(task_contract, dict):
+        return dict(task_contract)
+    if (
+        metadata.get("research_mode") == "deep"
+        or metadata.get("research_depth") == "deep_parallel_research"
+    ):
+        profile = str(metadata.get("research_profile") or "medium")
+        return {
+            "kind": "research",
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": profile,
+            "profile_source": metadata.get("profile_source") or "unknown",
+            "hard_options": metadata.get("hard_options") or {},
+            "max_subagent_requests": _deep_research_max_subagent_requests(profile),
+            "goal": user_prompt or "",
+        }
+    return (
+        build_chat_task_contract(user_prompt)
+        if isinstance(user_prompt, str) and user_prompt.strip()
+        else None
     )
 
 
@@ -572,7 +607,9 @@ def _deep_research_todos(trace_summary: dict[str, object]) -> DeepResearchTodoSt
     )
 
 
-def _deep_research_metrics(trace_summary: dict[str, object]) -> DeepResearchMetricsState:
+def _deep_research_metrics(
+    trace_summary: dict[str, object],
+) -> DeepResearchMetricsState:
     efficiency = trace_summary.get("research_efficiency")
     if not isinstance(efficiency, dict):
         efficiency = {}
@@ -583,7 +620,9 @@ def _deep_research_metrics(trace_summary: dict[str, object]) -> DeepResearchMetr
     tool_names = trace_summary.get("tool_names")
     names = [str(name) for name in tool_names] if isinstance(tool_names, list) else []
     return DeepResearchMetricsState(
-        promptTokens=_int_or_none(usage.get("input_tokens") or usage.get("prompt_tokens")),
+        promptTokens=_int_or_none(
+            usage.get("input_tokens") or usage.get("prompt_tokens")
+        ),
         completionTokens=_int_or_none(
             usage.get("output_tokens") or usage.get("completion_tokens")
         ),
@@ -598,7 +637,9 @@ def _deep_research_metrics(trace_summary: dict[str, object]) -> DeepResearchMetr
     )
 
 
-def _deep_research_subagents(trace_summary: dict[str, object]) -> DeepResearchSubagentState:
+def _deep_research_subagents(
+    trace_summary: dict[str, object],
+) -> DeepResearchSubagentState:
     subagents = trace_summary.get("subagents")
     if not isinstance(subagents, dict):
         return DeepResearchSubagentState()
@@ -885,12 +926,16 @@ def get_deep_research_state(
         warnings=_deep_research_warnings(trace_summary),
         trace=DeepResearchTraceState(
             runId=run_id,
-            verdict=trace_summary.get("verdict")
-            if isinstance(trace_summary.get("verdict"), str)
-            else None,
-            terminalEvent=trace_summary.get("terminal_event")
-            if isinstance(trace_summary.get("terminal_event"), str)
-            else None,
+            verdict=(
+                trace_summary.get("verdict")
+                if isinstance(trace_summary.get("verdict"), str)
+                else None
+            ),
+            terminalEvent=(
+                trace_summary.get("terminal_event")
+                if isinstance(trace_summary.get("terminal_event"), str)
+                else None
+            ),
             failureFlags=failure_flags,
         ),
     )

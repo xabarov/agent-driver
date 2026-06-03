@@ -25,6 +25,8 @@ def provider_profile_summary(
 
 def llm_call_summary(events: list[dict[str, object]]) -> dict[str, Any]:
     tool_choices: list[Any] = []
+    request_allowed_tools: list[Any] = []
+    request_tool_names: list[Any] = []
     force_final_reasons: list[str] = []
     continuation_reasons: list[str] = []
     usage = {
@@ -58,6 +60,10 @@ def llm_call_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         data = event_data(event)
         if "tool_choice_effective" in data:
             tool_choices.append(data.get("tool_choice_effective"))
+        if "request_allowed_tools" in data:
+            request_allowed_tools.append(data.get("request_allowed_tools"))
+        if "request_tool_names" in data:
+            request_tool_names.append(data.get("request_tool_names"))
         force_final_reason = data.get("force_final_reason")
         if isinstance(force_final_reason, str) and force_final_reason:
             force_final_reasons.append(force_final_reason)
@@ -68,6 +74,8 @@ def llm_call_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         "started": count_events(events, "llm_call_started"),
         "completed": count_events(events, "llm_call_completed"),
         "tool_choice_effective": tool_choices,
+        "request_allowed_tools": request_allowed_tools,
+        "request_tool_names": request_tool_names,
         "force_final_reasons": force_final_reasons,
         "continuation_reasons": continuation_reasons,
         "usage": usage if saw_usage else None,

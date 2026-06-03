@@ -37,6 +37,7 @@ from agent_driver.runtime.single_agent.llm_step.context_pressure import (
 from agent_driver.runtime.single_agent.llm_step.provider_requests import (
     narrow_request_tools_to_forced_choice as _narrow_request_tools_to_forced_choice,
     provider_error_message as _provider_error_message,
+    request_tool_name as _request_tool_name,
 )
 from agent_driver.runtime.single_agent.llm_step.prompt import (
     effective_code_agent_imports as _effective_code_agent_imports,
@@ -89,21 +90,6 @@ async def execute_llm_call_step(
 ) -> RuntimeStepResult:
     """Run LLM call step with trimming, compaction, and provider completion."""
     tool_state = get_tool_loop_state(context)
-    emit_step_event(
-        host,
-        context,
-        event_type=RuntimeEventType.LLM_CALL_STARTED,
-        payload={
-            "provider": host._deps.provider.name,
-            "tool_choice_effective": (
-                tool_state.tool_choice_override()
-                if tool_state.tool_choice_override() is not None
-                else context.run_input.tool_choice
-            ),
-            "force_final_reason": tool_state.force_final_answer_reason(),
-            "continuation_reason": context.metadata.get("continuation_nudge_reason"),
-        },
-    )
     context.metadata["llm_call_started_monotonic"] = time.monotonic()
     clarification = get_planning_runtime_state(context).clarification()
     try:
@@ -112,6 +98,27 @@ async def execute_llm_call_step(
             host, context, observations, clarification
         )
         request = _narrow_request_tools_to_forced_choice(request)
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.LLM_CALL_STARTED,
+            payload={
+                "provider": host._deps.provider.name,
+                "tool_choice_effective": request.tool_choice,
+                "request_allowed_tools": context.metadata.get(
+                    "llm_request_allowed_tools"
+                ),
+                "request_tool_names": [
+                    name
+                    for name in (_request_tool_name(tool) for tool in request.tools)
+                    if name
+                ],
+                "force_final_reason": tool_state.force_final_answer_reason(),
+                "continuation_reason": context.metadata.get(
+                    "continuation_nudge_reason"
+                ),
+            },
+        )
         _emit_protocol_debug(host, context, request)
         compaction_state = get_compaction_runtime_state(context)
         compaction_state.set_trim_payload(trim_payload)

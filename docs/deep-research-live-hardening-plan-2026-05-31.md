@@ -1221,11 +1221,16 @@ Checklist:
   - unknown artifact tool calls should trigger immediate repair/abort, not
     another long LLM loop.
 - [x] Revisit phase gate strictness:
-  - decide whether `skill_tool` is allowed before the first `todo_write`;
-  - allow `todo_write` progress updates outside the initial plan phase;
-  - allow verification tools in the real phase where they are required;
-  - start with warn-and-repair mode, then move to hard-deny only after the
-    observed medium canary passes.
+  - initial medium/hard planning is narrowed to `todo_write`;
+  - after the initial plan, medium/hard discovery is narrowed to one bounded
+    `agent_tool` child by default;
+  - after child join or discovery budget exhaustion, parent synthesis is
+    steered through request schema narrowing, strategy `tool_choice`,
+    execution `ToolGate`, and tool-stage repair;
+  - ordinary `source_verified_report` tasks must not enter Deep Research
+    medium/hard forcing unless `research_mode=deep`,
+    `research_depth=deep_parallel_research`, or an explicit
+    medium/hard Deep Research profile is present.
 - [x] Add early abort thresholds:
   - abort/repair after unknown tool call;
   - abort after more than N phase violations;
@@ -1289,17 +1294,47 @@ Checklist:
   - [x] Add contract-repair reason `child_synthesis_pending` and force the
     next repair turn toward parent `file_write` before falling back to
     report preview/patch tools.
-  - [ ] Enforce or repair the actual parent `file_write`/`file_patch` call and
-    verify it in a live medium trace.
+  - [x] Enforce or repair the actual parent `file_write`/`file_patch` call in
+    runtime tests, including report-only repair toward
+    `research/sources.jsonl`.
+  - [ ] Verify parent-owned report and source-ledger writes in two consecutive
+    live medium traces.
 - [ ] Make parent trace-summary optionally show child evidence separately
   (`child_search_count`, `child_fetch_count`, `child_verified_read_count`) while
   keeping medium readiness gated on parent-owned synthesis.
 
 Gate:
 
-- Do not begin architecture-variant comparison until the medium canary fails
-  only for research quality/source coverage, not for unknown tools, missing
-  report projection, phase-policy mismatch, or absent Phoenix evidence.
+- Do not begin Phase 1+ gate closure, hard-profile expansion, or
+  architecture-variant comparison until Phase 0.5 has two consecutive observed
+  medium fork-join passes.
+- A medium pass requires: parent trace evidence for `research/report.md`,
+  non-empty `research/sources.jsonl`, `run_completed`, concise artifact
+  handoff, token budget compliance, and no unknown/post-terminal tool drift.
+- Successful `deep_research_initial_subagent_gate` or
+  `deep_research_parent_synthesis_gate` denials count as guardrail recovery, not
+  as run failure, when the run subsequently completes through the required
+  artifact path.
+
+Execution note 2026-06-03:
+
+- Light observed canary passed:
+  `run_c4c552792483` in
+  `/tmp/chat-demo-live-observed-20260603-085910/deep-light-fork-join-canary`.
+- Medium observed canaries still failed the Phase 0.5 gate:
+  - `run_f9e966872806`:
+    `agent_tool -> file_write -> file_write`, missing initial todo and source
+    ledger.
+  - `run_775aafa13657`, `run_b2e00c8fcce7`, `run_d404463cf4c0`,
+    `run_38aa3751321b`: continued failures around initial planning, verified
+    fetches, source ledger, and report rewrite behavior under the default
+    OpenRouter model.
+  - `qwen/qwen3.5-397b-a17b` failed preflight with text-form tool calls.
+  - `minimax/minimax-m2.7` reached `todo_write` first but still failed medium
+    acceptance in `run_0e143997bd1e`: missing report/source ledger artifacts,
+    no verified fetch evidence, and phase violations.
+- Phase 0.5 remains open. Hard-profile expansion and architecture comparison
+  remain intentionally blocked until medium has two consecutive full passes.
 
 ### Phase 1: Capability Surface Fix
 

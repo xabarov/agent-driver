@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from agent_driver.runtime.single_agent.llm_step.request import (
     _deep_research_request_allowed_tools,
     _deep_research_strategy_tool_choice,
@@ -14,21 +16,26 @@ from agent_driver.runtime.single_agent.llm_step.request import (
 
 def _context(
     *,
-    profile: str = "medium",
+    profile: str | None = "medium",
     research_depth: str = "deep_parallel_research",
     research_mode: str | None = None,
     max_subagent_requests: int = 1,
     tool_results: list[dict[str, object]] | None = None,
     planning_state: dict[str, object] | None = None,
+    metadata: dict[str, object] | None = None,
+    app_metadata: dict[str, object] | None = None,
 ) -> SimpleNamespace:
-    metadata: dict[str, object] = {"tool_results": tool_results or []}
+    runtime_metadata: dict[str, object] = {
+        "tool_results": tool_results or [],
+        **(metadata or {}),
+    }
     if planning_state is not None:
-        metadata["planning_state"] = planning_state
+        runtime_metadata["planning_state"] = planning_state
     return SimpleNamespace(
         llm_step_count=2,
-        metadata=metadata,
+        metadata=runtime_metadata,
         run_input=SimpleNamespace(
-            app_metadata={},
+            app_metadata=app_metadata or {},
             tool_policy=SimpleNamespace(
                 allowed_tools=None,
                 denied_tools=[],
@@ -36,8 +43,10 @@ def _context(
                     "task_contract": {
                         "requires_research": True,
                         "research_depth": research_depth,
-                        "research_profile": profile,
                         "max_subagent_requests": max_subagent_requests,
+                        **(
+                            {"research_profile": profile} if profile is not None else {}
+                        ),
                         **(
                             {"research_mode": research_mode}
                             if research_mode is not None
@@ -97,12 +106,42 @@ def test_medium_after_plan_narrows_request_tools_to_first_subagent() -> None:
         tool_results=[_tool_result("todo_write")],
         planning_state={
             "todos": [
-                {"todo_id": "discover", "content": "Find sources", "status": "in_progress"}
+                {
+                    "todo_id": "discover",
+                    "content": "Find sources",
+                    "status": "in_progress",
+                }
             ]
         },
     )
 
     assert _deep_research_request_allowed_tools(context) == ("agent_tool",)
+
+
+def test_medium_after_plan_falls_back_when_agent_tool_not_effective() -> None:
+    context = _context(
+        research_mode="deep",
+        tool_results=[_tool_result("todo_write")],
+        planning_state={
+            "todos": [
+                {
+                    "todo_id": "discover",
+                    "content": "Find sources",
+                    "status": "in_progress",
+                }
+            ]
+        },
+        metadata={"effective_tool_names": ("todo_write", "file_write")},
+    )
+
+    assert _deep_research_request_allowed_tools(context) is None
+    assert _deep_research_strategy_tool_choice(context, None) is None
+
+
+def test_medium_before_plan_narrows_request_tools_to_planning_only() -> None:
+    context = _context(research_mode="deep")
+
+    assert _deep_research_request_allowed_tools(context) == ("todo_write",)
 
 
 def test_medium_after_skill_discovery_still_narrows_to_first_subagent() -> None:
@@ -154,10 +193,14 @@ def test_deep_research_with_report_only_narrows_to_ledger_write(
     report.parent.mkdir(parents=True)
     report.write_text("ready report", encoding="utf-8")
 
-    assert _deep_research_request_allowed_tools(context) == (
-        "file_write",
-        "todo_write",
-    )
+    assert _deep_research_request_allowed_tools(context) == ("file_write",)
+    choice = _deep_research_strategy_tool_choice(context, None)
+    assert choice == {"type": "tool", "name": "file_write"}
+    assert context.metadata["deep_research_strategy_tool_choice"] == {
+        "tool": "file_write",
+        "path": "research/sources.jsonl",
+        "reason": "deep_research_source_ledger_missing",
+    }
 
 
 def test_deep_research_with_report_and_ledger_disables_tools(
@@ -225,16 +268,25 @@ def test_pending_child_synthesis_narrows_to_write_after_fetch() -> None:
 def test_strategy_does_not_override_explicit_choice_or_light_profile() -> None:
     explicit = {"type": "tool", "name": "web_search"}
     assert _deep_research_strategy_tool_choice(_context(), explicit) is explicit
-    assert _deep_research_strategy_tool_choice(
-        _context(profile="light", max_subagent_requests=0),
-        None,
-    ) is None
+    assert (
+        _deep_research_strategy_tool_choice(
+            _context(profile="light", max_subagent_requests=0),
+            None,
+        )
+        is None
+    )
 
 
 def test_strategy_waits_for_initial_todo_before_agent_tool() -> None:
     context = _context()
 
-    assert _deep_research_strategy_tool_choice(context, None) is None
+    assert _deep_research_strategy_tool_choice(context, None) == {
+        "type": "tool",
+        "name": "todo_write",
+    }
+    assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
+        "medium_hard_requires_initial_todo_plan"
+    )
 
 
 def test_strategy_forces_file_write_after_agent_and_discovery_budget() -> None:
@@ -259,7 +311,9 @@ def test_strategy_forces_file_write_after_agent_and_discovery_budget() -> None:
     }
 
 
-def test_strategy_forces_second_agent_after_child_handoff_with_explicit_budget() -> None:
+def test_strategy_forces_second_agent_after_child_handoff_with_explicit_budget() -> (
+    None
+):
     context = _context(
         max_subagent_requests=2,
         tool_results=[
@@ -328,7 +382,59 @@ def test_strategy_forces_file_write_for_deep_source_verified_contract() -> None:
     )
 
 
-def test_strategy_forces_patch_when_child_notes_pending_with_captured_report() -> None:
+def test_source_verified_report_without_deep_mode_does_not_use_deep_strategy() -> None:
+    context = _context(
+        research_depth="source_verified_report",
+        research_mode=None,
+        profile=None,
+    )
+    context.metadata["deep_research_artifacts"] = {
+        "report_exists": True,
+        "report_path": "research/report.md",
+        "report_size_bytes": 512,
+    }
+
+    assert _deep_research_request_allowed_tools(context) is None
+    assert _deep_research_strategy_tool_choice(context, None) is None
+
+
+def test_source_verified_report_with_medium_profile_uses_deep_strategy() -> None:
+    context = _context(
+        research_depth="source_verified_report",
+        research_mode=None,
+        profile="medium",
+    )
+
+    assert _deep_research_request_allowed_tools(context) == ("todo_write",)
+    assert _deep_research_strategy_tool_choice(context, None) == {
+        "type": "tool",
+        "name": "todo_write",
+    }
+
+
+def test_app_metadata_deep_profile_enables_request_strategy_without_contract() -> None:
+    context = _context(
+        research_depth="source_verified_report",
+        research_mode=None,
+        profile=None,
+        app_metadata={
+            "research_mode": "deep",
+            "research_profile": "medium",
+            "research_depth": "deep_parallel_research",
+        },
+    )
+    context.run_input.tool_policy.metadata.pop("task_contract")
+
+    assert _deep_research_request_allowed_tools(context) == ("todo_write",)
+    assert _deep_research_strategy_tool_choice(context, None) == {
+        "type": "tool",
+        "name": "todo_write",
+    }
+
+
+def test_strategy_forces_source_ledger_when_child_notes_pending_with_captured_report() -> (
+    None
+):
     context = _context(
         tool_results=[
             _tool_result("todo_write"),
@@ -348,11 +454,11 @@ def test_strategy_forces_patch_when_child_notes_pending_with_captured_report() -
 
     choice = _deep_research_strategy_tool_choice(context, None)
 
-    assert choice == {"type": "tool", "name": "file_patch"}
+    assert choice == {"type": "tool", "name": "file_write"}
     assert context.metadata["deep_research_strategy_tool_choice"] == {
-        "tool": "file_patch",
-        "path": "research/report.md",
-        "reason": "child_synthesis_pending_budget_exhausted",
+        "tool": "file_write",
+        "path": "research/sources.jsonl",
+        "reason": "deep_research_source_ledger_missing",
     }
 
 
@@ -379,6 +485,29 @@ def test_provider_safe_tool_choice_disables_rejected_named_forcing() -> None:
     assert context.metadata["forced_tool_choice_disabled"] == (
         "provider_rejected_named_tool_choice"
     )
+
+
+def test_provider_rejection_keeps_report_only_schema_narrowing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    context = _context(research_mode="deep")
+    context.metadata["forced_tool_choice_retry"] = "removed_after_provider_rejection"
+    context.metadata["deep_research_artifacts"] = {
+        "report_exists": True,
+        "report_path": "research/report.md",
+        "report_size_bytes": 128,
+    }
+    report = tmp_path / "research" / "report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("ready report", encoding="utf-8")
+
+    forced = _deep_research_strategy_tool_choice(context, None)
+    choice = _provider_safe_tool_choice(context, forced)
+
+    assert forced == {"type": "tool", "name": "file_write"}
+    assert choice is None
+    assert _deep_research_request_allowed_tools(context) == ("file_write",)
 
 
 def test_provider_safe_tool_choice_keeps_forced_final_none() -> None:

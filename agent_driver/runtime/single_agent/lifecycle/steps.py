@@ -13,6 +13,15 @@ from agent_driver.runtime.metadata_state import (
     get_research_runtime_state,
     get_tool_loop_state,
 )
+from agent_driver.runtime.deep_research_gating import (
+    deep_research_context_enabled,
+    deep_research_contract_expected,
+    deep_research_max_subagent_requests,
+    deep_research_planned_or_started_subagent_count,
+    deep_research_profile,
+    deep_research_tool_available,
+    is_research_report_path,
+)
 from agent_driver.runtime.research_artifacts import (
     captured_draft_protocol_text,
     deep_research_artifact_repair_hint,
@@ -493,26 +502,15 @@ def _deep_research_initial_subagent_recovery_required(context: RunContext) -> bo
 
 
 def _tool_available_for_repair(context: RunContext, tool_name: str) -> bool:
-    policy = context.run_input.tool_policy
-    denied = set(policy.denied_tools or [])
-    if tool_name in denied:
-        return False
-    allowed = policy.allowed_tools
-    if allowed is not None and tool_name not in set(allowed):
-        return False
-    effective = get_tool_loop_state(context).effective_tool_names()
-    if effective is not None and tool_name not in set(effective):
-        return False
-    return True
+    return deep_research_tool_available(context, tool_name)
 
 
 def _tool_gate_for_context(context: RunContext) -> ToolGate | None:
     """Wrap caller gate with Deep Research parent-synthesis enforcement."""
     existing_gate = context.tool_gate
-    if (
-        not _deep_research_child_synthesis_pending_without_report(context)
-        and not _deep_research_requires_initial_subagent_gate(context)
-    ):
+    if not _deep_research_child_synthesis_pending_without_report(
+        context
+    ) and not _deep_research_requires_initial_subagent_gate(context):
         return existing_gate
 
     async def _gate(gate_context: ToolGateContext):
@@ -578,16 +576,18 @@ def _tool_gate_for_context(context: RunContext) -> ToolGate | None:
 
 def _deep_research_requires_initial_subagent_gate(context: RunContext) -> bool:
     task_contract = context.run_input.tool_policy.metadata.get("task_contract")
-    if not isinstance(task_contract, dict):
+    if isinstance(task_contract, dict):
+        deep_expected = deep_research_contract_expected(task_contract)
+    else:
+        deep_expected = deep_research_context_enabled(context)
+    if not deep_expected:
         return False
-    if task_contract.get("research_mode") != "deep":
-        return False
-    profile = str(task_contract.get("research_profile") or "").strip().lower()
+    profile = deep_research_profile(context, default="")
     if profile not in {"medium", "hard"}:
         return False
-    if _deep_research_max_subagent_requests(context) <= 0:
+    if deep_research_max_subagent_requests(context) <= 0:
         return False
-    if _deep_research_planned_or_started_subagent_count(context) > 0:
+    if deep_research_planned_or_started_subagent_count(context) > 0:
         return False
     return _tool_available_for_repair(context, "agent_tool")
 
@@ -608,7 +608,9 @@ def _deep_research_parent_synthesis_tool_allowed(
     return tool_name in _deep_research_parent_synthesis_allowed_tools(context)
 
 
-def _deep_research_parent_synthesis_allowed_tools(context: RunContext) -> frozenset[str]:
+def _deep_research_parent_synthesis_allowed_tools(
+    context: RunContext,
+) -> frozenset[str]:
     allowed = set(
         _PARENT_SYNTHESIS_UPDATE_TOOLS
         if deep_research_report_artifact_exists(context)
@@ -620,44 +622,9 @@ def _deep_research_parent_synthesis_allowed_tools(context: RunContext) -> frozen
 
 
 def _deep_research_subagent_budget_remaining(context: RunContext) -> bool:
-    return _deep_research_planned_or_started_subagent_count(
+    return deep_research_planned_or_started_subagent_count(
         context
-    ) < _deep_research_max_subagent_requests(context)
-
-
-def _deep_research_planned_or_started_subagent_count(context: RunContext) -> int:
-    count = 0
-    planned = context.metadata.get("planned_subagent_group")
-    if isinstance(planned, dict) and isinstance(planned.get("tasks"), list):
-        count += len([item for item in planned["tasks"] if isinstance(item, dict)])
-    runs = context.metadata.get("subagent_runs")
-    if isinstance(runs, list):
-        count += len([item for item in runs if isinstance(item, dict)])
-    return count
-
-
-def _deep_research_max_subagent_requests(context: RunContext) -> int:
-    metadata = context.run_input.tool_policy.metadata
-    task_contract = metadata.get("task_contract")
-    if isinstance(task_contract, dict):
-        raw = task_contract.get("max_subagent_requests")
-        if isinstance(raw, int) and not isinstance(raw, bool):
-            return max(0, raw)
-    mode = metadata.get("deep_research_mode")
-    profile = None
-    if isinstance(mode, dict):
-        raw_profile = mode.get("research_profile")
-        if isinstance(raw_profile, str):
-            profile = raw_profile.strip().lower()
-    if profile is None and isinstance(task_contract, dict):
-        raw_profile = task_contract.get("research_profile")
-        if isinstance(raw_profile, str):
-            profile = raw_profile.strip().lower()
-        if profile == "light":
-            return 0
-        if profile == "hard":
-            return 4
-    return 1
+    ) < deep_research_max_subagent_requests(context)
 
 
 def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
@@ -672,8 +639,7 @@ def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
         args = call.get("args")
         if not isinstance(args, dict):
             continue
-        path = str(args.get("path") or args.get("file_path") or "").strip()
-        if path == "research/report.md" or path.endswith("/research/report.md"):
+        if is_research_report_path(args.get("path") or args.get("file_path")):
             return True
     return False
 

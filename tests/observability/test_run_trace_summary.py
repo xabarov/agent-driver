@@ -47,7 +47,9 @@ def test_trace_summary_passes_research_with_web_tool() -> None:
             {
                 "event": "llm_call_started",
                 "data": {
-                    "tool_choice_effective": {"type": "tool", "name": "web_search"}
+                    "tool_choice_effective": {"type": "tool", "name": "web_search"},
+                    "request_allowed_tools": ["web_search"],
+                    "request_tool_names": ["web_search"],
                 },
             },
             _completed_tool("web_search"),
@@ -61,6 +63,8 @@ def test_trace_summary_passes_research_with_web_tool() -> None:
     assert summary["llm"]["tool_choice_effective"] == [
         {"type": "tool", "name": "web_search"}
     ]
+    assert summary["llm"]["request_allowed_tools"] == [["web_search"]]
+    assert summary["llm"]["request_tool_names"] == [["web_search"]]
 
 
 def test_trace_summary_does_not_double_count_started_and_completed_tools() -> None:

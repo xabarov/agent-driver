@@ -207,6 +207,42 @@ describe("chatStore", () => {
     expect(view?.sources.verified).toBe(1);
   });
 
+  test("deep research finishTurn marks ready stream view completed", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("deep research");
+    useChatStore.getState().setSessionId("session_1");
+    useChatStore.getState().setRunId("run_1");
+    useChatStore.getState().updateDeepResearch(assistantId, {
+      progress: { seq: 1, event: "research_progress", label: "write" },
+      artifact: {
+        reportPath: "research/report.md",
+        reportSizeBytes: 2048,
+      },
+      ledger: {
+        verifiedReads: [],
+        searchCandidates: [
+          {
+            id: "src_1",
+            url: "https://example.com/a",
+            canonicalUrl: "https://example.com/a",
+            domain: "example.com",
+            sourceType: "web_search",
+          },
+        ],
+        blockedReads: [],
+        failedReads: [],
+        assistantLinks: [],
+      },
+    });
+
+    useChatStore.getState().finishTurn(assistantId);
+
+    const view = useChatStore.getState().deepResearchView;
+    expect(view?.phase).toBe("completed");
+    expect(view?.readiness).toBe("ready");
+    expect(view?.trace.terminalEvent).toBe("run_completed");
+    expect(view?.trace.verdict).toBe("pass");
+  });
+
   test("loadSession replaces messages and resets stream state", () => {
     const state = useChatStore.getState();
     state.beginUserTurn("stale");

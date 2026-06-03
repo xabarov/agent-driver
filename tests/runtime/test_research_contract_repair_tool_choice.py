@@ -179,9 +179,10 @@ async def test_parent_synthesis_gate_blocks_discovery_after_child_handoff() -> N
     decision = await gate(_gate_context("glob_search"))
     assert isinstance(decision, ToolGateDeny)
     assert "deep_research_parent_synthesis_gate denied" in decision.reason
-    assert context.metadata["deep_research_parent_synthesis_gate"][
-        "blocked_tool"
-    ] == "glob_search"
+    assert (
+        context.metadata["deep_research_parent_synthesis_gate"]["blocked_tool"]
+        == "glob_search"
+    )
 
 
 @pytest.mark.asyncio
@@ -225,9 +226,10 @@ async def test_parent_synthesis_gate_blocks_artifact_list_before_report() -> Non
     assert gate is not None
     artifact_list = await gate(_gate_context("artifact_list"))
     assert isinstance(artifact_list, ToolGateDeny)
-    assert context.metadata["deep_research_parent_synthesis_gate"][
-        "blocked_tool"
-    ] == "artifact_list"
+    assert (
+        context.metadata["deep_research_parent_synthesis_gate"]["blocked_tool"]
+        == "artifact_list"
+    )
     file_write = await gate(_gate_context("file_write"))
     assert isinstance(file_write, ToolGateAllow)
     web_fetch = await gate(_gate_context("web_fetch"))
@@ -315,6 +317,41 @@ async def test_medium_deep_research_gate_requires_initial_subagent() -> None:
     assert "deep_research_initial_subagent_gate denied" in web_search.reason
     agent_tool = await gate(_gate_context("agent_tool"))
     assert isinstance(agent_tool, ToolGateAllow)
+
+
+@pytest.mark.asyncio
+async def test_app_metadata_deep_research_gate_requires_initial_subagent() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "effective_tool_names": ("agent_tool", "web_search", "todo_write"),
+        },
+    )
+    context.run_input.app_metadata = {
+        "research_mode": "deep",
+        "research_profile": "medium",
+        "research_depth": "deep_parallel_research",
+    }
+    context.run_input.tool_policy.metadata.pop("task_contract")
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    web_search = await gate(_gate_context("web_search"))
+    assert isinstance(web_search, ToolGateDeny)
+    assert "deep_research_initial_subagent_gate denied" in web_search.reason
+
+
+@pytest.mark.asyncio
+async def test_source_verified_report_does_not_enable_initial_subagent_gate() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "effective_tool_names": ("agent_tool", "web_search", "todo_write"),
+        },
+    )
+
+    assert _tool_gate_for_context(context) is None
 
 
 @pytest.mark.asyncio

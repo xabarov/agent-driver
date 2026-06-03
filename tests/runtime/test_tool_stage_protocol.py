@@ -152,6 +152,111 @@ def test_deep_research_retargets_alias_write_ledger_path_to_missing_report() -> 
     )
 
 
+def test_deep_research_retargets_repeated_report_write_to_missing_source_ledger() -> (
+    None
+):
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="file_write",
+                    tool_call_id="call_1",
+                    args={
+                        "path": "research/report.md",
+                        "content": "# Report\n\nDraft without sources.",
+                    },
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={
+            "deep_research_artifacts": {
+                "report_exists": True,
+                "report_path": "research/report.md",
+                "report_size_bytes": 128,
+            },
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "web_search",
+                        "tool_call_id": "search_1",
+                        "args": {"query": "fork join queues"},
+                    },
+                    "structured_output": {
+                        "results": [
+                            {
+                                "title": "Fork-join source",
+                                "url": "https://example.com/fork-join",
+                                "snippet": "Queueing model overview",
+                            }
+                        ]
+                    },
+                }
+            ],
+        },
+    )
+
+    _repair_deep_research_parent_file_write_args(context)
+
+    planned = llm_response.metadata["planned_tool_calls"][0]
+    assert planned["args"]["path"] == "research/sources.jsonl"
+    assert "https://example.com/fork-join" in planned["args"]["content"]
+    assert planned["metadata"]["deep_research_repair_reason"] == (
+        "source_ledger_required"
+    )
+
+
+def test_deep_research_keeps_source_ledger_file_path_alias_with_suffix() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="file_write",
+                    tool_call_id="call_1",
+                    args={
+                        "file_path": "workspace/research/sources.jsonl",
+                        "content": '{"url": "https://example.com/fork-join"}\n',
+                    },
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={
+            "deep_research_artifacts": {
+                "report_exists": True,
+                "report_path": "research/report.md",
+                "report_size_bytes": 128,
+            },
+            "tool_results": [],
+        },
+    )
+
+    _repair_deep_research_parent_file_write_args(context)
+
+    planned = llm_response.metadata["planned_tool_calls"][0]
+    assert planned["args"]["path"] == "workspace/research/sources.jsonl"
+    assert planned["args"]["content"] == '{"url": "https://example.com/fork-join"}\n'
+    assert planned["metadata"]["tool_args_normalized"] is True
+    assert context.metadata["deep_research_file_write_args_repaired"] == {
+        "count": 1,
+        "reason": "source_ledger_file_write_repair",
+    }
+
+
 def test_update_tool_protocol_messages_includes_truncated_and_error_code() -> None:
     llm_response = LlmResponse(
         message=ChatMessage(role=ChatRole.ASSISTANT, content=""),

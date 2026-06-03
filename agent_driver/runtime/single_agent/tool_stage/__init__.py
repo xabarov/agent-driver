@@ -19,6 +19,11 @@ from agent_driver.observability.source_evidence import source_evidence_from_tool
 from agent_driver.prompts import force_final_answer_tool_message
 from agent_driver.runtime.artifact_events import artifact_event_from_tool_result
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.deep_research_gating import (
+    is_research_report_path,
+    is_research_source_ledger_path,
+    normalize_artifact_path,
+)
 from agent_driver.runtime.metadata_state import (
     get_research_runtime_state,
     get_tool_loop_state,
@@ -134,13 +139,18 @@ def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
     response = context.llm_response
     if response is None:
         return
+    planned_calls = extract_planned_tool_calls(response)
+    if not planned_calls:
+        return
+    if deep_research_report_artifact_exists(
+        context
+    ) and not deep_research_source_ledger_artifact_exists(context):
+        _repair_deep_research_source_ledger_file_write_args(context, planned_calls)
+        return
     handoff = context.metadata.get("deep_research_child_synthesis")
     if not isinstance(handoff, dict) or handoff.get("pending") is not True:
         return
     if _report_artifact_path_seen(context):
-        return
-    planned_calls = extract_planned_tool_calls(response)
-    if not planned_calls:
         return
     repaired_payload: list[dict[str, Any]] = []
     repaired_count = 0
@@ -197,6 +207,55 @@ def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
     }
 
 
+def _repair_deep_research_source_ledger_file_write_args(
+    context: RunContext,
+    planned_calls: list[Any],
+) -> None:
+    response = context.llm_response
+    if response is None:
+        return
+    repaired_payload: list[dict[str, Any]] = []
+    repaired_count = 0
+    for call in planned_calls:
+        normalized_call = _normalize_parent_file_write_call(call)
+        if normalized_call is None:
+            repaired_payload.append(call.model_dump(mode="json"))
+            continue
+        normalized_args = normalized_call is not call
+        call = normalized_call
+        args = dict(call.args) if isinstance(call.args, dict) else {}
+        if not is_research_source_ledger_path(args.get("path")):
+            args = _deep_research_source_ledger_file_write_args(context)
+            repaired_count += 1
+        elif not isinstance(args.get("content"), str):
+            args = {
+                **args,
+                "content": _deep_research_sources_jsonl_from_tool_results(context),
+            }
+            repaired_count += 1
+        elif normalized_args:
+            repaired_count += 1
+        repaired_payload.append(
+            call.model_copy(
+                update={
+                    "args": args,
+                    "metadata": {
+                        **call.metadata,
+                        "deep_research_args_repaired": True,
+                        "deep_research_repair_reason": "source_ledger_required",
+                    },
+                }
+            ).model_dump(mode="json")
+        )
+    if repaired_count == 0:
+        return
+    response.metadata["planned_tool_calls"] = repaired_payload
+    context.metadata["deep_research_file_write_args_repaired"] = {
+        "count": repaired_count,
+        "reason": "source_ledger_file_write_repair",
+    }
+
+
 def _should_retarget_parent_file_write_to_report(
     context: RunContext,
     args: dict[str, Any],
@@ -207,13 +266,10 @@ def _should_retarget_parent_file_write_to_report(
         recovery = context.metadata.get("deep_research_parent_synthesis_recovery")
         if not isinstance(recovery, dict):
             return False
-    path = str(args.get("path") or "").strip()
+    path = normalize_artifact_path(args.get("path"))
     if not path:
         return False
-    normalized = path.replace("\\", "/").strip("/")
-    return normalized != "research/report.md" and not normalized.endswith(
-        "/research/report.md"
-    )
+    return not is_research_report_path(path)
 
 
 def _normalize_parent_file_write_call(call: Any) -> Any | None:
@@ -246,8 +302,10 @@ def _normalize_parent_file_write_call(call: Any) -> Any | None:
 
 
 def _has_file_write_args(args: dict[str, Any]) -> bool:
-    return isinstance(args.get("path"), str) and bool(args["path"].strip()) and (
-        isinstance(args.get("content"), str)
+    return (
+        isinstance(args.get("path"), str)
+        and bool(args["path"].strip())
+        and (isinstance(args.get("content"), str))
     )
 
 
@@ -266,6 +324,15 @@ def _deep_research_parent_file_write_args(
     return {
         "path": "research/report.md",
         "content": _deep_research_report_from_child_notes(context),
+        "mode": "overwrite",
+        "create_parent": True,
+    }
+
+
+def _deep_research_source_ledger_file_write_args(context: RunContext) -> dict[str, Any]:
+    return {
+        "path": "research/sources.jsonl",
+        "content": _deep_research_sources_jsonl_from_tool_results(context),
         "mode": "overwrite",
         "create_parent": True,
     }
@@ -305,6 +372,42 @@ def _deep_research_sources_jsonl_from_child_notes(context: RunContext) -> str:
     return "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
 
 
+def _deep_research_sources_jsonl_from_tool_results(context: RunContext) -> str:
+    ledger = research_source_ledger_from_tool_results(
+        get_tool_loop_state(context).tool_results()
+    ).model_dump()
+    rows: list[dict[str, Any]] = []
+    for section in (
+        "verified_reads",
+        "blocked_reads",
+        "failed_reads",
+        "search_candidates",
+        "assistant_links",
+    ):
+        values = ledger.get(section)
+        if not isinstance(values, list):
+            continue
+        for index, item in enumerate(values, start=1):
+            if not isinstance(item, dict):
+                continue
+            row = dict(item)
+            row["ledger_section"] = section
+            row["ledger_index"] = index
+            rows.append(row)
+    if not rows:
+        rows.append(
+            {
+                "ledger_section": "candidate",
+                "status": "candidate",
+                "source": "parent_synthesis_repair",
+                "notes": "Source ledger placeholder; verified source reads still pending.",
+            }
+        )
+    return "".join(
+        json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows
+    )
+
+
 def _report_artifact_path_seen(context: RunContext) -> bool:
     for item in context.metadata.get("tool_results") or []:
         if not isinstance(item, dict):
@@ -315,7 +418,7 @@ def _report_artifact_path_seen(context: RunContext) -> bool:
         if call.get("tool_name") not in {"file_write", "file_patch", "file_edit"}:
             continue
         args = call.get("args")
-        if isinstance(args, dict) and args.get("path") == "research/report.md":
+        if isinstance(args, dict) and is_research_report_path(args.get("path")):
             return True
     return False
 
@@ -983,18 +1086,16 @@ def _append_denial_recovery_message(
         error = envelope.error
         if error is None:
             continue
-        if (
-            error.code == "policy_denied"
-            and "deep_research_parent_synthesis_gate" in (error.message or "")
+        if error.code == "policy_denied" and "deep_research_parent_synthesis_gate" in (
+            error.message or ""
         ):
             denied_tool_name = envelope.call.tool_name
             denied_code = error.code
             denied_message = (error.message or "").strip()
             denied_signature = f"{denied_tool_name}:{error.code}:{denied_message}"
             break
-        if (
-            error.code == "policy_denied"
-            and "deep_research_initial_subagent_gate" in (error.message or "")
+        if error.code == "policy_denied" and "deep_research_initial_subagent_gate" in (
+            error.message or ""
         ):
             denied_tool_name = envelope.call.tool_name
             denied_code = error.code

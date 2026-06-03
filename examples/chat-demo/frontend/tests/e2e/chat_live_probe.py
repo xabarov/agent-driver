@@ -1287,6 +1287,15 @@ def render_scenario_scorecard(
             f"long_final_after_report=`{efficiency.get('long_final_after_report', False)}`"
         ),
         (
+            "- evidence_split: "
+            f"parent_search=`{efficiency.get('parent_search_count', 0)}`, "
+            f"parent_fetch=`{efficiency.get('parent_fetch_count', 0)}`, "
+            f"parent_verified=`{efficiency.get('parent_verified_read_count', 0)}`, "
+            f"child_search=`{efficiency.get('child_search_count', 0)}`, "
+            f"child_fetch=`{efficiency.get('child_fetch_count', 0)}`, "
+            f"child_verified=`{efficiency.get('child_verified_read_count', 0)}`"
+        ),
+        (
             "- phoenix: "
             f"enabled=`{tracing.get('enabled', False)}`, "
             f"configured=`{tracing.get('configured', False)}`, "

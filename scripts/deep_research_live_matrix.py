@@ -57,6 +57,19 @@ DEEP_RESEARCH_FAILURES = (
     "deep_research_long_final_after_report",
 )
 
+ACCEPTANCE_AXES = (
+    "expected",
+    "trace",
+    "artifact",
+    "synthesis",
+    "ledger",
+    "evidence_split",
+    "terminal",
+    "ui",
+    "budget",
+    "grounding",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class MatrixResult:
@@ -148,14 +161,7 @@ def main() -> int:
                                 artifact_dir,
                                 str(question.get("expected_answer_regex") or ""),
                             ),
-                            acceptance={
-                                "expected": False,
-                                "trace": False,
-                                "artifact": False,
-                                "ui": False,
-                                "budget": False,
-                                "grounding": False,
-                            },
+                            acceptance=failed_acceptance(),
                             error=str(exc),
                             artifact_dir=str(artifact_dir),
                             trace_summary=summary,
@@ -391,8 +397,7 @@ def acceptance_axes(
     if profile == "hard":
         required_paths.add("research/claims.jsonl")
     artifact_ok = (
-        required_paths.issubset(paths)
-        and parent_report_write_seen(summary)
+        required_paths.issubset(paths) and parent_report_write_seen(summary)
         if artifact_required
         else True
     )
@@ -409,10 +414,71 @@ def acceptance_axes(
         "expected": expected_found,
         "trace": trace_ok,
         "artifact": artifact_ok,
+        "synthesis": synthesis_ok(profile=profile, summary=summary),
+        "ledger": ledger_ok(profile=profile, summary=summary),
+        "evidence_split": evidence_split_ok(profile=profile, summary=summary),
+        "terminal": terminal_ok(profile=profile, summary=summary),
         "ui": ui_ok,
         "budget": budget_ok(profile=profile, question=question, summary=summary),
         "grounding": grounding_ok(question=question, artifact_dir=artifact_dir),
     }
+
+
+def failed_acceptance() -> dict[str, bool]:
+    return {name: False for name in ACCEPTANCE_AXES}
+
+
+def synthesis_ok(*, profile: str, summary: dict[str, Any]) -> bool:
+    if profile not in {"medium", "hard"}:
+        return True
+    if not parent_report_write_seen(summary):
+        return False
+    research = research_efficiency(summary)
+    return not any(
+        bool(research.get(key))
+        for key in (
+            "child_result_not_used",
+            "child_synthesis_pending",
+            "unexpected_tool_after_child_synthesis_pending",
+        )
+    )
+
+
+def ledger_ok(*, profile: str, summary: dict[str, Any]) -> bool:
+    if profile not in {"medium", "hard"}:
+        return True
+    research = research_efficiency(summary)
+    if research.get("missing_source_ledger_artifact") is True:
+        return False
+    return int(research.get("source_ledger_record_count") or 0) > 0
+
+
+def evidence_split_ok(*, profile: str, summary: dict[str, Any]) -> bool:
+    if profile not in {"medium", "hard"}:
+        return True
+    research = research_efficiency(summary)
+    subagents = (
+        summary.get("subagents") if isinstance(summary.get("subagents"), dict) else {}
+    )
+    child_count = int(subagents.get("child_count") or research.get("child_count") or 0)
+    if child_count <= 0:
+        return False
+    child_fetch_count = int(research.get("child_fetch_count") or 0)
+    return child_fetch_count > 0 or int(research.get("child_search_count") or 0) > 0
+
+
+def terminal_ok(*, profile: str, summary: dict[str, Any]) -> bool:
+    if profile not in {"medium", "hard"}:
+        return True
+    return summary.get("terminal_event") == "run_completed"
+
+
+def research_efficiency(summary: dict[str, Any]) -> dict[str, Any]:
+    return (
+        summary.get("research_efficiency")
+        if isinstance(summary.get("research_efficiency"), dict)
+        else {}
+    )
 
 
 def budget_ok(
@@ -546,13 +612,21 @@ def render_matrix_markdown(results: list[MatrixResult]) -> str:
             f"{name}={'ok' if ok else 'fail'}"
             for name, ok in sorted(item.acceptance.items())
         )
+        failures = active_failure_keys(summary)
+        research = research_efficiency(summary)
+        source_records = int(research.get("source_ledger_record_count") or 0)
+        child_fetches = int(research.get("child_fetch_count") or 0)
+        parent_fetches = int(research.get("parent_fetch_count") or 0)
+        error = item.error or ",".join(failures) or "-"
         lines.append(
             "| "
             f"{item.scenario} | {item.profile} | {item.repetition} | "
             f"{str(item.ok).lower()} | {axes} | "
             f"{int(usage.get('total_tokens') or 0)} | "
-            f"{tools or '-'} | {item.run_id or '-'} | "
-            f"{(item.error or '-').replace('|', '/')[:180]} |"
+            f"{tools or '-'}; sources={source_records}; "
+            f"parent_fetch={parent_fetches}; child_fetch={child_fetches} | "
+            f"{item.run_id or '-'} | "
+            f"{error.replace('|', '/')[:180]} |"
         )
     lines.extend(["", "## Aggregate", ""])
     lines.extend(render_aggregate_lines(results))
@@ -563,6 +637,8 @@ def render_matrix_markdown(results: list[MatrixResult]) -> str:
 
 
 def result_to_json(item: MatrixResult) -> dict[str, Any]:
+    summary = item.trace_summary or {}
+    research = research_efficiency(summary)
     return {
         "scenario": item.scenario,
         "profile": item.profile,
@@ -573,6 +649,15 @@ def result_to_json(item: MatrixResult) -> dict[str, Any]:
         "expected_found": item.expected_found,
         "acceptance": item.acceptance,
         "error": item.error,
+        "failure_class": failure_class(item),
+        "failure_keys": active_failure_keys(summary),
+        "terminal_event": summary.get("terminal_event"),
+        "source_records": int(research.get("source_ledger_record_count") or 0),
+        "report_status": research.get("report_status"),
+        "parent_search_count": int(research.get("parent_search_count") or 0),
+        "parent_fetch_count": int(research.get("parent_fetch_count") or 0),
+        "child_search_count": int(research.get("child_search_count") or 0),
+        "child_fetch_count": int(research.get("child_fetch_count") or 0),
         "artifact_dir": item.artifact_dir,
     }
 
@@ -591,7 +676,55 @@ def render_aggregate_lines(results: list[MatrixResult]) -> list[str]:
         subset = [item for item in results if item.profile == profile]
         count = sum(1 for item in subset if item.ok)
         lines.append(f"- {profile}_pass_rate: {count}/{len(subset)}")
+    failure_counts: dict[str, int] = {}
+    for item in results:
+        for key in active_failure_keys(item.trace_summary or {}):
+            failure_counts[key] = failure_counts.get(key, 0) + 1
+    for key, count in sorted(failure_counts.items()):
+        lines.append(f"- failure_{key}: {count}")
     return lines
+
+
+def active_failure_keys(summary: dict[str, Any]) -> list[str]:
+    failures = (
+        summary.get("failures") if isinstance(summary.get("failures"), dict) else {}
+    )
+    return sorted(str(key) for key, value in failures.items() if bool(value))
+
+
+def failure_class(item: MatrixResult) -> str | None:
+    if item.ok:
+        return None
+    if item.error:
+        lowered = item.error.lower()
+        if "timeout" in lowered or "timed out" in lowered:
+            return "timeout"
+        if "provider" in lowered or "tool_choice" in lowered or "404" in lowered:
+            return "provider"
+        return "infra"
+    failures = set(active_failure_keys(item.trace_summary or {}))
+    if not failures:
+        return "benchmark_assertion"
+    if failures & {
+        "missing_terminal_event",
+        "run_failed_or_cancelled",
+        "stuck_on_interrupt",
+    }:
+        return "runtime_terminal"
+    if failures & {
+        "text_form_tool_call",
+        "deep_research_phase_violation",
+        "deep_research_tool_entropy_high",
+        "deep_research_missing_initial_todo",
+    }:
+        return "model_behavior"
+    if failures & {
+        "deep_research_no_report_artifact",
+        "deep_research_no_source_ledger_artifact",
+        "child_result_not_used",
+    }:
+        return "artifact_contract"
+    return "benchmark_assertion"
 
 
 def total_tokens(summary: dict[str, Any] | None) -> int:

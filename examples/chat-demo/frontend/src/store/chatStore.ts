@@ -322,6 +322,35 @@ function createDeepResearchViewFromStream(
   };
 }
 
+function finalizeDeepResearchViewFromStream(
+  view: DeepResearchViewState | undefined,
+): DeepResearchViewState | undefined {
+  if (!view || view.researchMode !== "deep") {
+    return view;
+  }
+  const hasReport = Boolean(view.artifacts.report);
+  const hasLedger = Boolean(view.artifacts.sourceLedger);
+  const readiness = hasReport && hasLedger ? "ready" : view.readiness;
+  return {
+    ...view,
+    phase: readiness === "ready" ? "completed" : view.phase,
+    readiness,
+    warnings:
+      readiness === "ready"
+        ? view.warnings.filter(
+            (warning) =>
+              warning !== "deep_research_no_report_artifact" &&
+              warning !== "deep_research_no_source_ledger_artifact",
+          )
+        : view.warnings,
+    trace: {
+      ...view.trace,
+      terminalEvent: view.trace.terminalEvent ?? "run_completed",
+      verdict: readiness === "ready" ? (view.trace.verdict ?? "pass") : view.trace.verdict,
+    },
+  };
+}
+
 function compactionNoticeFromRawMetadata(
   raw: unknown,
   fallbackId: string,
@@ -795,6 +824,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   finishTurn: (assistantId) => {
     set((state) => ({
       streaming: false,
+      deepResearchView: finalizeDeepResearchViewFromStream(state.deepResearchView),
       messages: state.messages.map((message) => {
         if (message.id !== assistantId || message.role !== "assistant") {
           return message;

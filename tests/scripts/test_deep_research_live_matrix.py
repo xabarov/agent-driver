@@ -39,10 +39,18 @@ def test_acceptance_axes_require_trace_artifacts_budget_and_grounding(tmp_path) 
         expected_found=True,
         summary={
             "verdict": "pass",
+            "terminal_event": "run_completed",
             "failures": {"missing_terminal_event": False},
             "artifacts": {
                 "paths": ["research/report.md", "research/sources.jsonl"],
                 "report_write_seen": True,
+            },
+            "subagents": {"child_count": 1},
+            "research_efficiency": {
+                "source_ledger_record_count": 2,
+                "child_fetch_count": 1,
+                "parent_fetch_count": 1,
+                "report_status": "verified",
             },
             "llm": {"usage": {"total_tokens": 99}},
         },
@@ -52,6 +60,10 @@ def test_acceptance_axes_require_trace_artifacts_budget_and_grounding(tmp_path) 
         "expected": True,
         "trace": True,
         "artifact": True,
+        "synthesis": True,
+        "ledger": True,
+        "evidence_split": True,
+        "terminal": True,
         "ui": True,
         "budget": True,
         "grounding": True,
@@ -90,8 +102,14 @@ def test_medium_acceptance_requires_parent_report_write_evidence(tmp_path) -> No
         expected_found=True,
         summary={
             "verdict": "pass",
+            "terminal_event": "run_completed",
             "failures": {},
             "artifacts": {"paths": []},
+            "subagents": {"child_count": 1},
+            "research_efficiency": {
+                "source_ledger_record_count": 1,
+                "child_fetch_count": 1,
+            },
             "llm": {"usage": {"total_tokens": 10}},
         },
     )
@@ -125,13 +143,82 @@ def test_acceptance_artifacts_can_pair_workspace_index_with_trace_write(
         expected_found=True,
         summary={
             "verdict": "pass",
+            "terminal_event": "run_completed",
             "failures": {},
             "artifacts": {"paths": [], "report_write_seen": True},
+            "subagents": {"child_count": 1},
+            "research_efficiency": {
+                "source_ledger_record_count": 1,
+                "child_fetch_count": 1,
+            },
             "llm": {"usage": {"total_tokens": 10}},
         },
     )
 
     assert acceptance["artifact"] is True
+
+
+def test_medium_acceptance_requires_non_empty_source_ledger(tmp_path) -> None:
+    matrix = _load_matrix_module()
+    artifact_dir = tmp_path / "run"
+    artifact_dir.mkdir()
+    (artifact_dir / "screenshot.png").write_bytes(b"png")
+
+    acceptance = matrix.acceptance_axes(
+        profile="medium",
+        question={},
+        artifact_dir=artifact_dir,
+        expected_found=True,
+        summary={
+            "verdict": "pass",
+            "terminal_event": "run_completed",
+            "failures": {},
+            "artifacts": {
+                "paths": ["research/report.md", "research/sources.jsonl"],
+                "report_write_seen": True,
+            },
+            "subagents": {"child_count": 1},
+            "research_efficiency": {
+                "source_ledger_record_count": 0,
+                "child_fetch_count": 1,
+            },
+            "llm": {"usage": {"total_tokens": 10}},
+        },
+    )
+
+    assert acceptance["ledger"] is False
+
+
+def test_medium_acceptance_fails_synthesis_when_child_result_unused(tmp_path) -> None:
+    matrix = _load_matrix_module()
+    artifact_dir = tmp_path / "run"
+    artifact_dir.mkdir()
+    (artifact_dir / "screenshot.png").write_bytes(b"png")
+
+    acceptance = matrix.acceptance_axes(
+        profile="medium",
+        question={},
+        artifact_dir=artifact_dir,
+        expected_found=True,
+        summary={
+            "verdict": "pass",
+            "terminal_event": "run_completed",
+            "failures": {},
+            "artifacts": {
+                "paths": ["research/report.md", "research/sources.jsonl"],
+                "report_write_seen": True,
+            },
+            "subagents": {"child_count": 1},
+            "research_efficiency": {
+                "source_ledger_record_count": 1,
+                "child_fetch_count": 1,
+                "child_result_not_used": True,
+            },
+            "llm": {"usage": {"total_tokens": 10}},
+        },
+    )
+
+    assert acceptance["synthesis"] is False
 
 
 def test_budget_fails_closed_for_medium_without_usage(tmp_path) -> None:
@@ -178,13 +265,55 @@ def test_hard_profile_requires_claims_artifact(tmp_path) -> None:
         expected_found=True,
         summary={
             "verdict": "pass",
+            "terminal_event": "run_completed",
             "failures": {},
             "artifacts": {
                 "paths": ["research/report.md", "research/sources.jsonl"],
                 "report_write_seen": True,
+            },
+            "subagents": {"child_count": 1},
+            "research_efficiency": {
+                "source_ledger_record_count": 1,
+                "child_fetch_count": 1,
             },
             "llm": {"usage": {"total_tokens": 10}},
         },
     )
 
     assert acceptance["artifact"] is False
+
+
+def test_result_json_and_markdown_surface_failure_context() -> None:
+    matrix = _load_matrix_module()
+    result = matrix.MatrixResult(
+        scenario="deep-medium-fork",
+        profile="medium",
+        question_id="fork",
+        repetition=1,
+        ok=False,
+        run_id="run_1",
+        expected_found=True,
+        acceptance={"trace": False, "ledger": False},
+        error=None,
+        artifact_dir="/tmp/run",
+        trace_summary={
+            "terminal_event": "run_completed",
+            "failures": {"deep_research_no_source_ledger_artifact": True},
+            "research_efficiency": {
+                "source_ledger_record_count": 0,
+                "parent_fetch_count": 2,
+                "child_fetch_count": 1,
+                "report_status": "draft",
+            },
+            "llm": {"usage": {"total_tokens": 42}},
+        },
+    )
+
+    payload = matrix.result_to_json(result)
+    markdown = matrix.render_matrix_markdown([result])
+
+    assert payload["failure_class"] == "artifact_contract"
+    assert payload["failure_keys"] == ["deep_research_no_source_ledger_artifact"]
+    assert payload["source_records"] == 0
+    assert "sources=0" in markdown
+    assert "deep_research_no_source_ledger_artifact" in markdown

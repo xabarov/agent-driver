@@ -210,7 +210,9 @@ def test_from_preset_research_light_excludes_artifacts_subagents_and_code() -> N
     assert "python" not in names
 
 
-def test_from_preset_deep_research_medium_excludes_shell_python_and_hard_tools() -> None:
+def test_from_preset_deep_research_medium_excludes_shell_python_and_hard_tools() -> (
+    None
+):
     registry = _registry_with_defaults()
     names = set(
         ToolSet.from_preset("deep_research_medium").apply(registry).list_names()
@@ -238,7 +240,9 @@ def test_from_preset_deep_research_medium_excludes_shell_python_and_hard_tools()
     assert "browser_read" not in names
 
 
-def test_from_preset_deep_research_hard_adds_source_ladder_without_browser_action() -> None:
+def test_from_preset_deep_research_hard_adds_source_ladder_without_browser_action() -> (
+    None
+):
     registry = _registry_with_defaults()
     names = set(ToolSet.from_preset("deep_research_hard").apply(registry).list_names())
 

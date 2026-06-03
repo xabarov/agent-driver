@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from app.api.chat import _chat_tool_policy, _effective_chat_preset
+from types import SimpleNamespace
+
+from app.api.chat import (
+    _chat_tool_policy,
+    _effective_chat_preset,
+    _effective_research_mode,
+    _task_contract_for_trace_summary,
+)
 from app.config import Settings
 from app.schemas.chat import ChatMessageRequest
 from app.services.agent_factory import _tool_config_from_preset
@@ -234,6 +241,47 @@ def test_deep_research_mode_uses_artifact_tool_preset() -> None:
     )
 
     assert _effective_chat_preset(body) == "deep_research_medium"
+
+
+def test_deep_research_tool_preset_enables_deep_mode_metadata() -> None:
+    body = ChatMessageRequest(
+        message="найди источники и подготовь отчет",
+        tool_preset="deep_research",
+    )
+    policy = _chat_tool_policy(body=body, settings=Settings())
+
+    assert _effective_research_mode(body) == "deep"
+    assert _effective_chat_preset(body) == "deep_research_medium"
+    assert policy.metadata["deep_research_mode"]["enabled"] is True
+    assert policy.metadata["task_contract"]["research_mode"] == "deep"
+    assert policy.metadata["task_contract"]["research_profile"] == "medium"
+
+
+def test_trace_summary_contract_prefers_run_deep_research_metadata() -> None:
+    record = SimpleNamespace(
+        metadata_by_run=[
+            (
+                "run_1",
+                {
+                    "research_mode": "deep",
+                    "research_profile": "medium",
+                    "research_depth": "deep_parallel_research",
+                    "profile_source": "scenario_forced",
+                },
+            )
+        ]
+    )
+
+    contract = _task_contract_for_trace_summary(
+        record=record,
+        run_id="run_1",
+        user_prompt="Сделай отчет с проверенными источниками.",
+    )
+
+    assert contract is not None
+    assert contract["research_mode"] == "deep"
+    assert contract["research_depth"] == "deep_parallel_research"
+    assert contract["research_profile"] == "medium"
 
 
 def test_hard_research_mode_uses_hard_tool_preset() -> None:
