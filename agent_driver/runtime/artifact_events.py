@@ -42,6 +42,10 @@ def artifact_event_from_tool_result(
     if size_bytes is not None:
         payload["size_bytes"] = size_bytes
         payload["bytes"] = size_bytes
+    if path == "research/sources.jsonl":
+        record_count = _source_ledger_record_count(envelope.call.args.get("content"))
+        if record_count is not None:
+            payload["record_count"] = record_count
     replacements = _as_non_negative_int(structured.get("replacements"))
     if replacements is not None:
         payload["replacements"] = replacements
@@ -88,6 +92,12 @@ def _as_non_negative_int(value: Any) -> int | None:
     if isinstance(value, float):
         return max(0, int(value))
     return None
+
+
+def _source_ledger_record_count(value: Any) -> int | None:
+    if not isinstance(value, str):
+        return None
+    return len([line for line in value.splitlines() if line.strip()])
 
 
 __all__ = ["artifact_event_from_tool_result"]

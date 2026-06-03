@@ -196,17 +196,22 @@ def _deep_research_request_allowed_tools(
 ) -> tuple[str, ...] | None:
     """Narrow the LLM-visible tool surface during fragile synthesis states."""
     handoff = context.metadata.get("deep_research_child_synthesis")
-    if not deep_research_context_enabled(context) and not (
-        isinstance(handoff, dict) and handoff.get("pending") is True
-    ):
+    active = _deep_research_context_active(context) or _deep_research_initial_todo_only(
+        context
+    )
+    if not active and not (isinstance(handoff, dict) and handoff.get("pending") is True):
         return None
+    if active:
+        _record_deep_research_active_profile(context)
     if deep_research_report_artifact_exists(context):
         if deep_research_source_ledger_artifact_exists(context):
             return tuple()
         return ("file_write",)
     if deep_research_source_ledger_artifact_exists(context):
         return ("file_write",)
-    deep_medium_or_hard = deep_research_medium_or_hard(context)
+    deep_medium_or_hard = _deep_research_medium_or_hard_active(
+        context
+    ) or _deep_research_initial_todo_only(context)
     if isinstance(handoff, dict) and handoff.get("pending") is True:
         parent_synthesis_recovery = context.metadata.get(
             "deep_research_parent_synthesis_recovery"
@@ -215,7 +220,7 @@ def _deep_research_request_allowed_tools(
             return ("file_write",)
         if _deep_research_verified_fetch_count(context) > 0:
             return ("file_write",)
-        return ("file_write", "todo_write", "web_fetch")
+        return ("file_write", "todo_write", "web_fetch", "web_search")
     initial_subagent_recovery = context.metadata.get(
         "deep_research_initial_subagent_recovery"
     )
@@ -252,11 +257,25 @@ def _deep_research_strategy_tool_choice(
     """Force high-level Deep Research profile strategy when prompts drift."""
     if tool_choice is not None:
         return tool_choice
-    if not deep_research_context_enabled(context):
+    handoff = context.metadata.get("deep_research_child_synthesis")
+    active = _deep_research_context_active(context) or _deep_research_initial_todo_only(
+        context
+    )
+    if not active and not (isinstance(handoff, dict) and handoff.get("pending") is True):
         return None
-    profile = deep_research_profile(context)
+    if active:
+        _record_deep_research_active_profile(context)
+    profile = _deep_research_active_profile(context)
     if profile == "light":
         return None
+    if deep_research_report_artifact_exists(
+        context
+    ) and deep_research_source_ledger_artifact_exists(context):
+        context.metadata["deep_research_strategy_tool_choice"] = {
+            "tool": "none",
+            "reason": "deep_research_artifacts_ready",
+        }
+        return "none"
     if deep_research_report_artifact_exists(
         context
     ) and not deep_research_source_ledger_artifact_exists(context):
@@ -274,6 +293,18 @@ def _deep_research_strategy_tool_choice(
                 context,
                 tool_name="agent_tool",
                 reason="child_synthesis_pending_with_remaining_subagent_budget",
+            )
+        if _deep_research_parent_search_fallback_required(context):
+            return _deep_research_record_strategy_choice(
+                context,
+                tool_name="web_search",
+                reason="child_synthesis_pending_parent_search_fallback",
+            )
+        if _deep_research_parent_verify_fetch_budget_remaining(context):
+            return _deep_research_record_strategy_choice(
+                context,
+                tool_name="web_fetch",
+                reason="child_synthesis_pending_parent_verify_fetch",
             )
         return _deep_research_write_strategy_tool_choice(context, force=True)
     if not _deep_research_initial_plan_seen(context) and deep_research_tool_available(
@@ -297,6 +328,44 @@ def _deep_research_strategy_tool_choice(
         tool_name="agent_tool",
         reason="medium_hard_requires_bounded_subagents",
     )
+
+
+def _deep_research_context_active(context: RunContext) -> bool:
+    if deep_research_context_enabled(context):
+        return True
+    return context.metadata.get("deep_research_context_active") is True
+
+
+def _record_deep_research_active_profile(context: RunContext) -> None:
+    context.metadata["deep_research_context_active"] = True
+    profile = deep_research_profile(context)
+    if profile is not None:
+        context.metadata["deep_research_active_profile"] = profile
+
+
+def _deep_research_active_profile(context: RunContext) -> str | None:
+    profile = deep_research_profile(context)
+    if profile is not None:
+        return profile
+    stored = context.metadata.get("deep_research_active_profile")
+    return stored if isinstance(stored, str) else None
+
+
+def _deep_research_medium_or_hard_active(context: RunContext) -> bool:
+    if deep_research_medium_or_hard(context):
+        return True
+    return _deep_research_active_profile(context) in {"medium", "hard"}
+
+
+def _deep_research_initial_todo_only(context: RunContext) -> bool:
+    counts = _deep_research_tool_counts(context)
+    if counts.get("todo_write", 0) <= 0:
+        return False
+    if counts.get("agent_tool", 0) > 0:
+        return False
+    if counts.get("web_search", 0) > 0 or counts.get("web_fetch", 0) > 0:
+        return False
+    return deep_research_tool_available(context, "agent_tool")
 
 
 def _deep_research_write_strategy_tool_choice(
@@ -415,6 +484,38 @@ def _deep_research_verified_fetch_count(context: RunContext) -> int:
         if status in {"denied", "failed", "error", "timed_out", "timeout"}:
             continue
         count += 1
+    return count
+
+
+def _deep_research_parent_verify_fetch_budget_remaining(context: RunContext) -> bool:
+    if not deep_research_tool_available(context, "web_fetch"):
+        return False
+    if _deep_research_fetch_attempt_count(context) >= 3:
+        return False
+    return True
+
+
+def _deep_research_parent_search_fallback_required(context: RunContext) -> bool:
+    if not deep_research_tool_available(context, "web_search"):
+        return False
+    if _deep_research_tool_counts(context).get("web_search", 0) > 0:
+        return False
+    if _deep_research_fetch_attempt_count(context) > 0:
+        return False
+    return True
+
+
+def _deep_research_fetch_attempt_count(context: RunContext) -> int:
+    count = 0
+    results = context.metadata.get("tool_results")
+    if not isinstance(results, list):
+        return 0
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if isinstance(call, dict) and call.get("tool_name") == "web_fetch":
+            count += 1
     return count
 
 

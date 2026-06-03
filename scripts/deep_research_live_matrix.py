@@ -639,6 +639,7 @@ def render_matrix_markdown(results: list[MatrixResult]) -> str:
 def result_to_json(item: MatrixResult) -> dict[str, Any]:
     summary = item.trace_summary or {}
     research = research_efficiency(summary)
+    llm = summary.get("llm") if isinstance(summary.get("llm"), dict) else {}
     return {
         "scenario": item.scenario,
         "profile": item.profile,
@@ -651,7 +652,13 @@ def result_to_json(item: MatrixResult) -> dict[str, Any]:
         "error": item.error,
         "failure_class": failure_class(item),
         "failure_keys": active_failure_keys(summary),
+        "acceptance_failures": [
+            name for name, passed in sorted(item.acceptance.items()) if not passed
+        ],
         "terminal_event": summary.get("terminal_event"),
+        "llm_request_allowed_tools": llm.get("request_allowed_tools"),
+        "llm_request_tool_names": llm.get("request_tool_names"),
+        "llm_tool_choice_effective": llm.get("tool_choice_effective"),
         "source_records": int(research.get("source_ledger_record_count") or 0),
         "report_status": research.get("report_status"),
         "parent_search_count": int(research.get("parent_search_count") or 0),

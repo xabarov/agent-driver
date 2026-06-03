@@ -55,10 +55,12 @@ def _context(
     )
 
 
-def _gate_context(tool_name: str) -> ToolGateContext:
+def _gate_context(
+    tool_name: str, args: dict[str, object] | None = None
+) -> ToolGateContext:
     return ToolGateContext(
         tool_name=tool_name,
-        args={},
+        args=args or {},
         run_id="run",
         thread_id="thread",
         agent_id="agent",
@@ -186,7 +188,7 @@ async def test_parent_synthesis_gate_blocks_discovery_after_child_handoff() -> N
 
 
 @pytest.mark.asyncio
-async def test_parent_synthesis_gate_blocks_second_default_medium_child() -> None:
+async def test_parent_synthesis_gate_allows_one_search_but_blocks_second_default_child() -> None:
     context = _context(
         tool_results=[],
         metadata={
@@ -202,10 +204,43 @@ async def test_parent_synthesis_gate_blocks_second_default_medium_child() -> Non
 
     assert gate is not None
     web_search = await gate(_gate_context("web_search"))
-    assert isinstance(web_search, ToolGateDeny)
+    assert isinstance(web_search, ToolGateAllow)
     agent_tool = await gate(_gate_context("agent_tool"))
     assert isinstance(agent_tool, ToolGateDeny)
     assert "deep_research_parent_synthesis_gate denied" in agent_tool.reason
+
+
+@pytest.mark.asyncio
+async def test_initial_subagent_gate_recovers_when_contract_disappears_after_todo() -> None:
+    context = _context(
+        tool_results=[
+            {
+                "call": {
+                    "tool_name": "todo_write",
+                    "tool_call_id": "todo_1",
+                    "args": {},
+                }
+            }
+        ],
+        metadata={
+            "effective_tool_names": (
+                "agent_tool",
+                "glob_search",
+                "web_search",
+                "todo_write",
+            ),
+        },
+    )
+    context.run_input.tool_policy.metadata = {}
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    glob_search = await gate(_gate_context("glob_search"))
+    assert isinstance(glob_search, ToolGateDeny)
+    assert "deep_research_initial_subagent_gate denied" in glob_search.reason
+    agent_tool = await gate(_gate_context("agent_tool"))
+    assert isinstance(agent_tool, ToolGateAllow)
 
 
 @pytest.mark.asyncio
@@ -233,7 +268,258 @@ async def test_parent_synthesis_gate_blocks_artifact_list_before_report() -> Non
     file_write = await gate(_gate_context("file_write"))
     assert isinstance(file_write, ToolGateAllow)
     web_fetch = await gate(_gate_context("web_fetch"))
+    assert isinstance(web_fetch, ToolGateDeny)
+
+
+@pytest.mark.asyncio
+async def test_parent_synthesis_gate_allows_bounded_child_candidate_fetch() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "subagent_runs": [{"run_id": "child_1"}],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child found https://example.com/source",
+            },
+        },
+    )
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    web_fetch = await gate(
+        _gate_context("web_fetch", {"url": "https://example.com/source"})
+    )
     assert isinstance(web_fetch, ToolGateAllow)
+    unknown_fetch = await gate(
+        _gate_context("web_fetch", {"url": "https://unrelated.example/page"})
+    )
+    assert isinstance(unknown_fetch, ToolGateDeny)
+
+
+@pytest.mark.asyncio
+async def test_parent_synthesis_gate_allows_parent_search_candidate_fetch() -> None:
+    context = _context(
+        tool_results=[
+            {
+                "call": {
+                    "tool_name": "web_search",
+                    "tool_call_id": "search_1",
+                    "args": {"query": "fork join queue"},
+                },
+                "structured_output": {
+                    "results": [
+                        {
+                            "title": "Fork-join queue",
+                            "url": "https://example.org/fork-join",
+                        }
+                    ]
+                },
+            }
+        ],
+        metadata={
+            "subagent_runs": [{"run_id": "child_1"}],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child notes without direct urls",
+            },
+        },
+    )
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    web_fetch = await gate(
+        _gate_context("web_fetch", {"url": "https://example.org/fork-join"})
+    )
+    assert isinstance(web_fetch, ToolGateAllow)
+    unknown_fetch = await gate(
+        _gate_context("web_fetch", {"url": "https://unrelated.example/page"})
+    )
+    assert isinstance(unknown_fetch, ToolGateDeny)
+
+
+@pytest.mark.asyncio
+async def test_parent_synthesis_gate_allows_one_parent_search() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "subagent_runs": [{"run_id": "child_1"}],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child notes without direct urls",
+            },
+        },
+    )
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    web_search = await gate(_gate_context("web_search", {"query": "fork join queue"}))
+    assert isinstance(web_search, ToolGateAllow)
+
+    context.metadata["tool_results"] = [
+        {
+            "call": {
+                "tool_name": "web_search",
+                "tool_call_id": "search_1",
+                "args": {"query": "fork join queue"},
+            }
+        }
+    ]
+    second_search = await gate(
+        _gate_context("web_search", {"query": "fork join queueing model"})
+    )
+    assert isinstance(second_search, ToolGateDeny)
+
+
+@pytest.mark.asyncio
+async def test_parent_synthesis_gate_blocks_fetch_after_verify_limit() -> None:
+    context = _context(
+        tool_results=[
+            {
+                "call": {
+                    "tool_name": "web_fetch",
+                    "tool_call_id": f"fetch_{index}",
+                    "args": {"url": f"https://example.com/source-{index}"},
+                }
+            }
+            for index in range(3)
+        ],
+        metadata={
+            "subagent_runs": [{"run_id": "child_1"}],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child found https://example.com/source",
+            },
+        },
+    )
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    web_fetch = await gate(
+        _gate_context("web_fetch", {"url": "https://example.com/source"})
+    )
+    assert isinstance(web_fetch, ToolGateDeny)
+
+
+@pytest.mark.asyncio
+async def test_terminal_handoff_gate_blocks_hidden_tools_after_artifacts_ready() -> (
+    None
+):
+    context = _context(
+        tool_results=[],
+        metadata={
+            "deep_research_artifacts": {
+                "report_exists": True,
+                "report_path": "research/report.md",
+                "report_size_bytes": 1024,
+                "source_ledger_exists": True,
+                "source_ledger_path": "research/sources.jsonl",
+                "source_ledger_size_bytes": 128,
+            },
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child notes",
+            },
+        },
+    )
+    context.run_input.tool_policy.metadata["task_contract"] = {
+        "requires_research": True,
+        "research_mode": "deep",
+        "research_depth": "deep_parallel_research",
+        "research_profile": "medium",
+    }
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    decision = await gate(_gate_context("file_read"))
+    assert isinstance(decision, ToolGateDeny)
+    assert "deep_research_terminal_handoff_gate denied" in decision.reason
+    assert context.metadata["deep_research_terminal_handoff_gate"] == {
+        "blocked_tool": "file_read",
+        "allowed_tools": [],
+        "reason": "artifacts_ready_for_final_handoff",
+    }
+
+
+@pytest.mark.asyncio
+async def test_artifact_repair_gate_blocks_fetch_when_report_exists_without_ledger() -> (
+    None
+):
+    context = _context(
+        tool_results=[],
+        metadata={
+            "deep_research_artifacts": {
+                "report_exists": True,
+                "report_path": "research/report.md",
+                "report_size_bytes": 1024,
+            },
+        },
+    )
+    context.run_input.tool_policy.metadata["task_contract"] = {
+        "requires_research": True,
+        "research_mode": "deep",
+        "research_depth": "deep_parallel_research",
+        "research_profile": "medium",
+    }
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    web_fetch = await gate(
+        _gate_context("web_fetch", {"url": "https://example.com/source"})
+    )
+    assert isinstance(web_fetch, ToolGateDeny)
+    assert "deep_research_artifact_repair_gate denied" in web_fetch.reason
+    wrong_file_write = await gate(
+        _gate_context("file_write", {"path": "research/report.md"})
+    )
+    assert isinstance(wrong_file_write, ToolGateDeny)
+    assert (
+        context.metadata["deep_research_artifact_repair_gate"]["required_path"]
+        == "research/sources.jsonl"
+    )
+    file_write = await gate(
+        _gate_context("file_write", {"path": "research/sources.jsonl"})
+    )
+    assert isinstance(file_write, ToolGateAllow)
+
+
+@pytest.mark.asyncio
+async def test_parent_gate_reevaluates_artifact_state_between_batch_calls() -> None:
+    context = _context(
+        tool_results=[],
+        metadata={
+            "subagent_runs": [{"run_id": "child_1"}],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child notes",
+            },
+        },
+    )
+    context.run_input.tool_policy.metadata["task_contract"] = {
+        "requires_research": True,
+        "research_mode": "deep",
+        "research_depth": "deep_parallel_research",
+        "research_profile": "medium",
+    }
+
+    gate = _tool_gate_for_context(context)
+
+    assert gate is not None
+    first = await gate(_gate_context("file_write"))
+    assert isinstance(first, ToolGateAllow)
+    context.metadata["deep_research_artifacts"] = {
+        "report_exists": True,
+        "report_path": "research/report.md",
+        "report_size_bytes": 1024,
+    }
+    second = await gate(_gate_context("read_file", {"path": "research/report.md"}))
+    assert isinstance(second, ToolGateDeny)
+    assert "deep_research_artifact_repair_gate denied" in second.reason
 
 
 @pytest.mark.asyncio
@@ -260,7 +546,7 @@ async def test_parent_synthesis_gate_allows_second_child_with_explicit_budget() 
 
     assert gate is not None
     web_search = await gate(_gate_context("web_search"))
-    assert isinstance(web_search, ToolGateDeny)
+    assert isinstance(web_search, ToolGateAllow)
     agent_tool = await gate(_gate_context("agent_tool"))
     assert isinstance(agent_tool, ToolGateAllow)
 

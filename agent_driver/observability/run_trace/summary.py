@@ -826,13 +826,20 @@ def _research_efficiency_summary(
     if required_verified_reads <= 0:
         required_verified_reads = 1
     verified_read_count = source_ledger_counts["verified_reads"]
+    blocked_or_failed_read_count = (
+        source_ledger_counts["blocked_reads"] + source_ledger_counts["failed_reads"]
+    )
+    fetch_fallback_required = bool(research.get("fetch_fallback_required")) or (
+        verified_read_count == 0
+        and blocked_or_failed_read_count >= required_verified_reads
+    )
     report_status = _deep_research_report_status(
         deep_expected=deep_expected,
         report_updated=report_updated,
         source_ledger_updated=source_ledger_updated,
         verified_read_count=verified_read_count,
         required_verified_reads=required_verified_reads,
-        fetch_fallback_required=bool(research.get("fetch_fallback_required")),
+        fetch_fallback_required=fetch_fallback_required,
     )
     low_verified_coverage = report_status == "draft"
     preliminary_final = (
@@ -926,6 +933,7 @@ def _deep_research_phase_diagnostics(
     search_seen = False
     fetch_attempts = 0
     report_seen = False
+    subagent_seen = False
     violations: list[dict[str, Any]] = []
     for event in events:
         event_name = event.get("event")
@@ -947,7 +955,16 @@ def _deep_research_phase_diagnostics(
                 report_seen=report_seen,
             )
             allowed = _DEEP_RESEARCH_PHASE_ALLOWED_TOOLS.get(phase, frozenset())
-            if tool_name not in allowed and tool_name not in _phase_neutral_tools():
+            parent_synthesis_write = (
+                subagent_seen
+                and tool_name in {"file_write", "file_edit", "file_patch"}
+                and _tool_targets_research_artifact(tool, default_when_missing=True)
+            )
+            if (
+                tool_name not in allowed
+                and tool_name not in _phase_neutral_tools()
+                and not parent_synthesis_write
+            ):
                 violations.append(
                     {
                         "phase": phase,
@@ -957,6 +974,8 @@ def _deep_research_phase_diagnostics(
                 )
             if tool_name == "todo_write":
                 plan_created = True
+            elif tool_name == "agent_tool":
+                subagent_seen = True
             elif tool_name == "web_search":
                 search_seen = True
             elif tool_name in _READ_SOURCE_TOOLS:
@@ -972,6 +991,21 @@ def _deep_research_phase_diagnostics(
         "phase_violation_count": len(violations),
         "phase_violations": violations[:10],
     }
+
+
+def _tool_targets_research_artifact(
+    tool: dict[str, Any], *, default_when_missing: bool = False
+) -> bool:
+    args = tool.get("args")
+    if not isinstance(args, dict):
+        return default_when_missing
+    raw_path = args.get("path") or args.get("file_path")
+    if not isinstance(raw_path, str):
+        return default_when_missing
+    path = raw_path.replace("\\", "/").strip().strip("/")
+    return path in {"research/report.md", "research/sources.jsonl"} or path.endswith(
+        ("/research/report.md", "/research/sources.jsonl")
+    )
 
 
 def _child_evidence_summary(events: list[dict[str, object]]) -> dict[str, int]:

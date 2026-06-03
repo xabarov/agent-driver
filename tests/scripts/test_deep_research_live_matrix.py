@@ -305,7 +305,15 @@ def test_result_json_and_markdown_surface_failure_context() -> None:
                 "child_fetch_count": 1,
                 "report_status": "draft",
             },
-            "llm": {"usage": {"total_tokens": 42}},
+            "llm": {
+                "usage": {"total_tokens": 42},
+                "request_allowed_tools": [["file_write"], []],
+                "request_tool_names": [["file_write"], []],
+                "tool_choice_effective": [
+                    {"type": "tool", "name": "file_write"},
+                    "none",
+                ],
+            },
         },
     )
 
@@ -314,6 +322,13 @@ def test_result_json_and_markdown_surface_failure_context() -> None:
 
     assert payload["failure_class"] == "artifact_contract"
     assert payload["failure_keys"] == ["deep_research_no_source_ledger_artifact"]
+    assert payload["acceptance_failures"] == ["ledger", "trace"]
+    assert payload["llm_request_allowed_tools"] == [["file_write"], []]
+    assert payload["llm_request_tool_names"] == [["file_write"], []]
+    assert payload["llm_tool_choice_effective"] == [
+        {"type": "tool", "name": "file_write"},
+        "none",
+    ]
     assert payload["source_records"] == 0
     assert "sources=0" in markdown
     assert "deep_research_no_source_ledger_artifact" in markdown

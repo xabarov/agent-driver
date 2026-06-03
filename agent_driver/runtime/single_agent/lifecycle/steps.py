@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from urllib.parse import urlsplit, urlunsplit
+
 from agent_driver.code_agent.profile import run_code_agent_stage
 from agent_driver.context import CompactionOrchestrator
 from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
@@ -21,11 +24,13 @@ from agent_driver.runtime.deep_research_gating import (
     deep_research_profile,
     deep_research_tool_available,
     is_research_report_path,
+    normalize_artifact_path,
 )
 from agent_driver.runtime.research_artifacts import (
     captured_draft_protocol_text,
     deep_research_artifact_repair_hint,
     deep_research_report_artifact_exists,
+    deep_research_source_ledger_artifact_exists,
     ensure_deep_research_report_artifact_metadata,
     maybe_capture_deep_research_draft,
 )
@@ -86,13 +91,21 @@ _PARENT_SYNTHESIS_UPDATE_TOOLS = frozenset(
 )
 _DEEP_RESEARCH_PRE_SUBAGENT_BLOCKED_TOOLS = frozenset(
     {
+        "artifact_list",
+        "artifact_preview",
+        "artifact_read",
         "file_edit",
         "file_patch",
         "file_write",
+        "glob_search",
+        "grep_search",
+        "read_file",
         "web_fetch",
         "web_search",
     }
 )
+_URL_RE = re.compile(r"https?://[^\s\]\)>,;]+")
+_PARENT_SYNTHESIS_MAX_VERIFY_FETCHES = 3
 
 
 class SingleAgentStepMixin:
@@ -508,16 +521,61 @@ def _tool_available_for_repair(context: RunContext, tool_name: str) -> bool:
 def _tool_gate_for_context(context: RunContext) -> ToolGate | None:
     """Wrap caller gate with Deep Research parent-synthesis enforcement."""
     existing_gate = context.tool_gate
-    if not _deep_research_child_synthesis_pending_without_report(
-        context
-    ) and not _deep_research_requires_initial_subagent_gate(context):
+    terminal_handoff_ready = _deep_research_terminal_handoff_ready(context)
+    artifact_repair_required = _deep_research_artifact_repair_required(context)
+    if (
+        not _deep_research_child_synthesis_pending_without_report(context)
+        and not _deep_research_requires_initial_subagent_gate(context)
+        and not terminal_handoff_ready
+        and not artifact_repair_required
+    ):
         return existing_gate
 
     async def _gate(gate_context: ToolGateContext):
+        if _deep_research_terminal_handoff_ready(context):
+            payload = {
+                "blocked_tool": gate_context.tool_name,
+                "allowed_tools": [],
+                "reason": "artifacts_ready_for_final_handoff",
+            }
+            context.metadata["deep_research_terminal_handoff_gate"] = payload
+            return ToolGateDeny(
+                reason=(
+                    "deep_research_terminal_handoff_gate denied "
+                    f"{gate_context.tool_name!r}: research/report.md and "
+                    "research/sources.jsonl already exist. Finish with a concise "
+                    "artifact handoff instead of calling another tool."
+                )
+            )
+        if _deep_research_artifact_repair_required(context):
+            if _deep_research_artifact_repair_tool_allowed(
+                context,
+                gate_context.tool_name,
+                gate_context.args,
+            ):
+                if existing_gate is not None:
+                    return await existing_gate(gate_context)
+                return ToolGateAllow(reason="deep_research_artifact_repair_gate")
+            payload = {
+                "blocked_tool": gate_context.tool_name,
+                "allowed_tools": ["file_write"],
+                "reason": "report_or_ledger_missing",
+                "required_path": _deep_research_required_artifact_repair_path(context),
+            }
+            context.metadata["deep_research_artifact_repair_gate"] = payload
+            return ToolGateDeny(
+                reason=(
+                    "deep_research_artifact_repair_gate denied "
+                    f"{gate_context.tool_name!r}: Deep Research has exactly one "
+                    "required artifact. Write the missing research/report.md or "
+                    "research/sources.jsonl before any other tool."
+                )
+            )
         if _deep_research_child_synthesis_pending_without_report(context):
             if _deep_research_parent_synthesis_tool_allowed(
                 context,
                 gate_context.tool_name,
+                gate_context.args,
             ):
                 if existing_gate is not None:
                     return await existing_gate(gate_context)
@@ -581,15 +639,82 @@ def _deep_research_requires_initial_subagent_gate(context: RunContext) -> bool:
     else:
         deep_expected = deep_research_context_enabled(context)
     if not deep_expected:
-        return False
+        if not _deep_research_initial_todo_only_without_child(context):
+            return False
     profile = deep_research_profile(context, default="")
-    if profile not in {"medium", "hard"}:
+    if profile not in {"medium", "hard"} and not _deep_research_initial_todo_only_without_child(
+        context
+    ):
         return False
     if deep_research_max_subagent_requests(context) <= 0:
         return False
     if deep_research_planned_or_started_subagent_count(context) > 0:
         return False
     return _tool_available_for_repair(context, "agent_tool")
+
+
+def _deep_research_initial_todo_only_without_child(context: RunContext) -> bool:
+    counts: dict[str, int] = {}
+    rows = list(get_tool_loop_state(context).tool_results())
+    metadata_rows = context.metadata.get("tool_results")
+    if isinstance(metadata_rows, list):
+        rows.extend(item for item in metadata_rows if isinstance(item, dict))
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        tool_name = str(call.get("tool_name") or "").strip()
+        if tool_name:
+            counts[tool_name] = counts.get(tool_name, 0) + 1
+    if counts.get("todo_write", 0) <= 0:
+        return False
+    if counts.get("agent_tool", 0) > 0:
+        return False
+    return _tool_available_for_repair(context, "agent_tool")
+
+
+def _deep_research_terminal_handoff_ready(context: RunContext) -> bool:
+    return (
+        deep_research_context_enabled(context)
+        and deep_research_report_artifact_exists(context)
+        and deep_research_source_ledger_artifact_exists(context)
+    )
+
+
+def _deep_research_artifact_repair_required(context: RunContext) -> bool:
+    if not deep_research_context_enabled(context):
+        return False
+    report_exists = deep_research_report_artifact_exists(context)
+    ledger_exists = deep_research_source_ledger_artifact_exists(context)
+    return report_exists != ledger_exists
+
+
+def _deep_research_artifact_repair_tool_allowed(
+    context: RunContext,
+    tool_name: str,
+    args: object | None,
+) -> bool:
+    if tool_name != "file_write":
+        return False
+    required_path = _deep_research_required_artifact_repair_path(context)
+    if required_path is None:
+        return False
+    path = normalize_artifact_path(
+        _dict_value(args, "path") or _dict_value(args, "file_path")
+    )
+    return path == required_path
+
+
+def _deep_research_required_artifact_repair_path(context: RunContext) -> str | None:
+    report_exists = deep_research_report_artifact_exists(context)
+    ledger_exists = deep_research_source_ledger_artifact_exists(context)
+    if report_exists and not ledger_exists:
+        return "research/sources.jsonl"
+    if ledger_exists and not report_exists:
+        return "research/report.md"
+    return None
 
 
 def _deep_research_child_synthesis_pending_without_report(context: RunContext) -> bool:
@@ -604,7 +729,12 @@ def _deep_research_child_synthesis_pending_without_report(context: RunContext) -
 def _deep_research_parent_synthesis_tool_allowed(
     context: RunContext,
     tool_name: str,
+    args: object | None = None,
 ) -> bool:
+    if tool_name == "web_search":
+        return _deep_research_parent_search_count(context) < 1
+    if tool_name == "web_fetch":
+        return _deep_research_parent_verify_fetch_allowed(context, args)
     return tool_name in _deep_research_parent_synthesis_allowed_tools(context)
 
 
@@ -619,6 +749,145 @@ def _deep_research_parent_synthesis_allowed_tools(
     if _deep_research_subagent_budget_remaining(context):
         allowed.add("agent_tool")
     return frozenset(allowed)
+
+
+def _deep_research_parent_verify_fetch_allowed(
+    context: RunContext,
+    args: object | None,
+) -> bool:
+    if "web_fetch" not in _deep_research_parent_synthesis_allowed_tools(context):
+        return False
+    if (
+        _deep_research_parent_fetch_count(context)
+        >= _PARENT_SYNTHESIS_MAX_VERIFY_FETCHES
+    ):
+        return False
+    url = _canonical_url(_dict_value(args, "url"))
+    if url is None:
+        return False
+    return url in (
+        _deep_research_child_candidate_urls(context)
+        | _deep_research_parent_search_candidate_urls(context)
+    )
+
+
+def _deep_research_parent_fetch_count(context: RunContext) -> int:
+    count = 0
+    for item in get_tool_loop_state(context).tool_results():
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if isinstance(call, dict) and call.get("tool_name") == "web_fetch":
+            count += 1
+    return count
+
+
+def _deep_research_parent_search_count(context: RunContext) -> int:
+    count = 0
+    for item in get_tool_loop_state(context).tool_results():
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if isinstance(call, dict) and call.get("tool_name") == "web_search":
+            count += 1
+    return count
+
+
+def _deep_research_child_candidate_urls(context: RunContext) -> frozenset[str]:
+    urls: set[str] = set()
+    handoff = context.metadata.get("deep_research_child_synthesis")
+    if not isinstance(handoff, dict):
+        return frozenset()
+    _collect_urls_from_text(urls, str(handoff.get("summary") or ""))
+    children = handoff.get("children")
+    if isinstance(children, list):
+        for child in children:
+            if not isinstance(child, dict):
+                continue
+            _collect_urls_from_text(urls, str(child.get("summary") or ""))
+            source_ledger = child.get("source_ledger")
+            if isinstance(source_ledger, dict):
+                _collect_urls_from_source_ledger(urls, source_ledger)
+    source_ledger = handoff.get("source_ledger")
+    if isinstance(source_ledger, dict):
+        _collect_urls_from_source_ledger(urls, source_ledger)
+    return frozenset(urls)
+
+
+def _deep_research_parent_search_candidate_urls(context: RunContext) -> frozenset[str]:
+    urls: set[str] = set()
+    for item in get_tool_loop_state(context).tool_results():
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict) or call.get("tool_name") != "web_search":
+            continue
+        structured = item.get("structured_output")
+        if not isinstance(structured, dict):
+            continue
+        results = structured.get("results")
+        if not isinstance(results, list):
+            continue
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+            canonical = _canonical_url(result.get("url"))
+            if canonical is not None:
+                urls.add(canonical)
+    return frozenset(urls)
+
+
+def _collect_urls_from_source_ledger(
+    urls: set[str], source_ledger: dict[str, object]
+) -> None:
+    for section in (
+        "search_candidates",
+        "verified_reads",
+        "blocked_reads",
+        "failed_reads",
+    ):
+        rows = source_ledger.get(section)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            canonical = _canonical_url(row.get("url") or row.get("canonical_url"))
+            if canonical is not None:
+                urls.add(canonical)
+
+
+def _collect_urls_from_text(urls: set[str], text: str) -> None:
+    for match in _URL_RE.finditer(text):
+        canonical = _canonical_url(match.group(0).rstrip(".,;:"))
+        if canonical is not None:
+            urls.add(canonical)
+
+
+def _dict_value(value: object | None, key: str) -> object | None:
+    return value.get(key) if isinstance(value, dict) else None
+
+
+def _canonical_url(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = urlsplit(value.strip())
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return None
+    hostname = parsed.hostname
+    if not hostname:
+        return None
+    netloc = hostname.lower()
+    if parsed.port and not (
+        (parsed.scheme.lower() == "http" and parsed.port == 80)
+        or (parsed.scheme.lower() == "https" and parsed.port == 443)
+    ):
+        netloc = f"{netloc}:{parsed.port}"
+    path = parsed.path or "/"
+    return urlunsplit((parsed.scheme.lower(), netloc, path, parsed.query, ""))
 
 
 def _deep_research_subagent_budget_remaining(context: RunContext) -> bool:

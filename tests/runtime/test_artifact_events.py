@@ -100,6 +100,33 @@ def test_file_write_artifact_event_preserves_write_mode(tmp_path: Path) -> None:
     assert payload["mode"] == "append"
 
 
+def test_source_ledger_file_write_artifact_event_counts_jsonl_rows(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path)
+    ledger = tmp_path / "research" / "sources.jsonl"
+    envelope = _envelope(tool_name="file_write", path=ledger, created=True)
+    envelope = envelope.model_copy(
+        update={
+            "call": envelope.call.model_copy(
+                update={
+                    "args": {
+                        "path": str(ledger),
+                        "content": '{"status":"candidate"}\n\n{"status":"verified"}\n',
+                    }
+                }
+            )
+        }
+    )
+
+    event = artifact_event_from_tool_result(context, envelope)
+
+    assert event is not None
+    _, payload = event
+    assert payload["path"] == "research/sources.jsonl"
+    assert payload["record_count"] == 2
+
+
 def test_file_edit_projects_artifact_updated_event(tmp_path: Path) -> None:
     context = _context(tmp_path)
     report = tmp_path / "research" / "report.md"

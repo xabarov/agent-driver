@@ -20,6 +20,8 @@ from agent_driver.prompts import force_final_answer_tool_message
 from agent_driver.runtime.artifact_events import artifact_event_from_tool_result
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.deep_research_gating import (
+    deep_research_medium_or_hard,
+    deep_research_planned_or_started_subagent_count,
     is_research_report_path,
     is_research_source_ledger_path,
     normalize_artifact_path,
@@ -113,7 +115,11 @@ async def execute_tool_stage_step(
     host: ToolStageHost, context: RunContext
 ) -> RuntimeStepResult:
     """Execute tool stage and route to interrupt, code-agent loop, or finalize."""
+    _suppress_deep_research_terminal_tool_calls(context)
+    _clamp_deep_research_initial_subagent_batch(context)
     _repair_deep_research_parent_file_write_args(context)
+    _coerce_deep_research_artifact_repair_batch(context)
+    _clamp_deep_research_parent_artifact_batch(context)
     _emit_tool_started_if_needed(host, context)
     result = await host._tool_result_with_approved_override(context)
     host._store_tool_stage_outputs(context, result)
@@ -126,6 +132,163 @@ async def execute_tool_stage_step(
     if code_loop is not None:
         return code_loop
     return await _finalize_tool_stage_transition(host, context, result)
+
+
+def _suppress_deep_research_terminal_tool_calls(context: RunContext) -> None:
+    """Treat post-artifact tool drift as final text once both research artifacts exist."""
+    if not _deep_research_terminal_artifacts_seen(context):
+        return
+    response = context.llm_response
+    if response is None:
+        return
+    planned_calls = extract_planned_tool_calls(response)
+    if not planned_calls:
+        return
+    content = response.message.content or ""
+    response.message.content = strip_text_form_tool_calls(content)
+    response.finish_reason = LlmFinishReason.STOP
+    response.metadata["planned_tool_calls"] = []
+    context.metadata["deep_research_terminal_tool_calls_suppressed"] = {
+        "count": len(planned_calls),
+        "tools": [call.tool_name for call in planned_calls],
+        "reason": "artifacts_ready",
+    }
+
+
+def _clamp_deep_research_parent_artifact_batch(context: RunContext) -> None:
+    """Drop sibling tool drift when the parent is writing research artifacts."""
+    handoff = context.metadata.get("deep_research_child_synthesis")
+    if not (isinstance(handoff, dict) and handoff.get("pending") is True):
+        return
+    response = context.llm_response
+    if response is None:
+        return
+    planned_calls = extract_planned_tool_calls(response)
+    if not planned_calls or not any(call.tool_name == "file_write" for call in planned_calls):
+        return
+    kept = [call for call in planned_calls if call.tool_name == "file_write"]
+    if len(kept) == len(planned_calls):
+        return
+    response.metadata["planned_tool_calls"] = [
+        call.model_dump(mode="json") for call in kept
+    ]
+    context.metadata["deep_research_parent_artifact_batch_clamped"] = {
+        "kept": len(kept),
+        "dropped": len(planned_calls) - len(kept),
+        "reason": "parent_artifact_writes_only",
+        "dropped_tools": [
+            call.tool_name for call in planned_calls if call.tool_name != "file_write"
+        ],
+    }
+
+
+def _coerce_deep_research_artifact_repair_batch(context: RunContext) -> None:
+    """Rewrite artifact-repair drift to the single missing artifact write."""
+    report_exists = deep_research_report_artifact_exists(
+        context
+    ) or _deep_research_report_seen_in_tool_results(context)
+    ledger_exists = deep_research_source_ledger_artifact_exists(
+        context
+    ) or _deep_research_ledger_seen_in_tool_results(context)
+    if report_exists == ledger_exists:
+        return
+    response = context.llm_response
+    if response is None:
+        return
+    planned_calls = extract_planned_tool_calls(response)
+    if not planned_calls:
+        return
+    target = "sources" if report_exists else "report"
+    first = planned_calls[0]
+    repaired = first.model_copy(
+        update={
+            "tool_name": "file_write",
+            "args": _deep_research_parent_file_write_args(context, target=target),
+            "metadata": {
+                **first.metadata,
+                "deep_research_args_repaired": True,
+                "deep_research_repair_reason": "artifact_repair_tool_coerced",
+                "original_tool_name": first.tool_name,
+            },
+        }
+    )
+    response.metadata["planned_tool_calls"] = [repaired.model_dump(mode="json")]
+    context.metadata["deep_research_artifact_repair_batch_coerced"] = {
+        "target": "research/sources.jsonl" if target == "sources" else "research/report.md",
+        "dropped": max(0, len(planned_calls) - 1),
+        "original_tool": first.tool_name,
+    }
+
+
+def _deep_research_terminal_artifacts_seen(context: RunContext) -> bool:
+    return (
+        deep_research_report_artifact_exists(context)
+        and deep_research_source_ledger_artifact_exists(context)
+    ) or (
+        _deep_research_report_seen_in_tool_results(context)
+        and _deep_research_ledger_seen_in_tool_results(context)
+    )
+
+
+def _deep_research_report_seen_in_tool_results(context: RunContext) -> bool:
+    return _deep_research_artifact_seen_in_tool_results(context, "report")
+
+
+def _deep_research_ledger_seen_in_tool_results(context: RunContext) -> bool:
+    return _deep_research_artifact_seen_in_tool_results(context, "sources")
+
+
+def _deep_research_artifact_seen_in_tool_results(
+    context: RunContext, target: str
+) -> bool:
+    paths = {"report": "research/report.md", "sources": "research/sources.jsonl"}
+    expected = paths[target]
+    rows = list(get_tool_loop_state(context).tool_results())
+    metadata_rows = context.metadata.get("tool_results")
+    if isinstance(metadata_rows, list):
+        rows.extend(item for item in metadata_rows if isinstance(item, dict))
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        if call.get("tool_name") not in {"file_write", "file_patch", "file_edit"}:
+            continue
+        args = call.get("args")
+        if not isinstance(args, dict):
+            continue
+        path = normalize_artifact_path(args.get("path") or args.get("file_path"))
+        if path == expected:
+            return True
+    return False
+
+
+def _clamp_deep_research_initial_subagent_batch(context: RunContext) -> None:
+    """Prevent same-response direct discovery/write beside the first child call."""
+    if not deep_research_medium_or_hard(context):
+        return
+    if deep_research_planned_or_started_subagent_count(context) > 0:
+        return
+    response = context.llm_response
+    if response is None:
+        return
+    planned_calls = extract_planned_tool_calls(response)
+    if not planned_calls or not any(
+        call.tool_name == "agent_tool" for call in planned_calls
+    ):
+        return
+    kept = [call for call in planned_calls if call.tool_name == "agent_tool"]
+    if len(kept) == len(planned_calls):
+        return
+    response.metadata["planned_tool_calls"] = [
+        call.model_dump(mode="json") for call in kept
+    ]
+    context.metadata["deep_research_initial_subagent_batch_clamped"] = {
+        "kept": len(kept),
+        "dropped": len(planned_calls) - len(kept),
+        "reason": "medium_hard_first_child_only",
+    }
 
 
 def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
@@ -155,6 +318,7 @@ def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
     repaired_payload: list[dict[str, Any]] = []
     repaired_count = 0
     file_write_index = 0
+    report_write_seen_in_batch = False
     for call in planned_calls:
         normalized_call = _normalize_parent_file_write_call(call)
         if normalized_call is None:
@@ -163,6 +327,7 @@ def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
         call = normalized_call
         if _should_retarget_parent_file_write_to_report(context, call.args):
             args = _deep_research_parent_file_write_args(context, target="report")
+            report_write_seen_in_batch = True
             repaired = call.model_copy(
                 update={
                     "args": args,
@@ -178,7 +343,53 @@ def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
             repaired_payload.append(repaired.model_dump(mode="json"))
             repaired_count += 1
             continue
+        args = dict(call.args) if isinstance(call.args, dict) else {}
+        path = normalize_artifact_path(args.get("path"))
+        if _is_research_source_ledger_alias_path(path):
+            repaired = call.model_copy(
+                update={
+                    "args": _deep_research_parent_file_write_args(
+                        context,
+                        target="sources",
+                    ),
+                    "metadata": {
+                        **call.metadata,
+                        "deep_research_args_repaired": True,
+                        "deep_research_repair_reason": (
+                            "parent_synthesis_source_ledger_alias"
+                        ),
+                    },
+                }
+            )
+            repaired_payload.append(repaired.model_dump(mode="json"))
+            repaired_count += 1
+            continue
+        if (
+            report_write_seen_in_batch
+            and is_research_report_path(path)
+            and not deep_research_source_ledger_artifact_exists(context)
+        ):
+            repaired = call.model_copy(
+                update={
+                    "args": _deep_research_parent_file_write_args(
+                        context,
+                        target="sources",
+                    ),
+                    "metadata": {
+                        **call.metadata,
+                        "deep_research_args_repaired": True,
+                        "deep_research_repair_reason": (
+                            "parent_synthesis_source_ledger_required"
+                        ),
+                    },
+                }
+            )
+            repaired_payload.append(repaired.model_dump(mode="json"))
+            repaired_count += 1
+            continue
         if _has_file_write_args(call.args):
+            if is_research_report_path(path):
+                report_write_seen_in_batch = True
             repaired_payload.append(call.model_dump(mode="json"))
             continue
         file_write_index += 1
@@ -186,6 +397,8 @@ def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
             context,
             target="sources" if file_write_index > 1 else "report",
         )
+        if args["path"] == "research/report.md":
+            report_write_seen_in_batch = True
         repaired = call.model_copy(
             update={
                 "args": args,
@@ -309,6 +522,17 @@ def _has_file_write_args(args: dict[str, Any]) -> bool:
     )
 
 
+def _is_research_source_ledger_alias_path(path: str) -> bool:
+    return path in {
+        "research/sources.md",
+        "research/sources.txt",
+        "research/source-ledger.md",
+        "research/source_ledger.md",
+        "research/source-ledger.jsonl",
+        "research/source_ledger.jsonl",
+    }
+
+
 def _deep_research_parent_file_write_args(
     context: RunContext,
     *,
@@ -359,7 +583,7 @@ def _deep_research_report_from_child_notes(context: RunContext) -> str:
 
 def _deep_research_sources_jsonl_from_child_notes(context: RunContext) -> str:
     notes = _deep_research_report_from_child_notes(context)
-    urls = list(dict.fromkeys(re.findall(r"https?://[^\\s)\\]>\"']+", notes)))
+    urls = list(dict.fromkeys(re.findall(r"https?://[^\s)\]>\"']+", notes)))
     rows = [
         {
             "url": url.rstrip(".,;"),
@@ -369,6 +593,14 @@ def _deep_research_sources_jsonl_from_child_notes(context: RunContext) -> str:
         }
         for url in urls
     ]
+    if not rows:
+        rows.append(
+            {
+                "status": "candidate",
+                "source": "child_summary",
+                "notes": "Child notes contained no concrete URL; parent verification is still pending.",
+            }
+        )
     return "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
 
 
@@ -1552,8 +1784,11 @@ def _has_repeated_recent_tool_call(context: RunContext) -> bool:
 
 __all__ = [
     "ToolStageHost",
+    "_clamp_deep_research_parent_artifact_batch",
+    "_coerce_deep_research_artifact_repair_batch",
     "_force_web_fetch_for_source_verified_research",
     "_should_force_final_answer",
+    "_suppress_deep_research_terminal_tool_calls",
     "_update_tool_protocol_messages",
     "execute_tool_stage_step",
 ]

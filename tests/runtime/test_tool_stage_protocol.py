@@ -11,9 +11,13 @@ from agent_driver.contracts.tools import ToolCall, ToolError, ToolResultEnvelope
 from agent_driver.contracts.usage import UsageSummary
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.runtime.single_agent.tool_stage import (
+    _clamp_deep_research_parent_artifact_batch,
+    _clamp_deep_research_initial_subagent_batch,
+    _coerce_deep_research_artifact_repair_batch,
     _force_web_fetch_for_source_verified_research,
     _repair_deep_research_parent_file_write_args,
     _should_force_final_answer,
+    _suppress_deep_research_terminal_tool_calls,
     _update_tool_protocol_messages,
 )
 from agent_driver.runtime.tools import ToolExecutionResult
@@ -55,6 +59,263 @@ def test_deep_research_repairs_empty_parent_file_write_args() -> None:
     assert "https://example.com/paper" in planned["args"]["content"]
     assert planned["metadata"]["deep_research_args_repaired"] is True
     assert context.metadata["deep_research_file_write_args_repaired"]["count"] == 1
+
+
+def test_deep_research_initial_subagent_batch_drops_sibling_tools() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="web_search",
+                    tool_call_id="search_1",
+                    args={"query": "fork join"},
+                ).model_dump(mode="json"),
+                ToolCall(
+                    tool_name="agent_tool",
+                    tool_call_id="agent_1",
+                    args={"task": "Find sources", "description": "Find sources"},
+                ).model_dump(mode="json"),
+                ToolCall(
+                    tool_name="file_write",
+                    tool_call_id="write_1",
+                    args={"path": "research/report.md", "content": "# Report"},
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={"tool_results": []},
+        run_input=SimpleNamespace(
+            app_metadata={},
+            tool_policy=SimpleNamespace(
+                allowed_tools=None,
+                denied_tools=[],
+                metadata={
+                    "task_contract": {
+                        "requires_research": True,
+                        "research_mode": "deep",
+                        "research_depth": "deep_parallel_research",
+                        "research_profile": "medium",
+                    }
+                },
+            ),
+        ),
+    )
+
+    _clamp_deep_research_initial_subagent_batch(context)
+
+    planned = llm_response.metadata["planned_tool_calls"]
+    assert [item["tool_name"] for item in planned] == ["agent_tool"]
+    assert context.metadata["deep_research_initial_subagent_batch_clamped"] == {
+        "kept": 1,
+        "dropped": 2,
+        "reason": "medium_hard_first_child_only",
+    }
+
+
+def test_deep_research_terminal_state_suppresses_text_form_tool_calls() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(
+            role=ChatRole.ASSISTANT,
+            content=(
+                "Done. <tool_call>{\"name\":\"bash\",\"arguments\":{\"cmd\":\"ls\"}}"
+                "</tool_call>"
+            ),
+        ),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="bash",
+                    tool_call_id="bash_1",
+                    args={"cmd": "ls"},
+                    metadata={"text_form_source": True},
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={
+            "deep_research_artifacts": {
+                "report_exists": True,
+                "report_path": "research/report.md",
+                "source_ledger_exists": True,
+                "source_ledger_path": "research/sources.jsonl",
+            },
+        },
+    )
+
+    _suppress_deep_research_terminal_tool_calls(context)
+
+    assert llm_response.metadata["planned_tool_calls"] == []
+    assert llm_response.finish_reason == LlmFinishReason.STOP
+    assert "<tool_call>" not in llm_response.message.content
+    assert context.metadata["deep_research_terminal_tool_calls_suppressed"] == {
+        "count": 1,
+        "tools": ["bash"],
+        "reason": "artifacts_ready",
+    }
+
+
+def test_deep_research_terminal_state_suppresses_from_tool_result_artifacts() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(
+            role=ChatRole.ASSISTANT,
+            content="<tool_call>{\"name\":\"retrieve_subagent_results\",\"arguments\":{}}</tool_call>",
+        ),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="retrieve_subagent_results",
+                    tool_call_id="subagent_1",
+                    args={},
+                    metadata={"text_form_source": True},
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={
+            "tool_results": [
+                {
+                    "call": {
+                        "tool_name": "file_write",
+                        "args": {"path": "research/report.md"},
+                    }
+                },
+                {
+                    "call": {
+                        "tool_name": "file_write",
+                        "args": {"path": "research/sources.jsonl"},
+                    }
+                },
+            ]
+        },
+    )
+
+    _suppress_deep_research_terminal_tool_calls(context)
+
+    assert llm_response.metadata["planned_tool_calls"] == []
+    assert llm_response.finish_reason == LlmFinishReason.STOP
+    assert "retrieve_subagent_results" not in llm_response.message.content
+
+
+def test_deep_research_parent_artifact_batch_drops_sibling_tool_drift() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="file_write",
+                    tool_call_id="write_1",
+                    args={"path": "research/report.md", "content": "# Report"},
+                ).model_dump(mode="json"),
+                ToolCall(
+                    tool_name="shell",
+                    tool_call_id="shell_1",
+                    args={"cmd": "ls"},
+                    metadata={"text_form_source": True},
+                ).model_dump(mode="json"),
+                ToolCall(
+                    tool_name="TodoWrite",
+                    tool_call_id="todo_1",
+                    args={"todos": []},
+                    metadata={"text_form_source": True},
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "child notes",
+            }
+        },
+    )
+
+    _clamp_deep_research_parent_artifact_batch(context)
+
+    planned = llm_response.metadata["planned_tool_calls"]
+    assert [item["tool_name"] for item in planned] == ["file_write"]
+    assert context.metadata["deep_research_parent_artifact_batch_clamped"] == {
+        "kept": 1,
+        "dropped": 2,
+        "reason": "parent_artifact_writes_only",
+        "dropped_tools": ["shell", "TodoWrite"],
+    }
+
+
+def test_deep_research_artifact_repair_coerces_drift_to_missing_ledger() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="bash",
+                    tool_call_id="bash_1",
+                    args={"cmd": "ls"},
+                    metadata={"text_form_source": True},
+                ).model_dump(mode="json"),
+                ToolCall(
+                    tool_name="shell_execute",
+                    tool_call_id="shell_1",
+                    args={"cmd": "pwd"},
+                    metadata={"text_form_source": True},
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={
+            "deep_research_artifacts": {
+                "report_exists": True,
+                "report_path": "research/report.md",
+            },
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "Candidate source: https://example.com/source",
+            },
+        },
+    )
+
+    _coerce_deep_research_artifact_repair_batch(context)
+
+    planned = llm_response.metadata["planned_tool_calls"]
+    assert [item["tool_name"] for item in planned] == ["file_write"]
+    assert planned[0]["args"]["path"] == "research/sources.jsonl"
+    assert "https://example.com/source" in planned[0]["args"]["content"]
+    assert planned[0]["metadata"]["original_tool_name"] == "bash"
+    assert context.metadata["deep_research_artifact_repair_batch_coerced"] == {
+        "target": "research/sources.jsonl",
+        "dropped": 1,
+        "original_tool": "bash",
+    }
 
 
 def test_deep_research_retargets_parent_ledger_write_to_missing_report() -> None:
@@ -102,6 +363,105 @@ def test_deep_research_retargets_parent_ledger_write_to_missing_report() -> None
         "parent_synthesis_report_required"
     )
     assert context.metadata["deep_research_file_write_args_repaired"]["count"] == 1
+
+
+def test_deep_research_retargets_second_report_write_to_source_ledger() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="file_write",
+                    tool_call_id="call_1",
+                    args={
+                        "path": "research/report.md",
+                        "content": "# Report\n\nDraft.",
+                    },
+                ).model_dump(mode="json"),
+                ToolCall(
+                    tool_name="file_write",
+                    tool_call_id="call_2",
+                    args={
+                        "path": "research/report.md",
+                        "content": "# Report\n\nRewrite.",
+                    },
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={
+            "tool_results": [],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "Child notes without URL",
+            },
+        },
+    )
+
+    _repair_deep_research_parent_file_write_args(context)
+
+    planned = llm_response.metadata["planned_tool_calls"]
+    assert planned[0]["args"]["path"] == "research/report.md"
+    assert planned[1]["args"]["path"] == "research/sources.jsonl"
+    assert "verification is still pending" in planned[1]["args"]["content"]
+    assert planned[1]["metadata"]["deep_research_repair_reason"] == (
+        "parent_synthesis_source_ledger_required"
+    )
+
+
+def test_deep_research_retargets_sources_markdown_alias_to_source_ledger() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="file_write",
+                    tool_call_id="call_1",
+                    args={
+                        "path": "research/report.md",
+                        "content": "# Report\n\nDraft.",
+                    },
+                ).model_dump(mode="json"),
+                ToolCall(
+                    tool_name="file_write",
+                    tool_call_id="call_2",
+                    args={
+                        "path": "research/sources.md",
+                        "content": "- https://example.com/source",
+                    },
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={
+            "tool_results": [],
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "Candidate source: https://example.com/source",
+            },
+        },
+    )
+
+    _repair_deep_research_parent_file_write_args(context)
+
+    planned = llm_response.metadata["planned_tool_calls"]
+    assert planned[1]["args"]["path"] == "research/sources.jsonl"
+    assert "https://example.com/source" in planned[1]["args"]["content"]
+    assert planned[1]["metadata"]["deep_research_repair_reason"] == (
+        "parent_synthesis_source_ledger_alias"
+    )
 
 
 def test_deep_research_retargets_alias_write_ledger_path_to_missing_report() -> None:

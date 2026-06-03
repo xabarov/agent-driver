@@ -362,6 +362,82 @@ def test_trace_summary_splits_parent_and_child_research_evidence() -> None:
     assert summary["subagents"]["child_fetch_count"] == 2
 
 
+def test_trace_summary_allows_parent_artifact_writes_after_subagent() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Report ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "file_write",
+                            "status": "completed",
+                            "args": {"path": "research/report.md"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "file_write",
+                            "status": "completed",
+                            "args": {"path": "research/sources.jsonl"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "artifact_updated",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {
+                "event": "artifact_updated",
+                "data": {"path": "research/sources.jsonl", "tool_name": "file_write"},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["phase_violation"] is False
+    assert summary["failures"]["deep_research_phase_violation"] is False
+
+
+def test_trace_summary_allows_parent_file_write_without_args_after_subagent() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Report ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            _completed_tool("file_write"),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["phase_violation"] is False
+
+
 def test_trace_summary_flags_missed_explicit_delegation() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
@@ -639,6 +715,65 @@ def test_trace_summary_allows_agent_tool_verify_recovery() -> None:
 
     assert summary["research_efficiency"]["phase_violation"] is False
     assert summary["failures"]["deep_research_phase_violation"] is False
+
+
+def test_trace_summary_treats_blocked_deep_fetches_as_fallback_coverage() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово: полный отчет сохранен в research/report.md.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.com/a"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "source_ledger_updated",
+                "data": {
+                    "verified_reads": [],
+                    "failed_reads": [],
+                    "blocked_reads": [
+                        {"url": "https://example.com/a", "status": "blocked"}
+                    ],
+                    "search_candidates": [],
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 1},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["report_status"] == "fallback"
+    assert summary["research_efficiency"]["low_verified_coverage"] is False
+    assert summary["failures"]["deep_research_low_verified_coverage"] is False
+    assert summary["failures"]["deep_research_preliminary_final"] is False
 
 
 def test_trace_summary_counts_hard_read_tools_as_fetch_progress() -> None:

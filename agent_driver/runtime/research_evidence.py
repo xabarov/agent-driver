@@ -189,10 +189,13 @@ def research_source_ledger_from_tool_results(
             if record is None:
                 continue
             if _tool_result_blocked(item):
+                record["status"] = "blocked"
                 blocked_reads.append(record)
             elif _tool_result_failed(item):
+                record["status"] = "failed"
                 failed_reads.append(record)
             else:
+                record["status"] = "verified"
                 _append_unique_source(verified_reads, record, seen=seen_verified)
     return ResearchSourceLedger(
         search_candidates=search_candidates,
@@ -290,6 +293,7 @@ def _search_candidates(
             "domain": _domain(url),
             "rank": index,
             "source_type": WEB_SEARCH_TOOL,
+            "status": "candidate",
         }
         _set_clean(row, "title", result.get("title"))
         _set_clean(row, "excerpt", result.get("snippet"))

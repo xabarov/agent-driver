@@ -65,9 +65,9 @@ export CHAT_DEMO_TRACING_ENABLED="${CHAT_DEMO_TRACING_ENABLED:-true}"
 export PHOENIX_PROJECT_NAME="${PHOENIX_PROJECT_NAME:-agent-driver-chat-demo}"
 export PHOENIX_COLLECTOR_ENDPOINT="${PHOENIX_ENDPOINT}"
 export AGENT_DRIVER_RUNTIME_STORE_KIND="${AGENT_DRIVER_RUNTIME_STORE_KIND:-sqlite}"
-export AGENT_DRIVER_SQLITE_PATH="${AGENT_DRIVER_SQLITE_PATH:-${ARTIFACT_DIR}/runtime_store.sqlite3}"
-export CHAT_DEMO_SESSIONS_PATH="${CHAT_DEMO_SESSIONS_PATH:-${ARTIFACT_DIR}/sessions.json}"
-export CHAT_DEMO_WORKSPACE_ROOT="${CHAT_DEMO_WORKSPACE_ROOT:-${ARTIFACT_DIR}/workspace}"
+export AGENT_DRIVER_SQLITE_PATH="${CHAT_DEMO_LIVE_SQLITE_PATH:-${ARTIFACT_DIR}/runtime_store.sqlite3}"
+export CHAT_DEMO_SESSIONS_PATH="${CHAT_DEMO_LIVE_SESSIONS_PATH:-${ARTIFACT_DIR}/sessions.json}"
+export CHAT_DEMO_WORKSPACE_ROOT="${CHAT_DEMO_LIVE_WORKSPACE_ROOT:-${ARTIFACT_DIR}/workspace}"
 
 {
   echo "artifact_dir=${ARTIFACT_DIR}"
@@ -76,6 +76,8 @@ export CHAT_DEMO_WORKSPACE_ROOT="${CHAT_DEMO_WORKSPACE_ROOT:-${ARTIFACT_DIR}/wor
   echo "phoenix_base_url=${PHOENIX_BASE_URL}"
   echo "phoenix_project=${PHOENIX_PROJECT_NAME}"
   echo "runtime_store=${AGENT_DRIVER_RUNTIME_STORE_KIND}:${AGENT_DRIVER_SQLITE_PATH}"
+  echo "sessions_path=${CHAT_DEMO_SESSIONS_PATH}"
+  echo "workspace_root=${CHAT_DEMO_WORKSPACE_ROOT}"
   echo "profiles=${PROFILES}"
   echo "question_id=${QUESTION_ID}"
   echo "limit=${LIMIT}"
@@ -93,7 +95,7 @@ set +e
 (
   ${PYTHON_CMD} "${WITH_SERVER}" \
     --timeout "${SERVER_TIMEOUT}" \
-    --server "cd examples/chat-demo/backend && ${BACKEND_PYTHON_CMD} -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port ${BACKEND_PORT}" \
+    --server "cd examples/chat-demo/backend && CHAT_DEMO_WORKSPACE_ROOT='${CHAT_DEMO_WORKSPACE_ROOT}' CHAT_DEMO_SESSIONS_PATH='${CHAT_DEMO_SESSIONS_PATH}' AGENT_DRIVER_RUNTIME_STORE_KIND='${AGENT_DRIVER_RUNTIME_STORE_KIND}' AGENT_DRIVER_SQLITE_PATH='${AGENT_DRIVER_SQLITE_PATH}' ${BACKEND_PYTHON_CMD} -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port ${BACKEND_PORT}" \
     --port "${BACKEND_PORT}" \
     --server "cd examples/chat-demo/frontend && ${FRONTEND_COMMAND}" \
     --port "${FRONTEND_PORT}" \
@@ -129,6 +131,7 @@ set +e
             agent_driver/runtime/research_artifacts.py \
             agent_driver/runtime/deep_research_phase_gate.py \
             agent_driver/observability/run_trace/summary.py \
+            scripts/run_deep_research_live_observed.sh \
             examples/chat-demo/backend/app/api/chat.py \
             examples/chat-demo/backend/app/api/tools.py \
             examples/chat-demo/backend/app/sse_relay.py \

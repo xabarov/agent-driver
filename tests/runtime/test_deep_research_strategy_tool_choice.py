@@ -59,14 +59,17 @@ def _context(
     )
 
 
-def _tool_result(tool_name: str) -> dict[str, object]:
-    return {
+def _tool_result(tool_name: str, *, status: str | None = None) -> dict[str, object]:
+    result: dict[str, object] = {
         "call": {
             "tool_name": tool_name,
             "tool_call_id": f"call_{tool_name}",
             "args": {},
         }
     }
+    if status is not None:
+        result["status"] = status
+    return result
 
 
 def test_medium_strategy_forces_agent_tool_after_initial_plan() -> None:
@@ -97,6 +100,7 @@ def test_pending_child_synthesis_narrows_request_tools_before_report() -> None:
         "file_write",
         "todo_write",
         "web_fetch",
+        "web_search",
     )
 
 
@@ -215,6 +219,30 @@ def test_deep_research_with_report_and_ledger_disables_tools(
     ledger.write_text('{"url": "https://example.com"}\n', encoding="utf-8")
 
     assert _deep_research_request_allowed_tools(context) == tuple()
+    assert _deep_research_strategy_tool_choice(context, None) == "none"
+    assert context.metadata["deep_research_strategy_tool_choice"] == {
+        "tool": "none",
+        "reason": "deep_research_artifacts_ready",
+    }
+
+
+def test_deep_research_with_report_and_ledger_overrides_child_pending_to_final(
+    tmp_path: Path,
+) -> None:
+    context = _context(research_mode="deep")
+    context.metadata["workspace_cwd"] = str(tmp_path)
+    context.metadata["deep_research_child_synthesis"] = {
+        "pending": True,
+        "summary": "child notes",
+    }
+    report = tmp_path / "research" / "report.md"
+    ledger = tmp_path / "research" / "sources.jsonl"
+    report.parent.mkdir(parents=True)
+    report.write_text("ready report", encoding="utf-8")
+    ledger.write_text('{"url": "https://example.com"}\n', encoding="utf-8")
+
+    assert _deep_research_request_allowed_tools(context) == tuple()
+    assert _deep_research_strategy_tool_choice(context, None) == "none"
 
 
 def test_deep_research_with_ledger_only_forces_report_write(
@@ -265,6 +293,81 @@ def test_pending_child_synthesis_narrows_to_write_after_fetch() -> None:
     assert choice == {"type": "tool", "name": "file_write"}
 
 
+def test_strategy_honors_child_handoff_even_without_visible_contract() -> None:
+    context = _context(
+        profile=None,
+        research_mode=None,
+        tool_results=[
+            _tool_result("todo_write"),
+            _tool_result("agent_tool"),
+        ],
+    )
+    context.metadata["subagent_runs"] = [{"run_id": "child_1"}]
+    context.metadata["deep_research_child_synthesis"] = {
+        "pending": True,
+        "summary": "child notes",
+    }
+
+    assert _deep_research_request_allowed_tools(context) == (
+        "file_write",
+        "todo_write",
+        "web_fetch",
+        "web_search",
+    )
+    assert _deep_research_strategy_tool_choice(context, None) == {
+        "type": "tool",
+        "name": "web_search",
+    }
+    assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
+        "child_synthesis_pending_parent_search_fallback"
+    )
+
+
+def test_strategy_forces_parent_search_before_fetch_even_when_child_handoff_has_url() -> None:
+    context = _context(
+        tool_results=[
+            _tool_result("todo_write"),
+            _tool_result("agent_tool"),
+        ],
+    )
+    context.metadata["subagent_runs"] = [{"run_id": "child_1"}]
+    context.metadata["deep_research_child_synthesis"] = {
+        "pending": True,
+        "summary": "Candidate source: https://example.com/fork-join",
+    }
+
+    assert _deep_research_strategy_tool_choice(context, None) == {
+        "type": "tool",
+        "name": "web_search",
+    }
+    assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
+        "child_synthesis_pending_parent_search_fallback"
+    )
+
+
+def test_strategy_forces_parent_verify_fetch_after_parent_search() -> None:
+    context = _context(
+        tool_results=[
+            _tool_result("todo_write"),
+            _tool_result("agent_tool"),
+            _tool_result("web_search"),
+        ],
+    )
+    context.metadata["subagent_runs"] = [{"run_id": "child_1"}]
+    context.metadata["deep_research_child_synthesis"] = {
+        "pending": True,
+        "summary": "Candidate source: https://example.com/fork-join",
+    }
+
+    assert _deep_research_strategy_tool_choice(context, None) == {
+        "type": "tool",
+        "name": "web_fetch",
+    }
+    assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
+        "child_synthesis_pending_parent_verify_fetch"
+    )
+
+
 def test_strategy_does_not_override_explicit_choice_or_light_profile() -> None:
     explicit = {"type": "tool", "name": "web_search"}
     assert _deep_research_strategy_tool_choice(_context(), explicit) is explicit
@@ -287,6 +390,41 @@ def test_strategy_waits_for_initial_todo_before_agent_tool() -> None:
     assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
         "medium_hard_requires_initial_todo_plan"
     )
+
+
+def test_strategy_keeps_deep_research_active_after_contract_disappears() -> None:
+    context = _context(
+        profile=None,
+        research_mode=None,
+        metadata={
+            "deep_research_context_active": True,
+            "deep_research_active_profile": "medium",
+        },
+        tool_results=[_tool_result("todo_write")],
+    )
+
+    assert _deep_research_request_allowed_tools(context) == ("agent_tool",)
+    assert _deep_research_strategy_tool_choice(context, None) == {
+        "type": "tool",
+        "name": "agent_tool",
+    }
+    assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
+        "medium_hard_requires_bounded_subagents"
+    )
+
+
+def test_strategy_recovers_agent_tool_after_initial_todo_when_metadata_marker_missing() -> None:
+    context = _context(
+        profile=None,
+        research_mode=None,
+        tool_results=[_tool_result("todo_write")],
+    )
+
+    assert _deep_research_request_allowed_tools(context) == ("agent_tool",)
+    assert _deep_research_strategy_tool_choice(context, None) == {
+        "type": "tool",
+        "name": "agent_tool",
+    }
 
 
 def test_strategy_forces_file_write_after_agent_and_discovery_budget() -> None:
@@ -336,11 +474,36 @@ def test_strategy_forces_second_agent_after_child_handoff_with_explicit_budget()
     }
 
 
-def test_strategy_forces_file_write_after_child_budget_exhausted() -> None:
+def test_strategy_forces_parent_search_fallback_after_child_budget_exhausted() -> None:
     context = _context(
         tool_results=[
             _tool_result("todo_write"),
             _tool_result("agent_tool"),
+        ],
+    )
+    context.metadata["subagent_runs"] = [{"run_id": "child_1"}]
+    context.metadata["deep_research_child_synthesis"] = {
+        "pending": True,
+        "summary": "child notes",
+    }
+
+    choice = _deep_research_strategy_tool_choice(context, None)
+
+    assert choice == {"type": "tool", "name": "web_search"}
+    assert context.metadata["deep_research_strategy_tool_choice"] == {
+        "tool": "web_search",
+        "reason": "child_synthesis_pending_parent_search_fallback",
+    }
+
+
+def test_strategy_forces_file_write_after_parent_verify_fetch_budget_exhausted() -> None:
+    context = _context(
+        tool_results=[
+            _tool_result("todo_write"),
+            _tool_result("agent_tool"),
+            _tool_result("web_fetch", status="failed"),
+            _tool_result("web_fetch", status="failed"),
+            _tool_result("web_fetch", status="failed"),
         ],
     )
     context.metadata["subagent_runs"] = [{"run_id": "child_1"}]
@@ -359,7 +522,7 @@ def test_strategy_forces_file_write_after_child_budget_exhausted() -> None:
     }
 
 
-def test_strategy_forces_file_write_for_deep_source_verified_contract() -> None:
+def test_strategy_forces_parent_search_fallback_for_deep_source_verified_contract() -> None:
     context = _context(
         research_depth="source_verified_report",
         research_mode="deep",
@@ -376,9 +539,9 @@ def test_strategy_forces_file_write_for_deep_source_verified_contract() -> None:
 
     choice = _deep_research_strategy_tool_choice(context, None)
 
-    assert choice == {"type": "tool", "name": "file_write"}
+    assert choice == {"type": "tool", "name": "web_search"}
     assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
-        "child_synthesis_pending_budget_exhausted"
+        "child_synthesis_pending_parent_search_fallback"
     )
 
 
