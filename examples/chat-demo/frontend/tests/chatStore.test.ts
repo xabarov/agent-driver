@@ -165,6 +165,48 @@ describe("chatStore", () => {
     expect(useChatStore.getState().steeringControls).toEqual([]);
   });
 
+  test("deep research stream patch creates run-level view before query hydration", () => {
+    const assistantId = useChatStore.getState().beginUserTurn("deep research");
+    useChatStore.getState().setSessionId("session_1");
+    useChatStore.getState().setRunId("run_1");
+
+    useChatStore.getState().updateDeepResearch(assistantId, {
+      progress: { seq: 1, event: "research_progress", label: "write" },
+      artifact: {
+        reportPath: "research/report.md",
+        reportSizeBytes: 2048,
+      },
+      ledger: {
+        verifiedReads: [
+          {
+            id: "src_1",
+            url: "https://example.com/a",
+            canonicalUrl: "https://example.com/a",
+            domain: "example.com",
+            sourceType: "web_fetch",
+          },
+        ],
+        searchCandidates: [],
+        blockedReads: [],
+        failedReads: [],
+        assistantLinks: [],
+      },
+    });
+
+    const view = useChatStore.getState().deepResearchView;
+    expect(view).toMatchObject({
+      runId: "run_1",
+      sessionId: "session_1",
+      researchMode: "deep",
+      phase: "write",
+      phaseSource: "sse",
+      readiness: "ready",
+    });
+    expect(view?.artifacts.report?.path).toBe("research/report.md");
+    expect(view?.artifacts.sourceLedger?.path).toBe("research/sources.jsonl");
+    expect(view?.sources.verified).toBe(1);
+  });
+
   test("loadSession replaces messages and resets stream state", () => {
     const state = useChatStore.getState();
     state.beginUserTurn("stale");

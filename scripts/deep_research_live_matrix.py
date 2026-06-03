@@ -390,7 +390,12 @@ def acceptance_axes(
     required_paths = {"research/report.md", "research/sources.jsonl"}
     if profile == "hard":
         required_paths.add("research/claims.jsonl")
-    artifact_ok = required_paths.issubset(paths) if artifact_required else True
+    artifact_ok = (
+        required_paths.issubset(paths)
+        and parent_report_write_seen(summary)
+        if artifact_required
+        else True
+    )
     ui_ok = (artifact_dir / "screenshot.png").is_file()
     trace_ok = summary.get("verdict") == "pass" and not any(
         bool(value)
@@ -485,6 +490,20 @@ def workspace_artifact_paths(artifact_dir: Path) -> set[str]:
         for item in artifacts
         if isinstance(item, dict) and isinstance(item.get("path"), str)
     }
+
+
+def parent_report_write_seen(summary: dict[str, Any]) -> bool:
+    artifacts = (
+        summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
+    )
+    if artifacts.get("report_write_seen") is True:
+        return True
+    research = (
+        summary.get("research_efficiency")
+        if isinstance(summary.get("research_efficiency"), dict)
+        else {}
+    )
+    return research.get("report_write_seen") is True
 
 
 def acceptance_error(acceptance: dict[str, bool]) -> str:

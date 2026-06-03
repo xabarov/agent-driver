@@ -274,6 +274,54 @@ function mergeDeepResearchViewFromStream(
   };
 }
 
+function createDeepResearchViewFromStream(
+  state: Pick<ChatState, "runId" | "sessionId">,
+  patch: {
+    ledger?: SourceLedger;
+    progress?: DeepResearchState["progress"][number];
+    artifact?: DeepResearchArtifact;
+  },
+): DeepResearchViewState | undefined {
+  if (!state.runId) {
+    return undefined;
+  }
+  return {
+    runId: state.runId,
+    sessionId: state.sessionId ?? null,
+    researchMode: "deep",
+    profile: "medium",
+    profileSource: "stream",
+    phase: patch.progress?.label ?? "running",
+    phaseSource: "sse",
+    readiness: "running",
+    todos: { done: 0, total: 0, current: null, stale: false },
+    artifacts: { report: null, sourceLedger: null, claims: null },
+    sources: {
+      verified: 0,
+      candidates: 0,
+      blocked: 0,
+      failed: 0,
+      distinctDomains: 0,
+    },
+    subagents: {
+      totalChildren: 0,
+      runningChildren: 0,
+      completedChildren: 0,
+      failedChildren: 0,
+      duplicatedQueries: 0,
+    },
+    metrics: {
+      webSearchCount: 0,
+      webFetchCount: 0,
+      reportFullWriteCount: 0,
+      reportPatchCount: 0,
+      longChatBeforeReportChars: 0,
+    },
+    warnings: [],
+    trace: { runId: state.runId, verdict: null, terminalEvent: null, failureFlags: [] },
+  };
+}
+
 function compactionNoticeFromRawMetadata(
   raw: unknown,
   fallbackId: string,
@@ -723,7 +771,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
   updateDeepResearch: (assistantId, patch) =>
     set((state) => ({
-      deepResearchView: mergeDeepResearchViewFromStream(state.deepResearchView, patch),
+      deepResearchView: mergeDeepResearchViewFromStream(
+        state.deepResearchView ?? createDeepResearchViewFromStream(state, patch),
+        patch,
+      ),
       messages: state.messages.map((message) => {
         if (message.id !== assistantId || message.role !== "assistant") {
           return message;

@@ -198,6 +198,57 @@ def test_from_preset_all_matches_all_factory() -> None:
     assert sorted(a) == sorted(b)
 
 
+def test_from_preset_research_light_excludes_artifacts_subagents_and_code() -> None:
+    registry = _registry_with_defaults()
+    names = set(ToolSet.from_preset("research_light").apply(registry).list_names())
+
+    assert {"web_search", "web_fetch", "todo_write"}.issubset(names)
+    assert "agent_tool" not in names
+    assert "file_write" not in names
+    assert "artifact_preview" not in names
+    assert "bash" not in names
+    assert "python" not in names
+
+
+def test_from_preset_deep_research_medium_excludes_shell_python_and_hard_tools() -> None:
+    registry = _registry_with_defaults()
+    names = set(
+        ToolSet.from_preset("deep_research_medium").apply(registry).list_names()
+    )
+
+    assert {
+        "agent_tool",
+        "skill_tool",
+        "skill_view",
+        "todo_write",
+        "web_search",
+        "web_fetch",
+        "read_file",
+        "file_write",
+        "file_edit",
+        "file_patch",
+        "artifact_preview",
+        "artifact_read",
+        "artifact_list",
+    }.issubset(names)
+    assert "bash" not in names
+    assert "python" not in names
+    assert "source_read" not in names
+    assert "pdf_read" not in names
+    assert "browser_read" not in names
+
+
+def test_from_preset_deep_research_hard_adds_source_ladder_without_browser_action() -> None:
+    registry = _registry_with_defaults()
+    names = set(ToolSet.from_preset("deep_research_hard").apply(registry).list_names())
+
+    assert {"source_read", "pdf_read", "browser_read"}.issubset(names)
+    assert "agent_tool" in names
+    assert "bash" not in names
+    assert "python" not in names
+    assert "browser_action" not in names
+
+
 def test_from_preset_normalizes_whitespace_and_case() -> None:
     registry = _registry_with_defaults()
     a = ToolSet.from_preset("  SAFE  ").apply(registry).list_names()

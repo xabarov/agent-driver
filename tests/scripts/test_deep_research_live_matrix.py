@@ -40,7 +40,10 @@ def test_acceptance_axes_require_trace_artifacts_budget_and_grounding(tmp_path) 
         summary={
             "verdict": "pass",
             "failures": {"missing_terminal_event": False},
-            "artifacts": {"paths": ["research/report.md", "research/sources.jsonl"]},
+            "artifacts": {
+                "paths": ["research/report.md", "research/sources.jsonl"],
+                "report_write_seen": True,
+            },
             "llm": {"usage": {"total_tokens": 99}},
         },
     )
@@ -63,7 +66,7 @@ def test_acceptance_error_lists_failed_axes() -> None:
     )
 
 
-def test_acceptance_artifacts_can_come_from_workspace_index(tmp_path) -> None:
+def test_medium_acceptance_requires_parent_report_write_evidence(tmp_path) -> None:
     matrix = _load_matrix_module()
     artifact_dir = tmp_path / "run"
     artifact_dir.mkdir()
@@ -89,6 +92,41 @@ def test_acceptance_artifacts_can_come_from_workspace_index(tmp_path) -> None:
             "verdict": "pass",
             "failures": {},
             "artifacts": {"paths": []},
+            "llm": {"usage": {"total_tokens": 10}},
+        },
+    )
+
+    assert acceptance["artifact"] is False
+
+
+def test_acceptance_artifacts_can_pair_workspace_index_with_trace_write(
+    tmp_path,
+) -> None:
+    matrix = _load_matrix_module()
+    artifact_dir = tmp_path / "run"
+    artifact_dir.mkdir()
+    (artifact_dir / "screenshot.png").write_bytes(b"png")
+    (artifact_dir / "workspace-artifacts.json").write_text(
+        """
+        {
+          "artifacts": [
+            {"path": "research/report.md"},
+            {"path": "research/sources.jsonl"}
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    acceptance = matrix.acceptance_axes(
+        profile="medium",
+        question={},
+        artifact_dir=artifact_dir,
+        expected_found=True,
+        summary={
+            "verdict": "pass",
+            "failures": {},
+            "artifacts": {"paths": [], "report_write_seen": True},
             "llm": {"usage": {"total_tokens": 10}},
         },
     )
@@ -141,7 +179,10 @@ def test_hard_profile_requires_claims_artifact(tmp_path) -> None:
         summary={
             "verdict": "pass",
             "failures": {},
-            "artifacts": {"paths": ["research/report.md", "research/sources.jsonl"]},
+            "artifacts": {
+                "paths": ["research/report.md", "research/sources.jsonl"],
+                "report_write_seen": True,
+            },
             "llm": {"usage": {"total_tokens": 10}},
         },
     )
