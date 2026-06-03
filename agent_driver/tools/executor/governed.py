@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 # ``CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY``.
 DEFAULT_CONCURRENCY_LIMIT = 8
 _TOOL_ALIASES: dict[str, str] = {
+    "file_read": "read_file",
     "read": "read_file",
     "skill_search": "skill_tool",
     "web_search_tool": "web_search",

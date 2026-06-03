@@ -311,6 +311,53 @@ def test_trace_summary_collects_subagent_markers() -> None:
     assert summary["verdict"] == "pass"
 
 
+def test_trace_summary_splits_parent_and_child_research_evidence() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Report ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            {
+                "event": "subagent_completed",
+                "data": {
+                    "task_id": "task_1",
+                    "status": "completed",
+                    "child_evidence": {
+                        "search_count": 3,
+                        "fetch_count": 2,
+                        "verified_read_count": 1,
+                    },
+                },
+            },
+            _completed_tool("web_fetch"),
+            {
+                "event": "artifact_updated",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {
+                "event": "artifact_updated",
+                "data": {"path": "research/sources.jsonl", "tool_name": "file_write"},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    research = summary["research_efficiency"]
+    assert research["parent_fetch_count"] == 1
+    assert research["child_search_count"] == 3
+    assert research["child_fetch_count"] == 2
+    assert research["child_verified_read_count"] == 1
+    assert summary["subagents"]["child_fetch_count"] == 2
+
+
 def test_trace_summary_flags_missed_explicit_delegation() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

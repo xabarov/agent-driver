@@ -146,9 +146,11 @@ def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
     repaired_count = 0
     file_write_index = 0
     for call in planned_calls:
-        if call.tool_name != "file_write":
+        normalized_call = _normalize_parent_file_write_call(call)
+        if normalized_call is None:
             repaired_payload.append(call.model_dump(mode="json"))
             continue
+        call = normalized_call
         if _should_retarget_parent_file_write_to_report(context, call.args):
             args = _deep_research_parent_file_write_args(context, target="report")
             repaired = call.model_copy(
@@ -211,6 +213,35 @@ def _should_retarget_parent_file_write_to_report(
     normalized = path.replace("\\", "/").strip("/")
     return normalized != "research/report.md" and not normalized.endswith(
         "/research/report.md"
+    )
+
+
+def _normalize_parent_file_write_call(call: Any) -> Any | None:
+    """Normalize shaped write aliases before Deep Research-specific repair."""
+    if call.tool_name not in {"file_write", "write"}:
+        return None
+    args = dict(call.args) if isinstance(call.args, dict) else {}
+    if "path" not in args:
+        for key in ("file_path", "filepath"):
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                args["path"] = value
+                break
+    if call.tool_name == "file_write" and args == call.args:
+        return call
+    metadata = {
+        **call.metadata,
+        "tool_args_normalized": args != call.args,
+    }
+    if call.tool_name != "file_write":
+        metadata["original_tool_name"] = call.tool_name
+        metadata["tool_alias_normalized"] = True
+    return call.model_copy(
+        update={
+            "tool_name": "file_write",
+            "args": args,
+            "metadata": metadata,
+        }
     )
 
 

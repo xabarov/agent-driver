@@ -190,6 +190,90 @@ function deepResearchFromRawMetadata(raw: unknown): DeepResearchState | undefine
   return artifact ? { artifact, progress: [] } : undefined;
 }
 
+function mergeDeepResearchViewFromStream(
+  view: DeepResearchViewState | undefined,
+  patch: {
+    ledger?: SourceLedger;
+    progress?: DeepResearchState["progress"][number];
+    artifact?: DeepResearchArtifact;
+  },
+): DeepResearchViewState | undefined {
+  if (!view || view.researchMode !== "deep") {
+    return view;
+  }
+  const sourceDomains = new Set<string>();
+  const nextSources = patch.ledger
+    ? {
+        verified: patch.ledger.verifiedReads.length,
+        candidates: patch.ledger.searchCandidates.length,
+        blocked: patch.ledger.blockedReads.length,
+        failed: patch.ledger.failedReads.length,
+        distinctDomains: [
+          ...patch.ledger.verifiedReads,
+          ...patch.ledger.searchCandidates,
+          ...patch.ledger.blockedReads,
+          ...patch.ledger.failedReads,
+        ].reduce((count, source) => {
+          if (source.domain && !sourceDomains.has(source.domain)) {
+            sourceDomains.add(source.domain);
+            return count + 1;
+          }
+          return count;
+        }, 0),
+      }
+    : view.sources;
+  const nextReport = patch.artifact
+    ? {
+        path: patch.artifact.reportPath,
+        kind: "research_report",
+        sizeBytes: patch.artifact.reportSizeBytes ?? view.artifacts.report?.sizeBytes ?? 0,
+        modifiedAt: view.artifacts.report?.modifiedAt ?? null,
+        lifecycle: patch.artifact.capturedLongAnswers ? "captured_inline" : "created",
+        previewAvailable: true,
+      }
+    : view.artifacts.report;
+  const nextSourceLedger = patch.ledger
+    ? {
+        path: "research/sources.jsonl",
+        kind: "research_sources",
+        sizeBytes: view.artifacts.sourceLedger?.sizeBytes ?? 0,
+        modifiedAt: view.artifacts.sourceLedger?.modifiedAt ?? null,
+        lifecycle: "created",
+        previewAvailable: true,
+      }
+    : view.artifacts.sourceLedger;
+  const nextPhase = patch.progress?.label || view.phase;
+  const nextWarnings = view.warnings.filter((warning) => {
+    if (nextReport && warning === "deep_research_no_report_artifact") {
+      return false;
+    }
+    if (nextSourceLedger && warning === "deep_research_no_source_ledger_artifact") {
+      return false;
+    }
+    return true;
+  });
+  const nextReadiness =
+    nextReport && nextSourceLedger && nextWarnings.length === 0
+      ? "ready"
+      : !nextReport
+        ? "needs_report"
+        : !nextSourceLedger
+          ? "needs_more_sources"
+          : view.readiness;
+  return {
+    ...view,
+    phase: nextPhase,
+    sources: nextSources,
+    artifacts: {
+      ...view.artifacts,
+      report: nextReport,
+      sourceLedger: nextSourceLedger,
+    },
+    readiness: nextReadiness,
+    warnings: nextWarnings,
+  };
+}
+
 function compactionNoticeFromRawMetadata(
   raw: unknown,
   fallbackId: string,
@@ -639,6 +723,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
   updateDeepResearch: (assistantId, patch) =>
     set((state) => ({
+      deepResearchView: mergeDeepResearchViewFromStream(state.deepResearchView, patch),
       messages: state.messages.map((message) => {
         if (message.id !== assistantId || message.role !== "assistant") {
           return message;

@@ -64,6 +64,27 @@ async def test_tools_deep_research_preset_shows_agent_tool(client) -> None:
     assert {"skill_tool", "skill_view", "web_fetch", "web_search"}.issubset(names)
 
 
+async def test_tools_profile_presets_have_expected_surfaces(client) -> None:
+    light = await client.get("/api/tools", params={"preset": "research_light"})
+    medium = await client.get("/api/tools", params={"preset": "deep_research_medium"})
+    hard = await client.get("/api/tools", params={"preset": "deep_research_hard"})
+
+    assert light.status_code == 200
+    assert medium.status_code == 200
+    assert hard.status_code == 200
+    light_names = {item["name"] for item in light.json()["tools"]}
+    medium_names = {item["name"] for item in medium.json()["tools"]}
+    hard_names = {item["name"] for item in hard.json()["tools"]}
+    assert light_names == {"web_fetch", "web_search"}
+    assert {"agent_tool", "skill_tool", "skill_view"}.issubset(medium_names)
+    assert {"agent_tool", "skill_tool", "skill_view", "source_read"}.issubset(
+        hard_names
+    )
+    assert "source_read" not in medium_names
+    assert "python" not in medium_names
+    assert "python" not in hard_names
+
+
 async def test_tools_legacy_dev_preset_still_hides_filesystem_from_public_endpoint(
     client,
 ) -> None:
@@ -212,7 +233,17 @@ def test_deep_research_mode_uses_artifact_tool_preset() -> None:
         research_depth="deep_parallel_research",
     )
 
-    assert _effective_chat_preset(body) == "deep_research"
+    assert _effective_chat_preset(body) == "deep_research_medium"
+
+
+def test_hard_research_mode_uses_hard_tool_preset() -> None:
+    body = ChatMessageRequest(
+        message="найди источники и подготовь отчет",
+        research_mode="deep",
+        research_profile="hard",
+    )
+
+    assert _effective_chat_preset(body) == "deep_research_hard"
 
 
 def test_legacy_web_search_preset_is_not_widened_to_full_web() -> None:
@@ -231,11 +262,11 @@ def test_research_mode_web_maps_to_full_web() -> None:
         research_mode="web",
     )
 
-    assert _effective_chat_preset(body) == "web"
+    assert _effective_chat_preset(body) == "research_light"
 
 
 def test_deep_research_preset_includes_scoped_artifact_tools() -> None:
-    config = _tool_config_from_preset("deep_research")
+    config = _tool_config_from_preset("deep_research_medium")
 
     assert set(config.tools) == {"agent_tool", "skill_tool", "skill_view"}
     assert set(config.tool_packs) == {
@@ -248,6 +279,22 @@ def test_deep_research_preset_includes_scoped_artifact_tools() -> None:
     assert "shell" not in config.tool_packs
     assert "discovery" not in config.tool_packs
     assert config.allow_dangerous_tools is True
+    assert config.enable_python is False
+
+
+def test_hard_deep_research_preset_includes_source_read() -> None:
+    config = _tool_config_from_preset("deep_research_hard")
+
+    assert "source_tools" in set(config.tool_packs)
+    assert "shell" not in config.tool_packs
+    assert config.enable_python is False
+
+
+def test_research_light_preset_excludes_subagents_and_python() -> None:
+    config = _tool_config_from_preset("research_light")
+
+    assert config.tools == ()
+    assert set(config.tool_packs) == {"web", "planning_progress"}
     assert config.enable_python is False
 
 

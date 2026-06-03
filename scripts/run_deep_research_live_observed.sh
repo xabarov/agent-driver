@@ -3,9 +3,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
-set -a
-source .env
-set +a
+if [[ -f .env ]]; then
+  set -a
+  source .env
+  set +a
+fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 ARTIFACT_DIR="${CHAT_DEMO_LIVE_ARTIFACT_DIR:-/tmp/chat-demo-live-observed-${STAMP}}"
@@ -20,6 +22,23 @@ PREFLIGHT_SCENARIO="${DEEP_RESEARCH_PREFLIGHT_SCENARIO:-model-preflight-search-f
 PREFLIGHT_CACHE="${DEEP_RESEARCH_PREFLIGHT_CACHE:-${ROOT_DIR}/.agent-driver/live-tool-preflight.sha256}"
 SERVER_TIMEOUT="${DEEP_RESEARCH_SERVER_TIMEOUT:-120}"
 COMMAND_TIMEOUT="${DEEP_RESEARCH_COMMAND_TIMEOUT:-300}"
+PYTHON_CMD="${AGENT_DRIVER_PYTHON_CMD:-}"
+if [[ -z "${PYTHON_CMD}" ]]; then
+  PYTHON_CMD="uv run --with playwright python"
+fi
+BACKEND_PYTHON_CMD="${CHAT_DEMO_BACKEND_PYTHON_CMD:-}"
+if [[ -z "${BACKEND_PYTHON_CMD}" ]]; then
+  BACKEND_PYTHON_CMD="uv run --project ${ROOT_DIR}/examples/chat-demo/backend --with-editable ${ROOT_DIR} python"
+fi
+FRONTEND_COMMAND="${CHAT_DEMO_FRONTEND_COMMAND:-}"
+if [[ -z "${FRONTEND_COMMAND}" ]]; then
+  if command -v pnpm >/dev/null 2>&1; then
+    FRONTEND_COMMAND="if [[ ! -x node_modules/.bin/vite ]]; then pnpm install --frozen-lockfile; fi; VITE_API_PROXY_TARGET=http://127.0.0.1:${BACKEND_PORT} pnpm run dev -- --host 127.0.0.1 --port ${FRONTEND_PORT}"
+  else
+    FRONTEND_COMMAND="if [[ ! -x node_modules/.bin/vite ]]; then npm install --no-package-lock; fi; VITE_API_PROXY_TARGET=http://127.0.0.1:${BACKEND_PORT} npm run dev -- --host 127.0.0.1 --port ${FRONTEND_PORT}"
+  fi
+fi
+WITH_SERVER="${WEBAPP_WITH_SERVER:-/home/batman/.claude/skills/webapp-testing/scripts/with_server.py}"
 
 mkdir -p "${ARTIFACT_DIR}"
 
@@ -27,6 +46,16 @@ if ! curl -fsS "${PHOENIX_BASE_URL}/healthz" >/dev/null; then
   echo "Shared Phoenix is not healthy at ${PHOENIX_BASE_URL}/healthz" >&2
   echo "Start the shared local Phoenix before running live Deep Research." >&2
   exit 2
+fi
+if [[ "${CHAT_DEMO_ALLOW_FAKE_LIVE:-0}" != "1" ]]; then
+  PROVIDER_VALUE="${AGENT_DRIVER_PROVIDER:-fake}"
+  API_KEY_VALUE="${AGENT_DRIVER_API_KEY:-}"
+  if [[ "${PROVIDER_VALUE}" == "fake" || -z "${API_KEY_VALUE}" ]]; then
+    echo "Live Deep Research requires a real provider and AGENT_DRIVER_API_KEY." >&2
+    echo "Set AGENT_DRIVER_PROVIDER, AGENT_DRIVER_API_KEY, model/base URL env, then rerun." >&2
+    echo "Use CHAT_DEMO_ALLOW_FAKE_LIVE=1 only for UI plumbing checks." >&2
+    exit 2
+  fi
 fi
 
 export CHAT_DEMO_LIVE_ARTIFACT_DIR="${ARTIFACT_DIR}"
@@ -54,15 +83,19 @@ export CHAT_DEMO_WORKSPACE_ROOT="${CHAT_DEMO_WORKSPACE_ROOT:-${ARTIFACT_DIR}/wor
   echo "preflight_cache=${PREFLIGHT_CACHE}"
   echo "server_timeout=${SERVER_TIMEOUT}"
   echo "command_timeout=${COMMAND_TIMEOUT}"
+  echo "python_cmd=${PYTHON_CMD}"
+  echo "backend_python_cmd=${BACKEND_PYTHON_CMD}"
+  echo "frontend_command=${FRONTEND_COMMAND}"
+  echo "with_server=${WITH_SERVER}"
 } | tee "${ARTIFACT_DIR}/run-env.txt"
 
 set +e
 (
-  .venv/bin/python /home/roman/.codex/skills/webapp-testing/scripts/with_server.py \
+  ${PYTHON_CMD} "${WITH_SERVER}" \
     --timeout "${SERVER_TIMEOUT}" \
-    --server "cd examples/chat-demo/backend && ../../../.venv/bin/python -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port ${BACKEND_PORT}" \
+    --server "cd examples/chat-demo/backend && ${BACKEND_PYTHON_CMD} -m uvicorn app.main:create_app --factory --host 127.0.0.1 --port ${BACKEND_PORT}" \
     --port "${BACKEND_PORT}" \
-    --server "cd examples/chat-demo/frontend && VITE_API_PROXY_TARGET=http://127.0.0.1:${BACKEND_PORT} npm run dev -- --host 127.0.0.1 --port ${FRONTEND_PORT}" \
+    --server "cd examples/chat-demo/frontend && ${FRONTEND_COMMAND}" \
     --port "${FRONTEND_PORT}" \
     -- \
     env \
@@ -71,6 +104,7 @@ set +e
       CHAT_DEMO_LIVE_REQUIRE_OBSERVABILITY="${CHAT_DEMO_LIVE_REQUIRE_OBSERVABILITY}" \
       PREFLIGHT_SCENARIO="${PREFLIGHT_SCENARIO}" \
       PREFLIGHT_CACHE="${PREFLIGHT_CACHE}" \
+      PYTHON_CMD="${PYTHON_CMD}" \
       ROOT_DIR="${ROOT_DIR}" \
       PROFILES="${PROFILES}" \
       QUESTION_ID="${QUESTION_ID}" \
@@ -106,13 +140,13 @@ set +e
         cached="$(cat "${PREFLIGHT_CACHE}" 2>/dev/null || true)"
         if [[ "${DEEP_RESEARCH_FORCE_PREFLIGHT:-0}" == "1" || "${cached}" != "${fingerprint}" ]]; then
           echo "Running live model/tool preflight: ${PREFLIGHT_SCENARIO}"
-          .venv/bin/python examples/chat-demo/frontend/tests/e2e/chat_live_probe.py \
+          ${PYTHON_CMD} examples/chat-demo/frontend/tests/e2e/chat_live_probe.py \
             --scenario "${PREFLIGHT_SCENARIO}"
           printf "%s" "${fingerprint}" > "${PREFLIGHT_CACHE}"
         else
           echo "Skipping live model/tool preflight; code fingerprint unchanged."
         fi
-        .venv/bin/python scripts/deep_research_live_matrix.py \
+        ${PYTHON_CMD} scripts/deep_research_live_matrix.py \
           --profiles "${PROFILES}" \
           --question-id "${QUESTION_ID}" \
           --limit "${LIMIT}"
@@ -121,7 +155,7 @@ set +e
 RUN_STATUS="${PIPESTATUS[0]}"
 set -e
 
-.venv/bin/python scripts/export_phoenix_evidence.py \
+${PYTHON_CMD} scripts/export_phoenix_evidence.py \
   --base-url "${PHOENIX_BASE_URL}" \
   --project "${PHOENIX_PROJECT_NAME}" \
   --out "${ARTIFACT_DIR}/phoenix-evidence.json" \

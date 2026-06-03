@@ -389,6 +389,7 @@ async def test_governed_executor_normalizes_read_write_tool_aliases() -> None:
                     args={"path": "research/report.md", "content": "ok"},
                 ),
                 ToolCall(tool_name="read", args={"path": "research/report.md"}),
+                ToolCall(tool_name="file_read", args={"path": "research/report.md"}),
             ]
         )
     )
@@ -398,9 +399,11 @@ async def test_governed_executor_normalizes_read_write_tool_aliases() -> None:
     assert [item.call.tool_name for item in result.envelopes] == [
         "file_write",
         "read_file",
+        "read_file",
     ]
     assert result.envelopes[0].call.metadata["original_tool_name"] == "write"
     assert result.envelopes[1].call.metadata["original_tool_name"] == "read"
+    assert result.envelopes[2].call.metadata["original_tool_name"] == "file_read"
 
 
 @pytest.mark.asyncio

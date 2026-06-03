@@ -293,9 +293,11 @@ def _research_request_metadata(body: ChatMessageRequest) -> dict[str, object]:
 def _effective_chat_preset(body: ChatMessageRequest) -> ToolPreset:
     """Return runtime tool preset, upgrading Deep Research to artifact tools."""
     if body.research_mode == "deep" or body.research_depth == "deep_parallel_research":
-        return "deep_research"
+        if body.research_profile == "hard":
+            return "deep_research_hard"
+        return "deep_research_medium"
     if body.research_mode == "web":
-        return "web"
+        return "research_light"
     if body.research_mode == "chat":
         return "off"
     return resolve_tool_preset(body.tool_preset)
@@ -630,6 +632,8 @@ def _deep_research_phase(trace_summary: dict[str, object]) -> str:
 def _deep_research_readiness(trace_summary: dict[str, object]) -> str:
     final_readiness = trace_summary.get("final_readiness")
     if isinstance(final_readiness, str) and final_readiness:
+        if final_readiness == "allowed":
+            return "ready"
         return final_readiness
     if trace_summary.get("verdict") == "pass":
         return "ready"

@@ -488,11 +488,34 @@ def test_deep_parallel_research_phase_final_after_report_and_verified_sources() 
         ],
         assistant_text="[A](https://example.com/a), [B](https://example.org/b)",
         report_artifact_exists=True,
+        source_ledger_artifact_exists=True,
     )
 
     payload = contract.model_dump()["deep_research"]
     assert payload["phase"] == "final"
     assert payload["next_allowed_tools"] == []
+    assert payload["controller_state"]["final_handoff_ready"] is True
+
+
+def test_deep_parallel_research_report_without_source_ledger_stays_in_review() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        tool_results=[
+            _tool_result("web_search"),
+            _tool_result("web_fetch", url="https://example.com/a"),
+            _tool_result("web_fetch", url="https://example.org/b"),
+        ],
+        assistant_text="[A](https://example.com/a), [B](https://example.org/b)",
+        report_artifact_exists=True,
+    )
+
+    payload = contract.model_dump()["deep_research"]
+    assert payload["phase"] == "review"
+    assert payload["controller_state"]["source_ledger_required"] is True
+    assert payload["controller_state"]["final_handoff_ready"] is False
 
 
 def test_deep_parallel_research_treats_blocked_fetches_as_fallback() -> None:

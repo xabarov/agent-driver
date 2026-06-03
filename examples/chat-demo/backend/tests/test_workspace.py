@@ -9,6 +9,7 @@ import pytest
 from agent_driver.tools.builtin.filesystem._paths import resolve_writable_path
 from agent_driver.tools.context import workspace_cwd_scope
 
+from app.api.workspace import _safe_download_filename
 from app.deps import get_settings, reset_dependency_caches
 from app.workspace import (
     build_chat_app_metadata,
@@ -17,6 +18,7 @@ from app.workspace import (
     list_workspace_artifacts,
     merge_resume_app_metadata,
     preview_workspace_artifact,
+    read_workspace_artifact,
     resolve_session_workspace,
     resolved_workspace_root,
     workspace_status,
@@ -88,9 +90,46 @@ def test_workspace_artifact_index_and_preview(settings) -> None:
     assert truncated is False
 
 
+def test_workspace_artifact_raw_download_helper(settings) -> None:
+    workspace = resolve_session_workspace(settings, "session_download")
+    report = workspace / "research" / "report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("# Report\n", encoding="utf-8")
+
+    artifact, content = read_workspace_artifact(
+        settings,
+        "session_download",
+        "research/report.md",
+    )
+
+    assert artifact.path == "research/report.md"
+    assert content == b"# Report\n"
+
+
+def test_workspace_artifact_download_filename_is_header_safe() -> None:
+    assert _safe_download_filename('bad"name\r\n.md') == "bad_name__.md"
+    assert _safe_download_filename("   ") == "artifact.txt"
+
+
 def test_workspace_artifact_preview_rejects_escape(settings) -> None:
     with pytest.raises(ValueError, match="outside workspace"):
         preview_workspace_artifact(settings, "session_artifacts", "../secret.txt")
+
+
+@pytest.mark.asyncio
+async def test_workspace_artifact_download_endpoint(client, settings) -> None:
+    workspace = resolve_session_workspace(settings, "session_endpoint_download")
+    report = workspace / "research" / "report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("# Report\n", encoding="utf-8")
+
+    response = await client.get(
+        "/api/workspace/session_endpoint_download/artifacts/research/report.md/download"
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"# Report\n"
+    assert 'filename="report.md"' in response.headers["content-disposition"]
 
 
 def test_find_session_id_for_run(settings) -> None:

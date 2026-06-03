@@ -40,6 +40,10 @@ from agent_driver.runtime.metadata_state import (
 from agent_driver.runtime.research_evidence import (
     research_source_ledger_from_tool_results,
 )
+from agent_driver.runtime.research_artifacts import (
+    deep_research_report_artifact_exists,
+    deep_research_source_ledger_artifact_exists,
+)
 from agent_driver.runtime.single_agent.finalization.output_builders import (
     build_memory_audit,
     build_memory_projection_for_context,
@@ -52,6 +56,33 @@ from agent_driver.runtime.single_agent.types import (
     TerminalResult,
 )
 from agent_driver.subagents import summarize_child_runs_for_parent
+
+
+def _deep_research_terminal_handoff_ready(context: RunContext) -> bool:
+    task_contract = context.run_input.tool_policy.metadata.get("task_contract")
+    deep_contract = (
+        isinstance(task_contract, dict)
+        and (
+            task_contract.get("research_mode") == "deep"
+            or task_contract.get("research_depth") == "deep_parallel_research"
+            or task_contract.get("research_depth") == "source_verified_report"
+        )
+    )
+    metadata_enabled = (
+        isinstance(context.run_input.tool_policy.metadata.get("deep_research_mode"), dict)
+        or context.run_input.app_metadata.get("research_mode") == "deep"
+    )
+    if not (deep_contract or metadata_enabled):
+        return False
+    return deep_research_report_artifact_exists(
+        context
+    ) and deep_research_source_ledger_artifact_exists(context)
+
+
+def _is_concise_deep_research_handoff(answer: str) -> bool:
+    if len(answer) > 800:
+        return False
+    return "research/report.md" in answer
 
 
 class SingleAgentOutputMixin:
@@ -210,7 +241,25 @@ class SingleAgentOutputMixin:
         cleaned = strip_text_form_tool_calls(raw)
         if cleaned != raw:
             get_streaming_runtime_state(context).set_raw_assistant_content(raw)
-        return cleaned or None
+        answer = self._deep_research_artifact_handoff_answer(context, cleaned)
+        if answer != cleaned:
+            get_streaming_runtime_state(context).set_raw_assistant_content(raw)
+        return answer or None
+
+    def _deep_research_artifact_handoff_answer(
+        self, context: RunContext, answer: str
+    ) -> str:
+        """Clamp completed Deep Research runs to an artifact handoff."""
+        if not _deep_research_terminal_handoff_ready(context):
+            return answer
+        stripped = answer.strip()
+        if _is_concise_deep_research_handoff(stripped):
+            return answer
+        get_streaming_runtime_state(context).set_raw_assistant_content(answer)
+        return (
+            "Deep Research report is ready at `research/report.md`. "
+            "The source ledger is available at `research/sources.jsonl`."
+        )
 
     def _source_evidence_from_tool_results(
         self, tool_results: list[dict[str, Any]]

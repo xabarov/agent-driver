@@ -118,12 +118,33 @@ def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
             tool_packs=("web", "planning_progress", "filesystem_read"),
             enable_python=True,
         )
-    if preset == "deep_research":
+    if preset == "research_light":
+        return CliToolConfig(
+            tools_mode="default",
+            tool_packs=("web", "planning_progress"),
+            enable_python=False,
+        )
+    if preset in {"deep_research", "deep_research_medium"}:
         return CliToolConfig(
             tools_mode="default",
             tools=("agent_tool", "skill_tool", "skill_view"),
             tool_packs=(
                 "web",
+                "planning_progress",
+                "filesystem_read",
+                "filesystem_write",
+                "artifacts",
+            ),
+            allow_dangerous_tools=True,
+            enable_python=False,
+        )
+    if preset == "deep_research_hard":
+        return CliToolConfig(
+            tools_mode="default",
+            tools=("agent_tool", "skill_tool", "skill_view"),
+            tool_packs=(
+                "web",
+                "source_tools",
                 "planning_progress",
                 "filesystem_read",
                 "filesystem_write",

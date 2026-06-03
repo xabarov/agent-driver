@@ -104,6 +104,54 @@ def test_deep_research_retargets_parent_ledger_write_to_missing_report() -> None
     assert context.metadata["deep_research_file_write_args_repaired"]["count"] == 1
 
 
+def test_deep_research_retargets_alias_write_ledger_path_to_missing_report() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="write",
+                    tool_call_id="call_1",
+                    args={
+                        "file_path": "research/sources.jsonl",
+                        "content": '{"url": "https://example.com/paper"}\n',
+                    },
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={
+            "tool_results": [],
+            "deep_research_artifacts": {
+                "source_ledger_exists": True,
+                "source_ledger_path": "research/sources.jsonl",
+                "source_ledger_size_bytes": 42,
+            },
+            "deep_research_child_synthesis": {
+                "pending": True,
+                "summary": "Candidate source: https://example.com/paper",
+            },
+        },
+    )
+
+    _repair_deep_research_parent_file_write_args(context)
+
+    planned = llm_response.metadata["planned_tool_calls"][0]
+    assert planned["tool_name"] == "file_write"
+    assert planned["args"]["path"] == "research/report.md"
+    assert planned["metadata"]["original_tool_name"] == "write"
+    assert planned["metadata"]["tool_alias_normalized"] is True
+    assert planned["metadata"]["deep_research_repair_reason"] == (
+        "parent_synthesis_report_required"
+    )
+
+
 def test_update_tool_protocol_messages_includes_truncated_and_error_code() -> None:
     llm_response = LlmResponse(
         message=ChatMessage(role=ChatRole.ASSISTANT, content=""),

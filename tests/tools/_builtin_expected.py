@@ -54,6 +54,7 @@ EXPECTED_BUILTIN_TOOL_NAMES = {
     "todo_write",
     "ask_user_question",
     "task_output",
+    "source_read",
     "web_fetch",
 }
 

@@ -23,6 +23,7 @@ from agent_driver.tools.registry import ToolRegistry
 
 _WEB_FETCH_TOOL = "web_fetch"
 _WEB_SEARCH_TOOL = "web_search"
+_SOURCE_READ_TOOL = "source_read"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _DEFAULT_MAX_BYTES = 150_000
 _DEFAULT_MAX_RESULTS = 5
@@ -72,6 +73,7 @@ def register_web_tools(registry: ToolRegistry) -> None:
     """Register built-in web fetch/search tools."""
     registry.register(_web_fetch_manifest(), _web_fetch_handler)
     registry.register(_web_search_manifest(), _web_search_handler)
+    registry.register(_source_read_manifest(), _source_read_handler)
 
 
 def _web_fetch_manifest() -> ToolManifest:
@@ -185,6 +187,72 @@ def _web_search_manifest() -> ToolManifest:
     )
 
 
+def _source_read_manifest() -> ToolManifest:
+    return ToolManifest(
+        name=_SOURCE_READ_TOOL,
+        description=(
+            "Read a cited source URL for hard Deep Research verification. "
+            "Uses the same HTTP safety limits as web_fetch and returns text content."
+        ),
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.EXTERNAL_ACTION,
+        approval_mode=ApprovalMode.ON_POLICY_MATCH,
+        timeout_seconds=15.0,
+        output_char_budget=9000,
+        idempotent=True,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "HTTP(S) source URL"},
+                "timeout_seconds": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 60,
+                    "description": "Per-request timeout",
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "minimum": 256,
+                    "maximum": 1_000_000,
+                    "description": "Response byte cap before decode",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": 64,
+                    "maximum": 50_000,
+                    "description": "Maximum returned content chars",
+                },
+                "extract_mode": {
+                    "type": "string",
+                    "enum": ["raw", "text", "markdown"],
+                    "description": "Response extraction mode",
+                },
+                "allow_private_host": {
+                    "type": "boolean",
+                    "description": "Allow localhost/private host targets",
+                },
+                "mock_status_code": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 599,
+                    "description": "Optional offline status for deterministic tests",
+                },
+                "mock_content": {
+                    "type": "string",
+                    "description": "Optional offline response body for tests",
+                },
+                "mock_content_type": {
+                    "type": "string",
+                    "description": "Optional offline content type for tests",
+                },
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+        output_type="json",
+    )
+
+
 async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
     url = _validate_http_url(
         args.get("url"),
@@ -277,6 +345,15 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
         "content": content,
         "truncated": truncated,
         "max_chars_applied": max_chars,
+    }
+
+
+async def _source_read_handler(args: dict[str, Any]) -> dict[str, Any]:
+    payload = await _web_fetch_handler(args)
+    return {
+        **payload,
+        "summary": f"source_read: {payload.get('summary', '')}",
+        "source_read": True,
     }
 
 

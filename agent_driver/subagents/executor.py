@@ -571,6 +571,7 @@ async def execute_subagent_group_sync(
                     if hasattr(completed.status, "value")
                     else str(completed.status)
                 ),
+                "child_evidence": _child_evidence_summary(completed.metadata),
             },
         )
     join_decision = evaluate_join_policy(
@@ -828,6 +829,7 @@ async def _complete_background_child_task(
                 if hasattr(completed.status, "value")
                 else str(completed.status)
             ),
+            "child_evidence": _child_evidence_summary(completed.metadata),
             "execution_mode": SubagentExecutionMode.BACKGROUND.value,
         },
     )
@@ -892,6 +894,7 @@ def _child_source_ledger_from_output(
     max_candidates: int = 12,
     max_verified_reads: int = 6,
     max_failed_reads: int = 6,
+    max_blocked_reads: int = 6,
 ) -> dict[str, object]:
     ledger: dict[str, object] = {}
     for event in output.events:
@@ -915,6 +918,10 @@ def _child_source_ledger_from_output(
                 payload.get("failed_reads"),
                 max_rows=max_failed_reads,
             ),
+            "blocked_reads": _bounded_dict_rows(
+                payload.get("blocked_reads"),
+                max_rows=max_blocked_reads,
+            ),
         }
     return ledger
 
@@ -927,6 +934,35 @@ def _bounded_dict_rows(value: object, *, max_rows: int) -> list[dict[str, object
         if isinstance(item, dict):
             rows.append(dict(item))
     return rows
+
+
+def _child_evidence_summary(metadata: dict[str, object]) -> dict[str, int]:
+    ledger = metadata.get("child_source_ledger")
+    if not isinstance(ledger, dict):
+        return {
+            "search_count": 0,
+            "fetch_count": 0,
+            "verified_read_count": 0,
+            "candidate_count": 0,
+            "blocked_read_count": 0,
+            "failed_read_count": 0,
+        }
+    verified_reads = _ledger_rows(ledger.get("verified_reads"))
+    candidates = _ledger_rows(ledger.get("search_candidates"))
+    blocked_reads = _ledger_rows(ledger.get("blocked_reads"))
+    failed_reads = _ledger_rows(ledger.get("failed_reads"))
+    return {
+        "search_count": len(candidates),
+        "fetch_count": len(verified_reads) + len(blocked_reads) + len(failed_reads),
+        "verified_read_count": len(verified_reads),
+        "candidate_count": len(candidates),
+        "blocked_read_count": len(blocked_reads),
+        "failed_read_count": len(failed_reads),
+    }
+
+
+def _ledger_rows(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
 
 
 def _failed_child_run(

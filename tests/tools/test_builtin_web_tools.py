@@ -78,6 +78,28 @@ async def test_web_fetch_returns_text_payload(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_source_read_wraps_web_fetch_payload() -> None:
+    """source_read should expose hard-profile source verification reads."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("source_read")
+    assert tool is not None
+
+    out = await tool.handler(
+        {
+            "url": "https://example.com/source",
+            "mock_status_code": 200,
+            "mock_content": "source body",
+            "mock_content_type": "text/plain",
+        }
+    )
+
+    assert out["source_read"] is True
+    assert out["content"] == "source body"
+    assert out["summary"].startswith("source_read:")
+
+
+@pytest.mark.asyncio
 async def test_web_fetch_rejects_binary_content_type(monkeypatch) -> None:
     """web_fetch should reject non-text response types."""
     response = _DummyResponse(

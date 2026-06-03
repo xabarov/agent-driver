@@ -104,6 +104,34 @@ class ResearchFinalReadiness:
 
 
 @dataclass(frozen=True)
+class DeepResearchControllerState:
+    """Derived state machine view for artifact-first Deep Research control."""
+
+    phase: str
+    readiness: str
+    report_artifact_exists: bool
+    source_ledger_artifact_exists: bool
+    child_synthesis_pending: bool
+    report_required: bool
+    source_ledger_required: bool
+    final_handoff_ready: bool
+    next_allowed_tools: tuple[str, ...]
+
+    def model_dump(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase,
+            "readiness": self.readiness,
+            "report_artifact_exists": self.report_artifact_exists,
+            "source_ledger_artifact_exists": self.source_ledger_artifact_exists,
+            "child_synthesis_pending": self.child_synthesis_pending,
+            "report_required": self.report_required,
+            "source_ledger_required": self.source_ledger_required,
+            "final_handoff_ready": self.final_handoff_ready,
+            "next_allowed_tools": list(self.next_allowed_tools),
+        }
+
+
+@dataclass(frozen=True)
 class ResearchSessionContract:
     """Small computed contract for research evidence and visible todo progress."""
 
@@ -119,6 +147,7 @@ class ResearchSessionContract:
     enforce_todos: bool = True
     fetch_fallback_required: bool = False
     report_artifact_exists: bool = False
+    source_ledger_artifact_exists: bool = False
     plan_created: bool = False
     child_synthesis_pending: bool = False
 
@@ -201,6 +230,7 @@ def build_research_session_contract(
     enforce_todos: bool = True,
     allow_final_deliverable_todos: bool = False,
     report_artifact_exists: bool = False,
+    source_ledger_artifact_exists: bool = False,
     child_synthesis_pending: bool = False,
 ) -> ResearchSessionContract:
     """Build the final-readiness contract from current runtime state."""
@@ -255,6 +285,7 @@ def build_research_session_contract(
         enforce_todos=enforce_todos,
         fetch_fallback_required=fetch_fallback_required,
         report_artifact_exists=report_artifact_exists,
+        source_ledger_artifact_exists=source_ledger_artifact_exists,
         plan_created=plan_created,
         child_synthesis_pending=child_synthesis_pending,
     )
@@ -271,6 +302,7 @@ def build_research_session_contract_from_context(
     """Build a research contract from a single-agent run context."""
     from agent_driver.runtime.research_artifacts import (
         deep_research_report_artifact_exists,
+        deep_research_source_ledger_artifact_exists,
     )
 
     return build_research_session_contract(
@@ -283,6 +315,9 @@ def build_research_session_contract_from_context(
         enforce_todos=enforce_todos,
         allow_final_deliverable_todos=allow_final_deliverable_todos,
         report_artifact_exists=deep_research_report_artifact_exists(context),
+        source_ledger_artifact_exists=deep_research_source_ledger_artifact_exists(
+            context
+        ),
         child_synthesis_pending=_child_synthesis_pending(context),
     )
 
@@ -432,6 +467,11 @@ def _deep_research_contract_payload(
         return None
     phase = _deep_research_phase(contract)
     allowed_tools = _DEEP_RESEARCH_PHASE_TOOLS[phase]
+    controller_state = _deep_research_controller_state(
+        contract,
+        phase=phase,
+        allowed_tools=allowed_tools,
+    )
     return {
         "mode": RESEARCH_DEPTH_DEEP_PARALLEL,
         "phase": phase,
@@ -454,10 +494,38 @@ def _deep_research_contract_payload(
             "final_has_source_links": contract.final_has_source_links,
         },
         "report_artifact_exists": contract.report_artifact_exists,
+        "source_ledger_artifact_exists": contract.source_ledger_artifact_exists,
         "plan_created": contract.plan_created,
         "child_synthesis_pending": contract.child_synthesis_pending,
         "final_readiness_authority": "ResearchSessionContract",
+        "controller_state": controller_state.model_dump(),
     }
+
+
+def _deep_research_controller_state(
+    contract: ResearchSessionContract,
+    *,
+    phase: str,
+    allowed_tools: tuple[str, ...],
+) -> DeepResearchControllerState:
+    final_handoff_ready = (
+        phase == DEEP_RESEARCH_PHASE_FINAL
+        and contract.report_artifact_exists
+        and contract.source_ledger_artifact_exists
+    )
+    return DeepResearchControllerState(
+        phase=phase,
+        readiness=contract.final_readiness.status,
+        report_artifact_exists=contract.report_artifact_exists,
+        source_ledger_artifact_exists=contract.source_ledger_artifact_exists,
+        child_synthesis_pending=contract.child_synthesis_pending,
+        report_required=not contract.report_artifact_exists,
+        source_ledger_required=(
+            contract.report_artifact_exists and not contract.source_ledger_artifact_exists
+        ),
+        final_handoff_ready=final_handoff_ready,
+        next_allowed_tools=allowed_tools,
+    )
 
 
 def _deep_research_phase(contract: ResearchSessionContract) -> str:
@@ -477,6 +545,8 @@ def _deep_research_phase(contract: ResearchSessionContract) -> str:
         return DEEP_RESEARCH_PHASE_VERIFY
     if not contract.report_artifact_exists:
         return DEEP_RESEARCH_PHASE_WRITE
+    if not contract.source_ledger_artifact_exists:
+        return DEEP_RESEARCH_PHASE_REVIEW
     if contract.final_readiness.status != FINAL_READINESS_ALLOWED:
         return DEEP_RESEARCH_PHASE_REVIEW
     return DEEP_RESEARCH_PHASE_FINAL
@@ -546,6 +616,7 @@ __all__ = [
     "REPAIR_MISSING_FETCHED_SOURCES",
     "REPAIR_MISSING_RESEARCH_EVIDENCE",
     "REPAIR_UNFINISHED_TODOS",
+    "DeepResearchControllerState",
     "ResearchFinalReadiness",
     "ResearchSessionContract",
     "build_research_session_contract",

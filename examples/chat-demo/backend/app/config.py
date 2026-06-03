@@ -13,7 +13,10 @@ ToolPreset = Literal[
     "web_search",
     "web_fetch",
     "web",
+    "research_light",
     "deep_research",
+    "deep_research_medium",
+    "deep_research_hard",
     "agents",
     # Legacy/internal presets remain accepted for backend scenarios and older clients.
     "safe",

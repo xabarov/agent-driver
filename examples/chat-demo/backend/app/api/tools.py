@@ -13,6 +13,7 @@ router = APIRouter(tags=["meta"])
 PUBLIC_TOOL_NAMES = {
     "agent_tool",
     "python",
+    "source_read",
     "skill_tool",
     "skill_view",
     "web_fetch",

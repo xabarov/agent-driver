@@ -323,6 +323,13 @@ async def test_sync_child_execution_carries_source_ledger_metadata() -> None:
                                     }
                                 ],
                                 "verified_reads": [],
+                                "blocked_reads": [
+                                    {
+                                        "title": "Blocked source",
+                                        "url": "https://blocked.example/fork",
+                                        "domain": "blocked.example",
+                                    }
+                                ],
                                 "failed_reads": [],
                             }
                         },
@@ -352,6 +359,7 @@ async def test_sync_child_execution_carries_source_ledger_metadata() -> None:
 
     ledger = result.runs[0].metadata["child_source_ledger"]
     assert ledger["search_candidates"][0]["url"] == "https://example.test/fork"
+    assert ledger["blocked_reads"][0]["url"] == "https://blocked.example/fork"
 
 
 @pytest.mark.asyncio

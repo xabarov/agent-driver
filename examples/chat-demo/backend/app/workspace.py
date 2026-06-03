@@ -180,6 +180,36 @@ def preview_workspace_artifact(
     return artifact, preview, truncated
 
 
+def read_workspace_artifact(
+    settings: Settings,
+    session_id: str,
+    artifact_path: str,
+    *,
+    max_bytes: int = 2_000_000,
+) -> tuple[WorkspaceArtifact, bytes]:
+    """Return raw artifact bytes under the validated session workspace."""
+    workspace = resolve_session_workspace(settings, session_id)
+    target = (workspace / artifact_path).resolve()
+    try:
+        relative = target.relative_to(workspace).as_posix()
+    except ValueError as exc:
+        raise ValueError("artifact path outside workspace") from exc
+    if not _is_artifact_relative_path(relative):
+        raise ValueError("artifact path is not a known artifact")
+    if not target.is_file():
+        raise FileNotFoundError(relative)
+    stat = target.stat()
+    if stat.st_size > max_bytes:
+        raise ValueError("artifact is too large to download")
+    artifact = WorkspaceArtifact(
+        path=relative,
+        kind=_artifact_kind(relative),
+        size_bytes=stat.st_size,
+        modified_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+    )
+    return artifact, target.read_bytes()
+
+
 def _is_artifact_relative_path(path: str) -> bool:
     return any(path.startswith(f"{dirname}/") for dirname in _ARTIFACT_DIRS)
 

@@ -392,6 +392,7 @@ def _subagent_summary(
         for status in statuses
         if status.lower() in {"failed", "error", "cancelled", "timeout"}
     )
+    child_evidence = _child_evidence_summary(events)
     parent_synthesized_final = (
         agent_tool_used
         and groups_joined > 0
@@ -409,6 +410,9 @@ def _subagent_summary(
         "runs_started": _count_events(events, "subagent_started"),
         "runs_completed": _count_events(events, "subagent_completed"),
         "child_error_count": child_error_count,
+        "child_search_count": child_evidence["search_count"],
+        "child_fetch_count": child_evidence["fetch_count"],
+        "child_verified_read_count": child_evidence["verified_read_count"],
         "parent_synthesized_final": parent_synthesized_final,
         "child_synthesis_pending": child_synthesis_pending,
         "child_synthesis_summary_chars": child_synthesis_summary_chars,
@@ -814,6 +818,7 @@ def _research_efficiency_summary(
         research=research,
         source_ledger_counts=source_ledger_counts,
     )
+    child_evidence = _child_evidence_summary(events)
     unexpected_agent_tool = False
     skill_denied = deep_expected and _skill_tool_denied(events)
     required_verified_reads = _as_int(research.get("required_fetch_count"))
@@ -866,6 +871,12 @@ def _research_efficiency_summary(
         "skill_denied": skill_denied,
         "report_status": report_status,
         "verified_read_count": verified_read_count,
+        "parent_search_count": tool_names.count("web_search"),
+        "parent_fetch_count": tool_names.count("web_fetch"),
+        "parent_verified_read_count": verified_read_count,
+        "child_search_count": child_evidence["search_count"],
+        "child_fetch_count": child_evidence["fetch_count"],
+        "child_verified_read_count": child_evidence["verified_read_count"],
         "blocked_read_count": source_ledger_counts["blocked_reads"],
         "failed_read_count": source_ledger_counts["failed_reads"],
         "candidate_count": source_ledger_counts["search_candidates"],
@@ -960,6 +971,28 @@ def _deep_research_phase_diagnostics(
         "phase_violation_count": len(violations),
         "phase_violations": violations[:10],
     }
+
+
+def _child_evidence_summary(events: list[dict[str, object]]) -> dict[str, int]:
+    totals = {
+        "search_count": 0,
+        "fetch_count": 0,
+        "verified_read_count": 0,
+        "candidate_count": 0,
+        "blocked_read_count": 0,
+        "failed_read_count": 0,
+    }
+    for event in events:
+        if event.get("event") != "subagent_completed":
+            continue
+        evidence = _event_data(event).get("child_evidence")
+        if not isinstance(evidence, dict):
+            continue
+        for key in totals:
+            value = evidence.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                totals[key] += max(0, value)
+    return totals
 
 
 def _deep_research_phase_before_tool(
