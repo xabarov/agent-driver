@@ -553,3 +553,164 @@ def test_trace_summary_flags_ignored_context_pressure_recommendation() -> None:
     assert latest.get("state") == "compact_recommended"
     assert pressure["compaction_attempted_after_recommendation"] is False
     assert pressure["ignored_latest_recommendation"] is True
+
+
+def test_trace_summary_allows_agent_tool_verify_recovery() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text="Готово: полный отчет сохранен в research/report.md.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_search",
+                            "status": "completed",
+                            "args": {"query": "fork join queue"},
+                        }
+                    ]
+                },
+            },
+            _completed_tool("agent_tool"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.com/a"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "completed",
+                            "args": {"url": "https://example.org/b"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "source_ledger_updated",
+                "data": {
+                    "verified_reads": [
+                        {"url": "https://example.com/a"},
+                        {"url": "https://example.org/b"},
+                    ],
+                    "failed_reads": [],
+                    "blocked_reads": [],
+                    "search_candidates": [],
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 2},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["phase_violation"] is False
+    assert summary["failures"]["deep_research_phase_violation"] is False
+
+
+def test_trace_summary_counts_hard_read_tools_as_fetch_progress() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="сделай deep research отчет",
+        assistant_text=(
+            "Готово: полный отчет сохранен в research/report.md. "
+            "[A](https://example.com/a) [B](https://example.org/b)"
+        ),
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "hard",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("web_search"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "source_read",
+                            "status": "completed",
+                            "args": {"url": "https://example.com/a"},
+                            "structured_output": {"url": "https://example.com/a"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "pdf_read",
+                            "status": "completed",
+                            "args": {"url": "https://example.org/b"},
+                            "structured_output": {
+                                "url": "https://example.org/b",
+                                "verified_text": True,
+                            },
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "source_ledger_updated",
+                "data": {
+                    "verified_reads": [
+                        {"url": "https://example.com/a"},
+                        {"url": "https://example.org/b"},
+                    ],
+                    "failed_reads": [],
+                    "blocked_reads": [],
+                    "search_candidates": [],
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "tool_name": "file_write",
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 2},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research"]["fetch_count"] == 2
+    assert summary["research_efficiency"]["fetch_attempt_count"] == 2
+    assert summary["research_efficiency"]["phase_violation"] is False

@@ -19,6 +19,7 @@ from app.workspace import (
     list_workspace_artifacts,
     preview_workspace_artifact,
     read_workspace_artifact,
+    render_markdown_artifact_pdf,
     workspace_status,
 )
 
@@ -32,7 +33,10 @@ async def import_workspace_sample(session_id: str) -> WorkspaceImportResponse:
     if not clean_session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
     settings = get_settings()
-    files = import_sample_project(settings, clean_session_id)
+    try:
+        files = import_sample_project(settings, clean_session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return WorkspaceImportResponse(
         files=files,
         workspace=workspace_status(settings, clean_session_id, create=True),
@@ -49,6 +53,10 @@ async def workspace_artifacts(session_id: str) -> WorkspaceArtifactsResponse:
     if not clean_session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
     settings = get_settings()
+    try:
+        artifact_rows = list_workspace_artifacts(settings, clean_session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     artifacts = [
         WorkspaceArtifactView(
             path=item.path,
@@ -56,7 +64,7 @@ async def workspace_artifacts(session_id: str) -> WorkspaceArtifactsResponse:
             sizeBytes=item.size_bytes,
             modifiedAt=item.modified_at,
         )
-        for item in list_workspace_artifacts(settings, clean_session_id)
+        for item in artifact_rows
     ]
     return WorkspaceArtifactsResponse(sessionId=clean_session_id, artifacts=artifacts)
 
@@ -87,6 +95,43 @@ async def workspace_artifact_download(
     return Response(
         content=content,
         media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/workspace/{session_id}/artifacts/{artifact_path:path}/download.pdf")
+async def workspace_artifact_pdf_download(
+    session_id: str,
+    artifact_path: str,
+) -> Response:
+    """Download a text-only PDF rendering of a Markdown artifact."""
+    clean_session_id = session_id.strip()
+    if not clean_session_id:
+        raise HTTPException(status_code=400, detail="session_id is required")
+    try:
+        artifact, content = read_workspace_artifact(
+            get_settings(),
+            clean_session_id,
+            artifact_path,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="artifact not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not artifact.path.endswith(".md"):
+        raise HTTPException(
+            status_code=400, detail="PDF export supports Markdown artifacts"
+        )
+    filename = _safe_download_filename(
+        f"{PurePosixPath(artifact.path).stem or 'artifact'}.pdf"
+    )
+    pdf = render_markdown_artifact_pdf(
+        content,
+        title=PurePosixPath(artifact.path).name,
+    )
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
@@ -129,5 +174,3 @@ async def workspace_artifact_preview(
         content=content,
         truncated=truncated,
     )
-
-

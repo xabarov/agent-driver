@@ -13,6 +13,12 @@ RESEARCH_DEPTH_SOURCE_VERIFIED = "source_verified_report"
 RESEARCH_DEPTH_DEEP_PARALLEL = "deep_parallel_research"
 WEB_SEARCH_TOOL = "web_search"
 WEB_FETCH_TOOL = "web_fetch"
+SOURCE_READ_TOOL = "source_read"
+PDF_READ_TOOL = "pdf_read"
+BROWSER_READ_TOOL = "browser_read"
+READ_SOURCE_TOOLS = frozenset(
+    {WEB_FETCH_TOOL, SOURCE_READ_TOOL, PDF_READ_TOOL, BROWSER_READ_TOOL}
+)
 SOURCE_VERIFIED_FETCHES = 2
 SOURCE_VERIFIED_DOMAINS = 2
 
@@ -137,7 +143,7 @@ def research_evidence_from_tool_results(
         tool_name = str(call.get("tool_name") or "").strip()
         if tool_name == WEB_SEARCH_TOOL:
             search_calls += 1
-        elif tool_name == WEB_FETCH_TOOL:
+        elif tool_name in READ_SOURCE_TOOLS:
             fetch_calls += 1
             if _tool_result_failed(item):
                 failed_fetches += 1
@@ -178,8 +184,8 @@ def research_source_ledger_from_tool_results(
                 _append_unique_source(
                     search_candidates, candidate, seen=seen_candidates
                 )
-        elif tool_name == WEB_FETCH_TOOL:
-            record = _fetch_record(item, tool_call_id=tool_call_id)
+        elif tool_name in READ_SOURCE_TOOLS:
+            record = _fetch_record(item, tool_call_id=tool_call_id, tool_name=tool_name)
             if record is None:
                 continue
             if _tool_result_blocked(item):
@@ -294,7 +300,7 @@ def _search_candidates(
 
 
 def _fetch_record(
-    item: dict[str, Any], *, tool_call_id: str | None
+    item: dict[str, Any], *, tool_call_id: str | None, tool_name: str = WEB_FETCH_TOOL
 ) -> dict[str, Any] | None:
     url = _tool_result_url(item)
     if not url:
@@ -303,7 +309,7 @@ def _fetch_record(
     row: dict[str, Any] = {
         "url": url,
         "domain": _domain(url),
-        "source_type": WEB_FETCH_TOOL,
+        "source_type": tool_name,
     }
     if tool_call_id:
         row["tool_call_id"] = tool_call_id

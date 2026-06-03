@@ -24,12 +24,15 @@ from agent_driver.tools.registry import ToolRegistry
 _WEB_FETCH_TOOL = "web_fetch"
 _WEB_SEARCH_TOOL = "web_search"
 _SOURCE_READ_TOOL = "source_read"
+_PDF_READ_TOOL = "pdf_read"
+_BROWSER_READ_TOOL = "browser_read"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _DEFAULT_MAX_BYTES = 150_000
 _DEFAULT_MAX_RESULTS = 5
 _DEFAULT_PREVIEW_CHARS = 1_500
 _WEB_FETCH_MAX_CHARS_CAP = 8_000
 _WEB_FETCH_EXCERPT_CHARS = 2_000
+_PDF_READ_MAX_BYTES_CAP = 5_000_000
 _DEFAULT_USER_AGENT = "agent-driver/0.1"
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _BLOCKED_STATUS_CODES = {401, 403}
@@ -74,6 +77,8 @@ def register_web_tools(registry: ToolRegistry) -> None:
     registry.register(_web_fetch_manifest(), _web_fetch_handler)
     registry.register(_web_search_manifest(), _web_search_handler)
     registry.register(_source_read_manifest(), _source_read_handler)
+    registry.register(_pdf_read_manifest(), _pdf_read_handler)
+    registry.register(_browser_read_manifest(), _browser_read_handler)
 
 
 def _web_fetch_manifest() -> ToolManifest:
@@ -253,6 +258,101 @@ def _source_read_manifest() -> ToolManifest:
     )
 
 
+def _pdf_read_manifest() -> ToolManifest:
+    return ToolManifest(
+        name=_PDF_READ_TOOL,
+        description=(
+            "Validate and read a PDF source for hard Deep Research. Returns "
+            "structured PDF status and page-range citation hints; PDFs without "
+            "extractable text are not treated as verified text evidence."
+        ),
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.EXTERNAL_ACTION,
+        approval_mode=ApprovalMode.ON_POLICY_MATCH,
+        timeout_seconds=20.0,
+        output_char_budget=9000,
+        idempotent=True,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "HTTP(S) PDF URL"},
+                "page_start": {"type": "integer", "minimum": 1},
+                "page_end": {"type": "integer", "minimum": 1},
+                "timeout_seconds": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 60,
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "minimum": 256,
+                    "maximum": _PDF_READ_MAX_BYTES_CAP,
+                },
+                "allow_private_host": {"type": "boolean"},
+                "mock_pdf_bytes": {
+                    "type": "string",
+                    "description": "Optional offline PDF bytes as latin-1 text.",
+                },
+                "mock_extracted_text": {
+                    "type": "string",
+                    "description": "Optional deterministic extracted PDF text.",
+                },
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+        output_type="json",
+    )
+
+
+def _browser_read_manifest() -> ToolManifest:
+    return ToolManifest(
+        name=_BROWSER_READ_TOOL,
+        description=(
+            "Hard-profile read-only rendered-page fallback. Current implementation "
+            "uses the same URL safety checks as web_fetch and does not perform "
+            "browser actions, cookies, typing, or private-network access."
+        ),
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.EXTERNAL_ACTION,
+        approval_mode=ApprovalMode.ON_POLICY_MATCH,
+        timeout_seconds=20.0,
+        output_char_budget=9000,
+        idempotent=True,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "HTTP(S) page URL"},
+                "timeout_seconds": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 60,
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "minimum": 256,
+                    "maximum": 1_000_000,
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": 64,
+                    "maximum": 50_000,
+                },
+                "mock_status_code": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 599,
+                },
+                "mock_content": {"type": "string"},
+                "mock_content_type": {"type": "string"},
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+        output_type="json",
+    )
+
+
 async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
     url = _validate_http_url(
         args.get("url"),
@@ -354,6 +454,145 @@ async def _source_read_handler(args: dict[str, Any]) -> dict[str, Any]:
         **payload,
         "summary": f"source_read: {payload.get('summary', '')}",
         "source_read": True,
+    }
+
+
+async def _pdf_read_handler(args: dict[str, Any]) -> dict[str, Any]:
+    url = _validate_http_url(
+        args.get("url"),
+        allow_private_host=bool(args.get("allow_private_host", False)),
+    )
+    page_start = _as_int(args.get("page_start"), default=1, minimum=1)
+    page_end = _as_int(args.get("page_end"), default=page_start, minimum=page_start)
+    max_bytes = min(
+        _as_int(args.get("max_bytes"), default=_DEFAULT_MAX_BYTES, minimum=256),
+        _PDF_READ_MAX_BYTES_CAP,
+    )
+    mock_pdf = args.get("mock_pdf_bytes")
+    if isinstance(mock_pdf, str):
+        data = mock_pdf.encode("latin-1", errors="replace")
+        bytes_total = len(data)
+        status_code = int(args.get("mock_status_code") or 200)
+    else:
+        timeout_seconds = _as_float(
+            args.get("timeout_seconds"), default=_DEFAULT_TIMEOUT_SECONDS, minimum=0.1
+        )
+        try:
+            data, status_code, bytes_total = await _fetch_url_bytes_with_retry(
+                url=url,
+                timeout_seconds=timeout_seconds,
+                max_bytes=max_bytes,
+            )
+        except httpx.TimeoutException as exc:
+            return _pdf_error_payload(
+                url=url,
+                page_start=page_start,
+                page_end=page_end,
+                error="timeout",
+                detail=_error_message(exc),
+            )
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ValueError(f"pdf_read failed: {exc}") from exc
+    if bytes_total > max_bytes:
+        return _pdf_error_payload(
+            url=url,
+            page_start=page_start,
+            page_end=page_end,
+            error="pdf_too_large",
+            detail=f"{bytes_total} bytes exceeds {max_bytes}",
+            status_code=status_code,
+        )
+    if not data.startswith(b"%PDF"):
+        return _pdf_error_payload(
+            url=url,
+            page_start=page_start,
+            page_end=page_end,
+            error="invalid_pdf",
+            detail="missing PDF magic bytes",
+            status_code=status_code,
+        )
+    extracted = str(args.get("mock_extracted_text") or "")
+    if not extracted.strip():
+        return {
+            "summary": (
+                f"pdf_read validated {url} but text extraction is unavailable; "
+                "do not treat this PDF as verified textual evidence."
+            ),
+            "url": url,
+            "status_code": status_code,
+            "pdf_read": True,
+            "source_kind": "pdf",
+            "page_start": page_start,
+            "page_end": page_end,
+            "bytes_total": bytes_total,
+            "bytes_loaded": len(data),
+            "text": "",
+            "excerpt": "",
+            "page_citations": [],
+            "verified_text": False,
+            "error": "text_extraction_unavailable",
+        }
+    excerpt = extracted[:_WEB_FETCH_EXCERPT_CHARS]
+    return {
+        "summary": f"pdf_read extracted text from {url} pages {page_start}-{page_end}",
+        "url": url,
+        "status_code": status_code,
+        "pdf_read": True,
+        "source_kind": "pdf",
+        "page_start": page_start,
+        "page_end": page_end,
+        "bytes_total": bytes_total,
+        "bytes_loaded": len(data),
+        "text": extracted,
+        "excerpt": excerpt,
+        "page_citations": [
+            {"page": page, "url": url} for page in range(page_start, page_end + 1)
+        ],
+        "verified_text": True,
+    }
+
+
+async def _browser_read_handler(args: dict[str, Any]) -> dict[str, Any]:
+    payload = await _web_fetch_handler(
+        {
+            **args,
+            "extract_mode": "text",
+            "allow_private_host": False,
+        }
+    )
+    return {
+        **payload,
+        "summary": f"browser_read fallback: {payload.get('summary', '')}",
+        "browser_read": True,
+        "rendered": False,
+        "browser_action_allowed": False,
+        "screenshot_artifact": None,
+    }
+
+
+def _pdf_error_payload(
+    *,
+    url: str,
+    page_start: int,
+    page_end: int,
+    error: str,
+    detail: str,
+    status_code: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "summary": f"pdf_read could not verify text for {url}: {error}",
+        "url": url,
+        "status_code": status_code,
+        "pdf_read": True,
+        "source_kind": "pdf",
+        "page_start": page_start,
+        "page_end": page_end,
+        "text": "",
+        "excerpt": "",
+        "page_citations": [],
+        "verified_text": False,
+        "error": error,
+        "detail": detail,
     }
 
 
@@ -697,6 +936,38 @@ async def _fetch_url_text_with_retry(
                 timeout_seconds=timeout_seconds,
                 max_bytes=max_bytes,
             )
+        except httpx.TimeoutException as exc:
+            last_error = exc
+            if attempt == 2:
+                raise
+            await asyncio.sleep(0.5 + (0.5 * attempt))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("web fetch failed without specific exception")
+
+
+async def _fetch_url_bytes_with_retry(
+    *,
+    url: str,
+    timeout_seconds: float,
+    max_bytes: int,
+) -> tuple[bytes, int, int]:
+    last_error: httpx.TimeoutException | None = None
+    headers = {"User-Agent": _DEFAULT_USER_AGENT}
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=timeout_seconds,
+            ) as client:
+                response = await client.get(url, headers=headers)
+            if response.status_code not in _BLOCKED_STATUS_CODES:
+                response.raise_for_status()
+            content = response.content
+            bytes_total = len(content)
+            if len(content) > max_bytes:
+                content = content[:max_bytes]
+            return content, response.status_code, bytes_total
         except httpx.TimeoutException as exc:
             last_error = exc
             if attempt == 2:

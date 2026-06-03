@@ -46,6 +46,36 @@ def test_failed_web_fetch_does_not_become_source_evidence():
     assert sources == []
 
 
+def test_extracts_hard_read_source_evidence():
+    sources = source_evidence_from_tool_result(
+        tool_name="source_read",
+        tool_call_id="call_source",
+        structured_output={
+            "url": "https://example.com/source",
+            "metadata": {"title": "Source"},
+            "excerpt": "Verified source text.",
+        },
+    )
+
+    assert sources[0]["source_type"] == "source_read"
+    assert sources[0]["canonical_url"] == "https://example.com/source"
+
+
+def test_extracts_pdf_read_source_evidence():
+    sources = source_evidence_from_tool_result(
+        tool_name="pdf_read",
+        tool_call_id="call_pdf",
+        structured_output={
+            "url": "https://example.com/paper.pdf",
+            "excerpt": "Extracted PDF text.",
+            "verified_text": True,
+        },
+    )
+
+    assert sources[0]["source_type"] == "pdf_read"
+    assert sources[0]["title"] == "PDF source"
+
+
 def test_blocked_http_web_fetch_does_not_become_source_evidence():
     sources = source_evidence_from_tool_result(
         tool_name="web_fetch",
@@ -91,7 +121,7 @@ def test_extracts_web_search_source_evidence():
     ]
 
 
-def test_merge_source_evidence_prefers_fetched_pages():
+def test_merge_source_evidence_prefers_verified_reads():
     merged = merge_source_evidence(
         [
             {
@@ -108,6 +138,13 @@ def test_merge_source_evidence_prefers_fetched_pages():
                 "excerpt": "Fetched excerpt",
                 "rank": 2,
             },
+            {
+                "url": "https://example.com/a",
+                "canonical_url": "https://example.com/a",
+                "source_type": "source_read",
+                "excerpt": "Hard read excerpt",
+                "rank": 3,
+            },
         ]
     )
 
@@ -115,9 +152,9 @@ def test_merge_source_evidence_prefers_fetched_pages():
         {
             "url": "https://example.com/a",
             "canonical_url": "https://example.com/a",
-            "source_type": "web_fetch",
+            "source_type": "source_read",
             "title": "Search title",
-            "excerpt": "Fetched excerpt",
-            "rank": 2,
+            "excerpt": "Hard read excerpt",
+            "rank": 3,
         }
     ]

@@ -45,16 +45,12 @@ _DEEP_RESEARCH_INITIAL_SEARCH_BUDGET = 6
 _DEEP_RESEARCH_HARD_SEARCH_CAP = 15
 _DEEP_RESEARCH_PHASE_FETCH_ATTEMPTS = 2
 _DEEP_RESEARCH_LONG_CHAT_BEFORE_REPORT_CHARS = 1_500
+_READ_SOURCE_TOOLS = frozenset({"web_fetch", "source_read", "pdf_read", "browser_read"})
 _PARENT_SYNTHESIS_TOOLS = frozenset(
     {
         "file_write",
-        "file_edit",
-        "file_patch",
-        "read_file",
-        "artifact_list",
-        "artifact_read",
-        "artifact_preview",
         "todo_write",
+        *_READ_SOURCE_TOOLS,
     }
 )
 _DEEP_RESEARCH_PHASE_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
@@ -65,14 +61,16 @@ _DEEP_RESEARCH_PHASE_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
             "skill_tool",
             "skill_view",
             "web_search",
-            "web_fetch",
+            *_READ_SOURCE_TOOLS,
             "glob_search",
             "grep_search",
             "read_file",
             "todo_write",
         }
     ),
-    "verify": frozenset({"web_fetch", "web_search", "read_file", "todo_write"}),
+    "verify": frozenset(
+        {"agent_tool", "web_search", "read_file", "todo_write", *_READ_SOURCE_TOOLS}
+    ),
     "write": frozenset(
         {
             "file_write",
@@ -93,7 +91,7 @@ _DEEP_RESEARCH_PHASE_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
             "read_file",
             "file_patch",
             "file_edit",
-            "web_fetch",
+            *_READ_SOURCE_TOOLS,
             "todo_write",
         }
     ),
@@ -328,6 +326,10 @@ def _last_event_name(
     return None
 
 
+def _tool_count(tool_names: list[str], names: frozenset[str]) -> int:
+    return sum(1 for name in tool_names if name in names)
+
+
 def _subagent_summary(
     events: list[dict[str, object]],
     *,
@@ -380,12 +382,10 @@ def _subagent_summary(
         task_contract=task_contract,
         user_prompt=user_prompt,
     )
-    unexpected_tool_after_child_synthesis = (
-        _unexpected_tool_after_child_synthesis(
-            tools_after_child_synthesis_pending,
-            runs_started_before_child_synthesis=runs_started_before_child_synthesis,
-            max_subagent_requests=max_subagent_requests,
-        )
+    unexpected_tool_after_child_synthesis = _unexpected_tool_after_child_synthesis(
+        tools_after_child_synthesis_pending,
+        runs_started_before_child_synthesis=runs_started_before_child_synthesis,
+        max_subagent_requests=max_subagent_requests,
     )
     child_error_count = sum(
         1
@@ -809,7 +809,8 @@ def _research_efficiency_summary(
     repeated_tools = sorted(
         name
         for name in set(tool_names)
-        if tool_names.count(name) > 1 and name not in {"web_search", "web_fetch"}
+        if tool_names.count(name) > 1
+        and name not in {"web_search", *_READ_SOURCE_TOOLS}
     )
     search_diagnostics = _deep_research_search_diagnostics(
         events,
@@ -872,7 +873,7 @@ def _research_efficiency_summary(
         "report_status": report_status,
         "verified_read_count": verified_read_count,
         "parent_search_count": tool_names.count("web_search"),
-        "parent_fetch_count": tool_names.count("web_fetch"),
+        "parent_fetch_count": _tool_count(tool_names, _READ_SOURCE_TOOLS),
         "parent_verified_read_count": verified_read_count,
         "child_search_count": child_evidence["search_count"],
         "child_fetch_count": child_evidence["fetch_count"],
@@ -958,7 +959,7 @@ def _deep_research_phase_diagnostics(
                 plan_created = True
             elif tool_name == "web_search":
                 search_seen = True
-            elif tool_name == "web_fetch":
+            elif tool_name in _READ_SOURCE_TOOLS:
                 fetch_attempts += 1
             elif tool_name == "file_write":
                 # The artifact event is authoritative, but planned write is enough
@@ -1099,7 +1100,7 @@ def _deep_research_search_diagnostics(
         search_count = tool_names.count("web_search")
     fetch_attempt_count = _as_int(research.get("fetch_attempt_count"))
     if fetch_attempt_count <= 0:
-        fetch_attempt_count = tool_names.count("web_fetch")
+        fetch_attempt_count = _tool_count(tool_names, _READ_SOURCE_TOOLS)
     evidence_progress_count = (
         source_ledger_counts["verified_reads"]
         + source_ledger_counts["blocked_reads"]

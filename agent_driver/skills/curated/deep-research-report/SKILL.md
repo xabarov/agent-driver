@@ -3,7 +3,7 @@ name: deep-research-report
 description: Plan, search, fetch, synthesize and cite a source-verified report.
 when_to_use: Use for report-like research where search candidates must be verified before synthesis.
 tags: [research, deep-research, report, citations]
-allowed_tools: [todo_write, web_search, web_fetch, source_read, agent_tool, read_file, file_write, file_edit, file_patch, artifact_list, artifact_read, artifact_preview]
+allowed_tools: [todo_write, web_search, web_fetch, source_read, pdf_read, browser_read, agent_tool, read_file, file_write, file_edit, file_patch, artifact_list, artifact_read, artifact_preview]
 context:
   depth: deep_parallel_research
 source: bundled
@@ -32,7 +32,8 @@ URLs with `web_fetch`, then have the parent write `research/report.md` and
 
 Use hard for high-value research that needs audit/export. Start from the medium
 contract, then add verifier/auditor work, claim-source checking, broader source
-coverage, and export steps only when the hard profile explicitly allows them.
+coverage, `source_read`, `pdf_read`, `browser_read` fallback, and export steps
+only when the hard profile explicitly allows them.
 
 ## Workflow
 

@@ -296,9 +296,7 @@ def chat_mode_runtime_reminders(context: RunContext) -> list[str]:
         if isinstance(child_synthesis, dict) and child_synthesis.get("pending") is True:
             summary = str(child_synthesis.get("summary") or "").strip()
             summary_fragment = (
-                f" Child notes preview: {summary[:1200]}"
-                if summary
-                else ""
+                f" Child notes preview: {summary[:1200]}" if summary else ""
             )
             reminders.append(
                 "Runtime reminder: deep_research_child_synthesis_pending. "
@@ -335,9 +333,11 @@ def chat_mode_runtime_reminders(context: RunContext) -> list[str]:
     if get_research_runtime_state(context).fetch_fallback_required():
         reminders.append(
             "Runtime reminder: research_fetch_fallback. Multiple page fetches "
-            "failed; do not retry the same fetch loop. Answer from available "
-            "search metadata and explicitly state that full pages could not be "
-            "verified."
+            "failed; do not retry the same fetch loop. If hard-profile source "
+            "tools are available, try source_read, then pdf_read for PDF URLs, "
+            "then browser_read as a read-only fallback. If no source-read path "
+            "works, answer from available search metadata and explicitly state "
+            "that full pages could not be verified."
         )
     if get_planning_runtime_state(context).approved_plan():
         reminders.append(

@@ -24,7 +24,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from playwright.sync_api import Page, expect, sync_playwright
+try:
+    from playwright.sync_api import Page, expect, sync_playwright
+except ModuleNotFoundError:  # pragma: no cover - exercised by import-only tests.
+    Page = Any
+
+    def expect(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("Playwright is required for live chat probes.")
+
+    def sync_playwright() -> Any:
+        raise RuntimeError("Playwright is required for live chat probes.")
 
 BASE_URL = os.environ.get("CHAT_DEMO_URL", "http://localhost:5174")
 ARTIFACT_DIR = Path(

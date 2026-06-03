@@ -105,6 +105,29 @@ def test_research_contract_allows_fetch_required_after_one_fetch() -> None:
     assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
 
 
+def test_research_contract_counts_hard_read_tools_as_verified_reads() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "source_verified_report",
+        },
+        tool_results=[
+            _tool_result("source_read", url="https://example.com/a"),
+            _tool_result("pdf_read", url="https://example.org/paper.pdf"),
+        ],
+        web_fetch_available=True,
+        assistant_text="Sources: https://example.com/a https://example.org/paper.pdf",
+    )
+
+    assert contract.evidence.successful_fetches == 2
+    assert contract.evidence.unique_domains == ("example.com", "example.org")
+    assert [item["source_type"] for item in contract.source_ledger.verified_reads] == [
+        "source_read",
+        "pdf_read",
+    ]
+    assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
+
+
 def test_research_contract_requires_fetched_source_verified_evidence() -> None:
     contract = build_research_session_contract(
         task_contract={
@@ -473,6 +496,9 @@ def test_deep_parallel_research_phase_verifies_after_search() -> None:
     payload = contract.model_dump()["deep_research"]
     assert payload["phase"] == "verify"
     assert "web_fetch" in payload["next_allowed_tools"]
+    assert "source_read" in payload["next_allowed_tools"]
+    assert "pdf_read" in payload["next_allowed_tools"]
+    assert "browser_read" in payload["next_allowed_tools"]
 
 
 def test_deep_parallel_research_phase_final_after_report_and_verified_sources() -> None:

@@ -1,6 +1,13 @@
 import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BookOpenCheck, FileText, ListChecks } from "lucide-react";
+import {
+  AlertTriangle,
+  Bot,
+  BookOpenCheck,
+  FileText,
+  FileWarning,
+  ListChecks,
+} from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { fetchDeepResearchState } from "../../lib/api";
@@ -47,11 +54,12 @@ export function ChatPage({ mode }: ChatPageProps) {
   const selectedSessionId = mode === "existing" ? params.id ?? "" : "";
   const artifactSessionId = selectedSessionId || sessionId || "";
   const sessionQuery = useSession(selectedSessionId);
-  const latestRunId = sessionQuery.data?.run_ids.at(-1) ?? runId;
+  const latestSessionRunId = sessionQuery.data?.run_ids.at(-1);
+  const activeRunId = streaming && runId ? runId : (latestSessionRunId ?? runId);
   const deepResearchStateQuery = useQuery({
-    queryKey: ["deep-research-state", latestRunId ?? "no-run"],
-    queryFn: () => fetchDeepResearchState(latestRunId ?? ""),
-    enabled: Boolean(latestRunId),
+    queryKey: ["deep-research-state", activeRunId ?? "no-run"],
+    queryFn: () => fetchDeepResearchState(activeRunId ?? ""),
+    enabled: Boolean(activeRunId),
     staleTime: streaming ? 2_000 : 15_000,
     retry: false,
   });
@@ -96,6 +104,18 @@ export function ChatPage({ mode }: ChatPageProps) {
     }
   }, [deepResearchStateQuery.data, setDeepResearchView]);
 
+  useEffect(() => {
+    if (!activeRunId || (deepResearchView && deepResearchView.runId !== activeRunId)) {
+      setDeepResearchView(undefined);
+    }
+  }, [activeRunId, deepResearchView?.runId, setDeepResearchView]);
+
+  useEffect(() => {
+    if (deepResearchStateQuery.isError && !streaming) {
+      setDeepResearchView(undefined);
+    }
+  }, [deepResearchStateQuery.isError, setDeepResearchView, streaming]);
+
   if (mode === "existing" && sessionQuery.isLoading) {
     return (
       <div className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground">
@@ -138,6 +158,7 @@ export function ChatPage({ mode }: ChatPageProps) {
           <FakeProviderBanner />
           <StreamErrorBanner />
           <DeepResearchCompactBar state={deepResearchView} />
+          <DeepResearchCockpit state={deepResearchView} />
         </div>
         <div className="min-h-0 flex-1">
           {messages.length === 0 ? (
@@ -250,6 +271,85 @@ function DeepResearchCompactBar({
         </span>
       ) : null}
     </div>
+  );
+}
+
+function DeepResearchCockpit({
+  state,
+}: {
+  state?: DeepResearchViewState;
+}) {
+  if (!state || state.researchMode !== "deep") {
+    return null;
+  }
+  const artifacts = [
+    state.artifacts.report,
+    state.artifacts.sourceLedger,
+    state.artifacts.claims,
+  ].filter((artifact): artifact is NonNullable<typeof artifact> => Boolean(artifact));
+  return (
+    <section
+      aria-label="Deep Research cockpit"
+      className="grid gap-2 rounded-md border border-border/70 bg-background/70 p-3 text-xs text-muted-foreground md:grid-cols-4"
+    >
+      <div className="space-y-1">
+        <div className="flex items-center gap-1.5 font-medium text-foreground">
+          <ListChecks className="h-3.5 w-3.5" />
+          Progress
+        </div>
+        <div>phase: {state.phase}</div>
+        <div>
+          todos: {state.todos.done}/{state.todos.total}
+          {state.todos.stale ? " · stale" : ""}
+        </div>
+        {state.todos.current ? <div className="truncate">current: {state.todos.current}</div> : null}
+      </div>
+      <div className="space-y-1">
+        <div className="flex items-center gap-1.5 font-medium text-foreground">
+          <FileText className="h-3.5 w-3.5" />
+          Artifacts
+        </div>
+        {artifacts.length ? (
+          artifacts.map((artifact) => (
+            <div key={artifact.path} className="truncate">
+              {artifact.path} · {artifact.lifecycle}
+            </div>
+          ))
+        ) : (
+          <div>waiting for first artifact</div>
+        )}
+      </div>
+      <div className="space-y-1">
+        <div className="flex items-center gap-1.5 font-medium text-foreground">
+          <BookOpenCheck className="h-3.5 w-3.5" />
+          Sources
+        </div>
+        <div>
+          verified {state.sources.verified} · candidates {state.sources.candidates}
+        </div>
+        <div>
+          blocked {state.sources.blocked} · failed {state.sources.failed} · domains{" "}
+          {state.sources.distinctDomains}
+        </div>
+      </div>
+      <div className="space-y-1">
+        <div className="flex items-center gap-1.5 font-medium text-foreground">
+          <Bot className="h-3.5 w-3.5" />
+          Run Health
+        </div>
+        <div>
+          children {state.subagents.completedChildren}/{state.subagents.totalChildren}
+          {state.subagents.failedChildren ? ` · failed ${state.subagents.failedChildren}` : ""}
+        </div>
+        <div>trace: {state.trace.verdict ?? "pending"}</div>
+        {state.warnings.length ? (
+          <div className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300">
+            <FileWarning className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{state.warnings.join(", ")}</span>
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 

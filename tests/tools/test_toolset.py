@@ -68,6 +68,17 @@ def test_toolset_supports_artifacts_pack() -> None:
     }
 
 
+def test_toolset_supports_hard_source_tools_pack() -> None:
+    """source_tools pack should expose the hard-profile evidence ladder."""
+    registry = _registry_with_defaults()
+    filtered = ToolSet.packs("source_tools").apply(registry)
+    assert set(filtered.list_names()) == {
+        "source_read",
+        "pdf_read",
+        "browser_read",
+    }
+
+
 def test_toolset_filesystem_write_pack_includes_file_patch() -> None:
     """filesystem_write pack should expose batched exact replacement edits."""
     registry = _registry_with_defaults()

@@ -98,7 +98,10 @@ def _normalize_tool_alias(
 def _tool_alias_shape_matches(call: ToolCall, target_name: str) -> bool:
     args = call.args
     if target_name == "read_file":
-        return any(isinstance(args.get(key), str) and args[key].strip() for key in _PATH_ARG_ALIASES)
+        return any(
+            isinstance(args.get(key), str) and args[key].strip()
+            for key in _PATH_ARG_ALIASES
+        )
     if target_name == "file_write":
         has_path = any(
             isinstance(args.get(key), str) and args[key].strip()
@@ -126,22 +129,29 @@ def _normalize_tool_call_args(call: ToolCall) -> ToolCall:
 def _normalize_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Normalize common provider argument synonyms before handler execution."""
     normalized = dict(args)
-    if tool_name in {"web_fetch"} and "url" not in normalized:
+    if (
+        tool_name in {"web_fetch", "source_read", "pdf_read", "browser_read"}
+        and "url" not in normalized
+    ):
         for key in _URL_ARG_ALIASES:
             value = normalized.get(key)
             if isinstance(value, str) and value.strip():
                 normalized["url"] = value
                 break
-    if tool_name in {
-        "artifact_read",
-        "file_edit",
-        "file_patch",
-        "file_write",
-        "glob_search",
-        "grep_search",
-        "notebook_edit",
-        "read_file",
-    } and "path" not in normalized:
+    if (
+        tool_name
+        in {
+            "artifact_read",
+            "file_edit",
+            "file_patch",
+            "file_write",
+            "glob_search",
+            "grep_search",
+            "notebook_edit",
+            "read_file",
+        }
+        and "path" not in normalized
+    ):
         for key in _PATH_ARG_ALIASES:
             value = normalized.get(key)
             if isinstance(value, str) and value.strip():

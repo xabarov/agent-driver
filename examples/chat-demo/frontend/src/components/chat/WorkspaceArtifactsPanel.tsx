@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { FileText, FolderOpen, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Download, FileText, FolderOpen, RefreshCw } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { cn } from "../../lib/cn";
@@ -10,7 +10,7 @@ import {
 } from "../../lib/workspaceArtifacts";
 import type { WorkspaceArtifactView } from "../../types/api";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
+import { Button, buttonVariants } from "../ui/button";
 import {
   Popover,
   PopoverContent,
@@ -45,6 +45,10 @@ export function WorkspaceArtifactsPanel({
     [activePath, artifacts],
   );
   const count = artifacts.length;
+
+  useEffect(() => {
+    setSelectedPath(undefined);
+  }, [sessionId]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -136,6 +140,34 @@ export function WorkspaceArtifactsPanel({
                   </p>
                 ) : null}
               </div>
+              {selected ? (
+                <div className="flex shrink-0 items-center gap-1">
+                  <a
+                    className={cn(
+                      buttonVariants({ variant: "ghost", size: "sm" }),
+                      "h-7 gap-1 px-2 text-xs",
+                    )}
+                    href={artifactDownloadUrl(sessionId, selected.path)}
+                    download
+                  >
+                    <Download className="h-3.5 w-3.5" aria-hidden />
+                    {downloadLabel(selected.path)}
+                  </a>
+                  {selected.path.endsWith(".md") ? (
+                    <a
+                      className={cn(
+                        buttonVariants({ variant: "ghost", size: "sm" }),
+                        "h-7 gap-1 px-2 text-xs",
+                      )}
+                      href={artifactPdfDownloadUrl(sessionId, selected.path)}
+                      download
+                    >
+                      <Download className="h-3.5 w-3.5" aria-hidden />
+                      PDF
+                    </a>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             <ScrollArea className="h-[calc(26rem-2.75rem)]">
               <pre className="min-h-full whitespace-pre-wrap break-words p-4 font-mono text-xs leading-relaxed text-foreground">
@@ -153,6 +185,35 @@ export function WorkspaceArtifactsPanel({
       </PopoverContent>
     </Popover>
   );
+}
+
+function artifactDownloadUrl(sessionId: string, path: string): string {
+  return `/api/workspace/${encodeURIComponent(sessionId)}/artifacts/${encodeArtifactPath(
+    path,
+  )}/download`;
+}
+
+function artifactPdfDownloadUrl(sessionId: string, path: string): string {
+  return `/api/workspace/${encodeURIComponent(sessionId)}/artifacts/${encodeArtifactPath(
+    path,
+  )}/download.pdf`;
+}
+
+function downloadLabel(path: string): string {
+  if (path.endsWith(".md")) {
+    return "MD";
+  }
+  if (path.endsWith(".jsonl")) {
+    return "JSONL";
+  }
+  if (path.endsWith(".json")) {
+    return "JSON";
+  }
+  return "Download";
+}
+
+function encodeArtifactPath(path: string): string {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 
 function preferredArtifactPath(artifacts: WorkspaceArtifactView[]): string | undefined {

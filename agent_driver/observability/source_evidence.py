@@ -119,17 +119,28 @@ def source_evidence_from_tool_result(
         return []
     if _structured_output_failed(structured_output):
         return []
-    if tool_name == "web_fetch":
+    if tool_name in {"web_fetch", "source_read", "browser_read"}:
         metadata = structured_output.get("metadata")
         record = _source_record(
             url=structured_output.get("url"),
-            source_type="web_fetch",
+            source_type=tool_name,
             tool_call_id=tool_call_id,
             rank=1,
             title=_title_from_metadata(metadata),
             excerpt=structured_output.get("excerpt")
             or structured_output.get("summary"),
             published_at=_published_from_metadata(metadata),
+        )
+        return [record] if record is not None else []
+    if tool_name == "pdf_read":
+        record = _source_record(
+            url=structured_output.get("url"),
+            source_type="pdf_read",
+            tool_call_id=tool_call_id,
+            rank=1,
+            title="PDF source",
+            excerpt=structured_output.get("excerpt")
+            or structured_output.get("summary"),
         )
         return [record] if record is not None else []
     if tool_name != "web_search":
@@ -170,7 +181,14 @@ def _structured_output_failed(structured_output: dict[str, Any]) -> bool:
 
 def merge_source_evidence(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Deduplicate sources, preferring fetched pages over search hits."""
-    priority = {"web_fetch": 0, "assistant_link": 1, "web_search": 2}
+    priority = {
+        "source_read": 0,
+        "pdf_read": 0,
+        "browser_read": 0,
+        "web_fetch": 1,
+        "assistant_link": 2,
+        "web_search": 3,
+    }
     by_url: dict[str, dict[str, Any]] = {}
     for record in records:
         canonical = record.get("canonical_url")

@@ -19,6 +19,7 @@ from app.workspace import (
     merge_resume_app_metadata,
     preview_workspace_artifact,
     read_workspace_artifact,
+    render_markdown_artifact_pdf,
     resolve_session_workspace,
     resolved_workspace_root,
     workspace_status,
@@ -43,6 +44,11 @@ def test_resolve_session_workspace_creates_directory(settings) -> None:
     assert path.is_dir()
     assert path.name == "session_abc"
     assert path.parent == resolved_workspace_root(settings)
+
+
+def test_resolve_session_workspace_rejects_path_escape(settings) -> None:
+    with pytest.raises(ValueError, match="outside workspace root"):
+        resolve_session_workspace(settings, "../outside")
 
 
 def test_build_chat_app_metadata_includes_workspace_and_chat_mode(settings) -> None:
@@ -111,6 +117,14 @@ def test_workspace_artifact_download_filename_is_header_safe() -> None:
     assert _safe_download_filename("   ") == "artifact.txt"
 
 
+def test_render_markdown_artifact_pdf_returns_pdf_bytes() -> None:
+    pdf = render_markdown_artifact_pdf(b"# Report\n\nSee [A](https://example.com).")
+
+    assert pdf.startswith(b"%PDF-1.4")
+    assert b"/Type /Catalog" in pdf
+    assert b"startxref" in pdf
+
+
 def test_workspace_artifact_preview_rejects_escape(settings) -> None:
     with pytest.raises(ValueError, match="outside workspace"):
         preview_workspace_artifact(settings, "session_artifacts", "../secret.txt")
@@ -130,6 +144,31 @@ async def test_workspace_artifact_download_endpoint(client, settings) -> None:
     assert response.status_code == 200
     assert response.content == b"# Report\n"
     assert 'filename="report.md"' in response.headers["content-disposition"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_sample_import_rejects_escaped_session_id(client) -> None:
+    response = await client.post("/api/workspace/sample?session_id=..")
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "session_id resolves outside workspace root"
+
+
+@pytest.mark.asyncio
+async def test_workspace_artifact_pdf_download_endpoint(client, settings) -> None:
+    workspace = resolve_session_workspace(settings, "session_endpoint_pdf")
+    report = workspace / "research" / "report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("# Report\n", encoding="utf-8")
+
+    response = await client.get(
+        "/api/workspace/session_endpoint_pdf/artifacts/research/report.md/download.pdf"
+    )
+
+    assert response.status_code == 200
+    assert response.content.startswith(b"%PDF-1.4")
+    assert response.headers["content-type"] == "application/pdf"
+    assert 'filename="report.pdf"' in response.headers["content-disposition"]
 
 
 def test_find_session_id_for_run(settings) -> None:

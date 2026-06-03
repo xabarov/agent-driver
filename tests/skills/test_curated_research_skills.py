@@ -15,6 +15,8 @@ KNOWN_RESEARCH_TOOLS = {
     "file_write",
     "read_file",
     "source_read",
+    "pdf_read",
+    "browser_read",
     "todo_write",
     "web_fetch",
     "web_search",

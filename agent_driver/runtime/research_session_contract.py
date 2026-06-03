@@ -19,7 +19,6 @@ from agent_driver.runtime.research_evidence import (
     RESEARCH_DEPTH_SOURCE_VERIFIED,
     SOURCE_VERIFIED_DOMAINS,
     SOURCE_VERIFIED_FETCHES,
-    WEB_FETCH_TOOL,
     ResearchEvidenceState,
     ResearchSourceLedger,
     research_evidence_from_tool_results,
@@ -46,6 +45,7 @@ DEEP_RESEARCH_PHASE_VERIFY = "verify"
 DEEP_RESEARCH_PHASE_WRITE = "write"
 DEEP_RESEARCH_PHASE_REVIEW = "review"
 DEEP_RESEARCH_PHASE_FINAL = "final"
+_READ_SOURCE_TOOLS = ("web_fetch", "source_read", "pdf_read", "browser_read")
 
 _DEEP_RESEARCH_PHASE_TOOLS: dict[str, tuple[str, ...]] = {
     DEEP_RESEARCH_PHASE_PLAN: ("todo_write", "skill_tool", "skill_view"),
@@ -54,7 +54,7 @@ _DEEP_RESEARCH_PHASE_TOOLS: dict[str, tuple[str, ...]] = {
         "skill_tool",
         "skill_view",
         "web_search",
-        "web_fetch",
+        *_READ_SOURCE_TOOLS,
         "glob_search",
         "grep_search",
         "read_file",
@@ -62,7 +62,7 @@ _DEEP_RESEARCH_PHASE_TOOLS: dict[str, tuple[str, ...]] = {
     ),
     DEEP_RESEARCH_PHASE_VERIFY: (
         "agent_tool",
-        "web_fetch",
+        *_READ_SOURCE_TOOLS,
         "web_search",
         "read_file",
         "todo_write",
@@ -84,7 +84,7 @@ _DEEP_RESEARCH_PHASE_TOOLS: dict[str, tuple[str, ...]] = {
         "read_file",
         "file_patch",
         "file_edit",
-        "web_fetch",
+        *_READ_SOURCE_TOOLS,
         "todo_write",
     ),
     DEEP_RESEARCH_PHASE_FINAL: (),
@@ -310,7 +310,9 @@ def build_research_session_contract_from_context(
         tool_results=get_tool_loop_state(context).tool_results(),
         planning_state=get_planning_runtime_state(context).planning_state(),
         assistant_text=assistant_text,
-        web_fetch_available=_tool_available(context, WEB_FETCH_TOOL),
+        web_fetch_available=any(
+            _tool_available(context, tool_name) for tool_name in _READ_SOURCE_TOOLS
+        ),
         enforce_final_source_links=enforce_final_source_links,
         enforce_todos=enforce_todos,
         allow_final_deliverable_todos=allow_final_deliverable_todos,
@@ -521,7 +523,8 @@ def _deep_research_controller_state(
         child_synthesis_pending=contract.child_synthesis_pending,
         report_required=not contract.report_artifact_exists,
         source_ledger_required=(
-            contract.report_artifact_exists and not contract.source_ledger_artifact_exists
+            contract.report_artifact_exists
+            and not contract.source_ledger_artifact_exists
         ),
         final_handoff_ready=final_handoff_ready,
         next_allowed_tools=allowed_tools,

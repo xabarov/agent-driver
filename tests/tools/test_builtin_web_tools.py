@@ -100,6 +100,114 @@ async def test_source_read_wraps_web_fetch_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pdf_read_validates_pdf_and_returns_mock_text() -> None:
+    """pdf_read should validate magic bytes and expose page citation hints."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("pdf_read")
+    assert tool is not None
+
+    out = await tool.handler(
+        {
+            "url": "https://example.com/paper.pdf",
+            "mock_pdf_bytes": "%PDF-1.4\nbody",
+            "mock_extracted_text": "Page one text",
+            "page_start": 1,
+            "page_end": 2,
+        }
+    )
+
+    assert out["pdf_read"] is True
+    assert out["verified_text"] is True
+    assert out["page_citations"] == [
+        {"page": 1, "url": "https://example.com/paper.pdf"},
+        {"page": 2, "url": "https://example.com/paper.pdf"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pdf_read_rejects_invalid_pdf_magic() -> None:
+    """pdf_read should not present non-PDF bytes as verified evidence."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("pdf_read")
+    assert tool is not None
+
+    out = await tool.handler(
+        {
+            "url": "https://example.com/not-pdf.pdf",
+            "mock_pdf_bytes": "not a pdf",
+        }
+    )
+
+    assert out["pdf_read"] is True
+    assert out["verified_text"] is False
+    assert out["error"] == "invalid_pdf"
+
+
+@pytest.mark.asyncio
+async def test_pdf_read_reports_too_large_mock_pdf() -> None:
+    """pdf_read should report oversized PDFs before verification."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("pdf_read")
+    assert tool is not None
+
+    out = await tool.handler(
+        {
+            "url": "https://example.com/large.pdf",
+            "mock_pdf_bytes": "%PDF-1.4\n" + ("x" * 300),
+            "max_bytes": 256,
+        }
+    )
+
+    assert out["verified_text"] is False
+    assert out["error"] == "pdf_too_large"
+
+
+@pytest.mark.asyncio
+async def test_browser_read_is_read_only_fetch_fallback() -> None:
+    """browser_read should remain read-only and avoid browser actions."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("browser_read")
+    assert tool is not None
+
+    out = await tool.handler(
+        {
+            "url": "https://example.com/page",
+            "mock_status_code": 200,
+            "mock_content": "<h1>Hello</h1>",
+            "mock_content_type": "text/html",
+        }
+    )
+
+    assert out["browser_read"] is True
+    assert out["browser_action_allowed"] is False
+    assert out["rendered"] is False
+    assert "Hello" in out["content"]
+
+
+@pytest.mark.asyncio
+async def test_browser_read_blocks_private_host_even_with_override() -> None:
+    """browser_read fallback should not allow private-network SSRF overrides."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("browser_read")
+    assert tool is not None
+
+    with pytest.raises(ValueError, match="private/localhost hosts are blocked"):
+        await tool.handler(
+            {
+                "url": "http://127.0.0.1/private",
+                "allow_private_host": True,
+                "mock_status_code": 200,
+                "mock_content": "secret",
+            }
+        )
+
+
+@pytest.mark.asyncio
 async def test_web_fetch_rejects_binary_content_type(monkeypatch) -> None:
     """web_fetch should reject non-text response types."""
     response = _DummyResponse(

@@ -55,6 +55,8 @@ EXPECTED_BUILTIN_TOOL_NAMES = {
     "ask_user_question",
     "task_output",
     "source_read",
+    "pdf_read",
+    "browser_read",
     "web_fetch",
 }
 

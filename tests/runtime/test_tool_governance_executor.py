@@ -74,6 +74,52 @@ async def test_governed_executor_completes_tool_and_truncates() -> None:
 
 
 @pytest.mark.asyncio
+async def test_governed_executor_normalizes_read_source_url_aliases() -> None:
+    """Hard read tools should accept common URL aliases before schema handling."""
+    registry = ToolRegistry()
+
+    async def _source(args):
+        return {"summary": "ok", "url": args["url"]}
+
+    registry.register(
+        ToolManifest(
+            name="source_read",
+            description="Read source",
+            args_schema={
+                "type": "object",
+                "properties": {"url": {"type": "string"}},
+                "required": ["url"],
+            },
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.READ_ONLY,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _source,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="hello",
+        run_id="run_source_alias",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[ToolCall(tool_name="source_read", args={"href": "https://e.test"})]
+        )
+    )
+    result = await executor.execute(run_input, response)
+
+    assert result.envelopes[0].structured_output == {
+        "summary": "ok",
+        "url": "https://e.test",
+    }
+    assert result.envelopes[0].call.args["url"] == "https://e.test"
+
+
+@pytest.mark.asyncio
 async def test_governed_executor_unknown_tool_returns_fuzzy_match_suggestion() -> None:
     """Phase 13 H29.3 — when the model calls a tool that's close to a
     registered name (typo), the executor's block envelope should carry
@@ -282,9 +328,7 @@ async def test_governed_executor_normalizes_web_search_tool_alias() -> None:
     provider = FakeProvider(response_text="ok")
     response = await provider.complete(
         llm_request_with_planned_calls(
-            planned=[
-                ToolCall(tool_name="web_search_tool", args={"query": "fork join"})
-            ]
+            planned=[ToolCall(tool_name="web_search_tool", args={"query": "fork join"})]
         )
     )
 
@@ -447,7 +491,9 @@ async def test_governed_executor_normalizes_agent_tool_live_args() -> None:
     third_args = result.envelopes[2].call.args
     assert first_args["task"] == "Find fork-join queue sources."
     assert first_args["description"] == "Find fork-join queue sources."
-    assert second_args["description"] == "Find network applications of fork-join queues."
+    assert (
+        second_args["description"] == "Find network applications of fork-join queues."
+    )
     assert third_args["task"] == "Find queueing-theory survey sources."
     assert third_args["description"] == "Find queueing-theory survey sources."
     assert result.envelopes[0].call.metadata["tool_args_normalized"] is True

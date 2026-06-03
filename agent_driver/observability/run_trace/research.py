@@ -18,7 +18,8 @@ from agent_driver.runtime.research_evidence import (
     classify_research_depth,
 )
 
-RESEARCH_TOOLS = frozenset({"web_search", "web_fetch"})
+READ_SOURCE_TOOLS = frozenset({"web_fetch", "source_read", "pdf_read", "browser_read"})
+RESEARCH_TOOLS = frozenset({"web_search", *READ_SOURCE_TOOLS})
 FETCH_REQUIRED_MARKERS = (
     "открой",
     "открыть",
@@ -89,7 +90,11 @@ def research_summary(
         requires_research=requires_research,
     )
     search_count = tool_names.count("web_search")
-    all_fetch_payloads = list(tool_payloads(events, "web_fetch"))
+    all_fetch_payloads = [
+        payload
+        for tool_name in READ_SOURCE_TOOLS
+        for payload in tool_payloads(events, tool_name)
+    ]
     fetch_payloads = [
         payload for payload in all_fetch_payloads if tool_payload_succeeded(payload)
     ]

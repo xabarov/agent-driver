@@ -19,7 +19,7 @@ _BUILTIN_PACKS: dict[str, tuple[str, ...]] = {
     "filesystem_write": ("file_write", "file_edit", "file_patch", "notebook_edit"),
     "artifacts": ("artifact_list", "artifact_read", "artifact_preview"),
     "web": ("web_fetch", "web_search"),
-    "source_tools": ("source_read",),
+    "source_tools": ("source_read", "pdf_read", "browser_read"),
     "shell": ("bash", "powershell_tool"),
     "python_exec": ("python",),
     "code_intelligence": ("lsp_tool",),

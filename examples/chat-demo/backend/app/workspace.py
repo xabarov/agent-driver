@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+import re
 from typing import NamedTuple
 
 from app.config import Settings
@@ -35,9 +36,14 @@ def resolved_workspace_root(settings: Settings) -> Path:
 
 def resolve_session_workspace(settings: Settings, session_id: str) -> Path:
     """Ensure and return per-session sandbox directory."""
-    session_dir = resolved_workspace_root(settings) / session_id
+    workspace_root = resolved_workspace_root(settings)
+    session_dir = (workspace_root / session_id).resolve()
+    try:
+        session_dir.relative_to(workspace_root)
+    except ValueError as exc:
+        raise ValueError("session_id resolves outside workspace root") from exc
     session_dir.mkdir(parents=True, exist_ok=True)
-    return session_dir.resolve()
+    return session_dir
 
 
 def _count_workspace_files(path: Path) -> int:
@@ -210,6 +216,47 @@ def read_workspace_artifact(
     return artifact, target.read_bytes()
 
 
+def render_markdown_artifact_pdf(
+    markdown: bytes, *, title: str = "Research Report"
+) -> bytes:
+    """Render a small text-only PDF for Markdown report downloads.
+
+    This intentionally avoids shelling out to a browser or depending on a local
+    PDF toolchain. It is not a typography engine; it provides a durable fallback
+    export when raw Markdown is already available.
+    """
+    text = markdown.decode("utf-8", errors="replace")
+    lines = _markdown_to_pdf_lines(text, title=title)
+    pages = [lines[index : index + 42] for index in range(0, len(lines), 42)] or [[]]
+    objects: list[bytes] = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids ["
+        + b" ".join(
+            f"{3 + index * 2} 0 R".encode("ascii") for index in range(len(pages))
+        )
+        + f"] /Count {len(pages)} >>".encode("ascii"),
+    ]
+    for index, page_lines in enumerate(pages):
+        page_object_id = 3 + index * 2
+        content_object_id = page_object_id + 1
+        stream = _pdf_text_stream(page_lines)
+        objects.append(
+            (
+                f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                f"/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 "
+                f"/BaseFont /Helvetica >> >> >> /Contents {content_object_id} 0 R >>"
+            ).encode("ascii")
+        )
+        objects.append(
+            b"<< /Length "
+            + str(len(stream)).encode("ascii")
+            + b" >>\nstream\n"
+            + stream
+            + b"\nendstream"
+        )
+    return _pdf_document(objects)
+
+
 def _is_artifact_relative_path(path: str) -> bool:
     return any(path.startswith(f"{dirname}/") for dirname in _ARTIFACT_DIRS)
 
@@ -222,6 +269,70 @@ def _artifact_kind(path: str) -> str:
     if path.startswith("tool-results/"):
         return "tool_result"
     return "file"
+
+
+def _markdown_to_pdf_lines(text: str, *, title: str) -> list[str]:
+    rows = [title, ""]
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            rows.append("")
+            continue
+        line = re.sub(r"^#{1,6}\s*", "", line)
+        line = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", line)
+        line = re.sub(r"[*_`]+", "", line)
+        rows.extend(_wrap_pdf_line(line, width=92))
+    return rows
+
+
+def _wrap_pdf_line(line: str, *, width: int) -> list[str]:
+    words = line.split()
+    if not words:
+        return [""]
+    rows: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        if len(current) + 1 + len(word) > width:
+            rows.append(current)
+            current = word
+        else:
+            current = f"{current} {word}"
+    rows.append(current)
+    return rows
+
+
+def _pdf_text_stream(lines: list[str]) -> bytes:
+    commands = ["BT", "/F1 10 Tf", "50 750 Td", "14 TL"]
+    for index, line in enumerate(lines):
+        if index:
+            commands.append("T*")
+        commands.append(f"({_pdf_escape(line)}) Tj")
+    commands.append("ET")
+    return "\n".join(commands).encode("latin-1", errors="replace")
+
+
+def _pdf_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _pdf_document(objects: list[bytes]) -> bytes:
+    chunks = [b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"]
+    offsets = [0]
+    for index, payload in enumerate(objects, start=1):
+        offsets.append(sum(len(chunk) for chunk in chunks))
+        chunks.append(f"{index} 0 obj\n".encode("ascii") + payload + b"\nendobj\n")
+    xref_offset = sum(len(chunk) for chunk in chunks)
+    chunks.append(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    chunks.append(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        chunks.append(f"{offset:010d} 00000 n \n".encode("ascii"))
+    chunks.append(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF\n"
+        ).encode("ascii")
+    )
+    return b"".join(chunks)
 
 
 def find_session_id_for_run(store: SessionStore, run_id: str) -> str | None:
