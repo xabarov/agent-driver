@@ -16,6 +16,8 @@ from agent_driver.runtime.metadata_state import (
     get_tool_loop_state,
 )
 from agent_driver.runtime.research_evidence import (
+    DEEP_PARALLEL_DOMAINS,
+    DEEP_PARALLEL_FETCHES,
     RESEARCH_DEPTH_DEEP_PARALLEL,
     RESEARCH_DEPTH_LIGHT,
     RESEARCH_DEPTH_NONE,
@@ -42,6 +44,7 @@ REPAIR_INSUFFICIENT_SOURCE_DIVERSITY = "insufficient_source_diversity"
 REPAIR_FINAL_MISSING_SOURCE_LINKS = "final_missing_source_links"
 REPAIR_UNFINISHED_TODOS = "unfinished_todos"
 REPAIR_CHILD_SYNTHESIS_PENDING = "child_synthesis_pending"
+REPAIR_PARENT_REVIEW_PENDING = "parent_review_pending"
 
 DEEP_RESEARCH_PHASE_PLAN = "plan"
 DEEP_RESEARCH_PHASE_DISCOVER = "discover"
@@ -154,12 +157,15 @@ class ResearchSessionContract:
     source_ledger_artifact_exists: bool = False
     plan_created: bool = False
     child_synthesis_pending: bool = False
+    parent_review_pending: bool = False
 
     @property
     def final_readiness(self) -> ResearchFinalReadiness:
         reasons: list[str] = []
         if self.child_synthesis_pending:
             reasons.append(REPAIR_CHILD_SYNTHESIS_PENDING)
+        if self.parent_review_pending:
+            reasons.append(REPAIR_PARENT_REVIEW_PENDING)
         if self.enforce_todos and self.unfinished_todos:
             reasons.append(REPAIR_UNFINISHED_TODOS)
         if self.requires_research:
@@ -189,9 +195,10 @@ class ResearchSessionContract:
         if self.fetch_fallback_required:
             return []
         reasons: list[str] = []
-        if self.evidence.successful_fetches < SOURCE_VERIFIED_FETCHES:
+        required_fetches, required_domains = _evidence_floor(self.research_depth)
+        if self.evidence.successful_fetches < required_fetches:
             reasons.append(REPAIR_MISSING_FETCHED_SOURCES)
-        elif len(self.evidence.unique_domains) < SOURCE_VERIFIED_DOMAINS:
+        elif len(self.evidence.unique_domains) < required_domains:
             reasons.append(REPAIR_INSUFFICIENT_SOURCE_DIVERSITY)
         elif self.enforce_final_source_links and not self.final_has_source_links:
             reasons.append(REPAIR_FINAL_MISSING_SOURCE_LINKS)
@@ -245,7 +252,9 @@ def build_research_session_contract(
     )
     research_depth = _research_depth_from_task_contract(task_contract)
     fetch_required = _fetch_required_from_task_contract(task_contract)
-    evidence = research_evidence_from_tool_results(tool_results)
+    # Parent-only evidence (before child roll-up) — used to require the parent to
+    # do at least one verify-fetch of its own once children have joined.
+    parent_evidence = research_evidence_from_tool_results(tool_results)
     source_ledger = research_source_ledger_from_tool_results(
         tool_results,
         assistant_text=assistant_text,
@@ -255,7 +264,15 @@ def build_research_session_contract(
     # contract reports "missing research evidence" even though its children read
     # real pages. Children only ever add evidence on top of the parent's own.
     source_ledger, evidence = rollup_child_source_ledgers(
-        source_ledger, evidence, child_source_ledgers
+        source_ledger, parent_evidence, child_source_ledgers
+    )
+    parent_review_pending = _parent_review_pending(
+        requires_research=requires_research,
+        research_depth=research_depth,
+        web_fetch_available=web_fetch_available,
+        parent_evidence=parent_evidence,
+        tool_results=tool_results,
+        child_source_ledgers=child_source_ledgers,
     )
     plan_created = _plan_created(planning_state)
     fetch_fallback_required = (
@@ -300,6 +317,7 @@ def build_research_session_contract(
         source_ledger_artifact_exists=source_ledger_artifact_exists,
         plan_created=plan_created,
         child_synthesis_pending=child_synthesis_pending,
+        parent_review_pending=parent_review_pending,
     )
 
 
@@ -366,6 +384,248 @@ def _fetch_required_from_task_contract(task_contract: dict[str, Any] | None) -> 
     return (
         isinstance(task_contract, dict) and task_contract.get("fetch_required") is True
     )
+
+
+def _children_joined(child_source_ledgers: object) -> bool:
+    return isinstance(child_source_ledgers, list) and any(
+        isinstance(ledger, dict) for ledger in child_source_ledgers
+    )
+
+
+def _result_targets_report(call: dict[str, Any]) -> bool:
+    args = call.get("args")
+    if not isinstance(args, dict):
+        return False
+    path = str(args.get("path") or args.get("file_path") or "").strip()
+    return path == "research/report.md" or path.endswith("/research/report.md")
+
+
+# Artifacts whose read counts as the parent's "inspect" step. The report is the
+# headline, but reading the source ledger or claims matrix is an equally
+# legitimate review action — and crucially the model often reads the ledger
+# instead of the report. Scoping the read gate to *any* research artifact (while
+# the patch gate still requires the report itself) avoids an infinite forced
+# read_file loop when the model keeps re-reading sources.jsonl.
+_RESEARCH_ARTIFACT_BASENAMES = (
+    "research/report.md",
+    "research/sources.jsonl",
+    "research/claims.jsonl",
+)
+
+
+def _result_targets_research_artifact(call: dict[str, Any]) -> bool:
+    args = call.get("args")
+    if not isinstance(args, dict):
+        return False
+    path = str(args.get("path") or args.get("file_path") or "").strip()
+    return any(
+        path == base or path.endswith("/" + base)
+        for base in _RESEARCH_ARTIFACT_BASENAMES
+    )
+
+
+# Hard cap on forced parent attempts per review step before it is treated as
+# satisfied. The forced tool_choice only pins the tool *name*, not its args, so
+# the model can burn turns calling read_file / artifact_preview with absolute or
+# wrong paths that the workspace sandbox denies. Without a cap those denials spin
+# the run until it hits the iteration/token budget and is cancelled.
+_PARENT_REVIEW_ATTEMPT_CAP = 3
+
+
+def _parent_tool_attempt_count(tool_results: object, names: frozenset[str]) -> int:
+    """Count parent tool attempts for ``names`` (any path, any status)."""
+    if not isinstance(tool_results, list):
+        return 0
+    count = 0
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if isinstance(call, dict) and call.get("tool_name") in names:
+            count += 1
+    return count
+
+
+_PARENT_READ_TOOLS = frozenset({"read_file", "artifact_read"})
+_PARENT_PREVIEW_TOOLS = frozenset({"artifact_preview"})
+_PARENT_PATCH_TOOLS = frozenset({"file_patch", "file_edit"})
+
+
+def parent_review_actions_seen(tool_results: object) -> dict[str, bool]:
+    """Return which parent-owned review actions have succeeded this run.
+
+    The Deep Research parent must do its own verify+review pass on the report
+    after child notes are folded in — a child-only run plus the auto-written
+    draft stub is not a substitute for the parent reading, previewing, and
+    patching its own report. ``read_file``/``file_patch`` are scoped to the
+    report path so unrelated file reads/edits do not satisfy the gate.
+    """
+    seen = {"read_file": False, "artifact_preview": False, "file_patch": False}
+    if not isinstance(tool_results, list):
+        return seen
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        if not deep_research_tool_result_succeeded(item):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        tool_name = call.get("tool_name")
+        if tool_name in {"read_file", "artifact_read"} and (
+            _result_targets_research_artifact(call)
+        ):
+            seen["read_file"] = True
+        elif tool_name == "artifact_preview":
+            seen["artifact_preview"] = True
+        elif tool_name in {"file_patch", "file_edit"} and _result_targets_report(call):
+            seen["file_patch"] = True
+    return seen
+
+
+def _parent_review_pending(
+    *,
+    requires_research: bool,
+    research_depth: str,
+    web_fetch_available: bool,
+    parent_evidence: ResearchEvidenceState,
+    tool_results: object,
+    child_source_ledgers: object,
+) -> bool:
+    """True when a delegating hard-profile parent still owes a verify+review pass.
+
+    Only applies to deep-parallel (hard) runs where children have joined: once a
+    child fetches and the draft stub is auto-written, the run would otherwise
+    finalize without the parent ever reading, previewing, patching its report, or
+    opening a single source itself. The gate clears once the parent has done all
+    three review actions and at least one verify-fetch of its own.
+    """
+    if not requires_research:
+        return False
+    if research_depth != RESEARCH_DEPTH_DEEP_PARALLEL:
+        return False
+    if not _children_joined(child_source_ledgers):
+        return False
+    actions = parent_review_actions_seen(tool_results)
+    review_done = (
+        actions["read_file"] and actions["artifact_preview"] and actions["file_patch"]
+    )
+    # Count a fetch *attempt* (not only a success) as the verify step: a blocked
+    # or paywalled fetch still shows the parent tried to verify a source, and
+    # gating on success would deadlock the run on inaccessible sources.
+    verify_done = (not web_fetch_available) or parent_evidence.fetch_calls >= 1
+    return not (review_done and verify_done)
+
+
+def deep_research_parent_review_pending(context: RunContext) -> bool:
+    """Context predicate: does the delegating parent still owe a verify+review pass?
+
+    Used by the request builder so it does not strip the tool surface / force
+    ``tool_choice="none"`` the moment the auto-written draft creates both
+    artifacts — otherwise the parent can never read, preview, patch, or verify
+    its own report.
+    """
+    task_contract = _task_contract_from_context(context)
+    requires_research = (
+        isinstance(task_contract, dict)
+        and task_contract.get("requires_research") is True
+    )
+    # Cheap guard before touching loop state so minimal/non-research contexts
+    # (and unit-test stubs) short-circuit without requiring full RunContext.
+    if not requires_research:
+        return False
+    tool_results = get_tool_loop_state(context).tool_results()
+    return _parent_review_pending(
+        requires_research=requires_research,
+        research_depth=_research_depth_from_task_contract(task_contract),
+        web_fetch_available=any(
+            _tool_available(context, tool_name) for tool_name in _READ_SOURCE_TOOLS
+        ),
+        parent_evidence=research_evidence_from_tool_results(tool_results),
+        tool_results=tool_results,
+        child_source_ledgers=child_source_ledgers_from_context(context),
+    )
+
+
+def deep_research_parent_review_next_tool(context: RunContext) -> str | None:
+    """Pick the next parent-owned verify/review tool to force (request builder).
+
+    Order: the review trio read_file -> artifact_preview -> file_patch first
+    (the model reliably executes forced file ops), then a single verify-fetch
+    last. Availability is checked at the *policy* level, not the effective set,
+    because this surface is exactly what re-opens those tools. Returns ``None``
+    when the parent has nothing left to do (or no tool is permitted).
+    """
+    tool_results = get_tool_loop_state(context).tool_results()
+    actions = parent_review_actions_seen(tool_results)
+    # Loop-breaker per step: a forced tool_choice can be answered with a denied
+    # call (wrong/absolute path), which never flips the corresponding "seen"
+    # flag. After _PARENT_REVIEW_ATTEMPT_CAP attempts at a step, treat it as done
+    # and advance instead of spinning the run to cancellation.
+    read_step_done = actions["read_file"] or (
+        _parent_tool_attempt_count(tool_results, _PARENT_READ_TOOLS)
+        >= _PARENT_REVIEW_ATTEMPT_CAP
+    )
+    if not read_step_done and _tool_policy_allows(context, "read_file"):
+        return "read_file"
+    preview_step_done = actions["artifact_preview"] or (
+        _parent_tool_attempt_count(tool_results, _PARENT_PREVIEW_TOOLS)
+        >= _PARENT_REVIEW_ATTEMPT_CAP
+    )
+    if not preview_step_done and _tool_policy_allows(context, "artifact_preview"):
+        return "artifact_preview"
+    patch_step_done = actions["file_patch"] or (
+        _parent_tool_attempt_count(tool_results, _PARENT_PATCH_TOOLS)
+        >= _PARENT_REVIEW_ATTEMPT_CAP
+    )
+    if not patch_step_done:
+        for tool_name in ("file_patch", "file_edit"):
+            if _tool_policy_allows(context, tool_name):
+                return tool_name
+    parent_evidence = research_evidence_from_tool_results(tool_results)
+    if parent_evidence.fetch_calls < 1 and _tool_policy_allows(context, "web_fetch"):
+        return "web_fetch"
+    return None
+
+
+# Bound the parent's own verify-fetches so a stuck/blocked domain cannot loop
+# the run forever while chasing the diversity floor. Beyond this many parent
+# fetch attempts the run finalizes with whatever coverage it has. The diversity
+# repair nudge steers each attempt at an untried domain, so a handful of tries
+# is enough to clear the floor when an accessible source exists.
+_PARENT_VERIFY_FETCH_ATTEMPT_CAP = 6
+
+
+def deep_research_post_artifact_next_tool(context: RunContext) -> str | None:
+    """Next tool to force once both research artifacts exist but the run is not
+    yet final-ready.
+
+    Generalises the parent verify+review pass to also cover the discovery floor:
+    after the review trio + first verify-fetch clear ``parent_review_pending``,
+    a deep-parallel parent may still be short of the rolled-up fetch/domain
+    minimums. In that case force another parent verify-fetch (bounded by
+    ``_PARENT_VERIFY_FETCH_ATTEMPT_CAP`` so a blocked domain cannot spin). Returns
+    ``None`` when the contract is final-ready or when no tool can close the gap
+    (remaining reasons are handled by the repair nudge text).
+    """
+    review_tool = deep_research_parent_review_next_tool(context)
+    if review_tool is not None:
+        return review_tool
+    contract = build_research_session_contract_from_context(context)
+    readiness = contract.final_readiness
+    if readiness.status == FINAL_READINESS_ALLOWED:
+        return None
+    if (
+        REPAIR_MISSING_FETCHED_SOURCES in readiness.reasons
+        or REPAIR_INSUFFICIENT_SOURCE_DIVERSITY in readiness.reasons
+    ):
+        tool_results = get_tool_loop_state(context).tool_results()
+        parent_evidence = research_evidence_from_tool_results(tool_results)
+        if parent_evidence.fetch_calls < _PARENT_VERIFY_FETCH_ATTEMPT_CAP and (
+            _tool_policy_allows(context, "web_fetch")
+        ):
+            return "web_fetch"
+    return None
 
 
 def _unfinished_todo_labels(
@@ -460,10 +720,23 @@ def _research_evidence_satisfied(
         return True
     if not web_fetch_available or fetch_fallback_required:
         return True
+    required_fetches, required_domains = _evidence_floor(research_depth)
     return evidence.source_verified(
-        required_fetches=SOURCE_VERIFIED_FETCHES,
-        required_domains=SOURCE_VERIFIED_DOMAINS,
+        required_fetches=required_fetches,
+        required_domains=required_domains,
     )
+
+
+def _evidence_floor(research_depth: str) -> tuple[int, int]:
+    """Return (required_fetches, required_domains) for a research depth.
+
+    Deep-parallel (hard) parents clear a higher discovery floor than a single
+    source-verified child, because the parent rolls up its children's reads plus
+    its own verify-fetches.
+    """
+    if research_depth == RESEARCH_DEPTH_DEEP_PARALLEL:
+        return DEEP_PARALLEL_FETCHES, DEEP_PARALLEL_DOMAINS
+    return SOURCE_VERIFIED_FETCHES, SOURCE_VERIFIED_DOMAINS
 
 
 _SOURCE_VERIFIED_DEPTHS = {RESEARCH_DEPTH_SOURCE_VERIFIED, RESEARCH_DEPTH_DEEP_PARALLEL}
@@ -512,6 +785,7 @@ def _deep_research_contract_payload(
         "source_ledger_artifact_exists": contract.source_ledger_artifact_exists,
         "plan_created": contract.plan_created,
         "child_synthesis_pending": contract.child_synthesis_pending,
+        "parent_review_pending": contract.parent_review_pending,
         "final_readiness_authority": "ResearchSessionContract",
         "controller_state": controller_state.model_dump(),
     }
@@ -556,7 +830,8 @@ def _deep_research_phase(contract: ResearchSessionContract) -> str:
     if (
         contract.web_fetch_available
         and not contract.fetch_fallback_required
-        and contract.evidence.successful_fetches < SOURCE_VERIFIED_FETCHES
+        and contract.evidence.successful_fetches
+        < _evidence_floor(contract.research_depth)[0]
     ):
         return DEEP_RESEARCH_PHASE_VERIFY
     if not contract.report_artifact_exists:
@@ -576,7 +851,11 @@ def _plan_created(planning_state: object) -> bool:
 
 
 def _task_contract_from_context(context: RunContext) -> dict[str, Any] | None:
-    metadata = context.run_input.tool_policy.metadata
+    run_input = getattr(context, "run_input", None)
+    tool_policy = getattr(run_input, "tool_policy", None)
+    metadata = getattr(tool_policy, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
     task_contract = metadata.get("task_contract")
     return task_contract if isinstance(task_contract, dict) else None
 
@@ -643,7 +922,21 @@ def _tool_available(context: RunContext, tool_name: str) -> bool:
     effective_tool_names = get_tool_loop_state(context).effective_tool_names()
     if effective_tool_names is not None:
         return tool_name in effective_tool_names
-    policy = context.run_input.tool_policy
+    run_input = getattr(context, "run_input", None)
+    policy = getattr(run_input, "tool_policy", None)
+    if policy is None:
+        return False
+    denied = getattr(policy, "denied_tools", None) or []
+    allowed = getattr(policy, "allowed_tools", None)
+    return tool_name not in denied and (allowed is None or tool_name in allowed)
+
+
+def _tool_policy_allows(context: RunContext, tool_name: str) -> bool:
+    """Static-policy availability (ignores the per-request effective set)."""
+    run_input = getattr(context, "run_input", None)
+    policy = getattr(run_input, "tool_policy", None)
+    if policy is None:
+        return False
     denied = getattr(policy, "denied_tools", None) or []
     allowed = getattr(policy, "allowed_tools", None)
     return tool_name not in denied and (allowed is None or tool_name in allowed)
@@ -664,6 +957,7 @@ __all__ = [
     "REPAIR_INSUFFICIENT_SOURCE_DIVERSITY",
     "REPAIR_MISSING_FETCHED_SOURCES",
     "REPAIR_MISSING_RESEARCH_EVIDENCE",
+    "REPAIR_PARENT_REVIEW_PENDING",
     "REPAIR_UNFINISHED_TODOS",
     "DeepResearchControllerState",
     "ResearchFinalReadiness",
@@ -671,6 +965,10 @@ __all__ = [
     "build_research_session_contract",
     "build_research_session_contract_from_context",
     "child_source_ledgers_from_context",
+    "deep_research_parent_review_next_tool",
+    "deep_research_parent_review_pending",
+    "deep_research_post_artifact_next_tool",
     "has_source_links",
+    "parent_review_actions_seen",
     "unfinished_todo_labels",
 ]

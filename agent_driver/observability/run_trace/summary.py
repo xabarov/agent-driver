@@ -342,7 +342,7 @@ def summarize_run_trace(
         "research": {
             "required": requires_research,
             "tools_used": [name for name in tool_names if name in _RESEARCH_TOOLS],
-            **research,
+            **_rollup_research_with_children(research, _child_evidence_summary(events)),
         },
         "python": python,
         "planning": planning,
@@ -1283,8 +1283,49 @@ def _tool_targets_research_artifact(
     )
 
 
-def _child_evidence_summary(events: list[dict[str, object]]) -> dict[str, int]:
-    totals = {
+def _rollup_research_with_children(
+    research: dict[str, Any], child_evidence: dict[str, Any]
+) -> dict[str, Any]:
+    """Return the research block with child evidence folded into run totals.
+
+    Deep Research delegates discovery to children, so the run-level research
+    counters must credit the children's fetches/domains — otherwise a
+    delegating parent looks like it did no research even though its children
+    read real pages. Parent-only values are preserved under parent_* keys so
+    the split stays inspectable.
+    """
+    rolled = dict(research)
+    parent_fetch = _as_int(research.get("fetch_count"))
+    parent_attempts = _as_int(research.get("fetch_attempt_count"))
+    raw_parent_domains = research.get("unique_domains")
+    parent_domains = (
+        list(raw_parent_domains) if isinstance(raw_parent_domains, list) else []
+    )
+    child_fetch = _as_int(child_evidence.get("fetch_count"))
+    raw_child_domains = child_evidence.get("verified_domains")
+    child_domains = (
+        list(raw_child_domains) if isinstance(raw_child_domains, list) else []
+    )
+    merged_domains = list(parent_domains)
+    for domain in child_domains:
+        if domain not in merged_domains:
+            merged_domains.append(domain)
+    # Roll up *fetches* and *verified domains* only. search_count is the count
+    # of web_search calls and gates the research search budget; child evidence
+    # exposes only candidate URLs (not calls), so folding it into search_count
+    # would inflate the count and trip the "search budget exhausted before
+    # source diversity" stop mid-run. Keep search_count parent-only.
+    rolled["parent_fetch_count"] = parent_fetch
+    rolled["parent_unique_domains"] = parent_domains
+    rolled["child_fetch_count"] = child_fetch
+    rolled["fetch_count"] = parent_fetch + child_fetch
+    rolled["fetch_attempt_count"] = parent_attempts + child_fetch
+    rolled["unique_domains"] = merged_domains
+    return rolled
+
+
+def _child_evidence_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    totals: dict[str, Any] = {
         "search_count": 0,
         "fetch_count": 0,
         "verified_read_count": 0,
@@ -1292,6 +1333,7 @@ def _child_evidence_summary(events: list[dict[str, object]]) -> dict[str, int]:
         "blocked_read_count": 0,
         "failed_read_count": 0,
     }
+    domains: list[str] = []
     for event in events:
         if event.get("event") == "research_progress":
             data = _event_data(event)
@@ -1308,6 +1350,12 @@ def _child_evidence_summary(events: list[dict[str, object]]) -> dict[str, int]:
             value = evidence.get(key)
             if isinstance(value, int) and not isinstance(value, bool):
                 totals[key] += max(0, value)
+        verified_domains = evidence.get("verified_domains")
+        if isinstance(verified_domains, list):
+            for domain in verified_domains:
+                if isinstance(domain, str) and domain and domain not in domains:
+                    domains.append(domain)
+    totals["verified_domains"] = domains
     return totals
 
 
@@ -1394,15 +1442,21 @@ def _deep_research_phase_before_tool(
     fetch_attempts: int,
     report_seen: bool,
 ) -> str:
+    # Once the report artifact exists the run is in its review pass regardless of
+    # who performed discovery. In the delegated (fork-join) pattern the children
+    # — not the parent — call web_search/web_fetch, so without this the parent's
+    # own verify+review tools (read_file/artifact_preview/file_patch + a
+    # verify-fetch) would be judged against the stale "discover" phase and
+    # flagged as violations.
+    if report_seen:
+        return "review"
     if not plan_created and not search_seen:
         return "plan"
     if not search_seen:
         return "discover"
     if fetch_attempts < _DEEP_RESEARCH_PHASE_FETCH_ATTEMPTS:
         return "verify"
-    if not report_seen:
-        return "write"
-    return "review"
+    return "write"
 
 
 def _phase_neutral_tools() -> frozenset[str]:
@@ -1945,13 +1999,19 @@ def _report_read_edit_flow_summary(events: list[dict[str, object]]) -> dict[str,
     report_reads = 0
     repeated_unchanged_reads = 0
     report_generation = 0
-    read_generations: set[int] = set()
+    # Track which read *tools* have inspected each report generation. A single
+    # multi-modal review pass (read_file + artifact_preview of the same draft
+    # before patching) is legitimate, so only re-running the *same* read tool on
+    # an unchanged generation counts as a redundant repeat.
+    reads_by_generation: dict[int, set[str]] = {}
     for action in _report_flow_actions(events):
         if action["kind"] == "read":
             report_reads += 1
-            if report_generation in read_generations:
+            read_tool = str(action.get("tool_name") or "read")
+            seen_tools = reads_by_generation.setdefault(report_generation, set())
+            if read_tool in seen_tools:
                 repeated_unchanged_reads += 1
-            read_generations.add(report_generation)
+            seen_tools.add(read_tool)
             fresh_read = True
             continue
         tool_name = action.get("tool_name")

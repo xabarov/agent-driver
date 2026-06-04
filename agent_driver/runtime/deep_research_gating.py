@@ -98,15 +98,29 @@ def deep_research_planned_or_started_subagent_count(context: Any) -> int:
 
 def deep_research_tool_available(context: Any, tool_name: str) -> bool:
     """Return True when policy and effective runtime tools allow a tool."""
-    policy = context.run_input.tool_policy
-    denied = set(policy.denied_tools or [])
-    if tool_name in denied:
-        return False
-    allowed = policy.allowed_tools
-    if allowed is not None and tool_name not in set(allowed):
+    if not deep_research_tool_policy_allows(context, tool_name):
         return False
     effective = get_tool_loop_state(context).effective_tool_names()
     if effective is not None and tool_name not in set(effective):
+        return False
+    return True
+
+
+def deep_research_tool_policy_allows(context: Any, tool_name: str) -> bool:
+    """Return True when the static tool policy permits a tool.
+
+    Unlike ``deep_research_tool_available`` this ignores the *effective* tool
+    set, which is itself narrowed per-request. When building a fresh
+    ``request_allowed_tools`` surface (e.g. opening the parent review/verify
+    tools) we must consult the policy, not the previous turn's narrowed set —
+    otherwise the new surface is filtered down to whatever the prior phase
+    already allowed, defeating the widening.
+    """
+    policy = context.run_input.tool_policy
+    if tool_name in set(policy.denied_tools or []):
+        return False
+    allowed = policy.allowed_tools
+    if allowed is not None and tool_name not in set(allowed):
         return False
     return True
 

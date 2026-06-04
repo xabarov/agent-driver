@@ -25,12 +25,18 @@ from agent_driver.runtime.deep_research_gating import (
     deep_research_planned_or_started_subagent_count,
     deep_research_profile,
     deep_research_tool_available,
+    deep_research_tool_policy_allows,
     deep_research_tool_result_succeeded,
     is_research_report_path,
 )
 from agent_driver.runtime.research_artifacts import (
     deep_research_report_artifact_exists,
     deep_research_source_ledger_artifact_exists,
+)
+from agent_driver.runtime.research_session_contract import (
+    deep_research_parent_review_next_tool,
+    deep_research_parent_review_pending,
+    deep_research_post_artifact_next_tool,
 )
 from agent_driver.runtime.single_agent.llm_step.build import (
     LlmRequestBuildContext,
@@ -209,6 +215,28 @@ def _deep_research_request_allowed_tools(
     if active:
         _record_deep_research_active_profile(context)
     if deep_research_report_artifact_exists(context):
+        if deep_research_post_artifact_next_tool(context) is not None:
+            # The auto-written draft created the artifacts, but the delegating
+            # parent still owes tool-driven work: its own verify+review pass
+            # and/or topping up the rolled-up fetch/domain floor. Keep the
+            # review/verify tool surface open instead of collapsing it to
+            # "artifacts ready". Filter by *policy* (not the stale effective set
+            # narrowed by the prior phase) so the tools are actually re-opened.
+            return tuple(
+                tool_name
+                for tool_name in (
+                    "read_file",
+                    "artifact_preview",
+                    "artifact_read",
+                    "artifact_list",
+                    "file_patch",
+                    "file_edit",
+                    "web_fetch",
+                    "source_read",
+                    "todo_write",
+                )
+                if deep_research_tool_policy_allows(context, tool_name)
+            )
         if deep_research_source_ledger_artifact_exists(context):
             return tuple()
         return ("file_write",)
@@ -273,6 +301,20 @@ def _deep_research_strategy_tool_choice(
     profile = _deep_research_active_profile(context)
     if profile == "light":
         return None
+    if deep_research_report_artifact_exists(context):
+        next_tool = deep_research_post_artifact_next_tool(context)
+        if next_tool is not None:
+            reason = (
+                "deep_research_parent_review_pending"
+                if deep_research_parent_review_pending(context)
+                else "deep_research_discovery_floor_topup"
+            )
+            return _deep_research_record_strategy_choice(
+                context,
+                tool_name=next_tool,
+                reason=reason,
+                path="research/report.md" if next_tool != "web_fetch" else None,
+            )
     if deep_research_report_artifact_exists(
         context
     ) and deep_research_source_ledger_artifact_exists(context):

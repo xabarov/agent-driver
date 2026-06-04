@@ -52,6 +52,7 @@ not a public SDK contract.
 | `web_search_calls_total`, `web_search_zero_streak`, `web_fetch_calls_total` | research tool accounting | output/checkpoint | trace/debug | `ResearchRuntimeState` |
 | `web_fetch_verification_hint_sent`, `web_fetch_verification_hint_sent_for`, `web_fetch_duplicate_guard_sent` | research discipline nudges | checkpoint | diagnostics | `ResearchRuntimeState` |
 | `research_fetch_fallback_required`, `research_avoid_domains`, `research_source_diversity_avoid_domains` | research repair/source diversity | checkpoint | diagnostics | `ResearchRuntimeState` |
+| `deep_research_parent_review_required` | deep-research parent verify+review repair forcing | checkpoint | diagnostics | `ResearchRuntimeState` |
 | `assistant_stream_started`, `assistant_stream_content`, `assistant_stream_completed` | streaming LLM step/output recovery | checkpoint | yes for stream UI | `StreamingRuntimeState` |
 | `assistant_stream_tombstoned`, `assistant_stream_recovered`, `assistant_stream_recovery_reason` | stream recovery | output/checkpoint | diagnostics | `StreamingRuntimeState` |
 | `raw_assistant_content`, `last_llm_response`, `llm_call_started_monotonic` | LLM step/output builder | checkpoint/runtime | diagnostics | `StreamingRuntimeState` or `ProviderRuntimeState` |

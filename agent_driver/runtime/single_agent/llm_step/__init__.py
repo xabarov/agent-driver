@@ -84,6 +84,31 @@ class LlmStepHost(CompactionStageHost, Protocol):
 
 _runtime_attachment_messages = runtime_attachment_messages
 
+# Cap per-message content on LLM spans so a long prompt doesn't bloat the trace.
+_SPAN_MSG_MAX_CHARS = 4000
+
+
+def _content_for_span(message: Any) -> str:
+    """Stringify a ChatMessage's content for an OpenInference message attribute."""
+    content = getattr(message, "content", message)
+    text = content if isinstance(content, str) else str(content)
+    if len(text) > _SPAN_MSG_MAX_CHARS:
+        return text[:_SPAN_MSG_MAX_CHARS] + "…"
+    return text
+
+
+def _messages_for_span(messages: Any) -> list[dict[str, str]]:
+    """Build {role, content} dicts for llm.input_messages.* span attributes."""
+    out: list[dict[str, str]] = []
+    for msg in messages or []:
+        out.append(
+            {
+                "role": str(getattr(msg, "role", "")),
+                "content": _content_for_span(msg),
+            }
+        )
+    return out
+
 
 async def execute_llm_call_step(
     host: LlmStepHost, context: RunContext
@@ -130,7 +155,51 @@ async def execute_llm_call_step(
             request=request,
             token_pressure_state=token_state,
         )
-        context.llm_response = await _complete_request(host, context, request)
+        # OpenInference LLM span — Phoenix renders this as a colored LLM span with
+        # the model, prompt/completion token counts (→ cost), the input/output
+        # messages, and (on provider error) a red status. No-op when tracing off.
+        from agent_driver.observability.openinference import (  # noqa: PLC0415
+            oi_span,
+            record_status,
+            set_io,
+            set_llm,
+            SPAN_KIND_LLM,
+        )
+
+        _span_name = f"llm {request.model}" if getattr(request, "model", None) else "llm"
+        with oi_span(_span_name, kind=SPAN_KIND_LLM) as _llm_span:
+            _in_msgs = _messages_for_span(getattr(request, "messages", None))
+            set_llm(
+                _llm_span,
+                model=getattr(request, "model", None),
+                invocation_parameters={
+                    "temperature": getattr(request, "temperature", None),
+                    "max_tokens": getattr(request, "max_tokens", None),
+                    "tool_choice": getattr(request, "tool_choice", None),
+                },
+                input_messages=_in_msgs,
+            )
+            set_io(_llm_span, input=_in_msgs)
+            context.llm_response = await _complete_request(host, context, request)
+            _resp = context.llm_response
+            _usage = getattr(_resp, "usage", None)
+            _out_msg = getattr(_resp, "message", None)
+            _out_content = _content_for_span(_out_msg) if _out_msg is not None else None
+            set_llm(
+                _llm_span,
+                model=getattr(_resp, "model", None) or getattr(request, "model", None),
+                provider=getattr(_resp, "provider", None),
+                output_messages=(
+                    [{"role": str(getattr(_out_msg, "role", "assistant")), "content": _out_content}]
+                    if _out_msg is not None
+                    else None
+                ),
+                prompt_tokens=getattr(_usage, "input_tokens", None),
+                completion_tokens=getattr(_usage, "output_tokens", None),
+                total_tokens=getattr(_usage, "total_tokens", None),
+            )
+            set_io(_llm_span, output=_out_content)
+            record_status(_llm_span, ok=True)
     except httpx.HTTPStatusError as exc:
         reason = (
             TerminalReason.PROVIDER_PROTOCOL.value

@@ -355,7 +355,11 @@ def build_scenario(
         research_depth="deep_parallel_research",
         requires_subagent=True,
         min_research_fetch_count=6,
-        min_research_domain_count=3,
+        # Two distinct fetchable domains is the realistic floor for scholarly /
+        # paywalled topics (most academic publishers block automated fetch); the
+        # six-fetch volume floor carries the verification weight. See
+        # DEEP_PARALLEL_DOMAINS in research_evidence.py.
+        min_research_domain_count=2,
         max_research_search_count_without_min_domains=18,
         max_research_fetch_count_without_min_domains=18,
         required_artifact_path="research/report.md",

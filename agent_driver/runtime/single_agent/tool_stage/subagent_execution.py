@@ -277,8 +277,8 @@ def _bounded_dict_rows(value: object, *, max_rows: int) -> list[dict[str, object
     return [dict(item) for item in value[:max_rows] if isinstance(item, dict)]
 
 
-def _child_handoff_evidence_counts(handoff: dict[str, object]) -> dict[str, int]:
-    totals = {
+def _child_handoff_evidence_counts(handoff: dict[str, object]) -> dict[str, object]:
+    totals: dict[str, object] = {
         "search_count": 0,
         "fetch_count": 0,
         "verified_read_count": 0,
@@ -286,8 +286,10 @@ def _child_handoff_evidence_counts(handoff: dict[str, object]) -> dict[str, int]
         "blocked_read_count": 0,
         "failed_read_count": 0,
     }
+    verified_domains: list[str] = []
     children = handoff.get("children")
     if not isinstance(children, list):
+        totals["verified_domains"] = verified_domains
         return totals
     for child in children:
         if not isinstance(child, dict):
@@ -299,12 +301,19 @@ def _child_handoff_evidence_counts(handoff: dict[str, object]) -> dict[str, int]
         verified = _ledger_section_count(source_ledger, "verified_reads")
         blocked = _ledger_section_count(source_ledger, "blocked_reads")
         failed = _ledger_section_count(source_ledger, "failed_reads")
-        totals["search_count"] += candidates
-        totals["candidate_count"] += candidates
-        totals["verified_read_count"] += verified
-        totals["blocked_read_count"] += blocked
-        totals["failed_read_count"] += failed
-        totals["fetch_count"] += verified + blocked + failed
+        totals["search_count"] += candidates  # type: ignore[operator]
+        totals["candidate_count"] += candidates  # type: ignore[operator]
+        totals["verified_read_count"] += verified  # type: ignore[operator]
+        totals["blocked_read_count"] += blocked  # type: ignore[operator]
+        totals["failed_read_count"] += failed  # type: ignore[operator]
+        totals["fetch_count"] += verified + blocked + failed  # type: ignore[operator]
+        for row in source_ledger.get("verified_reads") or []:
+            if not isinstance(row, dict):
+                continue
+            domain = row.get("domain")
+            if isinstance(domain, str) and domain and domain not in verified_domains:
+                verified_domains.append(domain)
+    totals["verified_domains"] = verified_domains
     return totals
 
 

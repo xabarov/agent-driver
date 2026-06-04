@@ -42,13 +42,20 @@ from agent_driver.runtime.research_session_contract import (
     REPAIR_INSUFFICIENT_SOURCE_DIVERSITY,
     REPAIR_MISSING_FETCHED_SOURCES,
     REPAIR_MISSING_RESEARCH_EVIDENCE,
+    REPAIR_PARENT_REVIEW_PENDING,
     REPAIR_UNFINISHED_TODOS,
     build_research_session_contract_from_context,
+    child_source_ledgers_from_context,
+    deep_research_parent_review_pending,
+    deep_research_post_artifact_next_tool,
+    parent_review_actions_seen,
 )
 from agent_driver.runtime.research_evidence import (
     SOURCE_VERIFIED_DOMAINS,
     SOURCE_VERIFIED_FETCHES,
     research_evidence_from_tool_results,
+    research_source_ledger_from_tool_results,
+    rollup_child_source_ledgers,
 )
 from agent_driver.runtime.tool_gate import (
     ToolGate,
@@ -483,6 +490,17 @@ def _force_research_repair_tool_choice(
                     "path": "research/report.md",
                 }
                 return
+    if REPAIR_PARENT_REVIEW_PENDING in reasons:
+        tool_name = _deep_research_parent_review_next_tool(context)
+        if tool_name is not None:
+            get_tool_loop_state(context).set_tool_choice_override(
+                {"type": "tool", "name": tool_name}
+            )
+            context.metadata["deep_research_parent_review_required"] = {
+                "tool": tool_name,
+                "path": "research/report.md",
+            }
+            return
     if REPAIR_MISSING_RESEARCH_EVIDENCE in reasons:
         # Delegated search-spam: a child collected search candidates but never
         # opened a page. More searching will not help — force the parent to fetch
@@ -531,6 +549,33 @@ def _force_research_repair_tool_choice(
             get_tool_loop_state(context).set_tool_choice_override(
                 {"type": "tool", "name": "todo_write"}
             )
+
+
+def _deep_research_parent_review_next_tool(context: RunContext) -> str | None:
+    """Pick the next parent-owned verify/review tool to force.
+
+    Order: a verify-fetch first (gives the parent its own cited source + domain),
+    then the review trio read_file -> artifact_preview -> file_patch. Each forced
+    choice only seeds the next turn; the model is free to do the rest in one go.
+    """
+    tool_results = get_tool_loop_state(context).tool_results()
+    parent_evidence = research_evidence_from_tool_results(tool_results)
+    if parent_evidence.successful_fetches < 1 and _tool_available_for_repair(
+        context, "web_fetch"
+    ):
+        return "web_fetch"
+    actions = parent_review_actions_seen(tool_results)
+    if not actions["read_file"] and _tool_available_for_repair(context, "read_file"):
+        return "read_file"
+    if not actions["artifact_preview"] and _tool_available_for_repair(
+        context, "artifact_preview"
+    ):
+        return "artifact_preview"
+    if not actions["file_patch"]:
+        for tool_name in ("file_patch", "file_edit"):
+            if _tool_available_for_repair(context, tool_name):
+                return tool_name
+    return None
 
 
 def _deep_research_initial_subagent_recovery_required(context: RunContext) -> bool:
@@ -702,11 +747,19 @@ def _deep_research_initial_todo_only_without_child(context: RunContext) -> bool:
 
 
 def _deep_research_terminal_handoff_ready(context: RunContext) -> bool:
-    return (
+    if (
         deep_research_context_enabled(context)
         and deep_research_report_artifact_exists(context)
         and deep_research_source_ledger_artifact_exists(context)
-    )
+    ):
+        # The artifacts exist, but the run is only ready for terminal handoff once
+        # there is no remaining tool-driven repair work: the parent's verify+review
+        # pass (read_file / artifact_preview / file_patch + a verify-fetch) AND the
+        # rolled-up discovery floor (fetched sources / distinct domains). While any
+        # of those need a tool, the gate must let it through instead of clamping to
+        # a final handoff.
+        return deep_research_post_artifact_next_tool(context) is None
+    return False
 
 
 def _deep_research_artifact_repair_required(context: RunContext) -> bool:
@@ -1000,6 +1053,56 @@ def _research_evidence_ready_for_final_repair(context: RunContext) -> bool:
     return evidence.search_calls > 0 or evidence.fetch_calls > 0
 
 
+def _domain_of(url: str) -> str:
+    try:
+        return urlsplit(url).netloc.lower()
+    except ValueError:
+        return ""
+
+
+def _deep_research_diversity_targets(
+    context: RunContext,
+) -> tuple[list[str], list[str]]:
+    """Return (fresh_candidate_urls, blocked_domains) for a diversity top-up.
+
+    Builds the rolled-up source ledger (parent fetches + joined child reads) and
+    splits its candidate URLs into ones whose domain has *not* yet been fetched
+    or blocked (worth trying for a fresh domain) versus the domains that already
+    failed/blocked (worth warning the model away from re-fetching). Without this
+    the forced diversity-fetch keeps re-picking paywalled domains and never
+    clears the distinct-domain floor.
+    """
+    tool_results = get_tool_loop_state(context).tool_results()
+    merged_ledger, _ = rollup_child_source_ledgers(
+        research_source_ledger_from_tool_results(tool_results),
+        research_evidence_from_tool_results(tool_results),
+        child_source_ledgers_from_context(context),
+    )
+    verified_domains = {
+        _domain_of(str(row.get("url") or ""))
+        for row in merged_ledger.verified_reads
+    }
+    blocked_domains = {
+        _domain_of(str(row.get("url") or ""))
+        for row in (*merged_ledger.blocked_reads, *merged_ledger.failed_reads)
+    }
+    blocked_domains.discard("")
+    seen_targets: set[str] = set()
+    fresh_candidate_urls: list[str] = []
+    for row in merged_ledger.search_candidates:
+        url = str(row.get("url") or "").strip()
+        if not url:
+            continue
+        domain = _domain_of(url)
+        if not domain or domain in verified_domains or domain in blocked_domains:
+            continue
+        if domain in seen_targets:
+            continue
+        seen_targets.add(domain)
+        fresh_candidate_urls.append(url)
+    return fresh_candidate_urls[:4], sorted(blocked_domains)
+
+
 def _research_contract_repair_nudge(
     context: RunContext, reasons: tuple[str, ...]
 ) -> str:
@@ -1021,6 +1124,13 @@ def _research_contract_repair_nudge(
         fragments.append(
             "source-verified work needs fetched/read pages, not search results only"
         )
+    if REPAIR_PARENT_REVIEW_PENDING in reasons:
+        fragments.append(
+            "child research has been folded in, but the parent still owes its own "
+            "verify+review pass: open at least one source yourself with web_fetch, "
+            "then read_file research/report.md, artifact_preview it, and file_patch a "
+            "targeted correction (do not rewrite the whole report)"
+        )
     if _deep_research_child_searched_without_fetch(context):
         fetch_fragment = (
             "a child gathered search candidates but never opened a page; do not "
@@ -1036,11 +1146,25 @@ def _research_contract_repair_nudge(
             get_tool_loop_state(context).tool_results()
         )
         domains = ", ".join(evidence.unique_domains)
-        message = "the fetched evidence needs at least two distinct domains"
+        message = "the fetched evidence needs more distinct source domains"
         if domains:
+            message += f"; already verified domain(s): {domains}"
+        fresh_urls, blocked_domains = _deep_research_diversity_targets(context)
+        if blocked_domains:
             message += (
-                f"; already fetched domain(s): {domains}; search for and fetch "
-                "a concrete source outside those domains"
+                "; do NOT re-fetch these already-blocked/paywalled domains: "
+                + ", ".join(blocked_domains)
+            )
+        if fresh_urls:
+            message += (
+                "; fetch one of these untried candidate URLs on a NEW domain: "
+                + ", ".join(fresh_urls)
+            )
+        else:
+            message += (
+                "; run web_search for an open-access source (e.g. an arXiv/PDF "
+                "or university host) on a domain you have not fetched, then "
+                "web_fetch it"
             )
         fragments.append(message)
     if REPAIR_FINAL_MISSING_SOURCE_LINKS in reasons:

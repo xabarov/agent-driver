@@ -11,8 +11,10 @@ from agent_driver.runtime.research_session_contract import (
     REPAIR_FINAL_MISSING_SOURCE_LINKS,
     REPAIR_MISSING_FETCHED_SOURCES,
     REPAIR_MISSING_RESEARCH_EVIDENCE,
+    REPAIR_PARENT_REVIEW_PENDING,
     REPAIR_UNFINISHED_TODOS,
     build_research_session_contract,
+    parent_review_actions_seen,
 )
 
 
@@ -215,6 +217,18 @@ def test_research_contract_requires_fetched_source_verified_evidence() -> None:
     assert REPAIR_MISSING_FETCHED_SOURCES in contract.final_readiness.reasons
 
 
+# Six verified reads across three domains — enough to clear the deep-parallel
+# (hard) discovery floor of 6 fetches / 3 domains when rolled up into a parent.
+_CHILD_VERIFIED_READS_6_3 = [
+    {"url": "https://example.com/a", "domain": "example.com"},
+    {"url": "https://example.com/b", "domain": "example.com"},
+    {"url": "https://example.org/c", "domain": "example.org"},
+    {"url": "https://example.org/d", "domain": "example.org"},
+    {"url": "https://example.net/e", "domain": "example.net"},
+    {"url": "https://example.net/f", "domain": "example.net"},
+]
+
+
 def test_research_contract_rolls_up_child_verified_reads() -> None:
     # A delegating parent that fetched nothing itself still satisfies the
     # source-verified contract once its children's verified reads roll up.
@@ -229,23 +243,135 @@ def test_research_contract_rolls_up_child_verified_reads() -> None:
         child_source_ledgers=[
             {
                 "search_candidates": [{"url": "https://example.com/x"}],
-                "verified_reads": [
-                    {"url": "https://example.com/a", "domain": "example.com"},
-                    {"url": "https://example.org/b", "domain": "example.org"},
-                ],
+                "verified_reads": _CHILD_VERIFIED_READS_6_3,
             }
         ],
     )
 
-    assert contract.evidence.successful_fetches == 2
-    assert set(contract.evidence.unique_domains) == {"example.com", "example.org"}
-    assert len(contract.source_ledger.verified_reads) == 2
+    assert contract.evidence.successful_fetches == 6
+    assert set(contract.evidence.unique_domains) == {
+        "example.com",
+        "example.org",
+        "example.net",
+    }
+    assert len(contract.source_ledger.verified_reads) == 6
     assert all(
         row.get("origin") == "child"
         for row in contract.source_ledger.verified_reads
     )
     assert REPAIR_MISSING_RESEARCH_EVIDENCE not in contract.final_readiness.reasons
     assert REPAIR_MISSING_FETCHED_SOURCES not in contract.final_readiness.reasons
+
+
+def _path_result(tool_name: str, *, path: str) -> dict[str, object]:
+    return {
+        "call": {
+            "tool_name": tool_name,
+            "tool_call_id": f"call_{tool_name}",
+            "args": {"path": path},
+        },
+        "structured_output": {},
+    }
+
+
+def test_parent_review_read_step_satisfied_by_any_research_artifact() -> None:
+    # The forced read_file only pins the tool name, not the path, so the model
+    # often reads research/sources.jsonl instead of research/report.md. Reading
+    # any research artifact must satisfy the read-review step (the patch step
+    # still requires the report itself).
+    seen = parent_review_actions_seen(
+        [_path_result("read_file", path="research/sources.jsonl")]
+    )
+    assert seen["read_file"] is True
+    assert seen["file_patch"] is False
+
+    # A patch of a non-report artifact does NOT satisfy the patch step.
+    seen_patch = parent_review_actions_seen(
+        [_path_result("file_patch", path="research/sources.jsonl")]
+    )
+    assert seen_patch["file_patch"] is False
+    assert parent_review_actions_seen(
+        [_path_result("file_patch", path="research/report.md")]
+    )["file_patch"] is True
+
+
+def test_deep_research_parent_review_pending_after_child_join() -> None:
+    # Children fetched and rolled up, but the delegating parent has not done its
+    # own verify+review pass yet — the run must not finalize on the draft stub.
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        tool_results=[_tool_result("agent_tool"), _tool_result("web_search")],
+        planning_state={
+            "run_id": "run_dr",
+            "todos": [{"todo_id": "t1", "content": "Research", "status": "completed"}],
+        },
+        assistant_text="See https://example.com/a and https://example.org/c",
+        web_fetch_available=True,
+        report_artifact_exists=True,
+        source_ledger_artifact_exists=True,
+        child_source_ledgers=[{"verified_reads": _CHILD_VERIFIED_READS_6_3}],
+    )
+
+    assert contract.parent_review_pending is True
+    assert REPAIR_PARENT_REVIEW_PENDING in contract.final_readiness.reasons
+    assert contract.model_dump()["deep_research"]["phase"] == DEEP_RESEARCH_PHASE_REVIEW
+
+
+def test_deep_research_parent_review_cleared_after_verify_and_review() -> None:
+    # One parent verify-fetch + read_file/artifact_preview/file_patch of the
+    # report clears the gate.
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        tool_results=[
+            _tool_result("agent_tool"),
+            _tool_result("web_fetch", url="https://example.net/c"),
+            _path_result("read_file", path="research/report.md"),
+            _tool_result("artifact_preview"),
+            _path_result("file_patch", path="research/report.md"),
+        ],
+        assistant_text="See https://example.com/a and https://example.net/c",
+        web_fetch_available=True,
+        child_source_ledgers=[
+            {
+                "verified_reads": [
+                    {"url": "https://example.com/a", "domain": "example.com"},
+                    {"url": "https://example.org/b", "domain": "example.org"},
+                ]
+            }
+        ],
+    )
+
+    assert contract.parent_review_pending is False
+    assert REPAIR_PARENT_REVIEW_PENDING not in contract.final_readiness.reasons
+
+
+def test_parent_review_gate_scoped_to_deep_parallel() -> None:
+    # The medium (source_verified_report) profile is unaffected by the gate.
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "source_verified_report",
+        },
+        tool_results=[_tool_result("web_search")],
+        web_fetch_available=True,
+        child_source_ledgers=[
+            {
+                "verified_reads": [
+                    {"url": "https://example.com/a", "domain": "example.com"},
+                    {"url": "https://example.org/b", "domain": "example.org"},
+                ]
+            }
+        ],
+    )
+
+    assert contract.parent_review_pending is False
+    assert REPAIR_PARENT_REVIEW_PENDING not in contract.final_readiness.reasons
 
 
 def test_research_contract_child_rollup_dedupes_against_parent() -> None:
@@ -544,12 +670,8 @@ def test_deep_parallel_research_uses_readiness_contract_and_mode_payload() -> No
             "requires_research": True,
             "research_depth": "deep_parallel_research",
         },
-        tool_results=[
-            _tool_result("web_search"),
-            _tool_result("web_fetch", url="https://example.com/a"),
-            _tool_result("web_fetch", url="https://example.org/b"),
-        ],
-        assistant_text="[A](https://example.com/a), [B](https://example.org/b)",
+        tool_results=_deep_parallel_fetch_results(),
+        assistant_text="[A](https://example.com/a), [C](https://example.org/c)",
     )
 
     payload = contract.model_dump()
@@ -636,18 +758,27 @@ def test_deep_parallel_research_phase_verifies_after_search() -> None:
     assert "browser_read" in payload["next_allowed_tools"]
 
 
+def _deep_parallel_fetch_results() -> list[dict[str, object]]:
+    # Deep-parallel parents must clear a 6-fetch / 3-domain discovery floor.
+    return [
+        _tool_result("web_search"),
+        _tool_result("web_fetch", url="https://example.com/a"),
+        _tool_result("web_fetch", url="https://example.com/b"),
+        _tool_result("web_fetch", url="https://example.org/c"),
+        _tool_result("web_fetch", url="https://example.org/d"),
+        _tool_result("web_fetch", url="https://example.net/e"),
+        _tool_result("web_fetch", url="https://example.net/f"),
+    ]
+
+
 def test_deep_parallel_research_phase_final_after_report_and_verified_sources() -> None:
     contract = build_research_session_contract(
         task_contract={
             "requires_research": True,
             "research_depth": "deep_parallel_research",
         },
-        tool_results=[
-            _tool_result("web_search"),
-            _tool_result("web_fetch", url="https://example.com/a"),
-            _tool_result("web_fetch", url="https://example.org/b"),
-        ],
-        assistant_text="[A](https://example.com/a), [B](https://example.org/b)",
+        tool_results=_deep_parallel_fetch_results(),
+        assistant_text="[A](https://example.com/a), [C](https://example.org/c)",
         report_artifact_exists=True,
         source_ledger_artifact_exists=True,
     )
@@ -664,12 +795,8 @@ def test_deep_parallel_research_report_without_source_ledger_stays_in_review() -
             "requires_research": True,
             "research_depth": "deep_parallel_research",
         },
-        tool_results=[
-            _tool_result("web_search"),
-            _tool_result("web_fetch", url="https://example.com/a"),
-            _tool_result("web_fetch", url="https://example.org/b"),
-        ],
-        assistant_text="[A](https://example.com/a), [B](https://example.org/b)",
+        tool_results=_deep_parallel_fetch_results(),
+        assistant_text="[A](https://example.com/a), [C](https://example.org/c)",
         report_artifact_exists=True,
     )
 

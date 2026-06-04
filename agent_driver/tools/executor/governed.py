@@ -450,7 +450,7 @@ class GovernedToolExecutor:
         next_index = 1
         for unit in units:
             if isinstance(unit, SerialCall):
-                stop = await self._execute_one_call(
+                stop = await self._execute_one_call_traced(
                     ExecSpec(
                         result=result,
                         run_input=run_input,
@@ -781,7 +781,7 @@ class GovernedToolExecutor:
         async def run_one(call: ToolCall, index: int) -> GovernedExecutionResult:
             async with semaphore:
                 sub_result = GovernedExecutionResult()
-                await self._execute_one_call(
+                await self._execute_one_call_traced(
                     ExecSpec(
                         result=sub_result,
                         run_input=run_input,
@@ -816,6 +816,52 @@ class GovernedToolExecutor:
                 result.interrupt = sub_result.interrupt
                 stop_overall = True
         return stop_overall
+
+    async def _execute_one_call_traced(self, spec: ExecSpec) -> bool:
+        """Wrap :meth:`_execute_one_call` in an OpenInference TOOL span.
+
+        Phoenix then renders the tool call with its name, args, result and — when
+        the call is denied/failed — a red error status carrying the reason (e.g.
+        the SQLAlchemy "concurrent operations" message that made chart_vegalite
+        get denied). The status/result are read back from the ToolTrace this call
+        appends. No-op + never raises when tracing is off.
+        """
+        from agent_driver.observability.openinference import (  # noqa: PLC0415
+            oi_span,
+            record_status,
+            set_io,
+            set_tool,
+            SPAN_KIND_TOOL,
+        )
+
+        call = spec.call
+        before = len(spec.result.traces)
+        with oi_span(call.tool_name, kind=SPAN_KIND_TOOL) as span:
+            set_tool(
+                span,
+                name=call.tool_name,
+                arguments=dict(call.args or {}),
+                call_id=getattr(call, "tool_call_id", None),
+            )
+            stop = await self._execute_one_call(spec)
+            new_traces = spec.result.traces[before:]
+            trace = new_traces[-1] if new_traces else None
+            if trace is not None:
+                status_value = getattr(getattr(trace, "status", None), "value", "")
+                ok = status_value == "completed"
+                set_io(span, output=getattr(trace, "result_summary", None))
+                record_status(
+                    span,
+                    ok=ok,
+                    description=None
+                    if ok
+                    else (
+                        getattr(trace, "result_summary", None)
+                        or getattr(trace, "error_code", None)
+                        or status_value
+                    ),
+                )
+            return stop
 
     async def _execute_one_call(self, spec: ExecSpec) -> bool:
         """Execute one tool call, returning True when loop must stop."""

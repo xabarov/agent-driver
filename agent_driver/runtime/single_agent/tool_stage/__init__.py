@@ -47,6 +47,7 @@ from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
     build_research_session_contract_from_context,
     child_source_ledgers_from_context,
+    deep_research_post_artifact_next_tool,
 )
 from agent_driver.runtime.single_agent.lifecycle.pending import (
     pending_interrupt_from_execution_result,
@@ -159,6 +160,13 @@ async def execute_tool_stage_step(
 def _suppress_deep_research_terminal_tool_calls(context: RunContext) -> None:
     """Treat post-artifact tool drift as final text once both research artifacts exist."""
     if not _deep_research_terminal_artifacts_seen(context):
+        return
+    # Do not suppress while the delegating parent still owes tool-driven work:
+    # its own verify+review pass (read/preview/patch + a verify-fetch) AND topping
+    # up the rolled-up fetch/domain floor. The auto-written draft creates both
+    # artifacts, but those forced tool calls are legitimate, not post-terminal
+    # drift.
+    if deep_research_post_artifact_next_tool(context) is not None:
         return
     response = context.llm_response
     if response is None:

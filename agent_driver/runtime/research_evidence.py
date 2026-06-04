@@ -22,6 +22,17 @@ READ_SOURCE_TOOLS = frozenset(
 )
 SOURCE_VERIFIED_FETCHES = 2
 SOURCE_VERIFIED_DOMAINS = 2
+# Deep-parallel (hard) parents must clear a higher *fetch-volume* floor than a
+# single source-verified child: the rolled-up evidence (child reads + the
+# parent's own verify-fetches) has to reach this many distinct fetched sources
+# before the report is treated as evidence-complete. The distinct-domain floor
+# stays at two: scholarly/paywalled topics frequently expose only a couple of
+# auto-fetchable domains at a time (most academic publishers block automated
+# fetch), so demanding three simultaneously-verified domains is not reliably
+# achievable on the live web and drives the parent into a fetch spin. Two
+# distinct domains backed by six verified reads is already strong verification.
+DEEP_PARALLEL_FETCHES = 6
+DEEP_PARALLEL_DOMAINS = 2
 
 _ASSISTANT_URL_RE = re.compile(r"https?://[^\s\]\)>,]+")
 
@@ -535,6 +546,8 @@ def _append_domain(domains: list[str], url: str | None) -> None:
 __all__ = [
     "RESEARCH_DEPTH_LIGHT",
     "RESEARCH_DEPTH_DEEP_PARALLEL",
+    "DEEP_PARALLEL_DOMAINS",
+    "DEEP_PARALLEL_FETCHES",
     "RESEARCH_DEPTH_NONE",
     "RESEARCH_DEPTH_SOURCE_VERIFIED",
     "SOURCE_VERIFIED_DOMAINS",

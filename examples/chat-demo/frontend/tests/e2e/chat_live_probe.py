@@ -946,8 +946,30 @@ def assert_trace_acceptance(
         if summary.get("failures", {}).get(name) is True:
             failures.append(f"failure flag is set: {name}")
     tools = set(summary.get("tool_names") or [])
+    # Deep Research delegates discovery to children, so research tools used by a
+    # joined child satisfy the run's research-tool requirement even though the
+    # parent itself only called agent_tool. Non-research tools (file_patch,
+    # artifact_preview, read_file, ...) must still be the parent's own work.
+    efficiency = summary.get("research_efficiency") if isinstance(summary, dict) else {}
+    efficiency = efficiency if isinstance(efficiency, dict) else {}
+    child_research_tools: set[str] = set()
+
+    def _count(value: object) -> int:
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    # child_tool_names is not reliably populated from subagent events, so infer
+    # research-tool usage from the rolled-up child evidence counts instead: a
+    # child that searched used web_search; one that fetched used web_fetch.
+    if _count(efficiency.get("child_search_count")) > 0:
+        child_research_tools.add("web_search")
+    if _count(efficiency.get("child_fetch_count")) > 0:
+        child_research_tools.add("web_fetch")
+    for name in efficiency.get("child_tool_names") or []:
+        if name in {"web_search", "web_fetch", "source_read", "pdf_read", "browser_read"}:
+            child_research_tools.add(name)
+    effective_tools = tools | child_research_tools
     for tool_name in scenario.required_tools:
-        if tool_name not in tools:
+        if tool_name not in effective_tools:
             failures.append(f"required tool missing: {tool_name}")
     for tool_name in scenario.forbidden_tools:
         if tool_name in tools:
