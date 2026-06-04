@@ -40,10 +40,11 @@ from agent_driver.runtime.single_agent.types import EventSpec, RunContext
 @pytest.mark.asyncio
 async def test_runner_stream_mode_emits_token_delta_events() -> None:
     """Runner should emit durable token_delta events in stream mode."""
+    event_log = InMemoryEventLog()
     runner = SingleAgentRunner(
         provider=FakeProvider(response_text="stream output"),
         checkpoint_store=InMemoryCheckpointStore(),
-        event_log=InMemoryEventLog(),
+        event_log=event_log,
     )
     output = await runner.run(
         AgentRunInput(
@@ -68,6 +69,13 @@ async def test_runner_stream_mode_emits_token_delta_events() -> None:
         and event.payload.get("content") == "stream output"
         for event in output.events
     )
+    completed = [
+        event
+        for event in event_log.list_for_run("run_stream_mode_1")
+        if event.type == RuntimeEventType.RUN_COMPLETED
+    ]
+    assert completed
+    assert completed[-1].payload.get("answer") == "stream output"
 
 
 class _FailingStreamProvider:

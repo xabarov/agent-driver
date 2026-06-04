@@ -2522,3 +2522,75 @@ Live triage updates from 2026-06-02:
     contract-correct and passes the fork-join canary twice.
 14. Run hard profile with verifier/auditor, PDF, browser-read fallback, and
     export checks.
+
+## Next Stage Work Order (2026-06-04)
+
+Scope: close Phase 0.5 only. Do not begin hard-profile expansion, browser/PDF
+work, or architecture-variant comparison until the medium fork-join canary
+passes twice in a row with parent-owned artifacts and a concise terminal
+handoff.
+
+Current state:
+
+- Phase 0.5 is no longer blocked on missing subagents, child ownership, child
+  loop limits, provider alias normalization, or parent-synthesis schema
+  narrowing. Those contracts are implemented and have produced progressively
+  better live traces.
+- The latest meaningful medium run, `run_1c070d40d468` in
+  `/tmp/chat-demo-live-observed-medium-child-todo-20260602`, completed the
+  child run, created both `research/report.md` and `research/sources.jsonl`,
+  reached `fetch=3`, `unique_domains=2`, and reported readiness `allowed`.
+- The remaining blocker is post-report drift: after artifacts existed, the
+  model attempted `file_read`, missed the terminal handoff, failed to reference
+  `research/report.md` in the final answer, and one `file_write` rewrote the
+  source ledger instead of moving directly to report synthesis.
+
+Implementation order:
+
+1. Lock down parent-synthesis writes before the next live spend:
+   - if `research/sources.jsonl` already exists and `research/report.md` does
+     not, any parent-synthesis `file_write` targeting another path must be
+     retargeted to `research/report.md`;
+   - empty or malformed parent-synthesis `file_write` calls should continue to
+     be repaired from embedded child notes;
+   - child artifacts and long-answer captures remain diagnostic continuity
+     aids, not acceptance evidence.
+2. Lock down terminal handoff after both artifacts exist:
+   - the request surface must stay empty once `research/report.md` and
+     `research/sources.jsonl` are present;
+   - any post-artifact planned tool calls, including `file_read`,
+     `artifact_preview`, `artifact_read`, `web_search`, or `web_fetch`, must be
+     suppressed and recorded as terminal tool drift;
+   - final output must be clamped to a concise artifact handoff that references
+     `research/report.md` and does not paste or rewrite the report.
+3. Keep the live probe aligned with the runtime contract:
+   - after child join and before report creation, allow only bounded
+     verification fetches and parent artifact writes;
+   - after both artifacts exist, any new tool drift is a scorecard failure
+     unless the runtime suppresses it and still emits `run_completed`;
+   - scorecards must distinguish parent evidence from child evidence while
+     keeping medium readiness gated on parent-owned synthesis.
+4. Add or tighten regression coverage:
+   - ledger exists, report missing, and a parent `file_write` targets
+     `research/sources.jsonl` again -> retarget to `research/report.md`;
+   - both artifacts exist and the model emits `file_read`/artifact/search tool
+     calls -> suppress tool calls and produce a concise handoff;
+   - trace-summary continues to expose child-synthesis and parent/child evidence
+     fields needed by the live probe.
+5. Re-run the observed medium fork-join canary twice:
+   - reuse the preflight fingerprint unless code or model/tool surface changed;
+   - each pass must save screenshots, trace-summary, backend logs, Phoenix
+     evidence, workspace artifacts, and scorecard output;
+   - the two passes must be consecutive and must both end with `run_completed`.
+
+Phase 0.5 close criteria for the next execution note:
+
+- parent trace evidence contains a completed parent `file_write`, `file_edit`,
+  or `file_patch` event for `research/report.md`;
+- `research/sources.jsonl` is non-empty and visible through workspace and
+  trace-summary projection;
+- final chat answer is a concise artifact handoff that references
+  `research/report.md`;
+- no unknown tool calls or unsuppressed post-terminal tool drift remain;
+- token budget is below the medium threshold;
+- the same criteria pass in two consecutive observed medium fork-join runs.

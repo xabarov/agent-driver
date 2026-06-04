@@ -99,6 +99,11 @@ class AssistantTextCapture:
             if isinstance(content, str):
                 self._parts[:] = [content]
             return
+        if event_name == "run_completed":
+            answer = data.get("answer")
+            if isinstance(answer, str):
+                self._parts[:] = [answer]
+            return
         if event_name == "assistant_message_tombstoned":
             self._parts.clear()
 

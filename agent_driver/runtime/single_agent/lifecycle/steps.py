@@ -280,6 +280,9 @@ class SingleAgentStepMixin:
             self._save_checkpoint(context, latest_output=None, node_id="finalize")
             self._maybe_fail_after_step("finalize")
             return continuation
+        terminal_answer = self._sanitize_terminal_answer(context)
+        if terminal_answer:
+            completed_payload["answer"] = terminal_answer
         self._emit(
             EventSpec(
                 run_id=context.run_id,

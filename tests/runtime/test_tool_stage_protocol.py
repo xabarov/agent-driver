@@ -120,6 +120,63 @@ def test_deep_research_initial_subagent_batch_drops_sibling_tools() -> None:
     }
 
 
+def test_deep_research_initial_direct_discovery_coerces_to_subagent() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="web_search",
+                    tool_call_id="search_1",
+                    args={"query": "fork join"},
+                ).model_dump(mode="json"),
+                ToolCall(
+                    tool_name="todo_write",
+                    tool_call_id="todo_1",
+                    args={"todos": []},
+                ).model_dump(mode="json"),
+            ]
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        metadata={"tool_results": [{"call": {"tool_name": "todo_write", "args": {}}}]},
+        run_input=SimpleNamespace(
+            input="Research fork-join queueing models.",
+            app_metadata={},
+            tool_policy=SimpleNamespace(
+                allowed_tools=None,
+                denied_tools=[],
+                metadata={
+                    "task_contract": {
+                        "requires_research": True,
+                        "research_mode": "deep",
+                        "research_depth": "deep_parallel_research",
+                        "research_profile": "medium",
+                    }
+                },
+            ),
+        ),
+    )
+
+    _clamp_deep_research_initial_subagent_batch(context)
+
+    planned = llm_response.metadata["planned_tool_calls"]
+    assert [item["tool_name"] for item in planned] == ["agent_tool"]
+    assert planned[0]["args"]["execution_mode"] == "sync"
+    assert "Research fork-join queueing models." in planned[0]["args"]["task"]
+    assert planned[0]["metadata"]["original_tool_name"] == "web_search"
+    assert context.metadata["deep_research_initial_direct_discovery_coerced"] == {
+        "original_tool": "web_search",
+        "dropped": 1,
+        "target": "agent_tool",
+    }
+
+
 def test_deep_research_terminal_state_suppresses_text_form_tool_calls() -> None:
     llm_response = LlmResponse(
         message=ChatMessage(

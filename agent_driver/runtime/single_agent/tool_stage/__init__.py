@@ -22,6 +22,7 @@ from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.deep_research_gating import (
     deep_research_medium_or_hard,
     deep_research_planned_or_started_subagent_count,
+    deep_research_tool_available,
     deep_research_tool_result_succeeded,
     is_research_report_path,
     is_research_source_ledger_path,
@@ -86,6 +87,21 @@ from agent_driver.tools.executor.planned import extract_planned_tool_calls
 
 _force_web_fetch_for_source_verified_research = (
     force_web_fetch_for_source_verified_research
+)
+_DEEP_RESEARCH_PRE_SUBAGENT_BLOCKED_TOOLS = frozenset(
+    {
+        "artifact_list",
+        "artifact_preview",
+        "artifact_read",
+        "file_edit",
+        "file_patch",
+        "file_write",
+        "glob_search",
+        "grep_search",
+        "read_file",
+        "web_fetch",
+        "web_search",
+    }
 )
 
 
@@ -315,6 +331,7 @@ def _clamp_deep_research_initial_subagent_batch(context: RunContext) -> None:
     if not planned_calls or not any(
         call.tool_name == "agent_tool" for call in planned_calls
     ):
+        _coerce_deep_research_initial_direct_discovery(context, planned_calls)
         return
     kept = [call for call in planned_calls if call.tool_name == "agent_tool"]
     if len(kept) == len(planned_calls):
@@ -326,6 +343,57 @@ def _clamp_deep_research_initial_subagent_batch(context: RunContext) -> None:
         "kept": len(kept),
         "dropped": len(planned_calls) - len(kept),
         "reason": "medium_hard_first_child_only",
+    }
+
+
+def _coerce_deep_research_initial_direct_discovery(
+    context: RunContext, planned_calls: list[Any]
+) -> None:
+    """Rewrite pre-child discovery drift into the required first subagent."""
+    if not planned_calls:
+        return
+    if not deep_research_tool_available(context, "agent_tool"):
+        return
+    if any(call.tool_name == "agent_tool" for call in planned_calls):
+        return
+    if not any(
+        call.tool_name in _DEEP_RESEARCH_PRE_SUBAGENT_BLOCKED_TOOLS
+        for call in planned_calls
+    ):
+        return
+    first = planned_calls[0]
+    prompt = str(getattr(context.run_input, "input", "") or "").strip()
+    task = (
+        "Find and summarize candidate sources for the parent Deep Research "
+        "report. Return compact notes with URLs; do not write artifacts."
+    )
+    if prompt:
+        task = f"{task}\n\nUser request: {prompt}"
+    repaired = first.model_copy(
+        update={
+            "tool_name": "agent_tool",
+            "args": {
+                "task": task,
+                "description": "Find source notes",
+                "task_type": "research",
+                "execution_mode": "sync",
+            },
+            "metadata": {
+                **first.metadata,
+                "deep_research_tool_coerced": True,
+                "deep_research_repair_reason": "medium_hard_first_child_required",
+                "original_tool_name": first.tool_name,
+            },
+        }
+    )
+    response = context.llm_response
+    if response is None:
+        return
+    response.metadata["planned_tool_calls"] = [repaired.model_dump(mode="json")]
+    context.metadata["deep_research_initial_direct_discovery_coerced"] = {
+        "original_tool": first.tool_name,
+        "dropped": max(0, len(planned_calls) - 1),
+        "target": "agent_tool",
     }
 
 

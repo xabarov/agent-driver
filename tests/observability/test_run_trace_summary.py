@@ -417,6 +417,7 @@ def test_trace_summary_clears_child_synthesis_pending_after_parent_report_write(
     )
 
     assert summary["subagents"]["child_synthesis_pending"] is False
+    assert summary["subagents"]["parent_synthesized_final"] is True
     assert summary["subagents"]["tools_after_child_synthesis_pending"] == ["file_write"]
     assert summary["subagents"]["unexpected_tool_after_child_synthesis_pending"] is None
     assert summary["failures"]["child_result_not_used"] is False

@@ -107,9 +107,32 @@ class StreamRequest:
 
 @dataclass(frozen=True, slots=True)
 class HttpClientConfig:
-    """Optional HTTP client transport hooks for offline adapter tests."""
+    """Optional HTTP client knobs for provider clients.
+
+    ``transport`` injects a custom httpx transport — primarily for offline
+    adapter tests (e.g. ``httpx.MockTransport``).
+
+    .. warning::
+       A single ``transport`` **instance** is NOT safe to reuse across clients
+       that stream **concurrently**. Every ``httpx.AsyncClient`` closes its
+       transport on ``aclose()`` (i.e. when its ``async with`` block exits);
+       because providers build a fresh client per call but share this one
+       transport, the first client to finish tears down the shared connection
+       pool out from under any other in-flight stream — surfacing as
+       ``httpx.ReadError`` → ``ProviderTransportError`` on the siblings. So
+       ``transport`` is for single-flight use (tests). For the common
+       "skip TLS verification" need, use ``verify_ssl=False`` instead: each
+       client then builds its **own** default transport (own pool), which is
+       concurrency-safe.
+
+    ``verify_ssl`` toggles TLS certificate verification for clients built by
+    :meth:`ProviderBase.build_async_client` (set ``False`` for internal
+    vLLM/proxy endpoints with self-signed certs). Ignored when ``transport`` is
+    set (a custom transport carries its own TLS config).
+    """
 
     transport: httpx.AsyncBaseTransport | None = None
+    verify_ssl: bool = True
 
 
 class ProviderBase:
@@ -221,9 +244,8 @@ class ProviderBase:
         async with self.stream_with_telemetry(
             handled_exceptions=request.handled_exceptions
         ):
-            async with httpx.AsyncClient(
-                timeout=request.timeout_s,
-                transport=self._http_client_config.transport,
+            async with self.build_async_client(
+                timeout_s=request.timeout_s
             ) as client:
                 status_attempt = 0
                 while True:
@@ -301,8 +323,15 @@ class ProviderBase:
             raise
 
     def build_async_client(self, *, timeout_s: float) -> httpx.AsyncClient:
-        """Build async client honoring optional transport override."""
-        return httpx.AsyncClient(
-            timeout=timeout_s,
-            transport=self._http_client_config.transport,
-        )
+        """Build a fresh async client honoring the HttpClientConfig.
+
+        When a custom ``transport`` is injected (tests) it is used as-is.
+        Otherwise each client builds its own default transport with TLS
+        verification controlled by ``verify_ssl`` — giving every concurrent
+        client an independent connection pool (see the concurrency note on
+        :class:`HttpClientConfig`).
+        """
+        cfg = self._http_client_config
+        if cfg.transport is not None:
+            return httpx.AsyncClient(timeout=timeout_s, transport=cfg.transport)
+        return httpx.AsyncClient(timeout=timeout_s, verify=cfg.verify_ssl)

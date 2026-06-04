@@ -427,9 +427,14 @@ def _subagent_summary(
     parent_synthesized_final = (
         agent_tool_used
         and groups_joined > 0
-        and continuation_reason != "continuation_signal"
-        and not _subagent_progress_only_text(assistant_text)
-        and len(assistant_text.strip()) >= 20
+        and (
+            parent_report_write_seen_after_marker
+            or (
+                continuation_reason != "continuation_signal"
+                and not _subagent_progress_only_text(assistant_text)
+                and len(assistant_text.strip()) >= 20
+            )
+        )
     )
     return {
         "delegation_requested": _delegation_requested(user_prompt),

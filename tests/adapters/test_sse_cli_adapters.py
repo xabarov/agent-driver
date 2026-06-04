@@ -92,6 +92,8 @@ def test_assistant_text_capture_handles_replacement_and_tombstone() -> None:
     assert capture.text == ""
     capture.apply(event_name="token_delta", data={"delta_text": "after"})
     assert capture.text == "after"
+    capture.apply(event_name="run_completed", data={"answer": "terminal"})
+    assert capture.text == "terminal"
 
 
 class _StaticAgent:
