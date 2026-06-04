@@ -29,6 +29,17 @@ class SqliteCommandQueueStore:
         self._conn.execute("PRAGMA journal_mode=WAL;")
         self._create_schema()
 
+    def __deepcopy__(self, memo: dict) -> "SqliteCommandQueueStore":
+        """Return self — the store wraps a shared SQLite connection.
+
+        ``create_agent`` deep-copies the ``RunnerConfig``; a live
+        ``sqlite3.Connection`` is not copyable, and two independent copies of a
+        shared command queue would defeat its purpose (the runner must read the
+        same queue the host writes to). Identity-copy keeps the shared store.
+        """
+        memo[id(self)] = self
+        return self
+
     def _create_schema(self) -> None:
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS command_queue (

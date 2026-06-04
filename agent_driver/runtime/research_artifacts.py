@@ -239,6 +239,7 @@ def persist_deep_research_claims_matrix(
         "record_count": len(rows),
         "verified_count": counts["verified"],
         "unsupported_count": counts["unsupported"],
+        "inaccessible_count": counts["inaccessible"],
     }
     _record_claims_metadata(context, payload)
     return payload
@@ -390,6 +391,7 @@ def _record_claims_metadata(
             "claims_record_count": payload["record_count"],
             "claims_verified_count": payload["verified_count"],
             "claims_unsupported_count": payload["unsupported_count"],
+            "claims_inaccessible_count": payload.get("inaccessible_count", 0),
         }
     )
     context.metadata["deep_research_artifacts"] = artifacts
@@ -419,10 +421,16 @@ def _source_ledger_jsonl_rows(ledger: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _claims_jsonl_rows(ledger: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for section, status in (
+    # The scaffold mirrors source-ledger rows so the agent has a claim audit to
+    # fill in. A blocked/failed *source read* (paywall, 403, render failure) is
+    # an inaccessible source, NOT a false claim — it must not be scored as an
+    # "unsupported" claim, or the hard profile would auto-fail on every
+    # paywalled candidate. Such rows get a distinct, non-terminal
+    # "inaccessible" status the agent is expected to resolve in review.
+    for section, claim_status in (
         ("verified_reads", "verified"),
-        ("blocked_reads", "blocked"),
-        ("failed_reads", "failed"),
+        ("blocked_reads", "inaccessible"),
+        ("failed_reads", "inaccessible"),
     ):
         values = ledger.get(section)
         if not isinstance(values, list):
@@ -433,16 +441,21 @@ def _claims_jsonl_rows(ledger: dict[str, Any]) -> list[dict[str, Any]]:
             url = str(item.get("url") or "").strip()
             if not url:
                 continue
+            source_status = "verified" if section == "verified_reads" else (
+                "blocked" if section == "blocked_reads" else "failed"
+            )
             rows.append(
                 {
-                    "claim_id": f"{status}_{index}",
+                    "claim_id": f"{source_status}_{index}",
                     "claim_text": f"Source evidence row requires hard-profile audit: {url}",
                     "cited_urls": [url],
-                    "status": "verified" if status == "verified" else "unsupported",
-                    "source_status": status,
+                    "status": claim_status,
+                    "source_status": source_status,
                     "source_kind": item.get("source_kind") or item.get("source_type"),
                     "confidence": (
-                        "audit_required" if status != "verified" else "source_verified"
+                        "source_verified"
+                        if claim_status == "verified"
+                        else "audit_required"
                     ),
                     "verifier_notes": item.get("detail")
                     or item.get("error")
@@ -454,11 +467,13 @@ def _claims_jsonl_rows(ledger: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _claims_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {"verified": 0, "unsupported": 0}
+    counts = {"verified": 0, "unsupported": 0, "inaccessible": 0}
     for row in rows:
         status = str(row.get("status") or "").strip().lower()
         if status == "verified":
             counts["verified"] += 1
+        elif status == "inaccessible":
+            counts["inaccessible"] += 1
         else:
             counts["unsupported"] += 1
     return counts

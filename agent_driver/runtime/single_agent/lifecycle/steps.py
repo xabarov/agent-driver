@@ -348,8 +348,17 @@ def _maybe_build_continuation_transition(
         reason_signature = ",".join(readiness.reasons)
         repair_count = research_state.contract_repair_nudge_count()
         previous_signature = research_state.contract_repair_reason_signature()
-        if repair_count >= 2 or (
-            repair_count >= 1 and previous_signature == reason_signature
+        # The hard profile gets a larger repair budget and tolerates repeated
+        # same-reason nudges: "fetch real sources" legitimately repeats while the
+        # model escalates from search to fetch. Other profiles keep the tighter
+        # cap so they cannot spin on an unsatisfiable repair reason.
+        profile = deep_research_profile(context, default="")
+        max_repairs = 4 if profile == "hard" else 2
+        strict_repeat = profile != "hard"
+        if repair_count >= max_repairs or (
+            strict_repeat
+            and repair_count >= 1
+            and previous_signature == reason_signature
         ):
             research_state.set_repair_exhausted(list(readiness.reasons))
             return None
@@ -475,6 +484,19 @@ def _force_research_repair_tool_choice(
                 }
                 return
     if REPAIR_MISSING_RESEARCH_EVIDENCE in reasons:
+        # Delegated search-spam: a child collected search candidates but never
+        # opened a page. More searching will not help — force the parent to fetch
+        # one of the candidate URLs instead of running another web_search.
+        if _deep_research_child_searched_without_fetch(context) and (
+            _tool_available_for_repair(context, "web_fetch")
+        ):
+            get_tool_loop_state(context).set_tool_choice_override(
+                {"type": "tool", "name": "web_fetch"}
+            )
+            context.metadata["continuation_nudge_reason"] = (
+                "child_search_without_fetch_repair"
+            )
+            return
         if _tool_available_for_repair(context, "web_search"):
             get_tool_loop_state(context).set_tool_choice_override(
                 {"type": "tool", "name": "web_search"}
@@ -730,6 +752,37 @@ def _deep_research_child_synthesis_pending_without_report(context: RunContext) -
     )
 
 
+def _deep_research_child_searched_without_fetch(context: RunContext) -> bool:
+    """Return True when joined children gathered candidates but never fetched.
+
+    This is the search-spam failure mode: a subagent runs many web_search calls
+    but opens zero pages, so the parent ledger has no verified reads. The repair
+    path should force a fetch rather than yet another search.
+    """
+    handoff = context.metadata.get("deep_research_child_synthesis")
+    if not isinstance(handoff, dict):
+        return False
+    children = handoff.get("children")
+    if not isinstance(children, list):
+        return False
+    searched = 0
+    fetched = 0
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        ledger = child.get("source_ledger")
+        if not isinstance(ledger, dict):
+            continue
+        candidates = ledger.get("search_candidates")
+        if isinstance(candidates, list):
+            searched += len(candidates)
+        for section in ("verified_reads", "blocked_reads", "failed_reads"):
+            rows = ledger.get(section)
+            if isinstance(rows, list):
+                fetched += len(rows)
+    return searched > 0 and fetched == 0
+
+
 def _deep_research_parent_synthesis_tool_allowed(
     context: RunContext,
     tool_name: str,
@@ -968,6 +1021,16 @@ def _research_contract_repair_nudge(
         fragments.append(
             "source-verified work needs fetched/read pages, not search results only"
         )
+    if _deep_research_child_searched_without_fetch(context):
+        fetch_fragment = (
+            "a child gathered search candidates but never opened a page; do not "
+            "search again — open at least one concrete candidate URL with "
+            "web_fetch (or source_read) and cite the fetched source"
+        )
+        candidate_urls = list(_deep_research_child_candidate_urls(context))[:5]
+        if candidate_urls:
+            fetch_fragment += "; candidate URLs to fetch: " + ", ".join(candidate_urls)
+        fragments.append(fetch_fragment)
     if REPAIR_INSUFFICIENT_SOURCE_DIVERSITY in reasons:
         evidence = research_evidence_from_tool_results(
             get_tool_loop_state(context).tool_results()

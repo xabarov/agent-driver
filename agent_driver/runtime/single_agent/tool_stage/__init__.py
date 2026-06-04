@@ -33,7 +33,9 @@ from agent_driver.runtime.metadata_state import (
     get_tool_loop_state,
 )
 from agent_driver.runtime.research_evidence import (
+    research_evidence_from_tool_results,
     research_source_ledger_from_tool_results,
+    rollup_child_source_ledgers,
 )
 from agent_driver.runtime.research_artifacts import (
     deep_research_report_artifact_exists,
@@ -44,6 +46,7 @@ from agent_driver.runtime.research_artifacts import (
 from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
     build_research_session_contract_from_context,
+    child_source_ledgers_from_context,
 )
 from agent_driver.runtime.single_agent.lifecycle.pending import (
     pending_interrupt_from_execution_result,
@@ -1030,15 +1033,30 @@ def _emit_tool_completed_if_needed(
         payload=payload,
     )
     _emit_artifact_events_from_tool_result(host, context, result)
-    source_ledger = research_source_ledger_from_tool_results(
-        get_tool_loop_state(context).tool_results()
-    ).model_dump()
-    if any(
+    tool_results_rows = get_tool_loop_state(context).tool_results()
+    child_ledgers = child_source_ledgers_from_context(context)
+    merged_ledger, _ = rollup_child_source_ledgers(
+        research_source_ledger_from_tool_results(tool_results_rows),
+        research_evidence_from_tool_results(tool_results_rows),
+        child_ledgers,
+    )
+    source_ledger = merged_ledger.model_dump()
+    parent_used_source_tool = any(
         row["tool_name"]
         in {"web_search", "web_fetch", "source_read", "pdf_read", "browser_read"}
         for row in tools
         if isinstance(row.get("tool_name"), str)
-    ):
+    )
+    # Persist when the parent itself read sources this turn OR when joined
+    # children contributed verified reads — otherwise a delegating parent that
+    # never fetches would never emit sources.jsonl/claims.jsonl despite real
+    # child evidence.
+    child_contributed_reads = bool(child_ledgers) and bool(
+        merged_ledger.verified_reads
+        or merged_ledger.blocked_reads
+        or merged_ledger.failed_reads
+    )
+    if parent_used_source_tool or child_contributed_reads:
         source_artifact = persist_deep_research_source_ledger(context, source_ledger)
         if source_artifact is not None:
             source_ledger["artifact"] = {
@@ -1084,6 +1102,7 @@ def _emit_tool_completed_if_needed(
                     "record_count": claims_artifact["record_count"],
                     "verified_count": claims_artifact["verified_count"],
                     "unsupported_count": claims_artifact["unsupported_count"],
+                    "inaccessible_count": claims_artifact.get("inaccessible_count", 0),
                 },
             )
         emit_step_event(

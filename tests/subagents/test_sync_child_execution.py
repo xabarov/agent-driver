@@ -211,8 +211,21 @@ async def test_sync_child_execution_strips_parent_deep_research_contract() -> No
     assert policy.allowed_tools == ["todo_write", "web_search", "web_fetch"]
     assert "deep_research_mode" not in policy.metadata
     assert "deep_research_phase_gate" not in policy.metadata
-    assert "task_contract" not in policy.metadata
     assert policy.metadata["child_contract"] == "deep_research_source_notes"
+    # The child must not inherit the parent's delegating deep contract, but it
+    # now receives its own leaf source-verified contract so the same fetch gate
+    # that governs the parent also forces the child to open pages, not just
+    # search.
+    child_contract = policy.metadata["task_contract"]
+    assert child_contract["research_mode"] == "web"
+    assert child_contract["research_depth"] == "source_verified_report"
+    assert child_contract["requires_research"] is True
+    assert child_contract["fetch_required"] is True
+    assert child_contract["research_profile"] == "medium"
+    assert (
+        policy.metadata["parent_task_contract"]["research_depth"]
+        == "deep_parallel_research"
+    )
 
 
 @pytest.mark.asyncio

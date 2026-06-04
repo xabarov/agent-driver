@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from inspect import signature
-from typing import Callable
+from typing import Any, Callable
 from uuid import uuid4
 
 from agent_driver.contracts.artifacts import ArtifactRef
@@ -266,7 +267,9 @@ def _strip_parent_research_contract(policy: dict[str, object]) -> dict[str, obje
     metadata.pop("deep_research_mode", None)
     metadata.pop("deep_research_phase_gate", None)
     task_contract = metadata.get("task_contract")
+    parent_profile = ""
     if isinstance(task_contract, dict):
+        parent_profile = str(task_contract.get("research_profile") or "").strip().lower()
         metadata["parent_task_contract"] = {
             "research_profile": task_contract.get("research_profile"),
             "research_mode": task_contract.get("research_mode"),
@@ -274,7 +277,31 @@ def _strip_parent_research_contract(policy: dict[str, object]) -> dict[str, obje
         }
     metadata.pop("task_contract", None)
     metadata["child_contract"] = "deep_research_source_notes"
+    # Deep Research children are leaf researchers. Stripping the parent's deep
+    # (delegating) contract is intentional — a child must not re-delegate — but a
+    # child with NO research contract has no fetch-discipline gate, so it can run
+    # many web_search calls and never open a page. Give medium/hard children
+    # their own source-verified contract (research_mode="web", so it stays a
+    # leaf) to enforce the same search -> fetch escalation the parent gets.
+    if parent_profile in {"medium", "hard"} and _child_research_can_fetch(policy):
+        metadata["task_contract"] = {
+            "kind": "research",
+            "requires_research": True,
+            "research_mode": "web",
+            "research_depth": "source_verified_report",
+            "fetch_required": True,
+            "research_profile": parent_profile,
+        }
     return {**policy, "metadata": metadata}
+
+
+def _child_research_can_fetch(policy: Mapping[str, Any]) -> bool:
+    """Return True when the child tool surface exposes a page-reading tool."""
+    allowed = policy.get("allowed_tools")
+    if not isinstance(allowed, list):
+        return True
+    fetch_tools = {"web_fetch", "source_read", "pdf_read", "browser_read"}
+    return any(str(tool) in fetch_tools for tool in allowed)
 
 
 def _child_app_metadata(

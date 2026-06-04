@@ -215,6 +215,68 @@ def test_research_contract_requires_fetched_source_verified_evidence() -> None:
     assert REPAIR_MISSING_FETCHED_SOURCES in contract.final_readiness.reasons
 
 
+def test_research_contract_rolls_up_child_verified_reads() -> None:
+    # A delegating parent that fetched nothing itself still satisfies the
+    # source-verified contract once its children's verified reads roll up.
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+        },
+        tool_results=[_tool_result("agent_tool")],
+        assistant_text="See https://example.com/a and https://example.org/b",
+        web_fetch_available=True,
+        child_source_ledgers=[
+            {
+                "search_candidates": [{"url": "https://example.com/x"}],
+                "verified_reads": [
+                    {"url": "https://example.com/a", "domain": "example.com"},
+                    {"url": "https://example.org/b", "domain": "example.org"},
+                ],
+            }
+        ],
+    )
+
+    assert contract.evidence.successful_fetches == 2
+    assert set(contract.evidence.unique_domains) == {"example.com", "example.org"}
+    assert len(contract.source_ledger.verified_reads) == 2
+    assert all(
+        row.get("origin") == "child"
+        for row in contract.source_ledger.verified_reads
+    )
+    assert REPAIR_MISSING_RESEARCH_EVIDENCE not in contract.final_readiness.reasons
+    assert REPAIR_MISSING_FETCHED_SOURCES not in contract.final_readiness.reasons
+
+
+def test_research_contract_child_rollup_dedupes_against_parent() -> None:
+    # A page read by both the parent and a child counts once, and child rows
+    # never lower the parent's own earned evidence.
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "source_verified_report",
+        },
+        tool_results=[
+            _tool_result("web_search"),
+            _tool_result("web_fetch", url="https://example.com/a"),
+        ],
+        web_fetch_available=True,
+        child_source_ledgers=[
+            {
+                "verified_reads": [
+                    {"url": "https://example.com/a", "domain": "example.com"},
+                    {"url": "https://example.net/c", "domain": "example.net"},
+                ]
+            }
+        ],
+    )
+
+    urls = {row["url"] for row in contract.source_ledger.verified_reads}
+    assert urls == {"https://example.com/a", "https://example.net/c"}
+    assert contract.evidence.successful_fetches == 2
+    assert set(contract.evidence.unique_domains) == {"example.com", "example.net"}
+
+
 def test_research_contract_requires_final_links_after_verified_fetches() -> None:
     contract = build_research_session_contract(
         task_contract={

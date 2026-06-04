@@ -420,7 +420,11 @@ async def test_deep_research_subagent_join_records_parent_synthesis_handoff() ->
     assert handoff["pending"] is True
     assert handoff["source"] == "subagent_group_joined"
     assert handoff["child_count"] == 1
-    assert "child answer" in handoff["summary"]
+    # Deep Research children now run under their own source-verified contract, so
+    # the child executes a search -> fetch research loop instead of finalizing on
+    # its first turn. Assert the handoff mechanism captured the child (pending
+    # synthesis with a non-empty summary), not the exact first-turn text.
+    assert isinstance(handoff["summary"], str) and handoff["summary"].strip()
     assert handoff["required_parent_artifacts"] == [
         "research/report.md",
         "research/sources.jsonl",

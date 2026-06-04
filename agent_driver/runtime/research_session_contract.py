@@ -26,6 +26,7 @@ from agent_driver.runtime.research_evidence import (
     ResearchSourceLedger,
     research_evidence_from_tool_results,
     research_source_ledger_from_tool_results,
+    rollup_child_source_ledgers,
 )
 
 if TYPE_CHECKING:
@@ -235,6 +236,7 @@ def build_research_session_contract(
     report_artifact_exists: bool = False,
     source_ledger_artifact_exists: bool = False,
     child_synthesis_pending: bool = False,
+    child_source_ledgers: object = None,
 ) -> ResearchSessionContract:
     """Build the final-readiness contract from current runtime state."""
     requires_research = (
@@ -247,6 +249,13 @@ def build_research_session_contract(
     source_ledger = research_source_ledger_from_tool_results(
         tool_results,
         assistant_text=assistant_text,
+    )
+    # Roll child researchers' verified reads up into the parent ledger/evidence.
+    # A delegating parent often fetches nothing itself; without this the parent
+    # contract reports "missing research evidence" even though its children read
+    # real pages. Children only ever add evidence on top of the parent's own.
+    source_ledger, evidence = rollup_child_source_ledgers(
+        source_ledger, evidence, child_source_ledgers
     )
     plan_created = _plan_created(planning_state)
     fetch_fallback_required = (
@@ -324,6 +333,7 @@ def build_research_session_contract_from_context(
             context
         ),
         child_synthesis_pending=_child_synthesis_pending(context),
+        child_source_ledgers=child_source_ledgers_from_context(context),
     )
 
 
@@ -571,6 +581,24 @@ def _task_contract_from_context(context: RunContext) -> dict[str, Any] | None:
     return task_contract if isinstance(task_contract, dict) else None
 
 
+def child_source_ledgers_from_context(context: RunContext) -> list[dict[str, Any]]:
+    """Return the joined children's source ledgers for parent roll-up."""
+    payload = context.metadata.get("deep_research_child_synthesis")
+    if not isinstance(payload, dict):
+        return []
+    children = payload.get("children")
+    if not isinstance(children, list):
+        return []
+    ledgers: list[dict[str, Any]] = []
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        ledger = child.get("source_ledger")
+        if isinstance(ledger, dict):
+            ledgers.append(ledger)
+    return ledgers
+
+
 def _child_synthesis_pending(context: RunContext) -> bool:
     payload = context.metadata.get("deep_research_child_synthesis")
     if not isinstance(payload, dict) or payload.get("pending") is not True:
@@ -642,6 +670,7 @@ __all__ = [
     "ResearchSessionContract",
     "build_research_session_contract",
     "build_research_session_contract_from_context",
+    "child_source_ledgers_from_context",
     "has_source_links",
     "unfinished_todo_labels",
 ]

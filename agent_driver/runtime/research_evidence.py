@@ -160,6 +160,112 @@ def research_evidence_from_tool_results(
     )
 
 
+def rollup_child_source_ledgers(
+    parent_ledger: ResearchSourceLedger,
+    parent_evidence: ResearchEvidenceState,
+    child_ledgers: object,
+) -> tuple[ResearchSourceLedger, ResearchEvidenceState]:
+    """Fold child source ledgers into the parent ledger + evidence.
+
+    Deep Research children are leaf researchers; their verified reads are
+    first-class evidence for the parent's final readiness (the parent never
+    re-opens the page the child already read). Child rows are deduplicated
+    against the parent by URL so a page read by both counts once, and child
+    contributions are only ever *added* on top of the parent's own counters so
+    a roll-up can never lower already-earned parent evidence.
+    """
+    if not isinstance(child_ledgers, list) or not child_ledgers:
+        return parent_ledger, parent_evidence
+
+    verified_reads = list(parent_ledger.verified_reads)
+    search_candidates = list(parent_ledger.search_candidates)
+    blocked_reads = list(parent_ledger.blocked_reads)
+    failed_reads = list(parent_ledger.failed_reads)
+
+    seen_verified = {
+        str(row.get("url") or "").lower()
+        for row in verified_reads
+        if isinstance(row, dict)
+    }
+    seen_candidates = {
+        str(row.get("url") or "").lower()
+        for row in search_candidates
+        if isinstance(row, dict)
+    }
+
+    new_verified_domains: list[str] = []
+    new_verified_count = 0
+    child_fetch_total = 0
+    child_failed_total = 0
+    child_search_total = 0
+
+    for ledger in child_ledgers:
+        if not isinstance(ledger, dict):
+            continue
+        child_search_total += _len_of(ledger.get("search_candidates"))
+        for candidate in _iter_rows(ledger.get("search_candidates")):
+            _append_unique_source(
+                search_candidates, _tag_child(candidate), seen=seen_candidates
+            )
+        for read in _iter_rows(ledger.get("verified_reads")):
+            url = str(read.get("url") or "").lower()
+            child_fetch_total += 1
+            if not url or url in seen_verified:
+                continue
+            seen_verified.add(url)
+            row = _tag_child(read)
+            verified_reads.append(row)
+            new_verified_count += 1
+            domain = row.get("domain") or _domain(str(read.get("url") or ""))
+            if isinstance(domain, str) and domain and domain not in new_verified_domains:
+                new_verified_domains.append(domain)
+        for read in _iter_rows(ledger.get("blocked_reads")):
+            child_fetch_total += 1
+            child_failed_total += 1
+            blocked_reads.append(_tag_child(read))
+        for read in _iter_rows(ledger.get("failed_reads")):
+            child_fetch_total += 1
+            child_failed_total += 1
+            failed_reads.append(_tag_child(read))
+
+    merged_domains = list(parent_evidence.unique_domains)
+    for domain in new_verified_domains:
+        if domain not in merged_domains:
+            merged_domains.append(domain)
+
+    merged_evidence = ResearchEvidenceState(
+        search_calls=parent_evidence.search_calls + child_search_total,
+        fetch_calls=parent_evidence.fetch_calls + child_fetch_total,
+        successful_fetches=parent_evidence.successful_fetches + new_verified_count,
+        failed_fetches=parent_evidence.failed_fetches + child_failed_total,
+        unique_domains=tuple(merged_domains),
+    )
+    merged_ledger = ResearchSourceLedger(
+        search_candidates=search_candidates,
+        verified_reads=verified_reads,
+        failed_reads=failed_reads,
+        blocked_reads=blocked_reads,
+        assistant_links=list(parent_ledger.assistant_links),
+    )
+    return merged_ledger, merged_evidence
+
+
+def _iter_rows(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [row for row in value if isinstance(row, dict)]
+
+
+def _len_of(value: object) -> int:
+    return len(value) if isinstance(value, list) else 0
+
+
+def _tag_child(row: dict[str, Any]) -> dict[str, Any]:
+    tagged = dict(row)
+    tagged.setdefault("origin", "child")
+    return tagged
+
+
 def research_source_ledger_from_tool_results(
     tool_results: object, *, assistant_text: str = ""
 ) -> ResearchSourceLedger:
@@ -438,4 +544,5 @@ __all__ = [
     "classify_research_depth",
     "research_evidence_from_tool_results",
     "research_source_ledger_from_tool_results",
+    "rollup_child_source_ledgers",
 ]

@@ -17,7 +17,7 @@ from agent_driver.contracts.control import (
 )
 from agent_driver.contracts.enums import ResumeAction, RuntimeEventType
 from agent_driver.contracts.events import RuntimeEventContext, new_runtime_event
-from agent_driver.contracts.interrupts import ResumeCommand
+from agent_driver.contracts.interrupts import AllowedPrompt, ResumeCommand
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.runtime.abort import RunAbortHandle
@@ -355,8 +355,14 @@ class Agent:  # pylint: disable=too-many-public-methods
         graph_preset: str | None = None,
         edited_tool_args: dict[str, object] | None = None,
         message: str | None = None,
+        approved_prompts: list[AllowedPrompt] | None = None,
     ) -> AgentRunOutput:
-        """Resume an interrupted run via normalized resume command."""
+        """Resume an interrupted run via normalized resume command.
+
+        ``approved_prompts`` (Phase 11 H13) carries operator-approved
+        ``AllowedPrompt`` categories scoped to this run; it is threaded into the
+        ``ResumeCommand`` so subsequent policy evaluation can consult them.
+        """
         return await self.run(
             AgentRunInput(
                 run_id=run_id,
@@ -367,6 +373,7 @@ class Agent:  # pylint: disable=too-many-public-methods
                     action=action,
                     edited_tool_args=edited_tool_args,
                     message=message,
+                    approved_prompts=list(approved_prompts or []),
                 ),
             )
         )

@@ -122,3 +122,15 @@ def test_sqlite_command_queue_persists_rows(tmp_path) -> None:
     assert loaded is not None
     assert loaded.queue_id == item.queue_id
     assert second_store.dequeue_next(run_id="run_control").queue_id == item.queue_id
+
+
+def test_sqlite_store_deepcopy_returns_same_instance(tmp_path) -> None:
+    """deepcopy(store) must be identity — create_agent deep-copies RunnerConfig,
+    and a live sqlite3.Connection is not copyable. Two independent copies of a
+    shared queue would also defeat its purpose (runner + host must share it)."""
+    import copy
+
+    store = SqliteCommandQueueStore(path=str(tmp_path / "dc.db"))
+    assert copy.deepcopy(store) is store
+    # nested inside a structure (as in RunnerConfig) also stays identity
+    assert copy.deepcopy({"command_queue_store": store})["command_queue_store"] is store

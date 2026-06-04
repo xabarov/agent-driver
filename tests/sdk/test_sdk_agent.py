@@ -17,7 +17,12 @@ from agent_driver.contracts import (
     ToolManifest,
 )
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.contracts.enums import ApprovalMode, SideEffectClass, ToolRisk
+from agent_driver.contracts.enums import (
+    ApprovalMode,
+    ResumeAction,
+    SideEffectClass,
+    ToolRisk,
+)
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.llm.contracts import (
     LlmFinishReason,
@@ -674,6 +679,45 @@ async def test_sdk_resume_approve_shortcut_executes() -> None:
     assert paused.interrupt is not None
     resumed = await agent.approve(
         run_id="run_sdk_resume", interrupt_id=paused.interrupt.interrupt_id
+    )
+    assert resumed.status.value == "completed"
+
+
+@pytest.mark.asyncio
+async def test_sdk_resume_accepts_approved_prompts() -> None:
+    """resume() accepts approved_prompts (Phase 11 H13) and threads it through.
+
+    Regression: hosts (e.g. excel_ai's /decide endpoint) pass
+    ``approved_prompts=...`` into ``Agent.resume``; the convenience method used
+    to omit the parameter, raising ``TypeError: unexpected keyword argument``.
+    """
+    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only("file_write"))
+    paused = await agent.run(
+        AgentRunInput(
+            input="Write file.",
+            run_id="run_sdk_resume_ap",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy={
+                "approval_required_for_risk": "medium",
+                "metadata": {
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="file_write",
+                            args={"path": "/tmp/sdk-resume-ap.txt", "content": "x"},
+                        ).model_dump(mode="json")
+                    ]
+                },
+            },
+        )
+    )
+    assert paused.interrupt is not None
+    # The empty-list case mirrors the host's ``approved_prompts or None`` path.
+    resumed = await agent.resume(
+        run_id="run_sdk_resume_ap",
+        interrupt_id=paused.interrupt.interrupt_id,
+        action=ResumeAction.APPROVE,
+        approved_prompts=[],
     )
     assert resumed.status.value == "completed"
 

@@ -248,18 +248,24 @@ def test_deep_research_claims_matrix_persists_hard_audit_rows(
     assert payload["path"] == CLAIMS_RELATIVE_PATH
     assert payload["record_count"] == 2
     assert payload["verified_count"] == 1
-    assert payload["unsupported_count"] == 1
+    # A blocked source read is an *inaccessible* source, not a false claim, so
+    # it must not count as "unsupported" (which would auto-fail the hard gate
+    # on every paywalled candidate). It is tracked separately for follow-up.
+    assert payload["unsupported_count"] == 0
+    assert payload["inaccessible_count"] == 1
     claims_path = tmp_path / CLAIMS_RELATIVE_PATH
     content = claims_path.read_text(encoding="utf-8")
     assert '"claim_id": "verified_1"' in content
     assert '"claim_id": "blocked_1"' in content
     assert '"status": "verified"' in content
-    assert '"status": "unsupported"' in content
+    assert '"status": "inaccessible"' in content
+    assert '"status": "unsupported"' not in content
     artifacts = context.metadata["deep_research_artifacts"]
     assert artifacts["claims_exists"] is True
     assert artifacts["claims_record_count"] == 2
     assert artifacts["claims_verified_count"] == 1
-    assert artifacts["claims_unsupported_count"] == 1
+    assert artifacts["claims_unsupported_count"] == 0
+    assert artifacts["claims_inaccessible_count"] == 1
     assert deep_research_claims_artifact_exists(context) is True
 
 
