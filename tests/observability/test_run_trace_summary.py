@@ -465,6 +465,195 @@ def test_trace_summary_flags_hard_browser_read_before_source_read() -> None:
     assert summary["failures"]["deep_research_browser_used_before_source_read"] is True
 
 
+def test_trace_summary_requires_browser_read_fallback_reason() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use hard Deep Research.",
+        assistant_text="Report ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "hard",
+            "hard_options": {"allow_browser_action": False},
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("source_read"),
+            _completed_tool("browser_read"),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    ladder = summary["research_efficiency"]["hard_source_ladder"]
+    assert ladder["browser_read_missing_fallback_reason"] is True
+    assert (
+        summary["failures"]["deep_research_browser_read_missing_fallback_reason"]
+        is True
+    )
+
+
+def test_trace_summary_accepts_browser_read_fallback_reason() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use hard Deep Research.",
+        assistant_text="Report ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "hard",
+            "hard_options": {"allow_browser_action": False},
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("source_read"),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "browser_read",
+                            "status": "completed",
+                            "args": {
+                                "url": "https://example.com/js",
+                                "fallback_reason": "source_read returned empty body",
+                            },
+                            "structured_output": {
+                                "url": "https://example.com/js",
+                                "fallback_reason": "source_read returned empty body",
+                            },
+                        }
+                    ]
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    ladder = summary["research_efficiency"]["hard_source_ladder"]
+    assert ladder["browser_read_missing_fallback_reason"] is False
+    assert (
+        summary["failures"]["deep_research_browser_read_missing_fallback_reason"]
+        is False
+    )
+
+
+def test_trace_summary_flags_missing_hard_claims_artifact() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use hard Deep Research.",
+        assistant_text="Report ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "hard",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 1},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["hard_claims_missing"] is True
+    assert summary["failures"]["deep_research_hard_claims_missing"] is True
+
+
+def test_trace_summary_counts_hard_claims_artifact_records() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use hard Deep Research.",
+        assistant_text="Report ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "hard",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 1},
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/claims.jsonl",
+                    "record_count": 2,
+                    "verified_count": 2,
+                    "unsupported_count": 0,
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["artifacts"]["claims_record_count"] == 2
+    assert summary["artifacts"]["claims_verified_count"] == 2
+    assert summary["research_efficiency"]["hard_claims_missing"] is False
+    assert summary["research_efficiency"]["hard_claims_empty"] is False
+    assert summary["research_efficiency"]["hard_claims_no_verified"] is False
+    assert summary["research_efficiency"]["hard_claims_unsupported"] is False
+    assert summary["failures"]["deep_research_hard_claims_missing"] is False
+    assert summary["failures"]["deep_research_hard_claims_empty"] is False
+    assert summary["failures"]["deep_research_hard_claims_no_verified"] is False
+    assert summary["failures"]["deep_research_hard_claims_unsupported"] is False
+
+
+def test_trace_summary_rejects_hard_claims_without_verified_rows() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use hard Deep Research.",
+        assistant_text="Report ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "hard",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/sources.jsonl", "record_count": 1},
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/claims.jsonl",
+                    "record_count": 1,
+                    "verified_count": 0,
+                    "unsupported_count": 1,
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["hard_claims_no_verified"] is True
+    assert summary["research_efficiency"]["hard_claims_unsupported"] is True
+    assert summary["failures"]["deep_research_hard_claims_no_verified"] is True
+    assert summary["failures"]["deep_research_hard_claims_unsupported"] is True
+
+
 def test_trace_summary_clears_child_synthesis_pending_after_parent_report_write() -> (
     None
 ):

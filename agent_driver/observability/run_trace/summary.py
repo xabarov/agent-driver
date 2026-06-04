@@ -307,6 +307,17 @@ def summarize_run_trace(
         "deep_research_browser_used_before_source_read": research_efficiency[
             "hard_browser_used_before_source_read"
         ],
+        "deep_research_browser_read_missing_fallback_reason": research_efficiency[
+            "hard_browser_read_missing_fallback_reason"
+        ],
+        "deep_research_hard_claims_missing": research_efficiency["hard_claims_missing"],
+        "deep_research_hard_claims_empty": research_efficiency["hard_claims_empty"],
+        "deep_research_hard_claims_no_verified": research_efficiency[
+            "hard_claims_no_verified"
+        ],
+        "deep_research_hard_claims_unsupported": research_efficiency[
+            "hard_claims_unsupported"
+        ],
     }
     notes = _notes(
         failures=failures,
@@ -890,7 +901,11 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
     updates: list[dict[str, Any]] = []
     report_paths: list[str] = []
     source_ledger_paths: list[str] = []
+    claims_paths: list[str] = []
     source_ledger_records = 0
+    claims_records = 0
+    claims_verified = 0
+    claims_unsupported = 0
     for event in events:
         if event.get("event") not in {"artifact_created", "artifact_updated"}:
             continue
@@ -919,6 +934,19 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
             record_count = data.get("record_count")
             if isinstance(record_count, int) and not isinstance(record_count, bool):
                 source_ledger_records = max(source_ledger_records, record_count)
+        if path in {"research/claims.jsonl", "research/claims.md"}:
+            claims_paths.append(path)
+            record_count = data.get("record_count")
+            if isinstance(record_count, int) and not isinstance(record_count, bool):
+                claims_records = max(claims_records, record_count)
+            verified_count = data.get("verified_count")
+            if isinstance(verified_count, int) and not isinstance(verified_count, bool):
+                claims_verified = max(claims_verified, verified_count)
+            unsupported_count = data.get("unsupported_count")
+            if isinstance(unsupported_count, int) and not isinstance(
+                unsupported_count, bool
+            ):
+                claims_unsupported = max(claims_unsupported, unsupported_count)
     return {
         "updates": updates,
         "update_count": len(updates),
@@ -936,6 +964,11 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         "source_ledger_updated": bool(source_ledger_paths),
         "source_ledger_update_count": len(source_ledger_paths),
         "source_ledger_record_count": source_ledger_records,
+        "claims_updated": bool(claims_paths),
+        "claims_update_count": len(claims_paths),
+        "claims_record_count": claims_records,
+        "claims_verified_count": claims_verified,
+        "claims_unsupported_count": claims_unsupported,
     }
 
 
@@ -1012,6 +1045,7 @@ def _research_efficiency_summary(
         child_evidence=child_evidence,
     )
     hard_profile = _deep_research_hard_profile_summary(
+        events=events,
         task_contract=task_contract,
         tool_names=tool_names,
         artifacts=artifacts,
@@ -1128,6 +1162,21 @@ def _research_efficiency_summary(
         "report_update_count": artifacts.get("report_update_count", 0),
         "report_full_write_count": report_full_write_count,
         "report_patch_count": report_patch_count,
+        "claims_update_count": artifacts.get("claims_update_count", 0),
+        "claims_record_count": artifacts.get("claims_record_count", 0),
+        "claims_verified_count": artifacts.get("claims_verified_count", 0),
+        "claims_unsupported_count": artifacts.get("claims_unsupported_count", 0),
+        "hard_claims_missing": bool(hard_profile["hard_requires_claims"])
+        and not bool(hard_profile["hard_claims_artifact_seen"]),
+        "hard_claims_empty": bool(hard_profile["hard_requires_claims"])
+        and bool(hard_profile["hard_claims_artifact_seen"])
+        and _as_int(artifacts.get("claims_record_count")) <= 0,
+        "hard_claims_no_verified": bool(hard_profile["hard_requires_claims"])
+        and bool(hard_profile["hard_claims_artifact_seen"])
+        and _as_int(artifacts.get("claims_record_count")) > 0
+        and _as_int(artifacts.get("claims_verified_count")) <= 0,
+        "hard_claims_unsupported": bool(hard_profile["hard_requires_claims"])
+        and _as_int(artifacts.get("claims_unsupported_count")) > 0,
         "report_targeted_edit_count": artifacts.get("report_targeted_edit_count", 0),
         "report_targeted_edit_without_fresh_read_count": stale_report_edit_count,
         "repeated_unchanged_report_read_count": repeated_report_read_count,
@@ -1586,6 +1635,7 @@ def _deep_research_source_quality(
 
 def _deep_research_hard_profile_summary(
     *,
+    events: list[dict[str, object]],
     task_contract: dict[str, Any] | None,
     tool_names: list[str],
     artifacts: dict[str, Any],
@@ -1622,6 +1672,11 @@ def _deep_research_hard_profile_summary(
             or tool_names.index("browser_read") < tool_names.index("source_read")
         )
     )
+    browser_read_missing_fallback_reason = (
+        profile == "hard"
+        and browser_read_count > 0
+        and _browser_read_missing_fallback_reason(events)
+    )
     return {
         "hard_profile": profile == "hard",
         "hard_source_ladder": {
@@ -1631,6 +1686,7 @@ def _deep_research_hard_profile_summary(
             "browser_action_count": browser_action_count,
             "source_ladder_started": source_ladder_started,
             "browser_used_before_source_read": browser_used_before_source_read,
+            "browser_read_missing_fallback_reason": browser_read_missing_fallback_reason,
             "allow_browser_action": allow_browser_action,
         },
         "hard_claims_artifact_seen": bool(
@@ -1641,7 +1697,32 @@ def _deep_research_hard_profile_summary(
             profile == "hard" and browser_action_count > 0 and not allow_browser_action
         ),
         "hard_browser_used_before_source_read": browser_used_before_source_read,
+        "hard_browser_read_missing_fallback_reason": browser_read_missing_fallback_reason,
     }
+
+
+def _browser_read_missing_fallback_reason(events: list[dict[str, object]]) -> bool:
+    seen_browser_read = False
+    for event in events:
+        if event.get("event") != "tool_call_completed":
+            continue
+        for tool in event_tools(_event_data(event)):
+            tool_name = tool.get("tool_name") or tool.get("name")
+            if tool_name != "browser_read":
+                continue
+            seen_browser_read = True
+            structured = tool.get("structured_output")
+            args = tool.get("args")
+            reason = None
+            if isinstance(structured, dict):
+                reason = structured.get("fallback_reason") or structured.get(
+                    "browser_fallback_reason"
+                )
+            if not reason and isinstance(args, dict):
+                reason = args.get("fallback_reason")
+            if isinstance(reason, str) and reason.strip():
+                return False
+    return seen_browser_read
 
 
 def _has_initial_deep_research_todo(tool_names: list[str]) -> bool:

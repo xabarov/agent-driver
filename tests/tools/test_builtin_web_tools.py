@@ -95,6 +95,9 @@ async def test_source_read_wraps_web_fetch_payload() -> None:
     )
 
     assert out["source_read"] is True
+    assert out["source_kind"] == "url"
+    assert out["verified_text"] is True
+    assert out["content_sha256"]
     assert out["content"] == "source body"
     assert out["summary"].startswith("source_read:")
 
@@ -118,6 +121,8 @@ async def test_pdf_read_validates_pdf_and_returns_mock_text() -> None:
     )
 
     assert out["pdf_read"] is True
+    assert out["source_kind"] == "pdf"
+    assert out["status"] == "verified"
     assert out["verified_text"] is True
     assert out["page_citations"] == [
         {"page": 1, "url": "https://example.com/paper.pdf"},
@@ -141,6 +146,7 @@ async def test_pdf_read_rejects_invalid_pdf_magic() -> None:
     )
 
     assert out["pdf_read"] is True
+    assert out["status"] == "failed"
     assert out["verified_text"] is False
     assert out["error"] == "invalid_pdf"
 
@@ -183,6 +189,9 @@ async def test_browser_read_is_read_only_fetch_fallback() -> None:
     )
 
     assert out["browser_read"] is True
+    assert out["source_kind"] == "rendered_page"
+    assert out["status"] == "verified"
+    assert out["fallback_reason"] == "source_read_or_pdf_read_insufficient"
     assert out["browser_action_allowed"] is False
     assert out["rendered"] is False
     assert "Hello" in out["content"]
@@ -203,6 +212,24 @@ async def test_browser_read_blocks_private_host_even_with_override() -> None:
                 "allow_private_host": True,
                 "mock_status_code": 200,
                 "mock_content": "secret",
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_browser_read_blocks_cloud_metadata_endpoint() -> None:
+    """browser_read should reject link-local cloud metadata addresses."""
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("browser_read")
+    assert tool is not None
+
+    with pytest.raises(ValueError, match="private/localhost hosts are blocked"):
+        await tool.handler(
+            {
+                "url": "http://169.254.169.254/latest/meta-data",
+                "mock_status_code": 200,
+                "mock_content": "metadata",
             }
         )
 

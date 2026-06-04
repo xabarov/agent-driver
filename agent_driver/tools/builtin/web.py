@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from hashlib import sha256
 from html import unescape
 import ipaddress
 import os
@@ -345,6 +346,13 @@ def _browser_read_manifest() -> ToolManifest:
                 },
                 "mock_content": {"type": "string"},
                 "mock_content_type": {"type": "string"},
+                "fallback_reason": {
+                    "type": "string",
+                    "description": (
+                        "Why source_read/pdf_read were insufficient and rendered "
+                        "fallback is needed"
+                    ),
+                },
             },
             "required": ["url"],
             "additionalProperties": False,
@@ -450,10 +458,16 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
 
 async def _source_read_handler(args: dict[str, Any]) -> dict[str, Any]:
     payload = await _web_fetch_handler(args)
+    content = str(payload.get("content") or "")
     return {
         **payload,
         "summary": f"source_read: {payload.get('summary', '')}",
         "source_read": True,
+        "source_kind": "url",
+        "verified_text": bool(content) and payload.get("blocked") is not True,
+        "content_sha256": (
+            sha256(content.encode("utf-8")).hexdigest() if content else ""
+        ),
     }
 
 
@@ -522,6 +536,7 @@ async def _pdf_read_handler(args: dict[str, Any]) -> dict[str, Any]:
             "status_code": status_code,
             "pdf_read": True,
             "source_kind": "pdf",
+            "status": "partial",
             "page_start": page_start,
             "page_end": page_end,
             "bytes_total": bytes_total,
@@ -539,6 +554,7 @@ async def _pdf_read_handler(args: dict[str, Any]) -> dict[str, Any]:
         "status_code": status_code,
         "pdf_read": True,
         "source_kind": "pdf",
+        "status": "verified",
         "page_start": page_start,
         "page_end": page_end,
         "bytes_total": bytes_total,
@@ -553,6 +569,9 @@ async def _pdf_read_handler(args: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _browser_read_handler(args: dict[str, Any]) -> dict[str, Any]:
+    fallback_reason = str(
+        args.get("fallback_reason") or "source_read_or_pdf_read_insufficient"
+    ).strip()
     payload = await _web_fetch_handler(
         {
             **args,
@@ -564,6 +583,10 @@ async def _browser_read_handler(args: dict[str, Any]) -> dict[str, Any]:
         **payload,
         "summary": f"browser_read fallback: {payload.get('summary', '')}",
         "browser_read": True,
+        "source_kind": "rendered_page",
+        "status": "verified" if payload.get("blocked") is not True else "blocked",
+        "fallback_reason": fallback_reason,
+        "browser_fallback_reason": fallback_reason,
         "rendered": False,
         "browser_action_allowed": False,
         "screenshot_artifact": None,
@@ -585,6 +608,7 @@ def _pdf_error_payload(
         "status_code": status_code,
         "pdf_read": True,
         "source_kind": "pdf",
+        "status": "failed",
         "page_start": page_start,
         "page_end": page_end,
         "text": "",
@@ -1090,7 +1114,14 @@ def _validate_http_url(raw: Any, *, allow_private_host: bool = False) -> str:
                 addr = ipaddress.ip_address(host)
             except ValueError:
                 addr = None
-            if addr is not None and (addr.is_private or addr.is_loopback):
+            if addr is not None and (
+                addr.is_private
+                or addr.is_loopback
+                or addr.is_link_local
+                or addr.is_reserved
+                or addr.is_multicast
+                or addr.is_unspecified
+            ):
                 raise ValueError("private/localhost hosts are blocked by policy")
     return value
 

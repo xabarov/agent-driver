@@ -128,6 +128,79 @@ def test_research_contract_counts_hard_read_tools_as_verified_reads() -> None:
     assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
 
 
+def test_research_contract_preserves_hard_source_ladder_metadata() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "source_verified_report",
+        },
+        tool_results=[
+            {
+                "call": {
+                    "tool_name": "pdf_read",
+                    "tool_call_id": "pdf_1",
+                    "args": {"url": "https://example.org/paper.pdf"},
+                },
+                "structured_output": {
+                    "url": "https://example.org/paper.pdf",
+                    "source_kind": "pdf",
+                    "status": "verified",
+                    "verified_text": True,
+                    "text": "PDF evidence text",
+                    "page_start": 2,
+                    "page_end": 3,
+                    "page_citations": [
+                        {"page": 2, "url": "https://example.org/paper.pdf"},
+                        {"page": 3, "url": "https://example.org/paper.pdf"},
+                    ],
+                },
+            }
+        ],
+        assistant_text="[PDF](https://example.org/paper.pdf)",
+    )
+
+    row = contract.source_ledger.verified_reads[0]
+    assert row["source_type"] == "pdf_read"
+    assert row["source_kind"] == "pdf"
+    assert row["verified_text"] is True
+    assert row["page_start"] == 2
+    assert row["page_end"] == 3
+    assert len(row["page_citations"]) == 2
+    assert row["content_sha256"]
+
+
+def test_research_contract_rejects_partial_pdf_as_verified_evidence() -> None:
+    contract = build_research_session_contract(
+        task_contract={
+            "requires_research": True,
+            "research_depth": "source_verified_report",
+        },
+        tool_results=[
+            {
+                "call": {
+                    "tool_name": "pdf_read",
+                    "tool_call_id": "pdf_1",
+                    "args": {"url": "https://example.org/scanned.pdf"},
+                },
+                "structured_output": {
+                    "url": "https://example.org/scanned.pdf",
+                    "source_kind": "pdf",
+                    "status": "partial",
+                    "verified_text": False,
+                    "error": "text_extraction_unavailable",
+                },
+            }
+        ],
+        assistant_text="[PDF](https://example.org/scanned.pdf)",
+    )
+
+    assert contract.evidence.successful_fetches == 0
+    assert contract.evidence.failed_fetches == 1
+    assert contract.source_ledger.verified_reads == []
+    assert contract.source_ledger.failed_reads[0]["status"] == "failed"
+    assert contract.source_ledger.failed_reads[0]["source_kind"] == "pdf"
+
+
 def test_research_contract_requires_fetched_source_verified_evidence() -> None:
     contract = build_research_session_contract(
         task_contract={

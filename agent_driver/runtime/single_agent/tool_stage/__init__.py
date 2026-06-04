@@ -38,6 +38,7 @@ from agent_driver.runtime.research_evidence import (
 from agent_driver.runtime.research_artifacts import (
     deep_research_report_artifact_exists,
     deep_research_source_ledger_artifact_exists,
+    persist_deep_research_claims_matrix,
     persist_deep_research_source_ledger,
 )
 from agent_driver.runtime.research_session_contract import (
@@ -182,7 +183,9 @@ def _clamp_deep_research_parent_artifact_batch(context: RunContext) -> None:
     if response is None:
         return
     planned_calls = extract_planned_tool_calls(response)
-    if not planned_calls or not any(call.tool_name == "file_write" for call in planned_calls):
+    if not planned_calls or not any(
+        call.tool_name == "file_write" for call in planned_calls
+    ):
         return
     kept = [call for call in planned_calls if call.tool_name == "file_write"]
     if len(kept) == len(planned_calls):
@@ -232,7 +235,9 @@ def _coerce_deep_research_artifact_repair_batch(context: RunContext) -> None:
     )
     response.metadata["planned_tool_calls"] = [repaired.model_dump(mode="json")]
     context.metadata["deep_research_artifact_repair_batch_coerced"] = {
-        "target": "research/sources.jsonl" if target == "sources" else "research/report.md",
+        "target": (
+            "research/sources.jsonl" if target == "sources" else "research/report.md"
+        ),
         "dropped": max(0, len(planned_calls) - 1),
         "original_tool": first.tool_name,
     }
@@ -243,7 +248,9 @@ def _coerce_deep_research_parent_synthesis_write(context: RunContext) -> None:
     handoff = context.metadata.get("deep_research_child_synthesis")
     if not isinstance(handoff, dict) or handoff.get("pending") is not True:
         return
-    if deep_research_report_artifact_exists(context) or _report_artifact_path_seen(context):
+    if deep_research_report_artifact_exists(context) or _report_artifact_path_seen(
+        context
+    ):
         return
     response = context.llm_response
     if response is None:
@@ -251,7 +258,9 @@ def _coerce_deep_research_parent_synthesis_write(context: RunContext) -> None:
     planned_calls = extract_planned_tool_calls(response)
     if not planned_calls:
         return
-    if any(call.tool_name in {"file_write", "write", "web_fetch"} for call in planned_calls):
+    if any(
+        call.tool_name in {"file_write", "write", "web_fetch"} for call in planned_calls
+    ):
         return
     first = planned_calls[0]
     repaired = first.model_copy(
@@ -761,9 +770,8 @@ def _report_artifact_path_seen(context: RunContext) -> bool:
 
 
 def _report_artifact_confirmed_if_possible(context: RunContext) -> bool:
-    if (
-        "workspace_cwd" in context.metadata
-        or isinstance(context.metadata.get("deep_research_artifacts"), dict)
+    if "workspace_cwd" in context.metadata or isinstance(
+        context.metadata.get("deep_research_artifacts"), dict
     ):
         return deep_research_report_artifact_exists(context)
     return True
@@ -1026,7 +1034,8 @@ def _emit_tool_completed_if_needed(
         get_tool_loop_state(context).tool_results()
     ).model_dump()
     if any(
-        row["tool_name"] in {"web_search", "web_fetch"}
+        row["tool_name"]
+        in {"web_search", "web_fetch", "source_read", "pdf_read", "browser_read"}
         for row in tools
         if isinstance(row.get("tool_name"), str)
     ):
@@ -1053,6 +1062,28 @@ def _emit_tool_completed_if_needed(
                     "size_bytes": source_artifact["size_bytes"],
                     "bytes": source_artifact["bytes"],
                     "record_count": source_artifact["record_count"],
+                },
+            )
+        claims_artifact = persist_deep_research_claims_matrix(context, source_ledger)
+        if claims_artifact is not None:
+            emit_step_event(
+                host,
+                context,
+                event_type=(
+                    RuntimeEventType.ARTIFACT_CREATED
+                    if claims_artifact.get("created") is True
+                    else RuntimeEventType.ARTIFACT_UPDATED
+                ),
+                payload={
+                    "path": claims_artifact["path"],
+                    "kind": claims_artifact["kind"],
+                    "operation": claims_artifact["operation"],
+                    "tool_name": "claims_matrix",
+                    "size_bytes": claims_artifact["size_bytes"],
+                    "bytes": claims_artifact["bytes"],
+                    "record_count": claims_artifact["record_count"],
+                    "verified_count": claims_artifact["verified_count"],
+                    "unsupported_count": claims_artifact["unsupported_count"],
                 },
             )
         emit_step_event(

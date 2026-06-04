@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from hashlib import sha256
 from typing import Any
 from urllib.parse import urlparse
 
@@ -216,10 +217,12 @@ def _tool_result_failed(item: dict[str, Any]) -> bool:
     if isinstance(structured, dict):
         if structured.get("blocked") is True or structured.get("unavailable") is True:
             return True
+        if structured.get("verified_text") is False:
+            return True
         if structured.get("error") or structured.get("error_code"):
             return True
         status = str(structured.get("status") or "").lower()
-        if status in {"error", "failed", "denied"}:
+        if status in {"error", "failed", "denied", "partial", "blocked"}:
             return True
         status_code = _int_or_none(structured.get("status_code"))
         if status_code is not None and status_code >= 400:
@@ -325,10 +328,41 @@ def _fetch_record(
             structured.get("excerpt") or structured.get("summary"),
         )
         _set_clean(row, "error_code", structured.get("error_code"))
+        _set_clean(row, "error", structured.get("error"))
+        _set_clean(row, "detail", structured.get("detail"))
         _set_clean(row, "status", structured.get("status"))
+        _set_clean(row, "source_kind", structured.get("source_kind"))
+        _set_clean(row, "fallback_reason", structured.get("fallback_reason"))
+        _set_clean(
+            row, "browser_fallback_reason", structured.get("browser_fallback_reason")
+        )
         status_code = structured.get("status_code")
         if isinstance(status_code, int) and not isinstance(status_code, bool):
             row["status_code"] = status_code
+        page_start = _int_or_none(structured.get("page_start"))
+        page_end = _int_or_none(structured.get("page_end"))
+        if page_start is not None:
+            row["page_start"] = page_start
+        if page_end is not None:
+            row["page_end"] = page_end
+        page_citations = structured.get("page_citations")
+        if isinstance(page_citations, list):
+            row["page_citations"] = [
+                item for item in page_citations if isinstance(item, dict)
+            ]
+        for key in ("verified_text", "rendered", "browser_action_allowed"):
+            value = structured.get(key)
+            if isinstance(value, bool):
+                row[key] = value
+        content = structured.get("content") or structured.get("text")
+        if isinstance(content, str) and content:
+            row["content_sha256"] = sha256(content.encode("utf-8")).hexdigest()
+        bytes_total = _int_or_none(structured.get("bytes_total"))
+        bytes_loaded = _int_or_none(structured.get("bytes_loaded"))
+        if bytes_total is not None:
+            row["bytes_total"] = bytes_total
+        if bytes_loaded is not None:
+            row["bytes_loaded"] = bytes_loaded
     return row
 
 

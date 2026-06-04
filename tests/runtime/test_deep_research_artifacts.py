@@ -7,11 +7,14 @@ from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.runtime.research_artifacts import (
+    CLAIMS_RELATIVE_PATH,
     REPORT_RELATIVE_PATH,
     SOURCE_LEDGER_RELATIVE_PATH,
+    deep_research_claims_artifact_exists,
     deep_research_source_ledger_artifact_exists,
     ensure_deep_research_report_artifact_metadata,
     maybe_capture_deep_research_draft,
+    persist_deep_research_claims_matrix,
     persist_deep_research_source_ledger,
 )
 from agent_driver.runtime.single_agent.lifecycle.steps import (
@@ -20,7 +23,7 @@ from agent_driver.runtime.single_agent.lifecycle.steps import (
 from agent_driver.runtime.single_agent.types import RunContext
 
 
-def _context(tmp_path: Path, *, text: str = "draft") -> RunContext:
+def _context(tmp_path: Path, *, text: str = "draft", hard: bool = False) -> RunContext:
     run_input = AgentRunInput(
         input="research",
         run_id="run_deep_artifacts",
@@ -29,7 +32,14 @@ def _context(tmp_path: Path, *, text: str = "draft") -> RunContext:
         graph_preset="single_react",
         tool_policy=ToolPolicyInput(
             metadata={
-                "deep_research_mode": {"enabled": True},
+                "deep_research_mode": {
+                    "enabled": True,
+                    "research_profile": "hard" if hard else "medium",
+                },
+                "task_contract": {
+                    "research_depth": "deep_parallel_research",
+                    "research_profile": "hard" if hard else "medium",
+                },
             }
         ),
         app_metadata={
@@ -197,6 +207,60 @@ def test_deep_research_source_ledger_exists_from_workspace_file(
     source_ledger.write_text('{"url": "https://example.com"}\n', encoding="utf-8")
 
     assert deep_research_source_ledger_artifact_exists(context) is True
+
+
+def test_deep_research_claims_matrix_is_hard_only(tmp_path: Path) -> None:
+    context = _context(tmp_path)
+    ledger = {
+        "verified_reads": [{"url": "https://example.com/a", "source_type": "web_fetch"}]
+    }
+
+    assert persist_deep_research_claims_matrix(context, ledger) is None
+    assert not (tmp_path / CLAIMS_RELATIVE_PATH).exists()
+
+
+def test_deep_research_claims_matrix_persists_hard_audit_rows(
+    tmp_path: Path,
+) -> None:
+    context = _context(tmp_path, hard=True)
+    ledger = {
+        "verified_reads": [
+            {
+                "url": "https://example.com/a",
+                "source_type": "source_read",
+                "source_kind": "url",
+            }
+        ],
+        "blocked_reads": [
+            {
+                "url": "https://example.org/b",
+                "source_type": "browser_read",
+                "source_kind": "rendered_page",
+                "fallback_reason": "source_read blocked",
+            }
+        ],
+        "failed_reads": [],
+    }
+
+    payload = persist_deep_research_claims_matrix(context, ledger)
+
+    assert payload is not None
+    assert payload["path"] == CLAIMS_RELATIVE_PATH
+    assert payload["record_count"] == 2
+    assert payload["verified_count"] == 1
+    assert payload["unsupported_count"] == 1
+    claims_path = tmp_path / CLAIMS_RELATIVE_PATH
+    content = claims_path.read_text(encoding="utf-8")
+    assert '"claim_id": "verified_1"' in content
+    assert '"claim_id": "blocked_1"' in content
+    assert '"status": "verified"' in content
+    assert '"status": "unsupported"' in content
+    artifacts = context.metadata["deep_research_artifacts"]
+    assert artifacts["claims_exists"] is True
+    assert artifacts["claims_record_count"] == 2
+    assert artifacts["claims_verified_count"] == 1
+    assert artifacts["claims_unsupported_count"] == 1
+    assert deep_research_claims_artifact_exists(context) is True
 
 
 def test_contract_repair_uses_captured_report_instead_of_full_prompt(

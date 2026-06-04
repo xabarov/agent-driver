@@ -55,6 +55,13 @@ DEEP_RESEARCH_FAILURES = (
     "deep_research_tool_entropy_high",
     "deep_research_phase_violation",
     "deep_research_long_final_after_report",
+    "deep_research_browser_action_without_opt_in",
+    "deep_research_browser_used_before_source_read",
+    "deep_research_browser_read_missing_fallback_reason",
+    "deep_research_hard_claims_missing",
+    "deep_research_hard_claims_empty",
+    "deep_research_hard_claims_no_verified",
+    "deep_research_hard_claims_unsupported",
 )
 
 ACCEPTANCE_AXES = (
@@ -69,6 +76,8 @@ ACCEPTANCE_AXES = (
     "ui",
     "budget",
     "grounding",
+    "hard_claims",
+    "hard_safety",
 )
 
 
@@ -162,7 +171,7 @@ def main() -> int:
                                 artifact_dir,
                                 str(question.get("expected_answer_regex") or ""),
                             ),
-                            acceptance=failed_acceptance(),
+                            acceptance=failed_acceptance(profile=profile),
                             error=str(exc),
                             artifact_dir=str(artifact_dir),
                             trace_summary=summary,
@@ -420,11 +429,21 @@ def acceptance_axes(
         "ui": ui_ok,
         "budget": budget_ok(profile=profile, question=question, summary=summary),
         "grounding": grounding_ok(question=question, artifact_dir=artifact_dir),
+        "hard_claims": hard_claims_ok(
+            profile=profile,
+            summary=summary,
+            artifact_dir=artifact_dir,
+        ),
+        "hard_safety": hard_safety_ok(profile=profile, summary=summary),
     }
 
 
-def failed_acceptance() -> dict[str, bool]:
-    return {name: False for name in ACCEPTANCE_AXES}
+def failed_acceptance(*, profile: str | None = None) -> dict[str, bool]:
+    acceptance = {name: False for name in ACCEPTANCE_AXES}
+    if profile != "hard":
+        acceptance["hard_claims"] = True
+        acceptance["hard_safety"] = True
+    return acceptance
 
 
 def synthesis_ok(*, profile: str, summary: dict[str, Any]) -> bool:
@@ -502,6 +521,92 @@ def terminal_ok(*, profile: str, summary: dict[str, Any]) -> bool:
     if profile not in {"medium", "hard"}:
         return True
     return summary.get("terminal_event") == "run_completed"
+
+
+def hard_claims_ok(
+    *, profile: str, summary: dict[str, Any], artifact_dir: Path | None = None
+) -> bool:
+    if profile != "hard":
+        return True
+    research = research_efficiency(summary)
+    if research.get("hard_claims_missing") is True:
+        return False
+    if research.get("hard_claims_empty") is True:
+        return False
+    if research.get("hard_claims_no_verified") is True:
+        return False
+    if research.get("hard_claims_unsupported") is True:
+        return False
+    if int(research.get("claims_record_count") or 0) <= 0:
+        return False
+    if int(research.get("claims_verified_count") or 0) <= 0:
+        return False
+    if int(research.get("claims_unsupported_count") or 0) > 0:
+        return False
+    if artifact_dir is None:
+        return True
+    audit = claims_source_audit(artifact_dir)
+    if audit is None:
+        return True
+    return audit["ok"]
+
+
+def claims_source_audit(artifact_dir: Path) -> dict[str, Any] | None:
+    claims = _claims_rows_from_artifact_dir(artifact_dir)
+    if not claims:
+        return None
+    ledger = _source_rows_from_artifact_dir(artifact_dir)
+    verified_urls = {
+        _normalize_url(str(row.get("url")))
+        for row in ledger
+        if (
+            str(row.get("status") or row.get("source_status") or "").lower()
+            == "verified"
+            or row.get("ledger_section") == "verified_reads"
+        )
+        and isinstance(row.get("url"), str)
+    }
+    if not verified_urls:
+        return {
+            "ok": False,
+            "reason": "claims_without_verified_ledger_sources",
+        }
+    unsupported: list[str] = []
+    non_ledger: list[str] = []
+    for claim in claims:
+        status = str(claim.get("status") or "").strip().lower()
+        urls = _claim_urls(claim)
+        if status != "verified":
+            unsupported.append(str(claim.get("claim_id") or len(unsupported) + 1))
+            continue
+        if not urls or any(_normalize_url(url) not in verified_urls for url in urls):
+            non_ledger.append(str(claim.get("claim_id") or len(non_ledger) + 1))
+    return {
+        "ok": not unsupported and not non_ledger,
+        "unsupported": unsupported,
+        "non_ledger": non_ledger,
+    }
+
+
+def hard_safety_ok(*, profile: str, summary: dict[str, Any]) -> bool:
+    if profile != "hard":
+        return True
+    research = research_efficiency(summary)
+    ladder = (
+        research.get("hard_source_ladder")
+        if isinstance(research.get("hard_source_ladder"), dict)
+        else {}
+    )
+    return not any(
+        bool(value)
+        for value in (
+            research.get("hard_browser_action_without_opt_in"),
+            research.get("hard_browser_used_before_source_read"),
+            research.get("hard_browser_read_missing_fallback_reason"),
+            ladder.get("browser_used_before_source_read"),
+            ladder.get("browser_read_missing_fallback_reason"),
+        )
+    )
 
 
 def research_efficiency(summary: dict[str, Any]) -> dict[str, Any]:
@@ -589,6 +694,61 @@ def workspace_artifact_paths(artifact_dir: Path) -> set[str]:
     }
 
 
+def _claims_rows_from_artifact_dir(artifact_dir: Path) -> list[dict[str, Any]]:
+    return _jsonl_rows_from_known_paths(
+        artifact_dir,
+        (
+            "research/claims.jsonl",
+            "claims.jsonl",
+            "workspace/research/claims.jsonl",
+        ),
+    )
+
+
+def _source_rows_from_artifact_dir(artifact_dir: Path) -> list[dict[str, Any]]:
+    return _jsonl_rows_from_known_paths(
+        artifact_dir,
+        (
+            "research/sources.jsonl",
+            "sources.jsonl",
+            "workspace/research/sources.jsonl",
+        ),
+    )
+
+
+def _jsonl_rows_from_known_paths(
+    artifact_dir: Path, relative_paths: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for relative_path in relative_paths:
+        path = artifact_dir / relative_path
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def _claim_urls(claim: dict[str, Any]) -> list[str]:
+    urls = claim.get("cited_urls") or claim.get("source_urls") or claim.get("urls")
+    if isinstance(urls, list):
+        return [
+            str(url).strip() for url in urls if isinstance(url, str) and url.strip()
+        ]
+    url = claim.get("url")
+    if isinstance(url, str) and url.strip():
+        return [url.strip()]
+    return []
+
+
 def parent_report_write_seen(summary: dict[str, Any]) -> bool:
     artifacts = (
         summary.get("artifacts") if isinstance(summary.get("artifacts"), dict) else {}
@@ -655,6 +815,7 @@ def render_matrix_markdown(results: list[MatrixResult]) -> str:
         candidate_count = int(research.get("candidate_count") or 0)
         blocked_reads = int(research.get("blocked_read_count") or 0)
         failed_reads = int(research.get("failed_read_count") or 0)
+        claims_records = int(research.get("claims_record_count") or 0)
         error = item.error or ",".join(failures) or "-"
         lines.append(
             "| "
@@ -665,7 +826,8 @@ def render_matrix_markdown(results: list[MatrixResult]) -> str:
             f"parent_fetch={parent_fetches}; child_count={child_count}; "
             f"child_fetch={child_fetches}; duplicated_children={duplicated_child_queries}; "
             f"quality={quality_status}; verified={verified_reads}; "
-            f"candidate={candidate_count}; blocked={blocked_reads}; failed={failed_reads} | "
+            f"candidate={candidate_count}; blocked={blocked_reads}; "
+            f"failed={failed_reads}; claims={claims_records} | "
             f"{item.run_id or '-'} | "
             f"{error.replace('|', '/')[:180]} |"
         )
@@ -722,6 +884,22 @@ def result_to_json(item: MatrixResult) -> dict[str, Any]:
         "hard_profile": bool(research.get("hard_profile")),
         "hard_source_ladder": research.get("hard_source_ladder") or {},
         "hard_claims_artifact_seen": bool(research.get("hard_claims_artifact_seen")),
+        "claims_record_count": int(research.get("claims_record_count") or 0),
+        "claims_verified_count": int(research.get("claims_verified_count") or 0),
+        "claims_unsupported_count": int(research.get("claims_unsupported_count") or 0),
+        "hard_claims_missing": bool(research.get("hard_claims_missing")),
+        "hard_claims_empty": bool(research.get("hard_claims_empty")),
+        "hard_claims_no_verified": bool(research.get("hard_claims_no_verified")),
+        "hard_claims_unsupported": bool(research.get("hard_claims_unsupported")),
+        "hard_browser_action_without_opt_in": bool(
+            research.get("hard_browser_action_without_opt_in")
+        ),
+        "hard_browser_used_before_source_read": bool(
+            research.get("hard_browser_used_before_source_read")
+        ),
+        "hard_browser_read_missing_fallback_reason": bool(
+            research.get("hard_browser_read_missing_fallback_reason")
+        ),
         "artifact_dir": item.artifact_dir,
     }
 
@@ -783,8 +961,18 @@ def failure_class(item: MatrixResult) -> str | None:
     }:
         return "model_behavior"
     if failures & {
+        "deep_research_browser_action_without_opt_in",
+        "deep_research_browser_used_before_source_read",
+        "deep_research_browser_read_missing_fallback_reason",
+    }:
+        return "tool_surface"
+    if failures & {
         "deep_research_no_report_artifact",
         "deep_research_no_source_ledger_artifact",
+        "deep_research_hard_claims_missing",
+        "deep_research_hard_claims_empty",
+        "deep_research_hard_claims_no_verified",
+        "deep_research_hard_claims_unsupported",
         "child_result_not_used",
     }:
         return "artifact_contract"

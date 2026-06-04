@@ -2681,3 +2681,63 @@ Execution note 2026-06-04:
   `instructions/prompt/query -> task` alias normalization. This was a
   scorecard-only refinement; the final live pair above remains the Phase 0.5
   evidence bundle.
+
+Execution note 2026-06-04 hard-profile benchmark stage:
+
+- Implemented hard source ladder durability and checks:
+  - `source_read`, `pdf_read`, and `browser_read` now propagate stable ledger
+    metadata such as `source_kind`, status, content hash, page hints, and
+    fallback reason;
+  - partial/failed PDF reads and blocked browser fallbacks no longer count as
+    verified evidence;
+  - `browser_read` requires an explicit fallback reason in hard traces;
+  - `browser_action` remains forbidden unless explicitly opted in.
+- Added hard claims audit scaffolding:
+  - hard-profile source ledger persistence can create
+    `research/claims.jsonl` claim/source audit rows;
+  - trace-summary exposes claims artifact counts and fails hard runs with
+    missing, empty, no-verified, or unsupported claims artifacts;
+  - the live matrix hard claims axis checks saved `claims.jsonl` rows against
+    verified `sources.jsonl` ledger URLs when raw artifacts are available;
+  - live matrix includes dedicated `hard_claims` and `hard_safety` axes so a
+    hard run cannot pass solely on answer text or report creation.
+- Added safety coverage:
+  - `browser_read` remains read-only and blocks private, localhost,
+    link-local, reserved, multicast, unspecified, and cloud metadata IPs;
+  - PDF reads validate magic bytes, enforce byte caps, preserve page range
+    hints, and report partial/failed extraction as non-verified evidence.
+- Verified deterministic coverage:
+  - `uv run pytest tests/tools/test_builtin_web_tools.py
+    tests/runtime/test_research_session_contract.py
+    tests/runtime/test_deep_research_artifacts.py
+    tests/observability/test_run_trace_summary.py
+    tests/scripts/test_deep_research_live_matrix.py -q`;
+  - `uv run black --check agent_driver/runtime/research_evidence.py
+    agent_driver/runtime/research_artifacts.py
+    agent_driver/runtime/single_agent/tool_stage/__init__.py
+    agent_driver/tools/builtin/web.py
+    agent_driver/observability/run_trace/summary.py
+    scripts/deep_research_live_matrix.py
+    tests/runtime/test_research_session_contract.py
+    tests/runtime/test_deep_research_artifacts.py
+    tests/tools/test_builtin_web_tools.py
+    tests/observability/test_run_trace_summary.py
+    tests/scripts/test_deep_research_live_matrix.py`;
+  - `uv run python scripts/deep_research_live_matrix.py --profiles
+    medium,hard --limit 1 --dry-run`.
+- Live canary status:
+  - the medium-first gate was attempted with
+    `uv run python scripts/deep_research_live_matrix.py --profiles medium
+    --question-id fork-join-canary --repetitions 1`;
+  - it failed before agent execution with `health failed: 500`, so this is an
+    environment/backend health blocker, not a hard-profile contract result;
+  - hard canary was intentionally not run after the medium health gate failed.
+- Residual risks:
+  - the hard claims artifact is currently an audit scaffold from ledger rows;
+    future live hard runs should replace or enrich it with extracted report
+    claims and verifier notes;
+  - live hard quality remains unproven until chat-demo health is green and the
+    medium regression gate passes in the same environment;
+  - PDF extraction is still deterministic/mock-oriented in tests and should not
+    be treated as production-grade citation extraction until a real extractor
+    is wired behind the same failure semantics.

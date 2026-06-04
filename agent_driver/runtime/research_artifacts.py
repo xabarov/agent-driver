@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 DEFAULT_INLINE_ANSWER_MAX_CHARS = 1_800
 REPORT_RELATIVE_PATH = "research/report.md"
 SOURCE_LEDGER_RELATIVE_PATH = "research/sources.jsonl"
+CLAIMS_RELATIVE_PATH = "research/claims.jsonl"
 
 
 def deep_research_artifact_mode(context: "RunContext") -> bool:
@@ -59,6 +60,21 @@ def deep_research_source_ledger_artifact_exists(context: "RunContext") -> bool:
             return True
     ledger = _source_ledger_path(context)
     return ledger is not None and ledger.is_file() and ledger.stat().st_size > 0
+
+
+def deep_research_claims_artifact_exists(context: "RunContext") -> bool:
+    """Return whether this run already has a non-empty claims audit artifact."""
+    payload = context.metadata.get("deep_research_artifacts")
+    if isinstance(payload, dict):
+        if payload.get("claims_exists") is True:
+            return True
+        if (
+            isinstance(payload.get("claims_path"), str)
+            and int(payload.get("claims_size_bytes") or 0) > 0
+        ):
+            return True
+    claims = _claims_path(context)
+    return claims is not None and claims.is_file() and claims.stat().st_size > 0
 
 
 def ensure_deep_research_report_artifact_metadata(
@@ -184,6 +200,50 @@ def persist_deep_research_source_ledger(
     return payload
 
 
+def persist_deep_research_claims_matrix(
+    context: "RunContext",
+    ledger: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Persist a hard-profile claim/source audit scaffold to ``research/claims.jsonl``."""
+    if not deep_research_artifact_mode(context):
+        return None
+    if not _hard_profile_enabled(context):
+        return None
+    if deep_research_claims_artifact_exists(context):
+        return None
+    rows = _claims_jsonl_rows(ledger)
+    if not rows:
+        return None
+    workspace = _workspace_root(context)
+    if workspace is None:
+        return None
+    path = (workspace / CLAIMS_RELATIVE_PATH).resolve()
+    try:
+        path.relative_to(workspace)
+    except ValueError:
+        return None
+    existed_before = path.exists()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+    path.write_text(content, encoding="utf-8")
+    stat = path.stat()
+    counts = _claims_counts(rows)
+    payload = {
+        "path": CLAIMS_RELATIVE_PATH,
+        "absolute_path": str(path),
+        "kind": "research_claims",
+        "operation": "write" if not existed_before else "update",
+        "created": not existed_before,
+        "size_bytes": stat.st_size,
+        "bytes": stat.st_size,
+        "record_count": len(rows),
+        "verified_count": counts["verified"],
+        "unsupported_count": counts["unsupported"],
+    }
+    _record_claims_metadata(context, payload)
+    return payload
+
+
 def _report_path(context: "RunContext") -> Path | None:
     root = _workspace_root(context)
     if root is None:
@@ -206,6 +266,30 @@ def _source_ledger_path(context: "RunContext") -> Path | None:
     except ValueError:
         return None
     return ledger
+
+
+def _claims_path(context: "RunContext") -> Path | None:
+    root = _workspace_root(context)
+    if root is None:
+        return None
+    claims = (root / CLAIMS_RELATIVE_PATH).resolve()
+    try:
+        claims.relative_to(root)
+    except ValueError:
+        return None
+    return claims
+
+
+def _hard_profile_enabled(context: "RunContext") -> bool:
+    metadata = context.run_input.tool_policy.metadata
+    task_contract = metadata.get("task_contract")
+    if (
+        isinstance(task_contract, dict)
+        and task_contract.get("research_profile") == "hard"
+    ):
+        return True
+    mode = metadata.get("deep_research_mode")
+    return isinstance(mode, dict) and mode.get("research_profile") == "hard"
 
 
 def _inline_answer_max_chars(context: "RunContext") -> int:
@@ -291,6 +375,26 @@ def _record_source_ledger_metadata(
     context.metadata["deep_research_artifacts"] = artifacts
 
 
+def _record_claims_metadata(
+    context: "RunContext",
+    payload: dict[str, Any],
+) -> None:
+    previous = context.metadata.get("deep_research_artifacts")
+    artifacts = dict(previous) if isinstance(previous, dict) else {}
+    artifacts.update(
+        {
+            "claims_exists": True,
+            "claims_path": payload["path"],
+            "claims_absolute_path": payload["absolute_path"],
+            "claims_size_bytes": payload["size_bytes"],
+            "claims_record_count": payload["record_count"],
+            "claims_verified_count": payload["verified_count"],
+            "claims_unsupported_count": payload["unsupported_count"],
+        }
+    )
+    context.metadata["deep_research_artifacts"] = artifacts
+
+
 def _source_ledger_jsonl_rows(ledger: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for section in (
@@ -313,16 +417,66 @@ def _source_ledger_jsonl_rows(ledger: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def _claims_jsonl_rows(ledger: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for section, status in (
+        ("verified_reads", "verified"),
+        ("blocked_reads", "blocked"),
+        ("failed_reads", "failed"),
+    ):
+        values = ledger.get(section)
+        if not isinstance(values, list):
+            continue
+        for index, item in enumerate(values, start=1):
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if not url:
+                continue
+            rows.append(
+                {
+                    "claim_id": f"{status}_{index}",
+                    "claim_text": f"Source evidence row requires hard-profile audit: {url}",
+                    "cited_urls": [url],
+                    "status": "verified" if status == "verified" else "unsupported",
+                    "source_status": status,
+                    "source_kind": item.get("source_kind") or item.get("source_type"),
+                    "confidence": (
+                        "audit_required" if status != "verified" else "source_verified"
+                    ),
+                    "verifier_notes": item.get("detail")
+                    or item.get("error")
+                    or item.get("fallback_reason")
+                    or "",
+                }
+            )
+    return rows
+
+
+def _claims_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {"verified": 0, "unsupported": 0}
+    for row in rows:
+        status = str(row.get("status") or "").strip().lower()
+        if status == "verified":
+            counts["verified"] += 1
+        else:
+            counts["unsupported"] += 1
+    return counts
+
+
 __all__ = [
     "DEFAULT_INLINE_ANSWER_MAX_CHARS",
+    "CLAIMS_RELATIVE_PATH",
     "REPORT_RELATIVE_PATH",
     "SOURCE_LEDGER_RELATIVE_PATH",
     "captured_draft_protocol_text",
     "deep_research_artifact_mode",
     "deep_research_artifact_repair_hint",
+    "deep_research_claims_artifact_exists",
     "deep_research_report_artifact_exists",
     "deep_research_source_ledger_artifact_exists",
     "ensure_deep_research_report_artifact_metadata",
     "maybe_capture_deep_research_draft",
+    "persist_deep_research_claims_matrix",
     "persist_deep_research_source_ledger",
 ]

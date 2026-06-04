@@ -69,6 +69,8 @@ def test_acceptance_axes_require_trace_artifacts_budget_and_grounding(tmp_path) 
         "ui": True,
         "budget": True,
         "grounding": True,
+        "hard_claims": True,
+        "hard_safety": True,
     }
 
 
@@ -78,6 +80,18 @@ def test_acceptance_error_lists_failed_axes() -> None:
     assert matrix.acceptance_error({"expected": True, "trace": False}) == (
         "acceptance failed: trace"
     )
+
+
+def test_failed_acceptance_keeps_hard_axes_non_blocking_for_medium() -> None:
+    matrix = _load_matrix_module()
+
+    medium = matrix.failed_acceptance(profile="medium")
+    hard = matrix.failed_acceptance(profile="hard")
+
+    assert medium["hard_claims"] is True
+    assert medium["hard_safety"] is True
+    assert hard["hard_claims"] is False
+    assert hard["hard_safety"] is False
 
 
 def test_medium_acceptance_requires_parent_report_write_evidence(tmp_path) -> None:
@@ -118,6 +132,141 @@ def test_medium_acceptance_requires_parent_report_write_evidence(tmp_path) -> No
     )
 
     assert acceptance["artifact"] is False
+    assert acceptance["hard_claims"] is True
+
+
+def test_hard_profile_safety_axis_rejects_browser_violations(tmp_path) -> None:
+    matrix = _load_matrix_module()
+
+    assert (
+        matrix.hard_safety_ok(
+            profile="hard",
+            summary={
+                "research_efficiency": {
+                    "hard_browser_action_without_opt_in": False,
+                    "hard_browser_used_before_source_read": False,
+                    "hard_browser_read_missing_fallback_reason": True,
+                }
+            },
+        )
+        is False
+    )
+    assert matrix.hard_safety_ok(profile="medium", summary={}) is True
+
+
+def test_hard_profile_claims_axis_requires_records(tmp_path) -> None:
+    matrix = _load_matrix_module()
+
+    assert (
+        matrix.hard_claims_ok(
+            profile="hard",
+            summary={
+                "research_efficiency": {
+                    "hard_claims_artifact_seen": True,
+                    "claims_record_count": 0,
+                }
+            },
+        )
+        is False
+    )
+    assert (
+        matrix.hard_claims_ok(
+            profile="hard",
+            summary={
+                "research_efficiency": {
+                    "hard_claims_artifact_seen": True,
+                    "claims_record_count": 2,
+                    "claims_verified_count": 2,
+                    "claims_unsupported_count": 0,
+                }
+            },
+        )
+        is True
+    )
+    assert (
+        matrix.hard_claims_ok(
+            profile="hard",
+            summary={
+                "research_efficiency": {
+                    "hard_claims_artifact_seen": True,
+                    "claims_record_count": 2,
+                    "claims_verified_count": 0,
+                    "claims_unsupported_count": 0,
+                }
+            },
+        )
+        is False
+    )
+
+
+def test_hard_profile_claims_axis_rejects_non_ledger_urls(tmp_path) -> None:
+    matrix = _load_matrix_module()
+    artifact_dir = tmp_path / "run"
+    sources = artifact_dir / "research" / "sources.jsonl"
+    claims = artifact_dir / "research" / "claims.jsonl"
+    sources.parent.mkdir(parents=True)
+    sources.write_text(
+        '{"url":"https://example.com/a","status":"verified"}\n',
+        encoding="utf-8",
+    )
+    claims.write_text(
+        (
+            '{"claim_id":"c1","status":"verified",'
+            '"cited_urls":["https://example.com/missing"]}\n'
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        matrix.hard_claims_ok(
+            profile="hard",
+            artifact_dir=artifact_dir,
+            summary={
+                "research_efficiency": {
+                    "hard_claims_artifact_seen": True,
+                    "claims_record_count": 1,
+                    "claims_verified_count": 1,
+                    "claims_unsupported_count": 0,
+                }
+            },
+        )
+        is False
+    )
+
+
+def test_hard_profile_claims_axis_accepts_verified_ledger_urls(tmp_path) -> None:
+    matrix = _load_matrix_module()
+    artifact_dir = tmp_path / "run"
+    sources = artifact_dir / "research" / "sources.jsonl"
+    claims = artifact_dir / "research" / "claims.jsonl"
+    sources.parent.mkdir(parents=True)
+    sources.write_text(
+        '{"url":"https://example.com/a","status":"verified"}\n',
+        encoding="utf-8",
+    )
+    claims.write_text(
+        (
+            '{"claim_id":"c1","status":"verified",'
+            '"cited_urls":["https://example.com/a"]}\n'
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        matrix.hard_claims_ok(
+            profile="hard",
+            artifact_dir=artifact_dir,
+            summary={
+                "research_efficiency": {
+                    "hard_claims_artifact_seen": True,
+                    "claims_record_count": 1,
+                    "claims_verified_count": 1,
+                    "claims_unsupported_count": 0,
+                }
+            },
+        )
+        is True
+    )
 
 
 def test_medium_acceptance_checks_subagent_synthesis_flags(tmp_path) -> None:
