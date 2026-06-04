@@ -21,7 +21,10 @@ SOURCE_LEDGER_RELATIVE_PATH = "research/sources.jsonl"
 def deep_research_artifact_mode(context: "RunContext") -> bool:
     """Return whether the current run should use durable research artifacts."""
     app_metadata = getattr(context.run_input, "app_metadata", None)
-    if isinstance(app_metadata, dict) and app_metadata.get("subagent_origin") == "child":
+    if (
+        isinstance(app_metadata, dict)
+        and app_metadata.get("subagent_origin") == "child"
+    ):
         return False
     metadata = context.run_input.tool_policy.metadata
     mode = metadata.get("deep_research_mode")
@@ -255,6 +258,7 @@ def _record_report_metadata(
         "captured_text_chars": text_chars,
         "last_update_kind": "capture" if captured else "observed",
         "last_update_reason": reason,
+        "report_lifecycle": "captured_inline" if captured else "created",
     }
     if isinstance(previous, dict):
         for key in (

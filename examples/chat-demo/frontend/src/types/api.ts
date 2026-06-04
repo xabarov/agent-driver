@@ -281,6 +281,18 @@ export interface DeepResearchSourceCounts {
   blocked: number;
   failed: number;
   distinctDomains: number;
+  requiredVerified: number;
+  qualityStatus: string;
+  qualityOk: boolean;
+  rows: DeepResearchSourceRow[];
+}
+
+export interface DeepResearchSourceRow {
+  status: string;
+  title?: string | null;
+  url?: string | null;
+  domain?: string | null;
+  reason?: string | null;
 }
 
 export interface DeepResearchTodoState {
@@ -296,6 +308,9 @@ export interface DeepResearchSubagentState {
   completedChildren: number;
   failedChildren: number;
   duplicatedQueries: number;
+  toolNames: string[];
+  summaryChars: number;
+  sourceRecords: number;
 }
 
 export interface DeepResearchMetricsState {

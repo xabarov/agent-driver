@@ -301,6 +301,12 @@ def summarize_run_trace(
         ],
         "deep_research_tool_entropy_high": research_efficiency["tool_entropy_high"],
         "deep_research_phase_violation": research_efficiency["phase_violation"],
+        "deep_research_browser_action_without_opt_in": research_efficiency[
+            "hard_browser_action_without_opt_in"
+        ],
+        "deep_research_browser_used_before_source_read": research_efficiency[
+            "hard_browser_used_before_source_read"
+        ],
     }
     notes = _notes(
         failures=failures,
@@ -460,6 +466,10 @@ def _subagent_summary(
         if status.lower() in {"failed", "error", "cancelled", "timeout"}
     )
     child_evidence = _child_evidence_summary(events)
+    child_metrics = _child_orchestration_metrics(
+        events,
+        child_evidence=child_evidence,
+    )
     deep_research_expected = _deep_research_expected_from_contract(task_contract)
     parent_report_write_clears_child_synthesis = (
         parent_report_write_seen_after_child or parent_report_write_seen_after_marker
@@ -494,6 +504,7 @@ def _subagent_summary(
         "groups_failed": _count_events(events, "subagent_group_failed"),
         "runs_started": _count_events(events, "subagent_started"),
         "runs_completed": _count_events(events, "subagent_completed"),
+        **child_metrics,
         "child_error_count": child_error_count,
         "child_search_count": child_evidence["search_count"],
         "child_fetch_count": child_evidence["fetch_count"],
@@ -920,6 +931,7 @@ def _artifact_summary(events: list[dict[str, object]]) -> dict[str, Any]:
         "report_update_count": len(report_paths),
         "report_full_write_count": _report_full_write_count(updates),
         "report_patch_count": _report_patch_count(updates),
+        "report_lifecycle": _report_lifecycle_from_updates(updates),
         **_report_read_edit_flow_summary(events),
         "source_ledger_updated": bool(source_ledger_paths),
         "source_ledger_update_count": len(source_ledger_paths),
@@ -995,6 +1007,15 @@ def _research_efficiency_summary(
         source_ledger_counts=source_ledger_counts,
     )
     child_evidence = _child_evidence_summary(events)
+    child_metrics = _child_orchestration_metrics(
+        events,
+        child_evidence=child_evidence,
+    )
+    hard_profile = _deep_research_hard_profile_summary(
+        task_contract=task_contract,
+        tool_names=tool_names,
+        artifacts=artifacts,
+    )
     unexpected_agent_tool = False
     skill_denied = deep_expected and _skill_tool_denied(events)
     required_verified_reads = _as_int(research.get("required_fetch_count"))
@@ -1015,6 +1036,15 @@ def _research_efficiency_summary(
         verified_read_count=verified_read_count,
         required_verified_reads=required_verified_reads,
         fetch_fallback_required=fetch_fallback_required,
+    )
+    source_quality = _deep_research_source_quality(
+        deep_expected=deep_expected,
+        report_status=report_status,
+        verified_read_count=verified_read_count,
+        required_verified_reads=required_verified_reads,
+        candidate_count=source_ledger_counts["search_candidates"],
+        blocked_read_count=source_ledger_counts["blocked_reads"],
+        failed_read_count=source_ledger_counts["failed_reads"],
     )
     low_verified_coverage = report_status == "draft"
     preliminary_final = (
@@ -1053,6 +1083,21 @@ def _research_efficiency_summary(
         "unexpected_agent_tool": unexpected_agent_tool,
         "skill_denied": skill_denied,
         "report_status": report_status,
+        "report_lifecycle": _deep_research_report_lifecycle(
+            report_status=report_status,
+            artifacts=artifacts,
+        ),
+        "contract_ok": (
+            not deep_expected
+            or (
+                report_write_seen
+                and source_ledger_updated
+                and bool(final_references_report)
+            )
+        ),
+        "quality_ok": bool(source_quality["quality_ok"]),
+        "quality_status": source_quality["quality_status"],
+        "source_quality": source_quality,
         "verified_read_count": verified_read_count,
         "parent_search_count": tool_names.count("web_search"),
         "parent_fetch_count": _tool_count(tool_names, _READ_SOURCE_TOOLS),
@@ -1060,6 +1105,12 @@ def _research_efficiency_summary(
         "child_search_count": child_evidence["search_count"],
         "child_fetch_count": child_evidence["fetch_count"],
         "child_verified_read_count": child_evidence["verified_read_count"],
+        "child_count": child_metrics["child_count"],
+        "child_tool_names": child_metrics["child_tool_names"],
+        "child_summary_chars": child_metrics["child_summary_chars"],
+        "duplicated_child_queries": child_metrics["duplicated_child_queries"],
+        "child_source_records": child_metrics["child_source_records"],
+        **hard_profile,
         "blocked_read_count": source_ledger_counts["blocked_reads"],
         "failed_read_count": source_ledger_counts["failed_reads"],
         "candidate_count": source_ledger_counts["search_candidates"],
@@ -1209,6 +1260,82 @@ def _child_evidence_summary(events: list[dict[str, object]]) -> dict[str, int]:
             if isinstance(value, int) and not isinstance(value, bool):
                 totals[key] += max(0, value)
     return totals
+
+
+def _child_orchestration_metrics(
+    events: list[dict[str, object]],
+    *,
+    child_evidence: dict[str, int],
+) -> dict[str, Any]:
+    child_fingerprints: list[str] = []
+    child_tool_names: set[str] = set()
+    summary_chars = 0
+    runs_started = 0
+    runs_completed = 0
+    for event in events:
+        if event.get("event") not in {"subagent_started", "subagent_completed"}:
+            continue
+        data = _event_data(event)
+        if event.get("event") == "subagent_started":
+            runs_started += 1
+            fingerprint = _child_task_fingerprint(data)
+            if fingerprint:
+                child_fingerprints.append(fingerprint)
+        else:
+            runs_completed += 1
+        for name in _child_payload_tool_names(data):
+            child_tool_names.add(name)
+        raw_summary = (
+            data.get("summary")
+            or data.get("output_preview")
+            or data.get("result_summary")
+            or data.get("final_response")
+        )
+        if isinstance(raw_summary, str):
+            summary_chars += len(raw_summary)
+        raw_chars = data.get("summary_chars")
+        if isinstance(raw_chars, int) and not isinstance(raw_chars, bool):
+            summary_chars = max(summary_chars, raw_chars)
+    duplicates = max(0, len(child_fingerprints) - len(set(child_fingerprints)))
+    child_count = max(runs_started, runs_completed)
+    source_records = sum(
+        int(child_evidence.get(key) or 0)
+        for key in (
+            "verified_read_count",
+            "candidate_count",
+            "blocked_read_count",
+            "failed_read_count",
+        )
+    )
+    return {
+        "child_count": child_count,
+        "child_tool_names": sorted(child_tool_names),
+        "child_summary_chars": summary_chars,
+        "duplicated_child_queries": duplicates,
+        "child_source_records": source_records,
+    }
+
+
+def _child_payload_tool_names(data: dict[str, Any]) -> list[str]:
+    for key in ("used_tools", "tool_names", "tools_used"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return sorted(
+                {
+                    str(item).strip()
+                    for item in value
+                    if isinstance(item, str) and item.strip()
+                }
+            )
+    return []
+
+
+def _child_task_fingerprint(data: dict[str, Any]) -> str | None:
+    for key in ("task", "description", "query", "prompt", "instructions"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return " ".join(value.lower().split())
+    return None
 
 
 def _deep_research_phase_before_tool(
@@ -1424,6 +1551,99 @@ def _deep_research_report_status(
     return "draft"
 
 
+def _deep_research_source_quality(
+    *,
+    deep_expected: bool,
+    report_status: str,
+    verified_read_count: int,
+    required_verified_reads: int,
+    candidate_count: int,
+    blocked_read_count: int,
+    failed_read_count: int,
+) -> dict[str, Any]:
+    if not deep_expected:
+        quality_status = "not_applicable"
+    elif verified_read_count >= required_verified_reads:
+        quality_status = "verified"
+    elif blocked_read_count + failed_read_count >= required_verified_reads:
+        quality_status = "fallback"
+    elif candidate_count > 0:
+        quality_status = "candidate_only"
+    else:
+        quality_status = (
+            report_status if report_status in {"missing", "invalid"} else "draft"
+        )
+    return {
+        "quality_ok": quality_status == "verified",
+        "quality_status": quality_status,
+        "required_verified_read_count": required_verified_reads,
+        "verified_read_count": verified_read_count,
+        "candidate_count": candidate_count,
+        "blocked_read_count": blocked_read_count,
+        "failed_read_count": failed_read_count,
+    }
+
+
+def _deep_research_hard_profile_summary(
+    *,
+    task_contract: dict[str, Any] | None,
+    tool_names: list[str],
+    artifacts: dict[str, Any],
+) -> dict[str, Any]:
+    profile = (
+        str(task_contract.get("research_profile") or "")
+        if isinstance(task_contract, dict)
+        else ""
+    )
+    hard_options = (
+        task_contract.get("hard_options") if isinstance(task_contract, dict) else None
+    )
+    allow_browser_action = (
+        bool(hard_options.get("allow_browser_action"))
+        if isinstance(hard_options, dict)
+        else False
+    )
+    paths = artifacts.get("paths")
+    artifact_paths = (
+        {str(path) for path in paths if isinstance(path, str)}
+        if isinstance(paths, list)
+        else set()
+    )
+    source_read_count = tool_names.count("source_read")
+    pdf_read_count = tool_names.count("pdf_read")
+    browser_read_count = tool_names.count("browser_read")
+    browser_action_count = tool_names.count("browser_action")
+    source_ladder_started = source_read_count > 0 or pdf_read_count > 0
+    browser_used_before_source_read = (
+        profile == "hard"
+        and browser_read_count > 0
+        and (
+            "source_read" not in tool_names
+            or tool_names.index("browser_read") < tool_names.index("source_read")
+        )
+    )
+    return {
+        "hard_profile": profile == "hard",
+        "hard_source_ladder": {
+            "source_read_count": source_read_count,
+            "pdf_read_count": pdf_read_count,
+            "browser_read_count": browser_read_count,
+            "browser_action_count": browser_action_count,
+            "source_ladder_started": source_ladder_started,
+            "browser_used_before_source_read": browser_used_before_source_read,
+            "allow_browser_action": allow_browser_action,
+        },
+        "hard_claims_artifact_seen": bool(
+            {"research/claims.jsonl", "research/claims.md"} & artifact_paths
+        ),
+        "hard_requires_claims": profile == "hard",
+        "hard_browser_action_without_opt_in": (
+            profile == "hard" and browser_action_count > 0 and not allow_browser_action
+        ),
+        "hard_browser_used_before_source_read": browser_used_before_source_read,
+    }
+
+
 def _has_initial_deep_research_todo(tool_names: list[str]) -> bool:
     """Allow a successful skill lookup before the initial research todo."""
     if not tool_names:
@@ -1567,6 +1787,43 @@ def _report_patch_count(updates: list[dict[str, Any]]) -> int:
         if tool_name in {"file_edit", "file_patch"} or operation in {"edit", "patch"}:
             count += 1
     return count
+
+
+def _report_lifecycle_from_updates(updates: list[dict[str, Any]]) -> str:
+    report_updates = [
+        item for item in updates if item.get("path") == "research/report.md"
+    ]
+    if not report_updates:
+        return "not_started"
+    if any(
+        item.get("operation") == "capture" or item.get("mode") == "captured_inline"
+        for item in report_updates
+    ):
+        return "captured_inline"
+    if any(
+        item.get("tool_name") in {"file_edit", "file_patch"}
+        or item.get("operation") in {"edit", "patch"}
+        for item in report_updates
+    ):
+        return "patched"
+    if any(item.get("tool_name") == "file_write" for item in report_updates):
+        return "created"
+    return "created"
+
+
+def _deep_research_report_lifecycle(
+    *,
+    report_status: str,
+    artifacts: dict[str, Any],
+) -> str:
+    lifecycle = str(artifacts.get("report_lifecycle") or "not_started")
+    if lifecycle == "not_started":
+        return lifecycle
+    if report_status == "verified":
+        return "ready"
+    if report_status == "fallback" and lifecycle == "created":
+        return "captured_inline"
+    return lifecycle
 
 
 def _report_write_seen(

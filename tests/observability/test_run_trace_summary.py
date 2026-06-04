@@ -362,7 +362,112 @@ def test_trace_summary_splits_parent_and_child_research_evidence() -> None:
     assert summary["subagents"]["child_fetch_count"] == 2
 
 
-def test_trace_summary_clears_child_synthesis_pending_after_parent_report_write() -> None:
+def test_trace_summary_projects_child_orchestration_metrics() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Report ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "hard",
+        },
+        events=[
+            {
+                "event": "subagent_started",
+                "data": {
+                    "task_id": "task_1",
+                    "task": "Collect source evidence for model A.",
+                },
+            },
+            {
+                "event": "subagent_started",
+                "data": {
+                    "task_id": "task_2",
+                    "task": "Collect source evidence for model A.",
+                },
+            },
+            {
+                "event": "subagent_completed",
+                "data": {
+                    "task_id": "task_1",
+                    "status": "completed",
+                    "used_tools": ["web_search", "web_fetch"],
+                    "summary": "Found one source.",
+                    "child_evidence": {
+                        "verified_read_count": 1,
+                        "candidate_count": 2,
+                        "blocked_read_count": 1,
+                    },
+                },
+            },
+        ],
+    )
+
+    subagents = summary["subagents"]
+    research = summary["research_efficiency"]
+    assert subagents["child_count"] == 2
+    assert subagents["duplicated_child_queries"] == 1
+    assert subagents["child_tool_names"] == ["web_fetch", "web_search"]
+    assert subagents["child_source_records"] == 4
+    assert research["child_source_records"] == 4
+
+
+def test_trace_summary_flags_hard_browser_action_without_opt_in() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use hard Deep Research.",
+        assistant_text="Report ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "hard",
+            "hard_options": {"allow_browser_action": False},
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("browser_action"),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["hard_profile"] is True
+    assert summary["research_efficiency"]["hard_browser_action_without_opt_in"] is True
+    assert summary["failures"]["deep_research_browser_action_without_opt_in"] is True
+
+
+def test_trace_summary_flags_hard_browser_read_before_source_read() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use hard Deep Research.",
+        assistant_text="Report ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "hard",
+            "hard_options": {"allow_browser_action": False},
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("browser_read"),
+            _completed_tool("source_read"),
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    ladder = summary["research_efficiency"]["hard_source_ladder"]
+    assert ladder["browser_read_count"] == 1
+    assert ladder["source_read_count"] == 1
+    assert ladder["browser_used_before_source_read"] is True
+    assert summary["failures"]["deep_research_browser_used_before_source_read"] is True
+
+
+def test_trace_summary_clears_child_synthesis_pending_after_parent_report_write() -> (
+    None
+):
     summary = summarize_run_trace(
         run_id="run_test",
         user_prompt="Use Deep Research and write a report.",
@@ -423,7 +528,9 @@ def test_trace_summary_clears_child_synthesis_pending_after_parent_report_write(
     assert summary["failures"]["child_result_not_used"] is False
 
 
-def test_trace_summary_clears_child_synthesis_pending_when_report_write_precedes_marker() -> None:
+def test_trace_summary_clears_child_synthesis_pending_when_report_write_precedes_marker() -> (
+    None
+):
     summary = summarize_run_trace(
         run_id="run_test",
         user_prompt="Use Deep Research and write a report.",
@@ -531,7 +638,9 @@ def test_trace_summary_counts_artifact_handoff_when_marker_lands_after_report() 
     assert summary["failures"]["child_result_not_used"] is False
 
 
-def test_trace_summary_does_not_count_pre_child_report_via_late_marker_fallback() -> None:
+def test_trace_summary_does_not_count_pre_child_report_via_late_marker_fallback() -> (
+    None
+):
     summary = summarize_run_trace(
         run_id="run_test",
         user_prompt="Use Deep Research and write a report.",
@@ -644,7 +753,9 @@ def test_trace_summary_does_not_count_failed_report_write_as_parent_artifact() -
     assert summary["subagents"]["child_synthesis_pending"] is True
 
 
-def test_trace_summary_does_not_count_pre_child_report_write_as_child_synthesis() -> None:
+def test_trace_summary_does_not_count_pre_child_report_write_as_child_synthesis() -> (
+    None
+):
     summary = summarize_run_trace(
         run_id="run_test",
         user_prompt="Use Deep Research and write a report.",
@@ -692,7 +803,7 @@ def test_trace_summary_allows_phase05_artifact_handoff_despite_stale_todos() -> 
         user_prompt="Use Deep Research and write a report.",
         assistant_text=(
             "Deep Research report is ready at `research/report.md`.\n"
-            "<tool_call>{\"name\":\"read_file\",\"arguments\":{}}</tool_call>"
+            '<tool_call>{"name":"read_file","arguments":{}}</tool_call>'
         ),
         task_contract={
             "requires_research": True,
@@ -741,6 +852,96 @@ def test_trace_summary_allows_phase05_artifact_handoff_despite_stale_todos() -> 
     assert summary["failures"]["search_only_research_report"] is False
     assert summary["deep_research_artifact_handoff_complete"] is True
     assert summary["verdict"] == "pass"
+
+
+def test_trace_summary_surfaces_candidate_only_source_quality() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Deep Research report is ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            {
+                "event": "source_ledger_updated",
+                "data": {
+                    "search_candidates": [{"url": "https://example.com/a"}],
+                    "verified_reads": [],
+                    "blocked_reads": [],
+                    "failed_reads": [],
+                },
+            },
+            {
+                "event": "artifact_updated",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "tool_name": "source_ledger",
+                    "record_count": 1,
+                },
+            },
+            {
+                "event": "artifact_updated",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    quality = summary["research_efficiency"]["source_quality"]
+    assert summary["research_efficiency"]["quality_ok"] is False
+    assert summary["research_efficiency"]["quality_status"] == "candidate_only"
+    assert quality["verified_read_count"] == 0
+    assert quality["candidate_count"] == 1
+
+
+def test_trace_summary_surfaces_verified_source_quality() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Deep Research report is ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            {
+                "event": "source_ledger_updated",
+                "data": {
+                    "search_candidates": [],
+                    "verified_reads": [{"url": "https://example.com/a"}],
+                    "blocked_reads": [],
+                    "failed_reads": [],
+                },
+            },
+            {
+                "event": "artifact_updated",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "tool_name": "source_ledger",
+                    "record_count": 1,
+                },
+            },
+            {
+                "event": "artifact_updated",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["quality_ok"] is True
+    assert summary["research_efficiency"]["quality_status"] == "verified"
+    assert summary["research_efficiency"]["report_status"] == "verified"
 
 
 def test_trace_summary_requires_report_reference_for_artifact_handoff() -> None:
@@ -1090,7 +1291,9 @@ def test_trace_summary_allows_bounded_research_child_task_without_description() 
     assert summary["failures"]["child_prompt_not_bounded"] is False
 
 
-def test_trace_summary_rejects_generic_research_child_task_without_description() -> None:
+def test_trace_summary_rejects_generic_research_child_task_without_description() -> (
+    None
+):
     summary = summarize_run_trace(
         run_id="run_test",
         user_prompt="Use Deep Research and write a report.",

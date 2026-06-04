@@ -647,7 +647,14 @@ def render_matrix_markdown(results: list[MatrixResult]) -> str:
         research = research_efficiency(summary)
         source_records = int(research.get("source_ledger_record_count") or 0)
         child_fetches = int(research.get("child_fetch_count") or 0)
+        child_count = int(research.get("child_count") or 0)
+        duplicated_child_queries = int(research.get("duplicated_child_queries") or 0)
         parent_fetches = int(research.get("parent_fetch_count") or 0)
+        quality_status = str(research.get("quality_status") or "unknown")
+        verified_reads = int(research.get("verified_read_count") or 0)
+        candidate_count = int(research.get("candidate_count") or 0)
+        blocked_reads = int(research.get("blocked_read_count") or 0)
+        failed_reads = int(research.get("failed_read_count") or 0)
         error = item.error or ",".join(failures) or "-"
         lines.append(
             "| "
@@ -655,7 +662,10 @@ def render_matrix_markdown(results: list[MatrixResult]) -> str:
             f"{str(item.ok).lower()} | {axes} | "
             f"{int(usage.get('total_tokens') or 0)} | "
             f"{tools or '-'}; sources={source_records}; "
-            f"parent_fetch={parent_fetches}; child_fetch={child_fetches} | "
+            f"parent_fetch={parent_fetches}; child_count={child_count}; "
+            f"child_fetch={child_fetches}; duplicated_children={duplicated_child_queries}; "
+            f"quality={quality_status}; verified={verified_reads}; "
+            f"candidate={candidate_count}; blocked={blocked_reads}; failed={failed_reads} | "
             f"{item.run_id or '-'} | "
             f"{error.replace('|', '/')[:180]} |"
         )
@@ -692,10 +702,26 @@ def result_to_json(item: MatrixResult) -> dict[str, Any]:
         "llm_tool_choice_effective": llm.get("tool_choice_effective"),
         "source_records": int(research.get("source_ledger_record_count") or 0),
         "report_status": research.get("report_status"),
+        "contract_ok": bool(research.get("contract_ok")),
+        "quality_ok": bool(research.get("quality_ok")),
+        "quality_status": research.get("quality_status"),
+        "verified_read_count": int(research.get("verified_read_count") or 0),
+        "candidate_count": int(research.get("candidate_count") or 0),
+        "blocked_read_count": int(research.get("blocked_read_count") or 0),
+        "failed_read_count": int(research.get("failed_read_count") or 0),
+        "source_quality": research.get("source_quality") or {},
         "parent_search_count": int(research.get("parent_search_count") or 0),
         "parent_fetch_count": int(research.get("parent_fetch_count") or 0),
         "child_search_count": int(research.get("child_search_count") or 0),
         "child_fetch_count": int(research.get("child_fetch_count") or 0),
+        "child_count": int(research.get("child_count") or 0),
+        "child_tool_names": research.get("child_tool_names") or [],
+        "child_summary_chars": int(research.get("child_summary_chars") or 0),
+        "duplicated_child_queries": int(research.get("duplicated_child_queries") or 0),
+        "child_source_records": int(research.get("child_source_records") or 0),
+        "hard_profile": bool(research.get("hard_profile")),
+        "hard_source_ladder": research.get("hard_source_ladder") or {},
+        "hard_claims_artifact_seen": bool(research.get("hard_claims_artifact_seen")),
         "artifact_dir": item.artifact_dir,
     }
 

@@ -23,7 +23,11 @@ import {
   type SourceEvidence,
 } from "../lib/sourceEvidence";
 import { stripTextFormToolCalls } from "../lib/stripToolCalls";
-import type { DeepResearchViewState, SessionDetailView } from "../types/api";
+import type {
+  DeepResearchSourceRow,
+  DeepResearchViewState,
+  SessionDetailView,
+} from "../types/api";
 
 const PLANNING_TOOL_NAMES = new Set(["todo_write", "planning_state_update"]);
 const CONTROL_TOOL_NAMES = new Set([...PLANNING_TOOL_NAMES, "ask_user_question"]);
@@ -208,6 +212,19 @@ function mergeDeepResearchViewFromStream(
         candidates: patch.ledger.searchCandidates.length,
         blocked: patch.ledger.blockedReads.length,
         failed: patch.ledger.failedReads.length,
+        requiredVerified: view.sources.requiredVerified,
+        qualityStatus:
+          patch.ledger.verifiedReads.length >= Math.max(1, view.sources.requiredVerified)
+            ? "verified"
+            : patch.ledger.blockedReads.length + patch.ledger.failedReads.length >=
+                Math.max(1, view.sources.requiredVerified)
+              ? "fallback"
+              : patch.ledger.searchCandidates.length
+                ? "candidate_only"
+                : view.sources.qualityStatus,
+        qualityOk:
+          patch.ledger.verifiedReads.length >= Math.max(1, view.sources.requiredVerified),
+        rows: sourceRowsFromLedger(patch.ledger),
         distinctDomains: [
           ...patch.ledger.verifiedReads,
           ...patch.ledger.searchCandidates,
@@ -302,6 +319,10 @@ function createDeepResearchViewFromStream(
       blocked: 0,
       failed: 0,
       distinctDomains: 0,
+      requiredVerified: 0,
+      qualityStatus: "unknown",
+      qualityOk: false,
+      rows: [],
     },
     subagents: {
       totalChildren: 0,
@@ -309,6 +330,9 @@ function createDeepResearchViewFromStream(
       completedChildren: 0,
       failedChildren: 0,
       duplicatedQueries: 0,
+      toolNames: [],
+      summaryChars: 0,
+      sourceRecords: 0,
     },
     metrics: {
       webSearchCount: 0,
@@ -319,6 +343,28 @@ function createDeepResearchViewFromStream(
     },
     warnings: [],
     trace: { runId: state.runId, verdict: null, terminalEvent: null, failureFlags: [] },
+  };
+}
+
+function sourceRowsFromLedger(ledger: SourceLedger): DeepResearchSourceRow[] {
+  return [
+    ...ledger.verifiedReads.map((source) => sourceRow(source, "verified")),
+    ...ledger.searchCandidates.map((source) => sourceRow(source, "candidate")),
+    ...ledger.blockedReads.map((source) => sourceRow(source, "blocked")),
+    ...ledger.failedReads.map((source) => sourceRow(source, "failed")),
+  ];
+}
+
+function sourceRow(
+  source: SourceLedger[keyof SourceLedger][number],
+  status: string,
+): DeepResearchSourceRow {
+  return {
+    status,
+    title: source.title ?? null,
+    url: source.url,
+    domain: source.domain ?? null,
+    reason: source.excerpt ?? null,
   };
 }
 

@@ -24,6 +24,7 @@ from app.schemas.chat import (
     DeepResearchArtifactsState,
     DeepResearchMetricsState,
     DeepResearchSourceCounts,
+    DeepResearchSourceRow,
     DeepResearchSubagentState,
     DeepResearchTodoState,
     DeepResearchTraceState,
@@ -281,7 +282,7 @@ def _effective_hard_options(body: ChatMessageRequest) -> dict[str, bool]:
 def _research_request_metadata(body: ChatMessageRequest) -> dict[str, object]:
     mode = _effective_research_mode(body)
     profile = _effective_research_profile(body)
-    return {
+    payload: dict[str, object] = {
         "research_mode": mode,
         "research_profile": profile,
         "profile_source": _effective_profile_source(body),
@@ -289,6 +290,26 @@ def _research_request_metadata(body: ChatMessageRequest) -> dict[str, object]:
         "research_depth": (
             "deep_parallel_research" if mode == "deep" else body.research_depth
         ),
+    }
+    if mode == "deep" and profile == "hard":
+        payload["hard_profile"] = _hard_profile_contract(payload["hard_options"])
+    return payload
+
+
+def _hard_profile_contract(hard_options: object) -> dict[str, object]:
+    options = hard_options if isinstance(hard_options, dict) else {}
+    return {
+        "source_ladder": ["web_search", "source_read", "pdf_read", "browser_read"],
+        "preferred_evidence_tool": "source_read",
+        "verifier_roles": ["verifier", "auditor"],
+        "required_artifacts": [
+            "research/report.md",
+            "research/sources.jsonl",
+            "research/claims.jsonl",
+        ],
+        "allow_pdf_read": bool(options.get("allow_pdf_read", True)),
+        "allow_browser_read_fallback": bool(options.get("allow_browser_read", False)),
+        "allow_browser_action": bool(options.get("allow_browser_action", False)),
     }
 
 
@@ -380,6 +401,8 @@ def _chat_tool_policy(
             ),
         }
     )
+    if isinstance(request_metadata.get("hard_profile"), dict):
+        task_contract["hard_profile"] = request_metadata["hard_profile"]
     metadata["task_contract"] = task_contract
     metadata["deep_research_mode"] = {
         "enabled": True,
@@ -505,10 +528,18 @@ def _deep_research_artifacts_state(
     trace_artifacts = trace_summary.get("artifacts")
     lifecycle = "created"
     if isinstance(trace_artifacts, dict):
-        if int(trace_artifacts.get("report_patch_count") or 0) > 0:
+        trace_lifecycle = trace_artifacts.get("report_lifecycle")
+        if isinstance(trace_lifecycle, str) and trace_lifecycle:
+            lifecycle = trace_lifecycle
+        elif int(trace_artifacts.get("report_patch_count") or 0) > 0:
             lifecycle = "patched"
         elif int(trace_artifacts.get("report_targeted_edit_count") or 0) > 0:
             lifecycle = "edited"
+    efficiency = trace_summary.get("research_efficiency")
+    if isinstance(efficiency, dict):
+        report_lifecycle = efficiency.get("report_lifecycle")
+        if isinstance(report_lifecycle, str) and report_lifecycle:
+            lifecycle = report_lifecycle
     return DeepResearchArtifactsState(
         report=_deep_research_artifact_state(
             path="research/report.md",
@@ -554,6 +585,7 @@ def _source_domains_from_metadata(metadata: dict[str, object]) -> set[str]:
 
 def _deep_research_source_counts(
     *,
+    events: list[dict[str, object]],
     metadata: dict[str, object],
     trace_summary: dict[str, object],
 ) -> DeepResearchSourceCounts:
@@ -568,6 +600,10 @@ def _deep_research_source_counts(
         candidates=int(efficiency.get("candidate_count") or 0),
         blocked=int(efficiency.get("blocked_read_count") or 0),
         failed=int(efficiency.get("failed_read_count") or 0),
+        requiredVerified=int(efficiency.get("required_verified_read_count") or 0),
+        qualityStatus=str(efficiency.get("quality_status") or "unknown"),
+        qualityOk=bool(efficiency.get("quality_ok")),
+        rows=_deep_research_source_rows(events),
         distinctDomains=max(
             len(_source_domains_from_metadata(metadata)),
             _domain_count(
@@ -575,6 +611,48 @@ def _deep_research_source_counts(
             ),
         ),
     )
+
+
+def _deep_research_source_rows(
+    events: list[dict[str, object]],
+) -> list[DeepResearchSourceRow]:
+    latest: dict[str, object] = {}
+    for event in events:
+        if event.get("event") == "source_ledger_updated":
+            data = event.get("data")
+            if isinstance(data, dict):
+                latest = data
+    rows: list[DeepResearchSourceRow] = []
+    for section, status in (
+        ("verified_reads", "verified"),
+        ("search_candidates", "candidate"),
+        ("blocked_reads", "blocked"),
+        ("failed_reads", "failed"),
+    ):
+        values = latest.get(section)
+        if not isinstance(values, list):
+            continue
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            rows.append(
+                DeepResearchSourceRow(
+                    status=status,
+                    title=_first_string(item, "title", "name"),
+                    url=_first_string(item, "url", "final_url", "finalUrl"),
+                    domain=_first_string(item, "domain"),
+                    reason=_first_string(item, "reason", "error", "status"),
+                )
+            )
+    return rows
+
+
+def _first_string(payload: dict[str, object], *keys: str) -> str | None:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 def _domain_count(value: object) -> int:
@@ -652,7 +730,14 @@ def _deep_research_subagents(
         runningChildren=running,
         completedChildren=completed,
         failedChildren=failed,
-        duplicatedQueries=0,
+        duplicatedQueries=int(subagents.get("duplicated_child_queries") or 0),
+        toolNames=[
+            str(name)
+            for name in subagents.get("child_tool_names", [])
+            if isinstance(name, str)
+        ],
+        summaryChars=int(subagents.get("child_summary_chars") or 0),
+        sourceRecords=int(subagents.get("child_source_records") or 0),
     )
 
 
@@ -671,6 +756,14 @@ def _deep_research_phase(trace_summary: dict[str, object]) -> str:
 
 
 def _deep_research_readiness(trace_summary: dict[str, object]) -> str:
+    efficiency = trace_summary.get("research_efficiency")
+    if isinstance(efficiency, dict):
+        if efficiency.get("quality_ok") is False:
+            status = efficiency.get("quality_status")
+            if status in {"candidate_only", "draft"}:
+                return "needs_verified_sources"
+            if status == "fallback":
+                return "partial"
     final_readiness = trace_summary.get("final_readiness")
     if isinstance(final_readiness, str) and final_readiness:
         if final_readiness == "allowed":
@@ -918,6 +1011,7 @@ def get_deep_research_state(
             trace_summary=trace_summary,
         ),
         sources=_deep_research_source_counts(
+            events=events,
             metadata=metadata,
             trace_summary=trace_summary,
         ),

@@ -137,6 +137,22 @@ class DeepResearchSourceCounts(BaseModel):
     blocked: int = 0
     failed: int = 0
     distinct_domains: int = Field(default=0, alias="distinctDomains")
+    required_verified: int = Field(default=0, alias="requiredVerified")
+    quality_status: str = Field(default="unknown", alias="qualityStatus")
+    quality_ok: bool = Field(default=False, alias="qualityOk")
+    rows: list["DeepResearchSourceRow"] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
+
+
+class DeepResearchSourceRow(BaseModel):
+    """One source ledger row for the research cockpit."""
+
+    status: str
+    title: str | None = None
+    url: str | None = None
+    domain: str | None = None
+    reason: str | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -158,6 +174,9 @@ class DeepResearchSubagentState(BaseModel):
     completed_children: int = Field(default=0, alias="completedChildren")
     failed_children: int = Field(default=0, alias="failedChildren")
     duplicated_queries: int = Field(default=0, alias="duplicatedQueries")
+    tool_names: list[str] = Field(default_factory=list, alias="toolNames")
+    summary_chars: int = Field(default=0, alias="summaryChars")
+    source_records: int = Field(default=0, alias="sourceRecords")
 
     model_config = {"populate_by_name": True}
 

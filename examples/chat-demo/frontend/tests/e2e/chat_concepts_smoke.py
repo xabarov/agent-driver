@@ -119,6 +119,99 @@ def route_trace_summary(page: Page, payload: dict[str, Any]) -> None:
     )
 
 
+def deep_research_state_payload() -> dict[str, Any]:
+    return {
+        "runId": "run_test",
+        "sessionId": "session_dr",
+        "researchMode": "deep",
+        "profile": "medium",
+        "profileSource": "user_selected",
+        "phase": "final",
+        "phaseSource": "trace_summary",
+        "readiness": "needs_verified_sources",
+        "todos": {"done": 3, "total": 3, "current": None, "stale": False},
+        "artifacts": {
+            "report": {
+                "path": "research/report.md",
+                "kind": "research_report",
+                "sizeBytes": 2048,
+                "modifiedAt": "2026-06-04T00:00:00Z",
+                "lifecycle": "captured_inline",
+                "previewAvailable": True,
+            },
+            "sourceLedger": {
+                "path": "research/sources.jsonl",
+                "kind": "research_sources",
+                "sizeBytes": 512,
+                "modifiedAt": "2026-06-04T00:00:00Z",
+                "lifecycle": "updated",
+                "previewAvailable": True,
+            },
+            "claims": None,
+        },
+        "sources": {
+            "verified": 0,
+            "candidates": 1,
+            "blocked": 1,
+            "failed": 0,
+            "distinctDomains": 2,
+            "requiredVerified": 1,
+            "qualityStatus": "candidate_only",
+            "qualityOk": False,
+            "rows": [
+                {
+                    "status": "candidate",
+                    "title": "Candidate source",
+                    "url": "https://example.com/candidate",
+                    "domain": "example.com",
+                    "reason": None,
+                },
+                {
+                    "status": "blocked",
+                    "title": "Blocked source",
+                    "url": "https://blocked.example/source",
+                    "domain": "blocked.example",
+                    "reason": "fetch_denied",
+                },
+            ],
+        },
+        "subagents": {
+            "totalChildren": 1,
+            "runningChildren": 0,
+            "completedChildren": 1,
+            "failedChildren": 0,
+            "duplicatedQueries": 0,
+            "toolNames": ["web_search", "web_fetch"],
+            "summaryChars": 120,
+            "sourceRecords": 2,
+        },
+        "metrics": {
+            "promptTokens": 1000,
+            "completionTokens": 500,
+            "totalTokens": 1500,
+            "webSearchCount": 1,
+            "webFetchCount": 1,
+            "reportFullWriteCount": 1,
+            "reportPatchCount": 0,
+            "longChatBeforeReportChars": 0,
+        },
+        "warnings": ["quality_candidate_only"],
+        "trace": {
+            "runId": "run_test",
+            "verdict": "pass",
+            "terminalEvent": "run_completed",
+            "failureFlags": [],
+        },
+    }
+
+
+def route_deep_research_state(page: Page) -> None:
+    page.route(
+        "**/api/chat/runs/run_test/deep-research-state",
+        lambda route: fulfill_json(route, deep_research_state_payload()),
+    )
+
+
 def expect_trace_summary(
     page: Page,
     *,
@@ -1052,6 +1145,139 @@ def run_markdown_math(page: Page) -> None:
     page.screenshot(path=str(ARTIFACT_DIR / "markdown-math.png"), full_page=True)
 
 
+def run_deep_research_cockpit(page: Page) -> None:
+    """Deep Research cockpit survives stream completion and session reload."""
+
+    start_body = "".join(
+        [
+            sse_event(1, "run_started"),
+            sse_event(
+                2,
+                "source_ledger_updated",
+                {
+                    "search_candidates": [
+                        {
+                            "url": "https://example.com/candidate",
+                            "canonical_url": "https://example.com/candidate",
+                            "source_type": "web_search",
+                            "title": "Candidate source",
+                            "domain": "example.com",
+                        }
+                    ],
+                    "verified_reads": [],
+                    "blocked_reads": [
+                        {
+                            "url": "https://blocked.example/source",
+                            "canonical_url": "https://blocked.example/source",
+                            "source_type": "web_fetch",
+                            "title": "Blocked source",
+                            "domain": "blocked.example",
+                            "excerpt": "fetch_denied",
+                        }
+                    ],
+                    "failed_reads": [],
+                },
+            ),
+            sse_event(
+                3,
+                "deep_research_artifact_updated",
+                {
+                    "deep_research_artifacts": {
+                        "report_path": "research/report.md",
+                        "report_size_bytes": 2048,
+                        "captured_long_answers": 1,
+                    }
+                },
+            ),
+            sse_event(
+                4,
+                "token_delta",
+                {"delta_text": "Full report saved to `research/report.md`."},
+            ),
+            sse_event(5, "run_completed"),
+        ]
+    )
+    trace = trace_summary_payload(
+        tool_names=["todo_write", "agent_tool", "web_fetch", "file_write"],
+        research_required=True,
+        research_tools=["web_fetch"],
+    )
+    trace["research_efficiency"] = {
+        "contract_ok": True,
+        "quality_ok": False,
+        "quality_status": "candidate_only",
+    }
+    route_trace_summary(page, trace)
+    route_deep_research_state(page)
+    page.route(
+        "**/api/workspace/session_dr/artifacts",
+        lambda route: fulfill_json(
+            route,
+            {
+                "ok": True,
+                "sessionId": "session_dr",
+                "artifacts": [
+                    {
+                        "path": "research/report.md",
+                        "kind": "research_report",
+                        "sizeBytes": 2048,
+                        "modifiedAt": "2026-06-04T00:00:00Z",
+                    }
+                ],
+            },
+        ),
+    )
+    page.route("**/api/chat/messages", lambda route: fulfill_sse(route, start_body))
+    open_new_chat(page)
+
+    send_chat_message(page, "run deep research medium")
+    cockpit = page.get_by_label("Deep Research cockpit")
+    expect(cockpit).to_be_visible(timeout=5000)
+    expect(cockpit.get_by_text("quality: candidate_only")).to_be_visible()
+    expect(page.get_by_text("research/report.md · captured_inline")).to_be_visible()
+    expect(page.get_by_text("candidate: example.com")).to_be_visible()
+    expect(page.get_by_text("children 1/1")).to_be_visible()
+    expect(
+        cockpit.get_by_text("research/report.md · captured_inline · preview/download")
+    ).to_be_visible()
+
+    page.route(
+        "**/api/sessions/session_dr",
+        lambda route: fulfill_json(
+            route,
+            {
+                "session_id": "session_dr",
+                "thread_id": "thread_dr",
+                "title": "Deep Research",
+                "run_ids": ["run_test"],
+                "transcript": [
+                    {"role": "user", "content": "run deep research medium"},
+                    {
+                        "role": "assistant",
+                        "content": "Full report saved to `research/report.md`.",
+                    },
+                ],
+                "metadata_by_run": {
+                    "run_test": {
+                        "research_mode": "deep",
+                        "research_profile": "medium",
+                        "profile_source": "user_selected",
+                    }
+                },
+                "created_at": "2026-06-04T00:00:00Z",
+                "updated_at": "2026-06-04T00:00:00Z",
+            },
+        ),
+    )
+    page.goto(f"{BASE_URL}/sessions/session_dr", wait_until="networkidle")
+    cockpit = page.get_by_label("Deep Research cockpit")
+    expect(cockpit).to_be_visible(timeout=5000)
+    expect(cockpit.get_by_text("quality: candidate_only")).to_be_visible()
+    page.screenshot(
+        path=str(ARTIFACT_DIR / "deep-research-cockpit.png"), full_page=True
+    )
+
+
 def run_markdown_code_python(page: Page) -> None:
     """Python fenced code renders with header, copy button, and containment."""
 
@@ -1445,6 +1671,7 @@ SCENARIOS = {
     "compaction-failed-warning": run_compaction_failed_warning,
     "compaction-skipped-hidden": run_compaction_skipped_hidden,
     "compaction-start-success": run_compaction_start_success,
+    "deep-research-cockpit": run_deep_research_cockpit,
     "denied-tool": run_denied_tool_regression,
     "deliverable-no-replan": run_deliverable_no_replan,
     "markdown-code-python": run_markdown_code_python,

@@ -249,21 +249,31 @@ function DeepResearchCompactBar({
         className="gap-1.5 border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
       >
         <BookOpenCheck className="h-3.5 w-3.5" />
-        Deep: {state.profile === "hard" ? "Hard" : "Medium"}
+        {state.researchMode}: {state.profile === "hard" ? "Hard" : "Medium"}
       </Badge>
+      <Badge variant="outline">{state.profileSource}</Badge>
       <span className="inline-flex items-center gap-1.5">
         <ListChecks className="h-3.5 w-3.5" />
         {state.phase}
         {state.todos.total > 0 ? ` · ${state.todos.done}/${state.todos.total}` : ""}
       </span>
       <span>
-        sources {state.sources.verified} verified · {state.sources.candidates} candidate
+        sources {state.sources.verified}/{state.sources.requiredVerified || 1} verified ·{" "}
+        {state.sources.candidates} candidate
         {state.sources.blocked ? ` · ${state.sources.blocked} blocked` : ""}
       </span>
+      <Badge variant={state.sources.qualityOk ? "outline" : "secondary"}>
+        quality: {state.sources.qualityStatus}
+      </Badge>
       <span className="inline-flex items-center gap-1.5">
         <FileText className="h-3.5 w-3.5" />
-        {report ? `${report.path} · ${formatBytes(report.sizeBytes)}` : "report not started"}
+        {report
+          ? `${report.lifecycle} · ${report.path} · ${formatBytes(report.sizeBytes)}`
+          : "report not started"}
       </span>
+      {state.metrics.totalTokens ? (
+        <span className="tabular-nums">{state.metrics.totalTokens.toLocaleString()} tokens</span>
+      ) : null}
       {hasWarnings ? (
         <span className="inline-flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
           <AlertTriangle className="h-3.5 w-3.5" />
@@ -287,22 +297,57 @@ function DeepResearchCockpit({
     state.artifacts.sourceLedger,
     state.artifacts.claims,
   ].filter((artifact): artifact is NonNullable<typeof artifact> => Boolean(artifact));
+  const sourceRows = state.sources.rows.slice(0, 6);
   return (
     <section
       aria-label="Deep Research cockpit"
-      className="grid gap-2 rounded-md border border-border/70 bg-background/70 p-3 text-xs text-muted-foreground md:grid-cols-4"
+      className="rounded-md border border-border/70 bg-background/70 p-3 text-xs text-muted-foreground"
     >
+      <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-border/60 pb-2">
+        {["Overview", "Sources", "Artifacts", "Subagents", "Trace"].map((label) => (
+          <Badge key={label} variant="outline" className="rounded-full">
+            {label}
+          </Badge>
+        ))}
+      </div>
+      <div className="grid gap-3 md:grid-cols-5">
       <div className="space-y-1">
         <div className="flex items-center gap-1.5 font-medium text-foreground">
           <ListChecks className="h-3.5 w-3.5" />
-          Progress
+          Overview
         </div>
         <div>phase: {state.phase}</div>
+        <div>readiness: {state.readiness}</div>
+        <div>profile: {state.profile} ({state.profileSource})</div>
         <div>
           todos: {state.todos.done}/{state.todos.total}
           {state.todos.stale ? " · stale" : ""}
         </div>
         {state.todos.current ? <div className="truncate">current: {state.todos.current}</div> : null}
+      </div>
+      <div className="space-y-1">
+        <div className="flex items-center gap-1.5 font-medium text-foreground">
+          <BookOpenCheck className="h-3.5 w-3.5" />
+          Sources
+        </div>
+        <div>
+          verified {state.sources.verified}/{state.sources.requiredVerified || 1} · candidates{" "}
+          {state.sources.candidates}
+        </div>
+        <div>
+          blocked {state.sources.blocked} · failed {state.sources.failed} · domains{" "}
+          {state.sources.distinctDomains}
+        </div>
+        <div>quality: {state.sources.qualityStatus}</div>
+        {sourceRows.length ? (
+          <ul className="mt-1 space-y-1">
+            {sourceRows.map((source, index) => (
+              <li key={`${source.status}:${source.url ?? index}`} className="truncate">
+                {source.status}: {source.domain ?? source.title ?? source.url ?? "source"}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
       <div className="space-y-1">
         <div className="flex items-center gap-1.5 font-medium text-foreground">
@@ -312,7 +357,8 @@ function DeepResearchCockpit({
         {artifacts.length ? (
           artifacts.map((artifact) => (
             <div key={artifact.path} className="truncate">
-              {artifact.path} · {artifact.lifecycle}
+              {artifact.path} · {artifact.lifecycle} ·{" "}
+              {artifact.previewAvailable ? "preview/download" : "metadata only"}
             </div>
           ))
         ) : (
@@ -321,33 +367,38 @@ function DeepResearchCockpit({
       </div>
       <div className="space-y-1">
         <div className="flex items-center gap-1.5 font-medium text-foreground">
-          <BookOpenCheck className="h-3.5 w-3.5" />
-          Sources
-        </div>
-        <div>
-          verified {state.sources.verified} · candidates {state.sources.candidates}
-        </div>
-        <div>
-          blocked {state.sources.blocked} · failed {state.sources.failed} · domains{" "}
-          {state.sources.distinctDomains}
-        </div>
-      </div>
-      <div className="space-y-1">
-        <div className="flex items-center gap-1.5 font-medium text-foreground">
           <Bot className="h-3.5 w-3.5" />
-          Run Health
+          Subagents
         </div>
         <div>
           children {state.subagents.completedChildren}/{state.subagents.totalChildren}
           {state.subagents.failedChildren ? ` · failed ${state.subagents.failedChildren}` : ""}
         </div>
+        <div>sources from children: {state.subagents.sourceRecords}</div>
+        <div>summary chars: {state.subagents.summaryChars}</div>
+        {state.subagents.duplicatedQueries ? (
+          <div>duplicated queries: {state.subagents.duplicatedQueries}</div>
+        ) : null}
+        {state.subagents.toolNames.length ? (
+          <div className="truncate">tools: {state.subagents.toolNames.join(", ")}</div>
+        ) : null}
+      </div>
+      <div className="space-y-1">
+        <div className="flex items-center gap-1.5 font-medium text-foreground">
+          <FileWarning className="h-3.5 w-3.5" />
+          Trace
+        </div>
+        <div>run: {state.runId}</div>
         <div>trace: {state.trace.verdict ?? "pending"}</div>
+        <div>terminal: {state.trace.terminalEvent ?? "streaming"}</div>
+        <div>Phoenix/export: pending</div>
         {state.warnings.length ? (
           <div className="flex items-start gap-1.5 text-amber-700 dark:text-amber-300">
             <FileWarning className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>{state.warnings.join(", ")}</span>
           </div>
         ) : null}
+      </div>
       </div>
     </section>
   );
