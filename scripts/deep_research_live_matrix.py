@@ -432,9 +432,12 @@ def synthesis_ok(*, profile: str, summary: dict[str, Any]) -> bool:
         return True
     if not parent_report_write_seen(summary):
         return False
+    subagents = (
+        summary.get("subagents") if isinstance(summary.get("subagents"), dict) else {}
+    )
     research = research_efficiency(summary)
     return not any(
-        bool(research.get(key))
+        bool(subagents.get(key) or research.get(key))
         for key in (
             "child_result_not_used",
             "child_synthesis_pending",

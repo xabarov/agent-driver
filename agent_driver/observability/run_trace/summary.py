@@ -77,6 +77,7 @@ _DEEP_RESEARCH_PHASE_ALLOWED_TOOLS: dict[str, frozenset[str]] = {
             "file_edit",
             "file_patch",
             "read_file",
+            *_READ_SOURCE_TOOLS,
             "artifact_list",
             "artifact_read",
             "artifact_preview",
@@ -172,6 +173,14 @@ def summarize_run_trace(
         research=research,
         assistant_text=text,
     )
+    deep_research_requires_parent_synthesis = (
+        _deep_research_expected_from_contract(task_contract)
+        and _deep_research_max_subagent_requests_from_contract(
+            task_contract=task_contract,
+            user_prompt=user_prompt,
+        )
+        > 0
+    )
     deep_research_artifact_handoff_complete = (
         terminal_event == "run_completed"
         and bool(research_efficiency.get("deep_research_artifact_expected"))
@@ -179,6 +188,10 @@ def summarize_run_trace(
         and bool(artifacts.get("source_ledger_updated"))
         and _as_int(artifacts.get("source_ledger_record_count")) > 0
         and bool(research_efficiency.get("final_references_report_artifact"))
+        and (
+            not deep_research_requires_parent_synthesis
+            or bool(subagents.get("parent_synthesized_final"))
+        )
     )
 
     failures: dict[str, bool] = {
@@ -360,12 +373,26 @@ def _subagent_summary(
     child_synthesis_pending = False
     child_synthesis_summary_chars = 0
     marker_seen = False
+    child_join_seen = False
+    parent_report_write_seen_after_child = False
     parent_report_write_seen_after_marker = False
     runs_started_before_child_synthesis = 0
     tools_after_child_synthesis_pending: list[str] = []
     for event in events:
         data = _event_data(event)
         event_name = event.get("event")
+        if event_name in {"subagent_group_joined", "subagent_group_failed"}:
+            child_join_seen = True
+        if event_name == "tool_call_completed":
+            for tool in event_tools(data):
+                if child_join_seen and _tool_is_parent_report_write(tool):
+                    parent_report_write_seen_after_child = True
+        if (
+            child_join_seen
+            and event_name in {"artifact_created", "artifact_updated"}
+            and _artifact_event_is_parent_report_write(data)
+        ):
+            parent_report_write_seen_after_child = True
         if (
             marker_seen
             and not parent_report_write_seen_after_marker
@@ -424,13 +451,18 @@ def _subagent_summary(
         if status.lower() in {"failed", "error", "cancelled", "timeout"}
     )
     child_evidence = _child_evidence_summary(events)
+    deep_research_expected = _deep_research_expected_from_contract(task_contract)
+    parent_report_write_clears_child_synthesis = (
+        parent_report_write_seen_after_child or parent_report_write_seen_after_marker
+    )
     parent_synthesized_final = (
         agent_tool_used
         and groups_joined > 0
         and (
-            parent_report_write_seen_after_marker
+            parent_report_write_clears_child_synthesis
             or (
-                continuation_reason != "continuation_signal"
+                not deep_research_expected
+                and continuation_reason != "continuation_signal"
                 and not _subagent_progress_only_text(assistant_text)
                 and len(assistant_text.strip()) >= 20
             )
@@ -451,7 +483,7 @@ def _subagent_summary(
         "child_verified_read_count": child_evidence["verified_read_count"],
         "parent_synthesized_final": parent_synthesized_final,
         "child_synthesis_pending": (
-            child_synthesis_pending and not parent_report_write_seen_after_marker
+            child_synthesis_pending and not parent_report_write_clears_child_synthesis
         ),
         "child_synthesis_summary_chars": child_synthesis_summary_chars,
         "tools_after_child_synthesis_pending": tools_after_child_synthesis_pending,
@@ -615,6 +647,18 @@ def _deep_research_max_subagent_requests_for_profile(profile: str) -> int:
     if normalized == "hard":
         return 4
     return 1
+
+
+def _deep_research_expected_from_contract(task_contract: dict[str, Any] | None) -> bool:
+    if not isinstance(task_contract, dict):
+        return False
+    depth = task_contract.get("research_depth")
+    profile = str(task_contract.get("research_profile") or "").strip().lower()
+    return (
+        task_contract.get("research_mode") == "deep"
+        or depth == "deep_parallel_research"
+        or (depth == "source_verified_report" and profile in {"medium", "hard"})
+    )
 
 
 def _delegation_requested(user_prompt: str | None) -> bool:

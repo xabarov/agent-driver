@@ -1239,7 +1239,7 @@ Checklist:
   - abort if medium/hard starts more child runs than the profile budget allows;
   - abort if the report exists in workspace but cannot be projected into
     trace-summary/UI.
-- [ ] Split light scoring from medium/hard scoring:
+- [x] Split light scoring from medium/hard scoring:
   - light may require one fetched source/domain and a short answer;
   - light must not require report artifacts or subagents;
   - light should not load Deep Research skill unless explicitly requested.
@@ -1247,7 +1247,7 @@ Checklist:
   the recorded passing fingerprint.
 - [x] Re-run one light canary with SQLite, Phoenix, logs, screenshots,
   trace-summary, and workspace artifacts enabled.
-- [ ] Re-run one medium fork-join canary with SQLite, Phoenix, logs,
+- [x] Re-run one medium fork-join canary with SQLite, Phoenix, logs,
   screenshots, trace-summary, and workspace artifacts enabled after the
   parent-owned artifact/subagent fan-out fixes.
 - [x] Enforce Deep Research child ownership defaults:
@@ -1276,7 +1276,7 @@ Checklist:
   mode and could block the parent while summarizing. Deep Research notes-only
   children now receive bounded defaults: enough budget for `web_search`, up to
   three `web_fetch` calls, and compact final notes, plus a child deadline.
-- [ ] Ensure the parent creates or patches `research/report.md` and
+- [x] Ensure the parent creates or patches `research/report.md` and
   `research/sources.jsonl` after child join, even when children return useful
   notes.
   - [x] Record a run-level `deep_research_child_synthesis` handoff when a
@@ -1297,9 +1297,9 @@ Checklist:
   - [x] Enforce or repair the actual parent `file_write`/`file_patch` call in
     runtime tests, including report-only repair toward
     `research/sources.jsonl`.
-  - [ ] Verify parent-owned report and source-ledger writes in two consecutive
+  - [x] Verify parent-owned report and source-ledger writes in two consecutive
     live medium traces.
-- [ ] Make parent trace-summary optionally show child evidence separately
+- [x] Make parent trace-summary optionally show child evidence separately
   (`child_search_count`, `child_fetch_count`, `child_verified_read_count`) while
   keeping medium readiness gated on parent-owned synthesis.
 
@@ -1333,8 +1333,30 @@ Execution note 2026-06-03:
   - `minimax/minimax-m2.7` reached `todo_write` first but still failed medium
     acceptance in `run_0e143997bd1e`: missing report/source ledger artifacts,
     no verified fetch evidence, and phase violations.
-- Phase 0.5 remains open. Hard-profile expansion and architecture comparison
-  remain intentionally blocked until medium has two consecutive full passes.
+- Phase 0.5 remained open. Hard-profile expansion and architecture comparison
+  stayed intentionally blocked until medium had two consecutive full passes.
+
+Execution note 2026-06-04:
+
+- Phase 0.5 is closed after two consecutive observed medium fork-join passes:
+  - `run_e5b1450c815e` in
+    `/tmp/chat-demo-live-observed-medium-20260604-final/deep-medium-fork-join-canary`;
+  - `run_e4c691f6f916` in
+    `/tmp/chat-demo-live-observed-medium-20260604-final/deep-medium-fork-join-canary-rep2`.
+- Command:
+  `CHAT_DEMO_URL=http://localhost:5174 CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-observed-medium-20260604-final PHOENIX_PROJECT_NAME=agent-driver-chat-demo PYTHONPATH=/mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver /tmp/agent-driver-live-venv/bin/python scripts/deep_research_live_matrix.py --profiles medium --question-id fork-join-canary --limit 1 --repetitions 2`.
+- Matrix result: `pass_rate=2/2`, `medium_pass_rate=2/2`, all acceptance
+  axes `ok` for both repetitions (`artifact`, `budget`, `evidence_split`,
+  `expected`, `grounding`, `handoff`, `ledger`, `synthesis`, `terminal`,
+  `trace`, `ui`).
+- Parent-owned artifacts were visible in trace and workspace for both runs:
+  `research/report.md` and non-empty `research/sources.jsonl`.
+- Terminal handoff remained concise and referenced `research/report.md`; no
+  unknown tool calls or unsuppressed post-terminal tool drift remained.
+- The Phase 0.5 gate is now open for Phase 1/2 work. Hard-profile expansion and
+  architecture-variant comparison are unblocked, but should proceed in the
+  ordered Phase 1/2 sequence rather than skipping capability and artifact
+  controller cleanup.
 
 ### Phase 1: Capability Surface Fix
 

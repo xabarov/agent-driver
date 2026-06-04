@@ -120,6 +120,49 @@ def test_medium_acceptance_requires_parent_report_write_evidence(tmp_path) -> No
     assert acceptance["artifact"] is False
 
 
+def test_medium_acceptance_checks_subagent_synthesis_flags(tmp_path) -> None:
+    matrix = _load_matrix_module()
+    artifact_dir = tmp_path / "run"
+    artifact_dir.mkdir()
+    (artifact_dir / "screenshot.png").write_bytes(b"png")
+    (artifact_dir / "workspace-artifacts.json").write_text(
+        """
+        {
+          "artifacts": [
+            {"path": "research/report.md"},
+            {"path": "research/sources.jsonl"}
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    acceptance = matrix.acceptance_axes(
+        profile="medium",
+        question={},
+        artifact_dir=artifact_dir,
+        expected_found=True,
+        summary={
+            "verdict": "pass",
+            "terminal_event": "run_completed",
+            "failures": {},
+            "artifacts": {"paths": [], "report_write_seen": True},
+            "subagents": {
+                "runs_completed": 1,
+                "child_search_count": 1,
+                "child_synthesis_pending": True,
+            },
+            "research_efficiency": {
+                "source_ledger_record_count": 1,
+                "final_references_report_artifact": True,
+            },
+            "llm": {"usage": {"total_tokens": 10}},
+        },
+    )
+
+    assert acceptance["synthesis"] is False
+
+
 def test_acceptance_artifacts_can_pair_workspace_index_with_trace_write(
     tmp_path,
 ) -> None:
