@@ -51,6 +51,7 @@ def test_acceptance_axes_require_trace_artifacts_budget_and_grounding(tmp_path) 
                 "child_fetch_count": 1,
                 "parent_fetch_count": 1,
                 "report_status": "verified",
+                "final_references_report_artifact": True,
             },
             "llm": {"usage": {"total_tokens": 99}},
         },
@@ -63,6 +64,7 @@ def test_acceptance_axes_require_trace_artifacts_budget_and_grounding(tmp_path) 
         "synthesis": True,
         "ledger": True,
         "evidence_split": True,
+        "handoff": True,
         "terminal": True,
         "ui": True,
         "budget": True,
@@ -109,6 +111,7 @@ def test_medium_acceptance_requires_parent_report_write_evidence(tmp_path) -> No
             "research_efficiency": {
                 "source_ledger_record_count": 1,
                 "child_fetch_count": 1,
+                "final_references_report_artifact": True,
             },
             "llm": {"usage": {"total_tokens": 10}},
         },
@@ -150,6 +153,7 @@ def test_acceptance_artifacts_can_pair_workspace_index_with_trace_write(
             "research_efficiency": {
                 "source_ledger_record_count": 1,
                 "child_fetch_count": 1,
+                "final_references_report_artifact": True,
             },
             "llm": {"usage": {"total_tokens": 10}},
         },
@@ -181,6 +185,7 @@ def test_medium_acceptance_requires_non_empty_source_ledger(tmp_path) -> None:
             "research_efficiency": {
                 "source_ledger_record_count": 0,
                 "child_fetch_count": 1,
+                "final_references_report_artifact": True,
             },
             "llm": {"usage": {"total_tokens": 10}},
         },
@@ -213,12 +218,143 @@ def test_medium_acceptance_fails_synthesis_when_child_result_unused(tmp_path) ->
                 "source_ledger_record_count": 1,
                 "child_fetch_count": 1,
                 "child_result_not_used": True,
+                "final_references_report_artifact": True,
             },
             "llm": {"usage": {"total_tokens": 10}},
         },
     )
 
     assert acceptance["synthesis"] is False
+
+
+def test_medium_acceptance_requires_concise_report_handoff(tmp_path) -> None:
+    matrix = _load_matrix_module()
+    artifact_dir = tmp_path / "run"
+    artifact_dir.mkdir()
+    (artifact_dir / "screenshot.png").write_bytes(b"png")
+
+    acceptance = matrix.acceptance_axes(
+        profile="medium",
+        question={},
+        artifact_dir=artifact_dir,
+        expected_found=True,
+        summary={
+            "verdict": "pass",
+            "terminal_event": "run_completed",
+            "failures": {},
+            "artifacts": {
+                "paths": ["research/report.md", "research/sources.jsonl"],
+                "report_write_seen": True,
+            },
+            "subagents": {"child_count": 1},
+            "research_efficiency": {
+                "source_ledger_record_count": 1,
+                "child_fetch_count": 1,
+                "final_missing_report_reference": True,
+            },
+            "llm": {"usage": {"total_tokens": 10}},
+        },
+    )
+
+    assert acceptance["handoff"] is False
+
+
+def test_medium_acceptance_uses_trace_handoff_completion_signal(tmp_path) -> None:
+    matrix = _load_matrix_module()
+    artifact_dir = tmp_path / "run"
+    artifact_dir.mkdir()
+    (artifact_dir / "screenshot.png").write_bytes(b"png")
+
+    acceptance = matrix.acceptance_axes(
+        profile="medium",
+        question={},
+        artifact_dir=artifact_dir,
+        expected_found=True,
+        summary={
+            "verdict": "pass",
+            "terminal_event": "run_completed",
+            "failures": {},
+            "deep_research_artifact_handoff_complete": True,
+            "artifacts": {
+                "paths": ["research/report.md", "research/sources.jsonl"],
+                "report_write_seen": True,
+            },
+            "subagents": {"child_count": 1},
+            "research_efficiency": {
+                "source_ledger_record_count": 1,
+                "final_references_report_artifact": True,
+                "long_final_after_report": True,
+            },
+            "llm": {"usage": {"total_tokens": 10}},
+        },
+    )
+
+    assert acceptance["handoff"] is True
+
+
+def test_medium_evidence_split_requires_parent_synthesis_artifacts(tmp_path) -> None:
+    matrix = _load_matrix_module()
+    artifact_dir = tmp_path / "run"
+    artifact_dir.mkdir()
+    (artifact_dir / "screenshot.png").write_bytes(b"png")
+
+    acceptance = matrix.acceptance_axes(
+        profile="medium",
+        question={},
+        artifact_dir=artifact_dir,
+        expected_found=True,
+        summary={
+            "verdict": "pass",
+            "terminal_event": "run_completed",
+            "failures": {},
+            "artifacts": {
+                "paths": ["research/report.md", "research/sources.jsonl"],
+            },
+            "subagents": {"child_count": 1},
+            "research_efficiency": {
+                "source_ledger_record_count": 1,
+                "child_fetch_count": 1,
+                "final_references_report_artifact": True,
+            },
+            "llm": {"usage": {"total_tokens": 10}},
+        },
+    )
+
+    assert acceptance["evidence_split"] is False
+
+
+def test_medium_evidence_split_requires_child_evidence(tmp_path) -> None:
+    matrix = _load_matrix_module()
+    artifact_dir = tmp_path / "run"
+    artifact_dir.mkdir()
+    (artifact_dir / "screenshot.png").write_bytes(b"png")
+
+    acceptance = matrix.acceptance_axes(
+        profile="medium",
+        question={},
+        artifact_dir=artifact_dir,
+        expected_found=True,
+        summary={
+            "verdict": "pass",
+            "terminal_event": "run_completed",
+            "failures": {},
+            "artifacts": {
+                "paths": ["research/report.md", "research/sources.jsonl"],
+                "report_write_seen": True,
+            },
+            "subagents": {"child_count": 1},
+            "research_efficiency": {
+                "source_ledger_record_count": 1,
+                "child_search_count": 0,
+                "child_fetch_count": 0,
+                "child_verified_read_count": 0,
+                "final_references_report_artifact": True,
+            },
+            "llm": {"usage": {"total_tokens": 10}},
+        },
+    )
+
+    assert acceptance["evidence_split"] is False
 
 
 def test_budget_fails_closed_for_medium_without_usage(tmp_path) -> None:

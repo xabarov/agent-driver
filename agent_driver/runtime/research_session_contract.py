@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING, Any
 
 from agent_driver.contracts.context import PlanningState
 from agent_driver.contracts.enums import PlanningTodoStatus
+from agent_driver.runtime.deep_research_gating import (
+    deep_research_tool_result_succeeded,
+)
 from agent_driver.runtime.metadata_state import (
     get_planning_runtime_state,
     get_tool_loop_state,
@@ -579,6 +582,8 @@ def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
     for item in get_tool_loop_state(context).tool_results():
         if not isinstance(item, dict):
             continue
+        if not deep_research_tool_result_succeeded(item):
+            continue
         call = item.get("call")
         if not isinstance(call, dict):
             continue
@@ -589,8 +594,21 @@ def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
             continue
         path = str(args.get("path") or args.get("file_path") or "").strip()
         if path == "research/report.md" or path.endswith("/research/report.md"):
-            return True
+            return _report_artifact_confirmed_if_possible(context)
     return False
+
+
+def _report_artifact_confirmed_if_possible(context: RunContext) -> bool:
+    if (
+        "workspace_cwd" in context.metadata
+        or isinstance(context.metadata.get("deep_research_artifacts"), dict)
+    ):
+        from agent_driver.runtime.research_artifacts import (
+            deep_research_report_artifact_exists,
+        )
+
+        return deep_research_report_artifact_exists(context)
+    return True
 
 
 def _tool_available(context: RunContext, tool_name: str) -> bool:

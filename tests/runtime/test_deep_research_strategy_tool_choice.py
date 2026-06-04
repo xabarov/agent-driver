@@ -100,7 +100,6 @@ def test_pending_child_synthesis_narrows_request_tools_before_report() -> None:
         "file_write",
         "todo_write",
         "web_fetch",
-        "web_search",
     )
 
 
@@ -312,18 +311,17 @@ def test_strategy_honors_child_handoff_even_without_visible_contract() -> None:
         "file_write",
         "todo_write",
         "web_fetch",
-        "web_search",
     )
     assert _deep_research_strategy_tool_choice(context, None) == {
         "type": "tool",
-        "name": "web_search",
+        "name": "file_write",
     }
     assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
-        "child_synthesis_pending_parent_search_fallback"
+        "child_synthesis_pending_budget_exhausted"
     )
 
 
-def test_strategy_forces_parent_search_before_fetch_even_when_child_handoff_has_url() -> None:
+def test_strategy_fetches_concrete_child_url_without_parent_search() -> None:
     context = _context(
         tool_results=[
             _tool_result("todo_write"),
@@ -338,14 +336,46 @@ def test_strategy_forces_parent_search_before_fetch_even_when_child_handoff_has_
 
     assert _deep_research_strategy_tool_choice(context, None) == {
         "type": "tool",
-        "name": "web_search",
+        "name": "web_fetch",
     }
     assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
-        "child_synthesis_pending_parent_search_fallback"
+        "child_synthesis_pending_parent_verify_fetch"
     )
 
 
-def test_strategy_forces_parent_verify_fetch_after_parent_search() -> None:
+def test_strategy_fetches_url_from_child_source_ledger() -> None:
+    context = _context(
+        tool_results=[
+            _tool_result("todo_write"),
+            _tool_result("agent_tool"),
+        ],
+    )
+    context.metadata["subagent_runs"] = [{"run_id": "child_1"}]
+    context.metadata["deep_research_child_synthesis"] = {
+        "pending": True,
+        "summary": "Child summary without direct URLs.",
+        "children": [
+            {
+                "summary": "Still no URL here.",
+                "source_ledger": {
+                    "verified_reads": [
+                        {"url": "https://Example.com/fork-join/"}
+                    ]
+                },
+            }
+        ],
+    }
+
+    assert _deep_research_strategy_tool_choice(context, None) == {
+        "type": "tool",
+        "name": "web_fetch",
+    }
+    assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
+        "child_synthesis_pending_parent_verify_fetch"
+    )
+
+
+def test_strategy_keeps_parent_verify_fetch_after_prior_parent_search() -> None:
     context = _context(
         tool_results=[
             _tool_result("todo_write"),
@@ -474,7 +504,7 @@ def test_strategy_forces_second_agent_after_child_handoff_with_explicit_budget()
     }
 
 
-def test_strategy_forces_parent_search_fallback_after_child_budget_exhausted() -> None:
+def test_strategy_forces_file_write_after_child_budget_exhausted_without_url() -> None:
     context = _context(
         tool_results=[
             _tool_result("todo_write"),
@@ -489,10 +519,11 @@ def test_strategy_forces_parent_search_fallback_after_child_budget_exhausted() -
 
     choice = _deep_research_strategy_tool_choice(context, None)
 
-    assert choice == {"type": "tool", "name": "web_search"}
+    assert choice == {"type": "tool", "name": "file_write"}
     assert context.metadata["deep_research_strategy_tool_choice"] == {
-        "tool": "web_search",
-        "reason": "child_synthesis_pending_parent_search_fallback",
+        "tool": "file_write",
+        "path": "research/report.md",
+        "reason": "child_synthesis_pending_budget_exhausted",
     }
 
 
@@ -522,7 +553,44 @@ def test_strategy_forces_file_write_after_parent_verify_fetch_budget_exhausted()
     }
 
 
-def test_strategy_forces_parent_search_fallback_for_deep_source_verified_contract() -> None:
+def test_failed_report_write_does_not_clear_child_synthesis_strategy(
+    tmp_path: Path,
+) -> None:
+    context = _context(
+        tool_results=[
+            _tool_result("todo_write"),
+            _tool_result("agent_tool"),
+            {
+                "status": "failed",
+                "call": {
+                    "tool_name": "file_write",
+                    "tool_call_id": "write_report",
+                    "args": {"path": "research/report.md"},
+                },
+            },
+            _tool_result("web_fetch", status="failed"),
+            _tool_result("web_fetch", status="failed"),
+            _tool_result("web_fetch", status="failed"),
+        ],
+        metadata={"workspace_cwd": str(tmp_path)},
+    )
+    context.metadata["subagent_runs"] = [{"run_id": "child_1"}]
+    context.metadata["deep_research_child_synthesis"] = {
+        "pending": True,
+        "summary": "child notes",
+    }
+
+    choice = _deep_research_strategy_tool_choice(context, None)
+
+    assert choice == {"type": "tool", "name": "file_write"}
+    assert context.metadata["deep_research_strategy_tool_choice"] == {
+        "tool": "file_write",
+        "path": "research/report.md",
+        "reason": "child_synthesis_pending_budget_exhausted",
+    }
+
+
+def test_strategy_forces_write_without_child_url_for_deep_source_verified_contract() -> None:
     context = _context(
         research_depth="source_verified_report",
         research_mode="deep",
@@ -539,10 +607,12 @@ def test_strategy_forces_parent_search_fallback_for_deep_source_verified_contrac
 
     choice = _deep_research_strategy_tool_choice(context, None)
 
-    assert choice == {"type": "tool", "name": "web_search"}
-    assert context.metadata["deep_research_strategy_tool_choice"]["reason"] == (
-        "child_synthesis_pending_parent_search_fallback"
-    )
+    assert choice == {"type": "tool", "name": "file_write"}
+    assert context.metadata["deep_research_strategy_tool_choice"] == {
+        "tool": "file_write",
+        "path": "research/report.md",
+        "reason": "child_synthesis_pending_budget_exhausted",
+    }
 
 
 def test_source_verified_report_without_deep_mode_does_not_use_deep_strategy() -> None:

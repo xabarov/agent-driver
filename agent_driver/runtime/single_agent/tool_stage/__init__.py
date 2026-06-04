@@ -22,6 +22,7 @@ from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.deep_research_gating import (
     deep_research_medium_or_hard,
     deep_research_planned_or_started_subagent_count,
+    deep_research_tool_result_succeeded,
     is_research_report_path,
     is_research_source_ledger_path,
     normalize_artifact_path,
@@ -117,6 +118,7 @@ async def execute_tool_stage_step(
     """Execute tool stage and route to interrupt, code-agent loop, or finalize."""
     _suppress_deep_research_terminal_tool_calls(context)
     _clamp_deep_research_initial_subagent_batch(context)
+    _coerce_deep_research_parent_synthesis_write(context)
     _repair_deep_research_parent_file_write_args(context)
     _coerce_deep_research_artifact_repair_batch(context)
     _clamp_deep_research_parent_artifact_batch(context)
@@ -217,6 +219,42 @@ def _coerce_deep_research_artifact_repair_batch(context: RunContext) -> None:
         "target": "research/sources.jsonl" if target == "sources" else "research/report.md",
         "dropped": max(0, len(planned_calls) - 1),
         "original_tool": first.tool_name,
+    }
+
+
+def _coerce_deep_research_parent_synthesis_write(context: RunContext) -> None:
+    """Convert post-child tool drift into the required parent report write."""
+    handoff = context.metadata.get("deep_research_child_synthesis")
+    if not isinstance(handoff, dict) or handoff.get("pending") is not True:
+        return
+    if deep_research_report_artifact_exists(context) or _report_artifact_path_seen(context):
+        return
+    response = context.llm_response
+    if response is None:
+        return
+    planned_calls = extract_planned_tool_calls(response)
+    if not planned_calls:
+        return
+    if any(call.tool_name in {"file_write", "write", "web_fetch"} for call in planned_calls):
+        return
+    first = planned_calls[0]
+    repaired = first.model_copy(
+        update={
+            "tool_name": "file_write",
+            "args": _deep_research_parent_file_write_args(context, target="report"),
+            "metadata": {
+                **first.metadata,
+                "deep_research_args_repaired": True,
+                "deep_research_repair_reason": "parent_synthesis_tool_coerced",
+                "original_tool_name": first.tool_name,
+            },
+        }
+    )
+    response.metadata["planned_tool_calls"] = [repaired.model_dump(mode="json")]
+    context.metadata["deep_research_parent_synthesis_tool_coerced"] = {
+        "original_tool": first.tool_name,
+        "dropped": max(0, len(planned_calls) - 1),
+        "target": "research/report.md",
     }
 
 
@@ -325,24 +363,6 @@ def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
             repaired_payload.append(call.model_dump(mode="json"))
             continue
         call = normalized_call
-        if _should_retarget_parent_file_write_to_report(context, call.args):
-            args = _deep_research_parent_file_write_args(context, target="report")
-            report_write_seen_in_batch = True
-            repaired = call.model_copy(
-                update={
-                    "args": args,
-                    "metadata": {
-                        **call.metadata,
-                        "deep_research_args_repaired": True,
-                        "deep_research_repair_reason": (
-                            "parent_synthesis_report_required"
-                        ),
-                    },
-                }
-            )
-            repaired_payload.append(repaired.model_dump(mode="json"))
-            repaired_count += 1
-            continue
         args = dict(call.args) if isinstance(call.args, dict) else {}
         path = normalize_artifact_path(args.get("path"))
         if _is_research_source_ledger_alias_path(path):
@@ -357,6 +377,24 @@ def _repair_deep_research_parent_file_write_args(context: RunContext) -> None:
                         "deep_research_args_repaired": True,
                         "deep_research_repair_reason": (
                             "parent_synthesis_source_ledger_alias"
+                        ),
+                    },
+                }
+            )
+            repaired_payload.append(repaired.model_dump(mode="json"))
+            repaired_count += 1
+            continue
+        if _should_retarget_parent_file_write_to_report(context, call.args):
+            args = _deep_research_parent_file_write_args(context, target="report")
+            report_write_seen_in_batch = True
+            repaired = call.model_copy(
+                update={
+                    "args": args,
+                    "metadata": {
+                        **call.metadata,
+                        "deep_research_args_repaired": True,
+                        "deep_research_repair_reason": (
+                            "parent_synthesis_report_required"
                         ),
                     },
                 }
@@ -475,10 +513,6 @@ def _should_retarget_parent_file_write_to_report(
 ) -> bool:
     if deep_research_report_artifact_exists(context):
         return False
-    if not deep_research_source_ledger_artifact_exists(context):
-        recovery = context.metadata.get("deep_research_parent_synthesis_recovery")
-        if not isinstance(recovery, dict):
-            return False
     path = normalize_artifact_path(args.get("path"))
     if not path:
         return False
@@ -518,7 +552,8 @@ def _has_file_write_args(args: dict[str, Any]) -> bool:
     return (
         isinstance(args.get("path"), str)
         and bool(args["path"].strip())
-        and (isinstance(args.get("content"), str))
+        and isinstance(args.get("content"), str)
+        and bool(args["content"].strip())
     )
 
 
@@ -644,6 +679,8 @@ def _report_artifact_path_seen(context: RunContext) -> bool:
     for item in context.metadata.get("tool_results") or []:
         if not isinstance(item, dict):
             continue
+        if not deep_research_tool_result_succeeded(item):
+            continue
         call = item.get("call")
         if not isinstance(call, dict):
             continue
@@ -651,8 +688,17 @@ def _report_artifact_path_seen(context: RunContext) -> bool:
             continue
         args = call.get("args")
         if isinstance(args, dict) and is_research_report_path(args.get("path")):
-            return True
+            return _report_artifact_confirmed_if_possible(context)
     return False
+
+
+def _report_artifact_confirmed_if_possible(context: RunContext) -> bool:
+    if (
+        "workspace_cwd" in context.metadata
+        or isinstance(context.metadata.get("deep_research_artifacts"), dict)
+    ):
+        return deep_research_report_artifact_exists(context)
+    return True
 
 
 def _post_process_tool_result(

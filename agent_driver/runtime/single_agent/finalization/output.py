@@ -236,8 +236,10 @@ class SingleAgentOutputMixin:
         if context.llm_response is None:
             return None
         raw = context.llm_response.message.content
-        if not isinstance(raw, str) or not raw.strip():
+        if not isinstance(raw, str):
             return raw
+        if not raw.strip():
+            return self._deep_research_artifact_handoff_answer(context, raw) or None
         cleaned = strip_text_form_tool_calls(raw)
         if cleaned != raw:
             get_streaming_runtime_state(context).set_raw_assistant_content(raw)

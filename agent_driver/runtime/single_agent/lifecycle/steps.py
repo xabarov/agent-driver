@@ -23,6 +23,7 @@ from agent_driver.runtime.deep_research_gating import (
     deep_research_planned_or_started_subagent_count,
     deep_research_profile,
     deep_research_tool_available,
+    deep_research_tool_result_succeeded,
     is_research_report_path,
     normalize_artifact_path,
 )
@@ -731,8 +732,6 @@ def _deep_research_parent_synthesis_tool_allowed(
     tool_name: str,
     args: object | None = None,
 ) -> bool:
-    if tool_name == "web_search":
-        return _deep_research_parent_search_count(context) < 1
     if tool_name == "web_fetch":
         return _deep_research_parent_verify_fetch_allowed(context, args)
     return tool_name in _deep_research_parent_synthesis_allowed_tools(context)
@@ -746,8 +745,6 @@ def _deep_research_parent_synthesis_allowed_tools(
         if deep_research_report_artifact_exists(context)
         else _PARENT_SYNTHESIS_CREATE_TOOLS
     )
-    if _deep_research_subagent_budget_remaining(context):
-        allowed.add("agent_tool")
     return frozenset(allowed)
 
 
@@ -900,6 +897,8 @@ def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
     for item in get_tool_loop_state(context).tool_results():
         if not isinstance(item, dict):
             continue
+        if not deep_research_tool_result_succeeded(item):
+            continue
         call = item.get("call")
         if not isinstance(call, dict):
             continue
@@ -909,8 +908,17 @@ def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
         if not isinstance(args, dict):
             continue
         if is_research_report_path(args.get("path") or args.get("file_path")):
-            return True
+            return _report_artifact_confirmed_if_possible(context)
     return False
+
+
+def _report_artifact_confirmed_if_possible(context: RunContext) -> bool:
+    if (
+        "workspace_cwd" in context.metadata
+        or isinstance(context.metadata.get("deep_research_artifacts"), dict)
+    ):
+        return deep_research_report_artifact_exists(context)
+    return True
 
 
 def _research_evidence_ready_for_final_repair(context: RunContext) -> bool:

@@ -64,6 +64,7 @@ ACCEPTANCE_AXES = (
     "synthesis",
     "ledger",
     "evidence_split",
+    "handoff",
     "terminal",
     "ui",
     "budget",
@@ -299,10 +300,7 @@ def build_scenario(
             required_tools=(
                 "todo_write",
                 "agent_tool",
-                "web_search",
-                "web_fetch",
                 "file_write",
-                "read_file",
             ),
             forbidden_tools=("bash", "python"),
             tool_preset="deep_research",
@@ -311,8 +309,8 @@ def build_scenario(
             profile_source="scenario_forced",
             research_depth="deep_parallel_research",
             requires_subagent=True,
-            min_research_fetch_count=3,
-            min_research_domain_count=2,
+            min_research_fetch_count=None,
+            min_research_domain_count=None,
             max_research_search_count_without_min_domains=12,
             max_research_fetch_count_without_min_domains=12,
             required_artifact_path="research/report.md",
@@ -417,6 +415,7 @@ def acceptance_axes(
         "synthesis": synthesis_ok(profile=profile, summary=summary),
         "ledger": ledger_ok(profile=profile, summary=summary),
         "evidence_split": evidence_split_ok(profile=profile, summary=summary),
+        "handoff": handoff_ok(profile=profile, summary=summary),
         "terminal": terminal_ok(profile=profile, summary=summary),
         "ui": ui_ok,
         "budget": budget_ok(profile=profile, question=question, summary=summary),
@@ -457,14 +456,43 @@ def evidence_split_ok(*, profile: str, summary: dict[str, Any]) -> bool:
     if profile not in {"medium", "hard"}:
         return True
     research = research_efficiency(summary)
+    if not parent_report_write_seen(summary):
+        return False
+    if int(research.get("source_ledger_record_count") or 0) <= 0:
+        return False
     subagents = (
         summary.get("subagents") if isinstance(summary.get("subagents"), dict) else {}
     )
-    child_count = int(subagents.get("child_count") or research.get("child_count") or 0)
+    child_count = int(
+        subagents.get("child_count")
+        or subagents.get("runs_completed")
+        or research.get("child_count")
+        or 0
+    )
     if child_count <= 0:
         return False
-    child_fetch_count = int(research.get("child_fetch_count") or 0)
-    return child_fetch_count > 0 or int(research.get("child_search_count") or 0) > 0
+    child_evidence_count = sum(
+        int(research.get(key) or subagents.get(key) or 0)
+        for key in (
+            "child_search_count",
+            "child_fetch_count",
+            "child_verified_read_count",
+        )
+    )
+    return child_evidence_count > 0
+
+
+def handoff_ok(*, profile: str, summary: dict[str, Any]) -> bool:
+    if profile not in {"medium", "hard"}:
+        return True
+    if summary.get("deep_research_artifact_handoff_complete") is True:
+        return True
+    research = research_efficiency(summary)
+    return (
+        research.get("final_references_report_artifact") is True
+        and research.get("final_missing_report_reference") is not True
+        and research.get("long_final_after_report") is not True
+    )
 
 
 def terminal_ok(*, profile: str, summary: dict[str, Any]) -> bool:

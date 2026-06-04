@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from urllib.parse import urlsplit
 from typing import Any, Protocol
 
 from agent_driver.context import (
@@ -23,6 +25,7 @@ from agent_driver.runtime.deep_research_gating import (
     deep_research_planned_or_started_subagent_count,
     deep_research_profile,
     deep_research_tool_available,
+    deep_research_tool_result_succeeded,
     is_research_report_path,
 )
 from agent_driver.runtime.research_artifacts import (
@@ -52,6 +55,8 @@ from agent_driver.runtime.single_agent.types import (
     RunnerConfig,
     RunnerDeps,
 )
+
+_URL_RE = re.compile(r"https?://[^\s\]\)>,;]+")
 
 
 class LlmRequestPrepHost(Protocol):
@@ -220,7 +225,7 @@ def _deep_research_request_allowed_tools(
             return ("file_write",)
         if _deep_research_verified_fetch_count(context) > 0:
             return ("file_write",)
-        return ("file_write", "todo_write", "web_fetch", "web_search")
+        return ("file_write", "todo_write", "web_fetch")
     initial_subagent_recovery = context.metadata.get(
         "deep_research_initial_subagent_recovery"
     )
@@ -293,12 +298,6 @@ def _deep_research_strategy_tool_choice(
                 context,
                 tool_name="agent_tool",
                 reason="child_synthesis_pending_with_remaining_subagent_budget",
-            )
-        if _deep_research_parent_search_fallback_required(context):
-            return _deep_research_record_strategy_choice(
-                context,
-                tool_name="web_search",
-                reason="child_synthesis_pending_parent_search_fallback",
             )
         if _deep_research_parent_verify_fetch_budget_remaining(context):
             return _deep_research_record_strategy_choice(
@@ -492,7 +491,83 @@ def _deep_research_parent_verify_fetch_budget_remaining(context: RunContext) -> 
         return False
     if _deep_research_fetch_attempt_count(context) >= 3:
         return False
-    return True
+    return bool(_deep_research_candidate_urls(context))
+
+
+def _deep_research_candidate_urls(context: RunContext) -> set[str]:
+    urls: set[str] = set()
+    handoff = context.metadata.get("deep_research_child_synthesis")
+    if isinstance(handoff, dict):
+        _collect_urls_from_text(urls, str(handoff.get("summary") or ""))
+        preview = handoff.get("child_evidence_preview")
+        if isinstance(preview, list):
+            for item in preview:
+                if isinstance(item, dict):
+                    raw = item.get("url")
+                    if isinstance(raw, str) and raw.strip():
+                        canonical = _canonical_url(raw)
+                        if canonical is not None:
+                            urls.add(canonical)
+        children = handoff.get("children")
+        if isinstance(children, list):
+            for child in children:
+                if not isinstance(child, dict):
+                    continue
+                _collect_urls_from_text(urls, str(child.get("summary") or ""))
+                source_ledger = child.get("source_ledger")
+                if isinstance(source_ledger, dict):
+                    _collect_urls_from_source_ledger(urls, source_ledger)
+        source_ledger = handoff.get("source_ledger")
+        if isinstance(source_ledger, dict):
+            _collect_urls_from_source_ledger(urls, source_ledger)
+    return {url for url in urls if url}
+
+
+def _collect_urls_from_source_ledger(
+    urls: set[str], source_ledger: dict[str, object]
+) -> None:
+    for section in (
+        "search_candidates",
+        "verified_reads",
+        "blocked_reads",
+        "failed_reads",
+    ):
+        rows = source_ledger.get(section)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            canonical = _canonical_url(row.get("url") or row.get("canonical_url"))
+            if canonical is not None:
+                urls.add(canonical)
+
+
+def _collect_urls_from_text(urls: set[str], text: str) -> None:
+    for match in _URL_RE.finditer(text):
+        canonical = _canonical_url(match.group(0).rstrip(".,;:"))
+        if canonical is not None:
+            urls.add(canonical)
+
+
+def _canonical_url(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = urlsplit(value.strip())
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return None
+    hostname = parsed.hostname
+    if not hostname:
+        return None
+    netloc = hostname.lower()
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    path = parsed.path.rstrip("/")
+    query = f"?{parsed.query}" if parsed.query else ""
+    return f"{parsed.scheme.lower()}://{netloc}{path}{query}"
 
 
 def _deep_research_parent_search_fallback_required(context: RunContext) -> bool:
@@ -541,6 +616,8 @@ def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
     for item in get_tool_loop_state(context).tool_results():
         if not isinstance(item, dict):
             continue
+        if not deep_research_tool_result_succeeded(item):
+            continue
         call = item.get("call")
         if not isinstance(call, dict):
             continue
@@ -550,8 +627,17 @@ def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
         if not isinstance(args, dict):
             continue
         if is_research_report_path(args.get("path") or args.get("file_path")):
-            return True
+            return _report_artifact_confirmed_if_possible(context)
     return False
+
+
+def _report_artifact_confirmed_if_possible(context: RunContext) -> bool:
+    if (
+        "workspace_cwd" in context.metadata
+        or isinstance(context.metadata.get("deep_research_artifacts"), dict)
+    ):
+        return deep_research_report_artifact_exists(context)
+    return True
 
 
 def _deep_research_record_strategy_choice(

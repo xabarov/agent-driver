@@ -159,6 +159,7 @@ async def maybe_execute_subagent_group(
                     "group_id": handoff_payload.get("group_id"),
                     "child_count": handoff_payload.get("child_count"),
                     "summary_chars": len(str(handoff_payload.get("summary") or "")),
+                    "child_evidence": _child_handoff_evidence_counts(handoff_payload),
                     "required_parent_artifacts": handoff_payload.get(
                         "required_parent_artifacts"
                     ),
@@ -265,6 +266,7 @@ def _bounded_child_source_ledger(value: object) -> dict[str, object]:
             max_rows=8,
         ),
         "verified_reads": _bounded_dict_rows(value.get("verified_reads"), max_rows=5),
+        "blocked_reads": _bounded_dict_rows(value.get("blocked_reads"), max_rows=5),
         "failed_reads": _bounded_dict_rows(value.get("failed_reads"), max_rows=5),
     }
 
@@ -273,6 +275,42 @@ def _bounded_dict_rows(value: object, *, max_rows: int) -> list[dict[str, object
     if not isinstance(value, list):
         return []
     return [dict(item) for item in value[:max_rows] if isinstance(item, dict)]
+
+
+def _child_handoff_evidence_counts(handoff: dict[str, object]) -> dict[str, int]:
+    totals = {
+        "search_count": 0,
+        "fetch_count": 0,
+        "verified_read_count": 0,
+        "candidate_count": 0,
+        "blocked_read_count": 0,
+        "failed_read_count": 0,
+    }
+    children = handoff.get("children")
+    if not isinstance(children, list):
+        return totals
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+        source_ledger = child.get("source_ledger")
+        if not isinstance(source_ledger, dict):
+            continue
+        candidates = _ledger_section_count(source_ledger, "search_candidates")
+        verified = _ledger_section_count(source_ledger, "verified_reads")
+        blocked = _ledger_section_count(source_ledger, "blocked_reads")
+        failed = _ledger_section_count(source_ledger, "failed_reads")
+        totals["search_count"] += candidates
+        totals["candidate_count"] += candidates
+        totals["verified_read_count"] += verified
+        totals["blocked_read_count"] += blocked
+        totals["failed_read_count"] += failed
+        totals["fetch_count"] += verified + blocked + failed
+    return totals
+
+
+def _ledger_section_count(source_ledger: dict[str, object], section: str) -> int:
+    rows = source_ledger.get(section)
+    return len(rows) if isinstance(rows, list) else 0
 
 
 def _final_answer_ready_after_subagent(context: RunContext) -> bool:

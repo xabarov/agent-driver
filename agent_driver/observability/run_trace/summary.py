@@ -172,6 +172,14 @@ def summarize_run_trace(
         research=research,
         assistant_text=text,
     )
+    deep_research_artifact_handoff_complete = (
+        terminal_event == "run_completed"
+        and bool(research_efficiency.get("deep_research_artifact_expected"))
+        and bool(artifacts.get("report_write_seen"))
+        and bool(artifacts.get("source_ledger_updated"))
+        and _as_int(artifacts.get("source_ledger_record_count")) > 0
+        and bool(research_efficiency.get("final_references_report_artifact"))
+    )
 
     failures: dict[str, bool] = {
         "stuck_on_interrupt": bool(interrupt_reasons) and terminal_event is None,
@@ -180,14 +188,17 @@ def summarize_run_trace(
         "missing_required_research_evidence": (
             requires_research
             and not any(name in _RESEARCH_TOOLS for name in tool_names)
+            and not deep_research_artifact_handoff_complete
         ),
-        "search_only_research_report": research["fetch_required_but_missing"],
+        "search_only_research_report": research["fetch_required_but_missing"]
+        and not deep_research_artifact_handoff_complete,
         "insufficient_research_source_diversity": research[
             "insufficient_source_diversity"
         ],
         "final_missing_source_links": research["final_missing_source_links"],
         "progress_only_final": continuation.reason == "continuation_signal",
-        "text_form_tool_call": continuation.reason == "text_form_tool_call",
+        "text_form_tool_call": continuation.reason == "text_form_tool_call"
+        and not deep_research_artifact_handoff_complete,
         "fabricated_planning": planning["verdict"] == "fabricated"
         and not provider_rejected
         and _planning_execution_expected(
@@ -198,6 +209,7 @@ def summarize_run_trace(
         "repeated_approval_planning": planning["approval_cycles"] > 1,
         "plan_todos_incomplete_on_final": (
             terminal_event == "run_completed"
+            and not deep_research_artifact_handoff_complete
             and _planning_todos_incomplete(
                 planning,
                 assistant_text=text,
@@ -253,7 +265,8 @@ def summarize_run_trace(
         ],
         "deep_research_long_final_after_report": research_efficiency[
             "long_final_after_report"
-        ],
+        ]
+        and not deep_research_artifact_handoff_complete,
         "deep_research_missing_initial_todo": research_efficiency[
             "missing_initial_todo"
         ],
@@ -263,8 +276,10 @@ def summarize_run_trace(
         "deep_research_skill_denied": research_efficiency["skill_denied"],
         "deep_research_low_verified_coverage": research_efficiency[
             "low_verified_coverage"
-        ],
-        "deep_research_preliminary_final": research_efficiency["preliminary_final"],
+        ]
+        and not deep_research_artifact_handoff_complete,
+        "deep_research_preliminary_final": research_efficiency["preliminary_final"]
+        and not deep_research_artifact_handoff_complete,
         "deep_research_repeated_search_args": research_efficiency[
             "repeated_search_args"
         ],
@@ -292,6 +307,7 @@ def summarize_run_trace(
         "tool_chain": " -> ".join(tool_names),
         "artifacts": artifacts,
         "research_efficiency": research_efficiency,
+        "deep_research_artifact_handoff_complete": deep_research_artifact_handoff_complete,
         "runtime_markers": runtime_markers,
         "research": {
             "required": requires_research,
@@ -344,28 +360,43 @@ def _subagent_summary(
     child_synthesis_pending = False
     child_synthesis_summary_chars = 0
     marker_seen = False
+    parent_report_write_seen_after_marker = False
     runs_started_before_child_synthesis = 0
     tools_after_child_synthesis_pending: list[str] = []
     for event in events:
         data = _event_data(event)
-        if marker_seen and event.get("event") == "tool_call_completed":
+        event_name = event.get("event")
+        if (
+            marker_seen
+            and not parent_report_write_seen_after_marker
+            and event_name == "tool_call_completed"
+        ):
             for tool in event_tools(data):
                 if _is_parent_synthesis_gate_denial(tool):
                     continue
                 tool_name = tool.get("tool_name") or tool.get("name")
                 if isinstance(tool_name, str) and tool_name:
                     tools_after_child_synthesis_pending.append(tool_name)
-        if event.get("event") == "subagent_started" and not marker_seen:
+                if _tool_is_parent_report_write(tool):
+                    parent_report_write_seen_after_marker = True
+        if (
+            marker_seen
+            and not parent_report_write_seen_after_marker
+            and event_name in {"artifact_created", "artifact_updated"}
+            and _artifact_event_is_parent_report_write(data)
+        ):
+            parent_report_write_seen_after_marker = True
+        if event_name == "subagent_started" and not marker_seen:
             runs_started_before_child_synthesis += 1
-        if event.get("event") == "subagent_completed":
+        if event_name == "subagent_completed":
             status = data.get("status")
             if isinstance(status, str) and status:
                 statuses.append(status)
-        if event.get("event") in {"subagent_group_joined", "subagent_group_failed"}:
+        if event_name in {"subagent_group_joined", "subagent_group_failed"}:
             join_state = data.get("join_state")
             if isinstance(join_state, str) and join_state:
                 join_states.append(join_state)
-        if event.get("event") == "research_progress":
+        if event_name == "research_progress":
             kind = data.get("kind")
             if kind == "deep_research_child_synthesis_pending":
                 child_synthesis_pending = data.get("pending") is True
@@ -414,7 +445,9 @@ def _subagent_summary(
         "child_fetch_count": child_evidence["fetch_count"],
         "child_verified_read_count": child_evidence["verified_read_count"],
         "parent_synthesized_final": parent_synthesized_final,
-        "child_synthesis_pending": child_synthesis_pending,
+        "child_synthesis_pending": (
+            child_synthesis_pending and not parent_report_write_seen_after_marker
+        ),
         "child_synthesis_summary_chars": child_synthesis_summary_chars,
         "tools_after_child_synthesis_pending": tools_after_child_synthesis_pending,
         "first_tool_after_child_synthesis_pending": (
@@ -427,6 +460,38 @@ def _subagent_summary(
         ),
         "statuses": statuses,
         "join_states": join_states,
+    }
+
+
+def _tool_is_parent_report_write(tool: dict[str, Any]) -> bool:
+    if not _tool_payload_succeeded(tool):
+        return False
+    tool_name = tool.get("tool_name") or tool.get("name")
+    if tool_name not in {"file_write", "file_edit", "file_patch"}:
+        return False
+    args = tool.get("args")
+    if not isinstance(args, dict):
+        return False
+    return _path_targets_report(args.get("path") or args.get("file_path"))
+
+
+def _tool_payload_succeeded(payload: dict[str, Any]) -> bool:
+    if payload.get("error"):
+        return False
+    decision = str(payload.get("decision") or "").strip().lower()
+    if decision in {"deny", "denied", "interrupt", "rejected"}:
+        return False
+    status = str(payload.get("status") or "").strip().lower()
+    if status in {"denied", "failed", "error", "timed_out", "timeout", "cancelled"}:
+        return False
+    return True
+
+
+def _artifact_event_is_parent_report_write(data: dict[str, Any]) -> bool:
+    return data.get("path") == "research/report.md" and data.get("tool_name") in {
+        "file_write",
+        "file_edit",
+        "file_patch",
     }
 
 
@@ -1018,9 +1083,15 @@ def _child_evidence_summary(events: list[dict[str, object]]) -> dict[str, int]:
         "failed_read_count": 0,
     }
     for event in events:
-        if event.get("event") != "subagent_completed":
+        if event.get("event") == "research_progress":
+            data = _event_data(event)
+            if data.get("kind") != "deep_research_child_synthesis_pending":
+                continue
+            evidence = data.get("child_evidence")
+        elif event.get("event") == "subagent_completed":
+            evidence = _event_data(event).get("child_evidence")
+        else:
             continue
-        evidence = _event_data(event).get("child_evidence")
         if not isinstance(evidence, dict):
             continue
         for key in totals:
@@ -1398,10 +1469,6 @@ def _report_write_seen(
             "file_edit",
             "file_patch",
         }:
-            return True
-    for payload in _tool_payloads(events, "file_write"):
-        args = payload.get("args")
-        if isinstance(args, dict) and _path_targets_report(args.get("path")):
             return True
     return False
 

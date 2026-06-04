@@ -362,6 +362,213 @@ def test_trace_summary_splits_parent_and_child_research_evidence() -> None:
     assert summary["subagents"]["child_fetch_count"] == 2
 
 
+def test_trace_summary_clears_child_synthesis_pending_after_parent_report_write() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Deep Research report is ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "group_1", "join_state": "done"},
+            },
+            {
+                "event": "research_progress",
+                "data": {
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "summary_chars": 200,
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "file_write",
+                            "status": "completed",
+                            "args": {"path": "research/report.md"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "artifact_updated",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {
+                "event": "artifact_updated",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "tool_name": "file_write",
+                    "record_count": 1,
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["subagents"]["child_synthesis_pending"] is False
+    assert summary["subagents"]["tools_after_child_synthesis_pending"] == ["file_write"]
+    assert summary["subagents"]["unexpected_tool_after_child_synthesis_pending"] is None
+    assert summary["failures"]["child_result_not_used"] is False
+
+
+def test_trace_summary_does_not_count_failed_report_write_as_parent_artifact() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "group_1", "join_state": "done"},
+            },
+            {
+                "event": "research_progress",
+                "data": {
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "summary_chars": 200,
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "file_write",
+                            "status": "failed",
+                            "args": {"path": "research/report.md"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "artifact_updated",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "tool_name": "file_write",
+                    "record_count": 1,
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["artifacts"]["report_write_seen"] is False
+    assert summary["research_efficiency"]["report_write_seen"] is False
+    assert summary["subagents"]["child_synthesis_pending"] is True
+
+
+def test_trace_summary_allows_phase05_artifact_handoff_despite_stale_todos() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text=(
+            "Deep Research report is ready at `research/report.md`.\n"
+            "<tool_call>{\"name\":\"read_file\",\"arguments\":{}}</tool_call>"
+        ),
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            _completed_tool("web_search"),
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "group_1", "join_state": "done"},
+            },
+            {
+                "event": "artifact_updated",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "tool_name": "source_ledger",
+                    "record_count": 1,
+                },
+            },
+            {
+                "event": "artifact_updated",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {
+                "event": "planning_state",
+                "data": {
+                    "todos": [
+                        {
+                            "id": "fetch",
+                            "content": "Fetch and verify sources",
+                            "status": "pending",
+                        }
+                    ]
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["failures"]["text_form_tool_call"] is False
+    assert summary["failures"]["plan_todos_incomplete_on_final"] is False
+    assert summary["failures"]["search_only_research_report"] is False
+    assert summary["deep_research_artifact_handoff_complete"] is True
+    assert summary["verdict"] == "pass"
+
+
+def test_trace_summary_requires_report_reference_for_artifact_handoff() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Done.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            {
+                "event": "artifact_updated",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "tool_name": "source_ledger",
+                    "record_count": 1,
+                },
+            },
+            {
+                "event": "artifact_updated",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["research_efficiency"]["final_references_report_artifact"] is False
+    assert summary["failures"]["deep_research_final_missing_report_reference"] is True
+    assert summary["deep_research_artifact_handoff_complete"] is False
+
+
 def test_trace_summary_allows_parent_artifact_writes_after_subagent() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

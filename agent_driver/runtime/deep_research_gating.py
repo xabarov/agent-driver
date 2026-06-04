@@ -126,3 +126,16 @@ def is_research_report_path(value: object) -> bool:
 def is_research_source_ledger_path(value: object) -> bool:
     path = normalize_artifact_path(value)
     return path == "research/sources.jsonl" or path.endswith("/research/sources.jsonl")
+
+
+def deep_research_tool_result_succeeded(item: dict[str, Any]) -> bool:
+    """Return False for failed, denied, interrupted, or cancelled tool results."""
+    if item.get("error"):
+        return False
+    decision = str(item.get("decision") or "").strip().lower()
+    if decision in {"deny", "denied", "interrupt", "rejected"}:
+        return False
+    status = str(item.get("status") or "").strip().lower()
+    if status in {"denied", "failed", "error", "timed_out", "timeout", "cancelled"}:
+        return False
+    return True

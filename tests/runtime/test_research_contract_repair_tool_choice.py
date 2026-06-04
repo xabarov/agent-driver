@@ -188,7 +188,7 @@ async def test_parent_synthesis_gate_blocks_discovery_after_child_handoff() -> N
 
 
 @pytest.mark.asyncio
-async def test_parent_synthesis_gate_allows_one_search_but_blocks_second_default_child() -> None:
+async def test_parent_synthesis_gate_blocks_parent_search_after_child_handoff() -> None:
     context = _context(
         tool_results=[],
         metadata={
@@ -204,7 +204,8 @@ async def test_parent_synthesis_gate_allows_one_search_but_blocks_second_default
 
     assert gate is not None
     web_search = await gate(_gate_context("web_search"))
-    assert isinstance(web_search, ToolGateAllow)
+    assert isinstance(web_search, ToolGateDeny)
+    assert "deep_research_parent_synthesis_gate denied" in web_search.reason
     agent_tool = await gate(_gate_context("agent_tool"))
     assert isinstance(agent_tool, ToolGateDeny)
     assert "deep_research_parent_synthesis_gate denied" in agent_tool.reason
@@ -340,7 +341,7 @@ async def test_parent_synthesis_gate_allows_parent_search_candidate_fetch() -> N
 
 
 @pytest.mark.asyncio
-async def test_parent_synthesis_gate_allows_one_parent_search() -> None:
+async def test_parent_synthesis_gate_blocks_parent_search_without_direct_urls() -> None:
     context = _context(
         tool_results=[],
         metadata={
@@ -356,7 +357,8 @@ async def test_parent_synthesis_gate_allows_one_parent_search() -> None:
 
     assert gate is not None
     web_search = await gate(_gate_context("web_search", {"query": "fork join queue"}))
-    assert isinstance(web_search, ToolGateAllow)
+    assert isinstance(web_search, ToolGateDeny)
+    assert "deep_research_parent_synthesis_gate denied" in web_search.reason
 
     context.metadata["tool_results"] = [
         {
@@ -523,7 +525,7 @@ async def test_parent_gate_reevaluates_artifact_state_between_batch_calls() -> N
 
 
 @pytest.mark.asyncio
-async def test_parent_synthesis_gate_allows_second_child_with_explicit_budget() -> None:
+async def test_parent_synthesis_gate_blocks_second_child_even_with_explicit_budget() -> None:
     context = _context(
         tool_results=[],
         metadata={
@@ -546,9 +548,9 @@ async def test_parent_synthesis_gate_allows_second_child_with_explicit_budget() 
 
     assert gate is not None
     web_search = await gate(_gate_context("web_search"))
-    assert isinstance(web_search, ToolGateAllow)
+    assert isinstance(web_search, ToolGateDeny)
     agent_tool = await gate(_gate_context("agent_tool"))
-    assert isinstance(agent_tool, ToolGateAllow)
+    assert isinstance(agent_tool, ToolGateDeny)
 
 
 @pytest.mark.asyncio
