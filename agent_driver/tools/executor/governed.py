@@ -537,6 +537,10 @@ class GovernedToolExecutor:
                     "decision": ToolPolicyDecision.INTERRUPT,
                     "reason": result.message,
                     "interrupt_reason": "approval_required",
+                    # Carry the host's optional heading override through to the
+                    # interrupt (ToolGateAsk.title is documented to override the
+                    # default "Approval required for '<tool>'" heading).
+                    "interrupt_title": result.title,
                 }
             )
         logger.warning(

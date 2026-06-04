@@ -2616,3 +2616,68 @@ Phase 0.5 close criteria for the next execution note:
 - no unknown tool calls or unsuppressed post-terminal tool drift remain;
 - token budget is below the medium threshold;
 - the same criteria pass in two consecutive observed medium fork-join runs.
+
+Execution note 2026-06-04:
+
+- Focused regression baseline passed before the final live pair:
+  `uv run pytest tests/runtime/test_tool_stage_protocol.py
+  tests/runtime/test_deep_research_strategy_tool_choice.py
+  tests/runtime/test_research_contract_repair_tool_choice.py
+  tests/runtime/test_final_answer_strips_text_form_tool_calls.py
+  tests/runtime/test_subagent_integration.py
+  tests/observability/test_run_trace_summary.py
+  tests/scripts/test_deep_research_live_matrix.py -q`.
+- Live matrix dry-run passed.
+- Two scorecard/projection fixes were required before the final live pair:
+  - trace-summary now treats a parent-owned artifact handoff as synthesis when
+    child synthesis marker ordering is late but the trace contains both
+    `research/report.md` and `research/sources.jsonl` plus a post-marker parent
+    artifact write;
+  - the child prompt boundedness detector now accepts a specific
+    source/research child task even when the raw `agent_tool` call omitted an
+    explicit `description`, because the runtime normalizes description from
+    task text before spawning the child.
+- Final observed medium pass 1:
+  - artifact dir:
+    `/tmp/chat-demo-live-observed-medium-phase05-final-pass1`;
+  - run id: `run_3bbd621ee95c`;
+  - terminal: `run_completed`;
+  - scorecard: all axes `ok`;
+  - tokens: 22,001 total;
+  - tool chain: `todo_write -> agent_tool -> web_fetch -> file_write`;
+  - artifacts: parent trace saw `research/report.md` and
+    `research/sources.jsonl`, `report_write_seen=true`,
+    `source_ledger_record_count=1`;
+  - final handoff referenced `research/report.md`;
+  - Phoenix evidence: `ok=true`, project `agent-driver-chat-demo`.
+- Final observed medium pass 2:
+  - artifact dir:
+    `/tmp/chat-demo-live-observed-medium-phase05-final-pass2`;
+  - run id: `run_edf99ea343b8`;
+  - terminal: `run_completed`;
+  - scorecard: all axes `ok`;
+  - tokens: 18,965 total;
+  - tool chain:
+    `todo_write -> agent_tool -> web_fetch -> web_fetch -> web_fetch -> file_write`;
+  - artifacts: parent trace saw `research/report.md` and
+    `research/sources.jsonl`, `report_write_seen=true`,
+    `source_ledger_record_count=3`;
+  - final handoff referenced `research/report.md`;
+  - Phoenix evidence: `ok=true`, project `agent-driver-chat-demo`.
+- Phase 0.5 is closed for the medium fork-join canary. Do not reopen
+  architecture comparison for this canary unless a future code/model/tool
+  surface change regresses one of the recorded axes.
+- Residual risks for the next phase:
+  - both passing runs are contract-correct but still quality-light:
+    `parent_verified_read_count=0` and `child_verified_read_count=0`; source
+    verification depth belongs in Phase 1/2 capability cleanup before hard mode;
+  - report status is still `fallback`/draft in the trace summary even when the
+    artifact handoff passes; Phase 1/2 should separate contract readiness from
+    research-quality readiness in UI copy;
+  - Phoenix export proves project ingestion, not per-span semantic review.
+- Follow-up quality review on 2026-06-04 tightened the trace-summary
+  projection changes with additional negative tests and aligned child prompt
+  boundedness detection with the runtime's `agent_tool`
+  `instructions/prompt/query -> task` alias normalization. This was a
+  scorecard-only refinement; the final live pair above remains the Phase 0.5
+  evidence bundle.

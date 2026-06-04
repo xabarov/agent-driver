@@ -23,7 +23,12 @@ def build_tool_approval_interrupt(ctx: ToolApprovalContext) -> InterruptRequest:
         attempt_id=f"attempt_{ctx.index}",
         checkpoint_id="checkpoint_pending",
         reason=InterruptReason(ctx.policy.interrupt_reason or "approval_required"),
-        title=f"Approval required for '{ctx.call.tool_name}'",
+        # Honor a host-provided heading (e.g. a localised ToolGateAsk.title);
+        # fall back to the English default when none was supplied.
+        title=(
+            ctx.policy.interrupt_title
+            or f"Approval required for '{ctx.call.tool_name}'"
+        ),
         description=ctx.policy.reason,
         risk=ctx.manifest.risk,
         proposed_action={

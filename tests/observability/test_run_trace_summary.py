@@ -470,6 +470,125 @@ def test_trace_summary_clears_child_synthesis_pending_when_report_write_precedes
     assert summary["failures"]["child_result_not_used"] is False
 
 
+def test_trace_summary_counts_artifact_handoff_when_marker_lands_after_report() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Deep Research report is ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            _completed_tool("agent_tool"),
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "group_1", "join_state": "joined"},
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {
+                "event": "research_progress",
+                "data": {
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "summary_chars": 200,
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "file_write",
+                            "status": "completed",
+                            "args": {"path": "research/sources.jsonl"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "tool_name": "file_write",
+                    "record_count": 2,
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["subagents"]["parent_synthesized_final"] is True
+    assert summary["subagents"]["child_synthesis_pending"] is False
+    assert summary["subagents"]["tools_after_child_synthesis_pending"] == ["file_write"]
+    assert summary["failures"]["subagent_no_final"] is False
+    assert summary["failures"]["child_result_not_used"] is False
+
+
+def test_trace_summary_does_not_count_pre_child_report_via_late_marker_fallback() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Deep Research report is ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            _completed_tool("todo_write"),
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            _completed_tool("agent_tool"),
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "group_1", "join_state": "joined"},
+            },
+            {
+                "event": "research_progress",
+                "data": {
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "summary_chars": 200,
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "file_write",
+                            "status": "completed",
+                            "args": {"path": "research/sources.jsonl"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "tool_name": "file_write",
+                    "record_count": 2,
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["subagents"]["parent_synthesized_final"] is False
+    assert summary["failures"]["child_result_not_used"] is True
+
+
 def test_trace_summary_does_not_count_failed_report_write_as_parent_artifact() -> None:
     summary = summarize_run_trace(
         run_id="run_test",
@@ -903,6 +1022,164 @@ def test_trace_summary_flags_unbounded_child_prompt() -> None:
 
     assert summary["verdict"] == "fail"
     assert summary["failures"]["child_prompt_not_bounded"] is True
+
+
+def test_trace_summary_allows_bounded_research_child_task_without_description() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Deep Research report is ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "agent_tool",
+                            "status": "completed",
+                            "args": {
+                                "task": (
+                                    "Find source notes and URLs for the parent "
+                                    "Deep Research report."
+                                )
+                            },
+                        }
+                    ]
+                },
+            },
+            {"event": "subagent_group_started", "data": {"group_id": "group_1"}},
+            {"event": "subagent_started", "data": {"task_id": "task_1"}},
+            {
+                "event": "subagent_completed",
+                "data": {"task_id": "task_1", "status": "completed"},
+            },
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "group_1", "join_state": "joined"},
+            },
+            {
+                "event": "research_progress",
+                "data": {
+                    "kind": "deep_research_child_synthesis_pending",
+                    "pending": True,
+                    "summary_chars": 200,
+                },
+            },
+            {
+                "event": "artifact_created",
+                "data": {"path": "research/report.md", "tool_name": "file_write"},
+            },
+            {
+                "event": "artifact_created",
+                "data": {
+                    "path": "research/sources.jsonl",
+                    "tool_name": "file_write",
+                    "record_count": 2,
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["failures"]["child_prompt_not_bounded"] is False
+
+
+def test_trace_summary_rejects_generic_research_child_task_without_description() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Deep Research report is ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "agent_tool",
+                            "status": "completed",
+                            "args": {
+                                "task": (
+                                    "Research everything about distributed systems "
+                                    "and tell me what matters."
+                                )
+                            },
+                        }
+                    ]
+                },
+            },
+            {"event": "subagent_group_started", "data": {"group_id": "group_1"}},
+            {"event": "subagent_started", "data": {"task_id": "task_1"}},
+            {
+                "event": "subagent_completed",
+                "data": {"task_id": "task_1", "status": "completed"},
+            },
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "group_1", "join_state": "joined"},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["failures"]["child_prompt_not_bounded"] is True
+
+
+def test_trace_summary_allows_bounded_research_child_task_alias() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Use Deep Research and write a report.",
+        assistant_text="Deep Research report is ready at `research/report.md`.",
+        task_contract={
+            "requires_research": True,
+            "research_depth": "deep_parallel_research",
+            "research_mode": "deep",
+            "research_profile": "medium",
+        },
+        events=[
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "agent_tool",
+                            "status": "completed",
+                            "args": {
+                                "instructions": (
+                                    "Find source URLs and compact notes for the "
+                                    "parent report."
+                                )
+                            },
+                        }
+                    ]
+                },
+            },
+            {"event": "subagent_group_started", "data": {"group_id": "group_1"}},
+            {"event": "subagent_started", "data": {"task_id": "task_1"}},
+            {
+                "event": "subagent_completed",
+                "data": {"task_id": "task_1", "status": "completed"},
+            },
+            {
+                "event": "subagent_group_joined",
+                "data": {"group_id": "group_1", "join_state": "joined"},
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["failures"]["child_prompt_not_bounded"] is False
 
 
 def test_trace_summary_respects_no_search_instruction() -> None:

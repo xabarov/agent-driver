@@ -52,6 +52,8 @@ def setup_phoenix_tracing(config: PhoenixTracingConfig) -> dict[str, object]:
     _TRACING_CONFIGURED = True
     _TRACING_PROJECT_NAME = config.project_name
     try:
+        import inspect
+
         from phoenix.otel import register
 
         kwargs: dict[str, object] = {
@@ -63,7 +65,13 @@ def setup_phoenix_tracing(config: PhoenixTracingConfig) -> dict[str, object]:
             _TRACING_ENDPOINT = normalize_phoenix_http_endpoint(config.collector_endpoint)
             kwargs["endpoint"] = _TRACING_ENDPOINT
             kwargs["protocol"] = "http/protobuf"
-        register(**kwargs)
+        # arize-phoenix-otel's register() signature drifts across versions
+        # (older releases lack ``auto_instrument`` / ``protocol``). Pass only the
+        # kwargs the installed version actually accepts so tracing setup doesn't
+        # hard-fail on a version mismatch — the unsupported knobs simply fall
+        # back to that version's defaults.
+        accepted = set(inspect.signature(register).parameters)
+        register(**{k: v for k, v in kwargs.items() if k in accepted})
         _TRACING_READY = True
     except Exception as exc:  # pragma: no cover - optional dependency fallback
         _TRACING_ERROR = str(exc)

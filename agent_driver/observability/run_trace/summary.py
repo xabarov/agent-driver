@@ -376,6 +376,8 @@ def _subagent_summary(
     child_join_seen = False
     parent_report_write_seen_after_child = False
     parent_report_write_seen_after_marker = False
+    parent_report_artifact_after_child_join = False
+    source_ledger_artifact_after_marker = False
     runs_started_before_child_synthesis = 0
     tools_after_child_synthesis_pending: list[str] = []
     for event in events:
@@ -393,6 +395,7 @@ def _subagent_summary(
             and _artifact_event_is_parent_report_write(data)
         ):
             parent_report_write_seen_after_child = True
+            parent_report_artifact_after_child_join = True
         if (
             marker_seen
             and not parent_report_write_seen_after_marker
@@ -413,6 +416,12 @@ def _subagent_summary(
             and _artifact_event_is_parent_report_write(data)
         ):
             parent_report_write_seen_after_marker = True
+        if (
+            marker_seen
+            and event_name in {"artifact_created", "artifact_updated"}
+            and _artifact_event_is_source_ledger_write(data)
+        ):
+            source_ledger_artifact_after_marker = True
         if event_name == "subagent_started" and not marker_seen:
             runs_started_before_child_synthesis += 1
         if event_name == "subagent_completed":
@@ -455,11 +464,19 @@ def _subagent_summary(
     parent_report_write_clears_child_synthesis = (
         parent_report_write_seen_after_child or parent_report_write_seen_after_marker
     )
+    parent_artifact_handoff_after_child_marker = (
+        deep_research_expected
+        and bool(child_synthesis_summary_chars)
+        and any(name == "file_write" for name in tools_after_child_synthesis_pending)
+        and parent_report_artifact_after_child_join
+        and source_ledger_artifact_after_marker
+    )
     parent_synthesized_final = (
         agent_tool_used
         and groups_joined > 0
         and (
             parent_report_write_clears_child_synthesis
+            or parent_artifact_handoff_after_child_marker
             or (
                 not deep_research_expected
                 and continuation_reason != "continuation_signal"
@@ -529,6 +546,15 @@ def _artifact_event_is_parent_report_write(data: dict[str, Any]) -> bool:
         "file_write",
         "file_edit",
         "file_patch",
+    }
+
+
+def _artifact_event_is_source_ledger_write(data: dict[str, Any]) -> bool:
+    return data.get("path") == "research/sources.jsonl" and data.get("tool_name") in {
+        "file_write",
+        "file_edit",
+        "file_patch",
+        "source_ledger",
     }
 
 
@@ -746,11 +772,46 @@ def _agent_tool_prompt_unbounded(events: list[dict[str, object]]) -> bool:
             args = tool.get("args")
             if not isinstance(args, dict):
                 continue
-            task = str(args.get("task") or "").strip()
+            task = str(
+                args.get("task")
+                or args.get("instructions")
+                or args.get("prompt")
+                or args.get("query")
+                or ""
+            ).strip()
             description = str(args.get("description") or "").strip()
-            if len(task.split()) >= 5 and description:
+            if len(task.split()) >= 5 and (
+                description or _bounded_research_task_text(task)
+            ):
                 return False
     return saw_agent_tool
+
+
+def _bounded_research_task_text(task: str) -> bool:
+    text = task.lower()
+    evidence_markers = (
+        "source",
+        "sources",
+        "url",
+        "urls",
+        "источник",
+        "источники",
+    )
+    output_markers = (
+        "notes",
+        "report",
+        "summary",
+        "summarize",
+        "parent",
+        "замет",
+        "отчет",
+        "отчёт",
+        "свод",
+        "родител",
+    )
+    return any(marker in text for marker in evidence_markers) and any(
+        marker in text for marker in output_markers
+    )
 
 
 def _control_summary(events: list[dict[str, object]]) -> dict[str, Any]:
