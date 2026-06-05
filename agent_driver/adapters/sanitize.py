@@ -34,7 +34,9 @@ DEFAULT_RAW_PAYLOAD_KEY_PARTS = (
 DEFAULT_RAW_PAYLOAD_KEYS = frozenset({"request", "response"})
 
 
-def should_redact_key(key: str, *, sensitive_key_parts: tuple[str, ...] = DEFAULT_SENSITIVE_KEY_PARTS) -> bool:
+def should_redact_key(
+    key: str, *, sensitive_key_parts: tuple[str, ...] = DEFAULT_SENSITIVE_KEY_PARTS
+) -> bool:
     """Return True when a field name looks like it may contain credentials."""
     normalized = key.lower()
     return any(part in normalized for part in sensitive_key_parts)
@@ -48,7 +50,9 @@ def should_truncate_raw_payload_key(
 ) -> bool:
     """Return True for bulky provider/debug payload fields."""
     normalized = key.lower()
-    return normalized in raw_payload_keys or any(part in normalized for part in raw_payload_key_parts)
+    return normalized in raw_payload_keys or any(
+        part in normalized for part in raw_payload_key_parts
+    )
 
 
 def sanitize_projection_value(

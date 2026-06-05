@@ -57,7 +57,9 @@ def test_has_real_execution_proof_ignores_blocked_or_missing_tool_names() -> Non
     assert (
         has_real_execution_proof(
             [
-                _event("tool_call_completed", {"tool_name": "shell", "status": "blocked"}),
+                _event(
+                    "tool_call_completed", {"tool_name": "shell", "status": "blocked"}
+                ),
                 _event("tool_call_completed", {"status": "completed"}),
             ]
         )
