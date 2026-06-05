@@ -451,6 +451,28 @@ _PARENT_PREVIEW_TOOLS = frozenset({"artifact_preview"})
 _PARENT_PATCH_TOOLS = frozenset({"file_patch", "file_edit"})
 
 
+def _parent_review_steps_done(tool_results: object) -> dict[str, bool]:
+    """Cap-aware completion for each parent review step.
+
+    A step is done when its scoped action succeeded OR the model has burned the
+    per-step attempt cap on it (denied wrong-path calls included). Shared by the
+    pending gate and the next-tool picker so they never disagree (which would
+    leave the gate open while the picker has nothing left to force).
+    """
+    actions = parent_review_actions_seen(tool_results)
+    return {
+        "read_file": actions["read_file"]
+        or _parent_tool_attempt_count(tool_results, _PARENT_READ_TOOLS)
+        >= _PARENT_REVIEW_ATTEMPT_CAP,
+        "artifact_preview": actions["artifact_preview"]
+        or _parent_tool_attempt_count(tool_results, _PARENT_PREVIEW_TOOLS)
+        >= _PARENT_REVIEW_ATTEMPT_CAP,
+        "file_patch": actions["file_patch"]
+        or _parent_tool_attempt_count(tool_results, _PARENT_PATCH_TOOLS)
+        >= _PARENT_REVIEW_ATTEMPT_CAP,
+    }
+
+
 def parent_review_actions_seen(tool_results: object) -> dict[str, bool]:
     """Return which parent-owned review actions have succeeded this run.
 
@@ -506,9 +528,9 @@ def _parent_review_pending(
         return False
     if not _children_joined(child_source_ledgers):
         return False
-    actions = parent_review_actions_seen(tool_results)
+    steps = _parent_review_steps_done(tool_results)
     review_done = (
-        actions["read_file"] and actions["artifact_preview"] and actions["file_patch"]
+        steps["read_file"] and steps["artifact_preview"] and steps["file_patch"]
     )
     # Count a fetch *attempt* (not only a success) as the verify step: a blocked
     # or paywalled fetch still shows the parent tried to verify a source, and
@@ -557,28 +579,18 @@ def deep_research_parent_review_next_tool(context: RunContext) -> str | None:
     when the parent has nothing left to do (or no tool is permitted).
     """
     tool_results = get_tool_loop_state(context).tool_results()
-    actions = parent_review_actions_seen(tool_results)
     # Loop-breaker per step: a forced tool_choice can be answered with a denied
     # call (wrong/absolute path), which never flips the corresponding "seen"
-    # flag. After _PARENT_REVIEW_ATTEMPT_CAP attempts at a step, treat it as done
-    # and advance instead of spinning the run to cancellation.
-    read_step_done = actions["read_file"] or (
-        _parent_tool_attempt_count(tool_results, _PARENT_READ_TOOLS)
-        >= _PARENT_REVIEW_ATTEMPT_CAP
-    )
-    if not read_step_done and _tool_policy_allows(context, "read_file"):
+    # flag. _parent_review_steps_done treats a step as done after the per-step
+    # attempt cap so the run advances instead of spinning to cancellation.
+    steps = _parent_review_steps_done(tool_results)
+    if not steps["read_file"] and _tool_policy_allows(context, "read_file"):
         return "read_file"
-    preview_step_done = actions["artifact_preview"] or (
-        _parent_tool_attempt_count(tool_results, _PARENT_PREVIEW_TOOLS)
-        >= _PARENT_REVIEW_ATTEMPT_CAP
-    )
-    if not preview_step_done and _tool_policy_allows(context, "artifact_preview"):
+    if not steps["artifact_preview"] and _tool_policy_allows(
+        context, "artifact_preview"
+    ):
         return "artifact_preview"
-    patch_step_done = actions["file_patch"] or (
-        _parent_tool_attempt_count(tool_results, _PARENT_PATCH_TOOLS)
-        >= _PARENT_REVIEW_ATTEMPT_CAP
-    )
-    if not patch_step_done:
+    if not steps["file_patch"]:
         for tool_name in ("file_patch", "file_edit"):
             if _tool_policy_allows(context, tool_name):
                 return tool_name

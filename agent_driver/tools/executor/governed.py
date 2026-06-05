@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from typing import Any
 
 from agent_driver.contracts.enums import GuardrailDecision, ToolPolicyDecision
@@ -126,9 +127,38 @@ def _normalize_tool_call_args(call: ToolCall) -> ToolCall:
     )
 
 
+def _coerce_json_string_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Parse args the model serialized as JSON STRINGS back into objects/arrays.
+
+    Models (especially reasoning models) sometimes pass an object/array argument
+    as a JSON string — e.g. ``chart_vegalite(spec='{"mark": "bar", ...}')`` instead
+    of a native object — which then fails the handler's type check ("spec must be a
+    dictionary"). When a string value cleanly parses to a dict/list (optionally
+    inside a ```json fence), replace it with the parsed value. Generic — applies to
+    every tool, so each handler doesn't need its own string-spec workaround.
+    """
+    coerced = dict(args)
+    for key, value in args.items():
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
+            text = re.sub(r"\s*```$", "", text).strip()
+        if not (text.startswith("{") or text.startswith("[")):
+            continue
+        try:
+            parsed = json.loads(text)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(parsed, (dict, list)):
+            coerced[key] = parsed
+    return coerced
+
+
 def _normalize_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Normalize common provider argument synonyms before handler execution."""
-    normalized = dict(args)
+    normalized = _coerce_json_string_args(dict(args))
     if (
         tool_name in {"web_fetch", "source_read", "pdf_read", "browser_read"}
         and "url" not in normalized
