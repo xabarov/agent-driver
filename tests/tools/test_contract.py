@@ -108,6 +108,7 @@ def test_metadata_preserves_host_specific_fields() -> None:
         "requires_approval": "on_match",
         "timeout_seconds": 600,
         "output_char_budget": 16000,
+        "max_result_size_chars": 50000,
         "metadata": {
             "queue_category": "web",
             "catalog_group": "vuln_scanning",
@@ -126,6 +127,7 @@ def test_metadata_preserves_host_specific_fields() -> None:
     assert manifest.approval_mode is ApprovalMode.ON_POLICY_MATCH
     assert manifest.timeout_seconds == 600
     assert manifest.output_char_budget == 16000
+    assert manifest.max_result_size_chars == 50000
     assert manifest.metadata["queue_category"] == "web"
     assert manifest.metadata["requires_trigger"] is True
     assert manifest.metadata["capabilities"] == ["web", "vuln-scanning"]
