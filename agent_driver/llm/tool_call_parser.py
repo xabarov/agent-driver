@@ -122,6 +122,57 @@ def _coerce_xmlish_arg_value(value: str) -> Any:
     return text
 
 
+# Gemma chat-template tool calls leak as text when the provider doesn't parse them
+# into structured tool_calls, e.g.:
+#   <|tool_call>call:chart_vegalite{chart_type:<|"|>bar<|"|>,data:[...]}<tool_call|>
+# markers (<|tool_call> / <tool_call|>; pipe placement varies) wrap a
+# ``call:NAME{...}`` body whose string values are delimited by ``<|"|>``.
+_GEMMA_CALL_RE = re.compile(r"call:\s*(?P<name>[A-Za-z0-9_]+)\s*\{")
+# A gemma string-delimiter token wrapping a quote: <|"|>, <|">, <||">, ...
+_GEMMA_QUOTE_RE = re.compile(r"<\|+\"\|*>")
+# Any other stray gemma control token: <|tool_call>, <tool_call|>, <||>, <|...>.
+_GEMMA_STRAY_RE = re.compile(r"<\|[^<>]*>|<[^<>]*\|>")
+# Unquoted JSON object key after { or , — quote it so json.loads accepts it.
+_BARE_KEY_RE = re.compile(r"([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)")
+
+
+def _gemma_tool_call_payloads(text: str) -> list[dict[str, Any]]:
+    """Parse gemma ``call:NAME{...}`` leaks into ``{name, arguments}`` dicts.
+
+    Best-effort: normalises gemma's ``<|"|>`` quote-tokens to ``"``, quotes bare
+    object keys, then ``json.loads``. Pathological bodies (e.g. multi-line code
+    with embedded quotes) may fail to parse — those are skipped, leaving behaviour
+    no worse than before."""
+    payloads: list[dict[str, Any]] = []
+    for m in _GEMMA_CALL_RE.finditer(text):
+        name = m.group("name")
+        # Brace-match the args body.
+        depth, i, n = 0, m.end() - 1, len(text)
+        end = None
+        while i < n:
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+            i += 1
+        if end is None:
+            continue
+        body = text[m.end() - 1 : end + 1]
+        normalised = _GEMMA_QUOTE_RE.sub('"', body)
+        normalised = _GEMMA_STRAY_RE.sub("", normalised)
+        normalised = _BARE_KEY_RE.sub(r'\1"\2"\3', normalised)
+        try:
+            args = json.loads(normalised)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(args, dict):
+            payloads.append({"name": name, "arguments": args})
+    return payloads
+
+
 def extract_text_form_tool_calls(
     text: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -130,6 +181,11 @@ def extract_text_form_tool_calls(
         return [], []
     candidates: list[tuple[str, str]] = []
     xmlish_candidates: list[tuple[str, dict[str, Any]]] = []
+    # Gemma <|tool_call>call:NAME{...} leaks (only when its markers are present, so
+    # we don't mis-parse a normal ``call:`` mention in prose).
+    if "<|tool_call" in text or "<tool_call|" in text:
+        for payload in _gemma_tool_call_payloads(text):
+            xmlish_candidates.append(("gemma_tool_call", payload))
     for match in _TOOL_CALL_BLOCK_RE.finditer(text):
         raw_body = match.group("body")
         xmlish = _xmlish_tool_call_payload(raw_body)
