@@ -4,6 +4,11 @@ from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
 from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
 from agent_driver.runtime.events import InMemoryEventLog
+from agent_driver.runtime.execution_proof import (
+    ExecutionProof,
+    has_real_execution_proof,
+    summarize_execution_proof,
+)
 from agent_driver.runtime.hook_chains import FallbackSpec, HookChainExecutor
 from agent_driver.runtime.planning_check import (
     PLANNING_TOOL_NAMES,
@@ -64,6 +69,8 @@ __all__ = [
     "SqliteRuntimeStore",
     "FallbackSpec",
     "HookChainExecutor",
+    "ExecutionProof",
+    "has_real_execution_proof",
     "MissingCheckpointError",
     "RuntimeExecutionError",
     "RuntimeState",
@@ -73,6 +80,7 @@ __all__ = [
     "create_runtime_store_bundle",
     "runtime_store_config_from_env",
     "preflight_runtime_store",
+    "summarize_execution_proof",
     "ToolExecutor",
     "ToolExecutionResult",
     "ToolGate",
