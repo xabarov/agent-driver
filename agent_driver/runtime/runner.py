@@ -16,6 +16,12 @@ from agent_driver.context import (
 from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.llm.providers import LlmProvider
+from agent_driver.observability.openinference import (
+    SPAN_KIND_AGENT,
+    oi_span,
+    record_status,
+    set_io,
+)
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.abort import RunAbortHandle  # noqa: F401
 from agent_driver.runtime.metadata_state import get_loop_control_state
@@ -146,6 +152,25 @@ class SingleAgentRunner(
         context = self._init_context(
             run_input, abort_handle=abort_handle, tool_gate=tool_gate
         )
+        output: AgentRunOutput | None = None
+        with oi_span("agent.run", kind=SPAN_KIND_AGENT) as run_span:
+            _annotate_run_span_input(run_span, run_input)
+            try:
+                output = await self._drive_steps(context)
+                return output
+            finally:
+                _annotate_run_span_output(run_span, output)
+
+    async def _drive_steps(self, context: _RunContext) -> AgentRunOutput:
+        """Drive the deterministic step loop to a terminal output.
+
+        Extracted from :meth:`run` so the run-level OpenInference AGENT
+        span wraps the whole loop (including the early terminal/timeout
+        returns) and becomes the native trace root that nested
+        LLM/TOOL/subagent spans parent to (Workstream B). A subagent that
+        re-enters :meth:`run` synchronously opens its own AGENT span under
+        this one, giving Phoenix native subagent grouping.
+        """
         with workspace_cwd_scope(_pick_workspace_cwd(context)):
             while context.step_name != "done":
                 terminal = self._terminal_from_limits(context)
@@ -211,6 +236,54 @@ def _remaining_deadline_seconds(context: _RunContext) -> float | None:
     if deadline is None:
         return None
     return float(deadline) - (monotonic() - context.started_at)
+
+
+def _annotate_run_span_input(span: object, run_input: AgentRunInput) -> None:
+    """Seed the run AGENT span with agent identity + the user turn.
+
+    No-op/never-raises — telemetry must never break a run.
+    """
+    if span is None:
+        return
+    try:
+        profile = getattr(run_input.agent_profile, "value", run_input.agent_profile)
+        for key, value in (
+            ("agent.id", run_input.agent_id),
+            ("agent.profile", str(profile) if profile is not None else None),
+            ("llm.model_role", run_input.model_role),
+            ("graph.preset", run_input.graph_preset),
+        ):
+            if value is not None:
+                span.set_attribute(key, value)
+        if run_input.input:
+            set_io(span, input=run_input.input)
+        elif run_input.messages:
+            set_io(
+                span,
+                input=[m.model_dump(mode="json") for m in run_input.messages],
+            )
+    except Exception:  # telemetry must never break a run
+        pass
+
+
+def _annotate_run_span_output(
+    span: object, output: AgentRunOutput | None
+) -> None:
+    """Record the final answer + ERROR status on the run AGENT span."""
+    if span is None or output is None:
+        return
+    try:
+        if output.answer is not None:
+            set_io(span, output=output.answer)
+        ok = output.status in (RunStatus.COMPLETED, RunStatus.PAUSED)
+        description = None
+        if not ok:
+            description = f"run ended {output.status.value}"
+            if output.terminal_reason is not None:
+                description = f"{description}: {output.terminal_reason.value}"
+        record_status(span, ok=ok, description=description)
+    except Exception:  # telemetry must never break a run
+        pass
 
 
 
