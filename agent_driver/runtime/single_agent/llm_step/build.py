@@ -29,6 +29,7 @@ from agent_driver.harness import (
     select_harness_profile,
 )
 from agent_driver.llm.contracts import LlmRequest
+from agent_driver.llm.sanitize import sanitize_request_messages
 from agent_driver.runtime.single_agent.context_management.protocol_validate import (
     validate_and_repair_protocol_messages,
 )
@@ -342,7 +343,10 @@ def build_single_agent_llm_request(
     if harness_profile is not None:
         request_tools = apply_tool_overrides(request_tools, harness_profile)
     request = LlmRequest(
-        messages=_normalize_trimmed_messages(final_prompt_messages),
+        # E8: strip lone surrogates / NUL so the request can encode to UTF-8.
+        messages=sanitize_request_messages(
+            _normalize_trimmed_messages(final_prompt_messages)
+        ),
         model_role=run_input.model_role,
         model=forced_model if isinstance(forced_model, str) else None,
         stream=ctx.stream,

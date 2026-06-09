@@ -32,8 +32,11 @@ from agent_driver.llm.providers_impl import (
     OpenAICompatibleProvider,
 )
 from agent_driver.llm.router import HealthAwareRouter
+from agent_driver.llm.sanitize import sanitize_request_messages, strip_surrogates
 
 __all__ = [
+    "sanitize_request_messages",
+    "strip_surrogates",
     "ClassifiedError",
     "FakeProvider",
     "HealthAwareRouter",

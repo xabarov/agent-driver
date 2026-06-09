@@ -206,11 +206,20 @@ explicit demand.
 **Done when:** path-prefix routing dispatches to the right backend with
 standardized errors; offline tests per backend + composite routing.
 
-### E8 — Message sanitization hardening  ·  Low · S
+### E8 — Message sanitization hardening  ·  Low · S  ·  **DONE 2026-06-09**
 
-- [ ] Strip UTF-16 surrogate pairs / problematic non-ASCII before provider
-      calls; harden tool-arg JSON repair; optionally strip images for
-      image-phobic providers.
+- [x] `llm/sanitize.py`: `strip_surrogates` removes lone UTF-16 surrogates +
+      NUL (which raise `UnicodeEncodeError` on `.encode("utf-8")` and break the
+      HTTP/JSON request); legitimate Unicode preserved. `sanitize_request_messages`
+      copies only the dirty messages.
+- [x] Applied at request build (`build.py`) so every runtime/subagent request is
+      UTF-8-safe before the provider call.
+- [x] Tests: strip surrogate/NUL, clean text identity, copy-only-dirty,
+      end-to-end (surrogate input reaches the provider clean + encodable).
+
+Note: tool-arg JSON repair already exists (`llm/tool_call_parser.py` — gemma
+normalization, key-quoting, structured parse), so it was not re-done. Image
+stripping for image-phobic providers is out of scope (no multimodal path yet).
 
 **Why:** defensive hygiene — several providers choke on broken UTF-8; cheap.
 **Where:** `llm/` request-build path (a sanitizer pass) +
