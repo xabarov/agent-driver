@@ -33,7 +33,6 @@ from agent_driver.runtime.hook_chains import (
     HookChainExecutor,
 )
 
-
 # ---------------------------------------------------------------------------
 # Contract validation
 # ---------------------------------------------------------------------------
@@ -153,9 +152,7 @@ def _simple_rule(
     return HookRule(
         name=name,
         trigger=HookTrigger(event=event, tool=tool),
-        condition=HookCondition(
-            error_includes=error_includes, error_regex=error_regex
-        ),
+        condition=HookCondition(error_includes=error_includes, error_regex=error_regex),
         action=HookAction(
             type=HookActionType.SPAWN_FALLBACK,
             agent_type=agent_type,
@@ -252,9 +249,7 @@ def test_error_includes_narrows_match() -> None:
     )
     assert len(out) == 1
     # Doesn't match — different error text.
-    out = executor.observe(
-        _tool_failed_event(tool="chart_vegalite", error="timeout")
-    )
+    out = executor.observe(_tool_failed_event(tool="chart_vegalite", error="timeout"))
     assert out == []
 
 
@@ -299,9 +294,7 @@ def test_combined_condition_is_AND() -> None:
     executor = HookChainExecutor(cfg)
     # Both match.
     out = executor.observe(
-        _tool_failed_event(
-            tool="chart_vegalite", error="out of memory 1024 bytes"
-        )
+        _tool_failed_event(tool="chart_vegalite", error="out of memory 1024 bytes")
     )
     assert len(out) == 1
     # Only one matches (no bytes count).
@@ -317,9 +310,7 @@ def test_combined_condition_is_AND() -> None:
 
 
 def test_depth_limit_caps_total_fires_per_rule() -> None:
-    cfg = HookChainConfig(
-        rules=[_simple_rule(tool="chart_vegalite", depth_limit=2)]
-    )
+    cfg = HookChainConfig(rules=[_simple_rule(tool="chart_vegalite", depth_limit=2)])
     executor = HookChainExecutor(cfg)
     # Fire 3 times; only first 2 should yield a fallback.
     out1 = executor.observe(_tool_failed_event(tool="chart_vegalite", error="x"))
@@ -332,9 +323,7 @@ def test_depth_limit_caps_total_fires_per_rule() -> None:
 
 def test_depth_limit_zero_disables_rule() -> None:
     """``depth_limit=0`` is the operator's "shipped but off" knob."""
-    cfg = HookChainConfig(
-        rules=[_simple_rule(tool="chart_vegalite", depth_limit=0)]
-    )
+    cfg = HookChainConfig(rules=[_simple_rule(tool="chart_vegalite", depth_limit=0)])
     executor = HookChainExecutor(cfg)
     out = executor.observe(_tool_failed_event(tool="chart_vegalite", error="x"))
     assert out == []
@@ -511,3 +500,115 @@ def test_fallback_spec_carries_subagent_shape_fields() -> None:
     assert spec.max_tool_calls == 1
     assert spec.deadline_seconds == 30.0
     assert spec.max_cost_usd == 0.05
+
+
+# ---------------------------------------------------------------------------
+# N4: field_equals conditions + dedup window
+# ---------------------------------------------------------------------------
+
+
+def _denied_tool_event(*, tool: str, error: str = "blocked") -> RuntimeEvent:
+    return _event(
+        RuntimeEventType.TOOL_CALL_COMPLETED,
+        {"tools": [{"tool_name": tool, "error": error}], "statuses": ["denied"]},
+    )
+
+
+def _field_rule(field_equals: dict[str, str], *, name: str = "r") -> HookRule:
+    return HookRule(
+        name=name,
+        trigger=HookTrigger(event=HookTriggerEvent.TOOL_CALL_FAILED),
+        condition=HookCondition(field_equals=field_equals),
+        action=HookAction(
+            type=HookActionType.SPAWN_FALLBACK,
+            agent_type="fallback",
+            prompt_template="retry {tool_name}",
+        ),
+    )
+
+
+def test_field_equals_matches_tool_name() -> None:
+    """A field filter narrows to one tool by structured field, not error text."""
+    executor = HookChainExecutor(
+        HookChainConfig(rules=[_field_rule({"tool_name": "bash"})])
+    )
+    assert len(executor.observe(_tool_failed_event(tool="bash"))) == 1
+    assert executor.observe(_tool_failed_event(tool="python")) == []
+
+
+def test_field_equals_matches_raw_status_distinguishing_denied() -> None:
+    """status filter sees the raw denied/failed value, not a collapsed one."""
+    denied_rule = HookChainConfig(rules=[_field_rule({"status": "denied"})])
+    assert (
+        len(HookChainExecutor(denied_rule).observe(_denied_tool_event(tool="bash")))
+        == 1
+    )
+    # A plain failed event must NOT satisfy a status=denied filter.
+    assert HookChainExecutor(denied_rule).observe(_tool_failed_event(tool="bash")) == []
+
+
+def test_field_equals_is_case_insensitive() -> None:
+    executor = HookChainExecutor(
+        HookChainConfig(rules=[_field_rule({"tool_name": "BASH"})])
+    )
+    assert len(executor.observe(_tool_failed_event(tool="bash"))) == 1
+
+
+def test_field_equals_combines_with_error_text_as_and() -> None:
+    rule = HookRule(
+        name="r",
+        trigger=HookTrigger(event=HookTriggerEvent.TOOL_CALL_FAILED),
+        condition=HookCondition(
+            error_includes="rate limit", field_equals={"tool_name": "bash"}
+        ),
+        action=HookAction(
+            type=HookActionType.SPAWN_FALLBACK, agent_type="f", prompt_template="x"
+        ),
+        depth_limit=5,
+    )
+    executor = HookChainExecutor(HookChainConfig(rules=[rule]))
+    # Both conditions hold → fires.
+    assert (
+        len(executor.observe(_tool_failed_event(tool="bash", error="hit rate limit")))
+        == 1
+    )
+    # Right tool, wrong error → no fire.
+    assert executor.observe(_tool_failed_event(tool="bash", error="boom")) == []
+    # Right error, wrong tool → no fire.
+    assert executor.observe(_tool_failed_event(tool="python", error="rate limit")) == []
+
+
+def test_dedup_window_suppresses_same_signature_but_allows_different() -> None:
+    """Same tool+error within the window fires once; a different error fires."""
+    clock = {"now": 0.0}
+    rule = HookRule(
+        name="r",
+        trigger=HookTrigger(event=HookTriggerEvent.TOOL_CALL_FAILED),
+        action=HookAction(
+            type=HookActionType.SPAWN_FALLBACK, agent_type="f", prompt_template="x"
+        ),
+        dedup_window_seconds=60.0,
+        depth_limit=10,
+    )
+    executor = HookChainExecutor(
+        HookChainConfig(rules=[rule]), now=lambda: clock["now"]
+    )
+    # First failure fires.
+    assert len(executor.observe(_tool_failed_event(tool="bash", error="boom"))) == 1
+    # Identical signature 10s later is deduped.
+    clock["now"] = 10.0
+    assert executor.observe(_tool_failed_event(tool="bash", error="boom")) == []
+    # A DIFFERENT error (distinct signature) still fires inside the window.
+    assert len(executor.observe(_tool_failed_event(tool="bash", error="other"))) == 1
+    # Past the window, the original signature fires again.
+    clock["now"] = 71.0
+    assert len(executor.observe(_tool_failed_event(tool="bash", error="boom"))) == 1
+
+
+def test_dedup_window_zero_keeps_legacy_behavior() -> None:
+    """dedup_window_seconds=0 (default) does not suppress repeats."""
+    rule = _simple_rule(depth_limit=5)
+    assert rule.dedup_window_seconds == 0.0
+    executor = HookChainExecutor(HookChainConfig(rules=[rule]))
+    assert len(executor.observe(_tool_failed_event(tool="bash", error="boom"))) == 1
+    assert len(executor.observe(_tool_failed_event(tool="bash", error="boom"))) == 1

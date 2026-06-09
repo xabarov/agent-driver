@@ -21,10 +21,12 @@ Three rule kinds we support (Phase 1)
   ``TOOL_CALL_COMPLETED`` carries a ``timed_out`` status. Useful
   to differentiate slow-but-buggy from broken-and-fast.
 
-Conditions narrow the match by inspecting the failure's error
+Conditions narrow the match by inspecting the failure: the error
 text — ``error_includes`` (case-insensitive substring) or
 ``error_regex`` (compiled at validation time so a bad regex
-doesn't crash at fire time).
+doesn't crash at fire time) — and/or structured outcome fields via
+``field_equals`` (e.g. ``{"status": "denied"}``), matched against a
+tolerant field view of the payload.
 
 Actions for now are limited to ``spawn_fallback`` — emit a
 :class:`SubagentSpec` shape the host turns into a real
@@ -37,6 +39,10 @@ Cooldown + depth limits
 * ``cooldown_seconds`` — minimum monotonic seconds between
   successive fires of the SAME rule in the SAME run. Defaults to
   0 (no cooldown). Use for noisy tools that fail in bursts.
+* ``dedup_window_seconds`` — suppress re-firing for the SAME
+  trigger *signature* (tool + error text) within the window, while
+  still letting a *different* failure fire. Defaults to 0 (no
+  dedup). Cooldown gates by rule+time; dedup gates by content.
 * ``depth_limit`` — total number of times the rule may fire in
   the current run. Defaults to 1 — the canonical "try ONE
   fallback then give up" semantic. Setting to 0 disables the
@@ -89,14 +95,21 @@ class HookTrigger(ContractModel):
 
 
 class HookCondition(ContractModel):
-    """Narrow a trigger by inspecting the failure's error text.
+    """Narrow a trigger by inspecting the failed event.
 
-    Both fields default to ``None`` (no narrowing — any error
-    fires). Combining the two is treated as AND.
+    ``error_includes`` (case-insensitive substring) and
+    ``error_regex`` inspect the failure's extracted error text.
+    ``field_equals`` matches structured outcome fields by name
+    (e.g. ``{"status": "denied"}`` or ``{"tool_name": "bash"}``)
+    against a tolerant field view of the payload — top-level keys,
+    the normalized ``status``, and the first tool's fields — with
+    case-insensitive string comparison. All present fields default
+    to ``None``/empty (no narrowing). Multiple conditions AND.
     """
 
     error_includes: str | None = None
     error_regex: str | None = None
+    field_equals: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("error_regex")
     @classmethod
@@ -153,13 +166,14 @@ class HookRule(ContractModel):
     condition: HookCondition = Field(default_factory=HookCondition)
     action: HookAction
     cooldown_seconds: float = 0.0
+    dedup_window_seconds: float = 0.0
     depth_limit: int = 1
 
-    @field_validator("cooldown_seconds")
+    @field_validator("cooldown_seconds", "dedup_window_seconds")
     @classmethod
-    def validate_cooldown(cls, value: float) -> float:
+    def validate_non_negative_window(cls, value: float) -> float:
         if value < 0:
-            raise ValueError("cooldown_seconds must be >= 0")
+            raise ValueError("window seconds must be >= 0")
         return value
 
     @field_validator("depth_limit")

@@ -51,7 +51,7 @@ import re
 import time
 from collections import defaultdict
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from agent_driver.contracts.enums import RuntimeEventType
@@ -120,6 +120,8 @@ class _RuleState:
 
     fire_count: int = 0
     last_fired_at: float | None = None
+    # signature -> monotonic time of its most recent fire, for dedup windows.
+    recent_signatures: dict[str, float] = field(default_factory=dict)
 
 
 class HookChainExecutor:
@@ -183,13 +185,14 @@ class HookChainExecutor:
         if triggered_by is None:
             return []
 
+        signature = self._event_signature(event)
         results: list[FallbackSpec] = []
         for rule in self._config.rules:
             if not self._trigger_matches(rule, event):
                 continue
             if not self._condition_matches(rule.condition, event):
                 continue
-            if not self._budget_allows(rule):
+            if not self._budget_allows(rule, signature):
                 continue
             if rule.action.type != HookActionType.SPAWN_FALLBACK:
                 # Unknown / future action kinds — log + skip rather
@@ -202,7 +205,7 @@ class HookChainExecutor:
                 )
                 continue
 
-            self._record_fire(rule)
+            self._record_fire(rule, signature)
             results.append(
                 self._render_fallback(
                     rule=rule,
@@ -241,33 +244,54 @@ class HookChainExecutor:
 
     @staticmethod
     def _condition_matches(condition: HookCondition, event: RuntimeEvent) -> bool:
-        error_text = _extract_error_text(event.payload or {})
+        payload = event.payload or {}
+        error_text = _extract_error_text(payload)
         if condition.error_includes is not None:
             if condition.error_includes.lower() not in error_text.lower():
                 return False
         if condition.error_regex is not None:
             if not re.search(condition.error_regex, error_text):
                 return False
+        for field_name, expected in condition.field_equals.items():
+            actual = _extract_field(payload, field_name)
+            if actual is None or actual.lower() != str(expected).lower():
+                return False
         return True
 
-    def _budget_allows(self, rule: HookRule) -> bool:
+    def _budget_allows(self, rule: HookRule, signature: str) -> bool:
         if rule.depth_limit == 0:
             return False  # explicitly disabled
         state = self._state[rule.name]
         if state.fire_count >= rule.depth_limit:
             return False
+        now = self._now()
         if (
             state.last_fired_at is not None
             and rule.cooldown_seconds > 0
-            and self._now() - state.last_fired_at < rule.cooldown_seconds
+            and now - state.last_fired_at < rule.cooldown_seconds
         ):
             return False
+        if rule.dedup_window_seconds > 0:
+            seen_at = state.recent_signatures.get(signature)
+            if seen_at is not None and now - seen_at < rule.dedup_window_seconds:
+                return False
         return True
 
-    def _record_fire(self, rule: HookRule) -> None:
+    def _record_fire(self, rule: HookRule, signature: str) -> None:
         state = self._state[rule.name]
+        now = self._now()
         state.fire_count += 1
-        state.last_fired_at = self._now()
+        state.last_fired_at = now
+        if rule.dedup_window_seconds > 0:
+            state.recent_signatures[signature] = now
+            # Bound memory: drop signatures already past the dedup window.
+            stale = [
+                sig
+                for sig, ts in state.recent_signatures.items()
+                if now - ts >= rule.dedup_window_seconds
+            ]
+            for sig in stale:
+                del state.recent_signatures[sig]
 
     # ------------------------------------------------------------------
     # Render helpers
@@ -313,6 +337,17 @@ class HookChainExecutor:
             if _payload_indicates_timeout(event.payload or {}):
                 return f"tool_call_timed_out:{tool or 'unknown'}"
         return None
+
+    @staticmethod
+    def _event_signature(event: RuntimeEvent) -> str:
+        """Content signature for dedup: tool identity + error text.
+
+        Two events with the same signature are "the same failure" for
+        ``dedup_window_seconds`` — a different tool or a different error
+        message produces a distinct signature and can still fire.
+        """
+        payload = event.payload or {}
+        return f"{_extract_tool_name(payload) or ''}|{_extract_error_text(payload)}"
 
 
 # ----------------------------------------------------------------------
@@ -360,6 +395,31 @@ def _extract_tool_name(payload: dict[str, Any]) -> str | None:
     direct = payload.get("tool_name")
     if isinstance(direct, str):
         return direct
+    return None
+
+
+def _extract_field(payload: dict[str, Any], key: str) -> str | None:
+    """Tolerant lookup of one outcome field for ``field_equals`` matching.
+
+    Resolves, in order: a scalar top-level ``payload[key]``; for ``status``,
+    the first entry of the ``statuses`` list (so the raw ``failed`` / ``denied``
+    / ``timed_out`` value is preserved, not collapsed); then the first tool's
+    ``tools[0][key]``. Returns the value as a string, or ``None`` when the field
+    is absent. Mirrors the executor's other tolerant readers so a rule author
+    need not know the exact payload shape.
+    """
+    direct = payload.get(key)
+    if isinstance(direct, (str, int, float, bool)):
+        return str(direct)
+    if key == "status":
+        statuses = payload.get("statuses")
+        if isinstance(statuses, list) and statuses and isinstance(statuses[0], str):
+            return statuses[0]
+    tools = payload.get("tools")
+    if isinstance(tools, list) and tools and isinstance(tools[0], dict):
+        value = tools[0].get(key)
+        if isinstance(value, (str, int, float, bool)):
+            return str(value)
     return None
 
 
