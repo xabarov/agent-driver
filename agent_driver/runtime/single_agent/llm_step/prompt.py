@@ -14,6 +14,7 @@ from agent_driver.prompts import (
     todo_write_guidance,
 )
 from agent_driver.runtime.metadata_state import (
+    get_memory_runtime_state,
     get_planning_runtime_state,
     get_research_runtime_state,
 )
@@ -175,6 +176,9 @@ def react_system_instruction(host: LlmPromptHost, context: RunContext) -> str | 
     workspace_cwd = context.run_input.app_metadata.get("workspace_cwd")
     if isinstance(workspace_cwd, str) and workspace_cwd.strip():
         lines.append(f"Workspace cwd: {workspace_cwd.strip()}")
+    recalled_memory = get_memory_runtime_state(context).recalled_block()
+    if recalled_memory:
+        lines.append(recalled_memory)
     return "\n".join(lines)
 
 

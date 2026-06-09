@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import os
 
 from agent_driver.code_agent.backends import create_python_backend
 from agent_driver.contracts.runtime import AgentRunOutput
 from agent_driver.llm.providers import LlmProvider
+from agent_driver.memory.provider import MemoryProvider
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
-from agent_driver.runtime.events import InMemoryEventLog
-from agent_driver.runtime.runner import SingleAgentRunner
 from agent_driver.runtime.control import CommandQueueStore
+from agent_driver.runtime.events import InMemoryEventLog
+from agent_driver.runtime.lifecycle_hooks import RunLifecycleHook
+from agent_driver.runtime.runner import SingleAgentRunner
 from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.runtime.tools import wrap_governed_executor
@@ -53,11 +54,22 @@ def create_agent(
     checkpoint_store: CheckpointStore | None = None,
     event_log: RuntimeEventLog | None = None,
     command_queue_store: CommandQueueStore | None = None,
+    memory_provider: MemoryProvider | None = None,
+    lifecycle_hooks: tuple[RunLifecycleHook, ...] | None = None,
     agent_id: str = "agent",
     graph_preset: str = "single_react",
 ) -> Agent:
     """Create SDK Agent facade with filtered tool registry."""
-    config_copy = deepcopy(config) if config is not None else RunnerConfig()
+    # Shallow override-copy (not deepcopy): keeps the caller's config intact
+    # while letting us attach stateful deps (memory provider, registries) that
+    # are not safe to deep-copy.
+    config_copy = (config or RunnerConfig()).with_overrides()
+    effective_memory = memory_provider
+    if effective_memory is None and config is not None:
+        effective_memory = getattr(config, "memory_provider", None)
+    config_copy.memory_provider = effective_memory
+    if lifecycle_hooks is not None:
+        config_copy.lifecycle_hooks = tuple(lifecycle_hooks)
     if command_queue_store is not None:
         config_copy.command_queue_store = command_queue_store
     source_registry = config_copy.tool_registry or build_default_registry(config_copy)
@@ -90,6 +102,8 @@ async def query(
     checkpoint_store: CheckpointStore | None = None,
     event_log: RuntimeEventLog | None = None,
     command_queue_store: CommandQueueStore | None = None,
+    memory_provider: MemoryProvider | None = None,
+    lifecycle_hooks: tuple[RunLifecycleHook, ...] | None = None,
     agent_id: str = "agent",
     graph_preset: str = "single_react",
     run_id: str | None = None,
@@ -103,6 +117,8 @@ async def query(
         checkpoint_store=checkpoint_store,
         event_log=event_log,
         command_queue_store=command_queue_store,
+        memory_provider=memory_provider,
+        lifecycle_hooks=lifecycle_hooks,
         agent_id=agent_id,
         graph_preset=graph_preset,
     )

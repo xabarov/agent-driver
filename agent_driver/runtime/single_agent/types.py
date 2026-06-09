@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from time import monotonic
 from typing import Any
 
 from agent_driver.code_agent.executor import CodeActionExecutor
-from agent_driver.runtime.single_agent.lifecycle.config_sections import (
-    CodeAgentSettings,
-    CompactionSettings,
-    PythonToolSettings,
-    SubagentSettings,
-    TrimmingSettings,
-)
 from agent_driver.context.artifacts import ArtifactStore, ContextStore
 from agent_driver.context.sessions import SessionStore
 from agent_driver.contracts.checkpoints import CheckpointRef
@@ -24,19 +18,27 @@ from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolCall, ToolResultEnvelope
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.providers import LlmProvider
+from agent_driver.memory.provider import MemoryProvider
 from agent_driver.runtime.abort import RunAbortHandle
+from agent_driver.runtime.control.protocols import CommandQueueStore
+from agent_driver.runtime.lifecycle_hooks import RunLifecycleHook
 from agent_driver.runtime.metadata_state import (
     get_loop_control_state,
     get_tool_loop_state,
 )
+from agent_driver.runtime.single_agent.lifecycle.config_sections import (
+    CodeAgentSettings,
+    CompactionSettings,
+    PythonToolSettings,
+    SubagentSettings,
+    TrimmingSettings,
+)
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
-from agent_driver.runtime.control.protocols import CommandQueueStore
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.runtime.tools import ToolExecutor
 from agent_driver.subagents.mailbox import SubagentMailboxStore
 from agent_driver.subagents.store import SubagentStore
 from agent_driver.tools.registry import ToolRegistry
-
 
 _TRIMMING_FIELDS = {item.name for item in fields(TrimmingSettings)}
 _COMPACTION_FIELDS = {item.name for item in fields(CompactionSettings)}
@@ -45,9 +47,17 @@ _CODE_AGENT_FIELDS = {item.name for item in fields(CodeAgentSettings)}
 _PYTHON_TOOL_FIELDS = {item.name for item in fields(PythonToolSettings)}
 
 
-@dataclass(init=False, slots=True)
+@dataclass(init=False)
 class RunnerConfig:
-    """Configuration for durable single-agent runtime runner."""
+    """Configuration for durable single-agent runtime runner.
+
+    Intentionally **not** ``slots=True``: with a custom ``__init__`` the slotted
+    variant required every field to be declared in two synchronized places
+    (the slot annotation and the assignment), and a missed slot raised an
+    ``AttributeError`` at construction. Without slots, adding a config field is
+    a single assignment in ``__init__``. The annotations below remain as
+    documentation and power dataclass ``repr``/``eq``.
+    """
 
     graph_id: str
     cancellation_probe: Callable[[], bool] | None
@@ -63,6 +73,8 @@ class RunnerConfig:
     code_executor: CodeActionExecutor | None
     tool_registry: ToolRegistry | None
     command_queue_store: CommandQueueStore | None
+    memory_provider: MemoryProvider | None
+    lifecycle_hooks: tuple[RunLifecycleHook, ...]
     trimming: TrimmingSettings
     compaction: CompactionSettings
     subagents: SubagentSettings
@@ -74,16 +86,28 @@ class RunnerConfig:
             **{key: kwargs.pop(key) for key in list(kwargs) if key in _TRIMMING_FIELDS}
         )
         compaction = kwargs.pop("compaction", None) or CompactionSettings(
-            **{key: kwargs.pop(key) for key in list(kwargs) if key in _COMPACTION_FIELDS}
+            **{
+                key: kwargs.pop(key)
+                for key in list(kwargs)
+                if key in _COMPACTION_FIELDS
+            }
         )
         subagents = kwargs.pop("subagents", None) or SubagentSettings(
             **{key: kwargs.pop(key) for key in list(kwargs) if key in _SUBAGENT_FIELDS}
         )
         code_agent = kwargs.pop("code_agent", None) or CodeAgentSettings(
-            **{key: kwargs.pop(key) for key in list(kwargs) if key in _CODE_AGENT_FIELDS}
+            **{
+                key: kwargs.pop(key)
+                for key in list(kwargs)
+                if key in _CODE_AGENT_FIELDS
+            }
         )
         python_tool = kwargs.pop("python_tool", None) or PythonToolSettings(
-            **{key: kwargs.pop(key) for key in list(kwargs) if key in _PYTHON_TOOL_FIELDS}
+            **{
+                key: kwargs.pop(key)
+                for key in list(kwargs)
+                if key in _PYTHON_TOOL_FIELDS
+            }
         )
         self.graph_id = kwargs.pop("graph_id", "single_agent_runtime")
         self.cancellation_probe = kwargs.pop("cancellation_probe", None)
@@ -99,6 +123,8 @@ class RunnerConfig:
         self.code_executor = kwargs.pop("code_executor", None)
         self.tool_registry = kwargs.pop("tool_registry", None)
         self.command_queue_store = kwargs.pop("command_queue_store", None)
+        self.memory_provider = kwargs.pop("memory_provider", None)
+        self.lifecycle_hooks = tuple(kwargs.pop("lifecycle_hooks", ()) or ())
         self.trimming = trimming
         self.compaction = compaction
         self.subagents = subagents
@@ -106,6 +132,20 @@ class RunnerConfig:
         self.python_tool = python_tool
         if kwargs:
             raise TypeError(f"Unexpected RunnerConfig arguments: {sorted(kwargs)}")
+
+    def with_overrides(self, **overrides: Any) -> "RunnerConfig":
+        """Return a shallow copy with top-level attribute overrides applied.
+
+        Shallow by design: callers only reassign top-level attributes
+        (``tool_registry``, ``tool_executor``, ``memory_provider``,
+        ``command_queue_store``); nested settings objects are shared but never
+        mutated. This avoids ``deepcopy``, which cannot copy stateful deps such
+        as a memory provider's DB connection or lock.
+        """
+        clone = copy.copy(self)
+        for key, value in overrides.items():
+            setattr(clone, key, value)
+        return clone
 
     @property
     def trim_max_chars(self) -> int:
@@ -321,6 +361,7 @@ class RunnerDeps:
     tool_registry: ToolRegistry
     command_queue_store: CommandQueueStore | None = None
     python_backend: Any | None = None
+    lifecycle_hooks: tuple[RunLifecycleHook, ...] = ()
 
 
 @dataclass(slots=True)

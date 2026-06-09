@@ -22,14 +22,16 @@ from agent_driver.observability.openinference import (
     record_status,
     set_io,
 )
-from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.abort import RunAbortHandle  # noqa: F401
+from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.metadata_state import get_loop_control_state
-from agent_driver.runtime.tool_gate import ToolGate  # noqa: F401 (re-exported via runtime/__init__)
-from agent_driver.runtime.single_agent.lifecycle.journal import SingleAgentJournalMixin
 from agent_driver.runtime.single_agent.finalization.output import SingleAgentOutputMixin
+from agent_driver.runtime.single_agent.lifecycle.journal import SingleAgentJournalMixin
 from agent_driver.runtime.single_agent.lifecycle.resume import SingleAgentResumeMixin
 from agent_driver.runtime.single_agent.lifecycle.steps import SingleAgentStepMixin
+from agent_driver.runtime.tool_gate import (  # noqa: F401 (re-exported via runtime/__init__)
+    ToolGate,
+)
 
 # isort: off
 from agent_driver.runtime.single_agent.types import (
@@ -113,7 +115,25 @@ class SingleAgentRunner(
             ),
             command_queue_store=self._config.command_queue_store,
             python_backend=python_backend,
+            lifecycle_hooks=self._build_lifecycle_hooks(),
         )
+
+    def _build_lifecycle_hooks(self) -> tuple:
+        """Assemble run lifecycle hooks: memory adapter first, then config hooks.
+
+        The user-facing ``memory_provider`` is translated into a
+        ``MemoryLifecycleHook`` here so the step loop only ever sees the generic
+        hook seam, not memory-specific wiring.
+        """
+        hooks = list(getattr(self._config, "lifecycle_hooks", ()) or ())
+        memory_provider = getattr(self._config, "memory_provider", None)
+        if memory_provider is not None:
+            from agent_driver.runtime.single_agent.lifecycle.memory_hook import (
+                MemoryLifecycleHook,
+            )
+
+            hooks.insert(0, MemoryLifecycleHook(memory_provider))
+        return tuple(hooks)
 
     @property
     def config(self) -> RunnerConfig:
@@ -266,9 +286,7 @@ def _annotate_run_span_input(span: object, run_input: AgentRunInput) -> None:
         pass
 
 
-def _annotate_run_span_output(
-    span: object, output: AgentRunOutput | None
-) -> None:
+def _annotate_run_span_output(span: object, output: AgentRunOutput | None) -> None:
     """Record the final answer + ERROR status on the run AGENT span."""
     if span is None or output is None:
         return
@@ -284,8 +302,6 @@ def _annotate_run_span_output(
         record_status(span, ok=ok, description=description)
     except Exception:  # telemetry must never break a run
         pass
-
-
 
 
 class FakeSingleStepRunner(SingleAgentRunner):

@@ -18,7 +18,6 @@ from agent_driver.context import (
     COMPACTION_RESULT_KEY,
 )
 
-
 JsonDict = dict[str, Any]
 Metadata = MutableMapping[str, Any]
 
@@ -459,6 +458,26 @@ class CompactionRuntimeState(_MetadataView):
         return payload
 
 
+class MemoryRuntimeState(_MetadataView):
+    """Long-term memory recall block and one-time turn-sync guard."""
+
+    def recalled_block(self) -> str | None:
+        value = self.metadata.get("recalled_memory")
+        return value if isinstance(value, str) and value.strip() else None
+
+    def has_recalled(self) -> bool:
+        return "recalled_memory" in self.metadata
+
+    def set_recalled_block(self, block: str) -> None:
+        self.metadata["recalled_memory"] = block
+
+    def turn_synced(self) -> bool:
+        return self.metadata.get("memory_synced") is True
+
+    def mark_turn_synced(self) -> None:
+        self.metadata["memory_synced"] = True
+
+
 def get_loop_control_state(context: HasRuntimeMetadata) -> LoopControlState:
     return LoopControlState(context.metadata)
 
@@ -483,16 +502,22 @@ def get_compaction_runtime_state(context: HasRuntimeMetadata) -> CompactionRunti
     return CompactionRuntimeState(context.metadata)
 
 
+def get_memory_runtime_state(context: HasRuntimeMetadata) -> MemoryRuntimeState:
+    return MemoryRuntimeState(context.metadata)
+
+
 __all__ = [
     "CompactionRuntimeState",
     "HasRuntimeMetadata",
     "LoopControlState",
+    "MemoryRuntimeState",
     "PlanningRuntimeState",
     "ResearchRuntimeState",
     "StreamingRuntimeState",
     "ToolLoopState",
     "get_compaction_runtime_state",
     "get_loop_control_state",
+    "get_memory_runtime_state",
     "get_planning_runtime_state",
     "get_research_runtime_state",
     "get_streaming_runtime_state",
