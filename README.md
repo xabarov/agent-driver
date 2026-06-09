@@ -100,6 +100,8 @@ AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests
 
 ## Documentation map
 
+- Cookbook (offline runnable examples): `examples/cookbook/`
+- Extending agent-driver: `docs/extending.md`
 - Main docs index: `docs/README.md`
 - SDK overview: `docs/sdk.md`
 - Sessions: `docs/sdk-sessions.md`

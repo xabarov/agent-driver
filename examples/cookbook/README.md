@@ -1,0 +1,27 @@
+# Cookbook
+
+Short, self-contained examples for each agent-driver capability. Every script
+runs **offline** (it uses `FakeProvider`, no API key) and exposes a `main()`
+that `tests/examples/test_cookbook.py` executes, so the cookbook cannot rot.
+
+Run any one directly:
+
+```bash
+python examples/cookbook/01_quickstart.py
+```
+
+| Script | Capability | Key APIs |
+| --- | --- | --- |
+| `01_quickstart.py` | Build an agent, run a query | `create_agent`, `agent.query` |
+| `02_long_term_memory.py` | Recall a fact across runs/instances | `MemoryProvider`, `SqliteMemoryStore` |
+| `03_permissions.py` | Deny a dangerous shell command | `classify_command`, `build_permission_gate` |
+| `04_scheduler.py` | Fire a cron job (`tick`) | `Scheduler`, `JobStore`, `ScheduledJob` |
+| `05_batch.py` | Generate trajectories for a prompt set | `BatchRunner`, `TrajectoryStore` |
+| `06_gateway.py` | Session turn → approval → resume | `AgentGateway`, `tool_gate` |
+| `07_mcp_server.py` | Expose the agent over MCP | `AgentMcpServer` |
+| `08_providers.py` | Resolve / register a provider | `resolve_provider`, `ProviderDescriptor` |
+
+To use a real model, swap `FakeProvider(...)` for a descriptor-resolved
+provider (see `08_providers.py`) — e.g. `resolve_provider(ProviderSpec(
+provider_id="openrouter", model="..."))` with `OPENROUTER_API_KEY` set. See
+[docs/extending.md](../../docs/extending.md) for how the pieces fit together.
