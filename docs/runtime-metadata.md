@@ -66,7 +66,7 @@ not a public SDK contract.
 | `planned_subagent_group`, `subagent_groups`, `subagent_runs`, `subagent_merge_summary`, `subagent_origin` | subagent stage/output | output/checkpoint | yes for subagent UI | `SubagentRuntimeState` |
 | `artifact_refs`, `digest_refs`, `observations`, `protocol_messages`, `parse_error_feedback_sent_keys` | output builder, context stores, protocol validation | output/checkpoint | yes for diagnostics | `OutputRuntimeState` |
 | `prompt_fragments`, `code_tool_docs`, `python_policy_hint_sent` | prompt/profile policy | checkpoint | diagnostics | `OutputRuntimeState` or prompt-render state |
-| `last_provider_error`, `max_tokens_retry`, `empty_forced_final_retry`, `forced_final_retry`, `reasoning_echo_retry` | provider retry/recovery | checkpoint | provider diagnostics | `ProviderRuntimeState` |
+| `last_provider_error`, `max_tokens_retry`, `empty_forced_final_retry`, `forced_final_retry`, `reasoning_echo_retry`, `context_overflow_recovery` | provider retry/recovery (incl. reactive compact-and-retry on context overflow) | checkpoint | provider diagnostics | `ProviderRuntimeState` |
 | `applied_controls`, `workspace_cwd`, `eval_sandbox_dir` | control dispatcher / runner env | output/checkpoint | diagnostics | `LoopControlState` or run input metadata |
 | `recalled_memory`, `memory_synced` | long-term memory prefetch (run start) / one-time sync guard (finalize) | checkpoint | diagnostics | memory provider hooks (`MemoryProvider`) |
 

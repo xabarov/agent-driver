@@ -110,6 +110,28 @@ def _messages_for_span(messages: Any) -> list[dict[str, str]]:
     return out
 
 
+def _overflow_recovery(
+    host: LlmStepHost, context: RunContext, request: Any, clarification: Any
+):
+    """Build the CONTEXT_OVERFLOW recovery callback for ``complete_request``.
+
+    On overflow the provider says the prompt is too long for its context
+    window, so force a compaction (treat the run as max token pressure — it is
+    genuinely over budget) and rebuild a smaller request from the now-compacted
+    context. The compaction circuit breaker bounds repeated attempts.
+    """
+
+    async def _recover() -> Any:
+        await apply_compaction_if_eligible(
+            host, context=context, request=request, token_pressure_state="blocking"
+        )
+        observations = _microcompact_context_observations(host, context)
+        rebuilt, _ = _build_trimmed_request(host, context, observations, clarification)
+        return _narrow_request_tools_to_forced_choice(rebuilt)
+
+    return _recover
+
+
 async def execute_llm_call_step(
     host: LlmStepHost, context: RunContext
 ) -> RuntimeStepResult:
@@ -166,7 +188,9 @@ async def execute_llm_call_step(
             SPAN_KIND_LLM,
         )
 
-        _span_name = f"llm {request.model}" if getattr(request, "model", None) else "llm"
+        _span_name = (
+            f"llm {request.model}" if getattr(request, "model", None) else "llm"
+        )
         with oi_span(_span_name, kind=SPAN_KIND_LLM) as _llm_span:
             _in_msgs = _messages_for_span(getattr(request, "messages", None))
             set_llm(
@@ -180,7 +204,14 @@ async def execute_llm_call_step(
                 input_messages=_in_msgs,
             )
             set_io(_llm_span, input=_in_msgs)
-            context.llm_response = await _complete_request(host, context, request)
+            context.llm_response = await _complete_request(
+                host,
+                context,
+                request,
+                recover_context_overflow=_overflow_recovery(
+                    host, context, request, clarification
+                ),
+            )
             _resp = context.llm_response
             _usage = getattr(_resp, "usage", None)
             _out_msg = getattr(_resp, "message", None)
@@ -190,7 +221,12 @@ async def execute_llm_call_step(
                 model=getattr(_resp, "model", None) or getattr(request, "model", None),
                 provider=getattr(_resp, "provider", None),
                 output_messages=(
-                    [{"role": str(getattr(_out_msg, "role", "assistant")), "content": _out_content}]
+                    [
+                        {
+                            "role": str(getattr(_out_msg, "role", "assistant")),
+                            "content": _out_content,
+                        }
+                    ]
                     if _out_msg is not None
                     else None
                 ),

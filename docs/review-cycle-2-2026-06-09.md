@@ -24,7 +24,7 @@ packages. Claims below were verified against the current code.
 | # | Item | Why / builds on | Value · Risk |
 |---|------|-----------------|--------------|
 | **N1** | **Cost governance** — budget ceiling with fail-fast when a run/session exceeds it, a cost summary, opt-in structured per-request token logging, per-provider cache hit-rate | both refs; builds on `cost_ledger` + `UsageSummary` (already carries cache tokens) | High · Low |
-| **N2** | **Reactive compaction on `CONTEXT_OVERFLOW`** — when the classified reason is context-overflow, compress and retry instead of failing | closes the loop #3 intentionally left open; ties classifier → existing compaction | High · Low |
+| **N2** ✅ | **Reactive compaction on `CONTEXT_OVERFLOW`** (DONE 2026-06-09) — `complete_request` gained a single-shot `recover_context_overflow` callback; `execute_llm_call_step` forces a compaction at `blocking` pressure, rebuilds a smaller request, and retries once. Circuit breaker bounds storms. Tests: unit recovery/single-shot/no-callback + end-to-end runner recovery | closed the loop #3 left open | High · Low |
 | **N3** | **Goal tracking** — `goal` lifecycle (active/achieved) + evaluator injected into the prompt; distinct from planning | openclaude `/goal`; lands on the A1 lifecycle-hook seam | Med-High · Low |
 | **N4** | **Hook-chain enrichment** — add a dedup window + trigger on outcome/event-field filters | openclaude hookChains; incremental on existing executor | Med · Low |
 | **N5** | **Trajectory compression for training** — compress batch trajectories within a token budget, preserving first/last turns | hermes `trajectory_compressor`; extends batch #9 | Med · Low |
