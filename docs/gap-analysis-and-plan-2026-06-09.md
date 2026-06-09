@@ -293,6 +293,35 @@ spawn-error isolation hold.
 Cooldown/depth budgets are run-scoped (fresh executor per run). The existing
 `tests/runtime/test_hook_chains.py` executor coverage is unchanged.
 
+## Track #7 (DONE 2026-06-09) — Granular Permission Model
+
+Added a composable, operator-authorable permission layer in
+`agent_driver/permissions/`, layered on the existing per-call `tool_gate`
+seam (so it complements, not replaces, the risk/side-effect guardrails and the
+bash tool's read-only allowlist):
+
+- **E1** `command_classifier.py` — `classify_command(cmd) -> CommandRisk`
+  (`SAFE`/`CAUTION`/`DANGEROUS`/`CRITICAL` with reasons). Conservative,
+  pattern-based detection of `rm -rf /`, pipe-to-shell, fork bombs, `mkfs`,
+  `dd of=/dev/...`, `chmod -R 777 /`, `sudo`, force-push, `eval`, etc.
+- **E2** `policy.py` — `PermissionMode` (`YOLO`/`STANDARD`/`STRICT`),
+  `PermissionRule` (tool-name glob + command include/regex → allow/deny/ask),
+  and `PermissionPolicy.decide(tool, args)`: explicit rules win first, then the
+  mode default runs the classifier on command-bearing tools and maps the risk
+  level to a decision.
+- **E3** `gate.py` — `build_permission_gate(policy) -> ToolGate` maps decisions
+  to `ToolGateAllow`/`Deny`/`Ask`; pass it as `tool_gate=` to
+  `agent.run` / `session.send`.
+
+Acceptance (tests/permissions/): the classifier levels are pinned; the policy
+honors modes + explicit rules; and through the real runner a CRITICAL command
+is denied (blocked trace) while a DANGEROUS command pauses the run with an
+`approval_required` interrupt.
+
+Not done (deferred): path-glob filesystem rules and an ML/learned classifier
+(the heuristic covers the high-value destructive forms); an agent-level default
+gate on `RunnerConfig` (today the gate is passed per run).
+
 ## Sequencing rationale
 
 Track A is highest-leverage and lowest-risk: it is local to `llm/`,
