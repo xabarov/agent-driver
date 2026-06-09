@@ -67,6 +67,8 @@ convergence and optional SDK gateway/tool-server productization.
 - [Unified work plan](unified-work-plan-2026-05-31.md)
 - [Gap analysis and horizontal work plan](gap-analysis-and-plan-2026-06-09.md)
 - [Review cycle 2 — next gaps](review-cycle-2-2026-06-09.md)
+- [Improvement plan E1–E8 (cross-harness backlog)](improvement-plan-e1-e8-2026-06-09.md)
+- [Testing & comparison plan (low-budget, open-weight)](testing-plan-2026-06-09.md)
 - [Extending agent-driver](extending.md)
 - [Runtime overview](runtime.md)
 - [SDK](sdk.md)
