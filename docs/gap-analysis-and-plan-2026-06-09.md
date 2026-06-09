@@ -352,6 +352,32 @@ Not done (deferred): per-model capability descriptors (the existing
 Bedrock/Vertex/Gemini transports (add a descriptor + a transport branch when a
 real need lands).
 
+## Track #4 (DONE 2026-06-09) — MCP Server (expose agent-driver itself)
+
+The inverse of the built-in MCP *client*: `agent_driver/mcp_server/` lets an
+external MCP client (Claude Code, Cursor, another agent) drive an agent-driver
+`Agent` over the Model Context Protocol.
+
+- **G1** `server.py` — `AgentMcpServer` wraps an `Agent` and exposes tools
+  `agent_query`, `session_send`, `session_history`. `handle_request` is a
+  transport-agnostic JSON-RPC dispatcher (`initialize` / `tools/list` /
+  `tools/call` / `ping`, notifications return nothing, unknown methods →
+  `-32601`). Tool failures are in-band MCP results (`isError`), not protocol
+  errors. Dependency-free — does not require the optional `mcp` SDK.
+- **G2** `stdio.py` — `serve_stream(server, lines, write)` is the testable
+  newline-delimited JSON-RPC pump; `serve_stdio` binds it to real
+  stdin/stdout.
+
+Acceptance (tests/mcp_server/): `initialize`/`tools.list` shapes; `agent_query`
+and a `session_send` → `session_history` round trip with JSON-safe structured
+content; unknown-tool / missing-arg are in-band errors; unknown method is a
+protocol error; `serve_stream` pumps a mixed batch (ok / blank / parse-error /
+notification) correctly.
+
+Not done (deferred): the `mcp` SDK adapter and an HTTP/SSE transport (the
+JSON-RPC core is transport-ready); approval/interrupt and event-polling tools
+(land with the gateway, #6).
+
 ## Sequencing rationale
 
 Track A is highest-leverage and lowest-risk: it is local to `llm/`,
