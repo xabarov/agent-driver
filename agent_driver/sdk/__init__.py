@@ -23,6 +23,7 @@ from agent_driver.sdk.resume_payload import (
     resume_command_from_payload,
 )
 from agent_driver.sdk.session import Session
+from agent_driver.sdk.async_subagent import AsyncSubagentManager, BackgroundSubagent
 from agent_driver.sdk.fork import fork_subagent
 from agent_driver.sdk.subagent import (
     SubagentLimits,
@@ -38,6 +39,8 @@ from agent_driver.tools import ToolSet
 __all__ = [
     "Agent",
     "AgentDefaults",
+    "AsyncSubagentManager",
+    "BackgroundSubagent",
     "AgentDriverSDKError",
     "ProviderError",
     "ProviderErrorDetails",

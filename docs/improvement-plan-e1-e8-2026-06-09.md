@@ -253,9 +253,12 @@ explicit go-ahead on scope:
       openclaude `/src/grpc/*`.
 - [ ] **ACP editor adapter** (VS Code / Zed / JetBrains).  Ref: hermes
       `/acp_adapter/*`.
-- [ ] **Async / background subagents (D6)**: non-blocking spawns with task-id
-      polling (start/check/update/cancel).  Ref: deepagents
-      `middleware/async_subagents.py`.
+- [x] **Async / background subagents (D6)** — **DONE 2026-06-09**:
+      `sdk/async_subagent.py` — `AsyncSubagentManager` + `BackgroundSubagent`
+      wrap `run_subagent` in an `asyncio.Task` with start/check (status,
+      result_if_ready, result) / cancel (abort cascade + task cancel) / gather,
+      keyed by task id. In-process variant (same event loop), not the remote
+      Agent Protocol. Tested: start→result, gather, cancel→cancelled, unknown id.
 - [ ] **Scope-aware HITL predicates (D6)**: fire approval only when a bulk/glob
       op could touch a protected path; `interrupt` permission mode + glob anchor.
       Ref: deepagents `middleware/filesystem.py`, `_fs_interrupt.py`.
