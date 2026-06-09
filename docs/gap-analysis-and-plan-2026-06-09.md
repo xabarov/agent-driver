@@ -440,6 +440,33 @@ platform adapters (Telegram/Slack) — they bind this core to a transport/SDK an
 were explicitly left out of this slice; live token streaming inside the
 approval lifecycle; an OpenAI-compatible endpoint.
 
+## Track #9 (DONE 2026-06-09) — Batch Trajectory Generation
+
+`agent_driver/batch/` runs a dataset of prompts through an agent and records
+one trajectory per item — for training data, replay or analysis (distinct from
+`evals`, which *scores* runs).
+
+- **I1** `contracts.py` — `BatchItem`, `Trajectory` (item_id, run_id, status,
+  answer, messages, tool_calls, usage, error) with `from_output`/`from_error`,
+  and `BatchReport.from_trajectories` aggregating status histogram, per-tool
+  usage and total tokens.
+- **I2** `store.py` — `TrajectoryStore` protocol with `InMemoryTrajectoryStore`
+  and append-only `JsonlTrajectoryStore` (the canonical trajectory-dataset
+  format; resume reads existing `item_id`s).
+- **I3** `runner.py` — `BatchRunner(agent, concurrency)` runs items via an
+  asyncio semaphore, isolates per-item failures into error trajectories, skips
+  already-recorded items on `resume`, persists to the store, and returns a
+  `BatchReport`. Builds on `agent.query` + the descriptor-resolved provider.
+
+Acceptance (tests/batch/): all items run and aggregate; trajectories persist;
+a failing provider yields isolated error trajectories; resume over a reopened
+JSONL skips finished items; tool usage aggregates; report aggregation is unit-
+pure.
+
+Not done (deferred): toolset-distribution sampling (varying tool subsets per
+item) and HuggingFace schema normalization — add when a training pipeline needs
+them.
+
 ## Sequencing rationale
 
 Track A is highest-leverage and lowest-risk: it is local to `llm/`,
