@@ -173,6 +173,67 @@ def _gemma_tool_call_payloads(text: str) -> list[dict[str, Any]]:
     return payloads
 
 
+# DeepSeek v4 emits tool calls in a Claude-style invoke/parameter XML wrapped in
+# fullwidth "DSML" markers when the provider doesn't parse them into native
+# tool_calls. ``｜`` is U+FF5C (FULLWIDTH VERTICAL LINE), doubled:
+#   <｜｜DSML｜｜tool_calls>
+#     <｜｜DSML｜｜invoke name="excel_set_cell">
+#       <｜｜DSML｜｜parameter name="sheet_name" string="true">Sales</｜｜DSML｜｜parameter>
+#       <｜｜DSML｜｜parameter name="value" string="false">1420</｜｜DSML｜｜parameter>
+#     </｜｜DSML｜｜invoke>
+#   </｜｜DSML｜｜tool_calls>
+# ``string="false"`` flags a non-string value (number/array/bool) → JSON-parse.
+_DSML_OPEN = r"<｜+DSML｜+"
+_DSML_CLOSE = r"</｜+DSML｜+"
+_DSML_INVOKE_RE = re.compile(
+    _DSML_OPEN + r"invoke\s+name=\"(?P<name>[^\"]+)\"\s*>"
+    r"(?P<body>[\s\S]*?)" + _DSML_CLOSE + r"invoke>"
+)
+_DSML_PARAM_RE = re.compile(
+    _DSML_OPEN + r"parameter\s+name=\"(?P<key>[^\"]+)\"(?P<attrs>[^>]*)>"
+    r"(?P<value>[\s\S]*?)" + _DSML_CLOSE + r"parameter>"
+)
+_DSML_BLOCK_RE = re.compile(
+    _DSML_OPEN + r"tool_calls>[\s\S]*?" + _DSML_CLOSE + r"tool_calls>"
+)
+# Any leftover stray DSML marker token, open or close: <｜｜DSML｜｜...> / </｜｜DSML｜｜...>.
+_DSML_STRAY_RE = re.compile(r"</?｜+DSML｜+[^>]*>")
+
+
+def _coerce_dsml_value(value: str, *, is_string: bool) -> Any:
+    text = value.strip()
+    if is_string:
+        return text
+    # Non-string (number / array / bool / null) — JSON-parse, else heuristics.
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        return _coerce_xmlish_arg_value(text)
+
+
+def _dsml_tool_call_payloads(text: str) -> list[dict[str, Any]]:
+    """Parse deepseek ``<｜｜DSML｜｜invoke…>`` leaks into ``{name, arguments}`` dicts.
+
+    Best-effort: each ``invoke`` block contributes one tool call; its
+    ``parameter`` children become args, with ``string="false"`` values JSON-parsed
+    (numbers, arrays like ``[[2070],[600]]``). Malformed values fall back to the
+    xmlish coercion heuristic, never raising."""
+    payloads: list[dict[str, Any]] = []
+    for m in _DSML_INVOKE_RE.finditer(text):
+        name = m.group("name").strip()
+        if not name:
+            continue
+        args: dict[str, Any] = {}
+        for pm in _DSML_PARAM_RE.finditer(m.group("body")):
+            key = pm.group("key").strip()
+            if not key:
+                continue
+            is_string = 'string="true"' in (pm.group("attrs") or "")
+            args[key] = _coerce_dsml_value(pm.group("value"), is_string=is_string)
+        payloads.append({"name": name, "arguments": args})
+    return payloads
+
+
 def extract_text_form_tool_calls(
     text: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -186,6 +247,10 @@ def extract_text_form_tool_calls(
     if "<|tool_call" in text or "<tool_call|" in text:
         for payload in _gemma_tool_call_payloads(text):
             xmlish_candidates.append(("gemma_tool_call", payload))
+    # DeepSeek v4 <｜｜DSML｜｜invoke…> leaks (gated on the DSML marker).
+    if "DSML" in text:
+        for payload in _dsml_tool_call_payloads(text):
+            xmlish_candidates.append(("deepseek_dsml", payload))
     for match in _TOOL_CALL_BLOCK_RE.finditer(text):
         raw_body = match.group("body")
         xmlish = _xmlish_tool_call_payload(raw_body)
@@ -253,6 +318,11 @@ def strip_text_form_tool_calls(text: str) -> str:
     stripped = _TOOL_CALL_BLOCK_RE.sub("", text)
     stripped = _PYTHON_TAG_BLOCK_RE.sub("", stripped)
     stripped = _TOOL_CALL_FENCE_RE.sub("", stripped)
+    # DeepSeek DSML: drop the whole tool_calls block, any stray invoke blocks,
+    # then any leftover DSML marker tokens (truncated/unclosed wrappers).
+    stripped = _DSML_BLOCK_RE.sub("", stripped)
+    stripped = _DSML_INVOKE_RE.sub("", stripped)
+    stripped = _DSML_STRAY_RE.sub("", stripped)
     return stripped.strip()
 
 
