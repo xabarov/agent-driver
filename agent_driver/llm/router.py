@@ -6,6 +6,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from time import monotonic
 
+import httpx
+
 from agent_driver.llm.contracts import (
     LlmRequest,
     LlmResponse,
@@ -13,7 +15,17 @@ from agent_driver.llm.contracts import (
     ProviderStatus,
     RouterStrategy,
 )
+from agent_driver.llm.error_classifier import ClassifiedError, classify
 from agent_driver.llm.providers import LlmProvider
+
+# Exceptions a provider call may raise that the router knows how to classify
+# and (potentially) fail over. Anything outside this tuple is a programming
+# error and is allowed to propagate unclassified.
+_PROVIDER_EXC: tuple[type[BaseException], ...] = (
+    RuntimeError,
+    ValueError,
+    httpx.HTTPError,
+)
 
 
 @dataclass
@@ -26,7 +38,14 @@ class HealthAwareRouter:
     """Select provider by health and strategy, then fallback on failure."""
 
     class ProviderExecutionError(RuntimeError):
-        """Raised when one provider attempt fails during completion."""
+        """Raised when one provider attempt fails during completion.
+
+        Carries the :class:`ClassifiedError` for the underlying failure on
+        ``classified`` so callers can react to the reason (e.g. compress
+        context, surface an auth error) instead of re-parsing the cause.
+        """
+
+        classified: ClassifiedError | None = None
 
     def __init__(
         self,
@@ -101,17 +120,24 @@ class HealthAwareRouter:
                     selected, success=True, elapsed_ms=(monotonic() - started) * 1000
                 )
                 return response
-            except (RuntimeError, ValueError) as exc:
+            except _PROVIDER_EXC as exc:
+                classified = classify(exc)
                 self.record_result(
-                    selected, success=False, elapsed_ms=(monotonic() - started) * 1000
+                    selected,
+                    success=False,
+                    elapsed_ms=(monotonic() - started) * 1000,
+                    mark_unhealthy=classified.marks_unhealthy,
                 )
+                # Deterministic per-request failures (auth, content policy,
+                # oversized prompt) will not be fixed by a sibling provider.
+                if classified.is_fatal or not self._fallback_enabled:
+                    raise
                 last_error = self.ProviderExecutionError(
                     f"Provider '{selected.name}' failed"
                 )
                 last_error.__cause__ = exc
+                last_error.classified = classified
                 tried.add(selected.name)
-                if not self._fallback_enabled:
-                    raise
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         """Execute streaming request with startup-only fallback semantics."""
@@ -136,25 +162,45 @@ class HealthAwareRouter:
                     selected, success=True, elapsed_ms=(monotonic() - started) * 1000
                 )
                 return
-            except (RuntimeError, ValueError) as exc:
+            except _PROVIDER_EXC as exc:
+                classified = classify(exc)
                 self.record_result(
-                    selected, success=False, elapsed_ms=(monotonic() - started) * 1000
+                    selected,
+                    success=False,
+                    elapsed_ms=(monotonic() - started) * 1000,
+                    mark_unhealthy=classified.marks_unhealthy,
                 )
-                # Fallback is safe only if stream failed before yielding any chunk.
-                if first_chunk_emitted or not self._fallback_enabled:
+                # Fallback is safe only if the stream failed before yielding any
+                # chunk and the failure is not a deterministic per-request one.
+                if (
+                    first_chunk_emitted
+                    or classified.is_fatal
+                    or not self._fallback_enabled
+                ):
                     raise
                 last_error = self.ProviderExecutionError(
                     f"Provider '{selected.name}' stream startup failed"
                 )
                 last_error.__cause__ = exc
+                last_error.classified = classified
                 tried.add(selected.name)
 
     def record_result(
-        self, provider: LlmProvider, *, success: bool, elapsed_ms: float
+        self,
+        provider: LlmProvider,
+        *,
+        success: bool,
+        elapsed_ms: float,
+        mark_unhealthy: bool = True,
     ) -> None:
-        """Update provider status metrics after a request attempt."""
+        """Update provider status metrics after a request attempt.
+
+        ``mark_unhealthy`` lets the caller record a failure without dropping
+        the provider out of rotation — e.g. an auth or content-policy
+        rejection means the request was bad, not that the provider is down.
+        """
         status = provider.status
-        if not success:
+        if not success and mark_unhealthy:
             status.healthy = False
         if status.avg_latency_ms is None:
             status.avg_latency_ms = elapsed_ms
