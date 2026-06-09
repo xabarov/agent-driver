@@ -20,7 +20,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = subparsers.add_parser("run", help="Execute one run and print stream lines.")
+    run_parser = subparsers.add_parser(
+        "run", help="Execute one run and print stream lines."
+    )
     run_parser.add_argument("prompt", help="User prompt text for one run.")
     run_parser.add_argument("--run-id", default=None, help="Optional run identifier.")
     run_parser.add_argument("--agent-id", default="agent.cli", help="Agent identifier.")
@@ -61,12 +63,18 @@ def build_parser() -> argparse.ArgumentParser:
     add_store_options(run_parser)
     add_capability_options(run_parser)
 
-    replay_parser = subparsers.add_parser("replay", help="Replay all events for one run id.")
-    replay_parser.add_argument("--run-id", required=True, help="Run identifier to replay.")
+    replay_parser = subparsers.add_parser(
+        "replay", help="Replay all events for one run id."
+    )
+    replay_parser.add_argument(
+        "--run-id", required=True, help="Run identifier to replay."
+    )
     add_store_options(replay_parser)
 
     tail_parser = subparsers.add_parser("tail", help="Show tail of run events.")
-    tail_parser.add_argument("--run-id", required=True, help="Run identifier to inspect.")
+    tail_parser.add_argument(
+        "--run-id", required=True, help="Run identifier to inspect."
+    )
     tail_parser.add_argument(
         "--last-n", type=int, default=20, help="Number of trailing events."
     )
@@ -84,11 +92,15 @@ def build_parser() -> argparse.ArgumentParser:
     add_store_options(tail_parser)
 
     tree_parser = subparsers.add_parser("tree", help="Render step tree for one run id.")
-    tree_parser.add_argument("--run-id", required=True, help="Run identifier to inspect.")
+    tree_parser.add_argument(
+        "--run-id", required=True, help="Run identifier to inspect."
+    )
     add_store_options(tree_parser)
 
     chat_parser = subparsers.add_parser("chat", help="Interactive chat session.")
-    chat_parser.add_argument("--agent-id", default="agent.cli", help="Agent identifier.")
+    chat_parser.add_argument(
+        "--agent-id", default="agent.cli", help="Agent identifier."
+    )
     chat_parser.add_argument(
         "--graph-preset",
         default="single_react",
@@ -132,11 +144,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     config_parser = subparsers.add_parser("config", help="Configuration helpers.")
-    config_subparsers = config_parser.add_subparsers(dest="config_command", required=True)
+    config_subparsers = config_parser.add_subparsers(
+        dest="config_command", required=True
+    )
     config_subparsers.add_parser("show", help="Print resolved CLI config (JSON).")
 
-    doctor_parser = subparsers.add_parser("doctor", help="Diagnostics for config/provider/runtime.")
-    doctor_parser.add_argument("--agent-id", default="agent.cli", help="Agent identifier.")
+    doctor_parser = subparsers.add_parser(
+        "doctor", help="Diagnostics for config/provider/runtime."
+    )
+    doctor_parser.add_argument(
+        "--agent-id", default="agent.cli", help="Agent identifier."
+    )
     doctor_parser.add_argument(
         "--graph-preset",
         default="single_react",
@@ -157,8 +175,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_tool_options(doctor_parser)
     add_store_options(doctor_parser)
 
-    inspect_parser = subparsers.add_parser("inspect", help="Inspect one run in text/json.")
-    inspect_parser.add_argument("--run-id", required=True, help="Run identifier to inspect.")
+    inspect_parser = subparsers.add_parser(
+        "inspect", help="Inspect one run in text/json."
+    )
+    inspect_parser.add_argument(
+        "--run-id", required=True, help="Run identifier to inspect."
+    )
     inspect_parser.add_argument(
         "--format",
         choices=("text", "json"),
@@ -168,7 +190,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_store_options(inspect_parser)
 
     export_parser = subparsers.add_parser("export", help="Export one run to file.")
-    export_parser.add_argument("--run-id", required=True, help="Run identifier to export.")
+    export_parser.add_argument(
+        "--run-id", required=True, help="Run identifier to export."
+    )
     export_parser.add_argument(
         "--format",
         choices=("markdown", "jsonl"),
@@ -182,15 +206,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_store_options(export_parser)
 
-    sessions_parser = subparsers.add_parser("sessions", help="Manage local chat session metadata.")
+    sessions_parser = subparsers.add_parser(
+        "sessions", help="Manage local chat session metadata."
+    )
     sessions_subparsers = sessions_parser.add_subparsers(
         dest="sessions_command", required=True
     )
     sessions_subparsers.add_parser("list", help="List local sessions.")
-    sessions_show = sessions_subparsers.add_parser("show", help="Show one session details.")
-    sessions_show.add_argument("--session-id", required=True, help="Session identifier.")
+    sessions_show = sessions_subparsers.add_parser(
+        "show", help="Show one session details."
+    )
+    sessions_show.add_argument(
+        "--session-id", required=True, help="Session identifier."
+    )
 
-    resume_parser = subparsers.add_parser("resume", help="Resume pending interrupt decisions.")
+    resume_parser = subparsers.add_parser(
+        "resume", help="Resume pending interrupt decisions."
+    )
     resume_parser.add_argument(
         "action",
         choices=("approve", "reject", "cancel", "clarify", "edit"),
@@ -288,7 +320,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_tool_options(eval_compare)
 
-    eval_inspect = eval_sub.add_parser("inspect", help="Inspect one eval summary JSON row.")
+    eval_inspect = eval_sub.add_parser(
+        "inspect", help="Inspect one eval summary JSON row."
+    )
     eval_inspect.add_argument(
         "--summary-json",
         default=None,

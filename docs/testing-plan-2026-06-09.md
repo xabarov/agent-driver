@@ -104,7 +104,7 @@ on a suite run set conservatively (e.g. $5) so a single sweep can't overspend.
 
 ## T0 — Eval infrastructure (prerequisite, offline-testable, $0 to build)
 
-Status: **core library done** (commits on 2026-06-09); CLI surface pending.
+Status: **done** (library + CLI, 2026-06-09).
 
 - [x] **N-run repetition** over the BatchRunner: `run(..., repeats=N)`, each run
       keyed by `(item_id, run_index)`.  → `batch/runner.py`
@@ -124,14 +124,23 @@ Status: **core library done** (commits on 2026-06-09); CLI surface pending.
       `render_comparison` side-by-side delta.  → `evals/compare.py`
 - [x] Tier-A tests on `FakeProvider` (aggregation math, repeats, deltas, ceiling,
       suite/preset).  → `tests/evals/`, `tests/batch/`
-- [ ] **CLI surface** `agent-driver eval compare`: run the general suite N times
-      on the open-weight preset, one harness axis off vs on, enforce the ceiling,
-      print the render. (Live; offline-test the parser + render only.)
+- [x] **CLI surface** `agent-driver eval compare`: runs the general suite N
+      times on the open-weight preset, one harness axis off vs on
+      (`--treatment prompt_cache`), enforces `--max-cost-usd`, prints the delta
+      render + a JSON line. `--offline` does a deterministic fake-provider dry
+      run (CI-tested). → `cli/commands/evals.py`, parser in `cli/parser/builder.py`.
 
-**Done when:** the comparison library runs the general suite N times on the
-open-weight preset, enforces the cost ceiling, and emits median+interval
-cost/latency/success — **met for the library**; the `eval compare` CLI is the
-remaining convenience wrapper.
+**Done when:** ✅ `agent-driver eval compare` runs the general suite N times on
+the open-weight preset, enforces the cost ceiling, and emits median+interval
+cost/latency/success. Usage:
+
+```
+# deterministic dry run (no network, CI-safe)
+agent-driver eval compare --offline --repeats 3
+
+# live, open-weight via OpenRouter (set OPENROUTER_API_KEY), cache off vs on
+agent-driver eval compare --tier mid --repeats 5 --max-cost-usd 5 --treatment prompt_cache
+```
 
 ## Per-feature evaluation mapping
 

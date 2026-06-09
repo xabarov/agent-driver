@@ -32,6 +32,9 @@ from agent_driver.cli.evals import (
 from agent_driver.cli.commands.evals import (
     eval_inspect_command as _eval_inspect_command_impl,
 )
+from agent_driver.cli.commands.evals import (
+    eval_compare_command as _eval_compare_command_impl,
+)
 from agent_driver.cli.commands.evals import eval_run_command as _eval_run_command_impl
 from agent_driver.cli.commands.ops import doctor_command as _doctor_command_impl
 from agent_driver.cli.commands.ops import resume_command as _resume_command_impl
@@ -60,6 +63,7 @@ from agent_driver.runtime import RuntimeStoreFactoryConfig, create_runtime_store
 from agent_driver.cli.commands.run_chat import chat_command as _chat_command_impl
 from agent_driver.cli.commands.run_chat import run_command as _run_command_impl
 from agent_driver.sdk import create_agent
+
 
 def _build_parser() -> argparse.ArgumentParser:
     return _build_parser_impl()
@@ -247,6 +251,15 @@ async def _eval_run_command(args: argparse.Namespace) -> int:
     )
 
 
+async def _eval_compare_command(args: argparse.Namespace) -> int:
+    return await _eval_compare_command_impl(
+        args,
+        build_cli_toolset=build_cli_toolset,
+        tool_config_from_args=_tool_config_from_args,
+        tool_error=CliToolConfigError,
+    )
+
+
 def _eval_inspect_command(args: argparse.Namespace) -> int:
     return _eval_inspect_command_impl(
         args,
@@ -414,6 +427,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.eval_command == "run":
             try:
                 return asyncio.run(_eval_run_command(args))
+            except KeyboardInterrupt:
+                print("eval> interrupted")
+                return 130
+        if args.eval_command == "compare":
+            try:
+                return asyncio.run(_eval_compare_command(args))
             except KeyboardInterrupt:
                 print("eval> interrupted")
                 return 130

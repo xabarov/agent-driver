@@ -265,7 +265,9 @@ async def test_run_live_evaluation_writes_absolute_sandbox_dir(tmp_path) -> None
         ],
         offline=True,
     )
-    artifact = json.loads((bundle_dir / "sandbox_case.json").read_text(encoding="utf-8"))
+    artifact = json.loads(
+        (bundle_dir / "sandbox_case.json").read_text(encoding="utf-8")
+    )
     sandbox_raw = artifact["scenario"]["sandbox_dir"]
     assert isinstance(sandbox_raw, str)
     assert Path(sandbox_raw).is_absolute()
@@ -345,7 +347,9 @@ async def test_run_live_evaluation_offline_interrupt_resume(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_live_evaluation_offline_smoke_file_edit_minimal_patch(tmp_path) -> None:
+async def test_run_live_evaluation_offline_smoke_file_edit_minimal_patch(
+    tmp_path,
+) -> None:
     """Deep file_edit scenario should render sandbox artifact in offline mode."""
     scenario = next(
         row
@@ -365,3 +369,18 @@ async def test_run_live_evaluation_offline_smoke_file_edit_minimal_patch(tmp_pat
     )
     assert artifact["scenario"]["sandbox_required"] is True
     assert artifact["scenario"]["scenario_id"] == "file_edit_minimal_patch"
+
+
+def test_eval_compare_offline_runs_and_reports(capsys) -> None:
+    """`eval compare --offline` runs the general suite deterministically."""
+    code = cli_main.main(
+        ["eval", "compare", "--offline", "--repeats", "2", "--concurrency", "2"]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "prompt_cache_off" in out and "prompt_cache_on" in out
+    assert "success_rate" in out
+    payload = json.loads(out.strip().splitlines()[-1])
+    assert payload["axis"] == "prompt_cache"
+    assert payload["offline"] is True
+    assert payload["repeats"] == 2

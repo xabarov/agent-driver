@@ -68,7 +68,7 @@ async def eval_run_command(
     return 0
 
 
-async def eval_compare_command(
+async def eval_compare_command(  # pylint: disable=import-outside-toplevel
     args: argparse.Namespace,
     *,
     build_cli_toolset: Callable[[object], object],
@@ -80,6 +80,9 @@ async def eval_compare_command(
     Flips exactly one harness axis (``--treatment``) off vs on and reports the
     median delta. ``--offline`` uses the fake provider for a deterministic dry
     run (no network); otherwise the open-weight OpenRouter preset is used.
+
+    Imports are function-local to keep the heavier eval/batch subtree off the
+    CLI's startup path (it only loads when ``eval compare`` actually runs).
     """
     from agent_driver.batch import BatchRunner
     from agent_driver.evals import (
@@ -155,7 +158,9 @@ def eval_inspect_command(
     render_eval_inspect: Callable[[EvalSummary], str],
 ) -> int:
     if bool(args.summary_json) == bool(args.artifact_json):
-        print("eval inspect error: pass exactly one of --summary-json or --artifact-json")
+        print(
+            "eval inspect error: pass exactly one of --summary-json or --artifact-json"
+        )
         return 2
     if args.artifact_json:
         path = Path(args.artifact_json)
@@ -186,7 +191,11 @@ def eval_inspect_command(
         return 2
     rows = payload
     if args.scenario_id:
-        rows = [item for item in rows if isinstance(item, dict) and item.get("scenario_id") == args.scenario_id]
+        rows = [
+            item
+            for item in rows
+            if isinstance(item, dict) and item.get("scenario_id") == args.scenario_id
+        ]
     if not rows:
         print("eval inspect> no rows")
         return 0
