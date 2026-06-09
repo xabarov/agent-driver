@@ -113,14 +113,20 @@ A second `presets.py` tier set deferred (no demand yet).
 documented in the capability map + operational thresholds rather than a contrived
 example.)
 
-### R5 — CLI exposure  ·  Low value · Low risk · optional
+### R5 — CLI exposure  ·  Low value · Low risk · optional  ·  **DONE 2026-06-09 (scoped)**
 
-- [ ] Optional flags for SDK-only capabilities (`--auxiliary-*`,
-      `--project-memory`, `--tool-concurrency`); extend `eval compare
-      --treatment` to flip the E1/E4/E6 axes, not just `prompt_cache`.
+- [x] Extended `eval compare --treatment` beyond `prompt_cache` to
+      `tool_arg_truncation` and `tool_concurrency` (serial↔parallel) — the axes
+      that flip cleanly off/on over the general suite. An axis→config map keeps
+      it extensible.
+- [x] Tests: each axis runs offline with the right labels; unknown axis
+      rejected by argparse.
 
-These are SDK-first capabilities; CLI exposure is convenience, lowest priority.
-Do only what's cheap and clearly useful.
+Scoped out (intentional): per-capability `run`/`chat` flags for `--auxiliary-*`,
+`--project-memory`, etc. — SDK-first, low value, and they would grow the flag
+surface we just consolidated. `eval compare` axes for E1 (auxiliary, needs a
+second provider) and E6 (subagent routing, needs subagents) are left SDK-only —
+the general suite can't exercise them as a binary toggle.
 
 ## Sequencing
 

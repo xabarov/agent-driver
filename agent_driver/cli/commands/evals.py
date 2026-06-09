@@ -98,9 +98,32 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
     offline = bool(getattr(args, "offline", False))
     tier = str(getattr(args, "tier", "mid"))
     axis = str(getattr(args, "treatment", "prompt_cache"))
-    if axis != "prompt_cache":
+
+    # Each axis maps to (config builder over a treatment flag, baseline label,
+    # treatment label). Only axes that flip cleanly off/on over the general
+    # suite are offered; per-model auxiliary routing and subagent routing need a
+    # richer suite/second provider, so they stay SDK-only.
+    axes = {
+        "prompt_cache": (
+            lambda t: RunnerConfig(enable_prompt_cache=t),
+            "prompt_cache_off",
+            "prompt_cache_on",
+        ),
+        "tool_arg_truncation": (
+            lambda t: RunnerConfig(enable_tool_arg_truncation=t),
+            "arg_trunc_off",
+            "arg_trunc_on",
+        ),
+        "tool_concurrency": (
+            lambda t: RunnerConfig(tool_concurrency_limit=None if t else 1),
+            "serial",
+            "parallel",
+        ),
+    }
+    if axis not in axes:
         print(f"eval compare error: unknown --treatment axis {axis!r}")
         return 2
+    config_for, baseline_label, treatment_label = axes[axis]
 
     def _provider():
         if offline:
@@ -117,9 +140,7 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
 
     def _agent(*, treatment: bool):
         return create_agent(
-            provider=_provider(),
-            tools=toolset,
-            config=RunnerConfig(enable_prompt_cache=treatment),
+            provider=_provider(), tools=toolset, config=config_for(treatment)
         )
 
     report = await run_comparison(
@@ -127,8 +148,8 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
         BatchRunner(_agent(treatment=True), concurrency=int(args.concurrency)),
         general_task_suite(),
         repeats=int(args.repeats),
-        baseline_label=f"{axis}_off",
-        treatment_label=f"{axis}_on",
+        baseline_label=baseline_label,
+        treatment_label=treatment_label,
         max_total_cost_usd=(
             float(args.max_cost_usd) if args.max_cost_usd is not None else None
         ),

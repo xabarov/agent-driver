@@ -384,3 +384,31 @@ def test_eval_compare_offline_runs_and_reports(capsys) -> None:
     assert payload["axis"] == "prompt_cache"
     assert payload["offline"] is True
     assert payload["repeats"] == 2
+
+
+@pytest.mark.parametrize(
+    "axis,labels",
+    [
+        ("prompt_cache", ("prompt_cache_off", "prompt_cache_on")),
+        ("tool_arg_truncation", ("arg_trunc_off", "arg_trunc_on")),
+        ("tool_concurrency", ("serial", "parallel")),
+    ],
+)
+def test_eval_compare_treatment_axes(
+    axis: str, labels: tuple[str, str], capsys
+) -> None:
+    """`eval compare --treatment` supports the offered harness axes offline."""
+    code = cli_main.main(
+        ["eval", "compare", "--offline", "--repeats", "2", "--treatment", axis]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert labels[0] in out and labels[1] in out
+    payload = json.loads(out.strip().splitlines()[-1])
+    assert payload["axis"] == axis
+
+
+def test_eval_compare_rejects_unknown_axis(capsys) -> None:
+    # argparse rejects an unknown choice before our handler runs.
+    with pytest.raises(SystemExit):
+        cli_main.main(["eval", "compare", "--offline", "--treatment", "bogus"])
