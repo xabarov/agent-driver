@@ -15,6 +15,7 @@ from agent_driver.runtime.lifecycle_hooks import RunLifecycleHook
 from agent_driver.runtime.runner import SingleAgentRunner
 from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
+from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.runtime.tools import wrap_governed_executor
 from agent_driver.sdk.agent import Agent, AgentDefaults
 from agent_driver.sdk.config import SdkConfig, SdkTransportConfig
@@ -56,10 +57,16 @@ def create_agent(
     command_queue_store: CommandQueueStore | None = None,
     memory_provider: MemoryProvider | None = None,
     lifecycle_hooks: tuple[RunLifecycleHook, ...] | None = None,
+    tool_gate: ToolGate | None = None,
     agent_id: str = "agent",
     graph_preset: str = "single_react",
 ) -> Agent:
-    """Create SDK Agent facade with filtered tool registry."""
+    """Create SDK Agent facade with filtered tool registry.
+
+    ``tool_gate`` becomes the agent's construction-time default gate: every
+    run/stream/session turn uses it unless that call passes its own gate, so a
+    permission gate is wired once instead of on every call.
+    """
     # Shallow override-copy (not deepcopy): keeps the caller's config intact
     # while letting us attach stateful deps (memory provider, registries) that
     # are not safe to deep-copy.
@@ -93,6 +100,7 @@ def create_agent(
         runner,
         defaults=AgentDefaults(agent_id=agent_id, graph_preset=graph_preset),
         command_queue_store=command_queue_store,
+        default_tool_gate=tool_gate,
     )
 
 
@@ -107,6 +115,7 @@ async def query(
     command_queue_store: CommandQueueStore | None = None,
     memory_provider: MemoryProvider | None = None,
     lifecycle_hooks: tuple[RunLifecycleHook, ...] | None = None,
+    tool_gate: ToolGate | None = None,
     agent_id: str = "agent",
     graph_preset: str = "single_react",
     run_id: str | None = None,
@@ -122,6 +131,7 @@ async def query(
         command_queue_store=command_queue_store,
         memory_provider=memory_provider,
         lifecycle_hooks=lifecycle_hooks,
+        tool_gate=tool_gate,
         agent_id=agent_id,
         graph_preset=graph_preset,
     )

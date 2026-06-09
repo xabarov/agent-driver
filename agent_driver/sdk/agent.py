@@ -51,10 +51,15 @@ class Agent:  # pylint: disable=too-many-public-methods
         *,
         defaults: AgentDefaults | None = None,
         command_queue_store: CommandQueueStore | None = None,
+        default_tool_gate: ToolGate | None = None,
     ) -> None:
         self._runner = runner
         self._defaults = defaults or AgentDefaults()
         self._command_queue_store = command_queue_store or InMemoryCommandQueueStore()
+        # Construction-time default gate: used by run() (and thus start/stream/
+        # stream_run/session) whenever a call doesn't pass an explicit tool_gate,
+        # so callers needn't thread the gate through every turn.
+        self._default_tool_gate = default_tool_gate
 
     @property
     def defaults(self) -> AgentDefaults:
@@ -231,11 +236,15 @@ class Agent:  # pylint: disable=too-many-public-methods
         sees it and re-plans) or ASK (operator-facing
         :class:`InterruptRequest`). See
         :mod:`agent_driver.runtime.tool_gate` for the result contract
-        and fail-closed semantics.
+        and fail-closed semantics. When omitted, the agent's construction-time
+        ``default_tool_gate`` (if any) applies; an explicit per-call gate always
+        wins. All other entry points (``start``/``stream``/``stream_run`` and the
+        ``Session`` helpers) route through here, so they inherit the default too.
         """
+        effective_gate = tool_gate if tool_gate is not None else self._default_tool_gate
         try:
             return await self._runner.run(
-                run_input, abort_handle=abort_handle, tool_gate=tool_gate
+                run_input, abort_handle=abort_handle, tool_gate=effective_gate
             )
         except RuntimeExecutionError as exc:
             sdk_error = sdk_provider_error_from_runtime(exc)

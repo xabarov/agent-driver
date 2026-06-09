@@ -42,7 +42,11 @@ def _run_input(run_id: str) -> AgentRunInput:
                         args={
                             "query": "agent driver",
                             "mock_results": [
-                                {"title": "A", "url": "https://example.com", "snippet": "B"}
+                                {
+                                    "title": "A",
+                                    "url": "https://example.com",
+                                    "snippet": "B",
+                                }
                             ],
                         },
                     ).model_dump(mode="json")
@@ -110,3 +114,69 @@ async def test_run_with_ask_gate_pauses_with_interrupt() -> None:
     assert output.interrupt is not None
     assert output.interrupt.reason.value == "approval_required"
     assert "Please approve" in output.interrupt.description
+
+
+# ---------------------------------------------------------------------------
+# R2: construction-time default tool_gate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_default_gate_applies_without_per_call_gate() -> None:
+    """A gate passed to create_agent applies on run() with no per-call gate."""
+    seen: list[ToolGateContext] = []
+
+    async def gate(ctx: ToolGateContext) -> ToolGateAllow:
+        seen.append(ctx)
+        return ToolGateAllow()
+
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only("web_search"),
+        tool_gate=gate,
+    )
+    output = await agent.run(_run_input("run_default_gate"))
+    assert output.status.value == "completed"
+    assert len(seen) == 1 and seen[0].tool_name == "web_search"
+
+
+@pytest.mark.asyncio
+async def test_per_call_gate_overrides_default() -> None:
+    """An explicit per-call gate wins over the construction-time default."""
+    default_seen: list[ToolGateContext] = []
+    call_seen: list[ToolGateContext] = []
+
+    async def default_gate(ctx: ToolGateContext) -> ToolGateAllow:
+        default_seen.append(ctx)
+        return ToolGateAllow()
+
+    async def call_gate(ctx: ToolGateContext) -> ToolGateAllow:
+        call_seen.append(ctx)
+        return ToolGateAllow()
+
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only("web_search"),
+        tool_gate=default_gate,
+    )
+    await agent.run(_run_input("run_override_gate"), tool_gate=call_gate)
+    assert len(call_seen) == 1
+    assert default_seen == []  # default not consulted when a per-call gate is set
+
+
+@pytest.mark.asyncio
+async def test_default_deny_gate_blocks_tool() -> None:
+    """A deny default gate blocks the planned call without per-call wiring."""
+
+    async def gate(ctx: ToolGateContext) -> ToolGateDeny:
+        return ToolGateDeny(reason="blocked by default gate")
+
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only("web_search"),
+        tool_gate=gate,
+    )
+    output = await agent.run(_run_input("run_default_deny"))
+    web_search_traces = [t for t in output.tool_trace if t.tool_name == "web_search"]
+    assert web_search_traces
+    assert web_search_traces[0].status.value == "denied"

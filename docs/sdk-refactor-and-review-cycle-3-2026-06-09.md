@@ -63,19 +63,20 @@ capabilities, maximal reduction of the flat surface, identical back-compat. Net
 effect: `RunnerConfig` top-level drops 7 fields → 1 (`capabilities`), readers
 and callers unchanged.
 
-### R2 — SDK ergonomics  ·  High value · Low risk
+### R2 — SDK ergonomics  ·  High value · Low risk  ·  **DONE 2026-06-09**
 
-- [ ] `create_agent(..., tool_gate=None)`: a construction-time **default gate**
-      stored on the `Agent`; `run/start/stream/stream_run` use it when no
-      per-call `tool_gate` is passed (per-call still overrides). Mirrors the
-      existing `memory_provider` precedent; removes the "repeat the gate every
-      call" foot-gun (audit §2).
-- [ ] Thread the default through `Session.send/stream` too.
-- [ ] (Optional, evaluate during R2) a thin `create_agent` convenience that
-      accepts the common capability args directly and folds them into
-      `RunnerConfig(capabilities=...)` — only if it reads cleanly; otherwise the
-      `capabilities=` config arg from R1 is the documented one-stop. Avoid a
-      heavyweight builder class unless it clearly earns its keep.
+- [x] `create_agent(..., tool_gate=...)` (and `query(...)`) store a
+      construction-time **default gate** on the `Agent`. `Agent.run` resolves
+      `per-call gate if not None else default`; since `start`/`stream`/
+      `stream_run` and the `Session` helpers all route through `run`, they
+      inherit the default automatically — no per-method changes needed.
+- [x] Per-call `tool_gate` always overrides the default.
+- [x] Tests: default applies without per-call gate, per-call overrides (default
+      not consulted), deny-default blocks the planned call.
+
+Decision: did **not** add a builder/extra capability kwargs to `create_agent` —
+the `capabilities=CapabilitySettings(...)` config arg from R1 plus the default
+gate already cover the one-stop wiring without a heavyweight class.
 
 ### R3 — Review-cycle-3 self-audit fixes  ·  Med value · Low risk
 
