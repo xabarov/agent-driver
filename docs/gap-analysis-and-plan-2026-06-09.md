@@ -378,6 +378,35 @@ Not done (deferred): the `mcp` SDK adapter and an HTTP/SSE transport (the
 JSON-RPC core is transport-ready); approval/interrupt and event-polling tools
 (land with the gateway, #6).
 
+## Track #6 (headless core DONE 2026-06-09) — Gateway
+
+Scope this pass: the **headless core** only (transport-agnostic; no server
+framework or platform SDK dependency). `agent_driver/gateway/`:
+
+- **H1** `events.py` — `GatewayEvent` (`STARTED` / `ACTION_REQUIRED` /
+  `COMPLETED` / `FAILED`, with `session_id` / `run_id` / `seq` / `data`) and
+  `to_sse()` rendering an SSE frame (`id:`/`event:`/`data:`) for resumable
+  streaming.
+- **H2** `gateway.py` — `AgentGateway` over an `Agent`: `submit(session_id,
+  text)` runs a turn and yields events, **parking** the run and emitting
+  `ACTION_REQUIRED` when it pauses on an approval interrupt; `respond(session_id,
+  run_id, action)` resumes the parked run and continues; `pending(session_id)`
+  introspects parked runs. An optional `tool_gate` composes the #7 permission
+  layer at submit.
+
+This fills the real gap the SDK left open: a session-routed, approval-correlated
+server surface a transport or platform adapter sits on (the existing
+`adapters/sse.py` already covers pure token streaming).
+
+Acceptance (tests/gateway/): `to_sse` frame shape; `submit` → COMPLETED; the
+full `submit` → `ACTION_REQUIRED` (via a permission gate) → `pending` →
+`respond(REJECT)` → terminal round trip; respond-without-pending raises.
+
+Not done (deferred, by scope decision): a concrete ASGI/SSE HTTP server and
+platform adapters (Telegram/Slack) — they bind this core to a transport/SDK and
+were explicitly left out of this slice; live token streaming inside the
+approval lifecycle; an OpenAI-compatible endpoint.
+
 ## Sequencing rationale
 
 Track A is highest-leverage and lowest-risk: it is local to `llm/`,
