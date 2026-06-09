@@ -34,6 +34,7 @@ imported *by* the runtime (e.g. `memory` is imported by
 | You want to… | Use | Where |
 | --- | --- | --- |
 | React to run start / finalize / failure | `RunLifecycleHook` (`on_run_start`/`on_finalize`/`on_error`) | `runtime/lifecycle_hooks.py`; pass via `create_agent(lifecycle_hooks=...)` |
+| Transform/observe each LLM call (inject prompt, filter tools, evict, observe) | `RunLifecycleHook.before_llm_request` (returns a replacement request) / `after_llm_response` | same hook + `dispatch_before_llm`/`dispatch_after_llm` in the LLM step |
 | Inspect/transform a single tool call/result | `ToolHook` (`pre_tool_use`/`post_tool_use`) | `contracts/hooks.py`; dispatched in `tools/executor/governed.py` |
 | Allow/deny/ask per planned call at runtime | `tool_gate` (`ToolGate` → Allow/Deny/Ask) | `runtime/tool_gate.py`; pass via `agent.run(tool_gate=...)` |
 | Enforce a declarative permission policy | `permissions.build_permission_gate(policy)` (a `ToolGate`) | `permissions/` |

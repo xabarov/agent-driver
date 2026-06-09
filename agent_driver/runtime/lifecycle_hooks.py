@@ -15,11 +15,12 @@ coupled to runtime state rather than to provider-neutral contracts.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from agent_driver.contracts.events import RuntimeEvent
     from agent_driver.contracts.runtime import AgentRunOutput
+    from agent_driver.llm.contracts import LlmRequest, LlmResponse
     from agent_driver.runtime.single_agent.types import RunContext
 
 
@@ -31,6 +32,21 @@ class RunLifecycleHook(Protocol):
 
     async def on_run_start(self, context: "RunContext") -> None:
         """Called once when a run begins (before the first LLM call)."""
+
+    async def before_llm_request(
+        self, context: "RunContext", request: "LlmRequest"
+    ) -> "LlmRequest | None":
+        """Called before every provider call with the finalized request.
+
+        Return a replacement request to transform it (inject prompt, filter
+        tools, evict messages); return ``None`` to leave it unchanged. Hooks
+        chain — each sees the prior hook's result.
+        """
+
+    async def after_llm_response(
+        self, context: "RunContext", response: "LlmResponse"
+    ) -> None:
+        """Called after every provider call with the model's response."""
 
     async def on_finalize(self, context: "RunContext", *, answer: str) -> None:
         """Called once when a run reaches its terminal final answer."""
@@ -57,6 +73,16 @@ class BaseRunLifecycleHook:
 
     async def on_run_start(self, context: "RunContext") -> None:
         """No-op run-start hook; override to react to run start."""
+
+    async def before_llm_request(
+        self, context: "RunContext", request: "LlmRequest"
+    ) -> "LlmRequest | None":
+        """No-op pre-request hook; override to transform the request."""
+
+    async def after_llm_response(
+        self, context: "RunContext", response: "LlmResponse"
+    ) -> None:
+        """No-op post-response hook; override to observe the response."""
 
     async def on_finalize(self, context: "RunContext", *, answer: str) -> None:
         """No-op finalize hook; override to react to the final answer."""
@@ -99,9 +125,30 @@ async def dispatch_error(
         await hook.on_error(context, output=output, events=events)
 
 
+async def dispatch_before_llm(
+    hooks: Iterable[RunLifecycleHook], context: "RunContext", request: Any
+) -> Any:
+    """Chain ``before_llm_request`` hooks; return the (possibly transformed) request."""
+    for hook in hooks:
+        replacement = await hook.before_llm_request(context, request)
+        if replacement is not None:
+            request = replacement
+    return request
+
+
+async def dispatch_after_llm(
+    hooks: Iterable[RunLifecycleHook], context: "RunContext", response: Any
+) -> None:
+    """Invoke ``after_llm_response`` for each hook in order."""
+    for hook in hooks:
+        await hook.after_llm_response(context, response)
+
+
 __all__ = [
     "BaseRunLifecycleHook",
     "RunLifecycleHook",
+    "dispatch_after_llm",
+    "dispatch_before_llm",
     "dispatch_error",
     "dispatch_finalize",
     "dispatch_run_start",

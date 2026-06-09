@@ -16,6 +16,10 @@ from agent_driver.llm.payload_debug import (
     summarize_llm_request_payload,
 )
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.lifecycle_hooks import (
+    dispatch_after_llm,
+    dispatch_before_llm,
+)
 from agent_driver.runtime.metadata_state import (
     get_compaction_runtime_state,
     get_cost_runtime_state,
@@ -178,6 +182,11 @@ async def execute_llm_call_step(
             request=request,
             token_pressure_state=token_state,
         )
+        # Per-call hook seam: let lifecycle hooks transform the finalized
+        # request (inject prompt, filter tools, evict messages) before it ships.
+        request = await dispatch_before_llm(
+            host._deps.lifecycle_hooks, context, request
+        )
         # OpenInference LLM span — Phoenix renders this as a colored LLM span with
         # the model, prompt/completion token counts (→ cost), the input/output
         # messages, and (on provider error) a red status. No-op when tracing off.
@@ -241,6 +250,10 @@ async def execute_llm_call_step(
             # Fold this call's tokens/cost into the run ledger so the budget
             # gate (_terminal_from_limits) can fail fast when exceeded.
             get_cost_runtime_state(context).accumulate(_usage)
+        if context.llm_response is not None:
+            await dispatch_after_llm(
+                host._deps.lifecycle_hooks, context, context.llm_response
+            )
     except httpx.HTTPStatusError as exc:
         reason = (
             TerminalReason.PROVIDER_PROTOCOL.value
