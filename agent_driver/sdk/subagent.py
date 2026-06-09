@@ -472,13 +472,18 @@ async def run_subagent(
     app_metadata = {
         "subagent_origin": "child",
         "agent_type": spec.agent_type,
-        **(
-            {"parent_run_id": parent_run_id}
-            if parent_run_id is not None
-            else {}
-        ),
+        **({"parent_run_id": parent_run_id} if parent_run_id is not None else {}),
         **spec.app_metadata,
     }
+
+    # E6: resolve the child's model. Precedence: an explicit forced_model in the
+    # spec's app_metadata (caller override) wins; otherwise the parent's
+    # subagent_model_routing maps agent_type -> model; otherwise the parent
+    # provider's default. A resolved model rides forced_model so build.py picks
+    # it up (and any matching harness profile composes on top).
+    routing = getattr(parent.runner.config, "subagent_model_routing", {})
+    routed_model = spec.app_metadata.get("forced_model") or routing.get(spec.agent_type)
+    policy_metadata = {"forced_model": routed_model} if routed_model else {}
 
     tool_policy = ToolPolicyInput(
         mode=ToolPolicyMode.ALLOW_TOOLS,
@@ -486,6 +491,7 @@ async def run_subagent(
             list(spec.allowed_tools) if spec.allowed_tools is not None else None
         ),
         denied_tools=list(spec.denied_tools) if spec.denied_tools else None,
+        metadata=policy_metadata,
     )
 
     child_input = AgentRunInput(

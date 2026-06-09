@@ -26,7 +26,6 @@ from agent_driver.sdk import create_agent
 from agent_driver.sdk.subagent import SubagentSpec, run_subagent
 from agent_driver.tools import ToolSet
 
-
 # ---------------------------------------------------------------------------
 # SubagentSpec
 # ---------------------------------------------------------------------------
@@ -193,9 +192,7 @@ async def test_run_subagent_inherits_aborted_parent_handle() -> None:
     handle = RunAbortHandle()
     handle.abort("pre-flight")
     spec = SubagentSpec(agent_type="should_not_run", prompt="x")
-    result = await run_subagent(
-        parent, spec, parent_abort_handle=handle
-    )
+    result = await run_subagent(parent, spec, parent_abort_handle=handle)
     assert result.status == RunStatus.CANCELLED
     # Provider should never have been called.
     assert provider.requests == []
@@ -273,3 +270,50 @@ async def test_run_subagent_metadata_tags_child_as_origin() -> None:
     # carries a sub_ prefix from run_subagent.
     assert result.child_run_id.startswith("sub_")
     assert result.parent_run_id == "run_parent_42"
+
+
+# ---------------------------------------------------------------------------
+# E6: per-subagent-type model routing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_subagent_model_routing_applies_by_agent_type() -> None:
+    """A routing table maps the child's agent_type to a forced model."""
+    from agent_driver.runtime import RunnerConfig
+
+    provider = _CapturingProvider()
+    parent = create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        config=RunnerConfig(subagent_model_routing={"explorer": "cheap-explore"}),
+    )
+    await run_subagent(parent, SubagentSpec(agent_type="explorer", prompt="go"))
+    assert provider.requests[-1].model == "cheap-explore"
+
+
+@pytest.mark.asyncio
+async def test_explicit_forced_model_overrides_routing() -> None:
+    """An explicit forced_model in app_metadata wins over the routing table."""
+    from agent_driver.runtime import RunnerConfig
+
+    provider = _CapturingProvider()
+    parent = create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        config=RunnerConfig(subagent_model_routing={"explorer": "routed"}),
+    )
+    spec = SubagentSpec(
+        agent_type="explorer", prompt="go", app_metadata={"forced_model": "explicit"}
+    )
+    await run_subagent(parent, spec)
+    assert provider.requests[-1].model == "explicit"
+
+
+@pytest.mark.asyncio
+async def test_no_routing_leaves_model_unforced() -> None:
+    """Without a routing entry the child does not force a model."""
+    provider = _CapturingProvider()
+    parent = create_agent(provider=provider, tools=ToolSet.only())
+    await run_subagent(parent, SubagentSpec(agent_type="explorer", prompt="go"))
+    assert provider.requests[-1].model is None

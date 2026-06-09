@@ -81,6 +81,7 @@ class RunnerConfig:
     auxiliary_model: str | None
     project_memory_sources: tuple[str, ...]
     tool_concurrency_limit: int | None
+    subagent_model_routing: dict[str, str]
     lifecycle_hooks: tuple[RunLifecycleHook, ...]
     trimming: TrimmingSettings
     compaction: CompactionSettings
@@ -139,6 +140,9 @@ class RunnerConfig:
             kwargs.pop("project_memory_sources", ()) or ()
         )
         self.tool_concurrency_limit = kwargs.pop("tool_concurrency_limit", None)
+        self.subagent_model_routing = dict(
+            kwargs.pop("subagent_model_routing", {}) or {}
+        )
         self.lifecycle_hooks = tuple(kwargs.pop("lifecycle_hooks", ()) or ())
         self.trimming = trimming
         self.compaction = compaction

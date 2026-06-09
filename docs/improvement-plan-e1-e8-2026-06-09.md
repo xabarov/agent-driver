@@ -167,10 +167,16 @@ shared interrupt).
 exclusive tools serialize; abort cancels all; offline test asserts ordering +
 concurrency bound + a faster wall-clock on a fake-delayed batch.
 
-### E6 — Per-subagent-type model routing  ·  Med · S
+### E6 — Per-subagent-type model routing  ·  Med · S  ·  **DONE 2026-06-09**
 
-- [ ] Declarative `agent_type → model` routing table; subagent spawns resolve
-      their model from it (with explicit-override + default fallback).
+- [x] `RunnerConfig(subagent_model_routing={agent_type: model})`. `run_subagent`
+      resolves the child's model with precedence: explicit
+      `spec.app_metadata["forced_model"]` > `routing[agent_type]` > parent
+      default; a resolved model is set as `forced_model` in the child's
+      `ToolPolicyInput.metadata` (picked up by `build.py`, and a matching
+      harness profile composes on top).
+- [x] Tests: routing by agent_type, explicit override wins, no-routing leaves
+      the model unforced.
 
 **Why:** cost optimization — cheap model for explore/verify roles, stronger for
 synthesis — without code changes. We already have the pieces (subagent model
