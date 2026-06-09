@@ -21,6 +21,10 @@ python examples/cookbook/01_quickstart.py
 | `07_mcp_server.py` | Expose the agent over MCP | `AgentMcpServer` |
 | `08_providers.py` | Resolve / register a provider | `resolve_provider`, `ProviderDescriptor` |
 | `09_daemon.py` | Run the scheduler `run_forever` loop firing agent turns | `Scheduler.run_forever`, `JobRunner` |
+| `10_capabilities.py` | Wire prompt-cache + permission gate once | `CapabilitySettings`, `create_agent(tool_gate=...)` |
+| `11_project_memory.py` | Load AGENTS.md + injection scan (E2/E3) | `load_project_memory`, context scanner |
+| `12_subagent_routing.py` | Route subagents to per-role models (E6) | `RunnerConfig(subagent_model_routing=...)`, `run_subagent` |
+| `13_eval_compare.py` | Baseline-vs-treatment, N-run median deltas (T0) | `run_comparison`, `render_comparison` |
 
 To use a real model, swap `FakeProvider(...)` for a descriptor-resolved
 provider (see `08_providers.py`) — e.g. `resolve_provider(ProviderSpec(

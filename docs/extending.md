@@ -67,6 +67,26 @@ Prefer composing an existing seam over editing the step loop
   runtime `context.metadata` state goes through a typed owner, not raw string
   keys; register new keys in `docs/runtime-metadata.md` (a test enforces it).
 
+## Capability map (E1–E8 + T0) — which knob for which goal
+
+The cross-harness capabilities, grouped by the goal they serve. Config lives on
+`RunnerConfig` / `CapabilitySettings` (see [SDK](sdk.md)); most have a runnable
+cookbook example.
+
+| Goal | Capability | Knob | Example |
+| --- | --- | --- | --- |
+| **Cost** | auxiliary cheap-model for side tasks | `auxiliary_provider` / `auxiliary_model` | `10_capabilities.py` |
+| **Cost** | tool-arg truncation pre-pass | `enable_tool_arg_truncation` (CompactionSettings) | — |
+| **Cost** | per-role subagent model routing | `subagent_model_routing` | `12_subagent_routing.py` |
+| **Cost** | Anthropic prompt caching | `enable_prompt_cache` | `10_capabilities.py` |
+| **Safety** | project-memory ingestion | `project_memory_sources` | `11_project_memory.py` |
+| **Safety** | injection/C2 scan at ingestion | automatic (project memory, skills, recalled memory) | `11_project_memory.py` |
+| **Safety** | permission gating | `create_agent(tool_gate=...)` | `03_permissions.py`, `10_capabilities.py` |
+| **Latency** | parallel tool execution | `tool_concurrency_limit` + `ToolManifest.concurrency_safe` | — |
+| **Quality** | rubric goal-gate | `RubricLifecycleHook` | — |
+| **Quality/eval** | baseline-vs-treatment comparison | `run_comparison` / `agent-driver eval compare` | `13_eval_compare.py` |
+| **Shape** | per-model prompt slots / tool exclusion | `harness_profiles` | — |
+
 ## Operational thresholds & tuning
 
 **Permission modes** (`permissions.PermissionMode`). Commands are scored by

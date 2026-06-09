@@ -96,19 +96,22 @@ Not done (already satisfied / deferred): `evals/suites.py` extensibility —
 so the built-in `general_task_suite()` is just the default; no extra hook needed.
 A second `presets.py` tier set deferred (no demand yet).
 
-### R4 — Docs + cookbook  ·  Med value · Low risk
+### R4 — Docs + cookbook  ·  Med value · Low risk  ·  **DONE 2026-06-09**
 
-- [ ] Cookbook examples for the uncovered capabilities: auxiliary-model routing
-      (E1), project-memory + injection scan (E2/E3), tool-arg truncation (E5),
-      subagent model routing (E6), and `eval compare` / N-run aggregation (T0).
-      (E4 parallel tools is largely transparent; cover briefly or fold into a
-      tuning note.)
-- [ ] Expand `docs/sdk.md` to document the `RunnerConfig` / `CapabilitySettings`
-      fields (post-R1 surface).
-- [ ] A single capabilities guide (new `docs/capabilities.md` or an `extending.md`
-      section) mapping E1–E8 to the patterns they serve: cost (E1/E5/E6), safety
-      (E2/E3), latency (E4), quality/eval (T0).
-- [ ] Update the cookbook `README.md` table.
+- [x] Cookbook examples 10–13: `10_capabilities.py` (CapabilitySettings +
+      prompt-cache + default tool_gate), `11_project_memory.py` (E2/E3 load +
+      injection scan), `12_subagent_routing.py` (E6), `13_eval_compare.py` (T0
+      baseline-vs-treatment). All run offline + pass the cookbook smoke test.
+- [x] `docs/sdk.md` gained a "Capabilities" section documenting the
+      `RunnerConfig` / `CapabilitySettings` fields + the construction-time gate.
+- [x] `docs/extending.md` gained a "Capability map" (goal → knob → example)
+      instead of a separate doc — centralizes the index. `CapabilitySettings`
+      re-exported from `agent_driver.runtime` for discoverability.
+- [x] Cookbook `README.md` table updated.
+
+(E5 tool-arg truncation / E4 parallel tools are transparent runtime behaviors —
+documented in the capability map + operational thresholds rather than a contrived
+example.)
 
 ### R5 — CLI exposure  ·  Low value · Low risk · optional
 
