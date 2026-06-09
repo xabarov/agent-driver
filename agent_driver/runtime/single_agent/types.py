@@ -80,6 +80,7 @@ class RunnerConfig:
     auxiliary_provider: LlmProvider | None
     auxiliary_model: str | None
     project_memory_sources: tuple[str, ...]
+    tool_concurrency_limit: int | None
     lifecycle_hooks: tuple[RunLifecycleHook, ...]
     trimming: TrimmingSettings
     compaction: CompactionSettings
@@ -137,6 +138,7 @@ class RunnerConfig:
         self.project_memory_sources = tuple(
             kwargs.pop("project_memory_sources", ()) or ()
         )
+        self.tool_concurrency_limit = kwargs.pop("tool_concurrency_limit", None)
         self.lifecycle_hooks = tuple(kwargs.pop("lifecycle_hooks", ()) or ())
         self.trimming = trimming
         self.compaction = compaction

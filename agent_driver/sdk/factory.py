@@ -78,7 +78,10 @@ def create_agent(
     filtered_registry = selected_tools.apply(source_registry)
     config_copy.tool_registry = filtered_registry
     config_copy.tool_executor = wrap_governed_executor(
-        GovernedToolExecutor(registry=filtered_registry)
+        GovernedToolExecutor(
+            registry=filtered_registry,
+            concurrency_limit=config_copy.tool_concurrency_limit,
+        )
     )
     runner = SingleAgentRunner(
         provider=provider,

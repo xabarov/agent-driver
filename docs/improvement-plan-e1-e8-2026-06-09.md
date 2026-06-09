@@ -140,12 +140,21 @@ hole opened by E2 and by any filesystem-sourced context.
 **Done when:** known injection patterns in an ingested file are blocked +
 flagged; offline test with a malicious fixture; clean files pass through.
 
-### E4 — Parallel tool execution  ·  Med · Med
+### E4 — Parallel tool execution  ·  Med · Med  ·  **DONE 2026-06-09**
 
-- [ ] Execute independent tool calls concurrently; serialize exclusive ones
-      (concurrent-safe vs exclusive classes on the tool manifest).
-- [ ] Preserve result ordering for the model; respect a max-concurrency cap;
-      shared cancellation/abort cascades to in-flight tools.
+Finding: the **core was already shipped** as Phase 11 H12 —
+`ToolManifest.concurrency_safe` / `is_concurrency_safe()` partitions adjacent
+concurrency-safe calls into an `asyncio.gather` batch with a semaphore, serial
+calls execute serially, and result ordering matches LLM-emit order
+(`tools/executor/governed.py`; tested in `test_tool_governance_executor_parallel.py`,
+`test_concurrent_partition.py`). Abort cascades via asyncio task cancellation
+through the gather.
+
+- [x] Genuine gap closed: the concurrency cap was **env-only**
+      (`AGENT_DRIVER_TOOL_CONCURRENCY`); added `RunnerConfig(tool_concurrency_limit=N)`
+      threaded into `GovernedToolExecutor` in the SDK factory (None → env/default).
+- [x] Tests: explicit limit overrides env, None reads env, fallback to default,
+      config carries it, factory accepts it.
 
 **Why:** latency win on multi-tool turns without changing tool semantics.
 **Where:** `runtime/single_agent/tool_stage/executor.py`; add a
@@ -253,6 +262,23 @@ Rationale: cost/quality levers first (E1/E5 build on the existing cost-ledger +
 compaction), then context + safety (E2/E3), then latency (E4), then polish.
 Each item ships in its own commit to `origin/main` with offline tests, per the
 established cadence.
+
+## Structural notes for the post-E8 pass (refactor + SDK ergonomics)
+
+Jotted while implementing E1–E8 so the consolidation pass starts with a list:
+
+- **`RunnerConfig` flat-field growth.** Recently added top-level fields:
+  `enable_prompt_cache`, `harness_profiles`, `auxiliary_provider`,
+  `auxiliary_model`, `project_memory_sources`, `tool_concurrency_limit`
+  (compaction-related flags correctly went into `CompactionSettings`). Consider
+  grouping these into a coherent settings object (e.g. `CapabilitySettings`) or
+  a high-level `create_agent` capabilities preset, to stop the flat kwargs
+  surface from growing with each track.
+- **`create_agent` ergonomics.** No single high-level switch to enable a bundle
+  (prompt-cache + memory + permission + project-memory). A preset/builder would
+  improve discoverability.
+- **Cookbook coverage** for E1–E8 capabilities (auxiliary model, project memory,
+  injection scanner, eval compare) is not yet present.
 
 ## References
 
