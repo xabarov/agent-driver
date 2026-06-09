@@ -31,8 +31,21 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
 
     def __init__(self, provider: MemoryProvider) -> None:
         self._provider = provider
+        self._post_setup_done = False
+
+    async def _ensure_post_setup(self) -> None:
+        """Run the provider's one-time ``post_setup`` lazily and idempotently."""
+        if self._post_setup_done:
+            return
+        self._post_setup_done = True
+        await self._provider.post_setup()
+
+    async def shutdown(self) -> None:
+        """Flush/close the backing provider; invoked by ``Agent.aclose()``."""
+        await self._provider.shutdown()
 
     async def on_run_start(self, context: "RunContext") -> None:
+        await self._ensure_post_setup()
         session_id = context.run_input.thread_id
         memory_state = get_memory_runtime_state(context)
         if not session_id or memory_state.has_recalled():

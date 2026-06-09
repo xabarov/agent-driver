@@ -132,3 +132,37 @@ async def test_before_llm_request_transforms_the_request() -> None:
     await agent.session("s1").send("hello", run_id="r1")
 
     assert provider.saw_injected == "yes"
+
+
+class _BoomHook(BaseRunLifecycleHook):
+    """A hook that raises in every callback, to exercise dispatch isolation."""
+
+    name = "boom"
+
+    async def on_run_start(self, context) -> None:  # noqa: ANN001
+        raise RuntimeError("boom: on_run_start")
+
+    async def on_finalize(self, context, *, answer: str):  # noqa: ANN001
+        raise RuntimeError("boom: on_finalize")
+
+    async def before_llm_request(self, context, request):  # noqa: ANN001
+        raise RuntimeError("boom: before_llm_request")
+
+    async def after_llm_response(self, context, response) -> None:  # noqa: ANN001
+        raise RuntimeError("boom: after_llm_response")
+
+
+@pytest.mark.asyncio
+async def test_failing_hook_is_isolated_and_others_still_fire() -> None:
+    """A hook raising in every callback never aborts the run or blocks peers."""
+    survivor = _RecordingHook()
+    agent = create_agent(
+        provider=FakeProvider(response_text="done"),
+        tools=ToolSet.only(),
+        lifecycle_hooks=(_BoomHook(), survivor),
+    )
+    output = await agent.session("sess-iso").send("hello", run_id="r-iso")
+
+    assert output.status.value == "completed"  # the run survived the failing hook
+    assert survivor.events == ["start:sess-iso", "finalize"]  # peer still fired
+    assert survivor.answer == "done"

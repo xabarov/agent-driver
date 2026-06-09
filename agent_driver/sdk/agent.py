@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass
@@ -29,6 +30,8 @@ from agent_driver.runtime.stream import project_runtime_events
 from agent_driver.sdk.errors import sdk_provider_error_from_runtime
 from agent_driver.sdk.handle import RunHandle, RunStream
 from agent_driver.sdk.trace import TraceSummary, summarize_output, support_bundle
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,6 +467,32 @@ class Agent:  # pylint: disable=too-many-public-methods
                 run_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await run_task
+
+    async def aclose(self) -> None:
+        """Release resources held by lifecycle hooks (e.g. memory connections).
+
+        Calls an optional ``shutdown()`` on each registered lifecycle hook,
+        isolating per-hook failures so one bad teardown cannot block the rest.
+        Idempotent and safe to call even when no hook holds resources; also
+        runs automatically when the agent is used as an async context manager.
+        """
+        for hook in self._runner.deps.lifecycle_hooks:
+            shutdown = getattr(hook, "shutdown", None)
+            if shutdown is None:
+                continue
+            try:
+                await shutdown()
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.exception(
+                    "lifecycle shutdown failed for hook %r",
+                    getattr(hook, "name", None) or type(hook).__name__,
+                )
+
+    async def __aenter__(self) -> "Agent":
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.aclose()
 
 
 __all__ = ["Agent", "AgentDefaults"]
