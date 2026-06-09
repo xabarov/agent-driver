@@ -502,6 +502,22 @@ class CostRuntimeState(_MetadataView):
         return self.ledger().total_cost_usd()
 
 
+class RubricRuntimeState(_MetadataView):
+    """Goal-gate (rubric) iteration count and per-iteration evaluations."""
+
+    def iterations(self) -> int:
+        return int(self.metadata.get("rubric_iterations", 0))
+
+    def record_evaluation(self, *, satisfied: bool, feedback: str) -> None:
+        iteration = self.iterations() + 1
+        self.metadata["rubric_iterations"] = iteration
+        evaluations = self.list_of_dicts("rubric_evaluations")
+        evaluations.append(
+            {"iteration": iteration, "satisfied": satisfied, "feedback": feedback}
+        )
+        self.metadata["rubric_evaluations"] = evaluations
+
+
 def get_loop_control_state(context: HasRuntimeMetadata) -> LoopControlState:
     return LoopControlState(context.metadata)
 
@@ -534,6 +550,10 @@ def get_cost_runtime_state(context: HasRuntimeMetadata) -> CostRuntimeState:
     return CostRuntimeState(context.metadata)
 
 
+def get_rubric_runtime_state(context: HasRuntimeMetadata) -> RubricRuntimeState:
+    return RubricRuntimeState(context.metadata)
+
+
 __all__ = [
     "CompactionRuntimeState",
     "CostRuntimeState",
@@ -542,12 +562,14 @@ __all__ = [
     "MemoryRuntimeState",
     "PlanningRuntimeState",
     "ResearchRuntimeState",
+    "RubricRuntimeState",
     "StreamingRuntimeState",
     "ToolLoopState",
     "get_compaction_runtime_state",
     "get_cost_runtime_state",
     "get_loop_control_state",
     "get_memory_runtime_state",
+    "get_rubric_runtime_state",
     "get_planning_runtime_state",
     "get_research_runtime_state",
     "get_streaming_runtime_state",

@@ -22,9 +22,14 @@ from agent_driver.runtime.single_agent.context_management.compaction_stage impor
 from agent_driver.runtime.single_agent.llm_step import execute_llm_call_step
 from agent_driver.runtime.single_agent.planning.state import build_planning_snapshot
 from agent_driver.runtime.single_agent.research.gating import (
+    _build_continuation_transition,
     _maybe_build_continuation_transition,
     _tool_gate_for_context,
 )
+
+# Hard backstop on goal-gate (rubric) revision loops, independent of any
+# hook's own iteration budget — prevents an always-revising hook from looping.
+_MAX_RUBRIC_REVISIONS = 10
 from agent_driver.runtime.single_agent.tool_stage import execute_tool_stage_step
 from agent_driver.runtime.single_agent.tool_stage.subagent_execution import (
     maybe_execute_subagent_group,
@@ -215,9 +220,30 @@ class SingleAgentStepMixin:
         terminal_answer = self._sanitize_terminal_answer(context)
         if terminal_answer:
             completed_payload["answer"] = terminal_answer
-        await dispatch_finalize(
+        revision = await dispatch_finalize(
             self._deps.lifecycle_hooks, context, answer=terminal_answer or ""
         )
+        if revision is not None and (
+            int(context.metadata.get("rubric_revision_count", 0))
+            < _MAX_RUBRIC_REVISIONS
+        ):
+            # A goal-gate (rubric) hook is not satisfied: inject its feedback as
+            # a user turn and resume instead of finishing.
+            revise = _build_continuation_transition(
+                context,
+                text=terminal_answer or "",
+                nudge=revision.feedback,
+                reason="rubric_revision",
+                count_key="rubric_revision_count",
+            )
+            context.step_count += 1
+            get_loop_control_state(context).set_step_transition(
+                next_step="llm_call",
+                tool_calls=context.tool_calls,
+            )
+            self._save_checkpoint(context, latest_output=None, node_id="finalize")
+            self._maybe_fail_after_step("finalize")
+            return revise
         self._emit(
             EventSpec(
                 run_id=context.run_id,

@@ -35,6 +35,11 @@ from agent_driver.runtime.runner import FakeSingleStepRunner, SingleAgentRunner
 from agent_driver.runtime.single_agent.lifecycle.hook_chain_hook import (
     HookChainLifecycleHook,
 )
+from agent_driver.runtime.single_agent.lifecycle.rubric_hook import (
+    GraderVerdict,
+    RubricGradeInput,
+    RubricLifecycleHook,
+)
 from agent_driver.runtime.single_agent.types import RunnerConfig, RuntimeStepResult
 from agent_driver.runtime.sqlite_store import SqliteRuntimeStore
 from agent_driver.runtime.state import RuntimeState
@@ -75,8 +80,11 @@ __all__ = [
     "PostgresRuntimeStoreConfig",
     "SqliteRuntimeStore",
     "FallbackSpec",
+    "GraderVerdict",
     "HookChainExecutor",
     "HookChainLifecycleHook",
+    "RubricGradeInput",
+    "RubricLifecycleHook",
     "placeholders_for_event",
     "ExecutionProof",
     "has_real_execution_proof",

@@ -15,6 +15,7 @@ coupled to runtime state rather than to provider-neutral contracts.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -22,6 +23,17 @@ if TYPE_CHECKING:
     from agent_driver.contracts.runtime import AgentRunOutput
     from agent_driver.llm.contracts import LlmRequest, LlmResponse
     from agent_driver.runtime.single_agent.types import RunContext
+
+
+@dataclass(frozen=True, slots=True)
+class RevisionRequest:
+    """An ``on_finalize`` hook's request to revise instead of finishing.
+
+    The runtime injects ``feedback`` as a user turn and resumes the run (bounded
+    by a hard cap), letting a goal-gate / rubric drive iteration toward criteria.
+    """
+
+    feedback: str
 
 
 @runtime_checkable
@@ -48,8 +60,15 @@ class RunLifecycleHook(Protocol):
     ) -> None:
         """Called after every provider call with the model's response."""
 
-    async def on_finalize(self, context: "RunContext", *, answer: str) -> None:
-        """Called once when a run reaches its terminal final answer."""
+    async def on_finalize(
+        self, context: "RunContext", *, answer: str
+    ) -> "RevisionRequest | None":
+        """Called when a run reaches its terminal final answer.
+
+        Return a :class:`RevisionRequest` to send the run back for another
+        attempt (a goal-gate / rubric not yet satisfied); return ``None`` to
+        accept the answer and finish.
+        """
 
     async def on_error(
         self,
@@ -84,8 +103,10 @@ class BaseRunLifecycleHook:
     ) -> None:
         """No-op post-response hook; override to observe the response."""
 
-    async def on_finalize(self, context: "RunContext", *, answer: str) -> None:
-        """No-op finalize hook; override to react to the final answer."""
+    async def on_finalize(
+        self, context: "RunContext", *, answer: str
+    ) -> "RevisionRequest | None":
+        """No-op finalize hook; override to accept or request a revision."""
 
     async def on_error(
         self,
@@ -107,10 +128,14 @@ async def dispatch_run_start(
 
 async def dispatch_finalize(
     hooks: Iterable[RunLifecycleHook], context: "RunContext", *, answer: str
-) -> None:
-    """Invoke ``on_finalize`` for each hook in order."""
+) -> "RevisionRequest | None":
+    """Invoke ``on_finalize`` for each hook; return the first revision request."""
+    revision: RevisionRequest | None = None
     for hook in hooks:
-        await hook.on_finalize(context, answer=answer)
+        result = await hook.on_finalize(context, answer=answer)
+        if result is not None and revision is None:
+            revision = result
+    return revision
 
 
 async def dispatch_error(
@@ -146,6 +171,7 @@ async def dispatch_after_llm(
 
 __all__ = [
     "BaseRunLifecycleHook",
+    "RevisionRequest",
     "RunLifecycleHook",
     "dispatch_after_llm",
     "dispatch_before_llm",

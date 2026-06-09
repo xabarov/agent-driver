@@ -70,6 +70,7 @@ not a public SDK contract.
 | `applied_controls`, `workspace_cwd`, `eval_sandbox_dir` | control dispatcher / runner env | output/checkpoint | diagnostics | `LoopControlState` or run input metadata |
 | `recalled_memory`, `memory_synced` | long-term memory prefetch (run start) / one-time sync guard (finalize) | checkpoint | diagnostics | memory provider hooks (`MemoryProvider`) |
 | `cost_ledger` | per-run token/USD cost ledger accumulated per LLM call; drives `cost_budget_usd` fail-fast | checkpoint | cost diagnostics | `CostRuntimeState` |
+| `rubric_revision_count`, `rubric_iterations`, `rubric_evaluations` | goal-gate (rubric) revision loop counter + per-iteration grader verdicts | checkpoint | diagnostics | `RubricRuntimeState` + finalize revision continuation |
 
 ## Related Non-Context Metadata
 
