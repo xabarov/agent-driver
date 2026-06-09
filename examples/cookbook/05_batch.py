@@ -7,7 +7,12 @@ from __future__ import annotations
 
 import asyncio
 
-from agent_driver.batch import BatchRunner, InMemoryTrajectoryStore, items_from_prompts
+from agent_driver.batch import (
+    BatchRunner,
+    InMemoryTrajectoryStore,
+    compress_trajectories,
+    items_from_prompts,
+)
 from agent_driver.llm import FakeProvider
 from agent_driver.sdk import ToolSet, create_agent
 
@@ -27,6 +32,17 @@ async def main() -> None:
     print("by_status:", report.by_status)
     print("total_tokens:", report.total_tokens)
     print("recorded:", sorted(store.item_ids()))
+
+    # Compress the recorded trajectories to a per-example token budget for a
+    # training dataset: keep the first + last turn, elide the middle.
+    compressed = compress_trajectories(store.trajectories(), max_tokens=256)
+    print(
+        "compressed:",
+        [
+            t.metadata.get("compression", {}).get("final_tokens", "—")
+            for t in compressed
+        ],
+    )
 
 
 if __name__ == "__main__":

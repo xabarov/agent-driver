@@ -43,6 +43,7 @@ imported *by* the runtime (e.g. `memory` is imported by
 | Recall/persist long-term memory | `MemoryProvider` | `memory/`; wired as a lifecycle hook |
 | Run scheduled work | `Scheduler` + `JobStore` | `scheduler/`; host owns the `JobRunner`; drive `tick` (deterministic) or `run_forever` (daemon — see `examples/cookbook/09_daemon.py`) |
 | Run a prompt set with bounded concurrency | `BatchRunner(agent, concurrency=N)` | `batch/`; records trajectories to a `TrajectoryStore` |
+| Shrink recorded trajectories for a training dataset | `compress_trajectories(items, max_tokens=N)` | `batch/compress.py`; keeps first/last turns, elides the middle |
 | Add an LLM provider | `ProviderDescriptor` + `register_provider_descriptor` | `llm/provider_descriptors.py` |
 | Expose the agent to external clients | `AgentMcpServer` (MCP) / `AgentGateway` (sessions+approvals) | `mcp_server/`, `gateway/` |
 
