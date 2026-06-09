@@ -104,28 +104,34 @@ on a suite run set conservatively (e.g. $5) so a single sweep can't overspend.
 
 ## T0 — Eval infrastructure (prerequisite, offline-testable, $0 to build)
 
-- [ ] **N-run repetition** over the BatchRunner: run each item K times at temp>0,
-      keyed by `(item_id, run_index)`.
-- [ ] **Aggregation**: median + 5–95% interval per metric (success, tokens, USD,
-      latency); never report best-of.
-- [ ] **Cost/latency-per-task reporting**: extend `BatchReport` (or a new
-      `ComparisonReport`) with per-task USD (from the cost ledger), p50/p95
-      latency, and cache-hit-rate.
-- [ ] **Open-weight model preset**: a small config naming the OpenRouter
-      open-weight model id(s) + temperature; wired into the eval CLI.
-- [ ] **General task suite** (non-coding): tool-use / multi-turn dialog /
-      retrieval-lite / summarization / planning / memory-recall scenarios under
-      `agent_driver/evals/` (or `tools/selftest/scenarios`).
-- [ ] **Cost ceiling**: default `--cost-budget-usd` on a suite run; abort + report
-      partial results when hit.
-- [ ] **Baseline-vs-treatment harness**: run the same suite with a capability
-      flag off vs on, emit a side-by-side delta table.
-- [ ] Tier-A tests for all of the above on `FakeProvider` (deterministic counts,
-      aggregation math, budget-abort path).
+Status: **core library done** (commits on 2026-06-09); CLI surface pending.
 
-**Done when:** `agent-driver eval run` (or a new `eval compare`) executes the
-general suite N times on the open-weight preset, enforces the cost ceiling, and
-emits median+interval cost/latency/success — all unit-tested offline.
+- [x] **N-run repetition** over the BatchRunner: `run(..., repeats=N)`, each run
+      keyed by `(item_id, run_index)`.  → `batch/runner.py`
+- [x] **Aggregation**: median + 5–95% interval per metric (success, tokens, USD,
+      latency); never best-of.  → `evals/aggregate.py` (`RunAggregate`,
+      `MetricSummary`, `percentile`)
+- [x] **Cost/latency-per-task reporting**: `Trajectory` carries `cost_usd`
+      (estimated from usage) + `latency_ms` (wall-clock); runner populates both.
+      → `batch/contracts.py`, `batch/runner.py`
+- [x] **Open-weight model preset**: OpenRouter tiers small/mid/large +
+      `ProviderSpec` builder.  → `evals/presets.py`
+- [x] **General task suite** (non-coding): tool-use / dialog / retrieval /
+      summarization / planning / memory, tagged by category.  → `evals/suites.py`
+- [x] **Cost ceiling**: `BatchRunner.run(max_total_cost_usd=...)` records
+      `skipped_budget` once exceeded (best-effort under concurrency).
+- [x] **Baseline-vs-treatment harness**: `run_comparison` + `ComparisonReport` +
+      `render_comparison` side-by-side delta.  → `evals/compare.py`
+- [x] Tier-A tests on `FakeProvider` (aggregation math, repeats, deltas, ceiling,
+      suite/preset).  → `tests/evals/`, `tests/batch/`
+- [ ] **CLI surface** `agent-driver eval compare`: run the general suite N times
+      on the open-weight preset, one harness axis off vs on, enforce the ceiling,
+      print the render. (Live; offline-test the parser + render only.)
+
+**Done when:** the comparison library runs the general suite N times on the
+open-weight preset, enforces the cost ceiling, and emits median+interval
+cost/latency/success — **met for the library**; the `eval compare` CLI is the
+remaining convenience wrapper.
 
 ## Per-feature evaluation mapping
 
