@@ -131,3 +131,17 @@ def test_batch_item_metadata_must_be_json() -> None:
     BatchItem(item_id="ok", input="hi", metadata={"k": "v"})
     with pytest.raises(ValueError):
         BatchItem(item_id="bad", input="hi", metadata={"k": object()})
+
+
+@pytest.mark.asyncio
+async def test_trajectory_carries_cost_and_latency() -> None:
+    """Each trajectory records wall-clock latency and an estimated cost."""
+    ticks = iter([10.0, 10.4])  # start, end (concurrency=1, one item)
+    runner = BatchRunner(_agent("done"), concurrency=1, now=lambda: next(ticks))
+    store = InMemoryTrajectoryStore()
+    await runner.run(items_from_prompts(["a"]), store=store)
+
+    traj = store.trajectories()[0]
+    assert traj.latency_ms == pytest.approx(400.0)  # (10.4 - 10.0) * 1000
+    assert traj.cost_usd is not None  # estimate (0.0 for the unknown fake model)
+    assert traj.run_index == 0

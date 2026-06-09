@@ -1,5 +1,11 @@
 """Deterministic evaluation harness, dataset runners, and baseline reports."""
 
+from agent_driver.evals.aggregate import (
+    MetricSummary,
+    RunAggregate,
+    aggregate_trajectories,
+    percentile,
+)
 from agent_driver.evals.baseline import compare_reports
 from agent_driver.evals.context_quality import (
     ContextQualityFixture,
@@ -52,7 +58,11 @@ __all__ = [
     "DatasetCase",
     "EvalReport",
     "EvaluatorResult",
+    "MetricSummary",
     "ReportComparison",
+    "RunAggregate",
+    "aggregate_trajectories",
+    "percentile",
     "build_support_bundle",
     "ContextQualityFixture",
     "build_synthetic_context_quality_fixture",

@@ -12,7 +12,8 @@ provider, so it stays runtime-neutral.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable, Sequence
+import time
+from collections.abc import Callable, Iterable, Sequence
 from typing import TYPE_CHECKING
 
 from agent_driver.batch.contracts import BatchItem, BatchReport, Trajectory
@@ -23,13 +24,26 @@ if TYPE_CHECKING:
 
 
 class BatchRunner:
-    """Generate trajectories for a batch of prompts."""
+    """Generate trajectories for a batch of prompts.
 
-    def __init__(self, agent: "Agent", *, concurrency: int = 4) -> None:
+    Each trajectory carries per-task ``cost_usd`` (estimated from the run's
+    usage) and ``latency_ms`` (wall-clock around the query), so a downstream
+    aggregator can report median + percentile economics. ``now`` is injectable
+    for deterministic latency in tests.
+    """
+
+    def __init__(
+        self,
+        agent: "Agent",
+        *,
+        concurrency: int = 4,
+        now: Callable[[], float] | None = None,
+    ) -> None:
         if concurrency < 1:
             raise ValueError("concurrency must be >= 1")
         self._agent = agent
         self._concurrency = concurrency
+        self._now = now or time.monotonic
 
     async def run(
         self,
@@ -61,8 +75,13 @@ class BatchRunner:
             list(trajectories), skipped_resumed=skipped
         )
 
-    async def _run_item(self, item: BatchItem) -> Trajectory:
-        run_id = f"batch_{item.item_id}"
+    async def _run_item(self, item: BatchItem, *, run_index: int = 0) -> Trajectory:
+        run_id = (
+            f"batch_{item.item_id}_{run_index}"
+            if run_index
+            else f"batch_{item.item_id}"
+        )
+        started = self._now()
         try:
             output = await self._agent.query(item.input, run_id=run_id)
         except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -72,8 +91,25 @@ class BatchRunner:
                 run_id,
                 f"{type(exc).__name__}: {exc}",
                 metadata=item.metadata,
+                run_index=run_index,
+                latency_ms=(self._now() - started) * 1000.0,
             )
-        return Trajectory.from_output(item.item_id, output, metadata=item.metadata)
+        latency_ms = (self._now() - started) * 1000.0
+        # Local import: keep the observability subtree (which imports runtime)
+        # off the batch-import path.
+        from agent_driver.observability.cost_ledger import (  # pylint: disable=import-outside-toplevel
+            estimate_cost_usd,
+        )
+
+        cost_usd = estimate_cost_usd(output.usage) if output.usage else None
+        return Trajectory.from_output(
+            item.item_id,
+            output,
+            metadata=item.metadata,
+            run_index=run_index,
+            cost_usd=cost_usd,
+            latency_ms=latency_ms,
+        )
 
 
 def items_from_prompts(

@@ -34,7 +34,13 @@ class BatchItem(ContractModel):
 
 
 class Trajectory(ContractModel):
-    """One recorded run: the conversation, tool calls and usage."""
+    """One recorded run: the conversation, tool calls and usage.
+
+    ``run_index`` distinguishes repeated runs of the same item (N-run
+    reliability); ``cost_usd`` / ``latency_ms`` carry per-task economics for
+    aggregation (median + percentile) — populated by the runner since cost
+    estimation lives in the observability layer, not the contract.
+    """
 
     item_id: str
     run_id: str
@@ -44,11 +50,20 @@ class Trajectory(ContractModel):
     tool_calls: list[dict[str, str]] = Field(default_factory=list)
     usage: dict[str, int] = Field(default_factory=dict)
     error: str | None = None
+    run_index: int = 0
+    cost_usd: float | None = None
+    latency_ms: float | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @staticmethod
     def from_output(
-        item_id: str, output: AgentRunOutput, *, metadata: dict[str, Any] | None = None
+        item_id: str,
+        output: AgentRunOutput,
+        *,
+        metadata: dict[str, Any] | None = None,
+        run_index: int = 0,
+        cost_usd: float | None = None,
+        latency_ms: float | None = None,
     ) -> "Trajectory":
         """Build a trajectory from a completed run's output."""
         usage = output.usage
@@ -73,12 +88,21 @@ class Trajectory(ContractModel):
                 "output_tokens": usage.output_tokens if usage else 0,
                 "total_tokens": usage.total_tokens if usage else 0,
             },
+            run_index=run_index,
+            cost_usd=cost_usd,
+            latency_ms=latency_ms,
             metadata=metadata or {},
         )
 
     @staticmethod
     def from_error(
-        item_id: str, run_id: str, error: str, *, metadata: dict[str, Any] | None = None
+        item_id: str,
+        run_id: str,
+        error: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+        run_index: int = 0,
+        latency_ms: float | None = None,
     ) -> "Trajectory":
         """Build a trajectory for an item whose run raised."""
         return Trajectory(
@@ -86,6 +110,8 @@ class Trajectory(ContractModel):
             run_id=run_id,
             status="error",
             error=error,
+            run_index=run_index,
+            latency_ms=latency_ms,
             metadata=metadata or {},
         )
 
