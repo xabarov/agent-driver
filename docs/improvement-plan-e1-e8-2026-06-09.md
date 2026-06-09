@@ -259,9 +259,12 @@ explicit go-ahead on scope:
       result_if_ready, result) / cancel (abort cascade + task cancel) / gather,
       keyed by task id. In-process variant (same event loop), not the remote
       Agent Protocol. Tested: start→result, gather, cancel→cancelled, unknown id.
-- [ ] **Scope-aware HITL predicates (D6)**: fire approval only when a bulk/glob
-      op could touch a protected path; `interrupt` permission mode + glob anchor.
-      Ref: deepagents `middleware/filesystem.py`, `_fs_interrupt.py`.
+- [x] **Scope-aware HITL predicates (D6)** — **DONE 2026-06-09**:
+      `PermissionRule.path_under` fires the rule (ask/deny) only when the call's
+      path argument *could* touch the protected prefix — the path's static glob
+      anchor must overlap `path_under` (a bulk op rooted at `/` or `/etc` asks
+      before protected `/etc`; an unrelated path doesn't; sibling `/etchosts` is
+      not confused). Combines with the existing tool/command predicates. Tested.
 - [ ] **Skills curator**: auto-generate + lifecycle-manage skills
       (active→stale→archived, dedupe).  Ref: hermes `/agent/curator.py`.
 - [ ] **PrivateStateAttr marking**: exclude internal middleware bookkeeping from

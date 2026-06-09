@@ -13,6 +13,7 @@ from agent_driver.permissions.policy import (
     PermissionPolicy,
     PermissionRule,
     command_text,
+    path_text,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "build_permission_gate",
     "classify_command",
     "command_text",
+    "path_text",
 ]

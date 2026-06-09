@@ -69,6 +69,7 @@ class PermissionRule(ContractModel):
     tools: tuple[str, ...] = ()
     command_includes: str | None = None
     command_regex: str | None = None
+    path_under: str | None = None
     reason: str = ""
 
     @field_validator("command_regex")
@@ -93,6 +94,15 @@ class PermissionRule(ContractModel):
                 return False
         if self.command_regex is not None:
             if not re.search(self.command_regex, command or ""):
+                return False
+        if self.path_under is not None:
+            # Scope-aware: the rule fires only when the call's path argument
+            # *could* touch the protected prefix — i.e. the path's static anchor
+            # (before any glob wildcard) overlaps ``path_under``. A bulk/glob op
+            # rooted at or above the protected area triggers; an unrelated path
+            # does not. Calls with no path argument never match.
+            target = path_text(args)
+            if target is None or not _path_overlaps(target, self.path_under):
                 return False
         return True
 
@@ -144,6 +154,45 @@ def command_text(args: dict[str, Any]) -> str | None:
     return None
 
 
+_PATH_KEYS = ("path", "file_path", "dir", "base_dir", "directory", "target")
+_GLOB_CHARS = "*?["
+
+
+def path_text(args: dict[str, Any]) -> str | None:
+    """Return the path-bearing argument of a call, if any."""
+    for key in _PATH_KEYS:
+        value = args.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _path_anchor(path: str) -> str:
+    """The static prefix of a (possibly glob) path, before the first wildcard."""
+    head = path
+    for index, char in enumerate(path):
+        if char in _GLOB_CHARS:
+            head = path[:index]
+            break
+    # Normalize to a directory-ish prefix (drop the trailing partial segment).
+    head = head.rstrip("/")
+    return head or "/"
+
+
+def _path_overlaps(path: str, protected: str) -> bool:
+    """Whether ``path`` (or a glob rooted at it) could touch ``protected``.
+
+    True when the path's static anchor and the protected prefix are in an
+    ancestor relationship either way — a bulk op rooted at ``/`` or ``/etc``
+    overlaps protected ``/etc``, while ``/home/x`` does not.
+    """
+    anchor = _path_anchor(path).rstrip("/") or "/"
+    prot = protected.rstrip("/") or "/"
+    a = anchor if anchor == "/" else anchor + "/"
+    p = prot if prot == "/" else prot + "/"
+    return a.startswith(p) or p.startswith(a)
+
+
 __all__ = [
     "PermissionDecision",
     "PermissionMode",
@@ -151,4 +200,5 @@ __all__ = [
     "PermissionPolicy",
     "PermissionRule",
     "command_text",
+    "path_text",
 ]
