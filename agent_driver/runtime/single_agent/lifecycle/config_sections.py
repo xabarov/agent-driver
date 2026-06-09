@@ -37,6 +37,8 @@ class CompactionSettings:
     compaction_model: str = "default"
     ptl_retry_max_chars: int = 4000
     post_compact_max_reinjected_artifact_refs: int = 5
+    enable_tool_arg_truncation: bool = False
+    tool_arg_truncation_max_chars: int = 2000
 
 
 @dataclass(frozen=True, slots=True)

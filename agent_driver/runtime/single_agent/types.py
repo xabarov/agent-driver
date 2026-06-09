@@ -237,6 +237,14 @@ class RunnerConfig:
         return self.compaction.post_compact_max_reinjected_artifact_refs
 
     @property
+    def enable_tool_arg_truncation(self) -> bool:
+        return self.compaction.enable_tool_arg_truncation
+
+    @property
+    def tool_arg_truncation_max_chars(self) -> int:
+        return self.compaction.tool_arg_truncation_max_chars
+
+    @property
     def enable_subagents(self) -> bool:
         return self.subagents.enable_subagents
 

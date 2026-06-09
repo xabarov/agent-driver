@@ -71,11 +71,17 @@ frontier model; pairs directly with our cost-ledger + rubric + compaction.
 memory while the main provider answers; offline test asserts routing + separate
 cost tagging; falls back cleanly when unset.
 
-### E5 — Tool-arg truncation pre-pass  ·  Med · S
+### E5 — Tool-arg truncation pre-pass  ·  Med · S  ·  **DONE 2026-06-09**
 
-- [ ] Before full LLM compaction, clip oversized tool-call *arguments* in older
-      messages (cheap, deterministic, fires earlier than summarization).
-- [ ] Threshold-driven; record what was clipped in compaction audit metadata.
+- [x] `context/tool_arg_truncation.py`: pure `truncate_tool_call_args` clips
+      oversized string tool-call args (in `metadata["tool_calls"][i]["args"]`)
+      in all but the last `protect_last` messages; head + marker, no mutation,
+      returns an audit + chars_saved.
+- [x] Wired as a pre-pass at the top of `apply_compaction_if_eligible` (runs
+      whenever compaction is considered), guarded by
+      `RunnerConfig(enable_tool_arg_truncation=…, tool_arg_truncation_max_chars=…)`;
+      audit recorded under `context.metadata["tool_arg_truncation"]` (documented).
+- [x] Tests: clip/protect-tail/no-op/no-mutation/non-string-skip/validation.
 
 **Why:** cheap pre-pass avoids feeding huge old tool args to the (auxiliary)
 summarizer; reduces tokens before the expensive step. Natural neighbour of E1.

@@ -61,6 +61,7 @@ not a public SDK contract.
 | `raw_assistant_content`, `last_llm_response`, `llm_call_started_monotonic` | LLM step/output builder | checkpoint/runtime | diagnostics | `StreamingRuntimeState` or `ProviderRuntimeState` |
 | `trim_audit`, `trim_metadata`, `token_pressure`, `previous_token_pressure_state`, `prompt_render` | deterministic trimming / prompt render / pressure state-change diagnostics | output/checkpoint | trace/debug | `CompactionRuntimeState` |
 | `microcompaction`, `microcompaction_audit`, `post_compact_cleanup` | context compaction/microcompaction | output/checkpoint | trace/debug | `CompactionRuntimeState` |
+| `tool_arg_truncation` | E5 pre-pass audit: chars saved + per-arg clips when oversized tool-call args in older messages are truncated before compaction | checkpoint | trace/debug | `CompactionRuntimeState` |
 | `active_compaction_id`, `compaction_decision`, `compaction_audit`, `compaction_result`, `compaction_failures` | compaction stage/orchestrator | output/checkpoint | yes for compaction UI | `CompactionRuntimeState` |
 | `session_memory_extraction`, `retained_artifact_ids`, `retained_digest_ids` | output/memory compaction | output/checkpoint | trace/debug | `CompactionRuntimeState` |
 | `planned_subagent_group`, `subagent_groups`, `subagent_runs`, `subagent_merge_summary`, `subagent_origin` | subagent stage/output | output/checkpoint | yes for subagent UI | `SubagentRuntimeState` |

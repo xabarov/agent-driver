@@ -61,6 +61,33 @@ def _account_compaction_cost(
     )
 
 
+def _apply_tool_arg_truncation(
+    host: Any, *, context: RunContext, request: Any
+) -> None:
+    """E5 pre-pass: clip oversized tool-call args in older messages in place.
+
+    Cheap and LLM-free; runs whenever compaction is considered (token pressure)
+    so it can shrink the next provider call's tokens before — or instead of —
+    the expensive summarization. Records what it clipped under
+    ``tool_arg_truncation``.
+    """
+    from agent_driver.context.tool_arg_truncation import (  # pylint: disable=import-outside-toplevel
+        truncate_tool_call_args,
+    )
+
+    result = truncate_tool_call_args(
+        list(request.messages),
+        max_arg_chars=host._config.tool_arg_truncation_max_chars,
+    )
+    if not result.changed:
+        return
+    request.messages = result.messages
+    context.metadata["tool_arg_truncation"] = {
+        "chars_saved": result.chars_saved,
+        "clipped": result.audit,
+    }
+
+
 class CompactionStageHost(Protocol):
     """Host surface required for compaction stage helpers."""
 
@@ -179,6 +206,8 @@ async def apply_compaction_if_eligible(
     token_pressure_state: str,
 ) -> None:
     """Run compaction orchestration before final provider completion."""
+    if host._config.enable_tool_arg_truncation:
+        _apply_tool_arg_truncation(host, context=context, request=request)
     orchestrator = host._get_compaction_orchestrator()
     session_memory = load_session_memory(
         artifact_store=host._deps.artifact_store,
