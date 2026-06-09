@@ -189,12 +189,23 @@ subagent `model` override.
 **Done when:** a routing map selects per-role models at spawn; explicit spec
 overrides the map; offline test covers map hit / override / default.
 
-### E7 — Composite filesystem backend  ·  Med · L  (optional / larger)
+### E7 — Composite filesystem backend  ·  Med · L  ·  **DONE (core) 2026-06-09**
 
-- [ ] Pluggable backend protocol (read/write/edit/ls/glob/grep) with path-prefix
-      routing: e.g. `/memories/` → persistent, `/tmp/` → ephemeral, sandbox.
-- [ ] Standardized error codes (file_not_found, permission_denied, …) for
-      LLM-recoverable failures.
+- [x] `agent_driver/fs/`: `FileBackend` Protocol
+      (read/write/edit/ls/glob/grep/delete) + standardized `FileBackendError` /
+      `FileErrorCode` (not_found / is_directory / invalid_path / not_matched / …).
+- [x] Backends: `StateBackend` (ephemeral in-memory), `LocalFilesystemBackend`
+      (disk, jailed under root — traversal raises `INVALID_PATH`), and
+      `CompositeBackend` (longest-prefix routing with prefix strip/remap;
+      listing ops re-prefix; errors re-raised with the composite path).
+- [x] Tests: shared behavioral suite over state+local, local jail/IS_DIRECTORY,
+      composite routing / aggregation / longest-prefix / error path (20 tests).
+
+Follow-up (not done, higher-risk integration): wire the existing builtin
+filesystem tool + the artifact/context stores onto a `FileBackend` (let the
+runtime supply a `CompositeBackend`), so tool ops span scratch/durable/sandbox.
+The protocol + backends are independently usable now; the tool-wiring is a
+separate track to schedule when a concrete need appears.
 
 **Why:** unifies our artifact/context stores + spill behind one tool-facing FS
 abstraction; enables S3/db/sandbox backends later. Larger refactor — gate behind
