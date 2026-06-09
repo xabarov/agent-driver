@@ -322,6 +322,36 @@ Not done (deferred): path-glob filesystem rules and an ML/learned classifier
 (the heuristic covers the high-value destructive forms); an agent-level default
 gate on `RunnerConfig` (today the gate is passed per run).
 
+## Track #8 (DONE 2026-06-09) — Descriptor-First Multi-Provider
+
+Replaced the ad-hoc `if provider == ...` construction chain (which lived in
+the CLI and didn't even wire Anthropic) with a descriptor registry in
+`agent_driver/llm/provider_descriptors.py` that separates the three concerns:
+
+- **metadata** — `ProviderDescriptor` declares a provider's transport, default
+  base URL / model, credential env vars, and what is required;
+- **routing** — the caller picks a `ProviderSpec` (id + overrides); env fills
+  gaps;
+- **transport** — `resolve_provider` maps the descriptor's `ProviderTransport`
+  to a concrete constructor in ONE place.
+
+Built-in descriptors: `fake`, `openrouter`, `openai`, `vllm`, `ollama`,
+`anthropic`. Out-of-tree providers call `register_provider_descriptor` (with
+aliases). `cli/providers.py` now delegates to `resolve_provider` (wrapping
+`ProviderResolutionError` as `CliProviderConfigError` to keep its contract), so
+CLI/SDK/evals share one resolution path and `anthropic`/`openai` work in the
+CLI for free. Exported from `agent_driver.llm`.
+
+Acceptance (tests/llm/test_provider_descriptors.py + existing
+tests/cli/test_providers.py): each transport resolves; env fill + spec
+overrides; missing-required errors; alias + custom-descriptor registration; the
+CLI provider contract is unchanged.
+
+Not done (deferred): per-model capability descriptors (the existing
+`provider_capabilities.py` heuristic still derives those at request time);
+Bedrock/Vertex/Gemini transports (add a descriptor + a transport branch when a
+real need lands).
+
 ## Sequencing rationale
 
 Track A is highest-leverage and lowest-risk: it is local to `llm/`,

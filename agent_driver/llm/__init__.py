@@ -15,6 +15,16 @@ from agent_driver.llm.error_classifier import (
     RecoveryAction,
     classify,
 )
+from agent_driver.llm.provider_descriptors import (
+    ProviderDescriptor,
+    ProviderResolutionError,
+    ProviderSpec,
+    ProviderTransport,
+    get_provider_descriptor,
+    list_provider_ids,
+    register_provider_descriptor,
+    resolve_provider,
+)
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.llm.providers_impl import (
     FakeProvider,
@@ -28,9 +38,17 @@ __all__ = [
     "FakeProvider",
     "HealthAwareRouter",
     "LlmFinishReason",
+    "ProviderDescriptor",
     "ProviderErrorReason",
+    "ProviderResolutionError",
+    "ProviderSpec",
+    "ProviderTransport",
     "RecoveryAction",
     "classify",
+    "get_provider_descriptor",
+    "list_provider_ids",
+    "register_provider_descriptor",
+    "resolve_provider",
     "LlmProvider",
     "LlmProviderKind",
     "LlmRequest",
