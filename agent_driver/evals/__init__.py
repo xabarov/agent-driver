@@ -7,6 +7,12 @@ from agent_driver.evals.aggregate import (
     percentile,
 )
 from agent_driver.evals.baseline import compare_reports
+from agent_driver.evals.compare import (
+    ComparisonReport,
+    compare_aggregates,
+    render_comparison,
+    run_comparison,
+)
 from agent_driver.evals.context_quality import (
     ContextQualityFixture,
     build_synthetic_context_quality_fixture,
@@ -58,10 +64,14 @@ __all__ = [
     "DatasetCase",
     "EvalReport",
     "EvaluatorResult",
+    "ComparisonReport",
     "MetricSummary",
     "ReportComparison",
     "RunAggregate",
     "aggregate_trajectories",
+    "compare_aggregates",
+    "render_comparison",
+    "run_comparison",
     "percentile",
     "build_support_bundle",
     "ContextQualityFixture",

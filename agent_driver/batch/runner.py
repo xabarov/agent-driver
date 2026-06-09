@@ -51,8 +51,17 @@ class BatchRunner:
         *,
         store: TrajectoryStore | None = None,
         resume: bool = False,
+        repeats: int = 1,
     ) -> BatchReport:
-        """Run all items concurrently and return an aggregate report."""
+        """Run all items concurrently and return an aggregate report.
+
+        ``repeats`` runs each item N times (``run_index`` 0..N-1) for N-run
+        reliability; the returned report and any store then hold ``items ×
+        repeats`` trajectories. Resume-skipping keys on ``item_id`` (a resumed
+        item is skipped for all repeats).
+        """
+        if repeats < 1:
+            raise ValueError("repeats must be >= 1")
         pending = list(items)
         skipped = 0
         if store is not None and resume:
@@ -63,14 +72,20 @@ class BatchRunner:
 
         semaphore = asyncio.Semaphore(self._concurrency)
 
-        async def _run_one(item: BatchItem) -> Trajectory:
+        async def _run_one(item: BatchItem, run_index: int) -> Trajectory:
             async with semaphore:
-                trajectory = await self._run_item(item)
+                trajectory = await self._run_item(item, run_index=run_index)
             if store is not None:
                 store.append(trajectory)
             return trajectory
 
-        trajectories = await asyncio.gather(*(_run_one(item) for item in pending))
+        trajectories = await asyncio.gather(
+            *(
+                _run_one(item, run_index)
+                for item in pending
+                for run_index in range(repeats)
+            )
+        )
         return BatchReport.from_trajectories(
             list(trajectories), skipped_resumed=skipped
         )
