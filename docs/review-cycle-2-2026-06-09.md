@@ -46,8 +46,41 @@ packages. Claims below were verified against the current code.
   `Registry.values()` `id()` dedup is correct for the current use (aliases point
   to the same object).
 
+## Addendum — third reference: LangChain `deepagents` (2026-06-09)
+
+Added `deepagents` (langchain-ai/deepagents) as a third lens. Its harness is a
+**middleware composition** over a LangChain agent (TodoList / Filesystem+perms /
+SubAgent(+async) / Summarization / HumanInTheLoop / AnthropicPromptCaching, plus
+Memory / Rubric / Skills / PatchToolCalls) selected by **profiles**
+(HarnessProfile/ProviderProfile). Compared against agent-driver's current state;
+verified each claim against the code.
+
+Already covered (not gaps): eager oversized-tool-output offloading with a
+preview + fetch-by-reference is already `tools/executor/spill.py`
+(+ `context_window_recovery.py`); curated skills, durable subagents, the
+permission layer, compaction ladder + reactive overflow recovery are all
+present.
+
+Genuinely new/better directions from deepagents:
+
+| # | Item | Why / builds on | Value · Risk |
+|---|------|-----------------|--------------|
+| **D2** | **Per-LLM-call hook seam** — a `before_llm_request(context, request) -> request` / `after_llm_response` hook, complementing the run-boundary lifecycle hooks (A1). deepagents middleware intercept at model-call time (`wrap_model_call`) to inject prompt, filter tools, evict messages — agent-driver has no public per-call seam | generalizes the A1 seam to the LLM-call boundary; enables external middleware-style extensions | High · Med |
+| **D3** | **Rubric / grader goal-gate** — at finalize, a separate grader subagent scores the transcript against caller-supplied criteria (per-criterion verdicts); on `needs_revision` it injects feedback and the run continues until satisfied/failed/max-iters. Grader treats transcript as untrusted (injection-safe). This is a sharper form of **N3 (goal tracking)** | lands on the `on_finalize` hook + subagents + structured output (all present) — **supersedes N3** | High · Med |
+| **D4** | **Harness profile layer** — declarative per-provider/model prompt-assembly slots (USER→BASE/CUSTOM→SUFFIX) + per-model excluded tools/middleware + tool-description overrides, validated at assembly | a declarative layer over descriptor providers (#8) + prompt templates | Med · Med |
+| **D5** | **Anthropic prompt-cache breakpoints** — place `cache_control` at prompt-assembly boundaries (static base → memory → conversation) so updates don't invalidate the cached prefix | ties to **N1** cache hit-rate observability; real Anthropic cost win | Med · Low |
+| **D6** | Refinements: scope-aware HITL predicates (fire approval only when a bulk/glob op could touch a protected path) for the #7 permission gate; `PrivateStateAttr`-style marking of internal state; async/background subagents with task-id polling | incremental on #7 / state owners / subagents | Low-Med · varies |
+
+Net: deepagents' middleware model is orthogonal, not strictly superior to the
+step-loop + lifecycle hooks — but **D2** (per-call seam) and **D3** (rubric
+goal-gate) are sharper than what we have and worth adopting; **D3 replaces the
+earlier N3**.
+
 ## Recommendation
 
-Sequence: **N2** (cheap, closes a built-but-unwired loop) → **N1** (high-value
-cost governance) → **N6** (pay robustness before growing further) → **N3 / N4 /
-N5** → **N7** only with an explicit scope + dependency decision.
+N2 is done. Updated sequence: **N1** (high-value cost governance, + **D5**
+prompt-cache breakpoints fold in here) → **D2** (per-LLM-call hook seam — the
+enabling architecture that **D3** and future middleware-style extensions ride
+on) → **D3** (rubric goal-gate, replaces N3) → **N6** (robustness pass) → **N4 /
+N5 / D4** → **N7 / D6 / async-subagents** only with an explicit scope +
+dependency decision.
