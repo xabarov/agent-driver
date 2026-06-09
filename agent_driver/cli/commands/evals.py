@@ -132,6 +132,17 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
 
         return resolve_provider(openweight_provider_spec(tier))
 
+    # No-op-axis guard: prompt_cache only does anything on the Anthropic
+    # provider, but this command resolves the open-weight OpenRouter preset, so
+    # both sides send identical requests — any "delta" is environment/noise, not
+    # the flag. Warn so the operator picks an axis that's actually active here.
+    if axis == "prompt_cache" and not offline:
+        print(
+            "eval compare warning: --treatment prompt_cache is a no-op on the "
+            "open-weight OpenRouter preset (non-Anthropic); both sides are "
+            "identical. Use --treatment tool_concurrency for an active axis."
+        )
+
     try:
         toolset = build_cli_toolset(tool_config_from_args(args))
     except tool_error as exc:

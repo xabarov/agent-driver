@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from typing import TYPE_CHECKING
 
 from agent_driver.batch.contracts import BatchItem, BatchReport, Trajectory
@@ -37,13 +37,21 @@ class BatchRunner:
         agent: "Agent",
         *,
         concurrency: int = 4,
+        retries: int = 0,
+        retry_backoff_s: float = 0.5,
         now: Callable[[], float] | None = None,
+        sleep: Callable[[float], "Awaitable[None]"] | None = None,
     ) -> None:
         if concurrency < 1:
             raise ValueError("concurrency must be >= 1")
+        if retries < 0:
+            raise ValueError("retries must be >= 0")
         self._agent = agent
         self._concurrency = concurrency
+        self._retries = retries
+        self._retry_backoff_s = retry_backoff_s
         self._now = now or time.monotonic
+        self._sleep = sleep or asyncio.sleep
 
     async def run(
         self,
@@ -115,18 +123,31 @@ class BatchRunner:
             else f"batch_{item.item_id}"
         )
         started = self._now()
-        try:
-            output = await self._agent.query(item.input, run_id=run_id)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Retry transient failures (network / provider 429 surface as raised
+        # exceptions) with exponential backoff; a non-raising completed-with-
+        # failure output is a real result and is not retried.
+        last_exc: Exception | None = None
+        output = None
+        for attempt in range(self._retries + 1):
+            try:
+                output = await self._agent.query(item.input, run_id=run_id)
+                last_exc = None
+                break
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                last_exc = exc
+                if attempt < self._retries:
+                    await self._sleep(self._retry_backoff_s * (2**attempt))
+        if last_exc is not None:
             # One bad item must not abort the batch.
             return Trajectory.from_error(
                 item.item_id,
                 run_id,
-                f"{type(exc).__name__}: {exc}",
+                f"{type(last_exc).__name__}: {last_exc}",
                 metadata=item.metadata,
                 run_index=run_index,
                 latency_ms=(self._now() - started) * 1000.0,
             )
+        assert output is not None
         latency_ms = (self._now() - started) * 1000.0
         # Local import: keep the observability subtree (which imports runtime)
         # off the batch-import path.
