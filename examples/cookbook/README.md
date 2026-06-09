@@ -20,6 +20,7 @@ python examples/cookbook/01_quickstart.py
 | `06_gateway.py` | Session turn → approval → resume | `AgentGateway`, `tool_gate` |
 | `07_mcp_server.py` | Expose the agent over MCP | `AgentMcpServer` |
 | `08_providers.py` | Resolve / register a provider | `resolve_provider`, `ProviderDescriptor` |
+| `09_daemon.py` | Run the scheduler `run_forever` loop firing agent turns | `Scheduler.run_forever`, `JobRunner` |
 
 To use a real model, swap `FakeProvider(...)` for a descriptor-resolved
 provider (see `08_providers.py`) — e.g. `resolve_provider(ProviderSpec(

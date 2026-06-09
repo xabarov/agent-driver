@@ -41,7 +41,8 @@ imported *by* the runtime (e.g. `memory` is imported by
 | Guard input/args/results in a pipeline | `GuardrailPipeline` | `tools/guardrails/` |
 | Spawn a fallback when a run fails | `HookChainLifecycleHook` over `HookChainConfig` | `runtime/single_agent/lifecycle/hook_chain_hook.py` |
 | Recall/persist long-term memory | `MemoryProvider` | `memory/`; wired as a lifecycle hook |
-| Run scheduled work | `Scheduler` + `JobStore` | `scheduler/`; host owns the `JobRunner` + tick loop |
+| Run scheduled work | `Scheduler` + `JobStore` | `scheduler/`; host owns the `JobRunner`; drive `tick` (deterministic) or `run_forever` (daemon — see `examples/cookbook/09_daemon.py`) |
+| Run a prompt set with bounded concurrency | `BatchRunner(agent, concurrency=N)` | `batch/`; records trajectories to a `TrajectoryStore` |
 | Add an LLM provider | `ProviderDescriptor` + `register_provider_descriptor` | `llm/provider_descriptors.py` |
 | Expose the agent to external clients | `AgentMcpServer` (MCP) / `AgentGateway` (sessions+approvals) | `mcp_server/`, `gateway/` |
 
@@ -63,6 +64,39 @@ Prefer composing an existing seam over editing the step loop
 - **`_MetadataView` typed state owners** (`runtime/metadata_state.py`) — new
   runtime `context.metadata` state goes through a typed owner, not raw string
   keys; register new keys in `docs/runtime-metadata.md` (a test enforces it).
+
+## Operational thresholds & tuning
+
+**Permission modes** (`permissions.PermissionMode`). Commands are scored by
+`classify_command` into ordered risk levels `SAFE < CAUTION < DANGEROUS <
+CRITICAL`; the mode decides what happens to a call that no explicit
+`PermissionRule` matched:
+
+| Mode | `SAFE` | `CAUTION` | `DANGEROUS` | `CRITICAL` |
+| --- | --- | --- | --- | --- |
+| `yolo` | allow | allow | allow | allow |
+| `standard` (default) | allow | allow | **ask** | **deny** |
+| `strict` | allow | **ask** | **deny** | **deny** |
+
+`yolo` builds no gate at all. An `ask` outcome parks the run on an approval
+interrupt (the chat loop's `/approve`/`/reject`, the gateway's `respond`).
+Wire it via `agent.run(tool_gate=build_permission_gate(PermissionPolicy(mode=...)))`,
+or the CLI `--permission-mode {yolo,standard,strict}` on `run`/`chat`.
+
+**Batch concurrency** (`BatchRunner(agent, concurrency=4)`). An
+`asyncio.Semaphore` caps in-flight runs; `concurrency` must be `>= 1`. Tune it
+to the provider's rate limit, not the host's core count — runs are I/O-bound on
+the model. Start at the default 4 and raise only until you see provider 429s.
+
+**Scheduler bounds** (`Scheduler(...)`). Each fire is wrapped in a per-job hard
+timeout (`default_timeout_seconds=300`). After `max_consecutive_failures=5` a
+job auto-disables (status `disabled`) rather than retrying forever. `run_forever`
+polls every `poll_interval_seconds=30` by default; set it below the shortest
+interval schedule you register so jobs are not delayed by up to a full poll.
+
+**Long-term memory** is opt-in: pass `memory_provider=` to `create_agent`, or
+the CLI `--memory sqlite [--memory-path PATH]`. `post_setup()` runs once on
+first turn; call `await agent.aclose()` (or `async with agent:`) to flush it.
 
 ## Quality bar (applies to every addition)
 
