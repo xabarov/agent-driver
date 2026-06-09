@@ -3,8 +3,46 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from agent_driver.code_agent.contracts import CodeAgentLimits
+
+if TYPE_CHECKING:
+    from agent_driver.contracts.profiles import HarnessProfile
+    from agent_driver.llm.providers import LlmProvider
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilitySettings:
+    """Opt-in capability knobs added by the E1–E8 cross-harness tracks.
+
+    Grouped here (rather than as flat ``RunnerConfig`` fields) so the runner's
+    top-level surface stays small and future capabilities have one obvious home.
+    ``RunnerConfig`` auto-derives this from flat kwargs and exposes delegating
+    properties, so ``RunnerConfig(enable_prompt_cache=True, …)`` and
+    ``config.enable_prompt_cache`` keep working unchanged.
+    """
+
+    enable_prompt_cache: bool = False
+    harness_profiles: tuple["HarnessProfile", ...] = ()
+    auxiliary_provider: "LlmProvider | None" = None
+    auxiliary_model: str | None = None
+    project_memory_sources: tuple[str, ...] = ()
+    tool_concurrency_limit: int | None = None
+    subagent_model_routing: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Preserve the normalization the flat RunnerConfig assignments used to do
+        # (None → empty, coerce containers/bool), now that callers may pass these
+        # via either flat kwargs or a constructed CapabilitySettings.
+        object.__setattr__(self, "enable_prompt_cache", bool(self.enable_prompt_cache))
+        object.__setattr__(self, "harness_profiles", tuple(self.harness_profiles or ()))
+        object.__setattr__(
+            self, "project_memory_sources", tuple(self.project_memory_sources or ())
+        )
+        object.__setattr__(
+            self, "subagent_model_routing", dict(self.subagent_model_routing or {})
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +110,7 @@ class PythonToolSettings:
 
 
 __all__ = [
+    "CapabilitySettings",
     "CodeAgentSettings",
     "CompactionSettings",
     "PythonToolSettings",

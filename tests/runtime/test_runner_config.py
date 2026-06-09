@@ -40,3 +40,57 @@ def test_with_overrides_is_independent() -> None:
     assert clone.observation_max_chars == 22
     # Nested settings are shared (shallow copy) but never mutated.
     assert base.trimming is clone.trimming
+
+
+def test_capability_settings_field_snapshot() -> None:
+    """Lock the capability surface — adding a flat field must be deliberate.
+
+    R1 consolidated the E1–E8 capability flags into CapabilitySettings. This
+    snapshot makes a future flat addition to RunnerConfig a conscious choice
+    (extend CapabilitySettings + this set), not silent sprawl.
+    """
+    from dataclasses import fields
+
+    from agent_driver.runtime.single_agent.lifecycle.config_sections import (
+        CapabilitySettings,
+    )
+
+    assert {f.name for f in fields(CapabilitySettings)} == {
+        "enable_prompt_cache",
+        "harness_profiles",
+        "auxiliary_provider",
+        "auxiliary_model",
+        "project_memory_sources",
+        "tool_concurrency_limit",
+        "subagent_model_routing",
+    }
+
+
+def test_capability_flat_kwargs_and_group_are_equivalent() -> None:
+    """Flat kwargs and an explicit CapabilitySettings produce the same reads."""
+    from agent_driver.runtime.single_agent.lifecycle.config_sections import (
+        CapabilitySettings,
+    )
+
+    flat = RunnerConfig(enable_prompt_cache=True, tool_concurrency_limit=4)
+    grouped = RunnerConfig(
+        capabilities=CapabilitySettings(
+            enable_prompt_cache=True, tool_concurrency_limit=4
+        )
+    )
+    for cfg in (flat, grouped):
+        assert cfg.enable_prompt_cache is True
+        assert cfg.tool_concurrency_limit == 4
+        assert cfg.capabilities.enable_prompt_cache is True
+
+
+def test_capability_defaults_normalized() -> None:
+    """Defaults match the pre-R1 flat behavior (empty containers, False)."""
+    cfg = RunnerConfig()
+    assert cfg.enable_prompt_cache is False
+    assert cfg.harness_profiles == ()
+    assert cfg.project_memory_sources == ()
+    assert cfg.subagent_model_routing == {}
+    assert cfg.auxiliary_provider is None
+    assert cfg.auxiliary_model is None
+    assert cfg.tool_concurrency_limit is None

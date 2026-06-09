@@ -43,20 +43,19 @@ regressions. **Backward compatibility is mandatory** — existing
 
 ## Phases
 
-### R1 — Config consolidation  ·  High value · Low risk
+### R1 — Config consolidation  ·  High value · Low risk  ·  **DONE 2026-06-09**
 
-- [ ] Introduce `CapabilitySettings` (frozen dataclass in
-      `runtime/single_agent/lifecycle/config_sections.py`) holding the seven
-      flat capability fields: `enable_prompt_cache`, `harness_profiles`,
-      `auxiliary_provider`, `auxiliary_model`, `project_memory_sources`,
-      `tool_concurrency_limit`, `subagent_model_routing`.
-- [ ] Wire it into `RunnerConfig` via the existing `_*_FIELDS` auto-derivation
-      pattern (`_CAPABILITY_FIELDS`) so `RunnerConfig(enable_prompt_cache=True, …)`
-      still works unchanged; add **delegating `@property` accessors** so every
-      existing reader (`config.enable_prompt_cache`, etc.) is untouched.
-- [ ] Allow passing the group directly: `RunnerConfig(capabilities=CapabilitySettings(...))`.
-- [ ] Add a `RunnerConfig` field-shape snapshot test (lock the top-level surface
-      so future flat-field additions are a conscious choice).
+- [x] `CapabilitySettings` (frozen dataclass, `config_sections.py`) holds the
+      seven flat capability fields; `__post_init__` preserves the old
+      normalization (None→empty, bool/tuple/dict coercion).
+- [x] Wired into `RunnerConfig` via `_CAPABILITY_FIELDS` auto-derivation +
+      delegating `@property` accessors — flat kwargs and `config.<field>` reads
+      unchanged. `RunnerConfig` top-level dropped 7 fields → 1 (`capabilities`);
+      it is no longer flagged for too-many-attributes.
+- [x] `RunnerConfig(capabilities=CapabilitySettings(...))` supported.
+- [x] Snapshot test locks the `CapabilitySettings` field set (future flat
+      additions are now a deliberate choice) + flat/grouped equivalence +
+      default normalization. All E1–E8 readers/callers pass unchanged.
 
 Decision: group **all seven** into one `CapabilitySettings` (not the narrower
 "model routing" split the audit floated) — one obvious home for future

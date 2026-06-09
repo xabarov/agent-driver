@@ -28,6 +28,7 @@ from agent_driver.runtime.metadata_state import (
     get_tool_loop_state,
 )
 from agent_driver.runtime.single_agent.lifecycle.config_sections import (
+    CapabilitySettings,
     CodeAgentSettings,
     CompactionSettings,
     PythonToolSettings,
@@ -46,6 +47,7 @@ _COMPACTION_FIELDS = {item.name for item in fields(CompactionSettings)}
 _SUBAGENT_FIELDS = {item.name for item in fields(SubagentSettings)}
 _CODE_AGENT_FIELDS = {item.name for item in fields(CodeAgentSettings)}
 _PYTHON_TOOL_FIELDS = {item.name for item in fields(PythonToolSettings)}
+_CAPABILITY_FIELDS = {item.name for item in fields(CapabilitySettings)}
 
 
 @dataclass(init=False)
@@ -75,13 +77,7 @@ class RunnerConfig:
     tool_registry: ToolRegistry | None
     command_queue_store: CommandQueueStore | None
     memory_provider: MemoryProvider | None
-    enable_prompt_cache: bool
-    harness_profiles: tuple[HarnessProfile, ...]
-    auxiliary_provider: LlmProvider | None
-    auxiliary_model: str | None
-    project_memory_sources: tuple[str, ...]
-    tool_concurrency_limit: int | None
-    subagent_model_routing: dict[str, str]
+    capabilities: CapabilitySettings
     lifecycle_hooks: tuple[RunLifecycleHook, ...]
     trimming: TrimmingSettings
     compaction: CompactionSettings
@@ -117,6 +113,13 @@ class RunnerConfig:
                 if key in _PYTHON_TOOL_FIELDS
             }
         )
+        capabilities = kwargs.pop("capabilities", None) or CapabilitySettings(
+            **{
+                key: kwargs.pop(key)
+                for key in list(kwargs)
+                if key in _CAPABILITY_FIELDS
+            }
+        )
         self.graph_id = kwargs.pop("graph_id", "single_agent_runtime")
         self.cancellation_probe = kwargs.pop("cancellation_probe", None)
         self.fail_after_step = kwargs.pop("fail_after_step", None)
@@ -132,17 +135,7 @@ class RunnerConfig:
         self.tool_registry = kwargs.pop("tool_registry", None)
         self.command_queue_store = kwargs.pop("command_queue_store", None)
         self.memory_provider = kwargs.pop("memory_provider", None)
-        self.enable_prompt_cache = bool(kwargs.pop("enable_prompt_cache", False))
-        self.harness_profiles = tuple(kwargs.pop("harness_profiles", ()) or ())
-        self.auxiliary_provider = kwargs.pop("auxiliary_provider", None)
-        self.auxiliary_model = kwargs.pop("auxiliary_model", None)
-        self.project_memory_sources = tuple(
-            kwargs.pop("project_memory_sources", ()) or ()
-        )
-        self.tool_concurrency_limit = kwargs.pop("tool_concurrency_limit", None)
-        self.subagent_model_routing = dict(
-            kwargs.pop("subagent_model_routing", {}) or {}
-        )
+        self.capabilities = capabilities
         self.lifecycle_hooks = tuple(kwargs.pop("lifecycle_hooks", ()) or ())
         self.trimming = trimming
         self.compaction = compaction
@@ -253,6 +246,36 @@ class RunnerConfig:
     @property
     def tool_arg_truncation_max_chars(self) -> int:
         return self.compaction.tool_arg_truncation_max_chars
+
+    # Capability delegating accessors (grouped in CapabilitySettings; kept as
+    # top-level properties so existing readers/callers are unchanged).
+    @property
+    def enable_prompt_cache(self) -> bool:
+        return self.capabilities.enable_prompt_cache
+
+    @property
+    def harness_profiles(self) -> tuple[HarnessProfile, ...]:
+        return self.capabilities.harness_profiles
+
+    @property
+    def auxiliary_provider(self) -> LlmProvider | None:
+        return self.capabilities.auxiliary_provider
+
+    @property
+    def auxiliary_model(self) -> str | None:
+        return self.capabilities.auxiliary_model
+
+    @property
+    def project_memory_sources(self) -> tuple[str, ...]:
+        return self.capabilities.project_memory_sources
+
+    @property
+    def tool_concurrency_limit(self) -> int | None:
+        return self.capabilities.tool_concurrency_limit
+
+    @property
+    def subagent_model_routing(self) -> dict[str, str]:
+        return self.capabilities.subagent_model_routing
 
     @property
     def enable_subagents(self) -> bool:
