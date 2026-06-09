@@ -30,6 +30,7 @@ from agent_driver.llm.providers_impl import (
     OllamaProvider,
     OpenAICompatibleProvider,
 )
+from agent_driver.registry import Registry, RegistryError
 
 
 class ProviderTransport(StrEnum):
@@ -110,28 +111,29 @@ _BUILTIN: tuple[ProviderDescriptor, ...] = (
     ),
 )
 
-_DESCRIPTORS: dict[str, ProviderDescriptor] = {}
+_REGISTRY: Registry[ProviderDescriptor] = Registry(kind="provider")
 
 
 def register_provider_descriptor(
     descriptor: ProviderDescriptor, *, replace_existing: bool = False
 ) -> None:
     """Register a descriptor under its id and aliases."""
-    keys = (descriptor.provider_id, *descriptor.aliases)
-    for key in keys:
-        normalized = key.strip().lower()
-        if not normalized:
-            continue
-        if normalized in _DESCRIPTORS and not replace_existing:
-            raise ProviderResolutionError(
-                f"provider descriptor already registered: {normalized!r}"
-            )
-        _DESCRIPTORS[normalized] = descriptor
+    try:
+        _REGISTRY.register(
+            descriptor.provider_id,
+            descriptor,
+            aliases=descriptor.aliases,
+            replace=replace_existing,
+        )
+    except RegistryError as exc:
+        raise ProviderResolutionError(
+            f"provider descriptor already registered: {descriptor.provider_id!r}"
+        ) from exc
 
 
 def get_provider_descriptor(provider_id: str) -> ProviderDescriptor:
     """Return the descriptor for an id/alias, or raise."""
-    descriptor = _DESCRIPTORS.get((provider_id or "").strip().lower())
+    descriptor = _REGISTRY.try_get(provider_id)
     if descriptor is None:
         raise ProviderResolutionError(
             f"unknown provider {provider_id!r}; known: "
@@ -142,7 +144,7 @@ def get_provider_descriptor(provider_id: str) -> ProviderDescriptor:
 
 def list_provider_ids() -> tuple[str, ...]:
     """Return the canonical ids of registered providers."""
-    return tuple(sorted({d.provider_id for d in _DESCRIPTORS.values()}))
+    return tuple(sorted({d.provider_id for d in _REGISTRY.values()}))
 
 
 def _first_env(env: Mapping[str, str], keys: tuple[str, ...]) -> str | None:
@@ -236,7 +238,7 @@ def _construct(
 
 
 def _reset_descriptors_for_tests() -> None:
-    _DESCRIPTORS.clear()
+    _REGISTRY.clear()
     for descriptor in _BUILTIN:
         register_provider_descriptor(descriptor, replace_existing=True)
 

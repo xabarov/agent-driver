@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime
-from pathlib import Path
 from threading import RLock
 from typing import Any, Protocol
 
@@ -16,6 +14,7 @@ from agent_driver.contracts.validation import (
     ensure_json_serializable,
     ensure_non_negative_int,
 )
+from agent_driver.persistence import SqliteStoreBase
 
 
 class ScheduledJob(ContractModel):
@@ -124,86 +123,54 @@ class InMemoryJobStore:
         return [job for job in self.list() if _is_due(job, now)]
 
 
-class SqliteJobStore:
+class SqliteJobStore(SqliteStoreBase):
     """Durable SQLite-backed job store keyed by ``job_name``."""
 
-    def __init__(self, *, path: str) -> None:
-        self._path = Path(path)
-        self._conn = sqlite3.connect(self._path, check_same_thread=False)
-        self._lock = RLock()
-        if str(self._path) != ":memory:":
-            self._conn.execute("PRAGMA journal_mode=WAL;")
-        self._create_schema()
-
-    def _create_schema(self) -> None:
-        with self._lock:
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS jobs (
-                    job_name TEXT PRIMARY KEY,
-                    payload TEXT NOT NULL
-                )
-                """)
-            self._conn.commit()
+    def _init_schema(self) -> None:
+        self._execute(
+            "CREATE TABLE IF NOT EXISTS jobs "
+            "(job_name TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+        )
 
     def add(self, job: ScheduledJob) -> ScheduledJob:
         """Insert a new job; raise if the name already exists."""
         with self._lock:
-            if self._get_locked(job.job_name) is not None:
+            if self.get(job.job_name) is not None:
                 raise JobExistsError(f"cron job already exists: {job.job_name}")
-            self._write_locked(job)
+            self._write(job)
             return job
 
     def update(self, job: ScheduledJob) -> ScheduledJob:
         """Insert or replace a job by name."""
-        with self._lock:
-            self._write_locked(job)
-            return job
+        self._write(job)
+        return job
 
     def get(self, job_name: str) -> ScheduledJob | None:
         """Return a job by name, or ``None``."""
-        with self._lock:
-            return self._get_locked(job_name)
+        rows = self._query("SELECT payload FROM jobs WHERE job_name = ?", (job_name,))
+        if not rows:
+            return None
+        return ScheduledJob.model_validate(json.loads(rows[0][0]))
 
     def delete(self, job_name: str) -> bool:
         """Delete a job; return whether a row was removed."""
-        with self._lock:
-            cursor = self._conn.execute(
-                "DELETE FROM jobs WHERE job_name = ?", (job_name,)
-            )
-            self._conn.commit()
-            return cursor.rowcount > 0
+        cursor = self._execute("DELETE FROM jobs WHERE job_name = ?", (job_name,))
+        return cursor.rowcount > 0
 
     def list(self) -> list[ScheduledJob]:
         """Return all jobs ordered by name."""
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT payload FROM jobs ORDER BY job_name"
-            ).fetchall()
+        rows = self._query("SELECT payload FROM jobs ORDER BY job_name")
         return [ScheduledJob.model_validate(json.loads(row[0])) for row in rows]
 
     def due(self, now: datetime) -> list[ScheduledJob]:
         """Return enabled jobs due at ``now``."""
         return [job for job in self.list() if _is_due(job, now)]
 
-    def close(self) -> None:
-        """Close the underlying connection."""
-        with self._lock:
-            self._conn.close()
-
-    def _get_locked(self, job_name: str) -> ScheduledJob | None:
-        row = self._conn.execute(
-            "SELECT payload FROM jobs WHERE job_name = ?", (job_name,)
-        ).fetchone()
-        if row is None:
-            return None
-        return ScheduledJob.model_validate(json.loads(row[0]))
-
-    def _write_locked(self, job: ScheduledJob) -> None:
-        self._conn.execute(
+    def _write(self, job: ScheduledJob) -> None:
+        self._execute(
             "INSERT OR REPLACE INTO jobs (job_name, payload) VALUES (?, ?)",
             (job.job_name, json.dumps(job.model_dump(mode="json"))),
         )
-        self._conn.commit()
 
 
 __all__ = [

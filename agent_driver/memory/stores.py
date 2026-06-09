@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-from pathlib import Path
 from threading import RLock
 
 from agent_driver.memory.provider import MemoryKind, MemoryRecord
+from agent_driver.persistence import SqliteStoreBase
 
 
 class InMemoryMemoryStore:
@@ -42,50 +41,33 @@ class InMemoryMemoryStore:
             self._by_session.pop(session_id, None)
 
 
-class SqliteMemoryStore:
+class SqliteMemoryStore(SqliteStoreBase):
     """Durable SQLite-backed memory store keyed by session."""
 
-    def __init__(self, *, path: str) -> None:
-        self._path = Path(path)
-        self._conn = sqlite3.connect(self._path, check_same_thread=False)
-        self._lock = RLock()
-        if str(self._path) != ":memory:":
-            self._conn.execute("PRAGMA journal_mode=WAL;")
-        self._create_schema()
-
-    def _create_schema(self) -> None:
-        with self._lock:
-            self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS memories (
-                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id TEXT NOT NULL,
-                    kind TEXT NOT NULL,
-                    text TEXT NOT NULL,
-                    metadata TEXT NOT NULL
-                )
-                """)
-            self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_memories_session "
-                "ON memories (session_id, seq)"
-            )
-            self._conn.commit()
+    def _init_schema(self) -> None:
+        self._execute(
+            "CREATE TABLE IF NOT EXISTS memories ("
+            "seq INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, "
+            "kind TEXT NOT NULL, text TEXT NOT NULL, metadata TEXT NOT NULL)"
+        )
+        self._execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_session "
+            "ON memories (session_id, seq)"
+        )
 
     def append(self, record: MemoryRecord) -> MemoryRecord:
         """Persist a record; the DB assigns the autoincrement ``seq``."""
-        with self._lock:
-            cursor = self._conn.execute(
-                "INSERT INTO memories (session_id, kind, text, metadata) "
-                "VALUES (?, ?, ?, ?)",
-                (
-                    record.session_id,
-                    record.kind.value,
-                    record.text,
-                    json.dumps(record.metadata),
-                ),
-            )
-            self._conn.commit()
-            seq = int(cursor.lastrowid or 0)
-        return record.model_copy(update={"seq": seq})
+        cursor = self._execute(
+            "INSERT INTO memories (session_id, kind, text, metadata) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                record.session_id,
+                record.kind.value,
+                record.text,
+                json.dumps(record.metadata),
+            ),
+        )
+        return record.model_copy(update={"seq": int(cursor.lastrowid or 0)})
 
     def list_for_session(
         self, session_id: str, *, limit: int | None = None
@@ -99,22 +81,11 @@ class SqliteMemoryStore:
         if limit is not None:
             sql += " LIMIT ?"
             params = (session_id, limit)
-        with self._lock:
-            rows = self._conn.execute(sql, params).fetchall()
-        return [self._row_to_record(row) for row in rows]
+        return [self._row_to_record(row) for row in self._query(sql, params)]
 
     def clear(self, session_id: str) -> None:
         """Drop all records for a session."""
-        with self._lock:
-            self._conn.execute(
-                "DELETE FROM memories WHERE session_id = ?", (session_id,)
-            )
-            self._conn.commit()
-
-    def close(self) -> None:
-        """Close the underlying connection."""
-        with self._lock:
-            self._conn.close()
+        self._execute("DELETE FROM memories WHERE session_id = ?", (session_id,))
 
     @staticmethod
     def _row_to_record(row: tuple) -> MemoryRecord:

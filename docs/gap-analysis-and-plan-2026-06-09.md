@@ -161,6 +161,39 @@ then #4–#10) on the cleaner seams. Track 0 is structural debt paydown, not a
 new feature; if any item over-runs, ship the landed items and defer the rest
 with a dated note here.
 
+## Track 0 round 2 — Architecture, continued (DONE 2026-06-09)
+
+A second debt-paydown pass after the #1–#8/#4/#6 capability tracks surfaced
+repeated patterns:
+
+- **B1 — Shared SQLite plumbing.** Nine stores had re-implemented the same
+  connect / WAL / `RLock` / commit boilerplate. Extracted
+  `agent_driver/persistence/SqliteStoreBase` (connection + lock layer, not a
+  schema; stdlib-only so no import cycle) and moved `SqliteMemoryStore` and
+  `SqliteJobStore` onto it. The 7 pre-existing bespoke stores are left as-is;
+  the base is the convention for new SQLite backends.
+- **B2 — `docs/extending.md`.** The standard subsystem shape (contracts model →
+  `Protocol` → backends → runtime adapter), a table mapping each extension
+  seam to when to use it (lifecycle hook / tool gate / guardrail / hook chain /
+  memory provider / job store / provider descriptor), package layout, and the
+  shared primitives to reuse. Linked from `roadmap.md`.
+- **B3 — Shared registry.** `agent_driver/registry.Registry` (case-insensitive
+  keys, aliases, duplicate protection, identity-deduped `values()`) replaces
+  the ad-hoc module dict in `provider_descriptors`.
+- **B4 — Pre-existing failure triage.** Fixed the two cheap doc-sync guards
+  (`toolset_docs_sync` — documented the `source_tools` pack;
+  `runtime_metadata_inventory` — documented 23 drifted `deep_research_*` /
+  misc keys). The remaining 11 reds are pre-existing test-fixture/expectation
+  drift in areas untouched by these tracks (`test_llm_step_system_prompt` and
+  `deep_research`/`research_contract` use `SimpleNamespace` contexts missing
+  `.metadata`; `test_phoenix_helpers` stubs a fake `phoenix` module;
+  `react_base_policy` expects specific prompt text). Left for their owners
+  rather than blindly mutating behavioral assertions; not regressions from this
+  work (verified identical on a clean checkout).
+
+Net: suite went 13 → 11 reds, all remaining pre-existing; new primitives are
+pylint 10/10 with their own tests.
+
 ## Track A (active) — Provider Error Taxonomy + Smart Failover (gap #3)
 
 Goal: the router/runtime acts on *why* a provider failed instead of
