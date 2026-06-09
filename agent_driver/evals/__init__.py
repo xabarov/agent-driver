@@ -13,6 +13,14 @@ from agent_driver.evals.compare import (
     render_comparison,
     run_comparison,
 )
+from agent_driver.evals.presets import (
+    DEFAULT_TEMPERATURE,
+    OPENWEIGHT_MODELS,
+    OpenWeightPreset,
+    openweight_preset,
+    openweight_provider_spec,
+)
+from agent_driver.evals.suites import general_task_suite, suite_categories
 from agent_driver.evals.context_quality import (
     ContextQualityFixture,
     build_synthetic_context_quality_fixture,
@@ -73,6 +81,13 @@ __all__ = [
     "render_comparison",
     "run_comparison",
     "percentile",
+    "DEFAULT_TEMPERATURE",
+    "OPENWEIGHT_MODELS",
+    "OpenWeightPreset",
+    "openweight_preset",
+    "openweight_provider_spec",
+    "general_task_suite",
+    "suite_categories",
     "build_support_bundle",
     "ContextQualityFixture",
     "build_synthetic_context_quality_fixture",

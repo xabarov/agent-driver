@@ -52,6 +52,7 @@ class BatchRunner:
         store: TrajectoryStore | None = None,
         resume: bool = False,
         repeats: int = 1,
+        max_total_cost_usd: float | None = None,
     ) -> BatchReport:
         """Run all items concurrently and return an aggregate report.
 
@@ -59,6 +60,11 @@ class BatchRunner:
         reliability; the returned report and any store then hold ``items ×
         repeats`` trajectories. Resume-skipping keys on ``item_id`` (a resumed
         item is skipped for all repeats).
+
+        ``max_total_cost_usd`` caps cumulative estimated spend: once exceeded,
+        not-yet-started runs are recorded as ``status="skipped_budget"`` instead
+        of querying. The cap is best-effort under concurrency (in-flight runs
+        finish), so actual spend may exceed it by up to one wave of runs.
         """
         if repeats < 1:
             raise ValueError("repeats must be >= 1")
@@ -71,10 +77,22 @@ class BatchRunner:
             skipped = before - len(pending)
 
         semaphore = asyncio.Semaphore(self._concurrency)
+        spent = 0.0
 
         async def _run_one(item: BatchItem, run_index: int) -> Trajectory:
+            nonlocal spent
             async with semaphore:
-                trajectory = await self._run_item(item, run_index=run_index)
+                if max_total_cost_usd is not None and spent >= max_total_cost_usd:
+                    trajectory = Trajectory(
+                        item_id=item.item_id,
+                        run_id=f"batch_{item.item_id}_{run_index}",
+                        status="skipped_budget",
+                        run_index=run_index,
+                        metadata=item.metadata,
+                    )
+                else:
+                    trajectory = await self._run_item(item, run_index=run_index)
+                    spent += trajectory.cost_usd or 0.0
             if store is not None:
                 store.append(trajectory)
             return trajectory
