@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-
 from agent_driver.contracts.control import (
     CommandQueueItem,
     CommandQueueStatus,
@@ -12,6 +9,7 @@ from agent_driver.contracts.control import (
     ControlRequest,
     utc_now_iso,
 )
+from agent_driver.persistence import SqliteStoreBase
 
 _PRIORITY_ORDER = {
     ControlPriority.NOW: 0,
@@ -20,14 +18,8 @@ _PRIORITY_ORDER = {
 }
 
 
-class SqliteCommandQueueStore:
+class SqliteCommandQueueStore(SqliteStoreBase):
     """SQLite-backed command queue store."""
-
-    def __init__(self, *, path: str) -> None:
-        self._path = Path(path)
-        self._conn = sqlite3.connect(self._path, check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL;")
-        self._create_schema()
 
     def __deepcopy__(self, memo: dict) -> "SqliteCommandQueueStore":
         """Return self — the store wraps a shared SQLite connection.
@@ -40,8 +32,8 @@ class SqliteCommandQueueStore:
         memo[id(self)] = self
         return self
 
-    def _create_schema(self) -> None:
-        self._conn.execute("""
+    def _init_schema(self) -> None:
+        self._execute("""
             CREATE TABLE IF NOT EXISTS command_queue (
                 queue_id TEXT PRIMARY KEY,
                 control_id TEXT NOT NULL,
@@ -57,7 +49,6 @@ class SqliteCommandQueueStore:
                 payload TEXT NOT NULL
             )
             """)
-        self._conn.commit()
 
     def enqueue(self, request: ControlRequest) -> CommandQueueItem:
         """Persist a new queued command or return a deduped pending one."""
@@ -70,13 +61,13 @@ class SqliteCommandQueueStore:
 
     def get(self, queue_id: str) -> CommandQueueItem | None:
         """Return one command by id."""
-        row = self._conn.execute(
+        rows = self._query(
             "SELECT payload FROM command_queue WHERE queue_id = ?",
             (queue_id,),
-        ).fetchone()
-        if row is None:
+        )
+        if not rows:
             return None
-        return CommandQueueItem.model_validate_json(row[0])
+        return CommandQueueItem.model_validate_json(rows[0][0])
 
     def list_pending(
         self,
@@ -86,14 +77,14 @@ class SqliteCommandQueueStore:
         agent_id: str | None = None,
     ) -> list[CommandQueueItem]:
         """Return queued commands ordered by priority and insertion order."""
-        rows = self._conn.execute(
+        rows = self._query(
             """
             SELECT payload FROM command_queue
             WHERE status = ?
             ORDER BY created_at ASC, queue_id ASC
             """,
             (CommandQueueStatus.QUEUED.value,),
-        ).fetchall()
+        )
         items = [
             item
             for (payload,) in rows
@@ -172,7 +163,7 @@ class SqliteCommandQueueStore:
         return updated
 
     def _upsert(self, item: CommandQueueItem) -> None:
-        self._conn.execute(
+        self._execute(
             """
             INSERT OR REPLACE INTO command_queue (
                 queue_id, control_id, run_id, thread_id, agent_id, priority, kind,
@@ -195,7 +186,6 @@ class SqliteCommandQueueStore:
                 item.model_dump_json(),
             ),
         )
-        self._conn.commit()
 
     def _dedupe_match(self, request: ControlRequest) -> CommandQueueItem | None:
         if not request.dedupe_key:

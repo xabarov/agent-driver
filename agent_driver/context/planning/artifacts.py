@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import hashlib
-import sqlite3
 from pathlib import Path
 from typing import Protocol
 
 from agent_driver.contracts.context import PlanArtifact
 from agent_driver.contracts.enums import PlanningModeState
+from agent_driver.persistence import SqliteStoreBase
 
 
 def utc_now_iso() -> str:
@@ -60,18 +60,16 @@ class InMemoryPlanArtifactStore(PlanArtifactStore):
         ]
 
 
-class SqlitePlanArtifactStore(PlanArtifactStore):
+class SqlitePlanArtifactStore(SqliteStoreBase, PlanArtifactStore):
     """SQLite plan artifact store for local durable approval workflows."""
 
     def __init__(self, *, path: str) -> None:
-        self._path = Path(path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self._path, check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL;")
-        self._create_schema()
+        if path != ":memory:":
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        super().__init__(path=path)
 
-    def _create_schema(self) -> None:
-        self._conn.execute("""
+    def _init_schema(self) -> None:
+        self._execute("""
             CREATE TABLE IF NOT EXISTS plan_artifacts (
                 plan_id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL,
@@ -79,11 +77,10 @@ class SqlitePlanArtifactStore(PlanArtifactStore):
                 payload TEXT NOT NULL
             )
             """)
-        self._conn.commit()
 
     def put(self, artifact: PlanArtifact) -> PlanArtifact:
         """Create or replace a plan artifact."""
-        self._conn.execute(
+        self._execute(
             """
             INSERT OR REPLACE INTO plan_artifacts (
                 plan_id, run_id, created_at, payload
@@ -97,29 +94,28 @@ class SqlitePlanArtifactStore(PlanArtifactStore):
                 artifact.model_dump_json(),
             ),
         )
-        self._conn.commit()
         return artifact
 
     def get(self, plan_id: str) -> PlanArtifact | None:
         """Load one plan artifact by id."""
-        row = self._conn.execute(
+        rows = self._query(
             "SELECT payload FROM plan_artifacts WHERE plan_id = ?",
             (plan_id,),
-        ).fetchone()
-        if row is None:
+        )
+        if not rows:
             return None
-        return PlanArtifact.model_validate_json(row[0])
+        return PlanArtifact.model_validate_json(rows[0][0])
 
     def list_for_run(self, run_id: str) -> list[PlanArtifact]:
         """List artifacts for a run in creation order."""
-        rows = self._conn.execute(
+        rows = self._query(
             """
             SELECT payload FROM plan_artifacts
             WHERE run_id = ?
             ORDER BY created_at ASC, plan_id ASC
             """,
             (run_id,),
-        ).fetchall()
+        )
         return [PlanArtifact.model_validate_json(payload) for (payload,) in rows]
 
 
