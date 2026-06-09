@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from time import monotonic
 
@@ -24,6 +25,7 @@ from agent_driver.observability.openinference import (
 )
 from agent_driver.runtime.abort import RunAbortHandle  # noqa: F401
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.lifecycle_hooks import dispatch_error
 from agent_driver.runtime.metadata_state import get_loop_control_state
 from agent_driver.runtime.single_agent.finalization.output import SingleAgentOutputMixin
 from agent_driver.runtime.single_agent.lifecycle.journal import SingleAgentJournalMixin
@@ -50,6 +52,8 @@ from agent_driver.subagents.store import InMemorySubagentStore
 from agent_driver.tools import register_builtin_tools, register_planning_tool
 from agent_driver.tools.context import workspace_cwd_scope
 from agent_driver.tools.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class SingleAgentRunner(
@@ -177,9 +181,30 @@ class SingleAgentRunner(
             _annotate_run_span_input(run_span, run_input)
             try:
                 output = await self._drive_steps(context)
+                await self._dispatch_run_error(context, output)
                 return output
             finally:
                 _annotate_run_span_output(run_span, output)
+
+    async def _dispatch_run_error(
+        self, context: _RunContext, output: AgentRunOutput
+    ) -> None:
+        """Notify lifecycle hooks when a run terminated in failure.
+
+        User-cancelled runs are excluded (nothing to self-heal). Hook
+        exceptions are swallowed: the run already failed and a recovery hook
+        must not mask the original outcome.
+        """
+        if output.status not in (RunStatus.FAILED, RunStatus.TIMED_OUT):
+            return
+        hooks = self._deps.lifecycle_hooks
+        if not hooks:
+            return
+        events = self._deps.event_log.list_for_run(context.run_id)
+        try:
+            await dispatch_error(hooks, context, output=output, events=events)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("run lifecycle on_error hook failed")
 
     async def _drive_steps(self, context: _RunContext) -> AgentRunOutput:
         """Drive the deterministic step loop to a terminal output.

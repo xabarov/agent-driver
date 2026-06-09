@@ -54,8 +54,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from agent_driver.contracts.events import RuntimeEvent
 from agent_driver.contracts.enums import RuntimeEventType
+from agent_driver.contracts.events import RuntimeEvent
 from agent_driver.contracts.hook_chains import (
     HookActionType,
     HookChainConfig,
@@ -196,8 +196,7 @@ class HookChainExecutor:
                 # than raise; an SDK upgrade may add new kinds the
                 # host hasn't taught the executor yet.
                 logger.warning(
-                    "hook_chain rule %r has unsupported action type %r; "
-                    "skipping",
+                    "hook_chain rule %r has unsupported action type %r; skipping",
                     rule.name,
                     rule.action.type,
                 )
@@ -241,9 +240,7 @@ class HookChainExecutor:
         return False
 
     @staticmethod
-    def _condition_matches(
-        condition: HookCondition, event: RuntimeEvent
-    ) -> bool:
+    def _condition_matches(condition: HookCondition, event: RuntimeEvent) -> bool:
         error_text = _extract_error_text(event.payload or {})
         if condition.error_includes is not None:
             if condition.error_includes.lower() not in error_text.lower():
@@ -328,8 +325,7 @@ def _payload_indicates_failure(payload: dict[str, Any]) -> bool:
     statuses = payload.get("statuses")
     if isinstance(statuses, list):
         return any(
-            isinstance(s, str) and s.lower() in {"failed", "denied"}
-            for s in statuses
+            isinstance(s, str) and s.lower() in {"failed", "denied"} for s in statuses
         )
     status = payload.get("status")
     if isinstance(status, str):
@@ -341,10 +337,7 @@ def _payload_indicates_failure(payload: dict[str, Any]) -> bool:
 def _payload_indicates_timeout(payload: dict[str, Any]) -> bool:
     statuses = payload.get("statuses")
     if isinstance(statuses, list):
-        return any(
-            isinstance(s, str) and s.lower() == "timed_out"
-            for s in statuses
-        )
+        return any(isinstance(s, str) and s.lower() == "timed_out" for s in statuses)
     status = payload.get("status")
     if isinstance(status, str):
         return status.lower() == "timed_out"
@@ -391,6 +384,23 @@ def _extract_error_text(payload: dict[str, Any]) -> str:
     return " ".join(pieces)
 
 
+def placeholders_for_event(
+    event: RuntimeEvent, *, original_question: str = ""
+) -> dict[str, str]:
+    """Build the standard template placeholders from one runtime event.
+
+    Reuses the same tolerant payload introspection the executor uses for
+    matching, so a rule's ``prompt_template`` can reference ``{tool_name}`` /
+    ``{error_message}`` / ``{original_question}`` for any failure event shape.
+    """
+    payload = event.payload or {}
+    return HookChainExecutor.default_placeholders(
+        tool_name=_extract_tool_name(payload),
+        error_message=_extract_error_text(payload) or None,
+        original_question=original_question or None,
+    )
+
+
 def _safe_format(template: str, placeholders: Mapping[str, str]) -> str:
     """``str.format_map`` with missing-key fallback to empty string.
 
@@ -409,4 +419,5 @@ def _safe_format(template: str, placeholders: Mapping[str, str]) -> str:
 __all__ = [
     "FallbackSpec",
     "HookChainExecutor",
+    "placeholders_for_event",
 ]

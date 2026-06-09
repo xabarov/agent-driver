@@ -18,12 +18,14 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from agent_driver.contracts.events import RuntimeEvent
+    from agent_driver.contracts.runtime import AgentRunOutput
     from agent_driver.runtime.single_agent.types import RunContext
 
 
 @runtime_checkable
 class RunLifecycleHook(Protocol):
-    """Observer of run boundaries. Either method may be a no-op."""
+    """Observer of run boundaries. Any method may be a no-op."""
 
     name: str
 
@@ -32,6 +34,20 @@ class RunLifecycleHook(Protocol):
 
     async def on_finalize(self, context: "RunContext", *, answer: str) -> None:
         """Called once when a run reaches its terminal final answer."""
+
+    async def on_error(
+        self,
+        context: "RunContext",
+        *,
+        output: "AgentRunOutput",
+        events: "list[RuntimeEvent]",
+    ) -> None:
+        """Called once when a run terminates in failure / timeout.
+
+        ``events`` is the run's emitted event log, so a hook can react to the
+        specific tool failures and the terminal ``RUN_FAILED`` (e.g. a hook
+        chain spawning a fallback). Not called for user-cancelled runs.
+        """
 
 
 class BaseRunLifecycleHook:
@@ -44,6 +60,15 @@ class BaseRunLifecycleHook:
 
     async def on_finalize(self, context: "RunContext", *, answer: str) -> None:
         """No-op finalize hook; override to react to the final answer."""
+
+    async def on_error(
+        self,
+        context: "RunContext",
+        *,
+        output: "AgentRunOutput",
+        events: "list[RuntimeEvent]",
+    ) -> None:
+        """No-op error hook; override to react to a failed run."""
 
 
 async def dispatch_run_start(
@@ -62,9 +87,22 @@ async def dispatch_finalize(
         await hook.on_finalize(context, answer=answer)
 
 
+async def dispatch_error(
+    hooks: Iterable[RunLifecycleHook],
+    context: "RunContext",
+    *,
+    output: "AgentRunOutput",
+    events: "list[RuntimeEvent]",
+) -> None:
+    """Invoke ``on_error`` for each hook in order."""
+    for hook in hooks:
+        await hook.on_error(context, output=output, events=events)
+
+
 __all__ = [
     "BaseRunLifecycleHook",
     "RunLifecycleHook",
+    "dispatch_error",
     "dispatch_finalize",
     "dispatch_run_start",
 ]

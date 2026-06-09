@@ -9,7 +9,11 @@ from agent_driver.runtime.execution_proof import (
     has_real_execution_proof,
     summarize_execution_proof,
 )
-from agent_driver.runtime.hook_chains import FallbackSpec, HookChainExecutor
+from agent_driver.runtime.hook_chains import (
+    FallbackSpec,
+    HookChainExecutor,
+    placeholders_for_event,
+)
 from agent_driver.runtime.planning_check import (
     PLANNING_TOOL_NAMES,
     data_tool_called,
@@ -28,6 +32,9 @@ from agent_driver.runtime.postgres_store import (
     PostgresRuntimeStoreConfig,
 )
 from agent_driver.runtime.runner import FakeSingleStepRunner, SingleAgentRunner
+from agent_driver.runtime.single_agent.lifecycle.hook_chain_hook import (
+    HookChainLifecycleHook,
+)
 from agent_driver.runtime.single_agent.types import RunnerConfig, RuntimeStepResult
 from agent_driver.runtime.sqlite_store import SqliteRuntimeStore
 from agent_driver.runtime.state import RuntimeState
@@ -69,6 +76,8 @@ __all__ = [
     "SqliteRuntimeStore",
     "FallbackSpec",
     "HookChainExecutor",
+    "HookChainLifecycleHook",
+    "placeholders_for_event",
     "ExecutionProof",
     "has_real_execution_proof",
     "MissingCheckpointError",

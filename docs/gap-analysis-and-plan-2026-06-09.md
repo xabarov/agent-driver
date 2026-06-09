@@ -266,6 +266,33 @@ gateway, gap #6); pre-run script injection; postgres job store. The host still
 owns the `JobRunner` (e.g. wiring it to `agent.query(job.command)`) and the
 process that calls `tick`/`run_forever`.
 
+## Track #5 (DONE 2026-06-09) — Hook-Chain Self-Healing
+
+The declarative hook-chain machinery already existed
+(`contracts/hook_chains.py` + `runtime/hook_chains.py`'s `HookChainExecutor`)
+but was dormant — host-driven `observe` with nothing in the loop feeding it.
+Wired it in through the A1 lifecycle seam:
+
+- Extended `RunLifecycleHook` with `on_error(context, *, output, events)` and
+  `dispatch_error`; `SingleAgentRunner.run` dispatches it when a run terminates
+  `FAILED`/`TIMED_OUT` (not user-cancelled), passing the run's event log. Hook
+  exceptions are isolated so a recovery hook can't mask the original failure.
+- Added `placeholders_for_event` to `runtime/hook_chains.py` and
+  `HookChainLifecycleHook` (`runtime/single_agent/lifecycle/hook_chain_hook.py`):
+  on failure it replays the run's events through a fresh per-run
+  `HookChainExecutor` and hands each matched `FallbackSpec` to a host-supplied
+  `spawn` callback (per-spawn error isolation). Spawning stays the host's job
+  (it owns `run_subagent`), matching the executor's original design. Exported
+  from `agent_driver.runtime`.
+
+Acceptance (tests/runtime/test_hook_chain_lifecycle.py): a real run driven to
+`FAILED` (max steps) dispatches `on_error`, the configured `run_failed` rule
+fires, and the rendered fallback reaches the spawn callback; depth limits and
+spawn-error isolation hold.
+
+Cooldown/depth budgets are run-scoped (fresh executor per run). The existing
+`tests/runtime/test_hook_chains.py` executor coverage is unchanged.
+
 ## Sequencing rationale
 
 Track A is highest-leverage and lowest-risk: it is local to `llm/`,
