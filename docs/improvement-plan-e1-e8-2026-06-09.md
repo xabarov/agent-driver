@@ -267,8 +267,11 @@ explicit go-ahead on scope:
       not confused). Combines with the existing tool/command predicates. Tested.
 - [ ] **Skills curator**: auto-generate + lifecycle-manage skills
       (active→stale→archived, dedupe).  Ref: hermes `/agent/curator.py`.
-- [ ] **PrivateStateAttr marking**: exclude internal middleware bookkeeping from
-      I/O schemas.  Ref: deepagents `PrivateStateAttr`.
+- [x] **PrivateStateAttr marking** — **N/A (already satisfied) 2026-06-09**:
+      `AgentRunOutput.metadata` is built from an explicit allowlist in
+      `finalization/output.py` `_terminal_metadata` (not a full `context.metadata`
+      dump), so internal bookkeeping keys already don't leak. A separate
+      mark-to-exclude mechanism would be redundant.
 - [ ] **Prompt-cache base↔memory split (D5 leftover)**: separate static base
       from per-session memory so memory churn doesn't invalidate the base cache.
 
