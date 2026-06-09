@@ -98,6 +98,15 @@ interval schedule you register so jobs are not delayed by up to a full poll.
 the CLI `--memory sqlite [--memory-path PATH]`. `post_setup()` runs once on
 first turn; call `await agent.aclose()` (or `async with agent:`) to flush it.
 
+**Anthropic prompt caching** is opt-in via `RunnerConfig(enable_prompt_cache=True)`
+(CLI `--prompt-cache`; no-op for non-Anthropic providers). It places ephemeral
+`cache_control` breakpoints at three assembly tiers — the tools catalog, the
+system prompt, and the conversation prefix (the last message) — so each tier
+unchanged next turn is billed at cache-read rates. Watch the payoff via the
+cost ledger's `cache_hit_rate()` (see N1 cost governance). Anthropic ignores
+breakpoints below its per-model minimum (≈1024 tokens), so short turns cache
+nothing — expect gains on long system prompts / multi-turn chats.
+
 ## Quality bar (applies to every addition)
 
 - A new package is dependency-light; heavy/optional deps go behind an extra.

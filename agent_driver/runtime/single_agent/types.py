@@ -74,6 +74,7 @@ class RunnerConfig:
     tool_registry: ToolRegistry | None
     command_queue_store: CommandQueueStore | None
     memory_provider: MemoryProvider | None
+    enable_prompt_cache: bool
     lifecycle_hooks: tuple[RunLifecycleHook, ...]
     trimming: TrimmingSettings
     compaction: CompactionSettings
@@ -124,6 +125,7 @@ class RunnerConfig:
         self.tool_registry = kwargs.pop("tool_registry", None)
         self.command_queue_store = kwargs.pop("command_queue_store", None)
         self.memory_provider = kwargs.pop("memory_provider", None)
+        self.enable_prompt_cache = bool(kwargs.pop("enable_prompt_cache", False))
         self.lifecycle_hooks = tuple(kwargs.pop("lifecycle_hooks", ()) or ())
         self.trimming = trimming
         self.compaction = compaction

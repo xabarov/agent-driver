@@ -54,6 +54,7 @@ class LlmRequestBuildContext:
     tool_choice: str | dict[str, Any] | None = None
     response_format: dict[str, Any] | None = None
     request_allowed_tools: tuple[str, ...] | None = None
+    enable_prompt_cache: bool = False
 
 
 def _normalize_trimmed_messages(
@@ -317,6 +318,7 @@ def build_single_agent_llm_request(
         ),
         tool_choice=ctx.tool_choice,
         response_format=response_format,
+        enable_prompt_cache=ctx.enable_prompt_cache,
         metadata=request_metadata,
     )
     trim_metadata = trimmed.model_dump(mode="json").get("metadata", {})

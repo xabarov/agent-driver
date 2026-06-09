@@ -120,7 +120,10 @@ async def run_command(
         checkpoint_store=bundle.checkpoint_store,
         event_log=bundle.event_log,
         memory_provider=_memory_provider_from_args(args),
-        config=RunnerConfig(python_tool=_python_settings_from_args(args)),
+        config=RunnerConfig(
+            python_tool=_python_settings_from_args(args),
+            enable_prompt_cache=bool(getattr(args, "prompt_cache", False)),
+        ),
     )
     tool_gate = _permission_gate_from_args(args)
     run_id = args.run_id or f"run_{uuid.uuid4().hex[:12]}"
@@ -198,6 +201,7 @@ async def chat_command(
             enable_session_memory_compaction=True,
             python_tool=_python_settings_from_args(args),
             include_planning_prompt="todo_write" in tool_names,
+            enable_prompt_cache=bool(getattr(args, "prompt_cache", False)),
         ),
     )
     tool_gate = _permission_gate_from_args(args)

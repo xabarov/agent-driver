@@ -198,6 +198,7 @@ def build_trimmed_request(
                 else (tool_choice if isinstance(tool_choice, dict) else None)
             ),
             request_allowed_tools=request_allowed_tools,
+            enable_prompt_cache=host._config.enable_prompt_cache,
         )
     )
 

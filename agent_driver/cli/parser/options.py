@@ -190,6 +190,15 @@ def add_capability_options(parser: argparse.ArgumentParser) -> None:
             "dangerous+ and asks on caution (default: yolo)."
         ),
     )
+    parser.add_argument(
+        "--prompt-cache",
+        action="store_true",
+        help=(
+            "Enable Anthropic prompt caching (cache_control breakpoints on "
+            "tools, system and the conversation prefix). No-op for other "
+            "providers."
+        ),
+    )
 
 
 __all__ = [
