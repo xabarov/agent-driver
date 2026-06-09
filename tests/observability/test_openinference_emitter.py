@@ -4,6 +4,10 @@ conventions Phoenix needs (span kind, input/output, llm/tool attrs, status)."""
 from __future__ import annotations
 
 import pytest
+
+# OpenTelemetry is an optional observability extra; skip cleanly when absent.
+pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -64,7 +68,9 @@ def test_tool_span_with_error_status(exporter):
             arguments={"spec": {"mark": "bar"}},
             call_id="call_1",
         )
-        oi.record_status(span, ok=False, description="concurrent operations not permitted")
+        oi.record_status(
+            span, ok=False, description="concurrent operations not permitted"
+        )
     s = _only(exporter)
     a = s.attributes
     assert a["openinference.span.kind"] == "TOOL"

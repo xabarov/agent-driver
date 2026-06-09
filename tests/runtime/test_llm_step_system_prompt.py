@@ -347,7 +347,8 @@ def test_react_system_prompt_includes_workspace_cwd_when_present() -> None:
             agent_id="agent",
             graph_preset="single_react",
             app_metadata={"workspace_cwd": "/tmp/workspace"},
-        )
+        ),
+        metadata={},
     )
     instruction = _react_system_instruction(host, context)
     assert instruction is not None
@@ -375,7 +376,8 @@ def test_react_system_prompt_includes_python_addendum_when_tool_enabled() -> Non
             input="hello",
             agent_id="agent",
             graph_preset="single_react",
-        )
+        ),
+        metadata={},
     )
     instruction = _react_system_instruction(host, context)
     assert instruction is not None
@@ -408,7 +410,8 @@ def test_react_system_prompt_omits_python_addendum_when_disabled() -> None:
             input="hello",
             agent_id="agent",
             graph_preset="single_react",
-        )
+        ),
+        metadata={},
     )
     instruction = _react_system_instruction(host, context)
     assert instruction is not None

@@ -5,6 +5,10 @@ LLM/TOOL/subagent spans (so Phoenix groups a run under one trace root)."""
 from __future__ import annotations
 
 import pytest
+
+# OpenTelemetry is an optional observability extra; skip cleanly when absent.
+pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
+
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (

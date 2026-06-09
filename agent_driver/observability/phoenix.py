@@ -62,16 +62,27 @@ def setup_phoenix_tracing(config: PhoenixTracingConfig) -> dict[str, object]:
             "batch": config.batch,
         }
         if config.collector_endpoint:
-            _TRACING_ENDPOINT = normalize_phoenix_http_endpoint(config.collector_endpoint)
+            _TRACING_ENDPOINT = normalize_phoenix_http_endpoint(
+                config.collector_endpoint
+            )
             kwargs["endpoint"] = _TRACING_ENDPOINT
             kwargs["protocol"] = "http/protobuf"
         # arize-phoenix-otel's register() signature drifts across versions
         # (older releases lack ``auto_instrument`` / ``protocol``). Pass only the
         # kwargs the installed version actually accepts so tracing setup doesn't
         # hard-fail on a version mismatch — the unsupported knobs simply fall
-        # back to that version's defaults.
-        accepted = set(inspect.signature(register).parameters)
-        register(**{k: v for k, v in kwargs.items() if k in accepted})
+        # back to that version's defaults. A ``**kwargs`` register accepts
+        # everything, so pass the full set in that case.
+        signature = inspect.signature(register)
+        accepts_var_keyword = any(
+            param.kind is inspect.Parameter.VAR_KEYWORD
+            for param in signature.parameters.values()
+        )
+        if accepts_var_keyword:
+            register(**kwargs)
+        else:
+            accepted = set(signature.parameters)
+            register(**{k: v for k, v in kwargs.items() if k in accepted})
         _TRACING_READY = True
     except Exception as exc:  # pragma: no cover - optional dependency fallback
         _TRACING_ERROR = str(exc)
