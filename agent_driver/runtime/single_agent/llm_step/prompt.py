@@ -196,7 +196,11 @@ def _project_memory_block(host: LlmPromptHost, context: RunContext) -> str:
     from agent_driver.context.project_memory import load_project_memory
 
     # load_project_memory runs the E3 ingestion scanner per file internally.
-    block = load_project_memory(tuple(sources)).block
+    block = load_project_memory(
+        tuple(sources),
+        max_file_chars=host._config.project_memory_max_file_chars,
+        max_total_chars=host._config.project_memory_max_total_chars,
+    ).block
     context.metadata["project_memory_block"] = block
     return block
 

@@ -78,20 +78,23 @@ Decision: did **not** add a builder/extra capability kwargs to `create_agent` �
 the `capabilities=CapabilitySettings(...)` config arg from R1 plus the default
 gate already cover the one-stop wiring without a heavyweight class.
 
-### R3 — Review-cycle-3 self-audit fixes  ·  Med value · Low risk
+### R3 — Review-cycle-3 self-audit fixes  ·  Med value · Low risk  ·  **DONE 2026-06-09**
 
-- [ ] Wire the E3 scanner (`security/context_scan.py`) into the **skills loader**
-      and **recalled long-term memory** rendering (the E3 follow-up) — same
-      one-line seam used for project memory.
-- [ ] Expose project-memory size caps (`max_file_chars`, `max_total_chars`) via
-      `CapabilitySettings` instead of function-only defaults.
-- [ ] `evals/suites.py`: allow a caller-supplied suite (keep the built-in
-      general suite as default) — small factory hook, no SuiteRegistry needed.
-- [ ] Optional: a second open-weight tier set / note in `presets.py`; document
-      `HarnessProfile` case-insensitive `match_models` in its docstring.
+- [x] Wired the E3 scanner into **recalled long-term memory** (`render_recall_block`
+      scrubs each record, substituting a placeholder on a hit) and **untrusted
+      skills** (`view_skill` scans non-`trusted` skill bodies; trusted, author-
+      controlled skills pass through). Closes the E3 follow-up.
+- [x] Exposed project-memory size caps via `CapabilitySettings`
+      (`project_memory_max_file_chars` / `project_memory_max_total_chars`),
+      threaded into the prompt-build loader; snapshot test updated.
+- [x] Documented `HarnessProfile` case-insensitive `match_models` in its docstring.
+- [x] Tests: recall-block scrub, untrusted-skill withhold, trusted/clean
+      passthrough.
 
-Keep R3 tight — only the items that reduce real risk or close an explicit
-follow-up. Defer anything speculative.
+Not done (already satisfied / deferred): `evals/suites.py` extensibility —
+`run_comparison`/`BatchRunner` already accept any caller-supplied `list[BatchItem]`,
+so the built-in `general_task_suite()` is just the default; no extra hook needed.
+A second `presets.py` tier set deferred (no demand yet).
 
 ### R4 — Docs + cookbook  ·  Med value · Low risk
 

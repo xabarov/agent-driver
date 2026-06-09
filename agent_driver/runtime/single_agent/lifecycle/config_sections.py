@@ -28,6 +28,8 @@ class CapabilitySettings:
     auxiliary_provider: "LlmProvider | None" = None
     auxiliary_model: str | None = None
     project_memory_sources: tuple[str, ...] = ()
+    project_memory_max_file_chars: int = 8000
+    project_memory_max_total_chars: int = 24000
     tool_concurrency_limit: int | None = None
     subagent_model_routing: dict[str, str] = field(default_factory=dict)
 

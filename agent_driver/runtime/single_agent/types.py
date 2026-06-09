@@ -270,6 +270,14 @@ class RunnerConfig:
         return self.capabilities.project_memory_sources
 
     @property
+    def project_memory_max_file_chars(self) -> int:
+        return self.capabilities.project_memory_max_file_chars
+
+    @property
+    def project_memory_max_total_chars(self) -> int:
+        return self.capabilities.project_memory_max_total_chars
+
+    @property
     def tool_concurrency_limit(self) -> int | None:
         return self.capabilities.tool_concurrency_limit
 

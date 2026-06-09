@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agent_driver.security.context_scan import scan_context_text
 from agent_driver.skills.models import SkillInvocation, SkillManifest
 from agent_driver.skills.parser import SKILL_FILENAME, load_skill_manifest
 
@@ -90,6 +91,13 @@ def view_skill(
     if len(content) > max_chars:
         content = content[:max_chars]
         truncated = True
+    # E3: untrusted skill files are ingested into the prompt — scan them and
+    # substitute a blocking placeholder on an injection/C2 hit. Trusted skills
+    # are author-controlled and pass through unchanged.
+    if not manifest.trusted:
+        scan = scan_context_text(content, source=f"skill:{manifest.name}")
+        if scan.flagged:
+            content = scan.safe_text
     invocation = SkillInvocation(
         name=manifest.name,
         path=manifest.path,

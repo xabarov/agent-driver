@@ -80,9 +80,9 @@ class HarnessProfile(ContractModel):
     USER-assembled core), drops ``excluded_tools`` from the model-visible
     catalog, and rewrites tool descriptions via ``tool_description_overrides``.
 
-    ``match_models`` is a tuple of ``fnmatch`` globs against the request's
-    resolved model id; empty matches **any** model (a provider-wide default).
-    Selection is first-match over an ordered profile set.
+    ``match_models`` is a tuple of ``fnmatch`` globs matched **case-insensitively**
+    against the request's resolved model id; empty matches **any** model (a
+    provider-wide default). Selection is first-match over an ordered profile set.
     """
 
     name: str = Field(..., min_length=1)
