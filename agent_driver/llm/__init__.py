@@ -9,6 +9,12 @@ from agent_driver.llm.contracts import (
     ProviderStatus,
     RouterStrategy,
 )
+from agent_driver.llm.error_classifier import (
+    ClassifiedError,
+    ProviderErrorReason,
+    RecoveryAction,
+    classify,
+)
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.llm.providers_impl import (
     FakeProvider,
@@ -18,9 +24,13 @@ from agent_driver.llm.providers_impl import (
 from agent_driver.llm.router import HealthAwareRouter
 
 __all__ = [
+    "ClassifiedError",
     "FakeProvider",
     "HealthAwareRouter",
     "LlmFinishReason",
+    "ProviderErrorReason",
+    "RecoveryAction",
+    "classify",
     "LlmProvider",
     "LlmProviderKind",
     "LlmRequest",
