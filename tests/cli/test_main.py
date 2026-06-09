@@ -188,6 +188,70 @@ def test_cli_chat_keyboard_interrupt_returns_130(monkeypatch, capsys) -> None:
     assert "chat> interrupted" in output
 
 
+def test_chat_command_wires_memory_and_permission_flags(monkeypatch) -> None:
+    """--memory sqlite + --permission-mode build a provider and a tool gate."""
+    captured: dict[str, object] = {}
+
+    def _fake_store_bundle(_config):
+        return SimpleNamespace(checkpoint_store=object(), event_log=object())
+
+    async def _fake_provider_healthcheck():
+        return SimpleNamespace(
+            provider_name="fake", healthy=True, configured=True, latency_ms=1.0
+        )
+
+    fake_provider = SimpleNamespace(name="fake", healthcheck=_fake_provider_healthcheck)
+
+    def _fake_create_agent(**kwargs):
+        captured["memory_provider"] = kwargs.get("memory_provider")
+
+        class _Registry:
+            @staticmethod
+            def list_registered():
+                return []
+
+        fake_runner = SimpleNamespace(deps=SimpleNamespace(tool_registry=_Registry()))
+        return SimpleNamespace(runner=fake_runner)
+
+    async def _fake_run_chat_session(**kwargs):
+        captured["tool_gate"] = kwargs.get("tool_gate")
+        return 0
+
+    monkeypatch.setattr(cli_main, "create_runtime_store_bundle", _fake_store_bundle)
+    monkeypatch.setattr(cli_main, "build_cli_provider", lambda _cfg: fake_provider)
+    monkeypatch.setattr(
+        cli_main, "build_cli_toolset", lambda _cfg: SimpleNamespace(names=())
+    )
+    monkeypatch.setattr(cli_main, "create_agent", _fake_create_agent)
+    monkeypatch.setattr(cli_main, "run_chat_session", _fake_run_chat_session)
+
+    args = cli_main._build_parser().parse_args(  # pylint: disable=protected-access
+        [
+            "chat",
+            "--provider",
+            "fake",
+            "--plain",
+            "--memory",
+            "sqlite",
+            "--memory-path",
+            ":memory:",
+            "--permission-mode",
+            "strict",
+        ]
+    )
+    resolved = cli_main._resolve_args_with_config_and_explicit(  # pylint: disable=protected-access
+        args, explicit_options={"--provider", "--plain"}
+    )
+    code = asyncio.run(
+        cli_main._chat_command(resolved)
+    )  # pylint: disable=protected-access
+    assert code == 0
+    # A memory provider was constructed and handed to the agent.
+    assert type(captured["memory_provider"]).__name__ == "StoreBackedMemoryProvider"
+    # A permission gate (callable ToolGate) reached the chat loop.
+    assert callable(captured["tool_gate"])
+
+
 def test_chat_command_enables_compaction_flags(monkeypatch) -> None:
     """Chat command should create agent with compaction toggles enabled."""
     captured: dict[str, object] = {}
@@ -221,15 +285,21 @@ def test_chat_command_enables_compaction_flags(monkeypatch) -> None:
 
     monkeypatch.setattr(cli_main, "create_runtime_store_bundle", _fake_store_bundle)
     monkeypatch.setattr(cli_main, "build_cli_provider", lambda _cfg: fake_provider)
-    monkeypatch.setattr(cli_main, "build_cli_toolset", lambda _cfg: SimpleNamespace(names=()))
+    monkeypatch.setattr(
+        cli_main, "build_cli_toolset", lambda _cfg: SimpleNamespace(names=())
+    )
     monkeypatch.setattr(cli_main, "create_agent", _fake_create_agent)
     monkeypatch.setattr(cli_main, "run_chat_session", _fake_run_chat_session)
 
-    args = cli_main._build_parser().parse_args(["chat", "--provider", "fake", "--plain"])  # pylint: disable=protected-access
+    args = cli_main._build_parser().parse_args(
+        ["chat", "--provider", "fake", "--plain"]
+    )  # pylint: disable=protected-access
     resolved = cli_main._resolve_args_with_config_and_explicit(  # pylint: disable=protected-access
         args, explicit_options={"--provider", "--plain"}
     )
-    code = asyncio.run(cli_main._chat_command(resolved))  # pylint: disable=protected-access
+    code = asyncio.run(
+        cli_main._chat_command(resolved)
+    )  # pylint: disable=protected-access
     assert code == 0
     cfg = captured["config"]
     assert cfg is not None
@@ -262,7 +332,9 @@ def test_cli_explicit_flag_overrides_config(tmp_path, monkeypatch) -> None:
         "[cli]\nprovider='openrouter'\n",
         encoding="utf-8",
     )
-    args = cli_main._build_parser().parse_args(["chat", "--provider", "fake"])  # pylint: disable=protected-access
+    args = cli_main._build_parser().parse_args(
+        ["chat", "--provider", "fake"]
+    )  # pylint: disable=protected-access
     resolved = cli_main._resolve_args_with_config_and_explicit(  # pylint: disable=protected-access
         args, explicit_options={"--provider"}
     )
@@ -276,7 +348,9 @@ def test_cli_defaults_to_openrouter_chat(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("AGENT_DRIVER_BASE_URL", raising=False)
     monkeypatch.delenv("AGENT_DRIVER_MODEL", raising=False)
 
-    args = cli_main._build_parser().parse_args(["chat"])  # pylint: disable=protected-access
+    args = cli_main._build_parser().parse_args(
+        ["chat"]
+    )  # pylint: disable=protected-access
     resolved = cli_main._resolve_args_with_config_and_explicit(  # pylint: disable=protected-access
         args, explicit_options=set()
     )
@@ -305,7 +379,9 @@ def test_cli_loads_project_dotenv_for_openrouter(monkeypatch, tmp_path) -> None:
         encoding="utf-8",
     )
 
-    args = cli_main._build_parser().parse_args(["chat"])  # pylint: disable=protected-access
+    args = cli_main._build_parser().parse_args(
+        ["chat"]
+    )  # pylint: disable=protected-access
     resolved = cli_main._resolve_args_with_config_and_explicit(  # pylint: disable=protected-access
         args, explicit_options=set()
     )

@@ -167,7 +167,33 @@ def add_runtime_bounds_options(
     )
 
 
+def add_capability_options(parser: argparse.ArgumentParser) -> None:
+    """Add long-term-memory and permission-gate options for run/chat commands."""
+    parser.add_argument(
+        "--memory",
+        choices=("none", "sqlite"),
+        default="none",
+        help="Long-term cross-session memory backend (default: none).",
+    )
+    parser.add_argument(
+        "--memory-path",
+        default=".agent-driver/memory.db",
+        help="SQLite path for --memory sqlite.",
+    )
+    parser.add_argument(
+        "--permission-mode",
+        choices=("yolo", "standard", "strict"),
+        default="yolo",
+        help=(
+            "Permission gate for unmatched tool calls: yolo allows all; "
+            "standard denies critical and asks on dangerous; strict denies "
+            "dangerous+ and asks on caution (default: yolo)."
+        ),
+    )
+
+
 __all__ = [
+    "add_capability_options",
     "add_provider_options",
     "add_runtime_bounds_options",
     "add_store_options",

@@ -430,7 +430,12 @@ class Agent:  # pylint: disable=too-many-public-methods
             message=message,
         )
 
-    async def stream(self, run_input: AgentRunInput) -> AsyncIterator[RunStreamEvent]:
+    async def stream(
+        self,
+        run_input: AgentRunInput,
+        *,
+        tool_gate: ToolGate | None = None,
+    ) -> AsyncIterator[RunStreamEvent]:
         """Yield normalized stream events incrementally during run execution."""
         effective_run_id = run_input.run_id or f"run_{uuid.uuid4().hex[:12]}"
         effective_input = (
@@ -443,7 +448,7 @@ class Agent:  # pylint: disable=too-many-public-methods
         )
         poll_seconds = max(0.01, poll_interval_ms / 1000.0)
         after_seq = 0
-        run_task = asyncio.create_task(self.run(effective_input))
+        run_task = asyncio.create_task(self.run(effective_input, tool_gate=tool_gate))
         try:
             while True:
                 new_events = self._runner.deps.event_log.list_for_run(

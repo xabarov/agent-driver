@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from agent_driver.cli.parser.options import (
+    add_capability_options,
     add_provider_options,
     add_runtime_bounds_options,
     add_store_options,
@@ -58,6 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_provider_options(run_parser)
     add_tool_options(run_parser)
     add_store_options(run_parser)
+    add_capability_options(run_parser)
 
     replay_parser = subparsers.add_parser("replay", help="Replay all events for one run id.")
     replay_parser.add_argument("--run-id", required=True, help="Run identifier to replay.")
@@ -122,6 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_provider_options(chat_parser)
     add_tool_options(chat_parser)
     add_store_options(chat_parser)
+    add_capability_options(chat_parser)
     chat_parser.add_argument(
         "--resume-session",
         default=None,
