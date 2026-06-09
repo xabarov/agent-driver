@@ -92,13 +92,18 @@ hermes `tool_dispatch_helpers.py` (pre-pass truncation before LLM compression).
 **Done when:** old tool-call args over the threshold are clipped pre-compaction,
 audited, and reversible-safe (offload preserved); offline test pins behavior.
 
-### E2 — Project-memory files (AGENTS.md / CLAUDE.md)  ·  High · Med
+### E2 — Project-memory files (AGENTS.md / CLAUDE.md)  ·  High · Med  ·  **DONE 2026-06-09**
 
-- [ ] Load layered project-context files (base → user → project, last-wins)
-      into the system prompt as background context.
-- [ ] Configurable sources; HTML-comment stripping; size caps.
-- [ ] Prompt guidance: treat as reference, not sacred instruction (trust user +
-      verified evidence over stale memory).
+- [x] `context/project_memory.py`: `assemble_project_memory` (pure) layers
+      files in source order, strips HTML comments, caps per-file + total, frames
+      with reference-not-instruction guidance; `load_project_memory` does the IO.
+- [x] `RunnerConfig(project_memory_sources=(...))`; injected into the system
+      prompt once per run (cached in `context.metadata["project_memory_block"]`,
+      documented) alongside recalled long-term memory.
+- [x] Each file passes through the **E3** scanner at ingestion (poisoned files
+      dropped, others survive).
+- [x] Tests: assemble (order/strip/caps/skip), load+missing, scan-drop, and an
+      end-to-end runner test that the block reaches the system prompt.
 
 **Why:** standard "project memory" convention that materially improves grounding;
 complements our long-term `MemoryProvider` (which is recall-based, not file-based).
@@ -111,13 +116,19 @@ AGENTS.md, .cursorrules, persona).
 **Done when:** project files are discovered, layered, stripped, capped, and
 injected; offline test covers layering + override + cap.
 
-### E3 — Context-file injection scanner  ·  High · S–Med
+### E3 — Context-file injection scanner  ·  High · S–Med  ·  **DONE 2026-06-09**
 
-- [ ] Scan ingested context/memory/skill files for prompt-injection + C2
-      patterns **before** they enter the system prompt; replace a flagged file
-      with a blocking placeholder.
-- [ ] Reusable scanner so E2 (project memory), skills loader, and the memory
-      provider all pass ingested text through it.
+- [x] `security/context_scan.py`: `scan_context_text(text, *, source)` matches a
+      curated set of prompt-injection + C2 patterns (instruction override, role
+      reassignment, system-prompt probe, exfiltration, remote shell, eval
+      payload) and returns `ScanResult(flagged, reasons, safe_text)` with a
+      blocking placeholder; deterministic, conservative (low false-positive).
+- [x] Reusable; wired into E2's `load_project_memory` (per-file, ingestion-time).
+- [x] Tests: each pattern flagged, clean passes unchanged, benign "system"
+      mention does not over-trigger.
+
+Follow-up (not blocking): route the skills loader and recalled long-term memory
+text through the same scanner — same one-line seam as E2.
 
 **Why:** ingestion-time defence (not output-time) closes a real prompt-injection
 hole opened by E2 and by any filesystem-sourced context.

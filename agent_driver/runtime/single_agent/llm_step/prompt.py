@@ -179,7 +179,26 @@ def react_system_instruction(host: LlmPromptHost, context: RunContext) -> str | 
     recalled_memory = get_memory_runtime_state(context).recalled_block()
     if recalled_memory:
         lines.append(recalled_memory)
+    project_memory = _project_memory_block(host, context)
+    if project_memory:
+        lines.append(project_memory)
     return "\n".join(lines)
+
+
+def _project_memory_block(host: LlmPromptHost, context: RunContext) -> str:
+    """Load + cache the E2 project-memory block once per run (scanned via E3)."""
+    sources = getattr(host._config, "project_memory_sources", ())
+    if not sources:
+        return ""
+    cached = context.metadata.get("project_memory_block")
+    if isinstance(cached, str):
+        return cached
+    from agent_driver.context.project_memory import load_project_memory
+
+    # load_project_memory runs the E3 ingestion scanner per file internally.
+    block = load_project_memory(tuple(sources)).block
+    context.metadata["project_memory_block"] = block
+    return block
 
 
 def python_tool_addendum_if_present(

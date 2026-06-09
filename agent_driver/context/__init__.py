@@ -27,6 +27,11 @@ from agent_driver.context.compaction import (
     save_session_memory,
 )
 from agent_driver.context.microcompaction import microcompact_observations
+from agent_driver.context.project_memory import (
+    ProjectMemoryResult,
+    assemble_project_memory,
+    load_project_memory,
+)
 from agent_driver.context.tool_arg_truncation import (
     ToolArgTruncationResult,
     truncate_tool_call_args,
@@ -103,6 +108,9 @@ __all__ = [
     "build_observation_memory",
     "build_observation_memory_from_input",
     "microcompact_observations",
+    "ProjectMemoryResult",
+    "assemble_project_memory",
+    "load_project_memory",
     "ToolArgTruncationResult",
     "truncate_tool_call_args",
     "TokenPressureInput",

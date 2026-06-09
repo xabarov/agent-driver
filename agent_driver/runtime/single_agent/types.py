@@ -79,6 +79,7 @@ class RunnerConfig:
     harness_profiles: tuple[HarnessProfile, ...]
     auxiliary_provider: LlmProvider | None
     auxiliary_model: str | None
+    project_memory_sources: tuple[str, ...]
     lifecycle_hooks: tuple[RunLifecycleHook, ...]
     trimming: TrimmingSettings
     compaction: CompactionSettings
@@ -133,6 +134,9 @@ class RunnerConfig:
         self.harness_profiles = tuple(kwargs.pop("harness_profiles", ()) or ())
         self.auxiliary_provider = kwargs.pop("auxiliary_provider", None)
         self.auxiliary_model = kwargs.pop("auxiliary_model", None)
+        self.project_memory_sources = tuple(
+            kwargs.pop("project_memory_sources", ()) or ()
+        )
         self.lifecycle_hooks = tuple(kwargs.pop("lifecycle_hooks", ()) or ())
         self.trimming = trimming
         self.compaction = compaction
