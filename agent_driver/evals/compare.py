@@ -75,13 +75,28 @@ async def run_comparison(
     baseline_label: str = "baseline",
     treatment_label: str = "treatment",
     success_statuses: tuple[str, ...] = ("completed",),
+    max_total_cost_usd: float | None = None,
 ) -> ComparisonReport:
-    """Run both configurations over ``items`` ``repeats`` times and compare."""
+    """Run both configurations over ``items`` ``repeats`` times and compare.
+
+    ``max_total_cost_usd`` caps each side's spend independently (so the whole
+    comparison is bounded by ~2× the ceiling).
+    """
     item_list = list(items)
     baseline_store = InMemoryTrajectoryStore()
     treatment_store = InMemoryTrajectoryStore()
-    await baseline_runner.run(item_list, store=baseline_store, repeats=repeats)
-    await treatment_runner.run(item_list, store=treatment_store, repeats=repeats)
+    await baseline_runner.run(
+        item_list,
+        store=baseline_store,
+        repeats=repeats,
+        max_total_cost_usd=max_total_cost_usd,
+    )
+    await treatment_runner.run(
+        item_list,
+        store=treatment_store,
+        repeats=repeats,
+        max_total_cost_usd=max_total_cost_usd,
+    )
     baseline_agg = aggregate_trajectories(
         baseline_store.trajectories(), success_statuses=success_statuses
     )

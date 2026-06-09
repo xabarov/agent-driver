@@ -68,6 +68,86 @@ async def eval_run_command(
     return 0
 
 
+async def eval_compare_command(
+    args: argparse.Namespace,
+    *,
+    build_cli_toolset: Callable[[object], object],
+    tool_config_from_args: Callable[[argparse.Namespace], object],
+    tool_error: type[Exception],
+) -> int:
+    """Run the general suite baseline-vs-treatment on an open-weight tier.
+
+    Flips exactly one harness axis (``--treatment``) off vs on and reports the
+    median delta. ``--offline`` uses the fake provider for a deterministic dry
+    run (no network); otherwise the open-weight OpenRouter preset is used.
+    """
+    from agent_driver.batch import BatchRunner
+    from agent_driver.evals import (
+        general_task_suite,
+        openweight_provider_spec,
+        render_comparison,
+        run_comparison,
+    )
+    from agent_driver.llm.providers_impl.fake import FakeProvider
+    from agent_driver.runtime import RunnerConfig
+    from agent_driver.sdk import create_agent
+
+    offline = bool(getattr(args, "offline", False))
+    tier = str(getattr(args, "tier", "mid"))
+    axis = str(getattr(args, "treatment", "prompt_cache"))
+    if axis != "prompt_cache":
+        print(f"eval compare error: unknown --treatment axis {axis!r}")
+        return 2
+
+    def _provider():
+        if offline:
+            return FakeProvider(response_text="done")
+        from agent_driver.llm import resolve_provider
+
+        return resolve_provider(openweight_provider_spec(tier))
+
+    try:
+        toolset = build_cli_toolset(tool_config_from_args(args))
+    except tool_error as exc:
+        print(f"eval compare error: {exc}")
+        return 2
+
+    def _agent(*, treatment: bool):
+        return create_agent(
+            provider=_provider(),
+            tools=toolset,
+            config=RunnerConfig(enable_prompt_cache=treatment),
+        )
+
+    report = await run_comparison(
+        BatchRunner(_agent(treatment=False), concurrency=int(args.concurrency)),
+        BatchRunner(_agent(treatment=True), concurrency=int(args.concurrency)),
+        general_task_suite(),
+        repeats=int(args.repeats),
+        baseline_label=f"{axis}_off",
+        treatment_label=f"{axis}_on",
+        max_total_cost_usd=(
+            float(args.max_cost_usd) if args.max_cost_usd is not None else None
+        ),
+    )
+    print(render_comparison(report))
+    print(
+        json.dumps(
+            {
+                "axis": axis,
+                "tier": tier,
+                "repeats": int(args.repeats),
+                "offline": offline,
+                "success_rate_delta": report.success_rate_delta,
+                "cost_usd_median_delta": report.cost_usd_median_delta,
+                "latency_ms_median_delta": report.latency_ms_median_delta,
+            },
+            ensure_ascii=True,
+        )
+    )
+    return 0
+
+
 def eval_inspect_command(
     args: argparse.Namespace,
     *,
@@ -123,4 +203,4 @@ def eval_inspect_command(
     return 0
 
 
-__all__ = ["eval_inspect_command", "eval_run_command"]
+__all__ = ["eval_compare_command", "eval_inspect_command", "eval_run_command"]

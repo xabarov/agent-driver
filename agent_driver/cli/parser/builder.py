@@ -250,6 +250,44 @@ def build_parser() -> argparse.ArgumentParser:
     add_provider_options(eval_run)
     add_tool_options(eval_run)
     add_store_options(eval_run)
+    eval_compare = eval_sub.add_parser(
+        "compare",
+        help="Baseline-vs-treatment harness comparison on the general suite.",
+    )
+    eval_compare.add_argument(
+        "--treatment",
+        choices=("prompt_cache",),
+        default="prompt_cache",
+        help="Harness axis to flip off vs on (one axis at a time).",
+    )
+    eval_compare.add_argument(
+        "--tier",
+        choices=("small", "mid", "large"),
+        default="mid",
+        help="Open-weight model tier (OpenRouter) for live runs.",
+    )
+    eval_compare.add_argument(
+        "--repeats",
+        type=int,
+        default=5,
+        help="Runs per task (N-run reliability; report median over N).",
+    )
+    eval_compare.add_argument(
+        "--concurrency", type=int, default=4, help="Concurrent runs."
+    )
+    eval_compare.add_argument(
+        "--max-cost-usd",
+        type=float,
+        default=5.0,
+        help="Per-side suite spend ceiling; runs past it are skipped.",
+    )
+    eval_compare.add_argument(
+        "--offline",
+        action="store_true",
+        help="Deterministic dry run with the fake provider (no network).",
+    )
+    add_tool_options(eval_compare)
+
     eval_inspect = eval_sub.add_parser("inspect", help="Inspect one eval summary JSON row.")
     eval_inspect.add_argument(
         "--summary-json",
