@@ -42,17 +42,24 @@ For reference, the reference harnesses' headline features that agent-driver
 
 ## Backlog
 
-### E1 — Auxiliary / cheap-model routing  ·  High · Med
+### E1 — Auxiliary / cheap-model routing  ·  High · Med  ·  **DONE 2026-06-09**
 
-- [ ] Add an auxiliary-model seam: side tasks (compaction summaries, rubric
-      grading, session-memory extraction) resolve to a separate, cheaper model
-      instead of the main provider.
-- [ ] `RunnerConfig.auxiliary_provider` (or an `AuxiliaryModelRouter`) with a
-      resolution chain + graceful fallback to the main provider when unset/erroring.
-- [ ] Wire into: compaction (`context/compaction/llm_full.py`), rubric grader
-      (`lifecycle/rubric_hook.py` GradeFn), memory extraction
-      (`context/compaction/session_memory_extract.py`).
-- [ ] Account auxiliary spend separately in the cost ledger (tag `aux`).
+- [x] Auxiliary-model seam: `RunnerConfig.auxiliary_provider` +
+      `auxiliary_model`; the full-compaction side task routes to them when set,
+      else falls back to the main provider + `compaction_model`. Provider and
+      model resolve independently (either can be overridden).
+- [x] Wire into compaction (`context_management/compaction_stage.py` →
+      `run_full_llm_compaction`).
+- [x] Account the compaction call's usage in the run cost ledger, tagged by the
+      compaction model's name — so auxiliary spend is separated in the rollup
+      (`_account_compaction_cost`).
+- [x] Tests: cost-accounting + model tag, no-op without tokens, and end-to-end
+      routing to the auxiliary provider via the runner.
+
+Notes: session-memory extraction is deterministic (no LLM call), so it needs no
+routing. Rubric grading uses a host-supplied `GradeFn`, so the host picks the
+grader model directly — auxiliary routing there is the caller's choice, not a
+runtime config (documented, intentionally not forced).
 
 **Why:** biggest cost lever — these side tasks are frequent and don't need a
 frontier model; pairs directly with our cost-ledger + rubric + compaction.

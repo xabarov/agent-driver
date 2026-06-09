@@ -77,6 +77,8 @@ class RunnerConfig:
     memory_provider: MemoryProvider | None
     enable_prompt_cache: bool
     harness_profiles: tuple[HarnessProfile, ...]
+    auxiliary_provider: LlmProvider | None
+    auxiliary_model: str | None
     lifecycle_hooks: tuple[RunLifecycleHook, ...]
     trimming: TrimmingSettings
     compaction: CompactionSettings
@@ -129,6 +131,8 @@ class RunnerConfig:
         self.memory_provider = kwargs.pop("memory_provider", None)
         self.enable_prompt_cache = bool(kwargs.pop("enable_prompt_cache", False))
         self.harness_profiles = tuple(kwargs.pop("harness_profiles", ()) or ())
+        self.auxiliary_provider = kwargs.pop("auxiliary_provider", None)
+        self.auxiliary_model = kwargs.pop("auxiliary_model", None)
         self.lifecycle_hooks = tuple(kwargs.pop("lifecycle_hooks", ()) or ())
         self.trimming = trimming
         self.compaction = compaction

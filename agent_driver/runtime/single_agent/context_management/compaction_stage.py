@@ -22,12 +22,43 @@ from agent_driver.context import (
 from agent_driver.contracts import CompactionDecision
 from agent_driver.contracts.enums import RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.runtime.metadata_state import get_cost_runtime_state
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
     RunContext,
     RunnerConfig,
     RunnerDeps,
 )
+
+
+def _account_compaction_cost(
+    context: RunContext, compaction_result: Any, *, provider: Any
+) -> None:
+    """Accumulate a compaction call's usage into the run cost ledger.
+
+    Tagged by the compaction model's own name, so auxiliary-model spend (E1) is
+    separated from the main model's in the ledger rollup. Accounts even failed
+    attempts — they still consumed tokens.
+    """
+    if compaction_result is None:
+        return
+    input_tokens = int(getattr(compaction_result, "input_tokens_estimate", 0) or 0)
+    output_tokens = int(getattr(compaction_result, "output_tokens_estimate", 0) or 0)
+    if input_tokens == 0 and output_tokens == 0:
+        return
+    from agent_driver.contracts.usage import (  # pylint: disable=import-outside-toplevel
+        UsageSummary,
+    )
+
+    get_cost_runtime_state(context).accumulate(
+        UsageSummary(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            model_provider=getattr(provider, "name", "auxiliary"),
+            model_name=str(getattr(compaction_result, "model", "") or "compaction"),
+        )
+    )
 
 
 class CompactionStageHost(Protocol):
@@ -385,12 +416,19 @@ async def _apply_llm_full_compaction(
         )
     history_excerpt = "\n".join(kept_groups)
     sanitized_excerpt = sanitize_compaction_text(history_excerpt)
+    # E1: route this side task to the auxiliary (cheaper) provider/model when
+    # configured; otherwise the main provider + compaction_model. Auxiliary
+    # provider and model resolve independently so either can be overridden.
+    aux_provider = host._config.auxiliary_provider
+    compaction_provider = aux_provider or host._deps.provider
+    compaction_model = host._config.auxiliary_model or host._config.compaction_model
     compaction_result, summary = await run_full_llm_compaction(
-        provider=host._deps.provider,
-        model=host._config.compaction_model,
+        provider=compaction_provider,
+        model=compaction_model,
         history_excerpt=sanitized_excerpt,
         user_request=context.run_input.input or "",
     )
+    _account_compaction_cost(context, compaction_result, provider=compaction_provider)
     if compaction_result is None or not compaction_result.success:
         failure = {
             "kind": "llm_compaction_failed",
