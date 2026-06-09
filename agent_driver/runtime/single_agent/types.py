@@ -14,6 +14,7 @@ from agent_driver.context.sessions import SessionStore
 from agent_driver.contracts.checkpoints import CheckpointRef
 from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
 from agent_driver.contracts.interrupts import InterruptRequest
+from agent_driver.contracts.profiles import HarnessProfile
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolCall, ToolResultEnvelope
 from agent_driver.llm.contracts import LlmResponse
@@ -75,6 +76,7 @@ class RunnerConfig:
     command_queue_store: CommandQueueStore | None
     memory_provider: MemoryProvider | None
     enable_prompt_cache: bool
+    harness_profiles: tuple[HarnessProfile, ...]
     lifecycle_hooks: tuple[RunLifecycleHook, ...]
     trimming: TrimmingSettings
     compaction: CompactionSettings
@@ -126,6 +128,7 @@ class RunnerConfig:
         self.command_queue_store = kwargs.pop("command_queue_store", None)
         self.memory_provider = kwargs.pop("memory_provider", None)
         self.enable_prompt_cache = bool(kwargs.pop("enable_prompt_cache", False))
+        self.harness_profiles = tuple(kwargs.pop("harness_profiles", ()) or ())
         self.lifecycle_hooks = tuple(kwargs.pop("lifecycle_hooks", ()) or ())
         self.trimming = trimming
         self.compaction = compaction

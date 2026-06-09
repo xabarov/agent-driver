@@ -19,8 +19,15 @@ from agent_driver.context.token_pressure import (
 from agent_driver.contracts.context import ContextBudget
 from agent_driver.contracts.enums import AgentProfile
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.profiles import HarnessProfile
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolManifest
+from agent_driver.harness import (
+    apply_system_slots,
+    apply_tool_overrides,
+    profile_excluded_tools,
+    select_harness_profile,
+)
 from agent_driver.llm.contracts import LlmRequest
 from agent_driver.runtime.single_agent.context_management.protocol_validate import (
     validate_and_repair_protocol_messages,
@@ -55,6 +62,7 @@ class LlmRequestBuildContext:
     response_format: dict[str, Any] | None = None
     request_allowed_tools: tuple[str, ...] | None = None
     enable_prompt_cache: bool = False
+    harness_profiles: tuple[HarnessProfile, ...] = ()
 
 
 def _normalize_trimmed_messages(
@@ -264,6 +272,21 @@ def build_single_agent_llm_request(
             ] + prompt_messages
     if prompt_messages and ctx.protocol_messages is None:
         prompt_messages[-1]["content"] = prompt
+    # Harness-profile system slots are applied before trimming so the budget
+    # accounts for the prefix/suffix and they cannot be trimmed away.
+    harness_profile = select_harness_profile(
+        ctx.harness_profiles,
+        run_input.tool_policy.metadata.get("forced_model"),
+    )
+    if harness_profile is not None and (
+        harness_profile.system_prefix or harness_profile.system_suffix
+    ):
+        for message in prompt_messages:
+            if str(message.get("role", "")) == "system":
+                message["content"] = apply_system_slots(
+                    str(message.get("content") or ""), harness_profile
+                )
+                break
     trimmed = trim_context(
         budget=ContextBudget(
             max_chars=ctx.max_chars,
@@ -306,16 +329,24 @@ def build_single_agent_llm_request(
     response_format = ctx.response_format
     if response_format is None:
         response_format = run_input.response_format
+    # Profile tool shaping: exclusions ride the deny filter (model never sees
+    # them); description overrides rewrite the surfaced schemas.
+    request_denied = profile_excluded_tools(
+        harness_profile, tuple(policy_denied) if policy_denied else None
+    )
+    request_tools = _request_tools_from_registry(
+        ctx.registry,
+        allowed=request_allowed,
+        denied=request_denied,
+    )
+    if harness_profile is not None:
+        request_tools = apply_tool_overrides(request_tools, harness_profile)
     request = LlmRequest(
         messages=_normalize_trimmed_messages(final_prompt_messages),
         model_role=run_input.model_role,
         model=forced_model if isinstance(forced_model, str) else None,
         stream=ctx.stream,
-        tools=_request_tools_from_registry(
-            ctx.registry,
-            allowed=request_allowed,
-            denied=tuple(policy_denied) if policy_denied else None,
-        ),
+        tools=request_tools,
         tool_choice=ctx.tool_choice,
         response_format=response_format,
         enable_prompt_cache=ctx.enable_prompt_cache,

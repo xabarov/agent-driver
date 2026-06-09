@@ -69,3 +69,44 @@ class PromptRenderResult(ContractModel):
     def validate_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
         """Ensure metadata stays JSON-compatible."""
         return ensure_json_serializable(value, field_name="metadata")
+
+
+class HarnessProfile(ContractModel):
+    """Declarative per-provider/model harness shaping, applied at assembly.
+
+    A profile bends the request for the models it matches without editing the
+    step loop or prompt templates: it wraps the assembled system prompt in
+    ``system_prefix`` / ``system_suffix`` slots (the BASE/SUFFIX around the
+    USER-assembled core), drops ``excluded_tools`` from the model-visible
+    catalog, and rewrites tool descriptions via ``tool_description_overrides``.
+
+    ``match_models`` is a tuple of ``fnmatch`` globs against the request's
+    resolved model id; empty matches **any** model (a provider-wide default).
+    Selection is first-match over an ordered profile set.
+    """
+
+    name: str = Field(..., min_length=1)
+    match_models: tuple[str, ...] = ()
+    system_prefix: str = ""
+    system_suffix: str = ""
+    excluded_tools: tuple[str, ...] = ()
+    tool_description_overrides: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("match_models", "excluded_tools", mode="after")
+    @classmethod
+    def normalize_patterns(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Drop blank entries and de-dupe while preserving order."""
+        seen: dict[str, None] = {}
+        for item in value:
+            stripped = item.strip()
+            if stripped:
+                seen.setdefault(stripped, None)
+        return tuple(seen)
+
+    @field_validator("tool_description_overrides")
+    @classmethod
+    def validate_overrides(cls, value: dict[str, str]) -> dict[str, str]:
+        """Ensure overrides are a JSON-serializable name->description map."""
+        return ensure_json_serializable(
+            value, field_name="tool_description_overrides"
+        )

@@ -45,6 +45,7 @@ imported *by* the runtime (e.g. `memory` is imported by
 | Run a prompt set with bounded concurrency | `BatchRunner(agent, concurrency=N)` | `batch/`; records trajectories to a `TrajectoryStore` |
 | Shrink recorded trajectories for a training dataset | `compress_trajectories(items, max_tokens=N)` | `batch/compress.py`; keeps first/last turns, elides the middle |
 | Add an LLM provider | `ProviderDescriptor` + `register_provider_descriptor` | `llm/provider_descriptors.py` |
+| Shape the request per provider/model (prompt slots, tool exclusion, description overrides) | `HarnessProfile` | `contracts/profiles.py` + `harness/`; pass via `RunnerConfig(harness_profiles=...)` |
 | Expose the agent to external clients | `AgentMcpServer` (MCP) / `AgentGateway` (sessions+approvals) | `mcp_server/`, `gateway/` |
 
 Rule of thumb: **behavioral, run-scoped** capabilities are lifecycle hooks;
@@ -98,6 +99,16 @@ interval schedule you register so jobs are not delayed by up to a full poll.
 **Long-term memory** is opt-in: pass `memory_provider=` to `create_agent`, or
 the CLI `--memory sqlite [--memory-path PATH]`. `post_setup()` runs once on
 first turn; call `await agent.aclose()` (or `async with agent:`) to flush it.
+
+**Harness profiles** (`RunnerConfig(harness_profiles=(HarnessProfile(...),))`)
+shape the request per model without touching the step loop: `system_prefix` /
+`system_suffix` wrap the assembled system prompt (applied before trimming so
+they can't be trimmed away), `excluded_tools` ride the deny filter (the model
+never sees them), and `tool_description_overrides` rewrite surfaced tool
+descriptions. Selection is first-match over `match_models` (`fnmatch` globs;
+empty = any model) against the request's resolved model — so per-model profiles
+require the model to be pinned (e.g. via `set_model` / forced-model metadata);
+empty-pattern profiles act as a provider-wide default.
 
 **Anthropic prompt caching** is opt-in via `RunnerConfig(enable_prompt_cache=True)`
 (CLI `--prompt-cache`; no-op for non-Anthropic providers). It places ephemeral

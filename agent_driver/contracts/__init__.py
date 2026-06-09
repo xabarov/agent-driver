@@ -91,7 +91,11 @@ from agent_driver.contracts.interrupts import (
 )
 from agent_driver.contracts.memory import MemoryProjection
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.contracts.profiles import PromptRenderResult, PromptTemplate
+from agent_driver.contracts.profiles import (
+    HarnessProfile,
+    PromptRenderResult,
+    PromptTemplate,
+)
 from agent_driver.contracts.runtime import (
     AgentRunInput,
     AgentRunOutput,
@@ -173,6 +177,7 @@ __all__ = [
     "MemoryProjection",
     "MergeProvenance",
     "PromptRenderResult",
+    "HarnessProfile",
     "PromptTemplate",
     "ParentStateWriteMode",
     "PlanningModeState",

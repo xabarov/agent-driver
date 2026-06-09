@@ -199,6 +199,7 @@ def build_trimmed_request(
             ),
             request_allowed_tools=request_allowed_tools,
             enable_prompt_cache=host._config.enable_prompt_cache,
+            harness_profiles=host._config.harness_profiles,
         )
     )
 
