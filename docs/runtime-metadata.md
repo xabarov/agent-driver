@@ -69,6 +69,7 @@ not a public SDK contract.
 | `last_provider_error`, `max_tokens_retry`, `empty_forced_final_retry`, `forced_final_retry`, `reasoning_echo_retry`, `context_overflow_recovery` | provider retry/recovery (incl. reactive compact-and-retry on context overflow) | checkpoint | provider diagnostics | `ProviderRuntimeState` |
 | `applied_controls`, `workspace_cwd`, `eval_sandbox_dir` | control dispatcher / runner env | output/checkpoint | diagnostics | `LoopControlState` or run input metadata |
 | `recalled_memory`, `memory_synced` | long-term memory prefetch (run start) / one-time sync guard (finalize) | checkpoint | diagnostics | memory provider hooks (`MemoryProvider`) |
+| `cost_ledger` | per-run token/USD cost ledger accumulated per LLM call; drives `cost_budget_usd` fail-fast | checkpoint | cost diagnostics | `CostRuntimeState` |
 
 ## Related Non-Context Metadata
 

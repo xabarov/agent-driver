@@ -14,6 +14,7 @@ from agent_driver.contracts.events import (
 )
 from agent_driver.contracts.runtime import AgentRunOutput
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.metadata_state import get_cost_runtime_state
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
     RunContext,
@@ -124,6 +125,15 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
             return TerminalResult(
                 status=RunStatus.FAILED,
                 reason=TerminalReason.TOOL_POLICY_DENIED,
+            )
+        cost_budget = context.run_input.cost_budget_usd
+        if (
+            cost_budget is not None
+            and get_cost_runtime_state(context).total_cost_usd() > cost_budget
+        ):
+            return TerminalResult(
+                status=RunStatus.FAILED,
+                reason=TerminalReason.BUDGET_EXCEEDED,
             )
         return None
 

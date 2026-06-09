@@ -24,6 +24,7 @@ class TerminalReason(StrEnum):
     CANCELLED_BY_USER = "cancelled_by_user"
     DEADLINE_EXCEEDED = "deadline_exceeded"
     MAX_STEPS_EXCEEDED = "max_steps_exceeded"
+    BUDGET_EXCEEDED = "budget_exceeded"
     TOOL_POLICY_DENIED = "tool_policy_denied"
     GUARDRAIL_BLOCKED = "guardrail_blocked"
     APPROVAL_REJECTED = "approval_rejected"

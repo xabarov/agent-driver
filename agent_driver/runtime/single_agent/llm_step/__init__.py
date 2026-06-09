@@ -18,6 +18,7 @@ from agent_driver.llm.payload_debug import (
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.metadata_state import (
     get_compaction_runtime_state,
+    get_cost_runtime_state,
     get_loop_control_state,
     get_planning_runtime_state,
     get_tool_loop_state,
@@ -236,6 +237,10 @@ async def execute_llm_call_step(
             )
             set_io(_llm_span, output=_out_content)
             record_status(_llm_span, ok=True)
+        if _usage is not None:
+            # Fold this call's tokens/cost into the run ledger so the budget
+            # gate (_terminal_from_limits) can fail fast when exceeded.
+            get_cost_runtime_state(context).accumulate(_usage)
     except httpx.HTTPStatusError as exc:
         reason = (
             TerminalReason.PROVIDER_PROTOCOL.value

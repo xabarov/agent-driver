@@ -478,6 +478,30 @@ class MemoryRuntimeState(_MetadataView):
         self.metadata["memory_synced"] = True
 
 
+class CostRuntimeState(_MetadataView):
+    """Running per-run cost ledger (tokens + USD) for budget enforcement."""
+
+    def accumulate(self, usage: Any) -> None:
+        """Fold one LLM call's usage into the run's cost ledger."""
+        ledger = self.ledger()
+        ledger.accumulate(usage)
+        self.metadata["cost_ledger"] = ledger.model_dump(mode="json")
+
+    def ledger(self):
+        """Rehydrate the run's :class:`CostLedger` (empty if none yet)."""
+        # Local import: cost_ledger lives under observability/, whose package
+        # __init__ imports runtime modules — importing it at module top would
+        # cycle back into this module.
+        from agent_driver.observability.cost_ledger import CostLedger
+
+        raw = self.dict_or_none("cost_ledger")
+        return CostLedger.model_validate(raw) if raw else CostLedger()
+
+    def total_cost_usd(self) -> float:
+        """Total USD cost accumulated so far this run."""
+        return self.ledger().total_cost_usd()
+
+
 def get_loop_control_state(context: HasRuntimeMetadata) -> LoopControlState:
     return LoopControlState(context.metadata)
 
@@ -506,8 +530,13 @@ def get_memory_runtime_state(context: HasRuntimeMetadata) -> MemoryRuntimeState:
     return MemoryRuntimeState(context.metadata)
 
 
+def get_cost_runtime_state(context: HasRuntimeMetadata) -> CostRuntimeState:
+    return CostRuntimeState(context.metadata)
+
+
 __all__ = [
     "CompactionRuntimeState",
+    "CostRuntimeState",
     "HasRuntimeMetadata",
     "LoopControlState",
     "MemoryRuntimeState",
@@ -516,6 +545,7 @@ __all__ = [
     "StreamingRuntimeState",
     "ToolLoopState",
     "get_compaction_runtime_state",
+    "get_cost_runtime_state",
     "get_loop_control_state",
     "get_memory_runtime_state",
     "get_planning_runtime_state",

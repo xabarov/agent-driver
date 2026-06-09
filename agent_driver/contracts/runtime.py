@@ -46,6 +46,7 @@ class AgentRunInput(ContractModel):
     deadline_seconds: float | None = None
     max_steps: int | None = None
     max_tool_calls: int | None = None
+    cost_budget_usd: float | None = None
     user_id: str | None = None
     tenant_id: str | None = None
     workspace_id: str | None = None
@@ -110,6 +111,12 @@ class AgentRunInput(ContractModel):
     def validate_positive_optional_ints(cls, value: int | None) -> int | None:
         """Validate positive numeric run limits."""
         return ensure_positive_int(value, field_name="run limit")
+
+    @field_validator("cost_budget_usd")
+    @classmethod
+    def validate_cost_budget(cls, value: float | None) -> float | None:
+        """Validate a positive USD cost budget when provided."""
+        return ensure_positive_float(value, field_name="cost_budget_usd")
 
     @field_validator("app_metadata")
     @classmethod
