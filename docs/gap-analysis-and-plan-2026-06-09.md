@@ -234,21 +234,37 @@ Follow-ups (not blocking): semantic/embedding recall as an alternate store;
 extraction/distillation instead of raw turn text; memory-aware compaction so
 recalled facts survive context compaction.
 
-## Track C (then) — Real Scheduler For Existing Intents (gap #1)
+## Track C (DONE 2026-06-09) — Real Scheduler For Existing Cron Intents (gap #1)
 
-Goal: turn the existing `cron_*` / `remote_trigger` / `push_notification`
-intent records into a durable executor (the tool surface already exists).
+Turned the inert session-local `cron_*` intent stubs into a working durable
+scheduler. New `agent_driver/scheduler/` package:
 
-Steps (sketch):
+- **C1** `schedule.py` — dependency-free `Schedule.parse` for 5-field cron
+  (`*`, lists, ranges, steps), interval shorthand (`every 5m/2h/1d`) and
+  `@hourly`/`@daily`/`@weekly`/… macros; deterministic `next_after(dt)` with
+  Vixie DOM/DOW OR semantics.
+- **C2** `store.py` — `ScheduledJob` model + `JobStore` protocol with
+  `InMemoryJobStore` and durable `SqliteJobStore` (survives restart).
+- **C3** `runner.py` — `Scheduler.tick(now)` (deterministic, injected clock +
+  host `JobRunner` callback) fires due jobs with a per-run **hard interrupt**
+  (`asyncio.wait_for`), advances `next_run` with no backfill, records
+  status/failures, and auto-disables after N consecutive failures; an
+  unparseable schedule disables the job instead of crashing the tick.
+  `run_forever` is the thin always-on driver.
+- **C4** — `tools/builtin/automation.py` cron tools now back onto the
+  `JobStore` (in-memory default; `configure_cron_store(SqliteJobStore(...))`
+  points the tools and the `Scheduler` at one durable source of truth) and
+  validate the schedule on create. Existing automation tool tests stay green.
 
-- durable job store (reuse sqlite/postgres backends) for cron jobs and PR
-  subscriptions;
-- a scheduler loop: 5-field cron + human intervals, catchup window, a hard
-  per-run interrupt to prevent runaway loops, resume after restart;
-- optional pre-run script injection feeding stdout into the prompt.
+Acceptance met (tests in `tests/scheduler/`): a registered job fires on
+schedule and reschedules; a job registered before a simulated restart fires
+from the reopened SQLite store; a runaway job is bounded by the hard interrupt.
 
-Acceptance: a registered cron job fires on schedule, is durable across a
-restart, and is bounded by the hard interrupt.
+Not done (deferred, lower value): `remote_trigger` / `push_notification` /
+`subscribe_pr` remain intent envelopes (no delivery backend — that is the
+gateway, gap #6); pre-run script injection; postgres job store. The host still
+owns the `JobRunner` (e.g. wiring it to `agent.query(job.command)`) and the
+process that calls `tick`/`run_forever`.
 
 ## Sequencing rationale
 
