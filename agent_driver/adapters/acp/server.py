@@ -26,6 +26,7 @@ from agent_driver.adapters.acp.mapping import (
     is_known_mode,
     permission_options_for,
     permission_tool_call,
+    plan_update_from_results,
     resume_action_from_outcome,
     session_mode_state,
     slash_command_name,
@@ -291,8 +292,11 @@ class AgentAcpServer:
     async def _emit_leg(
         self, session_id: str, output: AgentRunOutput, emitted_tools: set[str]
     ) -> None:
-        """Emit a finished leg's tool timeline, then its answer text."""
+        """Emit a finished leg's tool timeline, plan update, then answer text."""
         await self._emit_tools(session_id, output, emitted_tools)
+        plan = plan_update_from_results(output)
+        if plan is not None:
+            await self._send(session_id, plan)
         if output.status == RunStatus.COMPLETED and output.answer:
             await self._send(session_id, acp.update_agent_message_text(output.answer))
 

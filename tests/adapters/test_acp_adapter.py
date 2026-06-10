@@ -411,6 +411,29 @@ async def test_edit_tool_emits_diff_content(tmp_path: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_todo_write_emits_plan_update() -> None:
+    todos = [
+        {"content": "analyze the bug", "status": "in_progress"},
+        {"content": "write the fix", "status": "pending"},
+    ]
+    agent = create_agent(
+        provider=_PlanToolThenFinish("todo_write", {"todos": todos}),
+        tools=ToolSet.only("todo_write"),
+    )
+    server = AgentAcpServer(agent)
+    client = FakeAcpClient()
+    session_id = await _bind(server, client)
+
+    await server.prompt(prompt=[_text_block("plan it")], session_id=session_id)
+
+    plans = [u for u in client.updates if type(u).__name__ == "AgentPlanUpdate"]
+    assert len(plans) == 1
+    entries = plans[0].entries
+    assert [e.content for e in entries] == ["analyze the bug", "write the fix"]
+    assert [str(e.status) for e in entries] == ["in_progress", "pending"]
+
+
+@pytest.mark.asyncio
 async def test_new_session_emits_available_commands() -> None:
     agent = create_agent(provider=FakeProvider(response_text="x"), tools=ToolSet.only())
     server = AgentAcpServer(agent)

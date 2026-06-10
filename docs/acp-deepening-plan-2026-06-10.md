@@ -194,12 +194,12 @@ from the trace post-leg, so correlating the live terminal_id is extra work).
 
 No client capability needed; pure additions to what the adapter pushes.
 
-**Status: current_mode_update + available_commands DONE (2026-06-10).**
-`mapping.current_mode_update` / `available_commands_update` / `slash_command_name`
-/ `slash_help_text`; the server emits `current_mode_update` on `set_session_mode`,
-`available_commands_update` on `new_session`/`load_session`, and handles `/clear`
-+ `/help` in-band in `prompt` (no model call). `plan` + rich tool-call diff
-content remain (below).
+**Status: Tier 2 DONE (2026-06-10).** `current_mode_update` (on
+`set_session_mode`), `available_commands_update` + `/clear`/`/help` handled
+in-band, rich edit tool-call diffs, and `plan` updates all shipped. The `plan`
+prerequisite turned out to be a non-issue: the `todo_write` todos live in the
+tool call's `args` inside `output.metadata["tool_results"]` (same channel the
+edit diffs use), so no runtime projection was needed after all.
 
 - [x] **`current_mode_update`**: emitted when `set_session_mode` changes the mode.
 - [x] **`available_commands_update`**: advertise + handle `/clear`, `/help`.
@@ -208,11 +208,12 @@ content remain (below).
       (old/new from the run's `tool_results` structured output) so editors render
       the change inline. (This unblocked once we found the structured tool data
       lives in `output.metadata["tool_results"]`, not on the bare trace.)
-- [ ] **`plan`** (`update_plan`): map `todo_write` activity to `PlanEntry`s.
-      *Blocked by data access* — structured todo items are not currently exposed
-      on `AgentRunOutput` (planning_state is internal); needs a small runtime
-      projection (e.g. surface the latest todo list on the output/metadata) before
-      this is honest. Track that as a prerequisite.
+- [x] **`plan`** (`update_plan`): `mapping.plan_update_from_results` reads the
+      latest `todo_write` todos from `output.metadata["tool_results"]` (the
+      tool call's `args.todos`) and maps each `{content, status}` to a
+      `PlanEntry`; emitted per leg in `_emit_leg`. The feared "blocked by data
+      access" prerequisite was a non-issue — the todos ride `tool_results`, the
+      same channel the edit diffs use; no runtime projection needed.
 - [ ] **Rich tool-call content**: map edit tools to `start_edit_tool_call`
       (old/new diff) and read tools to `start_read_tool_call` with locations,
       instead of the generic `start_tool_call`.

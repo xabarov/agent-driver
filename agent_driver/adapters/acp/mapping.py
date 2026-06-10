@@ -142,6 +142,44 @@ def tool_updates_from_trace(output: AgentRunOutput, *, emitted: set[str]) -> lis
     return updates
 
 
+_PLAN_STATUSES = {"pending", "in_progress", "completed"}
+
+
+def plan_update_from_results(output: AgentRunOutput) -> Any | None:
+    """Build an ACP ``plan`` update from the leg's latest ``todo_write`` call.
+
+    The todo list lives in the tool call's ``args`` (``output.tool_results``);
+    we map each ``{content, status}`` to a ``PlanEntry``. Returns ``None`` when
+    the leg ran no ``todo_write``.
+    """
+    results = output.metadata.get("tool_results")
+    if not isinstance(results, list):
+        return None
+    todos: list[Any] | None = None
+    for result in results:  # take the most recent todo_write in this leg
+        if not isinstance(result, dict):
+            continue
+        call = result.get("call")
+        if not isinstance(call, dict) or call.get("tool_name") != "todo_write":
+            continue
+        args = call.get("args")
+        if isinstance(args, dict) and isinstance(args.get("todos"), list):
+            todos = args["todos"]
+    if not todos:
+        return None
+    entries: list[Any] = []
+    for item in todos:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content") or item.get("title")
+        if not isinstance(content, str) or not content:
+            continue
+        status = item.get("status")
+        status = status if status in _PLAN_STATUSES else "pending"
+        entries.append(acp.plan_entry(content, status=status))
+    return acp.update_plan(entries) if entries else None
+
+
 def permission_options_for(
     interrupt: InterruptRequest,
 ) -> list[schema.PermissionOption]:
