@@ -27,6 +27,8 @@ python examples/cookbook/01_quickstart.py
 | `13_eval_compare.py` | Baseline-vs-treatment, N-run median deltas (T0) | `run_comparison`, `render_comparison` |
 | `14_filesystem_backends.py` | Route paths to scratch vs durable storage (E7) | `CompositeBackend`, `StateBackend`, `LocalFilesystemBackend` |
 | `15_auxiliary_model.py` | Route compaction to a cheaper auxiliary model (E1) | `RunnerConfig(auxiliary_provider=..., auxiliary_model=...)` |
+| `16_acp_adapter.py` | Serve an agent over the Agent Client Protocol (stdio) | `AgentAcpServer`, `serve_acp`, `request_permission` round-trip |
+| `17_openai_server.py` | Serve an agent over an OpenAI-compatible HTTP API | `server.create_app`, `/v1/chat/completions` (stream + non-stream), `/v1/models` |
 
 To use a real model, swap `FakeProvider(...)` for a descriptor-resolved
 provider (see `08_providers.py`) — e.g. `resolve_provider(ProviderSpec(

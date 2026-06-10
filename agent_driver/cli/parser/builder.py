@@ -143,6 +143,79 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resume from persisted local chat session id.",
     )
 
+    acp_parser = subparsers.add_parser(
+        "acp",
+        help="Serve the agent over the Agent Client Protocol (stdio).",
+    )
+    acp_parser.add_argument("--agent-id", default="agent.acp", help="Agent identifier.")
+    acp_parser.add_argument(
+        "--graph-preset",
+        default="single_react",
+        help="Graph preset passed into AgentRunInput.",
+    )
+    acp_parser.add_argument(
+        "--acp-name",
+        default="agent-driver",
+        help="Agent name advertised to ACP clients.",
+    )
+    acp_parser.add_argument(
+        "--acp-version",
+        default="0.1.0",
+        help="Agent version advertised to ACP clients.",
+    )
+    acp_parser.add_argument(
+        "--acp-unstable",
+        action="store_true",
+        help="Negotiate the unstable ACP protocol variant.",
+    )
+    add_runtime_bounds_options(
+        acp_parser,
+        default_max_steps=24,
+        default_max_tool_calls=12,
+        default_deadline_seconds=180.0,
+    )
+    add_provider_options(acp_parser)
+    add_tool_options(acp_parser)
+    add_store_options(acp_parser)
+    add_capability_options(acp_parser)
+
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Serve the agent over an OpenAI-compatible HTTP/SSE API.",
+    )
+    serve_parser.add_argument(
+        "--agent-id", default="agent.serve", help="Agent identifier."
+    )
+    serve_parser.add_argument(
+        "--graph-preset",
+        default="single_react",
+        help="Graph preset passed into AgentRunInput.",
+    )
+    serve_parser.add_argument(
+        "--host", default="127.0.0.1", help="Bind host (default loopback)."
+    )
+    serve_parser.add_argument("--port", type=int, default=8000, help="Bind port.")
+    serve_parser.add_argument(
+        "--served-model-id",
+        default="agent-driver",
+        help="Model id advertised at /v1/models and echoed in responses.",
+    )
+    serve_parser.add_argument(
+        "--api-key-server",
+        default=None,
+        help="Bearer key required from clients (else $AGENT_DRIVER_SERVER_API_KEY).",
+    )
+    add_runtime_bounds_options(
+        serve_parser,
+        default_max_steps=24,
+        default_max_tool_calls=12,
+        default_deadline_seconds=180.0,
+    )
+    add_provider_options(serve_parser)
+    add_tool_options(serve_parser)
+    add_store_options(serve_parser)
+    add_capability_options(serve_parser)
+
     config_parser = subparsers.add_parser("config", help="Configuration helpers.")
     config_subparsers = config_parser.add_subparsers(
         dest="config_command", required=True

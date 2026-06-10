@@ -1,7 +1,26 @@
 # Platform adapters plan — Phase 1 (ACP) + Phase 2 (OpenAI-compatible HTTP/SSE)
 
-Status: planned (2026-06-10). Scope: expose the runtime to external clients over
-standard protocols, keeping the core dependency-light and transport-agnostic.
+Status: **Phase 1 (ACP) and Phase 2 (OpenAI HTTP/SSE) implemented** (2026-06-10).
+Scope: expose the runtime to external clients over standard protocols, keeping
+the core dependency-light and transport-agnostic.
+
+Implementation notes:
+- Phase 1 shipped in `agent_driver/adapters/acp/`, CLI `agent-driver acp`,
+  `[acp]` extra, tests in `tests/adapters/test_acp_adapter.py`, docs
+  [`docs/acp.md`](acp.md), example `examples/cookbook/16_acp_adapter.py`.
+- Phase 2 shipped in `agent_driver/server/`, CLI `agent-driver serve`,
+  `[server]` extra, tests in `tests/server/test_openai_server.py`, docs
+  [`docs/server.md`](server.md), example `examples/cookbook/17_openai_server.py`.
+- Runtime fix found during Phase 1: a dynamic `tool_gate` was re-consulted on a
+  call the operator had already approved (`approved_interrupt_id` set), so a
+  stateless gate looped approve→ask forever. Fixed in
+  `agent_driver/tools/executor/governed.py` (skip the gate for approved calls,
+  mirroring the static-policy short-circuit).
+- Deviation from the Phase-2 sketch: the OpenAI surface does **not** emit
+  client-side `tool_calls` — the agent runs its tools internally, so a turn
+  returns the final assistant text with `finish_reason="stop"`. The
+  `test_chat_completions_tool_calls` item was replaced by
+  `test_internal_tool_use_returns_final_text`.
 
 This plan covers the two highest-value, lowest-dependency network surfaces from
 the cross-harness analysis:
