@@ -1,11 +1,13 @@
 """ACP agent-side server: bridges an :class:`Agent` to the Agent Client Protocol.
 
-Implements the ACP ``Agent`` protocol (``initialize``/``authenticate``/
-``new_session``/``prompt``/``cancel``). A prompt streams token/reasoning deltas
-live from the runtime's event stream, reconstructs the tool-call timeline from
-each finished leg's trace, and bridges runtime approval interrupts to the ACP
+Implements the ACP ``Agent`` protocol: the core
+``initialize``/``authenticate``/``new_session``/``prompt``/``cancel`` plus the
+session-richness methods ``load_session``/``resume_session``/``set_session_mode``.
+A prompt emits each finished leg's answer and tool-call timeline (reconstructed
+from its trace) and bridges runtime approval interrupts to the ACP
 ``request_permission`` round-trip (reusing the same resume semantics the
-in-process gateway uses).
+in-process gateway uses). ``set_session_mode`` maps an ACP session mode to a
+per-run permission gate; ``load_session`` replays the recorded transcript.
 """
 
 from __future__ import annotations
@@ -16,15 +18,20 @@ from uuid import uuid4
 import acp
 
 from agent_driver.adapters.acp.mapping import (
+    gate_for_mode,
+    history_updates,
+    is_known_mode,
     permission_options_for,
     permission_tool_call,
     resume_action_from_outcome,
+    session_mode_state,
     stop_reason_for,
     tool_updates_from_trace,
 )
 from agent_driver.adapters.acp.session import AcpSession
 from agent_driver.contracts.enums import ResumeAction, RunStatus
 from agent_driver.contracts.interrupts import InterruptRequest
+from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.runtime.abort import RunAbortHandle
 
@@ -80,9 +87,12 @@ class AgentAcpServer:
                 name=self._name, version=self._version
             ),
             agent_capabilities=acp.schema.AgentCapabilities(
-                load_session=False,
+                load_session=True,
                 prompt_capabilities=acp.schema.PromptCapabilities(
                     image=False, audio=False
+                ),
+                session_capabilities=acp.schema.SessionCapabilities(
+                    resume=acp.schema.SessionResumeCapabilities(),
                 ),
             ),
             auth_methods=[],
@@ -106,7 +116,59 @@ class AgentAcpServer:
         self._sessions[session_id] = AcpSession(
             session_id=session_id, thread_id=session_id, cwd=cwd
         )
-        return acp.NewSessionResponse(session_id=session_id)
+        return acp.NewSessionResponse(session_id=session_id, modes=session_mode_state())
+
+    async def load_session(
+        self,
+        session_id: str,
+        cwd: str | None = None,
+        mcp_servers: list[Any] | None = None,
+        **_: Any,
+    ) -> acp.schema.LoadSessionResponse:
+        """Restore a session and replay its persisted history to the client.
+
+        Per the ACP contract the conversation so far is streamed via
+        ``session_update`` notifications *before* this returns.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            session = AcpSession(session_id=session_id, thread_id=session_id, cwd=cwd)
+            self._sessions[session_id] = session
+        elif cwd is not None:
+            session.cwd = cwd
+        await self._replay_history(session_id)
+        return acp.schema.LoadSessionResponse(modes=session_mode_state(session.mode_id))
+
+    async def resume_session(
+        self,
+        session_id: str,
+        cwd: str | None = None,
+        mcp_servers: list[Any] | None = None,
+        **_: Any,
+    ) -> acp.schema.ResumeSessionResponse:
+        """Continue an existing session without replaying its history."""
+        session = self._sessions.get(session_id)
+        if session is None:
+            session = AcpSession(session_id=session_id, thread_id=session_id, cwd=cwd)
+            self._sessions[session_id] = session
+        elif cwd is not None:
+            session.cwd = cwd
+        return acp.schema.ResumeSessionResponse(
+            modes=session_mode_state(session.mode_id)
+        )
+
+    async def set_session_mode(
+        self, session_id: str, mode_id: str, **_: Any
+    ) -> acp.schema.SetSessionModeResponse:
+        """Switch a session's permission mode (maps to a per-run tool gate)."""
+        session = self._sessions.get(session_id) or AcpSession(
+            session_id=session_id, thread_id=session_id
+        )
+        self._sessions[session_id] = session
+        if is_known_mode(mode_id):
+            session.mode_id = mode_id
+            session.gate_override = gate_for_mode(mode_id)
+        return acp.schema.SetSessionModeResponse()
 
     async def cancel(self, session_id: str, **_: Any) -> None:
         """Cancel the active prompt for this session.
@@ -137,8 +199,12 @@ class AgentAcpServer:
         abort = RunAbortHandle()
         self._aborts[session_id] = abort
 
+        user_text = _prompt_text(prompt)
+        if user_text:
+            session.transcript.append(ChatMessage(role="user", content=user_text))
+
         run_input = AgentRunInput(
-            input=_prompt_text(prompt),
+            input=user_text,
             run_id=f"run_{uuid4().hex[:12]}",
             thread_id=session.thread_id,
             agent_id=self._agent.defaults.agent_id,
@@ -148,13 +214,20 @@ class AgentAcpServer:
 
         emitted_tools: set[str] = set()
         try:
-            output = await self._agent.run(run_input, abort_handle=abort)
+            output = await self._agent.run(
+                run_input, abort_handle=abort, tool_gate=session.gate_override
+            )
             await self._emit_leg(session_id, output, emitted_tools)
             output = await self._drive_resume_loop(
                 session_id, output, emitted_tools, abort
             )
         finally:
             self._aborts.pop(session_id, None)
+
+        if output.status == RunStatus.COMPLETED and output.answer:
+            session.transcript.append(
+                ChatMessage(role="assistant", content=output.answer)
+            )
 
         if session_id in self._cancelled or output.status == RunStatus.CANCELLED:
             return acp.PromptResponse(stop_reason="cancelled")
@@ -205,6 +278,14 @@ class AgentAcpServer:
             tool_call=permission_tool_call(interrupt),
         )
         return resume_action_from_outcome(response.outcome)
+
+    async def _replay_history(self, session_id: str) -> None:
+        """Stream the session's recorded transcript to the client."""
+        session = self._sessions.get(session_id)
+        if session is None:
+            return
+        for update in history_updates(session.transcript):
+            await self._send(session_id, update)
 
     async def _emit_tools(
         self, session_id: str, output: AgentRunOutput, emitted: set[str]

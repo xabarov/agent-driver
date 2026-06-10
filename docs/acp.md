@@ -61,11 +61,29 @@ Point Zed at the command in `settings.json` (`agent_servers`):
 
 | ACP method | Adapter behavior |
 | --- | --- |
-| `initialize` | Advertises `agent_info` (name/version) and capabilities (`image=false`, `audio=false`, `load_session=false`). No auth methods (stdio). |
+| `initialize` | Advertises `agent_info` (name/version) and capabilities (`image=false`, `audio=false`, `load_session=true`, session `resume`). No auth methods (stdio). |
 | `authenticate` | No-op (no auth on stdio). |
-| `new_session(cwd, …)` | Allocates a session bound to a fresh runtime thread; remembers `cwd` as the workspace for filesystem/shell tools. |
-| `prompt(prompt, session_id)` | Runs one turn. Streams the answer as `update_agent_message_text`, the tool timeline as `start_tool_call` + `update_tool_call`, and bridges approval interrupts to `request_permission`. Returns a `PromptResponse` with the mapped stop reason. |
+| `new_session(cwd, …)` | Allocates a session bound to a fresh runtime thread; remembers `cwd` as the workspace; advertises the available permission `modes`. |
+| `load_session(session_id, …)` | Re-registers the session and **replays its recorded transcript** (user + assistant turns) via `session_update` before returning. |
+| `resume_session(session_id, …)` | Re-registers the session and continues it **without** replaying history. (Routed under the unstable protocol.) |
+| `set_session_mode(session_id, mode_id)` | Switches the session's permission posture. Maps `default`/`yolo`/`standard`/`strict` to a per-run tool gate (see below). |
+| `prompt(prompt, session_id)` | Runs one turn. Emits the answer as `update_agent_message_text`, the tool timeline as `start_tool_call` + `update_tool_call`, and bridges approval interrupts to `request_permission`. Records the turn into the session transcript. Returns a `PromptResponse` with the mapped stop reason. |
 | `cancel(session_id)` | Flags the session and aborts the in-flight run; the turn returns `stop_reason="cancelled"`. |
+
+### Session modes
+
+`set_session_mode` maps an ACP mode id onto the runtime permission gate, applied
+per run for that session:
+
+| Mode | Behavior |
+| --- | --- |
+| `default` | Use the agent's construction-time gate (e.g. `--permission-mode`). |
+| `yolo` | Allow every tool call without asking (overrides the default gate). |
+| `standard` | Ask before dangerous tool calls. |
+| `strict` | Ask before dangerous *and* cautious tool calls. |
+
+`set_session_model` / `fork_session` / `list_sessions` are not implemented (the
+adapter serves a single fixed model).
 
 ### Stop reasons
 
@@ -112,7 +130,8 @@ an offline, in-process round-trip driven by a fake ACP client.
 
 ## Not yet implemented
 
-- `load_session` / `resume_session` history replay (advertised as
-  `load_session=false` for now).
-- `set_session_mode` / `set_session_model` / `fork_session` / `list_sessions`.
+- Live token-by-token streaming (the answer is emitted once per leg, not
+  incrementally) and reasoning/thought deltas.
+- `set_session_model` / `fork_session` / `list_sessions` (single fixed model).
+- Plan updates (`todo_write` → `AgentPlanUpdate`) and image/audio prompt content.
 - Image / audio prompt content blocks (text only).

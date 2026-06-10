@@ -168,6 +168,77 @@ _STOP_REASON_BY_TERMINAL: dict[str, str] = {
 }
 
 
+# ACP session modes -> our permission posture. "default" leaves the agent's
+# construction-time gate untouched; the others override it per session.
+_SESSION_MODES: tuple[tuple[str, str, str], ...] = (
+    ("default", "Default", "Use the agent's configured permission policy."),
+    ("yolo", "Yolo", "Allow every tool call without asking."),
+    ("standard", "Standard", "Ask before dangerous tool calls."),
+    ("strict", "Strict", "Ask before dangerous and cautious tool calls."),
+)
+
+
+def session_mode_state(current_mode_id: str = "default") -> Any:
+    """Build the ACP ``SessionModeState`` advertising the permission modes."""
+    available = [
+        schema.SessionMode(id=mode_id, name=name, description=description)
+        for mode_id, name, description in _SESSION_MODES
+    ]
+    return schema.SessionModeState(
+        available_modes=available, current_mode_id=current_mode_id
+    )
+
+
+def is_known_mode(mode_id: str) -> bool:
+    """Whether ``mode_id`` is one of the advertised session modes."""
+    return any(mode_id == known for known, _, _ in _SESSION_MODES)
+
+
+def gate_for_mode(mode_id: str) -> Any | None:
+    """Map a session mode to a runtime ``ToolGate`` override (or ``None``).
+
+    ``None`` means "do not override" — the run uses the agent's default gate.
+    """
+    # Imported lazily so the adapter's import graph does not pull permissions
+    # unless mode switching is actually used.
+    from agent_driver.permissions import (
+        PermissionMode,
+        PermissionPolicy,
+        build_permission_gate,
+    )
+    from agent_driver.runtime.tool_gate import ToolGateAllow
+
+    if mode_id == "yolo":
+
+        async def _allow_all(_ctx: Any) -> Any:
+            return ToolGateAllow(reason="acp session mode: yolo")
+
+        return _allow_all
+    if mode_id in ("standard", "strict"):
+        return build_permission_gate(PermissionPolicy(mode=PermissionMode(mode_id)))
+    return None  # "default" or unknown -> use the agent's default gate
+
+
+def history_updates(messages: list[Any]) -> list[Any]:
+    """Translate a transcript of messages into ACP replay updates.
+
+    User messages become ``update_user_message_text`` and assistant messages
+    ``update_agent_message_text``; other roles (tool/system) are skipped.
+    Accepts any object exposing ``role`` and ``content`` (e.g. ``ChatMessage``).
+    """
+    updates: list[Any] = []
+    for message in messages:
+        role = _enum_value(getattr(message, "role", "")).lower()
+        content = getattr(message, "content", None)
+        if not isinstance(content, str) or not content:
+            continue
+        if role == "user":
+            updates.append(acp.update_user_message_text(content))
+        elif role == "assistant":
+            updates.append(acp.update_agent_message_text(content))
+    return updates
+
+
 def stop_reason_for(output: AgentRunOutput) -> str:
     """Map a terminal run to an ACP stop reason literal.
 

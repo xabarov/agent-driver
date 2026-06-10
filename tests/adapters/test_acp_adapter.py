@@ -125,6 +125,73 @@ async def test_initialize_advertises_capabilities() -> None:
     assert resp.agent_info.name == "agent-driver"
     assert resp.agent_info.version == "9.9.9"
     assert resp.agent_capabilities.prompt_capabilities.image is False
+    # Session richness: load_session + resume are advertised.
+    assert resp.agent_capabilities.load_session is True
+    assert resp.agent_capabilities.session_capabilities.resume is not None
+
+
+@pytest.mark.asyncio
+async def test_new_session_advertises_modes() -> None:
+    agent = create_agent(provider=FakeProvider(response_text="x"), tools=ToolSet.only())
+    server = AgentAcpServer(agent)
+    resp = await server.new_session(cwd="/tmp")
+    mode_ids = {m.id for m in resp.modes.available_modes}
+    assert {"default", "yolo", "standard", "strict"} <= mode_ids
+    assert resp.modes.current_mode_id == "default"
+
+
+@pytest.mark.asyncio
+async def test_set_session_mode_yolo_overrides_default_gate() -> None:
+    # The agent's construction-time gate ASKs for every tool; switching the
+    # session to "yolo" must override it so the run completes with no approval.
+    server = AgentAcpServer(_gated_agent())
+    client = FakeAcpClient(allow_option_id=None)
+    session_id = await _bind(server, client)
+
+    await server.set_session_mode(session_id=session_id, mode_id="yolo")
+    resp = await server.prompt(prompt=[_text_block("run echo")], session_id=session_id)
+
+    assert client.permission_requests == []  # gate overridden -> never asked
+    assert resp.stop_reason == "end_turn"
+    assert "all done" in client.message_text()
+
+
+@pytest.mark.asyncio
+async def test_load_session_replays_transcript() -> None:
+    agent = create_agent(
+        provider=FakeProvider(response_text="the answer"), tools=ToolSet.only()
+    )
+    server = AgentAcpServer(agent)
+    client = FakeAcpClient()
+    session_id = await _bind(server, client)
+
+    await server.prompt(prompt=[_text_block("hello there")], session_id=session_id)
+    client.updates.clear()
+
+    resp = await server.load_session(session_id=session_id, cwd="/tmp")
+
+    kinds = [type(u).__name__ for u in client.updates]
+    # Full conversation replayed: the user turn then the assistant answer.
+    assert "UserMessageChunk" in kinds
+    assert "AgentMessageChunk" in kinds
+    assert resp.modes.current_mode_id == "default"
+
+
+@pytest.mark.asyncio
+async def test_resume_session_returns_modes_without_replay() -> None:
+    agent = create_agent(
+        provider=FakeProvider(response_text="hi"), tools=ToolSet.only()
+    )
+    server = AgentAcpServer(agent)
+    client = FakeAcpClient()
+    session_id = await _bind(server, client)
+    await server.prompt(prompt=[_text_block("hi")], session_id=session_id)
+    client.updates.clear()
+
+    resp = await server.resume_session(session_id=session_id, cwd="/tmp")
+    # resume does NOT replay history.
+    assert client.updates == []
+    assert resp.modes.current_mode_id == "default"
 
 
 @pytest.mark.asyncio
