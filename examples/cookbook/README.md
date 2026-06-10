@@ -25,6 +25,7 @@ python examples/cookbook/01_quickstart.py
 | `11_project_memory.py` | Load AGENTS.md + injection scan (E2/E3) | `load_project_memory`, context scanner |
 | `12_subagent_routing.py` | Route subagents to per-role models (E6) | `RunnerConfig(subagent_model_routing=...)`, `run_subagent` |
 | `13_eval_compare.py` | Baseline-vs-treatment, N-run median deltas (T0) | `run_comparison`, `render_comparison` |
+| `14_filesystem_backends.py` | Route paths to scratch vs durable storage (E7) | `CompositeBackend`, `StateBackend`, `LocalFilesystemBackend` |
 
 To use a real model, swap `FakeProvider(...)` for a descriptor-resolved
 provider (see `08_providers.py`) — e.g. `resolve_provider(ProviderSpec(
