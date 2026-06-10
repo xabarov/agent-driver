@@ -57,6 +57,9 @@ print(resp.choices[0].message.content)
 | Method / path | Behavior |
 | --- | --- |
 | `POST /v1/chat/completions` | `stream=false` → one `chat.completion` object with `usage`. `stream=true` → SSE of `chat.completion.chunk` frames, terminated by `data: [DONE]`. |
+| `POST /v1/responses` | Responses API: `input` + `instructions`, stateful chaining via `previous_response_id`. `stream=true` → SSE of `response.*` events. |
+| `GET /v1/responses/{id}` | Retrieve a stored response (`store: true`). |
+| `DELETE /v1/responses/{id}` | Delete a stored response. |
 | `POST /v1/runs` | Start an async run; returns `202` with the run object immediately. |
 | `GET /v1/runs/{id}` | Poll run status (`queued`/`running`/`requires_action`/`completed`/`failed`/`cancelled`). |
 | `GET /v1/runs/{id}/events` | SSE of lifecycle events, terminated by `data: [DONE]`. |
@@ -64,6 +67,19 @@ print(resp.choices[0].message.content)
 | `POST /v1/runs/{id}/stop` | Cancel a run. |
 | `GET /v1/models` | Lists the configured model id. |
 | `GET /healthz` | Liveness probe. |
+
+### Responses API (`/v1/responses`)
+
+A stateful alternative to chat completions. The request carries a single
+`input` (a string or a list of `{role, content}` items) plus optional
+`instructions` (the system prompt); the response is a `response` object with
+`output` / `output_text` + `usage`. When `store` is true (default) the
+conversation is kept under the response `id`, so a follow-up request continues it
+with `previous_response_id` (the server replays the prior turns) — no need for the
+client to resend history. `GET` / `DELETE /v1/responses/{id}` retrieve and remove
+stored responses; the store is a bounded LRU. `stream=true` emits
+`response.created` → `response.output_text.delta` → `response.completed` SSE
+events.
 
 ### Async runs (long-running + human-in-the-loop)
 
@@ -159,9 +175,10 @@ on unbounded session ids.
 - Incremental OpenAI `tool_calls` streaming (see above — agent tools run
   server-side).
 - `top_p` / `stop` / `n` / `seed` / `logprobs` sampling parameters.
-- `GET /v1/responses` (OpenAI Responses API) — chat completions + async runs
-  are the supported surfaces today.
 - Token/tool streaming inside `/v1/runs` events (lifecycle events only for now;
   the final answer is in `run.completed`).
+- Responses API: tool/reasoning item types in `output` (assistant text only),
+  and the full incremental `response.*` event taxonomy (created /
+  output_text.delta / completed only).
 - Per-request keepalive comment frames (proxies may idle-timeout very long runs).
 - Non-streaming client-disconnect cancellation (streaming runs already abort).

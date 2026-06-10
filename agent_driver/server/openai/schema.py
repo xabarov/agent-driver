@@ -84,4 +84,50 @@ class ChatCompletionRequest(BaseModel):
         return bool(self.stream_options and self.stream_options.include_usage)
 
 
-__all__ = ["ChatCompletionRequest", "ChatMessageIn", "StreamOptions"]
+class ResponsesRequest(BaseModel):
+    """Subset of the OpenAI ``/v1/responses`` request body we honor.
+
+    ``input`` is either a plain string (a single user turn) or a list of
+    message items (``{"role", "content"}``); ``instructions`` is the system
+    prompt; ``previous_response_id`` chains onto a stored response.
+    """
+
+    model: str = "agent-driver"
+    input: str | list[Any] = ""
+    instructions: str | None = None
+    stream: bool = False
+    previous_response_id: str | None = None
+    store: bool = True
+    temperature: float | None = None
+    max_output_tokens: int | None = None
+    model_config = {"extra": "ignore"}
+
+    def input_messages(self) -> list[tuple[str, str]]:
+        """Return ``(role, text)`` pairs for this request's input.
+
+        A string becomes a single user turn; a list of ``{role, content}``
+        items is flattened to text per item (unknown roles fall back to user).
+        """
+        pairs: list[tuple[str, str]] = []
+        if isinstance(self.input, str):
+            if self.input.strip():
+                pairs.append(("user", self.input))
+            return pairs
+        for item in self.input:
+            if isinstance(item, str):
+                pairs.append(("user", item))
+            elif isinstance(item, dict):
+                role = item.get("role")
+                role = role if role in ("system", "user", "assistant") else "user"
+                text = _flatten_text(item.get("content"))
+                if text:
+                    pairs.append((role, text))
+        return pairs
+
+
+__all__ = [
+    "ChatCompletionRequest",
+    "ChatMessageIn",
+    "ResponsesRequest",
+    "StreamOptions",
+]

@@ -28,7 +28,8 @@ from agent_driver.server import errors
 from agent_driver.server.auth import is_authorized
 from agent_driver.server.middleware import SecurityHeadersMiddleware
 from agent_driver.server.openai import translate
-from agent_driver.server.openai.schema import ChatCompletionRequest
+from agent_driver.server.openai.schema import ChatCompletionRequest, ResponsesRequest
+from agent_driver.server.responses import ResponseManager, response_object
 from agent_driver.server.runs import RunManager, resume_action_for
 
 if TYPE_CHECKING:
@@ -59,6 +60,7 @@ class OpenAIServer:
         # bounded LRU so a long-lived server cannot leak memory on session ids.
         self._sessions: "OrderedDict[str, list[ChatMessage]]" = OrderedDict()
         self._runs = RunManager(agent)
+        self._responses = ResponseManager(agent)
 
     # -- helpers -----------------------------------------------------------
 
@@ -213,6 +215,91 @@ class OpenAIServer:
             # disconnected) so it doesn't keep running detached.
             stream.cancel(reason="client_disconnect")
         yield "data: [DONE]\n\n"
+
+    # -- responses (/v1/responses) ----------------------------------------
+
+    async def create_response(self, request: Request) -> Any:
+        if not is_authorized(
+            request.headers.get("authorization"), api_key=self._api_key
+        ):
+            return self._unauthorized()
+        try:
+            parsed = ResponsesRequest.model_validate(await request.json())
+        except (ValueError, json.JSONDecodeError) as exc:
+            return JSONResponse(
+                {"error": {"message": str(exc), "type": "bad_request"}}, status_code=400
+            )
+        if parsed.stream:
+            return StreamingResponse(
+                self._response_stream(parsed),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        try:
+            record, output = await self._responses.create(parsed)
+        except Exception as exc:  # noqa: BLE001 - mapped to an OpenAI error body
+            logger.warning("responses run failed: %s", exc, exc_info=True)
+            status, payload = errors.status_and_payload_for_exception(exc)
+            return JSONResponse(payload, status_code=status)
+        terminal_error = errors.status_and_payload_for_output(output)
+        if terminal_error is not None:
+            status, payload = terminal_error
+            return JSONResponse(payload, status_code=status)
+        return JSONResponse(response_object(record))
+
+    async def _response_stream(self, parsed: ResponsesRequest):
+        messages, run_input = self._responses.prepare(parsed)
+        response_id = self._responses.new_response_id()
+        stream = self._agent.stream_run(run_input)
+
+        def _frame(event: str, data: dict[str, Any]) -> str:
+            return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+        yield _frame(
+            "response.created",
+            {"response": {"id": response_id, "status": "in_progress"}},
+        )
+        try:
+            async for delta in stream.text_deltas():
+                yield _frame("response.output_text.delta", {"delta": delta})
+            output = await stream.final_output()
+        except Exception as exc:  # noqa: BLE001 - surfaced as an error event
+            logger.warning("responses stream failed: %s", exc, exc_info=True)
+            _, payload = errors.status_and_payload_for_exception(exc)
+            yield _frame("error", payload)
+            return
+        record = self._responses.finalize(
+            parsed, messages, output, response_id=response_id
+        )
+        yield _frame("response.completed", {"response": response_object(record)})
+
+    async def get_response(self, request: Request) -> Any:
+        if not is_authorized(
+            request.headers.get("authorization"), api_key=self._api_key
+        ):
+            return self._unauthorized()
+        record = self._responses.get(request.path_params["response_id"])
+        if record is None:
+            return JSONResponse(
+                {"error": {"message": "unknown response", "type": "not_found"}},
+                status_code=404,
+            )
+        return JSONResponse(response_object(record))
+
+    async def delete_response(self, request: Request) -> Any:
+        if not is_authorized(
+            request.headers.get("authorization"), api_key=self._api_key
+        ):
+            return self._unauthorized()
+        deleted = self._responses.delete(request.path_params["response_id"])
+        return JSONResponse(
+            {
+                "id": request.path_params["response_id"],
+                "object": "response.deleted",
+                "deleted": deleted,
+            },
+            status_code=200 if deleted else 404,
+        )
 
     # -- async runs (/v1/runs) --------------------------------------------
 
@@ -371,6 +458,11 @@ def create_app(
     )
     routes = [
         Route("/v1/chat/completions", server.chat_completions, methods=["POST"]),
+        Route("/v1/responses", server.create_response, methods=["POST"]),
+        Route("/v1/responses/{response_id}", server.get_response, methods=["GET"]),
+        Route(
+            "/v1/responses/{response_id}", server.delete_response, methods=["DELETE"]
+        ),
         Route("/v1/runs", server.create_run, methods=["POST"]),
         Route("/v1/runs/{run_id}", server.get_run, methods=["GET"]),
         Route("/v1/runs/{run_id}/events", server.run_events, methods=["GET"]),
