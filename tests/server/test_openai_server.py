@@ -416,3 +416,35 @@ def test_content_flatten_shapes() -> None:
         ).text_content()
         == "ab"
     )
+
+
+def test_image_url_parts_reach_provider_as_attachments() -> None:
+    class _Spy(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__(response_text="a cat")
+            self.last: Any = None
+
+        async def complete(self, request: LlmRequest) -> LlmResponse:
+            self.last = request
+            return await super().complete(request)
+
+    spy = _Spy()
+    client = _client(spy)
+    body = {
+        "model": "agent-driver-test",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "what is in this image?"},
+                    {"type": "image_url", "image_url": {"url": "https://x/cat.png"}},
+                ],
+            }
+        ],
+    }
+    assert client.post("/v1/chat/completions", json=body).status_code == 200
+    user = [m for m in spy.last.messages if str(m.role.value) == "user"][-1]
+    assert user.content == "what is in this image?"
+    assert user.metadata.get("attachments") == [
+        {"kind": "image", "url": "https://x/cat.png"}
+    ]

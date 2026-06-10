@@ -36,23 +36,22 @@ def build_openai_completion_payload(
     """Build an OpenAI-compatible chat/completions request payload."""
     messages_payload: list[dict[str, Any]] = []
     for message in request.messages:
-        # Phase 13 H29.2 — when a tool-role message carries binary
-        # attachments (e.g. screenshot images planted in metadata by
-        # ``tool_stage``), emit the OpenAI ``content`` list shape
-        # with text + image_url blocks instead of the flat string.
+        # When a message carries binary/url attachments in metadata, emit the
+        # OpenAI ``content`` list (text + image_url blocks) instead of the flat
+        # string. Originally tool-only (Phase 13 H29.2 — tool_stage screenshots);
+        # now also for user/assistant messages so a user-supplied image reaches
+        # a vision model end-to-end.
         attachments = message.metadata.get("attachments")
         content_blocks: list[dict[str, Any]] | None = None
-        if (
-            message.role.value == "tool"
-            and isinstance(attachments, list)
-            and attachments
-        ):
+        if isinstance(attachments, list) and attachments:
             content_blocks = build_openai_tool_content_list(
                 message.content, attachments
             )
         row: dict[str, Any] = {
             "role": message.role.value,
-            "content": content_blocks if content_blocks is not None else message.content,
+            "content": (
+                content_blocks if content_blocks is not None else message.content
+            ),
         }
         if message.name:
             row["name"] = message.name
@@ -86,9 +85,7 @@ def build_openai_completion_payload(
         "stream": stream,
     }
     max_tokens = (
-        request.max_tokens
-        if request.max_tokens is not None
-        else max_tokens_default
+        request.max_tokens if request.max_tokens is not None else max_tokens_default
     )
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
@@ -106,9 +103,7 @@ def build_openai_completion_payload(
         if request.parallel_tool_calls is not None:
             payload["parallel_tool_calls"] = request.parallel_tool_calls
     elif request.tool_choice is not None:
-        payload["tool_choice"] = normalize_tool_choice_for_openai(
-            request.tool_choice
-        )
+        payload["tool_choice"] = normalize_tool_choice_for_openai(request.tool_choice)
     # Phase 13 H26 — structured output enforcement at the provider
     # layer. Pass through the native OpenAI ``response_format`` shape
     # when the caller set it; omit entirely when None so we don't

@@ -117,6 +117,24 @@ still reduce `max_tokens` on provider credit errors. `response_format`
 (`{"type": "json_object"}` or `json_schema`) is passed through for JSON / schema
 mode (provider support required).
 
+### Image input (vision models)
+
+A user message may carry images via OpenAI multimodal content parts:
+
+```json
+{"role": "user", "content": [
+  {"type": "text", "text": "what is in this image?"},
+  {"type": "image_url", "image_url": {"url": "https://…/cat.png"}},
+  {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR…"}}
+]}
+```
+
+Both `https://` and `data:` URLs are supported. The image parts are carried on
+the run as `ChatMessage.metadata["attachments"]` and emitted to the provider as
+OpenAI `image_url` content blocks, so a vision model (e.g. a Qwen-VL route on
+OpenRouter) receives them. Requires a vision-capable `--model`. Audio input is
+not yet wired.
+
 ### Errors
 
 Failures use the OpenAI error envelope — `{"error": {"message", "type", "code"}}`

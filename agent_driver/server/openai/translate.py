@@ -32,7 +32,11 @@ def to_chat_messages(messages: list[ChatMessageIn]) -> list[ChatMessage]:
     converted: list[ChatMessage] = []
     for message in messages:
         role = _ROLE_MAP.get(message.role, "user")
-        converted.append(ChatMessage(role=role, content=message.text_content()))
+        attachments = message.image_attachments()
+        metadata = {"attachments": attachments} if attachments else {}
+        converted.append(
+            ChatMessage(role=role, content=message.text_content(), metadata=metadata)
+        )
     return converted
 
 

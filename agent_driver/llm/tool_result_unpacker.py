@@ -69,14 +69,20 @@ def normalize_attachment(raw: Any) -> dict[str, Any] | None:
     """
     if not isinstance(raw, dict):
         return None
+    kind = raw.get("kind", _DEFAULT_KIND)
+    if not isinstance(kind, str) or kind not in _RECOGNIZED_KINDS:
+        return None
+    # URL-referenced attachment (e.g. a user-supplied image_url). Passed
+    # through to the provider as-is; no base64 round-trip. Accept http(s)
+    # and data: URLs.
+    url = raw.get("url")
+    if isinstance(url, str) and url.startswith(("http://", "https://", "data:")):
+        return {"kind": kind, "url": url}
     mime_type = raw.get("mime_type")
     data = raw.get("data")
-    kind = raw.get("kind", _DEFAULT_KIND)
     if not isinstance(mime_type, str) or "/" not in mime_type:
         return None
     if not isinstance(data, str) or not data:
-        return None
-    if not isinstance(kind, str) or kind not in _RECOGNIZED_KINDS:
         return None
     # Quick base64 sanity-check — decode header bytes to catch obvious
     # corruption without paying for the full decode of large payloads.
@@ -153,14 +159,14 @@ def build_openai_tool_content_list(
     for attachment in attachments:
         kind = attachment.get("kind")
         if kind == "image":
-            mime = attachment["mime_type"]
-            data = attachment["data"]
-            blocks.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{data}"},
-                }
-            )
+            url = attachment.get("url")
+            if isinstance(url, str) and url:
+                image_url = url
+            else:
+                mime = attachment["mime_type"]
+                data = attachment["data"]
+                image_url = f"data:{mime};base64,{data}"
+            blocks.append({"type": "image_url", "image_url": {"url": image_url}})
         # Future ``kind`` values silently dropped here so adding a new
         # transport doesn't require touching this function.
     if not blocks:

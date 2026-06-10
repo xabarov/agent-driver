@@ -23,6 +23,27 @@ class ChatMessageIn(BaseModel):
     content: str | list[Any] | dict[str, Any] | None = None
     name: str | None = None
 
+    def image_attachments(self) -> list[dict[str, Any]]:
+        """Extract image parts (``image_url`` / ``input_image``) as attachments.
+
+        Returns ``[{"kind": "image", "url": <data: or http(s) url>}]`` for each
+        image part; the runtime carries these on ``ChatMessage.metadata`` and the
+        provider emits them as ``image_url`` content blocks to a vision model.
+        """
+        if not isinstance(self.content, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for part in self.content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") not in ("image_url", "input_image"):
+                continue
+            image_url = part.get("image_url")
+            url = image_url.get("url") if isinstance(image_url, dict) else image_url
+            if isinstance(url, str) and url:
+                out.append({"kind": "image", "url": url})
+        return out
+
     def text_content(self) -> str:
         """Return the message content flattened to plain text.
 
