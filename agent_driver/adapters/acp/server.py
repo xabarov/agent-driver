@@ -113,6 +113,9 @@ class AgentAcpServer:
                 ),
                 session_capabilities=acp.schema.SessionCapabilities(
                     resume=acp.schema.SessionResumeCapabilities(),
+                    list=acp.schema.SessionListCapabilities(),
+                    fork=acp.schema.SessionForkCapabilities(),
+                    close=acp.schema.SessionCloseCapabilities(),
                 ),
             ),
             auth_methods=[],
@@ -192,6 +195,49 @@ class AgentAcpServer:
             session.gate_override = gate_for_mode(mode_id)
             await self._send(session_id, current_mode_update(mode_id))
         return acp.schema.SetSessionModeResponse()
+
+    async def list_sessions(
+        self, cursor: str | None = None, cwd: str | None = None, **_: Any
+    ) -> acp.schema.ListSessionsResponse:
+        """List the adapter's known sessions (no pagination — returns all)."""
+        sessions = [
+            acp.schema.SessionInfo(session_id=sid, cwd=session.cwd or "")
+            for sid, session in self._sessions.items()
+        ]
+        return acp.schema.ListSessionsResponse(sessions=sessions, next_cursor=None)
+
+    async def fork_session(
+        self,
+        session_id: str,
+        cwd: str | None = None,
+        mcp_servers: list[Any] | None = None,
+        **_: Any,
+    ) -> acp.schema.ForkSessionResponse:
+        """Branch a session into a new one, copying its transcript and mode."""
+        parent = self._sessions.get(session_id)
+        new_id = f"acp_{uuid4().hex[:12]}"
+        forked = AcpSession(
+            session_id=new_id,
+            thread_id=new_id,
+            cwd=cwd if cwd is not None else (parent.cwd if parent else None),
+        )
+        if parent is not None:
+            forked.transcript = list(parent.transcript)
+            forked.mode_id = parent.mode_id
+            forked.gate_override = parent.gate_override
+        self._sessions[new_id] = forked
+        return acp.schema.ForkSessionResponse(
+            session_id=new_id, modes=session_mode_state(forked.mode_id)
+        )
+
+    async def close_session(
+        self, session_id: str, **_: Any
+    ) -> acp.schema.CloseSessionResponse:
+        """Discard a session's adapter-side state."""
+        self._sessions.pop(session_id, None)
+        self._cancelled.discard(session_id)
+        self._aborts.pop(session_id, None)
+        return acp.schema.CloseSessionResponse()
 
     async def cancel(self, session_id: str, **_: Any) -> None:
         """Cancel the active prompt for this session.

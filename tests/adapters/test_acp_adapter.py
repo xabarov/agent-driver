@@ -411,6 +411,70 @@ async def test_edit_tool_emits_diff_content(tmp_path: Any) -> None:
 
 
 @pytest.mark.asyncio
+async def test_initialize_advertises_session_management() -> None:
+    agent = create_agent(provider=FakeProvider(response_text="x"), tools=ToolSet.only())
+    resp = await AgentAcpServer(agent).initialize(protocol_version=1)
+    caps = resp.agent_capabilities.session_capabilities
+    assert caps.list is not None
+    assert caps.fork is not None
+    assert caps.close is not None
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_returns_known_sessions() -> None:
+    server = AgentAcpServer(
+        create_agent(provider=FakeProvider(response_text="x"), tools=ToolSet.only())
+    )
+    a = await server.new_session(cwd="/tmp/a")
+    b = await server.new_session(cwd="/tmp/b")
+
+    resp = await server.list_sessions()
+
+    ids = {s.session_id for s in resp.sessions}
+    assert ids == {a.session_id, b.session_id}
+    cwds = {s.cwd for s in resp.sessions}
+    assert cwds == {"/tmp/a", "/tmp/b"}
+
+
+@pytest.mark.asyncio
+async def test_fork_session_copies_transcript_and_mode() -> None:
+    server = AgentAcpServer(
+        create_agent(provider=FakeProvider(response_text="hi"), tools=ToolSet.only())
+    )
+    client = FakeAcpClient()
+    parent_id = await _bind(server, client)
+    await server.prompt(prompt=[_text_block("remember this")], session_id=parent_id)
+    await server.set_session_mode(session_id=parent_id, mode_id="strict")
+
+    forked = await server.fork_session(session_id=parent_id)
+
+    assert forked.session_id != parent_id
+    child = server._sessions[forked.session_id]
+    parent = server._sessions[parent_id]
+    assert child.mode_id == "strict"
+    assert [m.content for m in child.transcript] == [
+        m.content for m in parent.transcript
+    ]
+    # Independent copy: mutating the child does not touch the parent.
+    child.transcript.clear()
+    assert parent.transcript
+
+
+@pytest.mark.asyncio
+async def test_close_session_discards_state() -> None:
+    server = AgentAcpServer(
+        create_agent(provider=FakeProvider(response_text="x"), tools=ToolSet.only())
+    )
+    session = await server.new_session(cwd="/tmp")
+    assert session.session_id in server._sessions
+
+    resp = await server.close_session(session_id=session.session_id)
+
+    assert type(resp).__name__ == "CloseSessionResponse"
+    assert session.session_id not in server._sessions
+
+
+@pytest.mark.asyncio
 async def test_todo_write_emits_plan_update() -> None:
     todos = [
         {"content": "analyze the bug", "status": "in_progress"},

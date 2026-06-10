@@ -220,15 +220,22 @@ edit diffs use), so no runtime projection was needed after all.
 
 ---
 
-## Tier 3 — Extra agent methods (niche / larger, defer)
+## Tier 3 — Extra agent methods (niche / larger)
 
-- [ ] `session/list` (paginated session inventory) + `session/fork` (branch a
-      conversation) — need a session registry the adapter owns.
+**Status: session management DONE (2026-06-10).** `list_sessions` /
+`fork_session` / `close_session` implemented over the adapter's `_sessions`
+registry (fork copies the parent's transcript + mode; close discards state);
+capabilities advertised in `initialize`. `fork`/`close` route under the unstable
+protocol, `list` is stable.
+
+- [x] `session/list` (session inventory) + `session/fork` (branch a
+      conversation, copying transcript + mode) + `session/close`.
 - [ ] `session/set_model` — only meaningful once the agent supports multi-model
       swapping (the adapter serves a single fixed model today).
-- [ ] `session/close`, `elicitation/*` (structured form prompts), `document/*`
-      (editor open/change/save lifecycle), `nes/*` (next-edit suggestions),
-      `providers/*`. Pending demand.
+- [ ] `elicitation/*` (structured form prompts — agent→client callback, natural
+      fit for the `ask_user_question` tool), `document/*` (editor open/change/
+      save lifecycle), `nes/*` (next-edit suggestions), `providers/*`. Pending
+      demand.
 
 ---
 

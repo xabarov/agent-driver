@@ -85,8 +85,13 @@ per run for that session:
 Switching the mode emits a `current_mode_update` so the editor reflects the
 active posture.
 
-`set_session_model` / `fork_session` / `list_sessions` are not implemented (the
-adapter serves a single fixed model).
+### Session management
+
+`list_sessions` returns the adapter's known sessions; `fork_session` branches a
+session into a new one (copying its transcript + mode); `close_session` discards
+a session's adapter-side state. `fork_session` / `close_session` are routed under
+the unstable protocol (`use_unstable_protocol=True`); `list_sessions` is stable.
+`set_session_model` is not implemented — the adapter serves a single fixed model.
 
 ### Slash commands
 
@@ -177,7 +182,9 @@ an offline, in-process round-trip driven by a fake ACP client.
 - Live token-by-token streaming (the answer is emitted once per leg, not
   incrementally) and reasoning/thought deltas.
 - `set_session_model` / `fork_session` / `list_sessions` (single fixed model).
-- Image/audio prompt content. (Edit-family tools emit a `diff` content block,
-  and `todo_write` emits an `AgentPlanUpdate`, so edits and the plan render
-  natively in the editor.)
+- `set_session_model` (single fixed model), `elicitation/*` (structured form
+  prompts), `document/*` (editor file lifecycle), `nes/*` (next-edit
+  suggestions), and image/audio prompt content. (Edit-family tools emit a `diff`
+  content block, and `todo_write` emits an `AgentPlanUpdate`, so edits and the
+  plan render natively in the editor.)
 - Image / audio prompt content blocks (text only).
