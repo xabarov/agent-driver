@@ -37,6 +37,13 @@ class ChatMessageIn(BaseModel):
         return ""
 
 
+class StreamOptions(BaseModel):
+    """OpenAI ``stream_options`` (only ``include_usage`` is honored)."""
+
+    include_usage: bool = False
+    model_config = {"extra": "ignore"}
+
+
 class ChatCompletionRequest(BaseModel):
     """Subset of the OpenAI ``/v1/chat/completions`` request body we honor."""
 
@@ -45,8 +52,14 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     temperature: float | None = None
     max_tokens: int | None = None
+    response_format: dict[str, Any] | None = None
+    stream_options: StreamOptions | None = None
     # Tolerate (and ignore) any other OpenAI fields a client may send.
     model_config = {"extra": "ignore"}
 
+    def wants_usage_chunk(self) -> bool:
+        """Whether a final usage chunk was requested via stream_options."""
+        return bool(self.stream_options and self.stream_options.include_usage)
 
-__all__ = ["ChatCompletionRequest", "ChatMessageIn"]
+
+__all__ = ["ChatCompletionRequest", "ChatMessageIn", "StreamOptions"]

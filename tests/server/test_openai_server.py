@@ -215,3 +215,122 @@ def test_bad_json_body(bad: str) -> None:
         headers={"Content-Type": "application/json"},
     )
     assert resp.status_code == 400
+
+
+# -- production-readiness ------------------------------------------------------
+
+
+class _Boom(FakeProvider):
+    """Provider that always raises, to exercise error mapping."""
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        raise RuntimeError("provider exploded")
+
+
+def test_provider_error_is_openai_envelope() -> None:
+    agent = create_agent(provider=_Boom(), tools=ToolSet.only())
+    client = TestClient(create_app(agent), raise_server_exceptions=False)
+    resp = client.post("/v1/chat/completions", json=_body("hi"))
+    assert resp.status_code in (500, 502, 504)
+    assert resp.headers["content-type"].startswith("application/json")
+    err = resp.json()["error"]
+    assert err["type"] and "message" in err
+
+
+def test_failed_run_maps_to_error_unit() -> None:
+    # Unit-level: a non-completed terminal run becomes an OpenAI error body.
+    # status_and_payload_for_output reads only status/terminal_reason/answer,
+    # so a duck-typed stub avoids AgentRunOutput's terminal-event validator.
+    from types import SimpleNamespace
+
+    from agent_driver.contracts.enums import RunStatus, TerminalReason
+    from agent_driver.server import errors
+
+    failed = SimpleNamespace(
+        status=RunStatus.FAILED,
+        terminal_reason=TerminalReason.APPROVAL_REJECTED,
+        answer=None,
+    )
+    mapped = errors.status_and_payload_for_output(failed)
+    assert mapped is not None
+    status, payload = mapped
+    assert status == 500
+    assert payload["error"]["type"] == "run_failed"
+
+    completed = SimpleNamespace(
+        status=RunStatus.COMPLETED,
+        terminal_reason=TerminalReason.FINAL_ANSWER,
+        answer="ok",
+    )
+    assert errors.status_and_payload_for_output(completed) is None
+
+
+def test_stream_include_usage_emits_usage_chunk() -> None:
+    client = _client(FakeProvider(response_text="hello world"))
+    body = _body("hi", stream=True)
+    body["stream_options"] = {"include_usage": True}
+    with client.stream("POST", "/v1/chat/completions", json=body) as resp:
+        text = "".join(resp.iter_text())
+    chunks = _parse_sse(text)
+    usage_chunks = [c for c in chunks if c.get("usage")]
+    assert len(usage_chunks) == 1
+    # Usage chunk carries an empty choices array per the OpenAI contract.
+    assert usage_chunks[0]["choices"] == []
+    assert usage_chunks[0]["usage"]["total_tokens"] >= 1
+
+
+def test_stream_omits_usage_chunk_by_default() -> None:
+    client = _client(FakeProvider(response_text="hello"))
+    with client.stream(
+        "POST", "/v1/chat/completions", json=_body("hi", stream=True)
+    ) as resp:
+        text = "".join(resp.iter_text())
+    assert all(not c.get("usage") for c in _parse_sse(text))
+
+
+class _RequestSpy(FakeProvider):
+    """Captures the LlmRequest fields the runtime builds."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="ok")
+        self.last: LlmRequest | None = None
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.last = request
+        return await super().complete(request)
+
+
+def test_sampling_and_response_format_passthrough() -> None:
+    spy = _RequestSpy()
+    client = _client(spy)
+    body = _body("hi")
+    body["temperature"] = 0.3
+    body["max_tokens"] = 256
+    body["response_format"] = {"type": "json_object"}
+    resp = client.post("/v1/chat/completions", json=body)
+    assert resp.status_code == 200
+    assert spy.last is not None
+    assert spy.last.temperature == 0.3
+    assert spy.last.max_tokens == 256
+    assert spy.last.response_format == {"type": "json_object"}
+
+
+def test_session_lru_eviction() -> None:
+    spy = _ContextSpy()
+    agent = create_agent(provider=spy, tools=ToolSet.only())
+    client = TestClient(create_app(agent, max_sessions=2))
+
+    for sid in ("s1", "s2", "s3"):  # 3 sessions, cap 2 -> s1 evicted
+        client.post(
+            "/v1/chat/completions",
+            json=_body("remember me"),
+            headers={"X-Session-Id": sid},
+        )
+    # s1 was evicted: a follow-up on s1 does NOT see its earlier turn.
+    spy.seen.clear()
+    client.post(
+        "/v1/chat/completions",
+        json=_body("what did I say?"),
+        headers={"X-Session-Id": "s1"},
+    )
+    assert "remember me" not in " ".join(spy.seen[-1])

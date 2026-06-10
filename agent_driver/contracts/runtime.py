@@ -47,6 +47,15 @@ class AgentRunInput(ContractModel):
     max_steps: int | None = None
     max_tool_calls: int | None = None
     cost_budget_usd: float | None = None
+    temperature: float | None = None
+    """Sampling temperature passed through to ``LlmRequest.temperature`` for
+    every model call in the run. ``None`` leaves the provider default. Mirrors
+    the OpenAI ``temperature`` parameter."""
+    max_tokens: int | None = None
+    """Max completion tokens passed through to ``LlmRequest.max_tokens`` for
+    each model call. ``None`` leaves the provider/runtime default (the runtime
+    may still reduce it on provider credit errors). Mirrors OpenAI
+    ``max_tokens``."""
     user_id: str | None = None
     tenant_id: str | None = None
     workspace_id: str | None = None

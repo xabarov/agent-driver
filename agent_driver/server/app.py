@@ -12,6 +12,7 @@ import json
 import logging
 import time
 import uuid
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 from starlette.applications import Starlette
@@ -20,6 +21,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.server import errors
 from agent_driver.server.auth import is_authorized
 from agent_driver.server.openai import translate
 from agent_driver.server.openai.schema import ChatCompletionRequest
@@ -30,6 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SESSION_HEADER = "x-session-id"
+DEFAULT_MAX_SESSIONS = 1024
 
 
 class OpenAIServer:
@@ -41,12 +44,15 @@ class OpenAIServer:
         *,
         model_id: str = "agent-driver",
         api_key: str | None = None,
+        max_sessions: int = DEFAULT_MAX_SESSIONS,
     ) -> None:
         self._agent = agent
         self._model_id = model_id
         self._api_key = api_key
-        # Server-side conversation memory for stateful (X-Session-Id) clients.
-        self._sessions: dict[str, list[ChatMessage]] = {}
+        self._max_sessions = max(1, max_sessions)
+        # Server-side conversation memory for stateful (X-Session-Id) clients,
+        # bounded LRU so a long-lived server cannot leak memory on session ids.
+        self._sessions: "OrderedDict[str, list[ChatMessage]]" = OrderedDict()
 
     # -- helpers -----------------------------------------------------------
 
@@ -59,7 +65,10 @@ class OpenAIServer:
     def _build_run_input(
         self, request: ChatCompletionRequest, session_id: str | None, run_id: str
     ) -> Any:
-        history = self._sessions.get(session_id, []) if session_id else []
+        history: list[ChatMessage] = []
+        if session_id and session_id in self._sessions:
+            self._sessions.move_to_end(session_id)  # LRU touch
+            history = self._sessions[session_id]
         return translate.to_run_input(
             request,
             run_id=run_id,
@@ -70,12 +79,19 @@ class OpenAIServer:
         )
 
     def _remember(self, session_id: str | None, run_input: Any, answer: str) -> None:
-        """Persist the turn into server-side session memory (stateful mode)."""
+        """Persist the turn into server-side session memory (stateful mode).
+
+        Bounded LRU: the most-recently-used session is kept at the end; when the
+        map exceeds ``max_sessions`` the least-recently-used entry is evicted.
+        """
         if not session_id:
             return
         history = list(run_input.messages)
         history.append(ChatMessage(role="assistant", content=answer or ""))
         self._sessions[session_id] = history
+        self._sessions.move_to_end(session_id)
+        while len(self._sessions) > self._max_sessions:
+            self._sessions.popitem(last=False)
 
     # -- routes ------------------------------------------------------------
 
@@ -109,54 +125,87 @@ class OpenAIServer:
 
         if parsed.stream:
             return StreamingResponse(
-                self._stream_chunks(run_input, session_id, created),
+                self._stream_chunks(parsed, run_input, session_id, created),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
-        output = await self._agent.run(run_input)
+        try:
+            output = await self._agent.run(run_input)
+        except Exception as exc:  # noqa: BLE001 - mapped to an OpenAI error body
+            logger.warning("chat.completions run failed: %s", exc, exc_info=True)
+            status, payload = errors.status_and_payload_for_exception(exc)
+            return JSONResponse(payload, status_code=status)
+        # A non-completed terminal run (failed/timed-out) is an error, not an
+        # empty completion — surface it with the right status + OpenAI envelope.
+        terminal_error = errors.status_and_payload_for_output(output)
+        if terminal_error is not None:
+            status, payload = terminal_error
+            return JSONResponse(payload, status_code=status)
         self._remember(session_id, run_input, output.answer or "")
         return JSONResponse(
             translate.completion_object(output, model=self._model_id, created=created)
         )
 
     async def _stream_chunks(
-        self, run_input: Any, session_id: str | None, created: int
+        self,
+        parsed: ChatCompletionRequest,
+        run_input: Any,
+        session_id: str | None,
+        created: int,
     ):
-        """Yield SSE frames of chat.completion.chunk, terminated by [DONE]."""
+        """Yield SSE frames of chat.completion.chunk, terminated by [DONE].
+
+        On client disconnect the generator is closed and the ``finally`` aborts
+        the underlying run so it does not keep burning tokens. Mid-stream errors
+        are surfaced as a trailing ``{"error": ...}`` frame before ``[DONE]``.
+        """
         stream = self._agent.stream_run(run_input)
         parts: list[str] = []
 
         def _frame(payload: dict[str, Any]) -> str:
             return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-        yield _frame(
-            translate.role_chunk(
-                run_input.run_id, model=self._model_id, created=created
-            )
-        )
-        async for delta in stream.text_deltas():
-            parts.append(delta)
+        try:
             yield _frame(
-                translate.content_chunk(
-                    run_input.run_id, delta, model=self._model_id, created=created
+                translate.role_chunk(
+                    run_input.run_id, model=self._model_id, created=created
                 )
             )
-        output = await stream.final_output()
-        # Some providers do not emit token deltas; fall back to the final answer.
-        if not parts and output.answer:
-            yield _frame(
-                translate.content_chunk(
-                    run_input.run_id,
-                    output.answer,
-                    model=self._model_id,
-                    created=created,
+            async for delta in stream.text_deltas():
+                parts.append(delta)
+                yield _frame(
+                    translate.content_chunk(
+                        run_input.run_id, delta, model=self._model_id, created=created
+                    )
                 )
+            output = await stream.final_output()
+            # Some providers do not emit token deltas; fall back to the answer.
+            if not parts and output.answer:
+                yield _frame(
+                    translate.content_chunk(
+                        run_input.run_id,
+                        output.answer,
+                        model=self._model_id,
+                        created=created,
+                    )
+                )
+            self._remember(session_id, run_input, output.answer or "")
+            yield _frame(
+                translate.final_chunk(output, model=self._model_id, created=created)
             )
-        self._remember(session_id, run_input, output.answer or "")
-        yield _frame(
-            translate.final_chunk(output, model=self._model_id, created=created)
-        )
+            if parsed.wants_usage_chunk():
+                yield _frame(
+                    translate.usage_chunk(output, model=self._model_id, created=created)
+                )
+        except Exception as exc:  # noqa: BLE001 - surfaced as an SSE error frame
+            logger.warning("chat.completions stream failed: %s", exc, exc_info=True)
+            _, payload = errors.status_and_payload_for_exception(exc)
+            yield _frame(payload)
+        finally:
+            # Abort the run if the consumer stopped early (e.g. client
+            # disconnected) so it doesn't keep running detached.
+            stream.cancel(reason="client_disconnect")
         yield "data: [DONE]\n\n"
 
     async def list_models(self, request: Request) -> Any:
@@ -191,6 +240,7 @@ def create_app(
     model_id: str = "agent-driver",
     api_key: str | None = None,
     enable_mcp: bool = False,
+    max_sessions: int = DEFAULT_MAX_SESSIONS,
 ) -> Starlette:
     """Build the Starlette app exposing ``agent`` over the OpenAI HTTP surface.
 
@@ -203,7 +253,9 @@ def create_app(
             "agent-driver server: no API key configured — the server is OPEN. "
             "Set AGENT_DRIVER_SERVER_API_KEY and bind to loopback only."
         )
-    server = OpenAIServer(agent, model_id=model_id, api_key=api_key)
+    server = OpenAIServer(
+        agent, model_id=model_id, api_key=api_key, max_sessions=max_sessions
+    )
     routes = [
         Route("/v1/chat/completions", server.chat_completions, methods=["POST"]),
         Route("/v1/models", server.list_models, methods=["GET"]),

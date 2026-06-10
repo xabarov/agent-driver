@@ -353,6 +353,8 @@ def build_single_agent_llm_request(
         tools=request_tools,
         tool_choice=ctx.tool_choice,
         response_format=response_format,
+        temperature=run_input.temperature,
+        max_tokens=run_input.max_tokens,
         enable_prompt_cache=ctx.enable_prompt_cache,
         metadata=request_metadata,
     )

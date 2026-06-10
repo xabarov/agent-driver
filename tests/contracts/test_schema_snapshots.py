@@ -22,7 +22,6 @@ from agent_driver.contracts import (
     ToolTrace,
 )
 
-
 PUBLIC_CONTRACT_FIELD_SNAPSHOTS: dict[str, tuple[str, ...]] = {
     "AgentRunInput": (
         "input",
@@ -43,6 +42,8 @@ PUBLIC_CONTRACT_FIELD_SNAPSHOTS: dict[str, tuple[str, ...]] = {
         "max_steps",
         "max_tool_calls",
         "cost_budget_usd",
+        "temperature",
+        "max_tokens",
         "user_id",
         "tenant_id",
         "workspace_id",

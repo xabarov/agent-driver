@@ -58,11 +58,14 @@ def to_run_input(
         agent_id=agent_id,
         graph_preset=graph_preset,
         stream=request.stream,
+        response_format=request.response_format,
+        temperature=request.temperature,
+        max_tokens=request.max_tokens,
         app_metadata={"openai_model": request.model},
     )
 
 
-def _usage_dict(output: AgentRunOutput) -> dict[str, int]:
+def usage_dict(output: AgentRunOutput) -> dict[str, int]:
     """Project the run's usage onto OpenAI ``usage`` fields (zeros if absent)."""
     usage = output.usage
     prompt = int(getattr(usage, "input_tokens", 0) or 0)
@@ -109,7 +112,7 @@ def completion_object(
                 "finish_reason": _finish_reason(output),
             }
         ],
-        "usage": _usage_dict(output),
+        "usage": usage_dict(output),
     }
 
 
@@ -136,6 +139,22 @@ def final_chunk(output: AgentRunOutput, *, model: str, created: int) -> dict[str
     )
 
 
+def usage_chunk(output: AgentRunOutput, *, model: str, created: int) -> dict[str, Any]:
+    """Final streaming chunk carrying ``usage`` (OpenAI stream_options).
+
+    Per the OpenAI contract the usage chunk has an empty ``choices`` array and a
+    populated ``usage`` object; it is sent after the finish-reason chunk.
+    """
+    return {
+        "id": completion_id(output.run_id),
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [],
+        "usage": usage_dict(output),
+    }
+
+
 def _chunk(
     run_id: str,
     *,
@@ -158,7 +177,9 @@ __all__ = [
     "to_run_input",
     "completion_id",
     "completion_object",
+    "usage_dict",
     "role_chunk",
     "content_chunk",
     "final_chunk",
+    "usage_chunk",
 ]

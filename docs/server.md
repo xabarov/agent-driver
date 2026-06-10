@@ -67,6 +67,28 @@ content chunk per token delta (`delta: {"content": "…"}`), a terminal chunk wi
 `finish_reason`, then `data: [DONE]`. Concatenating the content deltas yields the
 full answer.
 
+Send `stream_options: {"include_usage": true}` to receive one extra chunk before
+`[DONE]` carrying `usage` (with an empty `choices` array), per the OpenAI
+contract. If the client disconnects mid-stream the run is **aborted** rather than
+left running. A mid-stream failure is surfaced as a trailing `{"error": {...}}`
+frame before `[DONE]`.
+
+### Request parameters
+
+`temperature` and `max_tokens` are passed through to every model call in the run
+(`AgentRunInput.temperature` / `max_tokens` → `LlmRequest`); the runtime may
+still reduce `max_tokens` on provider credit errors. `response_format`
+(`{"type": "json_object"}` or `json_schema`) is passed through for JSON / schema
+mode (provider support required).
+
+### Errors
+
+Failures use the OpenAI error envelope — `{"error": {"message", "type", "code"}}`
+— with a meaningful status: `400` (bad request), `401` (auth), `429`/`5xx`
+(upstream provider, mapped from the SDK provider exception), `504` (timeout),
+`500` (a failed/incomplete run or internal error). A non-completed terminal run
+is reported as an error, not an empty `200` completion.
+
 ### Tools and `finish_reason`
 
 The agent **executes its tools internally** — a turn may run several tool calls
@@ -105,10 +127,18 @@ serve_http(agent, host="127.0.0.1", port=8000, model_id="my-agent")
 See [`examples/cookbook/17_openai_server.py`](examples/cookbook/17_openai_server.py)
 for an offline, in-process round-trip driven by Starlette's `TestClient`.
 
+## Bounded session memory
+
+Stateful (`X-Session-Id`) conversations are held in a bounded LRU (default 1024
+sessions; configurable via `create_app(max_sessions=...)`). The least-recently
+used session is evicted past the cap, so a long-lived server cannot leak memory
+on unbounded session ids.
+
 ## Not yet implemented
 
 - Incremental OpenAI `tool_calls` streaming (see above — agent tools run
   server-side).
-- `temperature` / `max_tokens` passthrough into the run config.
+- `top_p` / `stop` / `n` / `seed` / `logprobs` sampling parameters.
 - `GET /v1/responses` and other OpenAI endpoints beyond chat completions.
 - Per-request keepalive comment frames (proxies may idle-timeout very long runs).
+- Non-streaming client-disconnect cancellation (streaming runs already abort).
