@@ -216,6 +216,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also mount the A2A Agent Card + JSON-RPC endpoint (/a2a).",
     )
     serve_parser.add_argument(
+        "--persist",
+        default=None,
+        metavar="SQLITE_PATH",
+        help="Persist server state (sessions/responses/A2A tasks) to a SQLite "
+        "file so it survives restart (default: in-memory).",
+    )
+    serve_parser.add_argument(
         "--cors-origin",
         action="append",
         default=None,

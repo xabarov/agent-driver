@@ -11,18 +11,21 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput
+from agent_driver.persistence.record_store import InMemoryRecordStore
 from agent_driver.server.usage import responses_usage
 
 if TYPE_CHECKING:
     from agent_driver.contracts.runtime import AgentRunOutput
+    from agent_driver.persistence.record_store import RecordStore
     from agent_driver.sdk.agent import Agent
     from agent_driver.server.openai.schema import ResponsesRequest
+
+_RESPONSE_NS = "response"
 
 
 @dataclass
@@ -37,6 +40,32 @@ class ResponseRecord:
     usage: dict[str, int] | None = None
     # Full conversation (incl. this turn's assistant answer) for chaining.
     messages: list[ChatMessage] = field(default_factory=list)
+
+
+def _record_to_json(record: ResponseRecord) -> dict[str, Any]:
+    """Serialize a record to a JSON-able dict for the record store."""
+    return {
+        "id": record.id,
+        "created": record.created,
+        "model": record.model,
+        "status": record.status,
+        "output_text": record.output_text,
+        "usage": record.usage,
+        "messages": [m.model_dump(mode="json") for m in record.messages],
+    }
+
+
+def _record_from_json(raw: dict[str, Any]) -> ResponseRecord:
+    """Rebuild a record from its stored JSON dict."""
+    return ResponseRecord(
+        id=raw["id"],
+        created=raw["created"],
+        model=raw["model"],
+        status=raw["status"],
+        output_text=raw.get("output_text", ""),
+        usage=raw.get("usage"),
+        messages=[ChatMessage.model_validate(m) for m in raw.get("messages", [])],
+    )
 
 
 def response_object(record: ResponseRecord) -> dict[str, Any]:
@@ -63,27 +92,29 @@ def response_object(record: ResponseRecord) -> dict[str, Any]:
 class ResponseManager:
     """Owns the Responses-API store + run wiring for one server."""
 
-    def __init__(self, agent: "Agent", *, max_responses: int = 1024) -> None:
+    def __init__(
+        self,
+        agent: "Agent",
+        *,
+        max_responses: int = 1024,
+        store: "RecordStore | None" = None,
+    ) -> None:
         self._agent = agent
-        self._store: "OrderedDict[str, ResponseRecord]" = OrderedDict()
-        self._max = max(1, max_responses)
+        self._store: "RecordStore" = store or InMemoryRecordStore(
+            max_per_namespace=max_responses
+        )
 
     # -- store -------------------------------------------------------------
 
     def get(self, response_id: str) -> ResponseRecord | None:
-        record = self._store.get(response_id)
-        if record is not None:
-            self._store.move_to_end(response_id)
-        return record
+        raw = self._store.get(_RESPONSE_NS, response_id)
+        return _record_from_json(raw) if raw is not None else None
 
     def delete(self, response_id: str) -> bool:
-        return self._store.pop(response_id, None) is not None
+        return self._store.delete(_RESPONSE_NS, response_id)
 
     def _persist(self, record: ResponseRecord) -> None:
-        self._store[record.id] = record
-        self._store.move_to_end(record.id)
-        while len(self._store) > self._max:
-            self._store.popitem(last=False)
+        self._store.set(_RESPONSE_NS, record.id, _record_to_json(record))
 
     # -- build -------------------------------------------------------------
 
@@ -91,7 +122,7 @@ class ResponseManager:
         """Assemble the run's messages: prior turns (chained) + this input."""
         base: list[ChatMessage] = []
         if request.previous_response_id:
-            prior = self._store.get(request.previous_response_id)
+            prior = self.get(request.previous_response_id)
             if prior is not None:
                 base = list(prior.messages)
         messages = list(base)

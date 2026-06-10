@@ -14,12 +14,16 @@ Uses the canonical JSON-RPC/HTTP shapes (lowercase task states + ``role`` and
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from agent_driver.persistence.record_store import InMemoryRecordStore
+
 if TYPE_CHECKING:
+    from agent_driver.persistence.record_store import RecordStore
     from agent_driver.sdk.agent import Agent
+
+_A2A_TASK_NS = "a2a_task"
 
 A2A_PROTOCOL_VERSION = "0.2.5"
 
@@ -64,14 +68,16 @@ class A2aServer:
         version: str = "0.1.0",
         url: str = "http://localhost:8000/a2a",
         max_tasks: int = 1024,
+        store: "RecordStore | None" = None,
     ) -> None:
         self._agent = agent
         self._name = name
         self._description = description
         self._version = version
         self._url = url
-        self._tasks: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
-        self._max_tasks = max(1, max_tasks)
+        self._store: "RecordStore" = store or InMemoryRecordStore(
+            max_per_namespace=max_tasks
+        )
 
     # -- discovery ---------------------------------------------------------
 
@@ -135,14 +141,8 @@ class A2aServer:
             ],
             "history": [user_message],
         }
-        self._store_task(task)
+        self._store.set(_A2A_TASK_NS, task["id"], task)
         return task
-
-    def _store_task(self, task: dict[str, Any]) -> None:
-        self._tasks[task["id"]] = task
-        self._tasks.move_to_end(task["id"])
-        while len(self._tasks) > self._max_tasks:
-            self._tasks.popitem(last=False)
 
     # -- JSON-RPC ----------------------------------------------------------
 
@@ -155,16 +155,17 @@ class A2aServer:
             task = await self.run_task(params)
             return _ok(request_id, task)
         if method == "tasks/get":
-            task = self._tasks.get(params.get("id"))
+            task = self._store.get(_A2A_TASK_NS, params.get("id"))
             if task is None:
                 return _err(request_id, _TASK_NOT_FOUND, "task not found")
             return _ok(request_id, task)
         if method == "tasks/cancel":
-            task = self._tasks.get(params.get("id"))
+            task = self._store.get(_A2A_TASK_NS, params.get("id"))
             if task is None:
                 return _err(request_id, _TASK_NOT_FOUND, "task not found")
             # Synchronous send tasks are already terminal; reflect cancel intent.
             task["status"] = {"state": "canceled"}
+            self._store.set(_A2A_TASK_NS, task["id"], task)
             return _ok(request_id, task)
         if "id" not in request:
             return None  # notification

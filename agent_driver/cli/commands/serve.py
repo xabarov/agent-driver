@@ -86,6 +86,13 @@ async def serve_command(
 
     import uvicorn
 
+    record_store = None
+    persist_path = getattr(args, "persist", None)
+    if persist_path:
+        from agent_driver.persistence.record_store import SqliteRecordStore
+
+        record_store = SqliteRecordStore(path=persist_path)
+
     api_key = args.api_key_server or os.environ.get("AGENT_DRIVER_SERVER_API_KEY")
     app = create_app(
         agent,
@@ -94,6 +101,7 @@ async def serve_command(
         enable_mcp=bool(getattr(args, "mcp", False)),
         enable_a2a=bool(getattr(args, "a2a", False)),
         cors_origins=getattr(args, "cors_origin", None),
+        record_store=record_store,
     )
     config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
     await uvicorn.Server(config).serve()

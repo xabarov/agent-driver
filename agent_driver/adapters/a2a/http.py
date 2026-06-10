@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.routing import Route
 
+    from agent_driver.persistence.record_store import RecordStore
     from agent_driver.sdk.agent import Agent
 
 _PARSE_ERROR = -32700
@@ -113,12 +114,18 @@ def build_a2a_routes(
     url: str = "http://localhost:8000/a2a",
     api_key: str | None = None,
     path: str = "/a2a",
+    store: "RecordStore | None" = None,
 ) -> list["Route"]:
     """Build the Agent Card + JSON-RPC routes for mounting into a Starlette app."""
     from starlette.routing import Route
 
     server = A2aServer(
-        agent, name=name, description=description, version=version, url=url
+        agent,
+        name=name,
+        description=description,
+        version=version,
+        url=url,
+        store=store,
     )
     transport = A2aHttpTransport(server, api_key=api_key)
     return [
@@ -136,6 +143,7 @@ def create_a2a_app(
     url: str = "http://localhost:8000/a2a",
     api_key: str | None = None,
     path: str = "/a2a",
+    store: "RecordStore | None" = None,
 ) -> "Starlette":
     """Build a standalone Starlette app serving the A2A endpoints."""
     from starlette.applications import Starlette
@@ -149,6 +157,7 @@ def create_a2a_app(
             url=url,
             api_key=api_key,
             path=path,
+            store=store,
         )
     )
 

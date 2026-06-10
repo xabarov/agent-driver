@@ -163,12 +163,23 @@ serve_http(agent, host="127.0.0.1", port=8000, model_id="my-agent")
 See [`examples/cookbook/17_openai_server.py`](examples/cookbook/17_openai_server.py)
 for an offline, in-process round-trip driven by Starlette's `TestClient`.
 
-## Bounded session memory
+## State: in-memory vs durable
 
-Stateful (`X-Session-Id`) conversations are held in a bounded LRU (default 1024
-sessions; configurable via `create_app(max_sessions=...)`). The least-recently
-used session is evicted past the cap, so a long-lived server cannot leak memory
-on unbounded session ids.
+The server's keyed state — chat sessions (`X-Session-Id`), stored responses
+(`previous_response_id` chaining), and A2A tasks — lives in a pluggable
+`RecordStore`:
+
+- **Default (in-memory)**: a bounded LRU (default 1024 per kind; configurable
+  via `create_app(max_sessions=...)`). Fast, but lost on restart, and not shared
+  across worker processes.
+- **Durable (SQLite)**: pass `agent-driver serve --persist <path.db>` (or
+  `create_app(record_store=SqliteRecordStore(path=...))`). Sessions / responses
+  / A2A tasks then survive a restart — a fresh process on the same DB file
+  resumes them. One store backs all three, namespaced.
+
+Async **runs** are intentionally *not* persisted: a run's in-flight background
+task cannot survive a process restart, so durable long-running work belongs to
+the runtime's checkpoint/event-log layer rather than this record store.
 
 ## Not yet implemented
 

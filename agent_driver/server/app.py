@@ -12,7 +12,6 @@ import json
 import logging
 import time
 import uuid
-from collections import OrderedDict
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +23,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.persistence.record_store import InMemoryRecordStore
 from agent_driver.server import errors
 from agent_driver.server.auth import is_authorized
 from agent_driver.server.middleware import SecurityHeadersMiddleware
@@ -34,12 +34,14 @@ from agent_driver.server.runs import RunManager, resume_action_for
 from agent_driver.server.sse import SSE_DONE, sse_data, sse_event
 
 if TYPE_CHECKING:
+    from agent_driver.persistence.record_store import RecordStore
     from agent_driver.sdk.agent import Agent
 
 logger = logging.getLogger(__name__)
 
 SESSION_HEADER = "x-session-id"
 DEFAULT_MAX_SESSIONS = 1024
+_SESSION_NS = "session"
 
 
 class OpenAIServer:
@@ -52,16 +54,19 @@ class OpenAIServer:
         model_id: str = "agent-driver",
         api_key: str | None = None,
         max_sessions: int = DEFAULT_MAX_SESSIONS,
+        record_store: "RecordStore | None" = None,
     ) -> None:
         self._agent = agent
         self._model_id = model_id
         self._api_key = api_key
-        self._max_sessions = max(1, max_sessions)
-        # Server-side conversation memory for stateful (X-Session-Id) clients,
-        # bounded LRU so a long-lived server cannot leak memory on session ids.
-        self._sessions: "OrderedDict[str, list[ChatMessage]]" = OrderedDict()
+        # Server-side conversation memory for stateful (X-Session-Id) clients.
+        # A durable record store survives restart; the default in-memory store
+        # is a bounded LRU (lost on restart).
+        self._store: "RecordStore" = record_store or InMemoryRecordStore(
+            max_per_namespace=max_sessions
+        )
         self._runs = RunManager(agent)
-        self._responses = ResponseManager(agent)
+        self._responses = ResponseManager(agent, store=self._store)
 
     # -- helpers -----------------------------------------------------------
 
@@ -75,9 +80,10 @@ class OpenAIServer:
         self, request: ChatCompletionRequest, session_id: str | None, run_id: str
     ) -> Any:
         history: list[ChatMessage] = []
-        if session_id and session_id in self._sessions:
-            self._sessions.move_to_end(session_id)  # LRU touch
-            history = self._sessions[session_id]
+        if session_id:
+            raw = self._store.get(_SESSION_NS, session_id)
+            if isinstance(raw, list):
+                history = [ChatMessage.model_validate(m) for m in raw]
         return translate.to_run_input(
             request,
             run_id=run_id,
@@ -88,19 +94,14 @@ class OpenAIServer:
         )
 
     def _remember(self, session_id: str | None, run_input: Any, answer: str) -> None:
-        """Persist the turn into server-side session memory (stateful mode).
-
-        Bounded LRU: the most-recently-used session is kept at the end; when the
-        map exceeds ``max_sessions`` the least-recently-used entry is evicted.
-        """
+        """Persist the turn into the session record store (stateful mode)."""
         if not session_id:
             return
         history = list(run_input.messages)
         history.append(ChatMessage(role="assistant", content=answer or ""))
-        self._sessions[session_id] = history
-        self._sessions.move_to_end(session_id)
-        while len(self._sessions) > self._max_sessions:
-            self._sessions.popitem(last=False)
+        self._store.set(
+            _SESSION_NS, session_id, [m.model_dump(mode="json") for m in history]
+        )
 
     # -- routes ------------------------------------------------------------
 
@@ -443,6 +444,7 @@ def create_app(
     enable_a2a: bool = False,
     max_sessions: int = DEFAULT_MAX_SESSIONS,
     cors_origins: Sequence[str] | None = None,
+    record_store: "RecordStore | None" = None,
 ) -> Starlette:
     """Build the Starlette app exposing ``agent`` over the OpenAI HTTP surface.
 
@@ -450,14 +452,23 @@ def create_app(
     mounted on the same app; ``enable_a2a`` mounts the A2A Agent Card +
     JSON-RPC endpoint (``/.well-known/agent-card.json`` + ``/a2a``). Both reuse
     the same bearer key — so one server can speak OpenAI, MCP and A2A.
+
+    ``record_store`` makes the server's keyed state (sessions, stored responses,
+    A2A tasks) durable; pass a ``SqliteRecordStore`` to survive restart. Default
+    is a shared bounded in-memory store.
     """
     if not api_key:
         logger.warning(
             "agent-driver server: no API key configured — the server is OPEN. "
             "Set AGENT_DRIVER_SERVER_API_KEY and bind to loopback only."
         )
+    store = record_store or InMemoryRecordStore(max_per_namespace=max_sessions)
     server = OpenAIServer(
-        agent, model_id=model_id, api_key=api_key, max_sessions=max_sessions
+        agent,
+        model_id=model_id,
+        api_key=api_key,
+        max_sessions=max_sessions,
+        record_store=store,
     )
     routes = [
         Route("/v1/chat/completions", server.chat_completions, methods=["POST"]),
@@ -481,7 +492,9 @@ def create_app(
     if enable_a2a:
         from agent_driver.adapters.a2a.http import build_a2a_routes
 
-        routes.extend(build_a2a_routes(agent, name=model_id, api_key=api_key))
+        routes.extend(
+            build_a2a_routes(agent, name=model_id, api_key=api_key, store=store)
+        )
 
     # Security headers on every response; CORS only when origins are configured
     # (browser clients like Open WebUI / LibreChat need it, CLI/SDK clients
