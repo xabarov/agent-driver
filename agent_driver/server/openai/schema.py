@@ -126,8 +126,22 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int | None = None
     response_format: dict[str, Any] | None = None
     stream_options: StreamOptions | None = None
+    # Output media: ``modalities`` (e.g. ["text", "audio"]) + ``audio`` (voice /
+    # format) request audio output; forwarded to the provider verbatim so an
+    # audio-capable model returns an assistant ``audio`` object.
+    modalities: list[str] | None = None
+    audio: dict[str, Any] | None = None
     # Tolerate (and ignore) any other OpenAI fields a client may send.
     model_config = {"extra": "ignore"}
+
+    def provider_extra_body(self) -> dict[str, Any]:
+        """Provider passthrough for output-media request params (empty if none)."""
+        extra: dict[str, Any] = {}
+        if self.modalities is not None:
+            extra["modalities"] = self.modalities
+        if self.audio is not None:
+            extra["audio"] = self.audio
+        return extra
 
     def wants_usage_chunk(self) -> bool:
         """Whether a final usage chunk was requested via stream_options."""

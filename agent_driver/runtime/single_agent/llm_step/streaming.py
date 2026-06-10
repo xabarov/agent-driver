@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 from contextlib import suppress
 from time import monotonic
 from typing import Any, Protocol
@@ -86,6 +88,7 @@ async def complete_streaming_request(
     """Collect streaming provider deltas into one normalized LlmResponse."""
     delta_chunks: list[str] = []
     reasoning_chunks: list[str] = []
+    audio_state: dict[str, Any] = {}
     usage = UsageSummary()
     finish_reason = LlmFinishReason.UNKNOWN
     provider_name = host._deps.provider.name
@@ -132,6 +135,7 @@ async def complete_streaming_request(
                 delta_chunks=delta_chunks,
                 reasoning_chunks=reasoning_chunks,
                 stream_metadata=stream_metadata,
+                audio_state=audio_state,
             )
             if _is_meaningful_stream_item(item):
                 last_meaningful_event_at = monotonic()
@@ -147,6 +151,14 @@ async def complete_streaming_request(
             with suppress(BaseException):
                 await asyncio.wait_for(aclose(), timeout=2.0)
     content = "".join(delta_chunks)
+    message_metadata: dict[str, Any] = {}
+    output_audio = _finalize_stream_audio(audio_state)
+    if output_audio is not None:
+        message_metadata["output_audio"] = output_audio
+        # Audio replies stream their text in ``transcript`` (``content`` is
+        # empty); surface it as the answer so the run isn't blank.
+        if not content and isinstance(output_audio.get("transcript"), str):
+            content = output_audio["transcript"]
     streaming_state.mark_completed(content)
     emit_step_event(
         host,
@@ -160,7 +172,9 @@ async def complete_streaming_request(
         },
     )
     return LlmResponse(
-        message=ChatMessage(role="assistant", content=content),
+        message=ChatMessage(
+            role="assistant", content=content, metadata=message_metadata
+        ),
         finish_reason=finish_reason,
         usage=usage,
         provider=provider_name,
@@ -184,6 +198,7 @@ def _is_meaningful_stream_item(item: Any) -> bool:
         "planned_tool_calls",
         "tool_call_parse_errors",
         "stream_tool_call_delta",
+        "output_audio_delta",
     }
     return any(key in metadata for key in meaningful_metadata_keys)
 
@@ -211,6 +226,7 @@ def _collect_stream_item(
     delta_chunks: list[str],
     reasoning_chunks: list[str],
     stream_metadata: dict[str, Any],
+    audio_state: dict[str, Any],
 ) -> None:
     """Append one provider stream event and emit durable deltas."""
     chunk = item.delta_text or ""
@@ -253,6 +269,50 @@ def _collect_stream_item(
             stream_metadata["tool_call_parse_errors"] = item.metadata[
                 "tool_call_parse_errors"
             ]
+        audio_delta = item.metadata.get("output_audio_delta")
+        if isinstance(audio_delta, dict):
+            _accumulate_audio_delta(audio_state, audio_delta)
+
+
+def _accumulate_audio_delta(state: dict[str, Any], delta: dict[str, Any]) -> None:
+    """Accumulate one streamed ``delta.audio`` object into ``state``."""
+    data = delta.get("data")
+    if isinstance(data, str) and data:
+        state.setdefault("data_parts", []).append(data)
+    transcript = delta.get("transcript")
+    if isinstance(transcript, str) and transcript:
+        state.setdefault("transcript_parts", []).append(transcript)
+    for key in ("id", "expires_at", "format"):
+        if delta.get(key) is not None:
+            state[key] = delta[key]
+
+
+def _finalize_stream_audio(state: dict[str, Any]) -> dict[str, Any] | None:
+    """Assemble the accumulated audio deltas into one ``output_audio`` object."""
+    data_parts = state.get("data_parts") or []
+    transcript_parts = state.get("transcript_parts") or []
+    if not data_parts and not transcript_parts:
+        return None
+    audio: dict[str, Any] = {}
+    if state.get("id") is not None:
+        audio["id"] = state["id"]
+    data = "".join(data_parts)
+    if data:
+        # The provider splits the base64 stream into segments; decode+re-encode
+        # so the concatenation is always valid base64 (fall back to the raw join
+        # if a segment isn't independently decodable).
+        try:
+            data = base64.b64encode(base64.b64decode(data)).decode("ascii")
+        except (binascii.Error, ValueError):
+            pass
+        audio["data"] = data
+    if transcript_parts:
+        audio["transcript"] = "".join(transcript_parts)
+    if state.get("expires_at") is not None:
+        audio["expires_at"] = state["expires_at"]
+    if state.get("format") is not None:
+        audio["format"] = state["format"]
+    return audio or None
 
 
 def _stream_idle_timeout_seconds(run_input: AgentRunInput) -> float | None:

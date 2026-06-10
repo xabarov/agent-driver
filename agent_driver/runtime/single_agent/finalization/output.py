@@ -384,6 +384,10 @@ class SingleAgentOutputMixin:
                 context
             ).raw_assistant_content(),
         }
+        if context.llm_response is not None:
+            output_audio = context.llm_response.message.metadata.get("output_audio")
+            if isinstance(output_audio, dict):
+                metadata["output_audio"] = output_audio
         research_artifacts = context.metadata.get("deep_research_artifacts")
         if isinstance(research_artifacts, dict):
             metadata["deep_research_artifacts"] = dict(research_artifacts)

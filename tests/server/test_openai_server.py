@@ -137,6 +137,97 @@ class _ContextSpy(FakeProvider):
         return await super().complete(request)
 
 
+def test_output_audio_surfaces_on_message() -> None:
+    # A model that returns an assistant ``audio`` object (modalities=["text",
+    # "audio"]) has it carried through the run onto the completion message.
+    audio = {"id": "audio_1", "data": "UklGRiQ=", "transcript": "hi", "format": "wav"}
+    provider = FakeProvider(
+        response_text="hi", response_message_metadata={"output_audio": audio}
+    )
+    client = _client(provider)
+    resp = client.post("/v1/chat/completions", json=_body("say hi"))
+    assert resp.status_code == 200
+    message = resp.json()["choices"][0]["message"]
+    assert message["audio"] == audio
+
+
+class _AudioStreamProvider(FakeProvider):
+    """Streams two ``delta.audio`` segments then finishes (no text deltas)."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="")
+
+    async def stream(self, request: LlmRequest):
+        from agent_driver.contracts.usage import UsageSummary
+        from agent_driver.llm.contracts import LlmStreamEvent
+
+        yield LlmStreamEvent(
+            event="delta",
+            metadata={"output_audio_delta": {"id": "a1", "data": "aGVs", "transcript": "He"}},
+        )
+        yield LlmStreamEvent(
+            event="delta",
+            metadata={"output_audio_delta": {"data": "bG8=", "transcript": "llo", "format": "pcm16"}},
+        )
+        yield LlmStreamEvent(
+            event="delta",
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(
+                input_tokens=1, output_tokens=1, total_tokens=2,
+                model_provider="fake", model_name="gpt-audio",
+            ),
+        )
+
+
+def test_streaming_output_audio_emitted_as_chunk() -> None:
+    client = _client(_AudioStreamProvider())
+    body = _body("say hi", stream=True)
+    body["modalities"] = ["text", "audio"]
+    body["audio"] = {"voice": "alloy", "format": "pcm16"}
+    resp = client.post("/v1/chat/completions", json=body)
+    assert resp.status_code == 200
+    chunks = _parse_sse(resp.text)
+    audio_deltas = [
+        c["choices"][0]["delta"]["audio"]
+        for c in chunks
+        if c.get("choices") and "audio" in c["choices"][0].get("delta", {})
+    ]
+    assert len(audio_deltas) == 1
+    audio = audio_deltas[0]
+    assert audio["transcript"] == "Hello"
+    import base64
+
+    assert base64.b64decode(audio["data"]) == b"hello"
+
+
+class _ExtraBodySpy(FakeProvider):
+    """Records the provider_extra_body handed to the provider per call."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="ok")
+        self.extra_body: list[Any] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.extra_body.append(request.metadata.get("provider_extra_body"))
+        return await super().complete(request)
+
+
+def test_output_media_request_params_reach_provider() -> None:
+    # modalities/audio on the request are forwarded to the provider request as
+    # provider_extra_body (which the payload builder emits as top-level params).
+    spy = _ExtraBodySpy()
+    client = _client(spy)
+    body = _body("say hi")
+    body["modalities"] = ["text", "audio"]
+    body["audio"] = {"voice": "alloy", "format": "wav"}
+    resp = client.post("/v1/chat/completions", json=body)
+    assert resp.status_code == 200
+    assert spy.extra_body[-1] == {
+        "modalities": ["text", "audio"],
+        "audio": {"voice": "alloy", "format": "wav"},
+    }
+
+
 def test_session_continuity() -> None:
     spy = _ContextSpy()
     client = _client(spy)

@@ -314,6 +314,14 @@ def build_single_agent_llm_request(
         ]
     request_metadata = dict(run_input.tool_policy.metadata)
     forced_model = request_metadata.pop("forced_model", None)
+    # App-level provider passthrough (e.g. output-media ``modalities`` / ``audio``
+    # from the OpenAI server) is merged into the request's ``provider_extra_body``
+    # so it reaches the provider payload without a dedicated field per param.
+    app_extra_body = run_input.app_metadata.get("provider_extra_body")
+    if isinstance(app_extra_body, dict) and app_extra_body:
+        merged = dict(request_metadata.get("provider_extra_body") or {})
+        merged.update(app_extra_body)
+        request_metadata["provider_extra_body"] = merged
     # Mirror the runtime policy's allow/deny into the schema layer so the
     # model only sees tools it's permitted to call. ``None`` allowlist
     # keeps the legacy "show everything" default; explicit tuples flow

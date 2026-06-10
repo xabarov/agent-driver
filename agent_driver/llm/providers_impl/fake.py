@@ -27,6 +27,7 @@ class FakeProvider(ProviderBase):
         name: str = "fake",
         response_text: str = "fake response",
         configured: bool = True,
+        response_message_metadata: dict | None = None,
     ) -> None:
         super().__init__(
             config=ProviderBase.Config(
@@ -37,6 +38,7 @@ class FakeProvider(ProviderBase):
             )
         )
         self._response_text = response_text
+        self._response_message_metadata = dict(response_message_metadata or {})
         self.status.latency_ms = 1.0
         self.status.avg_latency_ms = 1.0
 
@@ -61,7 +63,11 @@ class FakeProvider(ProviderBase):
         response_metadata = {"provider_kind": LlmProviderKind.FAKE.value}
         response_metadata.update(request.metadata)
         return LlmResponse(
-            message=ChatMessage(role="assistant", content=self._response_text),
+            message=ChatMessage(
+                role="assistant",
+                content=self._response_text,
+                metadata=dict(self._response_message_metadata),
+            ),
             finish_reason=LlmFinishReason.STOP,
             usage=usage,
             provider=self.name,

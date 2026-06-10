@@ -298,8 +298,23 @@ def normalize_openai_completion_payload(
         metadata["planned_tool_calls"] = planned_tool_calls
     if parse_errors:
         metadata["tool_call_parse_errors"] = parse_errors
+    # Output media: when ``modalities`` includes "audio", the model returns an
+    # assistant ``audio`` object ({id, data, transcript, expires_at, format}).
+    # Carry it on the message metadata; when ``content`` is null (the common
+    # case for audio replies) surface ``transcript`` as the message text so the
+    # run's answer isn't empty.
+    message_metadata: dict[str, Any] = {}
+    output_audio = message_payload.get("audio")
+    if isinstance(output_audio, dict):
+        message_metadata["output_audio"] = output_audio
+        if not text:
+            transcript = output_audio.get("transcript")
+            if isinstance(transcript, str):
+                text = transcript
     return LlmResponse(
-        message=ChatMessage(role="assistant", content=text),
+        message=ChatMessage(
+            role="assistant", content=text, metadata=message_metadata
+        ),
         finish_reason=map_finish_reason(choice.get("finish_reason")),
         usage=usage,
         provider=provider_name,
@@ -355,6 +370,13 @@ def normalize_openai_stream_chunk(
         metadata["tool_call_parse_errors"] = parse_errors
     if isinstance(delta, dict) and delta.get("tool_calls"):
         metadata["stream_tool_call_delta"] = True
+    # Output media: streamed assistant audio arrives as incremental ``delta.audio``
+    # objects ({data, transcript, id, expires_at}); carry each delta so the
+    # runtime can accumulate it into the final ``output_audio``.
+    if isinstance(delta, dict):
+        audio_delta = delta.get("audio")
+        if isinstance(audio_delta, dict):
+            metadata["output_audio_delta"] = audio_delta
     return LlmStreamEvent(
         event="delta",
         delta_text=text,

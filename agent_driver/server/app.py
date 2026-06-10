@@ -200,6 +200,16 @@ class OpenAIServer:
                         created=created,
                     )
                 )
+            output_audio = output.metadata.get("output_audio")
+            if isinstance(output_audio, dict):
+                yield _frame(
+                    translate.audio_chunk(
+                        run_input.run_id,
+                        output_audio,
+                        model=self._model_id,
+                        created=created,
+                    )
+                )
             self._remember(session_id, run_input, output.answer or "")
             yield _frame(
                 translate.final_chunk(output, model=self._model_id, created=created)

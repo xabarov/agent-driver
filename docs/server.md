@@ -152,6 +152,34 @@ Like images, audio parts are carried on the run as
 an audio-capable `--model`. Both image and audio parts may appear in the same
 message — they are emitted in order alongside the text block.
 
+### Audio output (the model speaks back)
+
+Request audio output with `modalities` + `audio` (forwarded verbatim to the
+provider, so an audio-capable model returns an assistant `audio` object):
+
+```json
+{"model": "openai/gpt-audio",
+ "stream": true,
+ "modalities": ["text", "audio"],
+ "audio": {"voice": "alloy", "format": "pcm16"},
+ "messages": [{"role": "user", "content": "Say hello."}]}
+```
+
+The model's assistant `audio` (`{id, data, transcript, expires_at, format}`) is
+surfaced back:
+
+- **Non-streaming** — on the completion message as `choices[0].message.audio`.
+  (This is the OpenAI-direct shape; note some gateways, e.g. OpenRouter, only
+  serve audio output with `stream: true`.)
+- **Streaming** — the incremental `delta.audio` segments are accumulated by the
+  runtime and emitted as a single `chat.completion.chunk` whose
+  `delta.audio` carries the assembled `data` (base64) + `transcript`, sent after
+  the text deltas and before the finish chunk.
+
+When the reply is audio-only (`content` is null), the audio `transcript` becomes
+the run's text answer so it is never blank. Per-segment incremental audio
+streaming (one chunk per provider delta) is consolidated into one chunk for now.
+
 ### Errors
 
 Failures use the OpenAI error envelope — `{"error": {"message", "type", "code"}}`

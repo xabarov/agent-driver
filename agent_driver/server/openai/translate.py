@@ -56,6 +56,10 @@ def to_run_input(
     are authoritative (the client resends the full conversation).
     """
     messages = list(history or []) + to_chat_messages(request.messages)
+    app_metadata: dict[str, Any] = {"openai_model": request.model}
+    extra_body = request.provider_extra_body()
+    if extra_body:
+        app_metadata["provider_extra_body"] = extra_body
     return AgentRunInput(
         messages=messages,
         run_id=run_id,
@@ -66,7 +70,7 @@ def to_run_input(
         response_format=request.response_format,
         temperature=request.temperature,
         max_tokens=request.max_tokens,
-        app_metadata={"openai_model": request.model},
+        app_metadata=app_metadata,
     )
 
 
@@ -94,6 +98,15 @@ def completion_object(
     output: AgentRunOutput, *, model: str, created: int
 ) -> dict[str, Any]:
     """Assemble a non-streaming ``chat.completion`` object."""
+    message: dict[str, Any] = {
+        "role": "assistant",
+        "content": output.answer or "",
+    }
+    # Output media: surface the model's assistant ``audio`` object (carried on
+    # the run metadata) back on the message, per the OpenAI audio-output shape.
+    output_audio = output.metadata.get("output_audio")
+    if isinstance(output_audio, dict):
+        message["audio"] = output_audio
     return {
         "id": completion_id(output.run_id),
         "object": "chat.completion",
@@ -102,10 +115,7 @@ def completion_object(
         "choices": [
             {
                 "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": output.answer or "",
-                },
+                "message": message,
                 "finish_reason": _finish_reason(output),
             }
         ],
@@ -123,6 +133,17 @@ def content_chunk(
 ) -> dict[str, Any]:
     """A streaming chunk carrying a token delta."""
     return _chunk(run_id, model=model, created=created, delta={"content": text})
+
+
+def audio_chunk(
+    run_id: str, audio: dict[str, Any], *, model: str, created: int
+) -> dict[str, Any]:
+    """A streaming chunk carrying the assistant ``audio`` object (output media).
+
+    Emitted once, after the text deltas, carrying the assembled audio (the
+    incremental ``delta.audio`` segments are accumulated by the runtime).
+    """
+    return _chunk(run_id, model=model, created=created, delta={"audio": audio})
 
 
 def final_chunk(output: AgentRunOutput, *, model: str, created: int) -> dict[str, Any]:
@@ -177,6 +198,7 @@ __all__ = [
     "usage_dict",
     "role_chunk",
     "content_chunk",
+    "audio_chunk",
     "final_chunk",
     "usage_chunk",
 ]
