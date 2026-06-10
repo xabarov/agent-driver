@@ -13,9 +13,12 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
@@ -23,6 +26,7 @@ from starlette.routing import Route
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.server import errors
 from agent_driver.server.auth import is_authorized
+from agent_driver.server.middleware import SecurityHeadersMiddleware
 from agent_driver.server.openai import translate
 from agent_driver.server.openai.schema import ChatCompletionRequest
 
@@ -241,6 +245,7 @@ def create_app(
     api_key: str | None = None,
     enable_mcp: bool = False,
     max_sessions: int = DEFAULT_MAX_SESSIONS,
+    cors_origins: Sequence[str] | None = None,
 ) -> Starlette:
     """Build the Starlette app exposing ``agent`` over the OpenAI HTTP surface.
 
@@ -265,7 +270,23 @@ def create_app(
         from agent_driver.mcp_server.http import build_mcp_routes
 
         routes.extend(build_mcp_routes(agent, server_name=model_id, api_key=api_key))
-    return Starlette(routes=routes)
+
+    # Security headers on every response; CORS only when origins are configured
+    # (browser clients like Open WebUI / LibreChat need it, CLI/SDK clients
+    # don't). CORSMiddleware runs outermost so preflight OPTIONS short-circuits.
+    middleware = [Middleware(SecurityHeadersMiddleware)]
+    if cors_origins:
+        middleware.insert(
+            0,
+            Middleware(
+                CORSMiddleware,
+                allow_origins=list(cors_origins),
+                allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+                allow_headers=["*"],
+                allow_credentials=False,
+            ),
+        )
+    return Starlette(routes=routes, middleware=middleware)
 
 
 __all__ = ["create_app", "OpenAIServer", "SESSION_HEADER"]

@@ -334,3 +334,85 @@ def test_session_lru_eviction() -> None:
         headers={"X-Session-Id": "s1"},
     )
     assert "remember me" not in " ".join(spy.seen[-1])
+
+
+# -- browser-client compatibility ---------------------------------------------
+
+
+def test_security_headers_present() -> None:
+    client = _client()
+    resp = client.post("/v1/chat/completions", json=_body("hi"))
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["x-frame-options"] == "DENY"
+    assert resp.headers["referrer-policy"] == "no-referrer"
+
+
+def test_cors_preflight_and_headers() -> None:
+    agent = create_agent(provider=FakeProvider(response_text="x"), tools=ToolSet.only())
+    client = TestClient(create_app(agent, cors_origins=["https://chat.example"]))
+    # Preflight.
+    pre = client.options(
+        "/v1/chat/completions",
+        headers={
+            "Origin": "https://chat.example",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert pre.status_code in (200, 204)
+    assert pre.headers["access-control-allow-origin"] == "https://chat.example"
+    # Actual request echoes the allowed origin.
+    resp = client.post(
+        "/v1/chat/completions",
+        json=_body("hi"),
+        headers={"Origin": "https://chat.example"},
+    )
+    assert resp.headers["access-control-allow-origin"] == "https://chat.example"
+
+
+def test_cors_absent_by_default() -> None:
+    client = _client()
+    resp = client.post(
+        "/v1/chat/completions",
+        json=_body("hi"),
+        headers={"Origin": "https://chat.example"},
+    )
+    assert "access-control-allow-origin" not in resp.headers
+
+
+def test_multimodal_content_flattened() -> None:
+    spy = _ContextSpy()
+    client = _client(spy)
+    body = {
+        "model": "agent-driver-test",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe "},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,Zm9v"},
+                    },
+                    {"type": "text", "text": "this image"},
+                ],
+            }
+        ],
+    }
+    resp = client.post("/v1/chat/completions", json=body)
+    assert resp.status_code == 200
+    # Text parts concatenated; the image part is skipped, not fatal.
+    assert "describe this image" in " ".join(spy.seen[-1])
+
+
+def test_content_flatten_shapes() -> None:
+    from agent_driver.server.openai.schema import ChatMessageIn
+
+    assert ChatMessageIn(role="user", content="plain").text_content() == "plain"
+    assert ChatMessageIn(role="user", content=None).text_content() == ""
+    assert ChatMessageIn(role="user", content={"text": "d"}).text_content() == "d"
+    assert (
+        ChatMessageIn(
+            role="user", content=["a", {"type": "text", "text": "b"}]
+        ).text_content()
+        == "ab"
+    )
