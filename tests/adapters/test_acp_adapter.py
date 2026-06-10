@@ -373,6 +373,67 @@ async def test_no_terminal_capability_uses_local_subprocess(tmp_path: Any) -> No
     assert client.terminal_events == []
 
 
+def _update_kinds(client: FakeAcpClient) -> list[str]:
+    return [type(u).__name__ for u in client.updates]
+
+
+@pytest.mark.asyncio
+async def test_new_session_emits_available_commands() -> None:
+    agent = create_agent(provider=FakeProvider(response_text="x"), tools=ToolSet.only())
+    server = AgentAcpServer(agent)
+    client = FakeAcpClient()
+    await _bind(server, client)
+    assert "AvailableCommandsUpdate" in _update_kinds(client)
+
+
+@pytest.mark.asyncio
+async def test_set_session_mode_emits_current_mode_update() -> None:
+    agent = create_agent(provider=FakeProvider(response_text="x"), tools=ToolSet.only())
+    server = AgentAcpServer(agent)
+    client = FakeAcpClient()
+    session_id = await _bind(server, client)
+    client.updates.clear()
+
+    await server.set_session_mode(session_id=session_id, mode_id="strict")
+
+    modes = [u for u in client.updates if type(u).__name__ == "CurrentModeUpdate"]
+    assert len(modes) == 1
+    assert modes[0].current_mode_id == "strict"
+
+
+@pytest.mark.asyncio
+async def test_slash_clear_clears_transcript_without_running() -> None:
+    provider = FakeProvider(response_text="should-not-run")
+    server = AgentAcpServer(create_agent(provider=provider, tools=ToolSet.only()))
+    client = FakeAcpClient()
+    session_id = await _bind(server, client)
+    await server.prompt(prompt=[_text_block("remember this")], session_id=session_id)
+    assert server._sessions[session_id].transcript  # non-empty
+    client.updates.clear()
+
+    resp = await server.prompt(prompt=[_text_block("/clear")], session_id=session_id)
+
+    assert resp.stop_reason == "end_turn"
+    assert server._sessions[session_id].transcript == []
+    assert "cleared" in client.message_text().lower()
+
+
+@pytest.mark.asyncio
+async def test_slash_help_lists_commands() -> None:
+    server = AgentAcpServer(
+        create_agent(provider=FakeProvider(response_text="x"), tools=ToolSet.only())
+    )
+    client = FakeAcpClient()
+    session_id = await _bind(server, client)
+    client.updates.clear()
+
+    resp = await server.prompt(prompt=[_text_block("/help")], session_id=session_id)
+
+    assert resp.stop_reason == "end_turn"
+    text = client.message_text()
+    assert "/clear" in text and "/help" in text
+
+
 @pytest.mark.asyncio
 async def test_resume_session_returns_modes_without_replay() -> None:
     agent = create_agent(

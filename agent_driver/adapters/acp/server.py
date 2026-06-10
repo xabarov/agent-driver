@@ -19,6 +19,8 @@ import acp
 
 from agent_driver.adapters.acp.fs import AcpClientFileIO, client_fs_flags
 from agent_driver.adapters.acp.mapping import (
+    available_commands_update,
+    current_mode_update,
     gate_for_mode,
     history_updates,
     is_known_mode,
@@ -26,6 +28,8 @@ from agent_driver.adapters.acp.mapping import (
     permission_tool_call,
     resume_action_from_outcome,
     session_mode_state,
+    slash_command_name,
+    slash_help_text,
     stop_reason_for,
     tool_updates_from_trace,
 )
@@ -131,6 +135,7 @@ class AgentAcpServer:
         self._sessions[session_id] = AcpSession(
             session_id=session_id, thread_id=session_id, cwd=cwd
         )
+        await self._send(session_id, available_commands_update())
         return acp.NewSessionResponse(session_id=session_id, modes=session_mode_state())
 
     async def load_session(
@@ -152,6 +157,7 @@ class AgentAcpServer:
         elif cwd is not None:
             session.cwd = cwd
         await self._replay_history(session_id)
+        await self._send(session_id, available_commands_update())
         return acp.schema.LoadSessionResponse(modes=session_mode_state(session.mode_id))
 
     async def resume_session(
@@ -183,6 +189,7 @@ class AgentAcpServer:
         if is_known_mode(mode_id):
             session.mode_id = mode_id
             session.gate_override = gate_for_mode(mode_id)
+            await self._send(session_id, current_mode_update(mode_id))
         return acp.schema.SetSessionModeResponse()
 
     async def cancel(self, session_id: str, **_: Any) -> None:
@@ -217,6 +224,11 @@ class AgentAcpServer:
         user_text = _prompt_text(prompt)
         if user_text:
             session.transcript.append(ChatMessage(role="user", content=user_text))
+
+        command = slash_command_name(user_text)
+        if command is not None:
+            self._aborts.pop(session_id, None)
+            return await self._handle_slash_command(session_id, session, command)
 
         run_input = AgentRunInput(
             input=user_text,
@@ -314,6 +326,21 @@ class AgentAcpServer:
         if self._conn is None or not self._client_terminal:
             return None
         return AcpTerminalRunner(self._conn, session.session_id)
+
+    async def _handle_slash_command(
+        self, session_id: str, session: AcpSession, command: str
+    ) -> acp.PromptResponse:
+        """Handle an in-band slash command without invoking the model."""
+        if command == "clear":
+            session.transcript.clear()
+            await self._send(
+                session_id, acp.update_agent_message_text("Conversation cleared.")
+            )
+        elif command == "help":
+            await self._send(
+                session_id, acp.update_agent_message_text(slash_help_text())
+            )
+        return acp.PromptResponse(stop_reason="end_turn")
 
     async def _replay_history(self, session_id: str) -> None:
         """Stream the session's recorded transcript to the client."""

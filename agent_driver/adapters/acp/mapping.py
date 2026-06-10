@@ -178,6 +178,48 @@ _SESSION_MODES: tuple[tuple[str, str, str], ...] = (
 )
 
 
+# Slash commands the adapter advertises (available_commands_update) and handles
+# in-band in prompt(). Kept small and editor-agnostic.
+_SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("clear", "Clear the conversation transcript and start fresh."),
+    ("help", "List the available slash commands."),
+)
+
+
+def available_commands_update() -> Any:
+    """Build the ACP ``available_commands_update`` advertising slash commands."""
+    return schema.AvailableCommandsUpdate(
+        available_commands=[
+            schema.AvailableCommand(name=name, description=description)
+            for name, description in _SLASH_COMMANDS
+        ],
+        session_update="available_commands_update",
+    )
+
+
+def current_mode_update(mode_id: str) -> Any:
+    """Build the ACP ``current_mode_update`` reflecting the active session mode."""
+    return schema.CurrentModeUpdate(
+        current_mode_id=mode_id, session_update="current_mode_update"
+    )
+
+
+def slash_command_name(text: str | None) -> str | None:
+    """Return the command name if ``text`` is exactly a known ``/command``."""
+    stripped = (text or "").strip()
+    if not stripped.startswith("/"):
+        return None
+    name = stripped[1:].split(maxsplit=1)[0] if len(stripped) > 1 else ""
+    known = {name for name, _ in _SLASH_COMMANDS}
+    return name if name in known else None
+
+
+def slash_help_text() -> str:
+    """Human-readable list of the advertised slash commands."""
+    lines = [f"/{name} — {description}" for name, description in _SLASH_COMMANDS]
+    return "Available commands:\n" + "\n".join(lines)
+
+
 def session_mode_state(current_mode_id: str = "default") -> Any:
     """Build the ACP ``SessionModeState`` advertising the permission modes."""
     available = [

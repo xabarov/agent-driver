@@ -194,11 +194,15 @@ from the trace post-leg, so correlating the live terminal_id is extra work).
 
 No client capability needed; pure additions to what the adapter pushes.
 
-- [ ] **`current_mode_update`**: emit when `set_session_mode` changes the mode so
-      the editor reflects the active permission posture.
-- [ ] **`available_commands_update`**: advertise slash commands (`/help`,
-      `/compact`, `/clear`, …) on `new_session`/`load_session`; route a prompt
-      that is exactly a slash command to the matching behavior.
+**Status: current_mode_update + available_commands DONE (2026-06-10).**
+`mapping.current_mode_update` / `available_commands_update` / `slash_command_name`
+/ `slash_help_text`; the server emits `current_mode_update` on `set_session_mode`,
+`available_commands_update` on `new_session`/`load_session`, and handles `/clear`
++ `/help` in-band in `prompt` (no model call). `plan` + rich tool-call diff
+content remain (below).
+
+- [x] **`current_mode_update`**: emitted when `set_session_mode` changes the mode.
+- [x] **`available_commands_update`**: advertise + handle `/clear`, `/help`.
 - [ ] **`plan`** (`update_plan`): map `todo_write` activity to `PlanEntry`s.
       *Blocked by data access* — structured todo items are not currently exposed
       on `AgentRunOutput` (planning_state is internal); needs a small runtime

@@ -82,8 +82,21 @@ per run for that session:
 | `standard` | Ask before dangerous tool calls. |
 | `strict` | Ask before dangerous *and* cautious tool calls. |
 
+Switching the mode emits a `current_mode_update` so the editor reflects the
+active posture.
+
 `set_session_model` / `fork_session` / `list_sessions` are not implemented (the
 adapter serves a single fixed model).
+
+### Slash commands
+
+`new_session` / `load_session` advertise a small set of slash commands via
+`available_commands_update`, handled in-band by the adapter (no model call):
+
+| Command | Behavior |
+| --- | --- |
+| `/clear` | Clear the conversation transcript and start fresh. |
+| `/help` | List the available slash commands. |
 
 ### Stop reasons
 
@@ -164,5 +177,7 @@ an offline, in-process round-trip driven by a fake ACP client.
 - Live token-by-token streaming (the answer is emitted once per leg, not
   incrementally) and reasoning/thought deltas.
 - `set_session_model` / `fork_session` / `list_sessions` (single fixed model).
-- Plan updates (`todo_write` → `AgentPlanUpdate`) and image/audio prompt content.
+- Plan updates (`todo_write` → `AgentPlanUpdate`) — blocked on a runtime
+  projection of structured todos — and rich tool-call diff content; image/audio
+  prompt content.
 - Image / audio prompt content blocks (text only).
