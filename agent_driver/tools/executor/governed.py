@@ -883,12 +883,14 @@ class GovernedToolExecutor:
                 record_status(
                     span,
                     ok=ok,
-                    description=None
-                    if ok
-                    else (
-                        getattr(trace, "result_summary", None)
-                        or getattr(trace, "error_code", None)
-                        or status_value
+                    description=(
+                        None
+                        if ok
+                        else (
+                            getattr(trace, "result_summary", None)
+                            or getattr(trace, "error_code", None)
+                            or status_value
+                        )
                     ),
                 )
             return stop
@@ -967,7 +969,21 @@ class GovernedToolExecutor:
         # Allow / Deny / Ask. Errors are caught and treated as Deny
         # (fail-closed) so a malformed gate can't silently bypass
         # operator-level checks.
-        if policy.decision == ToolPolicyDecision.ALLOW and spec.tool_gate is not None:
+        #
+        # Skip the gate for a call the operator already approved via a
+        # prior interrupt (``approved_interrupt_id`` set on resume). A
+        # stateless gate (e.g. ``build_permission_gate``) re-evaluates the
+        # same risky call identically and would ASK again, re-parking the
+        # run on the very interrupt the operator just cleared — an infinite
+        # approve/ask loop. This mirrors the static-policy short-circuit
+        # above that collapses INTERRUPT->ALLOW for approved calls.
+        if (
+            policy.decision == ToolPolicyDecision.ALLOW
+            and spec.tool_gate is not None
+            and not (
+                isinstance(approved_interrupt_id, str) and approved_interrupt_id.strip()
+            )
+        ):
             policy = await self._apply_tool_gate(
                 gate=spec.tool_gate,
                 policy=policy,
