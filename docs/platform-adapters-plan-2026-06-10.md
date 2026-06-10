@@ -1,8 +1,8 @@
 # Platform adapters plan — Phase 1 (ACP) + Phase 2 (OpenAI-compatible HTTP/SSE)
 
-Status: **Phase 1 (ACP) and Phase 2 (OpenAI HTTP/SSE) implemented** (2026-06-10).
-Scope: expose the runtime to external clients over standard protocols, keeping
-the core dependency-light and transport-agnostic.
+Status: **Phases 1 (ACP), 2 (OpenAI HTTP/SSE) and 3 (MCP Streamable-HTTP)
+implemented** (2026-06-10). Scope: expose the runtime to external clients over
+standard protocols, keeping the core dependency-light and transport-agnostic.
 
 Implementation notes:
 - Phase 1 shipped in `agent_driver/adapters/acp/`, CLI `agent-driver acp`,
@@ -21,6 +21,13 @@ Implementation notes:
   returns the final assistant text with `finish_reason="stop"`. The
   `test_chat_completions_tool_calls` item was replaced by
   `test_internal_tool_use_returns_final_text`.
+- Phase 3 shipped in `agent_driver/mcp_server/http.py` (Streamable-HTTP
+  transport over the existing MCP JSON-RPC core), mounted on the Phase-2 ASGI
+  app via `create_app(..., enable_mcp=True)` / `agent-driver serve --mcp`, tests
+  in `tests/server/test_mcp_http.py`, docs [`docs/mcp-http.md`](mcp-http.md),
+  example `examples/cookbook/18_mcp_http_server.py`. Request/response only
+  (`GET /mcp` → 405; no server-initiated SSE). A2A / AG-UI / gRPC remain out of
+  scope pending demand.
 
 This plan covers the two highest-value, lowest-dependency network surfaces from
 the cross-harness analysis:

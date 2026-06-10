@@ -205,6 +205,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Bearer key required from clients (else $AGENT_DRIVER_SERVER_API_KEY).",
     )
+    serve_parser.add_argument(
+        "--mcp",
+        action="store_true",
+        help="Also mount the MCP Streamable-HTTP endpoint at /mcp.",
+    )
     add_runtime_bounds_options(
         serve_parser,
         default_max_steps=24,

@@ -190,8 +190,14 @@ def create_app(
     *,
     model_id: str = "agent-driver",
     api_key: str | None = None,
+    enable_mcp: bool = False,
 ) -> Starlette:
-    """Build the Starlette app exposing ``agent`` over the OpenAI HTTP surface."""
+    """Build the Starlette app exposing ``agent`` over the OpenAI HTTP surface.
+
+    When ``enable_mcp`` is set, the MCP Streamable-HTTP endpoint (``/mcp``,
+    Phase 3) is mounted on the same app, gated by the same bearer key — so one
+    server speaks both the OpenAI chat surface and MCP.
+    """
     if not api_key:
         logger.warning(
             "agent-driver server: no API key configured — the server is OPEN. "
@@ -203,6 +209,10 @@ def create_app(
         Route("/v1/models", server.list_models, methods=["GET"]),
         Route("/healthz", server.healthz, methods=["GET"]),
     ]
+    if enable_mcp:
+        from agent_driver.mcp_server.http import build_mcp_routes
+
+        routes.extend(build_mcp_routes(agent, server_name=model_id, api_key=api_key))
     return Starlette(routes=routes)
 
 

@@ -29,6 +29,7 @@ python examples/cookbook/01_quickstart.py
 | `15_auxiliary_model.py` | Route compaction to a cheaper auxiliary model (E1) | `RunnerConfig(auxiliary_provider=..., auxiliary_model=...)` |
 | `16_acp_adapter.py` | Serve an agent over the Agent Client Protocol (stdio) | `AgentAcpServer`, `serve_acp`, `request_permission` round-trip |
 | `17_openai_server.py` | Serve an agent over an OpenAI-compatible HTTP API | `server.create_app`, `/v1/chat/completions` (stream + non-stream), `/v1/models` |
+| `18_mcp_http_server.py` | Serve an agent over MCP Streamable-HTTP (`/mcp`) | `mcp_server.http.create_mcp_app`, JSON-RPC over HTTP, session id |
 
 To use a real model, swap `FakeProvider(...)` for a descriptor-resolved
 provider (see `08_providers.py`) — e.g. `resolve_provider(ProviderSpec(

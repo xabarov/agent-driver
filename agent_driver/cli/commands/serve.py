@@ -87,7 +87,12 @@ async def serve_command(
     import uvicorn
 
     api_key = args.api_key_server or os.environ.get("AGENT_DRIVER_SERVER_API_KEY")
-    app = create_app(agent, model_id=args.served_model_id, api_key=api_key)
+    app = create_app(
+        agent,
+        model_id=args.served_model_id,
+        api_key=api_key,
+        enable_mcp=bool(getattr(args, "mcp", False)),
+    )
     config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
     await uvicorn.Server(config).serve()
     return 0
