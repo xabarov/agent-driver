@@ -45,6 +45,7 @@ where = ["."]
 include = ["agent_driver*"]
 
 [tool.setuptools.package-data]
+"agent_driver" = ["py.typed"]
 "agent_driver.prompts.templates" = ["*.txt"]
 "agent_driver.skills.curated" = ["*/SKILL.md"]
 

@@ -70,6 +70,7 @@ convergence and optional SDK gateway/tool-server productization.
 - [Improvement plan E1–E8 (cross-harness backlog)](improvement-plan-e1-e8-2026-06-09.md)
 - [SDK refactor + review cycle 3 (post-E8 consolidation)](sdk-refactor-and-review-cycle-3-2026-06-09.md)
 - [Testing & comparison plan (low-budget, open-weight)](testing-plan-2026-06-09.md)
+- [Embedding agent-driver (public API surface)](embedding.md)
 - [Extending agent-driver](extending.md)
 - [Runtime overview](runtime.md)
 - [SDK](sdk.md)
