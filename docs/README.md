@@ -23,6 +23,9 @@ current, and tied to code that exists in the repository.
 
 ## Plans And Status
 
+- [Platform adapters plan](platform-adapters-plan-2026-06-10.md) - Phase 1 ACP
+  adapter (stdio, editors) and Phase 2 OpenAI-compatible HTTP/SSE server, both
+  behind optional extras; deferred MCP-HTTP/A2A/AG-UI/gRPC.
 - [Unified work plan](unified-work-plan-2026-05-31.md) - active cross-stream
   order for the remaining work: artifact-first Deep Research, eval harness,
   storage convergence, optional SDK gateway/tool-server, and docs hygiene.
