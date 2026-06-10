@@ -57,8 +57,28 @@ print(resp.choices[0].message.content)
 | Method / path | Behavior |
 | --- | --- |
 | `POST /v1/chat/completions` | `stream=false` → one `chat.completion` object with `usage`. `stream=true` → SSE of `chat.completion.chunk` frames, terminated by `data: [DONE]`. |
+| `POST /v1/runs` | Start an async run; returns `202` with the run object immediately. |
+| `GET /v1/runs/{id}` | Poll run status (`queued`/`running`/`requires_action`/`completed`/`failed`/`cancelled`). |
+| `GET /v1/runs/{id}/events` | SSE of lifecycle events, terminated by `data: [DONE]`. |
+| `POST /v1/runs/{id}/approval` | Resolve a paused run's approval (`{"action": "approve"\|"reject"\|"cancel"\|"edit"\|"clarify"}`). |
+| `POST /v1/runs/{id}/stop` | Cancel a run. |
 | `GET /v1/models` | Lists the configured model id. |
 | `GET /healthz` | Liveness probe. |
+
+### Async runs (long-running + human-in-the-loop)
+
+`/v1/chat/completions` is synchronous. For long-running work or
+human-in-the-loop, `POST /v1/runs` starts a run in the background and returns
+immediately; the run is then driven by polling `GET /v1/runs/{id}` and/or
+consuming `GET /v1/runs/{id}/events` (SSE: `run.started`, `run.requires_action`,
+`run.completed` / `run.failed` / `run.cancelled`).
+
+When the run pauses on a tool-approval interrupt it reports
+`status: "requires_action"` with a `required_action` object (interrupt id,
+reason, title, allowed actions); the client resolves it with
+`POST /v1/runs/{id}/approval` (mirroring the ACP `request_permission` round-trip
+and the in-process gateway). `POST /v1/runs/{id}/stop` cancels a run. Runs are
+held in a bounded in-memory map (oldest terminal runs evicted past the cap).
 
 ### Streaming frames
 
@@ -139,6 +159,9 @@ on unbounded session ids.
 - Incremental OpenAI `tool_calls` streaming (see above — agent tools run
   server-side).
 - `top_p` / `stop` / `n` / `seed` / `logprobs` sampling parameters.
-- `GET /v1/responses` and other OpenAI endpoints beyond chat completions.
+- `GET /v1/responses` (OpenAI Responses API) — chat completions + async runs
+  are the supported surfaces today.
+- Token/tool streaming inside `/v1/runs` events (lifecycle events only for now;
+  the final answer is in `run.completed`).
 - Per-request keepalive comment frames (proxies may idle-timeout very long runs).
 - Non-streaming client-disconnect cancellation (streaming runs already abort).

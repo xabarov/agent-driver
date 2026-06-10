@@ -29,6 +29,7 @@ from agent_driver.server.auth import is_authorized
 from agent_driver.server.middleware import SecurityHeadersMiddleware
 from agent_driver.server.openai import translate
 from agent_driver.server.openai.schema import ChatCompletionRequest
+from agent_driver.server.runs import RunManager, resume_action_for
 
 if TYPE_CHECKING:
     from agent_driver.sdk.agent import Agent
@@ -57,6 +58,7 @@ class OpenAIServer:
         # Server-side conversation memory for stateful (X-Session-Id) clients,
         # bounded LRU so a long-lived server cannot leak memory on session ids.
         self._sessions: "OrderedDict[str, list[ChatMessage]]" = OrderedDict()
+        self._runs = RunManager(agent)
 
     # -- helpers -----------------------------------------------------------
 
@@ -212,6 +214,112 @@ class OpenAIServer:
             stream.cancel(reason="client_disconnect")
         yield "data: [DONE]\n\n"
 
+    # -- async runs (/v1/runs) --------------------------------------------
+
+    def _unauthorized(self) -> Any:
+        return JSONResponse(
+            {"error": {"message": "invalid api key", "type": "auth"}}, status_code=401
+        )
+
+    async def create_run(self, request: Request) -> Any:
+        if not is_authorized(
+            request.headers.get("authorization"), api_key=self._api_key
+        ):
+            return self._unauthorized()
+        try:
+            parsed = self._parse_request(await request.json())
+        except (ValueError, json.JSONDecodeError) as exc:
+            return JSONResponse(
+                {"error": {"message": str(exc), "type": "bad_request"}}, status_code=400
+            )
+        session_id = request.headers.get(SESSION_HEADER)
+        messages = translate.to_chat_messages(parsed.messages)
+        record = self._runs.start(messages, thread_id=session_id, model=parsed.model)
+        return JSONResponse(record.public(), status_code=202)
+
+    async def get_run(self, request: Request) -> Any:
+        if not is_authorized(
+            request.headers.get("authorization"), api_key=self._api_key
+        ):
+            return self._unauthorized()
+        record = self._runs.get(request.path_params["run_id"])
+        if record is None:
+            return JSONResponse(
+                {"error": {"message": "unknown run", "type": "not_found"}},
+                status_code=404,
+            )
+        return JSONResponse(record.public())
+
+    async def run_events(self, request: Request) -> Any:
+        if not is_authorized(
+            request.headers.get("authorization"), api_key=self._api_key
+        ):
+            return self._unauthorized()
+        run_id = request.path_params["run_id"]
+        if self._runs.get(run_id) is None:
+            return JSONResponse(
+                {"error": {"message": "unknown run", "type": "not_found"}},
+                status_code=404,
+            )
+
+        async def _frames():
+            async for event in self._runs.stream_events(run_id):
+                yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            _frames(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    async def approve_run(self, request: Request) -> Any:
+        if not is_authorized(
+            request.headers.get("authorization"), api_key=self._api_key
+        ):
+            return self._unauthorized()
+        run_id = request.path_params["run_id"]
+        try:
+            body = await request.json()
+        except (ValueError, json.JSONDecodeError):
+            body = {}
+        action = resume_action_for(str(body.get("action", "approve")))
+        if action is None:
+            return JSONResponse(
+                {"error": {"message": "invalid action", "type": "bad_request"}},
+                status_code=400,
+            )
+        ok = await self._runs.approve(
+            run_id,
+            action,
+            message=body.get("message"),
+            edited_tool_args=body.get("edited_tool_args"),
+        )
+        if not ok:
+            return JSONResponse(
+                {"error": {"message": "run not awaiting approval", "type": "conflict"}},
+                status_code=409,
+            )
+        return JSONResponse({"id": run_id, "ok": True})
+
+    async def stop_run(self, request: Request) -> Any:
+        if not is_authorized(
+            request.headers.get("authorization"), api_key=self._api_key
+        ):
+            return self._unauthorized()
+        run_id = request.path_params["run_id"]
+        if not self._runs.stop(run_id):
+            return JSONResponse(
+                {
+                    "error": {
+                        "message": "run unknown or already done",
+                        "type": "conflict",
+                    }
+                },
+                status_code=409,
+            )
+        return JSONResponse({"id": run_id, "ok": True})
+
     async def list_models(self, request: Request) -> Any:
         if not is_authorized(
             request.headers.get("authorization"), api_key=self._api_key
@@ -263,6 +371,11 @@ def create_app(
     )
     routes = [
         Route("/v1/chat/completions", server.chat_completions, methods=["POST"]),
+        Route("/v1/runs", server.create_run, methods=["POST"]),
+        Route("/v1/runs/{run_id}", server.get_run, methods=["GET"]),
+        Route("/v1/runs/{run_id}/events", server.run_events, methods=["GET"]),
+        Route("/v1/runs/{run_id}/approval", server.approve_run, methods=["POST"]),
+        Route("/v1/runs/{run_id}/stop", server.stop_run, methods=["POST"]),
         Route("/v1/models", server.list_models, methods=["GET"]),
         Route("/healthz", server.healthz, methods=["GET"]),
     ]
