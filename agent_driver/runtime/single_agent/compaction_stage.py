@@ -1,5 +1,7 @@
 """Compatibility shim for context-management compaction helpers."""
 
+# SHIM-REMOVE-BY: 2026-12-01 (re-export kept for importers; see refactoring-plan-2026-06-10)
+
 from agent_driver.runtime.single_agent.context_management.compaction_stage import (
     CompactionStageHost,
     _emit_compaction_outcome,

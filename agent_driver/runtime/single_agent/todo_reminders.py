@@ -1,5 +1,7 @@
 """Compatibility shim for todo reminder helpers."""
 
+# SHIM-REMOVE-BY: 2026-12-01 (re-export kept for importers; see refactoring-plan-2026-06-10)
+
 from agent_driver.runtime.single_agent.context_management.todo_reminders import (
     SUBSTANTIVE_TODO_HINT_TOOLS,
     TODO_REMINDER_TOOL_LOOPS,
