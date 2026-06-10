@@ -6,6 +6,10 @@
 приложений с поддержкой durable execution, governance инструментов и
 воспроизводимых runtime-контрактов.
 
+**Встраиваете в своё приложение?** Начните с поддерживаемой публичной поверхности
+API и политики стабильности: [docs/embedding.md](docs/embedding.md). Готовые
+рецепты: [examples/cookbook](examples/cookbook/README.md).
+
 Текущая версия пакета: `0.1.0`
 
 ## Что нового в текущей итерации
@@ -95,6 +99,7 @@ AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests
 
 ## Карта документации
 
+- Встраивание (публичная поверхность API + стабильность): `docs/embedding.md`
 - Главный индекс: `docs/README.md`
 - Обзор архитектуры и extraction-план:
   `docs/agent-driver-analysis-2026-05-18.md`

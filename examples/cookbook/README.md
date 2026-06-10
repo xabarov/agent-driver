@@ -26,6 +26,7 @@ python examples/cookbook/01_quickstart.py
 | `12_subagent_routing.py` | Route subagents to per-role models (E6) | `RunnerConfig(subagent_model_routing=...)`, `run_subagent` |
 | `13_eval_compare.py` | Baseline-vs-treatment, N-run median deltas (T0) | `run_comparison`, `render_comparison` |
 | `14_filesystem_backends.py` | Route paths to scratch vs durable storage (E7) | `CompositeBackend`, `StateBackend`, `LocalFilesystemBackend` |
+| `15_auxiliary_model.py` | Route compaction to a cheaper auxiliary model (E1) | `RunnerConfig(auxiliary_provider=..., auxiliary_model=...)` |
 
 To use a real model, swap `FakeProvider(...)` for a descriptor-resolved
 provider (see `08_providers.py`) — e.g. `resolve_provider(ProviderSpec(

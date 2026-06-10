@@ -6,6 +6,10 @@
 applications with durable execution, tool governance, and reproducible run
 contracts.
 
+**Embedding it?** Start with the supported public API surface and stability
+policy: [docs/embedding.md](docs/embedding.md). Runnable recipes:
+[examples/cookbook](examples/cookbook/README.md).
+
 Current package version: `0.1.0`
 
 ## What is new in this iteration
@@ -100,6 +104,7 @@ AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests
 
 ## Documentation map
 
+- Embedding (public API surface + stability): `docs/embedding.md`
 - Cookbook (offline runnable examples): `examples/cookbook/`
 - Extending agent-driver: `docs/extending.md`
 - Main docs index: `docs/README.md`
