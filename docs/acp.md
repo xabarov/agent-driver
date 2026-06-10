@@ -114,6 +114,23 @@ A reject ends the run as a `refusal`; an approve resumes it to completion. The
 runtime does **not** re-ask an already-approved call, so an `allow_once`
 outcome cannot loop.
 
+### Client filesystem (editor-native edits)
+
+When the connected client advertises the `fs` capability in `initialize`
+(`fs.readTextFile` / `fs.writeTextFile`), the agent's file tools route their
+reads and writes **through the editor** rather than local disk — using
+`fs/read_text_file` and `fs/write_text_file`. So the agent sees the editor's
+unsaved buffer contents and its edits land in the user's buffers (visible,
+undoable) instead of silently touching disk.
+
+Mechanics: the adapter sets a run-scoped `AsyncFileIO` (`fs_io_scope`) around the
+run; the builtin `read_file` / `file_write` / `file_edit` / `file_patch` tools
+pick it up and await the client calls. Path validation and the workspace jail
+still run locally (the file must resolve within the workspace) — only the byte
+transfer is redirected. Each op falls back to local disk when its specific
+capability is absent, and when the client advertises no `fs` capability the
+tools behave exactly as before (local disk).
+
 ## Embedding directly
 
 To serve an agent you constructed yourself (bypassing the CLI):

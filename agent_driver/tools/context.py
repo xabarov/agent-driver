@@ -6,12 +6,33 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Protocol, runtime_checkable
 
 _workspace_cwd: ContextVar[Path | None] = ContextVar("workspace_cwd", default=None)
 _tool_call_context: ContextVar[dict[str, str] | None] = ContextVar(
     "tool_call_context", default=None
 )
+
+
+@runtime_checkable
+class AsyncFileIO(Protocol):
+    """Run-scoped async source/sink for the filesystem tools' bytes.
+
+    When set (via :func:`fs_io_scope`), the builtin read/write/edit tools route
+    their file reads and writes through this object instead of local disk —
+    e.g. an ACP adapter routes them to the editor so edits land in the user's
+    buffers. Path validation / jailing still happens against the local
+    workspace; only the byte transfer is redirected.
+    """
+
+    async def read_text(self, path: str) -> str:
+        """Return the text content of ``path``."""
+
+    async def write_text(self, path: str, content: str) -> None:
+        """Write ``content`` to ``path``."""
+
+
+_fs_io: ContextVar["AsyncFileIO | None"] = ContextVar("fs_io", default=None)
 
 
 # Phase 11 H16 — optional progress reporter for long-running tools.
@@ -69,6 +90,11 @@ def get_tool_call_context() -> dict[str, str]:
     if not isinstance(payload, dict):
         return {}
     return dict(payload)
+
+
+def get_fs_io() -> "AsyncFileIO | None":
+    """Return the run-scoped async file IO, or ``None`` for local disk."""
+    return _fs_io.get()
 
 
 def report_tool_progress(
@@ -153,6 +179,21 @@ def tool_call_context_scope(
 
 
 @contextmanager
+def fs_io_scope(file_io: "AsyncFileIO | None") -> Iterator[None]:
+    """Temporarily route filesystem-tool reads/writes through ``file_io``.
+
+    Set by a host (e.g. the ACP adapter) around a run; the builtin filesystem
+    tools pick it up via :func:`get_fs_io`. ``None`` keeps the default
+    local-disk behavior.
+    """
+    token = _fs_io.set(file_io)
+    try:
+        yield
+    finally:
+        _fs_io.reset(token)
+
+
+@contextmanager
 def tool_progress_scope(reporter: ProgressReporter | None) -> Iterator[None]:
     """Phase 11 H16 — wire a progress reporter for the current tool call.
 
@@ -173,8 +214,11 @@ def tool_progress_scope(reporter: ProgressReporter | None) -> Iterator[None]:
 
 
 __all__ = [
+    "AsyncFileIO",
     "ProgressReporter",
     "ToolProgress",
+    "fs_io_scope",
+    "get_fs_io",
     "get_workspace_cwd",
     "get_workspace_jail_root",
     "get_tool_call_context",

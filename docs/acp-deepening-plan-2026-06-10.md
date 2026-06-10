@@ -143,14 +143,22 @@ async. Either make the backend methods async (touches the protocol + callers) or
 bridge via a thread-confined run-loop handle. Decide during implementation;
 prefer adding async variants to the backend protocol with sync fallbacks.
 
+**Status: DONE (2026-06-10).** Implemented as a run-scoped **async** file-IO seam
+rather than the sync `FileBackend` — the file tools are already async, so an
+async seam sidesteps the sync/async wrinkle above: `tools/context.AsyncFileIO` +
+`fs_io_scope`, consumed via `read_text_routed` / `write_text_routed` in the
+builtin `read_file` / `file_write` / `file_edit` / `file_patch` tools (default =
+direct disk). `adapters/acp/fs.AcpClientFileIO` proxies to
+`conn.read_text_file` / `write_text_file` with per-op capability + disk fallback;
+ACP `prompt` wraps the run in `fs_io_scope` when `initialize` saw the `fs`
+capability. Path jail/validation still runs locally; only byte transfer is
+redirected.
+
 **Steps:**
-- [ ] `initialize`: capture `client_capabilities` on the server (fs/terminal).
-- [ ] `AcpClientBackend` implementing the `FileBackend` read/write/edit surface
-      over `conn.read_text_file`/`write_text_file` (path normalized to the
-      session `cwd`).
-- [ ] Make builtin `read_file`/`file_write`/`file_edit` resolve a context
-      `FileBackend` (default = current direct-disk behavior).
-- [ ] ACP `prompt` injects `AcpClientBackend` for the run when `fs` advertised.
+- [x] `initialize`: capture `client_capabilities` on the server (fs).
+- [x] `AcpClientFileIO` over `conn.read_text_file`/`write_text_file`.
+- [x] Builtin file tools resolve a run-scoped `AsyncFileIO` (default disk).
+- [x] ACP `prompt` injects it for the run when `fs` advertised.
 - [ ] Offline test: fake client records `read_text_file`/`write_text_file` calls;
       a planned file edit routes through the client, not disk.
 

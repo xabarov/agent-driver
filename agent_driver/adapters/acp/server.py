@@ -17,6 +17,7 @@ from uuid import uuid4
 
 import acp
 
+from agent_driver.adapters.acp.fs import AcpClientFileIO, client_fs_flags
 from agent_driver.adapters.acp.mapping import (
     gate_for_mode,
     history_updates,
@@ -34,6 +35,7 @@ from agent_driver.contracts.interrupts import InterruptRequest
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.runtime.abort import RunAbortHandle
+from agent_driver.tools.context import fs_io_scope
 
 if TYPE_CHECKING:
     from agent_driver.sdk.agent import Agent
@@ -66,6 +68,10 @@ class AgentAcpServer:
         self._sessions: dict[str, AcpSession] = {}
         self._cancelled: set[str] = set()
         self._aborts: dict[str, RunAbortHandle] = {}
+        # Client filesystem capability captured at initialize; gates whether
+        # file tools route through the editor (fs/read_text_file/write_text_file).
+        self._client_fs_read = False
+        self._client_fs_write = False
 
     # -- connection / capabilities ----------------------------------------
 
@@ -81,6 +87,9 @@ class AgentAcpServer:
         **_: Any,
     ) -> acp.InitializeResponse:
         """Advertise agent identity and capabilities."""
+        self._client_fs_read, self._client_fs_write = client_fs_flags(
+            client_capabilities
+        )
         return acp.InitializeResponse(
             protocol_version=acp.PROTOCOL_VERSION,
             agent_info=acp.schema.Implementation(
@@ -214,13 +223,14 @@ class AgentAcpServer:
 
         emitted_tools: set[str] = set()
         try:
-            output = await self._agent.run(
-                run_input, abort_handle=abort, tool_gate=session.gate_override
-            )
-            await self._emit_leg(session_id, output, emitted_tools)
-            output = await self._drive_resume_loop(
-                session_id, output, emitted_tools, abort
-            )
+            with fs_io_scope(self._file_io(session)):
+                output = await self._agent.run(
+                    run_input, abort_handle=abort, tool_gate=session.gate_override
+                )
+                await self._emit_leg(session_id, output, emitted_tools)
+                output = await self._drive_resume_loop(
+                    session_id, output, emitted_tools, abort
+                )
         finally:
             self._aborts.pop(session_id, None)
 
@@ -278,6 +288,17 @@ class AgentAcpServer:
             tool_call=permission_tool_call(interrupt),
         )
         return resume_action_from_outcome(response.outcome)
+
+    def _file_io(self, session: AcpSession) -> AcpClientFileIO | None:
+        """Route file tools through the editor when the client advertised fs."""
+        if self._conn is None or not (self._client_fs_read or self._client_fs_write):
+            return None
+        return AcpClientFileIO(
+            self._conn,
+            session.session_id,
+            can_read=self._client_fs_read,
+            can_write=self._client_fs_write,
+        )
 
     async def _replay_history(self, session_id: str) -> None:
         """Stream the session's recorded transcript to the client."""

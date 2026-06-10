@@ -41,8 +41,24 @@ class FakeAcpClient:
         self._allow_option_id = allow_option_id
         self._on_permission = on_permission
 
+        self.fs_reads: list[str] = []
+        self.fs_writes: list[tuple[str, str]] = []
+        self.read_content = "EDITOR BUFFER CONTENT"
+
     async def session_update(self, *, session_id: str, update: Any, **_: Any) -> None:
         self.updates.append(update)
+
+    async def read_text_file(
+        self, *, path: str, session_id: str, **_: Any
+    ) -> schema.ReadTextFileResponse:
+        self.fs_reads.append(path)
+        return schema.ReadTextFileResponse(content=self.read_content)
+
+    async def write_text_file(
+        self, *, content: str, path: str, session_id: str, **_: Any
+    ) -> None:
+        self.fs_writes.append((path, content))
+        return None
 
     async def request_permission(
         self, *, options: list[Any], session_id: str, tool_call: Any, **_: Any
@@ -175,6 +191,109 @@ async def test_load_session_replays_transcript() -> None:
     assert "UserMessageChunk" in kinds
     assert "AgentMessageChunk" in kinds
     assert resp.modes.current_mode_id == "default"
+
+
+class _PlanToolThenFinish(FakeProvider):
+    """Plan one tool call (tool_name + args), then answer on the next turn."""
+
+    def __init__(self, tool_name: str, args: dict[str, Any]) -> None:
+        super().__init__(response_text="done")
+        self._calls = 0
+        self._tool_name = tool_name
+        self._args = args
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self._calls += 1
+        if self._calls == 1:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                provider="plan-tool",
+                model="test",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(tool_name=self._tool_name, args=self._args).model_dump(
+                            mode="json"
+                        )
+                    ]
+                },
+            )
+        return await super().complete(request)
+
+
+def _fs_capabilities() -> Any:
+    return schema.ClientCapabilities(
+        fs=schema.FileSystemCapabilities(read_text_file=True, write_text_file=True)
+    )
+
+
+@pytest.mark.asyncio
+async def test_file_write_routes_through_client_fs(tmp_path: Any) -> None:
+    target = tmp_path / "out.txt"
+    agent = create_agent(
+        provider=_PlanToolThenFinish(
+            "file_write", {"path": str(target), "content": "FROM AGENT"}
+        ),
+        tools=ToolSet.only("file_write"),
+    )
+    server = AgentAcpServer(agent)
+    client = FakeAcpClient()
+    server.on_connect(client)
+    await server.initialize(protocol_version=1, client_capabilities=_fs_capabilities())
+    session = await server.new_session(cwd=str(tmp_path))
+
+    resp = await server.prompt(
+        prompt=[_text_block("write it")], session_id=session.session_id
+    )
+
+    assert resp.stop_reason == "end_turn"
+    # Routed to the editor, not local disk.
+    assert client.fs_writes == [(str(target), "FROM AGENT")]
+    assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_file_read_routes_through_client_fs(tmp_path: Any) -> None:
+    target = tmp_path / "src.txt"
+    target.write_text("ON DISK", encoding="utf-8")  # exists for path validation
+    agent = create_agent(
+        provider=_PlanToolThenFinish("read_file", {"path": str(target)}),
+        tools=ToolSet.only("read_file"),
+    )
+    server = AgentAcpServer(agent)
+    client = FakeAcpClient()
+    client.read_content = "UNSAVED EDITOR CONTENT"
+    server.on_connect(client)
+    await server.initialize(protocol_version=1, client_capabilities=_fs_capabilities())
+    session = await server.new_session(cwd=str(tmp_path))
+
+    await server.prompt(prompt=[_text_block("read it")], session_id=session.session_id)
+
+    # The read went through the client and returned the editor's (unsaved) view.
+    assert client.fs_reads == [str(target)]
+
+
+@pytest.mark.asyncio
+async def test_no_fs_capability_uses_local_disk(tmp_path: Any) -> None:
+    target = tmp_path / "out.txt"
+    agent = create_agent(
+        provider=_PlanToolThenFinish(
+            "file_write", {"path": str(target), "content": "ON DISK"}
+        ),
+        tools=ToolSet.only("file_write"),
+    )
+    server = AgentAcpServer(agent)
+    client = FakeAcpClient()
+    server.on_connect(client)
+    # initialize WITHOUT fs capabilities.
+    await server.initialize(protocol_version=1)
+    session = await server.new_session(cwd=str(tmp_path))
+
+    await server.prompt(prompt=[_text_block("write it")], session_id=session.session_id)
+
+    # No client fs calls; the write hit local disk.
+    assert client.fs_writes == []
+    assert target.read_text(encoding="utf-8") == "ON DISK"
 
 
 @pytest.mark.asyncio

@@ -10,9 +10,10 @@ from agent_driver.tools.builtin.filesystem._paths import (
     MAX_BYTES_DEFAULT,
     as_int,
     ensure_text_size,
-    read_text_with_size_guard,
+    read_text_routed,
     resolve_file_path,
     resolve_writable_path,
+    write_text_routed,
 )
 
 FILE_WRITE_TOOL = "file_write"
@@ -242,7 +243,7 @@ async def file_write_handler(args: dict[str, Any]) -> dict[str, Any]:
     max_bytes = as_int(args.get("max_bytes"), default=MAX_BYTES_DEFAULT, minimum=1)
     existed_before = path.exists()
     existing = (
-        read_text_with_size_guard(path, max_bytes=max_bytes) if existed_before else ""
+        await read_text_routed(path, max_bytes=max_bytes) if existed_before else ""
     )
     new_text = content if mode == "overwrite" else f"{existing}{content}"
     ensure_text_size(new_text, max_bytes=max_bytes)
@@ -251,7 +252,7 @@ async def file_write_handler(args: dict[str, Any]) -> dict[str, Any]:
         args.get("preview_chars"), default=_PREVIEW_CHARS_DEFAULT, minimum=0
     )
     if not dry_run:
-        path.write_text(new_text, encoding="utf-8")
+        await write_text_routed(path, new_text)
     return {
         "summary": f"{mode} write {'previewed' if dry_run else 'completed'}: {path}",
         "path": str(path),
@@ -282,7 +283,7 @@ async def file_edit_handler(args: dict[str, Any]) -> dict[str, Any]:
         minimum=1,
     )
     max_bytes = as_int(args.get("max_bytes"), default=MAX_BYTES_DEFAULT, minimum=1)
-    source = read_text_with_size_guard(path, max_bytes=max_bytes)
+    source = await read_text_routed(path, max_bytes=max_bytes)
     occurrences = source.count(old_text)
     if occurrences != expected:
         raise ValueError(
@@ -295,7 +296,7 @@ async def file_edit_handler(args: dict[str, Any]) -> dict[str, Any]:
         args.get("preview_chars"), default=_PREVIEW_CHARS_DEFAULT, minimum=0
     )
     if not dry_run:
-        path.write_text(updated, encoding="utf-8")
+        await write_text_routed(path, updated)
     return {
         "summary": f"edit {'previewed' if dry_run else 'completed'}: {path}",
         "path": str(path),
@@ -314,7 +315,7 @@ async def file_patch_handler(args: dict[str, Any]) -> dict[str, Any]:
     path = resolve_file_path(args.get("path"))
     patches = _parse_patch_operations(args.get("patches"))
     max_bytes = as_int(args.get("max_bytes"), default=MAX_BYTES_DEFAULT, minimum=1)
-    source = read_text_with_size_guard(path, max_bytes=max_bytes)
+    source = await read_text_routed(path, max_bytes=max_bytes)
     updated = source
     applied: list[dict[str, Any]] = []
     replacement_total = 0
@@ -344,7 +345,7 @@ async def file_patch_handler(args: dict[str, Any]) -> dict[str, Any]:
         args.get("preview_chars"), default=_PREVIEW_CHARS_DEFAULT, minimum=0
     )
     if not dry_run:
-        path.write_text(updated, encoding="utf-8")
+        await write_text_routed(path, updated)
     return {
         "summary": (
             f"patch {'previewed' if dry_run else 'completed'}: "
