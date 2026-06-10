@@ -71,3 +71,29 @@ def test_negative_retries_rejected() -> None:
         BatchRunner(
             create_agent(provider=FakeProvider(), tools=ToolSet.only()), retries=-1
         )
+
+
+class _BillingAgent:
+    """Always raises a 402 (non-transient) provider error."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def query(self, text: str, *, run_id: str | None = None):  # noqa: ANN201
+        import httpx
+
+        self.calls += 1
+        req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+        resp = httpx.Response(402, request=req, text="Payment Required")
+        raise httpx.HTTPStatusError("402", request=req, response=resp)
+
+
+@pytest.mark.asyncio
+async def test_non_transient_402_fails_fast() -> None:
+    """A 402 (billing) error is not retried — it fails fast."""
+    agent = _BillingAgent()
+    runner = _runner(agent, retries=3, retry_backoff_s=0.0)
+    report = await runner.run(items_from_prompts(["a"]))
+    assert report.completed == 0
+    assert agent.calls == 1  # no wasted retries on a non-transient error
+    assert runner._slept == []

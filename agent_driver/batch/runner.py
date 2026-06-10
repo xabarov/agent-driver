@@ -135,8 +135,13 @@ class BatchRunner:
                 break
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 last_exc = exc
-                if attempt < self._retries:
-                    await self._sleep(self._retry_backoff_s * (2**attempt))
+                # Fail fast on non-transient errors (auth, billing/402,
+                # model-not-found, content policy, context overflow) — retrying
+                # them just wastes attempts + backoff. Retry only transient ones
+                # (rate-limit/429, overload, timeout, server, transport).
+                if attempt >= self._retries or not _is_transient(exc):
+                    break
+                await self._sleep(self._retry_backoff_s * (2**attempt))
         if last_exc is not None:
             # One bad item must not abort the batch.
             return Trajectory.from_error(
@@ -164,6 +169,23 @@ class BatchRunner:
             cost_usd=cost_usd,
             latency_ms=latency_ms,
         )
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """Whether ``exc`` is a transient failure worth retrying.
+
+    Uses the provider error classifier: retry rate-limit / overload / timeout /
+    server / transport; fail fast on auth, billing (402), model-not-found,
+    content-policy, payload-too-large, and context-overflow (which a plain retry
+    won't fix).
+    """
+    from agent_driver.llm.error_classifier import (  # pylint: disable=import-outside-toplevel
+        RecoveryAction,
+        classify,
+    )
+
+    action = classify(exc).action
+    return action not in (RecoveryAction.FAIL_FAST, RecoveryAction.COMPRESS_CONTEXT)
 
 
 def items_from_prompts(

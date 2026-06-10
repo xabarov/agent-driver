@@ -109,6 +109,11 @@ _DEFAULT_PRICING: dict[str, Pricing] = {
     ),
     "gpt-4o": Pricing(input_per_million=2.5, output_per_million=10.0),
     "gpt-4o-mini": Pricing(input_per_million=0.15, output_per_million=0.6),
+    # OpenRouter open-weight list prices (per openrouter.ai, 2026-06).
+    "qwen/qwen-2.5-7b-instruct": Pricing(
+        input_per_million=0.04, output_per_million=0.10
+    ),
+    "qwen/qwen3.5-397b-a17b": Pricing(input_per_million=0.39, output_per_million=2.34),
 }
 
 
