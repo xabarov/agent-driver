@@ -30,12 +30,16 @@ from agent_driver.adapters.acp.mapping import (
     tool_updates_from_trace,
 )
 from agent_driver.adapters.acp.session import AcpSession
+from agent_driver.adapters.acp.terminal import (
+    AcpTerminalRunner,
+    client_terminal_enabled,
+)
 from agent_driver.contracts.enums import ResumeAction, RunStatus
 from agent_driver.contracts.interrupts import InterruptRequest
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.runtime.abort import RunAbortHandle
-from agent_driver.tools.context import fs_io_scope
+from agent_driver.tools.context import command_runner_scope, fs_io_scope
 
 if TYPE_CHECKING:
     from agent_driver.sdk.agent import Agent
@@ -72,6 +76,7 @@ class AgentAcpServer:
         # file tools route through the editor (fs/read_text_file/write_text_file).
         self._client_fs_read = False
         self._client_fs_write = False
+        self._client_terminal = False
 
     # -- connection / capabilities ----------------------------------------
 
@@ -90,6 +95,7 @@ class AgentAcpServer:
         self._client_fs_read, self._client_fs_write = client_fs_flags(
             client_capabilities
         )
+        self._client_terminal = client_terminal_enabled(client_capabilities)
         return acp.InitializeResponse(
             protocol_version=acp.PROTOCOL_VERSION,
             agent_info=acp.schema.Implementation(
@@ -223,7 +229,10 @@ class AgentAcpServer:
 
         emitted_tools: set[str] = set()
         try:
-            with fs_io_scope(self._file_io(session)):
+            with (
+                fs_io_scope(self._file_io(session)),
+                command_runner_scope(self._command_runner(session)),
+            ):
                 output = await self._agent.run(
                     run_input, abort_handle=abort, tool_gate=session.gate_override
                 )
@@ -299,6 +308,12 @@ class AgentAcpServer:
             can_read=self._client_fs_read,
             can_write=self._client_fs_write,
         )
+
+    def _command_runner(self, session: AcpSession) -> AcpTerminalRunner | None:
+        """Route shell commands to the editor terminal when client supports it."""
+        if self._conn is None or not self._client_terminal:
+            return None
+        return AcpTerminalRunner(self._conn, session.session_id)
 
     async def _replay_history(self, session_id: str) -> None:
         """Stream the session's recorded transcript to the client."""

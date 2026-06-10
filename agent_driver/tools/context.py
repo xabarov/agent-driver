@@ -35,6 +35,28 @@ class AsyncFileIO(Protocol):
 _fs_io: ContextVar["AsyncFileIO | None"] = ContextVar("fs_io", default=None)
 
 
+@runtime_checkable
+class AsyncCommandRunner(Protocol):
+    """Run-scoped executor for the shell tool's commands.
+
+    When set (via :func:`command_runner_scope`), the builtin ``bash`` tool runs
+    its (already policy-checked) command through this object instead of a local
+    subprocess — e.g. an ACP adapter runs it in the editor's terminal. Returns
+    the same shape the local executor does:
+    ``{"stdout", "stderr", "timed_out", "exit_code"}``.
+    """
+
+    async def run_command(
+        self, command: str, *, cwd: str, timeout_seconds: float
+    ) -> dict[str, Any]:
+        """Execute ``command`` and return its stdout/stderr/exit result."""
+
+
+_command_runner: ContextVar["AsyncCommandRunner | None"] = ContextVar(
+    "command_runner", default=None
+)
+
+
 # Phase 11 H16 — optional progress reporter for long-running tools.
 # Stored as a ContextVar so handlers don't need an extra parameter; the
 # context is set up by the executor immediately before invoking the
@@ -95,6 +117,11 @@ def get_tool_call_context() -> dict[str, str]:
 def get_fs_io() -> "AsyncFileIO | None":
     """Return the run-scoped async file IO, or ``None`` for local disk."""
     return _fs_io.get()
+
+
+def get_command_runner() -> "AsyncCommandRunner | None":
+    """Return the run-scoped command runner, or ``None`` for local subprocess."""
+    return _command_runner.get()
 
 
 def report_tool_progress(
@@ -194,6 +221,21 @@ def fs_io_scope(file_io: "AsyncFileIO | None") -> Iterator[None]:
 
 
 @contextmanager
+def command_runner_scope(runner: "AsyncCommandRunner | None") -> Iterator[None]:
+    """Temporarily route the shell tool's execution through ``runner``.
+
+    Set by a host (e.g. the ACP adapter) around a run; the builtin ``bash`` tool
+    picks it up via :func:`get_command_runner`. ``None`` keeps the default local
+    subprocess behavior.
+    """
+    token = _command_runner.set(runner)
+    try:
+        yield
+    finally:
+        _command_runner.reset(token)
+
+
+@contextmanager
 def tool_progress_scope(reporter: ProgressReporter | None) -> Iterator[None]:
     """Phase 11 H16 — wire a progress reporter for the current tool call.
 
@@ -214,10 +256,13 @@ def tool_progress_scope(reporter: ProgressReporter | None) -> Iterator[None]:
 
 
 __all__ = [
+    "AsyncCommandRunner",
     "AsyncFileIO",
     "ProgressReporter",
     "ToolProgress",
+    "command_runner_scope",
     "fs_io_scope",
+    "get_command_runner",
     "get_fs_io",
     "get_workspace_cwd",
     "get_workspace_jail_root",

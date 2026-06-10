@@ -173,11 +173,20 @@ needs the bash tool to resolve a pluggable "command runner" from context, with a
 `AcpTerminalRunner` that drives `conn.create_terminal` → `terminal_output` →
 `wait_for_terminal_exit` → `release_terminal`. Larger than 1a; ship after it.
 
-**Steps:**
-- [ ] `AcpTerminalRunner` over the terminal client methods.
-- [ ] Pluggable command runner seam for the `bash` tool (default = local).
-- [ ] ACP `prompt` injects it when `terminal` advertised; emit `tool_terminal_ref`.
-- [ ] Offline test: fake client records terminal lifecycle for a planned bash call.
+**Status: DONE (2026-06-10).** Same async per-run seam as 1a:
+`tools/context.AsyncCommandRunner` + `command_runner_scope`; the `bash` tool's
+`_execute_bash` routes through it when set (default = local subprocess). The
+read-only command policy still runs first. `adapters/acp/terminal.AcpTerminalRunner`
+drives `create_terminal` → `wait_for_terminal_exit` → `terminal_output` →
+`release_terminal`; ACP `prompt` injects it when `initialize` saw the `terminal`
+capability. `tool_terminal_ref` emission deferred (the tool timeline is rebuilt
+from the trace post-leg, so correlating the live terminal_id is extra work).
+
+- [x] `AcpTerminalRunner` over the terminal client methods.
+- [x] Pluggable command runner seam for the `bash` tool (default = local).
+- [x] ACP `prompt` injects it when `terminal` advertised.
+- [ ] `tool_terminal_ref` on the tool call (deferred — see above).
+- [x] Offline tests: lifecycle recorded; absent capability runs locally.
 
 ---
 

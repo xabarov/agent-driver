@@ -131,6 +131,20 @@ transfer is redirected. Each op falls back to local disk when its specific
 capability is absent, and when the client advertises no `fs` capability the
 tools behave exactly as before (local disk).
 
+### Client terminal (commands in the editor's terminal)
+
+When the client advertises the `terminal` capability, the `bash` tool runs its
+(already policy-checked) command in the **editor's terminal** via the
+`terminal/*` lifecycle — `terminal/create` → `terminal/wait_for_exit` →
+`terminal/output` → `terminal/release` — instead of a local subprocess. The user
+sees the command run in their editor, and its output/exit code flow back into the
+agent.
+
+Mechanics mirror the filesystem seam: the adapter sets a run-scoped
+`AsyncCommandRunner` (`command_runner_scope`) around the run; the `bash` tool
+picks it up. The read-only command policy still runs first (only the execution
+venue changes). With no `terminal` capability the tool runs locally as before.
+
 ## Embedding directly
 
 To serve an agent you constructed yourself (bypassing the CLI):

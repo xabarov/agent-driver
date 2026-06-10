@@ -16,7 +16,11 @@ from agent_driver.contracts import (
     ToolManifest,
     ToolRisk,
 )
-from agent_driver.tools.context import get_workspace_cwd, get_workspace_jail_root
+from agent_driver.tools.context import (
+    get_command_runner,
+    get_workspace_cwd,
+    get_workspace_jail_root,
+)
 from agent_driver.tools.registry import ToolRegistry
 
 _BASH_TOOL = "bash"
@@ -174,7 +178,9 @@ def _evaluate_command_policy(command: str) -> _CommandPolicyResult:
         if first not in _READONLY_PREFIXES:
             if first in _NETWORK_READ_PREFIXES:
                 if _is_private_network_target(segment):
-                    reasons.append("network command target must not be localhost/private")
+                    reasons.append(
+                        "network command target must not be localhost/private"
+                    )
                     categories.append("destructive")
                 else:
                     categories.append("network_read")
@@ -239,6 +245,14 @@ def _parse_bash_request(args: dict[str, Any]) -> _BashRequest:
 async def _execute_bash(
     *, command: str, cwd: Path, timeout_seconds: float
 ) -> dict[str, Any]:
+    # Route through the run-scoped command runner when set (e.g. an ACP editor
+    # terminal); otherwise run locally. The read-only command policy has already
+    # passed, so only the execution venue changes.
+    runner = get_command_runner()
+    if runner is not None:
+        return await runner.run_command(
+            command, cwd=str(cwd), timeout_seconds=timeout_seconds
+        )
     proc = await asyncio.create_subprocess_shell(
         command,
         cwd=str(cwd),
@@ -328,7 +342,9 @@ def _resolve_cwd(raw: Any) -> Path:
         try:
             resolved.relative_to(jail_root.resolve())
         except ValueError as exc:
-            raise ValueError(f"cwd outside workspace ({jail_root.resolve()}): {resolved}") from exc
+            raise ValueError(
+                f"cwd outside workspace ({jail_root.resolve()}): {resolved}"
+            ) from exc
         cwd = resolved
     return cwd
 

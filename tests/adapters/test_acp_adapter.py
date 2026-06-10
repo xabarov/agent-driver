@@ -44,6 +44,9 @@ class FakeAcpClient:
         self.fs_reads: list[str] = []
         self.fs_writes: list[tuple[str, str]] = []
         self.read_content = "EDITOR BUFFER CONTENT"
+        self.terminal_events: list[tuple[str, str]] = []
+        self.terminal_output_text = "terminal stdout\n"
+        self.terminal_exit_code = 0
 
     async def session_update(self, *, session_id: str, update: Any, **_: Any) -> None:
         self.updates.append(update)
@@ -58,6 +61,32 @@ class FakeAcpClient:
         self, *, content: str, path: str, session_id: str, **_: Any
     ) -> None:
         self.fs_writes.append((path, content))
+        return None
+
+    async def create_terminal(
+        self, *, command: str, session_id: str, cwd: Any = None, **_: Any
+    ) -> schema.CreateTerminalResponse:
+        self.terminal_events.append(("create", command))
+        return schema.CreateTerminalResponse(terminal_id="term-1")
+
+    async def wait_for_terminal_exit(
+        self, *, session_id: str, terminal_id: str, **_: Any
+    ) -> schema.WaitForTerminalExitResponse:
+        self.terminal_events.append(("wait", terminal_id))
+        return schema.WaitForTerminalExitResponse(exit_code=self.terminal_exit_code)
+
+    async def terminal_output(
+        self, *, session_id: str, terminal_id: str, **_: Any
+    ) -> schema.TerminalOutputResponse:
+        self.terminal_events.append(("output", terminal_id))
+        return schema.TerminalOutputResponse(
+            output=self.terminal_output_text, truncated=False
+        )
+
+    async def release_terminal(
+        self, *, session_id: str, terminal_id: str, **_: Any
+    ) -> None:
+        self.terminal_events.append(("release", terminal_id))
         return None
 
     async def request_permission(
@@ -294,6 +323,54 @@ async def test_no_fs_capability_uses_local_disk(tmp_path: Any) -> None:
     # No client fs calls; the write hit local disk.
     assert client.fs_writes == []
     assert target.read_text(encoding="utf-8") == "ON DISK"
+
+
+@pytest.mark.asyncio
+async def test_bash_routes_through_client_terminal(tmp_path: Any) -> None:
+    agent = create_agent(
+        provider=_PlanToolThenFinish("bash", {"command": "echo hi"}),
+        tools=ToolSet.only("bash"),
+    )
+    server = AgentAcpServer(agent)
+    client = FakeAcpClient()
+    client.terminal_output_text = "hi\n"
+    server.on_connect(client)
+    await server.initialize(
+        protocol_version=1,
+        client_capabilities=schema.ClientCapabilities(terminal=True),
+    )
+    session = await server.new_session(cwd=str(tmp_path))
+
+    resp = await server.prompt(
+        prompt=[_text_block("run echo")], session_id=session.session_id
+    )
+
+    assert resp.stop_reason == "end_turn"
+    # Full editor-terminal lifecycle, in order.
+    assert client.terminal_events == [
+        ("create", "echo hi"),
+        ("wait", "term-1"),
+        ("output", "term-1"),
+        ("release", "term-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_terminal_capability_uses_local_subprocess(tmp_path: Any) -> None:
+    agent = create_agent(
+        provider=_PlanToolThenFinish("bash", {"command": "echo hi"}),
+        tools=ToolSet.only("bash"),
+    )
+    server = AgentAcpServer(agent)
+    client = FakeAcpClient()
+    server.on_connect(client)
+    await server.initialize(protocol_version=1)  # no terminal capability
+    session = await server.new_session(cwd=str(tmp_path))
+
+    await server.prompt(prompt=[_text_block("run echo")], session_id=session.session_id)
+
+    # Ran locally — the client terminal was never touched.
+    assert client.terminal_events == []
 
 
 @pytest.mark.asyncio
