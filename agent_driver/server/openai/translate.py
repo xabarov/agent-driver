@@ -13,6 +13,7 @@ from typing import Any
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.server.openai.schema import ChatCompletionRequest, ChatMessageIn
+from agent_driver.server.usage import chat_usage
 
 # OpenAI roles we accept -> runtime ChatRole values. Unknown roles fall back to
 # "user" so a stray role never drops a message.
@@ -66,16 +67,8 @@ def to_run_input(
 
 
 def usage_dict(output: AgentRunOutput) -> dict[str, int]:
-    """Project the run's usage onto OpenAI ``usage`` fields (zeros if absent)."""
-    usage = output.usage
-    prompt = int(getattr(usage, "input_tokens", 0) or 0)
-    completion = int(getattr(usage, "output_tokens", 0) or 0)
-    total = int(getattr(usage, "total_tokens", 0) or 0) or (prompt + completion)
-    return {
-        "prompt_tokens": prompt,
-        "completion_tokens": completion,
-        "total_tokens": total,
-    }
+    """Project the run's usage onto OpenAI chat ``usage`` fields (zeros if absent)."""
+    return chat_usage(output)
 
 
 def _finish_reason(output: AgentRunOutput) -> str:

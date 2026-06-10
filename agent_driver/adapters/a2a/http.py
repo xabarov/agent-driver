@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_driver.adapters.a2a.server import A2aServer
 from agent_driver.server.auth import is_authorized
+from agent_driver.server.sse import sse_data
 
 if TYPE_CHECKING:
     from starlette.applications import Starlette
@@ -86,8 +87,7 @@ class A2aHttpTransport:
         params = body.get("params") or {}
 
         def _frame(result: dict[str, Any]) -> str:
-            payload = {"jsonrpc": "2.0", "id": request_id, "result": result}
-            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            return sse_data({"jsonrpc": "2.0", "id": request_id, "result": result})
 
         task = await self._server.run_task(params)
         # First event: the task (working snapshot); then the terminal update.

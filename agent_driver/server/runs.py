@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from agent_driver.contracts.enums import ResumeAction, RunStatus
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.runtime.abort import RunAbortHandle
+from agent_driver.server.usage import chat_usage
 
 if TYPE_CHECKING:
     from agent_driver.contracts.messages import ChatMessage
@@ -240,13 +241,8 @@ class RunManager:
 
     def _finalize(self, record: RunRecord, output: Any) -> None:
         status = getattr(output.status, "value", output.status)
-        usage = output.usage
-        if usage is not None:
-            record.usage = {
-                "prompt_tokens": int(getattr(usage, "input_tokens", 0) or 0),
-                "completion_tokens": int(getattr(usage, "output_tokens", 0) or 0),
-                "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
-            }
+        if output.usage is not None:
+            record.usage = chat_usage(output)
         if status == "completed":
             record.status = COMPLETED
             record.answer = output.answer or ""

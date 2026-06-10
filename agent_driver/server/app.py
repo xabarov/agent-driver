@@ -31,6 +31,7 @@ from agent_driver.server.openai import translate
 from agent_driver.server.openai.schema import ChatCompletionRequest, ResponsesRequest
 from agent_driver.server.responses import ResponseManager, response_object
 from agent_driver.server.runs import RunManager, resume_action_for
+from agent_driver.server.sse import SSE_DONE, sse_data, sse_event
 
 if TYPE_CHECKING:
     from agent_driver.sdk.agent import Agent
@@ -172,7 +173,7 @@ class OpenAIServer:
         parts: list[str] = []
 
         def _frame(payload: dict[str, Any]) -> str:
-            return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            return sse_data(payload)
 
         try:
             yield _frame(
@@ -214,7 +215,7 @@ class OpenAIServer:
             # Abort the run if the consumer stopped early (e.g. client
             # disconnected) so it doesn't keep running detached.
             stream.cancel(reason="client_disconnect")
-        yield "data: [DONE]\n\n"
+        yield SSE_DONE
 
     # -- responses (/v1/responses) ----------------------------------------
 
@@ -253,7 +254,7 @@ class OpenAIServer:
         stream = self._agent.stream_run(run_input)
 
         def _frame(event: str, data: dict[str, Any]) -> str:
-            return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+            return sse_event(event, data)
 
         yield _frame(
             "response.created",
@@ -351,8 +352,8 @@ class OpenAIServer:
 
         async def _frames():
             async for event in self._runs.stream_events(run_id):
-                yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
-            yield "data: [DONE]\n\n"
+                yield sse_event(event["event"], event["data"])
+            yield SSE_DONE
 
         return StreamingResponse(
             _frames(),

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput
+from agent_driver.server.usage import responses_usage
 
 if TYPE_CHECKING:
     from agent_driver.contracts.runtime import AgentRunOutput
@@ -158,14 +159,7 @@ class ResponseManager:
     ) -> ResponseRecord:
         status = getattr(output.status, "value", output.status)
         answer = output.answer or ""
-        usage = output.usage
-        usage_dict = None
-        if usage is not None:
-            usage_dict = {
-                "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
-                "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
-                "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
-            }
+        usage_dict = responses_usage(output)
         record = ResponseRecord(
             id=response_id or self.new_response_id(),
             created=int(time.time()),
