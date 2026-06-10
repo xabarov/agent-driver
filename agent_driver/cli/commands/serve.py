@@ -92,6 +92,7 @@ async def serve_command(
         model_id=args.served_model_id,
         api_key=api_key,
         enable_mcp=bool(getattr(args, "mcp", False)),
+        enable_a2a=bool(getattr(args, "a2a", False)),
         cors_origins=getattr(args, "cors_origin", None),
     )
     config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")

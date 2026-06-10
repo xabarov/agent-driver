@@ -26,8 +26,18 @@ Implementation notes:
   app via `create_app(..., enable_mcp=True)` / `agent-driver serve --mcp`, tests
   in `tests/server/test_mcp_http.py`, docs [`docs/mcp-http.md`](mcp-http.md),
   example `examples/cookbook/18_mcp_http_server.py`. Request/response only
-  (`GET /mcp` → 405; no server-initiated SSE). A2A / AG-UI / gRPC remain out of
-  scope pending demand.
+  (`GET /mcp` → 405; no server-initiated SSE).
+- Phase 4 — **A2A (Agent2Agent) implemented** (2026-06-10): hand-rolled
+  JSON-RPC 2.0 core (`agent_driver/adapters/a2a/`) + Agent Card, mounted via
+  `create_app(..., enable_a2a=True)` / `agent-driver serve --a2a`
+  (`/.well-known/agent-card.json` + `/a2a`: `message/send` / `message/stream` /
+  `tasks/get` / `tasks/cancel`). Tests `tests/adapters/test_a2a.py`, docs
+  [`docs/a2a.md`](a2a.md). AG-UI / gRPC remain out of scope pending demand
+  (AG-UI niche; gRPC dependency-heavy and least universal in Python).
+- Also shipped beyond the original plan: OpenAI server hardening + browser
+  compat, async runs (`/v1/runs`), and the Responses API (`/v1/responses`);
+  ACP deepening (client fs/terminal, session modes/list/fork/close, plan +
+  edit-diff updates) — see [`docs/acp-deepening-plan-2026-06-10.md`](acp-deepening-plan-2026-06-10.md).
 
 This plan covers the two highest-value, lowest-dependency network surfaces from
 the cross-harness analysis:

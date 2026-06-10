@@ -439,14 +439,16 @@ def create_app(
     model_id: str = "agent-driver",
     api_key: str | None = None,
     enable_mcp: bool = False,
+    enable_a2a: bool = False,
     max_sessions: int = DEFAULT_MAX_SESSIONS,
     cors_origins: Sequence[str] | None = None,
 ) -> Starlette:
     """Build the Starlette app exposing ``agent`` over the OpenAI HTTP surface.
 
-    When ``enable_mcp`` is set, the MCP Streamable-HTTP endpoint (``/mcp``,
-    Phase 3) is mounted on the same app, gated by the same bearer key — so one
-    server speaks both the OpenAI chat surface and MCP.
+    When ``enable_mcp`` is set, the MCP Streamable-HTTP endpoint (``/mcp``) is
+    mounted on the same app; ``enable_a2a`` mounts the A2A Agent Card +
+    JSON-RPC endpoint (``/.well-known/agent-card.json`` + ``/a2a``). Both reuse
+    the same bearer key — so one server can speak OpenAI, MCP and A2A.
     """
     if not api_key:
         logger.warning(
@@ -475,6 +477,10 @@ def create_app(
         from agent_driver.mcp_server.http import build_mcp_routes
 
         routes.extend(build_mcp_routes(agent, server_name=model_id, api_key=api_key))
+    if enable_a2a:
+        from agent_driver.adapters.a2a.http import build_a2a_routes
+
+        routes.extend(build_a2a_routes(agent, name=model_id, api_key=api_key))
 
     # Security headers on every response; CORS only when origins are configured
     # (browser clients like Open WebUI / LibreChat need it, CLI/SDK clients

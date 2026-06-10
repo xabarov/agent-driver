@@ -211,6 +211,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also mount the MCP Streamable-HTTP endpoint at /mcp.",
     )
     serve_parser.add_argument(
+        "--a2a",
+        action="store_true",
+        help="Also mount the A2A Agent Card + JSON-RPC endpoint (/a2a).",
+    )
+    serve_parser.add_argument(
         "--cors-origin",
         action="append",
         default=None,
