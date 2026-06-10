@@ -203,6 +203,11 @@ content remain (below).
 
 - [x] **`current_mode_update`**: emitted when `set_session_mode` changes the mode.
 - [x] **`available_commands_update`**: advertise + handle `/clear`, `/help`.
+- [x] **Rich tool-call content**: edit-family tools (`file_edit`/`file_write`/
+      `file_patch`) emit an ACP *edit* tool call with a `diff` content block
+      (old/new from the run's `tool_results` structured output) so editors render
+      the change inline. (This unblocked once we found the structured tool data
+      lives in `output.metadata["tool_results"]`, not on the bare trace.)
 - [ ] **`plan`** (`update_plan`): map `todo_write` activity to `PlanEntry`s.
       *Blocked by data access* — structured todo items are not currently exposed
       on `AgentRunOutput` (planning_state is internal); needs a small runtime

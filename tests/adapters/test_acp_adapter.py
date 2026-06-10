@@ -378,6 +378,39 @@ def _update_kinds(client: FakeAcpClient) -> list[str]:
 
 
 @pytest.mark.asyncio
+async def test_edit_tool_emits_diff_content(tmp_path: Any) -> None:
+    target = tmp_path / "f.txt"
+    target.write_text("hello world", encoding="utf-8")
+    agent = create_agent(
+        provider=_PlanToolThenFinish(
+            "file_edit",
+            {"path": str(target), "old_text": "hello", "new_text": "goodbye"},
+        ),
+        tools=ToolSet.only("file_edit"),
+    )
+    server = AgentAcpServer(agent)
+    client = FakeAcpClient()
+    server.on_connect(client)
+    await server.initialize(protocol_version=1)
+    session = await server.new_session(cwd=str(tmp_path))
+
+    await server.prompt(prompt=[_text_block("edit it")], session_id=session.session_id)
+
+    starts = [u for u in client.updates if type(u).__name__ == "ToolCallStart"]
+    assert any(getattr(u, "kind", None) == "edit" for u in starts)
+    # The diff (old/new) is surfaced in a tool-call content block of type "diff".
+    diff_blocks = [
+        block
+        for u in client.updates
+        for block in (getattr(u, "content", None) or [])
+        if type(block).__name__ == "FileEditToolCallContent"
+    ]
+    assert diff_blocks
+    assert diff_blocks[0].old_text == "hello world"
+    assert diff_blocks[0].new_text == "goodbye world"
+
+
+@pytest.mark.asyncio
 async def test_new_session_emits_available_commands() -> None:
     agent = create_agent(provider=FakeProvider(response_text="x"), tools=ToolSet.only())
     server = AgentAcpServer(agent)

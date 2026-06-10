@@ -178,6 +178,6 @@ an offline, in-process round-trip driven by a fake ACP client.
   incrementally) and reasoning/thought deltas.
 - `set_session_model` / `fork_session` / `list_sessions` (single fixed model).
 - Plan updates (`todo_write` → `AgentPlanUpdate`) — blocked on a runtime
-  projection of structured todos — and rich tool-call diff content; image/audio
-  prompt content.
+  projection of structured todos; image/audio prompt content. (Edit-family tools
+  already emit a `diff` content block so editors render the change inline.)
 - Image / audio prompt content blocks (text only).

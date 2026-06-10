@@ -77,21 +77,64 @@ def text_update_for(event: RunStreamEvent) -> Any | None:
     return None
 
 
+# Edit-family tools whose tool calls carry a file diff (old/new) for the editor.
+_EDIT_TOOLS = {"file_write", "file_edit", "file_patch"}
+
+
+def _file_edit_payload(result: Any) -> tuple[str, str, str | None] | None:
+    """Extract ``(path, new_text, old_text)`` from a tool result, or ``None``.
+
+    Reads the structured output the edit tools emit (``preview.before/after`` +
+    ``path``); returns ``None`` when the shape isn't an editable file change.
+    """
+    if not isinstance(result, dict):
+        return None
+    structured = result.get("structured_output")
+    if not isinstance(structured, dict):
+        return None
+    path = structured.get("path")
+    preview = structured.get("preview")
+    if not isinstance(path, str) or not isinstance(preview, dict):
+        return None
+    after = preview.get("after")
+    before = preview.get("before")
+    if not isinstance(after, str):
+        return None
+    return (path, after, before if isinstance(before, str) else None)
+
+
 def tool_updates_from_trace(output: AgentRunOutput, *, emitted: set[str]) -> list[Any]:
     """Build start+progress tool-call updates from a finished leg's trace.
 
     ``emitted`` tracks already-reported call ids so a multi-leg prompt does not
-    re-announce the same tool call after a resume.
+    re-announce the same tool call after a resume. Edit-family tools are emitted
+    as ACP *edit* tool calls carrying a file diff (old/new) so the editor can
+    render the change inline; the structured diff is sourced from the run's
+    ``tool_results`` (the trace itself carries only a string summary).
     """
+    results = output.metadata.get("tool_results")
+    results = results if isinstance(results, list) else []
     updates: list[Any] = []
     for index, trace in enumerate(output.tool_trace or []):
         call_id = trace.tool_call_id or f"{output.run_id}:tool:{index}"
         if call_id in emitted:
             continue
         emitted.add(call_id)
+        status = _TOOL_STATUS.get(_enum_value(trace.status), "completed")
+        result = results[index] if index < len(results) else None
+        edit = _file_edit_payload(result) if trace.tool_name in _EDIT_TOOLS else None
+        if edit is not None:
+            path, new_text, old_text = edit
+            diff = acp.tool_diff_content(path, new_text, old_text)
+            updates.append(
+                acp.start_edit_tool_call(call_id, trace.tool_name, path, diff)
+            )
+            # Re-send the diff in the update's content array — editors render the
+            # inline diff from there (start_edit_tool_call only sets raw_input).
+            updates.append(acp.update_tool_call(call_id, status=status, content=[diff]))
+            continue
         kind = tool_kind_for(trace.tool_name)
         updates.append(acp.start_tool_call(call_id, trace.tool_name, kind=kind))
-        status = _TOOL_STATUS.get(_enum_value(trace.status), "completed")
         content = None
         if trace.result_summary:
             content = [acp.tool_content(acp.text_block(trace.result_summary))]
