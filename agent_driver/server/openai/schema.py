@@ -44,6 +44,35 @@ class ChatMessageIn(BaseModel):
                 out.append({"kind": "image", "url": url})
         return out
 
+    def audio_attachments(self) -> list[dict[str, Any]]:
+        """Extract ``input_audio`` parts as attachments.
+
+        Returns ``[{"kind": "audio", "data": <base64>, "format": <fmt>}]`` for
+        each audio part; the runtime carries these on ``ChatMessage.metadata``
+        and the provider emits them as ``input_audio`` content blocks to an
+        audio-capable model.
+        """
+        if not isinstance(self.content, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for part in self.content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") != "input_audio":
+                continue
+            audio = part.get("input_audio")
+            if not isinstance(audio, dict):
+                continue
+            data = audio.get("data")
+            fmt = audio.get("format")
+            if isinstance(data, str) and data and isinstance(fmt, str) and fmt:
+                out.append({"kind": "audio", "data": data, "format": fmt})
+        return out
+
+    def media_attachments(self) -> list[dict[str, Any]]:
+        """All image + audio attachments carried by this message, in order."""
+        return self.image_attachments() + self.audio_attachments()
+
     def text_content(self) -> str:
         """Return the message content flattened to plain text.
 

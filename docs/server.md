@@ -132,8 +132,25 @@ A user message may carry images via OpenAI multimodal content parts:
 Both `https://` and `data:` URLs are supported. The image parts are carried on
 the run as `ChatMessage.metadata["attachments"]` and emitted to the provider as
 OpenAI `image_url` content blocks, so a vision model (e.g. a Qwen-VL route on
-OpenRouter) receives them. Requires a vision-capable `--model`. Audio input is
-not yet wired.
+OpenRouter) receives them. Requires a vision-capable `--model`.
+
+### Audio input (audio models)
+
+A user message may carry audio via OpenAI `input_audio` content parts (base64
+bytes + a `format` tag — `wav` or `mp3`; there is no URL form):
+
+```json
+{"role": "user", "content": [
+  {"type": "text", "text": "transcribe this clip"},
+  {"type": "input_audio", "input_audio": {"data": "UklGR…", "format": "wav"}}
+]}
+```
+
+Like images, audio parts are carried on the run as
+`ChatMessage.metadata["attachments"]` and emitted to the provider as OpenAI
+`input_audio` content blocks, so an audio-capable model receives them. Requires
+an audio-capable `--model`. Both image and audio parts may appear in the same
+message — they are emitted in order alongside the text block.
 
 ### Errors
 

@@ -9,11 +9,10 @@ never saw the image and could not reason over it.
 This module formalizes a lightweight convention:
 
   * A tool's ``structured_output`` may carry an ``attachments`` list.
-  * Each attachment is a dict with at minimum ``mime_type`` and
-    ``data`` (base64-encoded string). Optional ``kind`` selects the
-    transport shape — currently ``"image"`` is the only recognized
-    value; future values (e.g. ``"audio"`` for whisper-style models)
-    layer on the same protocol without breaking callers.
+  * Each attachment is a dict. ``kind`` selects the transport shape:
+    ``"image"`` (a ``url`` or ``mime_type`` + base64 ``data``) and
+    ``"audio"`` (base64 ``data`` + a ``format`` tag) are recognized;
+    further values layer on the same protocol without breaking callers.
   * The runtime moves recognized attachments off ``structured_output``
     into ``ChatMessage.metadata["attachments"]`` so the textual
     part stays JSON-serializable for the provider's flat content
@@ -55,37 +54,16 @@ import base64
 import binascii
 from typing import Any
 
-_RECOGNIZED_KINDS = frozenset({"image"})
+_RECOGNIZED_KINDS = frozenset({"image", "audio"})
 _DEFAULT_KIND = "image"  # legacy callers that omit ``kind`` get image.
 _MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20 MB — provider limits vary.
+# OpenAI ``input_audio`` formats (no URL form — base64 ``data`` + ``format``).
+_AUDIO_FORMATS = frozenset({"wav", "mp3"})
 
 
-def normalize_attachment(raw: Any) -> dict[str, Any] | None:
-    """Validate and canonicalize a single attachment entry.
-
-    Returns the canonical shape ``{"kind": str, "mime_type": str,
-    "data": str}`` on success, or ``None`` when the entry is malformed
-    (caller drops it silently and keeps siblings).
-    """
-    if not isinstance(raw, dict):
-        return None
-    kind = raw.get("kind", _DEFAULT_KIND)
-    if not isinstance(kind, str) or kind not in _RECOGNIZED_KINDS:
-        return None
-    # URL-referenced attachment (e.g. a user-supplied image_url). Passed
-    # through to the provider as-is; no base64 round-trip. Accept http(s)
-    # and data: URLs.
-    url = raw.get("url")
-    if isinstance(url, str) and url.startswith(("http://", "https://", "data:")):
-        return {"kind": kind, "url": url}
-    mime_type = raw.get("mime_type")
-    data = raw.get("data")
-    if not isinstance(mime_type, str) or "/" not in mime_type:
-        return None
-    if not isinstance(data, str) or not data:
-        return None
-    # Quick base64 sanity-check — decode header bytes to catch obvious
-    # corruption without paying for the full decode of large payloads.
+def _b64_prefix_ok(data: str) -> bool:
+    """Quick base64 sanity-check — decode header bytes to catch obvious
+    corruption without paying for the full decode of large payloads."""
     sample = data[: min(128, len(data))]
     try:
         # validate=True rejects whitespace + non-base64 chars; the prefix
@@ -95,13 +73,70 @@ def normalize_attachment(raw: Any) -> dict[str, Any] | None:
         padded = sample + "=" * (-len(sample) % 4)
         base64.b64decode(padded, validate=True)
     except (binascii.Error, ValueError):
+        return False
+    return True
+
+
+def normalize_attachment(raw: Any) -> dict[str, Any] | None:
+    """Validate and canonicalize a single attachment entry.
+
+    Returns a canonical dict on success, or ``None`` when the entry is
+    malformed (caller drops it silently and keeps siblings). The shape
+    depends on ``kind``:
+
+      * image: ``{"kind": "image", "url": str}`` (http(s)/data URL) or
+        ``{"kind": "image", "mime_type": str, "data": str}`` (base64).
+      * audio: ``{"kind": "audio", "data": str, "format": str}``
+        (base64 + an OpenAI ``input_audio`` format).
+    """
+    if not isinstance(raw, dict):
+        return None
+    kind = raw.get("kind", _DEFAULT_KIND)
+    if not isinstance(kind, str) or kind not in _RECOGNIZED_KINDS:
+        return None
+    if kind == "audio":
+        return _normalize_audio(raw)
+    return _normalize_image(raw)
+
+
+def _normalize_image(raw: dict[str, Any]) -> dict[str, Any] | None:
+    # URL-referenced attachment (e.g. a user-supplied image_url). Passed
+    # through to the provider as-is; no base64 round-trip. Accept http(s)
+    # and data: URLs.
+    url = raw.get("url")
+    if isinstance(url, str) and url.startswith(("http://", "https://", "data:")):
+        return {"kind": "image", "url": url}
+    mime_type = raw.get("mime_type")
+    data = raw.get("data")
+    if not isinstance(mime_type, str) or "/" not in mime_type:
+        return None
+    if not isinstance(data, str) or not data:
+        return None
+    if not _b64_prefix_ok(data):
         return None
     if len(data) > _MAX_ATTACHMENT_BYTES:
         # Don't crash the run for an oversized image — drop with a
         # diagnostic marker the caller can log. Returning None signals
         # "skip this entry".
         return None
-    return {"kind": kind, "mime_type": mime_type, "data": data}
+    return {"kind": "image", "mime_type": mime_type, "data": data}
+
+
+def _normalize_audio(raw: dict[str, Any]) -> dict[str, Any] | None:
+    # OpenAI ``input_audio`` carries base64 ``data`` + a ``format`` tag
+    # ("wav"/"mp3"); there is no URL form. Unknown formats are dropped so
+    # a backend never 400s on an unsupported tag.
+    data = raw.get("data")
+    fmt = raw.get("format")
+    if not isinstance(data, str) or not data:
+        return None
+    if not isinstance(fmt, str) or fmt.lower() not in _AUDIO_FORMATS:
+        return None
+    if not _b64_prefix_ok(data):
+        return None
+    if len(data) > _MAX_ATTACHMENT_BYTES:
+        return None
+    return {"kind": "audio", "data": data, "format": fmt.lower()}
 
 
 def extract_attachments_from_structured_output(
@@ -147,9 +182,10 @@ def build_openai_tool_content_list(
     attachments list is empty (callers keep the flat-string codepath).
 
     Image attachments project to ``{"type": "image_url", "image_url":
-    {"url": "data:<mime>;base64,<data>"}}``. Unknown kinds are dropped
-    with no error so a future ``audio`` attachment doesn't break older
-    code paths.
+    {"url": "data:<mime>;base64,<data>"}}``; audio attachments project to
+    ``{"type": "input_audio", "input_audio": {"data": <base64>, "format":
+    <fmt>}}``. Unknown kinds are dropped with no error so adding a new
+    transport doesn't break older code paths.
     """
     if not attachments:
         return None
@@ -167,6 +203,16 @@ def build_openai_tool_content_list(
                 data = attachment["data"]
                 image_url = f"data:{mime};base64,{data}"
             blocks.append({"type": "image_url", "image_url": {"url": image_url}})
+        elif kind == "audio":
+            blocks.append(
+                {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": attachment["data"],
+                        "format": attachment["format"],
+                    },
+                }
+            )
         # Future ``kind`` values silently dropped here so adding a new
         # transport doesn't require touching this function.
     if not blocks:
