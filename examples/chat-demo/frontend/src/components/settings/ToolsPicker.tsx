@@ -1,20 +1,12 @@
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Wrench } from "lucide-react";
+import { Bot, Calculator, Globe, Link2, Search } from "lucide-react";
 
-import { cn } from "../../lib/cn";
-import { importSampleWorkspace } from "../../lib/api";
-import { PRESET_HINTS, toolsQueryKey, useToolsForPreset } from "../../lib/tools";
-import { useChatStore } from "../../store/chatStore";
-import type { ToolPreset } from "../../store/settingsStore";
+import { PRESET_HINTS } from "../../lib/tools";
+import {
+  normalizeToolPreset,
+  toolPresetLabel,
+  type ToolPreset,
+} from "../../store/settingsStore";
 import { useSettingsStore } from "../../store/settingsStore";
-import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
-import { ToggleGroup, ToggleGroupItem } from "../ui/toggle-group";
-
-const PRESETS: ToolPreset[] = ["off", "safe", "workspace", "dev", "all"];
-const VISIBLE_TOOL_LIMIT = 8;
-const WORKSPACE_PRESETS = new Set<ToolPreset>(["workspace", "dev", "all"]);
 
 interface ToolsPickerProps {
   disabled?: boolean;
@@ -22,144 +14,132 @@ interface ToolsPickerProps {
   onPresetChange?: () => void;
 }
 
-export function ToolsPicker({ disabled, compact, onPresetChange }: ToolsPickerProps) {
-  const queryClient = useQueryClient();
-  const sessionId = useChatStore((state) => state.sessionId);
-  const toolPreset = useSettingsStore((state) => state.toolPreset);
-  const setToolPreset = useSettingsStore((state) => state.setToolPreset);
-  const toolsQuery = useToolsForPreset(toolPreset, sessionId);
-  const [showAllTools, setShowAllTools] = useState(false);
-  const sampleMutation = useMutation({
-    mutationFn: () => importSampleWorkspace(sessionId ?? ""),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: toolsQueryKey(toolPreset, sessionId) });
-    },
-  });
+function presetFromToggles(webSearch: boolean, webFetch: boolean): ToolPreset {
+  if (webSearch && webFetch) {
+    return "web";
+  }
+  if (webSearch) {
+    return "web_search";
+  }
+  if (webFetch) {
+    return "web_fetch";
+  }
+  return "off";
+}
 
-  const toolNames = toolsQuery.data?.tools.map((tool) => tool.name) ?? [];
-  const visibleTools = showAllTools ? toolNames : toolNames.slice(0, VISIBLE_TOOL_LIMIT);
-  const hiddenCount = Math.max(0, toolNames.length - VISIBLE_TOOL_LIMIT);
-  const workspace = toolsQuery.data?.workspace;
-  const showWorkspaceDetails = WORKSPACE_PRESETS.has(toolPreset);
+interface ToolToggleProps {
+  checked: boolean;
+  disabled?: boolean;
+  icon: typeof Search;
+  title: string;
+  description: string;
+  onChange: (checked: boolean) => void;
+}
+
+function ToolToggle({
+  checked,
+  disabled,
+  icon: Icon,
+  title,
+  description,
+  onChange,
+}: ToolToggleProps) {
+  return (
+    <label className="flex items-center gap-3 rounded-lg border border-border/70 bg-background/60 px-3 py-2.5 text-sm">
+      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium text-foreground">{title}</span>
+        <span className="block text-xs leading-5 text-muted-foreground">{description}</span>
+      </span>
+      <input
+        type="checkbox"
+        className="h-4 w-4 shrink-0 accent-primary"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    </label>
+  );
+}
+
+function CapabilityRow({
+  icon: Icon,
+  title,
+  description,
+}: Pick<ToolToggleProps, "icon" | "title" | "description">) {
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-border/70 bg-background/60 px-3 py-2.5 text-sm">
+      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium text-foreground">{title}</span>
+        <span className="block text-xs leading-5 text-muted-foreground">{description}</span>
+      </span>
+      <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+        Auto
+      </span>
+    </div>
+  );
+}
+
+export function ToolsPicker({ disabled, compact, onPresetChange }: ToolsPickerProps) {
+  const toolPreset = normalizeToolPreset(useSettingsStore((state) => state.toolPreset));
+  const setToolPreset = useSettingsStore((state) => state.setToolPreset);
+  const webSearch = toolPreset === "web" || toolPreset === "web_search";
+  const webFetch = toolPreset === "web" || toolPreset === "web_fetch";
+
+  const update = (next: { webSearch?: boolean; webFetch?: boolean }) => {
+    const preset = presetFromToggles(next.webSearch ?? webSearch, next.webFetch ?? webFetch);
+    setToolPreset(preset);
+    onPresetChange?.();
+  };
 
   return (
-    <div className={cn("space-y-2", compact && "space-y-1.5")}>
-      <div className="flex flex-wrap items-center gap-2">
-        {!compact ? (
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
-            <Wrench className="h-3.5 w-3.5" />
-            Tools
-          </span>
-        ) : null}
-        <ToggleGroup
-          type="single"
-          value={toolPreset}
-          onValueChange={(value) => {
-            if (value && PRESETS.includes(value as ToolPreset)) {
-              setToolPreset(value as ToolPreset);
-              setShowAllTools(false);
-              onPresetChange?.();
-            }
-          }}
-          disabled={disabled}
-          aria-label="Tool preset"
-        >
-          {PRESETS.map((preset) => (
-            <ToggleGroupItem key={preset} value={preset} aria-label={PRESET_HINTS[preset]}>
-              {preset}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      </div>
-      <p className="text-xs text-muted-foreground">{PRESET_HINTS[toolPreset]}</p>
-      {showWorkspaceDetails ? (
-        <div className="rounded-lg border border-border/70 bg-background/60 p-2 text-xs">
-          <div className="font-medium text-foreground">Session workspace</div>
-          {sessionId ? (
-            <>
-              <div className="mt-1 text-muted-foreground">
-                {workspace?.exists ? `${workspace.fileCount} files available` : "Empty workspace"}
-              </div>
-              {workspace?.root ? (
-                <div className="mt-1 truncate font-mono text-muted-foreground" title={workspace.root}>
-                  {workspace.root}
-                </div>
-              ) : null}
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="mt-2 h-7 px-2 text-xs"
-                disabled={disabled || sampleMutation.isPending}
-                onClick={() => sampleMutation.mutate()}
-              >
-                {sampleMutation.isPending ? "Importing…" : "Import sample project"}
-              </Button>
-              {sampleMutation.isSuccess ? (
-                <span className="ml-2 text-muted-foreground">Sample files ready.</span>
-              ) : null}
-            </>
-          ) : (
-            <div className="mt-1 text-muted-foreground">
-              Workspace is created after the first message in a session.
+    <div className={compact ? "space-y-2" : "space-y-3"}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          {!compact ? (
+            <div className="mb-1 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <Globe className="h-3.5 w-3.5" />
+              Server tools
             </div>
-          )}
+          ) : null}
+          <p className="text-sm font-medium text-foreground">{toolPresetLabel(toolPreset)}</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{PRESET_HINTS[toolPreset]}</p>
         </div>
-      ) : null}
-      {toolPreset === "all" ? (
-        <p className="flex items-center gap-1 text-xs text-amber-400">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          Full tool surface — use with care.
-        </p>
-      ) : null}
-      {!toolsQuery.isLoading && !toolsQuery.isError ? (
-        <p className="text-xs font-medium text-foreground">
-          {toolNames.length === 0 ? "No tools enabled" : `${toolNames.length} tools enabled`}
-        </p>
-      ) : null}
-      <div
-        className="tools-picker-scroll flex max-h-[min(50vh,12rem)] min-h-6 flex-wrap gap-1 overflow-y-auto pr-1"
-        data-testid="tools-picker-scroll"
-      >
-        {toolsQuery.isLoading ? (
-          <span className="text-xs text-muted-foreground">Loading tools…</span>
-        ) : null}
-        {toolsQuery.isError ? (
-          <span className="text-xs text-destructive">Failed to load tools list.</span>
-        ) : null}
-        {!toolsQuery.isLoading && !toolsQuery.isError && toolNames.length === 0 ? (
-          <Badge variant="outline" className="text-xs">
-            No tools
-          </Badge>
-        ) : null}
-        {visibleTools.map((name) => (
-          <Badge key={name} variant="secondary" className="font-mono text-xs">
-            {name}
-          </Badge>
-        ))}
       </div>
-      {hiddenCount > 0 && !showAllTools ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-xs"
-          onClick={() => setShowAllTools(true)}
-        >
-          +{hiddenCount} more
-        </Button>
-      ) : null}
-      {showAllTools && toolNames.length > VISIBLE_TOOL_LIMIT ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-xs"
-          onClick={() => setShowAllTools(false)}
-        >
-          Show less
-        </Button>
-      ) : null}
+      <div className="space-y-2">
+        <ToolToggle
+          checked={webSearch}
+          disabled={disabled}
+          icon={Search}
+          title="Web Search"
+          description="Search the web for current information."
+          onChange={(checked) => update({ webSearch: checked })}
+        />
+        <ToolToggle
+          checked={webFetch}
+          disabled={disabled}
+          icon={Link2}
+          title="Web Fetch"
+          description="Retrieve content from URLs."
+          onChange={(checked) => update({ webFetch: checked })}
+        />
+        <CapabilityRow
+          icon={Bot}
+          title="Delegation"
+          description="The agent can spawn bounded child agents when the task warrants it."
+        />
+        <CapabilityRow
+          icon={Calculator}
+          title="Python"
+          description="The agent can run sandboxed calculations when exact computation helps."
+        />
+      </div>
+      <p className="text-xs leading-5 text-muted-foreground">
+        The agent can use planning, delegation, and Python when a task needs them. Web access
+        is the user-controlled capability here. Local file and shell tools are not exposed in
+        this web demo.
+      </p>
     </div>
   );
 }

@@ -5,6 +5,9 @@ from agent_driver.contracts.enums.compaction import CompactionMode, CompactionSk
 from agent_driver.contracts.enums.context import (
     ObservationSource,
     ObservationTrust,
+    PlanningHintLevel,
+    PlanningModeState,
+    PlanningPolicyMode,
     PlanningTodoStatus,
     TrimAction,
 )
@@ -76,7 +79,10 @@ __all__ = [
     "SubagentJoinPolicy",
     "SubagentMergeMode",
     "SubagentGroupStatus",
+    "PlanningModeState",
+    "PlanningHintLevel",
     "PlanningTodoStatus",
+    "PlanningPolicyMode",
     "ObservationSource",
     "ObservationTrust",
     "TrimAction",

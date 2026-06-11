@@ -23,8 +23,12 @@ def summarize_llm_request_payload(request: LlmRequest) -> dict[str, Any]:
     messages = request.messages if isinstance(request.messages, list) else []
     role_chars: dict[str, int] = {}
     tool_call_ids: list[str] = []
+    assistant_reasoning_detail_counts: list[int] = []
+    assistant_reasoning_text_chars: list[int] = []
     for message in messages:
-        role = message.role.value if hasattr(message.role, "value") else str(message.role)
+        role = (
+            message.role.value if hasattr(message.role, "value") else str(message.role)
+        )
         role_chars[role] = role_chars.get(role, 0) + len(message.content or "")
         metadata = message.metadata if isinstance(message.metadata, dict) else {}
         tool_calls = metadata.get("tool_calls")
@@ -35,6 +39,12 @@ def summarize_llm_request_payload(request: LlmRequest) -> dict[str, Any]:
                 call_id = call.get("id")
                 if isinstance(call_id, str) and call_id.strip():
                     tool_call_ids.append(call_id)
+        reasoning_details = metadata.get("reasoning_details")
+        if isinstance(reasoning_details, list):
+            assistant_reasoning_detail_counts.append(len(reasoning_details))
+        reasoning = metadata.get("reasoning")
+        if isinstance(reasoning, str):
+            assistant_reasoning_text_chars.append(len(reasoning))
         if message.tool_call_id:
             tool_call_ids.append(str(message.tool_call_id))
     tools = request.tools if isinstance(request.tools, list) else []
@@ -56,6 +66,8 @@ def summarize_llm_request_payload(request: LlmRequest) -> dict[str, Any]:
         "tool_names": tool_names,
         "tool_choice": request.tool_choice,
         "stream": request.stream,
+        "assistant_reasoning_detail_counts": assistant_reasoning_detail_counts,
+        "assistant_reasoning_text_chars": assistant_reasoning_text_chars,
     }
 
 

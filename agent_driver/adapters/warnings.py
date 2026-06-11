@@ -11,8 +11,10 @@ Stable signal ids
 
 For ``kind="token_pressure"``:
 
-- ``context_above_soft_threshold`` — context usage entered the warning band;
-  compaction is not yet recommended but the host may surface a hint.
+- ``context_early_warning`` — context usage crossed the early guidance band.
+- ``context_delegate_or_summarize`` — context usage crossed the band where the
+  model should summarize or delegate read-heavy work.
+- ``context_above_soft_threshold`` — legacy alias for the old warning band.
 - ``context_compact_recommended`` — context usage crossed the compact
   threshold; the runtime will attempt compaction on the next eligible turn.
 - ``context_blocking_threshold`` — context usage approached the blocking
@@ -35,8 +37,9 @@ For ``kind="compaction_circuit_breaker"``:
 Each signal carries a precomputed ``severity`` (``info|warning|critical``) and
 the raw thresholds (``warning_threshold``, ``compact_threshold``,
 ``blocking_threshold``, ``context_window_estimate``, ``output_token_reserve``)
-plus the derived ``usage_ratio``. The host can build its own message copy from
-these numbers without re-deriving any thresholds.
+plus the derived ``context_usage_ratio``. The legacy alias ``usage_ratio`` is
+also projected while existing clients migrate. The host can build its own
+message copy from these numbers without re-deriving any thresholds.
 
 Example
 -------
@@ -58,7 +61,7 @@ Example
                 "message": "...",
                 "suggestion": "near_hard_threshold",
                 "detail": {
-                    "usage_ratio": projection["usage_ratio"],
+                    "context_usage_ratio": projection["context_usage_ratio"],
                     ...
                 },
             }
@@ -81,7 +84,9 @@ _TOKEN_PRESSURE_FIELDS: tuple[str, ...] = (
     "warning_threshold",
     "compact_threshold",
     "blocking_threshold",
+    "context_usage_ratio",
     "usage_ratio",
+    "recommendation",
 )
 
 _TOOL_CHOICE_ANTIPATTERN_FIELDS: tuple[str, ...] = (

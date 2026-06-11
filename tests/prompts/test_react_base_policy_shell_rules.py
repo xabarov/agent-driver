@@ -30,7 +30,8 @@ def test_react_system_instruction_includes_bash_safety_rule() -> None:
             input="hello",
             agent_id="agent",
             graph_preset="single_react",
-        )
+        ),
+        metadata={},
     )
     instruction = _react_system_instruction(host, context)
     assert instruction is not None

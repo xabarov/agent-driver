@@ -138,4 +138,99 @@ describe("eventsToMessages planning", () => {
     expect(messages.some((m) => m.role === "tool" && m.name === "todo_write")).toBe(false);
     expect(messages.some((m) => m.role === "tool" && m.name === "file_write")).toBe(true);
   });
+
+  test("skips ask_user_question control tool cards", () => {
+    const events: RunStreamEvent<Record<string, unknown>>[] = [
+      {
+        schema_version: "1.0",
+        stream_id: "r:1",
+        run_id: "r",
+        attempt_id: "a",
+        seq: 1,
+        event: "run_started",
+        source: "runtime_event",
+        data: {},
+      },
+      {
+        schema_version: "1.0",
+        stream_id: "r:2",
+        run_id: "r",
+        attempt_id: "a",
+        seq: 2,
+        event: "tool_call_started",
+        source: "runtime_event",
+        data: {
+          tools: [
+            {
+              tool_name: "ask_user_question",
+              tool_call_id: "ask1",
+              status: "running",
+            },
+          ],
+        },
+      },
+      {
+        schema_version: "1.0",
+        stream_id: "r:3",
+        run_id: "r",
+        attempt_id: "a",
+        seq: 3,
+        event: "run_paused",
+        source: "runtime_event",
+        data: { reason: "clarification_required" },
+      },
+    ];
+
+    expect(eventsToMessages(events).some((m) => m.role === "tool")).toBe(false);
+  });
+
+  test("preserves planning snapshot across assistant tombstone", () => {
+    const events: RunStreamEvent<Record<string, unknown>>[] = [
+      {
+        schema_version: "1.0",
+        stream_id: "r:1",
+        run_id: "r",
+        attempt_id: "a",
+        seq: 1,
+        event: "run_started",
+        source: "runtime_event",
+        data: {},
+      },
+      {
+        schema_version: "1.0",
+        stream_id: "r:2",
+        run_id: "r",
+        attempt_id: "a",
+        seq: 2,
+        event: "tool_call_completed",
+        source: "runtime_event",
+        data: {
+          planning_snapshot: {
+            todos: [{ id: "s1", content: "Step one", status: "in_progress" }],
+            completed: 0,
+            total: 1,
+            in_progress_id: "s1",
+          },
+          tools: [{ tool_name: "todo_write", tool_call_id: "tw1", status: "ok" }],
+        },
+      },
+      {
+        schema_version: "1.0",
+        stream_id: "r:3",
+        run_id: "r",
+        attempt_id: "a",
+        seq: 3,
+        event: "assistant_message_tombstoned",
+        source: "runtime_event",
+        data: { reason: "stream_idle_timeout" },
+      },
+    ];
+
+    const assistant = eventsToMessages(events).find((m) => m.role === "assistant");
+    expect(assistant?.role).toBe("assistant");
+    if (assistant?.role === "assistant") {
+      expect(assistant.planningSnapshot?.total).toBe(1);
+      expect(assistant.content).toBe("");
+    }
+  });
 });

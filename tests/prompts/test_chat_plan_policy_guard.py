@@ -4,19 +4,23 @@ from __future__ import annotations
 
 from importlib import resources
 
-from agent_driver.prompts.agent import react_chat_tool_policy, react_base_policy, todo_write_guidance
+from agent_driver.prompts.agent import (
+    react_base_policy,
+    react_chat_tool_policy,
+    todo_write_guidance,
+)
 
 
 def test_react_chat_tool_policy_plan_without_prose_checklist() -> None:
     text = (
         resources.files("agent_driver.prompts.templates")
-        .joinpath("react_chat_tool_policy.txt")
+        .joinpath("react_chat_tool_policy_todo.txt")
         .read_text(encoding="utf-8")
     )
     assert "todo_write" in text
     assert "план" in text or "plan" in text.lower()
     assert "do not repeat" in text.lower() or "не повтор" in text.lower()
-    policy = react_chat_tool_policy()
+    policy = react_chat_tool_policy(available_tool_names=("todo_write",))
     assert "plan panel" in policy.lower() or "plan panel" in policy
     assert "numbered" not in policy.lower() or "do not repeat" in policy.lower()
 

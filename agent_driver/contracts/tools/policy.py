@@ -43,6 +43,11 @@ class ToolPolicyOutcome(ContractModel):
     decision: ToolPolicyDecision
     reason: str
     interrupt_reason: str | None = None
+    # Host-provided heading for the approval interrupt (e.g. a ``ToolGateAsk``
+    # ``title``). When None the interrupt builder falls back to its default
+    # ``"Approval required for '<tool>'"`` heading — lets a host with a localised
+    # UI override the (English) default. See ``policy_interrupt``.
+    interrupt_title: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("metadata")

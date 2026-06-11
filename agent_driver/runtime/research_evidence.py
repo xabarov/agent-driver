@@ -1,0 +1,561 @@
+"""Small helpers for chat research depth and evidence accounting."""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from hashlib import sha256
+from typing import Any
+from urllib.parse import urlparse
+
+RESEARCH_DEPTH_NONE = "none"
+RESEARCH_DEPTH_LIGHT = "light_search"
+RESEARCH_DEPTH_SOURCE_VERIFIED = "source_verified_report"
+RESEARCH_DEPTH_DEEP_PARALLEL = "deep_parallel_research"
+WEB_SEARCH_TOOL = "web_search"
+WEB_FETCH_TOOL = "web_fetch"
+SOURCE_READ_TOOL = "source_read"
+PDF_READ_TOOL = "pdf_read"
+BROWSER_READ_TOOL = "browser_read"
+READ_SOURCE_TOOLS = frozenset(
+    {WEB_FETCH_TOOL, SOURCE_READ_TOOL, PDF_READ_TOOL, BROWSER_READ_TOOL}
+)
+SOURCE_VERIFIED_FETCHES = 2
+SOURCE_VERIFIED_DOMAINS = 2
+# Deep-parallel (hard) parents must clear a higher *fetch-volume* floor than a
+# single source-verified child: the rolled-up evidence (child reads + the
+# parent's own verify-fetches) has to reach this many distinct fetched sources
+# before the report is treated as evidence-complete. The distinct-domain floor
+# stays at two: scholarly/paywalled topics frequently expose only a couple of
+# auto-fetchable domains at a time (most academic publishers block automated
+# fetch), so demanding three simultaneously-verified domains is not reliably
+# achievable on the live web and drives the parent into a fetch spin. Two
+# distinct domains backed by six verified reads is already strong verification.
+DEEP_PARALLEL_FETCHES = 6
+DEEP_PARALLEL_DOMAINS = 2
+
+_ASSISTANT_URL_RE = re.compile(r"https?://[^\s\]\)>,]+")
+
+_SOURCE_VERIFIED_MARKERS = (
+    "deep research",
+    "literature review",
+    "report",
+    "sources",
+    "обзор",
+    "отчет",
+    "отчёт",
+    "реферат",
+    "исслед",
+    "поискать информацию",
+    "найти информацию",
+    "найди информацию",
+    "информацию",
+    "составь todo",
+    "составь туду",
+    "иди по нему",
+    "сравни",
+    "сравнение",
+)
+
+_LIGHT_RESEARCH_MARKERS = (
+    "один источник",
+    "одну ссылку",
+    "свежую ссылку",
+    "найди ссылку",
+    "find a source",
+    "one source",
+    "one link",
+)
+
+
+@dataclass(frozen=True)
+class ResearchEvidenceState:
+    """Evidence counters derived from completed tool results."""
+
+    search_calls: int = 0
+    fetch_calls: int = 0
+    successful_fetches: int = 0
+    failed_fetches: int = 0
+    unique_domains: tuple[str, ...] = ()
+
+    def source_verified(
+        self,
+        *,
+        required_fetches: int = SOURCE_VERIFIED_FETCHES,
+        required_domains: int = SOURCE_VERIFIED_DOMAINS,
+    ) -> bool:
+        """Return True when enough fetched sources exist for report-like work."""
+        return (
+            self.successful_fetches >= required_fetches
+            and len(self.unique_domains) >= required_domains
+        )
+
+
+@dataclass(frozen=True)
+class ResearchSourceLedger:
+    """First-class source ledger for research runs.
+
+    Search hits are candidates. Only verified reads should satisfy final
+    report readiness.
+    """
+
+    search_candidates: list[dict[str, Any]] = field(default_factory=list)
+    verified_reads: list[dict[str, Any]] = field(default_factory=list)
+    failed_reads: list[dict[str, Any]] = field(default_factory=list)
+    blocked_reads: list[dict[str, Any]] = field(default_factory=list)
+    assistant_links: list[dict[str, Any]] = field(default_factory=list)
+
+    def model_dump(self) -> dict[str, Any]:
+        """Return JSON-compatible ledger payload."""
+        return {
+            "search_candidates": self.search_candidates,
+            "verified_reads": self.verified_reads,
+            "failed_reads": self.failed_reads,
+            "blocked_reads": self.blocked_reads,
+            "assistant_links": self.assistant_links,
+        }
+
+
+def classify_research_depth(
+    text: str,
+    *,
+    requires_research: bool,
+    plan_only: bool = False,
+) -> str:
+    """Classify how much evidence a chat research request needs."""
+    if plan_only or not requires_research:
+        return RESEARCH_DEPTH_NONE
+    normalized = " ".join(text.lower().split())
+    if any(marker in normalized for marker in _LIGHT_RESEARCH_MARKERS):
+        return RESEARCH_DEPTH_LIGHT
+    if "deep parallel research" in normalized or "deep_parallel_research" in normalized:
+        return RESEARCH_DEPTH_DEEP_PARALLEL
+    if any(marker in normalized for marker in _SOURCE_VERIFIED_MARKERS):
+        return RESEARCH_DEPTH_SOURCE_VERIFIED
+    return RESEARCH_DEPTH_LIGHT
+
+
+def research_evidence_from_tool_results(
+    tool_results: object,
+) -> ResearchEvidenceState:
+    """Count web_search/web_fetch evidence from normalized tool result rows."""
+    if not isinstance(tool_results, list):
+        return ResearchEvidenceState()
+    search_calls = 0
+    fetch_calls = 0
+    successful_fetches = 0
+    failed_fetches = 0
+    domains: list[str] = []
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        tool_name = str(call.get("tool_name") or "").strip()
+        if tool_name == WEB_SEARCH_TOOL:
+            search_calls += 1
+        elif tool_name in READ_SOURCE_TOOLS:
+            fetch_calls += 1
+            if _tool_result_failed(item):
+                failed_fetches += 1
+            else:
+                successful_fetches += 1
+                _append_domain(domains, _tool_result_url(item))
+    return ResearchEvidenceState(
+        search_calls=search_calls,
+        fetch_calls=fetch_calls,
+        successful_fetches=successful_fetches,
+        failed_fetches=failed_fetches,
+        unique_domains=tuple(domains),
+    )
+
+
+def rollup_child_source_ledgers(
+    parent_ledger: ResearchSourceLedger,
+    parent_evidence: ResearchEvidenceState,
+    child_ledgers: object,
+) -> tuple[ResearchSourceLedger, ResearchEvidenceState]:
+    """Fold child source ledgers into the parent ledger + evidence.
+
+    Deep Research children are leaf researchers; their verified reads are
+    first-class evidence for the parent's final readiness (the parent never
+    re-opens the page the child already read). Child rows are deduplicated
+    against the parent by URL so a page read by both counts once, and child
+    contributions are only ever *added* on top of the parent's own counters so
+    a roll-up can never lower already-earned parent evidence.
+    """
+    if not isinstance(child_ledgers, list) or not child_ledgers:
+        return parent_ledger, parent_evidence
+
+    verified_reads = list(parent_ledger.verified_reads)
+    search_candidates = list(parent_ledger.search_candidates)
+    blocked_reads = list(parent_ledger.blocked_reads)
+    failed_reads = list(parent_ledger.failed_reads)
+
+    seen_verified = {
+        str(row.get("url") or "").lower()
+        for row in verified_reads
+        if isinstance(row, dict)
+    }
+    seen_candidates = {
+        str(row.get("url") or "").lower()
+        for row in search_candidates
+        if isinstance(row, dict)
+    }
+
+    new_verified_domains: list[str] = []
+    new_verified_count = 0
+    child_fetch_total = 0
+    child_failed_total = 0
+    child_search_total = 0
+
+    for ledger in child_ledgers:
+        if not isinstance(ledger, dict):
+            continue
+        child_search_total += _len_of(ledger.get("search_candidates"))
+        for candidate in _iter_rows(ledger.get("search_candidates")):
+            _append_unique_source(
+                search_candidates, _tag_child(candidate), seen=seen_candidates
+            )
+        for read in _iter_rows(ledger.get("verified_reads")):
+            url = str(read.get("url") or "").lower()
+            child_fetch_total += 1
+            if not url or url in seen_verified:
+                continue
+            seen_verified.add(url)
+            row = _tag_child(read)
+            verified_reads.append(row)
+            new_verified_count += 1
+            domain = row.get("domain") or _domain(str(read.get("url") or ""))
+            if isinstance(domain, str) and domain and domain not in new_verified_domains:
+                new_verified_domains.append(domain)
+        for read in _iter_rows(ledger.get("blocked_reads")):
+            child_fetch_total += 1
+            child_failed_total += 1
+            blocked_reads.append(_tag_child(read))
+        for read in _iter_rows(ledger.get("failed_reads")):
+            child_fetch_total += 1
+            child_failed_total += 1
+            failed_reads.append(_tag_child(read))
+
+    merged_domains = list(parent_evidence.unique_domains)
+    for domain in new_verified_domains:
+        if domain not in merged_domains:
+            merged_domains.append(domain)
+
+    merged_evidence = ResearchEvidenceState(
+        search_calls=parent_evidence.search_calls + child_search_total,
+        fetch_calls=parent_evidence.fetch_calls + child_fetch_total,
+        successful_fetches=parent_evidence.successful_fetches + new_verified_count,
+        failed_fetches=parent_evidence.failed_fetches + child_failed_total,
+        unique_domains=tuple(merged_domains),
+    )
+    merged_ledger = ResearchSourceLedger(
+        search_candidates=search_candidates,
+        verified_reads=verified_reads,
+        failed_reads=failed_reads,
+        blocked_reads=blocked_reads,
+        assistant_links=list(parent_ledger.assistant_links),
+    )
+    return merged_ledger, merged_evidence
+
+
+def _iter_rows(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [row for row in value if isinstance(row, dict)]
+
+
+def _len_of(value: object) -> int:
+    return len(value) if isinstance(value, list) else 0
+
+
+def _tag_child(row: dict[str, Any]) -> dict[str, Any]:
+    tagged = dict(row)
+    tagged.setdefault("origin", "child")
+    return tagged
+
+
+def research_source_ledger_from_tool_results(
+    tool_results: object, *, assistant_text: str = ""
+) -> ResearchSourceLedger:
+    """Build a compact source ledger from tool rows plus assistant-visible links."""
+    if not isinstance(tool_results, list):
+        return ResearchSourceLedger(assistant_links=_assistant_links(assistant_text))
+    search_candidates: list[dict[str, Any]] = []
+    verified_reads: list[dict[str, Any]] = []
+    failed_reads: list[dict[str, Any]] = []
+    blocked_reads: list[dict[str, Any]] = []
+    seen_candidates: set[str] = set()
+    seen_verified: set[str] = set()
+    for item in tool_results:
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        tool_name = str(call.get("tool_name") or "").strip()
+        tool_call_id = _clean_str(call.get("tool_call_id"))
+        if tool_name == WEB_SEARCH_TOOL:
+            for candidate in _search_candidates(item, tool_call_id=tool_call_id):
+                _append_unique_source(
+                    search_candidates, candidate, seen=seen_candidates
+                )
+        elif tool_name in READ_SOURCE_TOOLS:
+            record = _fetch_record(item, tool_call_id=tool_call_id, tool_name=tool_name)
+            if record is None:
+                continue
+            if _tool_result_blocked(item):
+                record["status"] = "blocked"
+                blocked_reads.append(record)
+            elif _tool_result_failed(item):
+                record["status"] = "failed"
+                failed_reads.append(record)
+            else:
+                record["status"] = "verified"
+                _append_unique_source(verified_reads, record, seen=seen_verified)
+    return ResearchSourceLedger(
+        search_candidates=search_candidates,
+        verified_reads=verified_reads,
+        failed_reads=failed_reads,
+        blocked_reads=blocked_reads,
+        assistant_links=_assistant_links(assistant_text),
+    )
+
+
+def _tool_result_failed(item: dict[str, Any]) -> bool:
+    if item.get("error"):
+        return True
+    decision = str(item.get("decision") or "").lower()
+    if decision == "deny":
+        return True
+    structured = item.get("structured_output")
+    if isinstance(structured, dict):
+        if structured.get("blocked") is True or structured.get("unavailable") is True:
+            return True
+        if structured.get("verified_text") is False:
+            return True
+        if structured.get("error") or structured.get("error_code"):
+            return True
+        status = str(structured.get("status") or "").lower()
+        if status in {"error", "failed", "denied", "partial", "blocked"}:
+            return True
+        status_code = _int_or_none(structured.get("status_code"))
+        if status_code is not None and status_code >= 400:
+            return True
+    return False
+
+
+def _tool_result_blocked(item: dict[str, Any]) -> bool:
+    decision = str(item.get("decision") or "").lower()
+    if decision in {"deny", "interrupt"}:
+        return True
+    structured = item.get("structured_output")
+    if isinstance(structured, dict):
+        if structured.get("blocked") is True:
+            return True
+        status = str(structured.get("status") or "").lower()
+        if status == "denied":
+            return True
+        status_code = _int_or_none(structured.get("status_code"))
+        return status_code in {401, 403, 407, 429, 451}
+    return False
+
+
+def _int_or_none(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _tool_result_url(item: dict[str, Any]) -> str | None:
+    structured = item.get("structured_output")
+    if isinstance(structured, dict):
+        url = structured.get("url")
+        if isinstance(url, str) and url:
+            return url
+    call = item.get("call")
+    if isinstance(call, dict):
+        args = call.get("args")
+        if isinstance(args, dict):
+            url = args.get("url")
+            if isinstance(url, str) and url:
+                return url
+    return None
+
+
+def _search_candidates(
+    item: dict[str, Any], *, tool_call_id: str | None
+) -> list[dict[str, Any]]:
+    structured = item.get("structured_output")
+    if not isinstance(structured, dict):
+        return []
+    results = structured.get("results")
+    if not isinstance(results, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for index, result in enumerate(results, start=1):
+        if not isinstance(result, dict):
+            continue
+        url = _clean_str(result.get("url"))
+        if not url:
+            continue
+        row = {
+            "url": url,
+            "domain": _domain(url),
+            "rank": index,
+            "source_type": WEB_SEARCH_TOOL,
+            "status": "candidate",
+        }
+        _set_clean(row, "title", result.get("title"))
+        _set_clean(row, "excerpt", result.get("snippet"))
+        if tool_call_id:
+            row["tool_call_id"] = tool_call_id
+        rows.append(row)
+    return rows
+
+
+def _fetch_record(
+    item: dict[str, Any], *, tool_call_id: str | None, tool_name: str = WEB_FETCH_TOOL
+) -> dict[str, Any] | None:
+    url = _tool_result_url(item)
+    if not url:
+        return None
+    structured = item.get("structured_output")
+    row: dict[str, Any] = {
+        "url": url,
+        "domain": _domain(url),
+        "source_type": tool_name,
+    }
+    if tool_call_id:
+        row["tool_call_id"] = tool_call_id
+    if isinstance(structured, dict):
+        _set_clean(row, "title", _metadata_value(structured.get("metadata"), "title"))
+        _set_clean(
+            row,
+            "excerpt",
+            structured.get("excerpt") or structured.get("summary"),
+        )
+        _set_clean(row, "error_code", structured.get("error_code"))
+        _set_clean(row, "error", structured.get("error"))
+        _set_clean(row, "detail", structured.get("detail"))
+        _set_clean(row, "status", structured.get("status"))
+        _set_clean(row, "source_kind", structured.get("source_kind"))
+        _set_clean(row, "fallback_reason", structured.get("fallback_reason"))
+        _set_clean(
+            row, "browser_fallback_reason", structured.get("browser_fallback_reason")
+        )
+        status_code = structured.get("status_code")
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            row["status_code"] = status_code
+        page_start = _int_or_none(structured.get("page_start"))
+        page_end = _int_or_none(structured.get("page_end"))
+        if page_start is not None:
+            row["page_start"] = page_start
+        if page_end is not None:
+            row["page_end"] = page_end
+        page_citations = structured.get("page_citations")
+        if isinstance(page_citations, list):
+            row["page_citations"] = [
+                item for item in page_citations if isinstance(item, dict)
+            ]
+        for key in ("verified_text", "rendered", "browser_action_allowed"):
+            value = structured.get(key)
+            if isinstance(value, bool):
+                row[key] = value
+        content = structured.get("content") or structured.get("text")
+        if isinstance(content, str) and content:
+            row["content_sha256"] = sha256(content.encode("utf-8")).hexdigest()
+        bytes_total = _int_or_none(structured.get("bytes_total"))
+        bytes_loaded = _int_or_none(structured.get("bytes_loaded"))
+        if bytes_total is not None:
+            row["bytes_total"] = bytes_total
+        if bytes_loaded is not None:
+            row["bytes_loaded"] = bytes_loaded
+    return row
+
+
+def _assistant_links(text: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for match in _ASSISTANT_URL_RE.finditer(text or ""):
+        url = match.group(0).rstrip(".,;:")
+        if url in seen:
+            continue
+        seen.add(url)
+        rows.append(
+            {"url": url, "domain": _domain(url), "source_type": "assistant_link"}
+        )
+    return rows
+
+
+def _append_unique_source(
+    rows: list[dict[str, Any]], row: dict[str, Any], *, seen: set[str]
+) -> None:
+    url = str(row.get("url") or "")
+    key = url.lower()
+    if not key or key in seen:
+        return
+    seen.add(key)
+    rows.append(row)
+
+
+def _metadata_value(metadata: object, key: str) -> object:
+    return metadata.get(key) if isinstance(metadata, dict) else None
+
+
+def _set_clean(row: dict[str, Any], key: str, value: object) -> None:
+    cleaned = _clean_str(value)
+    if cleaned:
+        row[key] = cleaned[:500]
+
+
+def _clean_str(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = " ".join(value.strip().split())
+    return cleaned or None
+
+
+def _domain(url: str) -> str | None:
+    parsed = urlparse(url)
+    domain = parsed.netloc.lower()
+    if domain.startswith("www."):
+        domain = domain[4:]
+    return domain or None
+
+
+def _append_domain(domains: list[str], url: str | None) -> None:
+    if not url:
+        return
+    domain = urlparse(url).netloc.lower()
+    if domain.startswith("www."):
+        domain = domain[4:]
+    if domain and domain not in domains:
+        domains.append(domain)
+
+
+__all__ = [
+    "RESEARCH_DEPTH_LIGHT",
+    "RESEARCH_DEPTH_DEEP_PARALLEL",
+    "DEEP_PARALLEL_DOMAINS",
+    "DEEP_PARALLEL_FETCHES",
+    "RESEARCH_DEPTH_NONE",
+    "RESEARCH_DEPTH_SOURCE_VERIFIED",
+    "SOURCE_VERIFIED_DOMAINS",
+    "SOURCE_VERIFIED_FETCHES",
+    "ResearchEvidenceState",
+    "ResearchSourceLedger",
+    "classify_research_depth",
+    "research_evidence_from_tool_results",
+    "research_source_ledger_from_tool_results",
+    "rollup_child_source_ledgers",
+]

@@ -14,6 +14,12 @@ from agent_driver.cli.commands.common import (
     build_provider_and_toolset,
     print_provider_health,
 )
+from agent_driver.memory import SqliteMemoryStore, StoreBackedMemoryProvider
+from agent_driver.permissions import (
+    PermissionMode,
+    PermissionPolicy,
+    build_permission_gate,
+)
 from agent_driver.runtime import RunnerConfig
 import os
 
@@ -45,6 +51,24 @@ def _python_settings_from_args(args: argparse.Namespace) -> PythonToolSettings:
         default_imports=merged_defaults,
         allow_overlay=bool(extra_imports),
     )
+
+
+def _memory_provider_from_args(args: argparse.Namespace) -> object | None:
+    """Build a long-term memory provider from --memory / --memory-path, if any."""
+    if str(getattr(args, "memory", "none")) != "sqlite":
+        return None
+    path = str(getattr(args, "memory_path", None) or ".agent-driver/memory.db")
+    if path != ":memory:":
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+    return StoreBackedMemoryProvider(SqliteMemoryStore(path=path))
+
+
+def _permission_gate_from_args(args: argparse.Namespace) -> object | None:
+    """Build a permission ToolGate from --permission-mode (None when yolo)."""
+    mode = str(getattr(args, "permission_mode", "yolo"))
+    if mode == "yolo":
+        return None  # allow-all: no gate needed
+    return build_permission_gate(PermissionPolicy(mode=PermissionMode(mode)))
 
 
 def _resolve_workspace_arg(args: argparse.Namespace) -> str | None:
@@ -95,8 +119,13 @@ async def run_command(
         tools=toolset,
         checkpoint_store=bundle.checkpoint_store,
         event_log=bundle.event_log,
-        config=RunnerConfig(python_tool=_python_settings_from_args(args)),
+        memory_provider=_memory_provider_from_args(args),
+        config=RunnerConfig(
+            python_tool=_python_settings_from_args(args),
+            enable_prompt_cache=bool(getattr(args, "prompt_cache", False)),
+        ),
     )
+    tool_gate = _permission_gate_from_args(args)
     run_id = args.run_id or f"run_{uuid.uuid4().hex[:12]}"
     app_metadata: dict[str, object] = {
         "stream_poll_interval_ms": args.stream_poll_interval_ms,
@@ -120,7 +149,9 @@ async def run_command(
         deadline_seconds=args.deadline_seconds,
         app_metadata=app_metadata,
     )
-    async for line in cli_run_live_lines(agent.stream(run_input), prefer_rich=prefer_rich(args)):
+    async for line in cli_run_live_lines(
+        agent.stream(run_input, tool_gate=tool_gate), prefer_rich=prefer_rich(args)
+    ):
         print(line)
     print(json.dumps({"run_id": run_id, "store_kind": args.store_kind}, ensure_ascii=True))
     return 0
@@ -164,13 +195,16 @@ async def chat_command(
         tools=toolset,
         checkpoint_store=bundle.checkpoint_store,
         event_log=bundle.event_log,
+        memory_provider=_memory_provider_from_args(args),
         config=RunnerConfig(
             enable_compaction=True,
             enable_session_memory_compaction=True,
             python_tool=_python_settings_from_args(args),
             include_planning_prompt="todo_write" in tool_names,
+            enable_prompt_cache=bool(getattr(args, "prompt_cache", False)),
         ),
     )
+    tool_gate = _permission_gate_from_args(args)
     ui_mode = "rich" if (not args.plain and (args.rich or sys.stdout.isatty())) else "plain"
     selected_manifests = [row.manifest for row in agent.runner.deps.tool_registry.list_registered()]
     try:
@@ -194,6 +228,7 @@ async def chat_command(
         selected_manifests=selected_manifests,
         ui_mode=ui_mode,
         workspace_cwd=workspace_cwd,
+        tool_gate=tool_gate,
     )
 
 

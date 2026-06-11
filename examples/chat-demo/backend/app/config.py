@@ -8,7 +8,29 @@ from typing import Literal
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ToolPreset = Literal["off", "safe", "workspace", "dev", "all"]
+ToolPreset = Literal[
+    "off",
+    "web_search",
+    "web_fetch",
+    "web",
+    "research_light",
+    "deep_research",
+    "deep_research_medium",
+    "deep_research_hard",
+    "agents",
+    # Legacy/internal presets remain accepted for backend scenarios and older clients.
+    "safe",
+    "workspace",
+    "dev",
+    "all",
+]
+PlanningMode = Literal[
+    "off",
+    "prompt_only",
+    "required_for_writes",
+    "required_for_risky_tools",
+    "always_for_multistep",
+]
 
 
 def _discover_env_files() -> tuple[str, ...]:
@@ -33,16 +55,41 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_host: str = Field(default="127.0.0.1", validation_alias=AliasChoices("APP_HOST"))
+    app_host: str = Field(
+        default="127.0.0.1", validation_alias=AliasChoices("APP_HOST")
+    )
     app_port: int = Field(default=8010, validation_alias=AliasChoices("APP_PORT"))
     app_cors_origins: str = Field(
         default="http://localhost:5173",
         validation_alias=AliasChoices("APP_CORS_ORIGINS"),
     )
+    tracing_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("CHAT_DEMO_TRACING_ENABLED"),
+    )
+    phoenix_project_name: str = Field(
+        default="agent-driver-chat-demo",
+        validation_alias=AliasChoices("PHOENIX_PROJECT_NAME"),
+    )
+    phoenix_collector_endpoint: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PHOENIX_COLLECTOR_ENDPOINT"),
+    )
 
     tool_preset: ToolPreset = Field(
-        default="safe",
+        default="web",
         validation_alias=AliasChoices("CHAT_DEMO_TOOL_PRESET"),
+    )
+    force_planning: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("CHAT_DEMO_FORCE_PLANNING"),
+    )
+    force_planning_mode: PlanningMode = Field(
+        default="required_for_writes",
+        validation_alias=AliasChoices(
+            "CHAT_DEMO_FORCE_PLANNING_MODE",
+            "CHAT_DEMO_PLANNING_MODE",
+        ),
     )
     max_steps: int = Field(
         default=24,
@@ -55,6 +102,14 @@ class Settings(BaseSettings):
     deadline_seconds: float = Field(
         default=600.0,
         validation_alias=AliasChoices("CHAT_DEMO_DEADLINE_SECONDS"),
+    )
+    max_child_runs: int = Field(
+        default=3,
+        validation_alias=AliasChoices("CHAT_DEMO_MAX_CHILD_RUNS"),
+    )
+    deep_research_phase_gate_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("CHAT_DEMO_DEEP_RESEARCH_PHASE_GATE_ENABLED"),
     )
     stream_poll_interval_ms: int = Field(
         default=20,
@@ -81,6 +136,10 @@ class Settings(BaseSettings):
         default="fake",
         validation_alias=AliasChoices("AGENT_DRIVER_PROVIDER"),
     )
+    fake_scenario: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("CHAT_DEMO_FAKE_SCENARIO"),
+    )
     model: str | None = Field(
         default=None,
         validation_alias=AliasChoices("AGENT_DRIVER_MODEL"),
@@ -106,8 +165,5 @@ class Settings(BaseSettings):
     def cors_origins(self) -> list[str]:
         """Parse comma-separated CORS origins into clean list."""
         return [
-            item.strip()
-            for item in self.app_cors_origins.split(",")
-            if item.strip()
+            item.strip() for item in self.app_cors_origins.split(",") if item.strip()
         ] or ["http://localhost:5173"]
-

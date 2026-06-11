@@ -43,6 +43,8 @@ def test_build_renderer_plain_mode() -> None:
 
 def test_rich_renderer_welcome_emits_panel_once() -> None:
     """Rich welcome should not duplicate output via record+export."""
+    import re
+
     from agent_driver.cli.tui.renderer import RichRenderer
 
     output: list[str] = []
@@ -61,15 +63,20 @@ def test_rich_renderer_welcome_emits_panel_once() -> None:
         mode_label="chat",
     )
     text = "".join(output)
-    assert text.count("Welcome to agent-driver") == 1
-    assert text.count("╭─ chat") == 1
-    assert "! for bash" in text
-    assert "cwd:" in text
-    assert "mode:" in text
-    assert "branch:" in text
-    assert "python:" in text
-    assert "/reset clears memory" in text
-    assert "Type /help for commands" not in text
+    # Rich emits ANSI color escapes between styled tokens — the panel
+    # border (``╭─\x1b[0m\x1b[37m chat …``), the highlighted slash in
+    # ``/reset``, etc. Strip escapes before substring assertions so
+    # markers don't get split across colour boundaries.
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    assert clean.count("Welcome to agent-driver") == 1
+    assert clean.count("╭─ chat") == 1
+    assert "! for bash" in clean
+    assert "cwd:" in clean
+    assert "mode:" in clean
+    assert "branch:" in clean
+    assert "python:" in clean
+    assert "/reset clears memory" in clean
+    assert "Type /help for commands" not in clean
 
 
 def test_rich_renderer_tool_card_format() -> None:
@@ -106,6 +113,8 @@ def test_rich_renderer_assistant_prefix_and_tail() -> None:
 
 
 def test_rich_renderer_denied_tool_card_highlights_reason() -> None:
+    import re
+
     from agent_driver.cli.tui.renderer import RichRenderer
 
     output: list[str] = []
@@ -119,7 +128,12 @@ def test_rich_renderer_denied_tool_card_highlights_reason() -> None:
         result_summary="todo.id is required",
     )
     text = "".join(output)
-    assert "status=denied" in text
+    # The danger-styled ``status=denied`` token is split by per-character
+    # ANSI runs (``\x1b[31mstatus\x1b[0m\x1b[31m=\x1b[0m\x1b[31mdenied\x1b[0m``).
+    # Strip the escapes for the marker checks; keep the raw text for the
+    # plain unstyled labels.
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    assert "status=denied" in clean
     assert "reason:" in text
     assert "todo.id is required" in text
 

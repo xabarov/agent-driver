@@ -12,6 +12,11 @@ _JSON_OBJECT_RE = re.compile(r"\{[\s\S]*?\}")
 _TOOL_CALL_BLOCK_RE = re.compile(
     r"<tool_call>\s*(?P<body>[\s\S]*?)\s*</tool_call>", re.IGNORECASE
 )
+_ARG_PAIR_RE = re.compile(
+    r"<arg_key>\s*(?P<key>[\s\S]*?)\s*</arg_key>\s*"
+    r"<arg_value>\s*(?P<value>[\s\S]*?)\s*</arg_value>",
+    re.IGNORECASE,
+)
 _PYTHON_TAG_BLOCK_RE = re.compile(
     r"<\|python_tag\|>\s*(?P<body>[\s\S]*?)\s*<\|eom_id\|>", re.IGNORECASE
 )
@@ -73,7 +78,9 @@ def _to_tool_call(
         tool_call = ToolCall(
             tool_name=name,
             args=args,
-            tool_call_id=call_id if isinstance(call_id, str) and call_id.strip() else None,
+            tool_call_id=(
+                call_id if isinstance(call_id, str) and call_id.strip() else None
+            ),
             metadata={"text_form_source": source, "text_form_index": index},
         )
     except (TypeError, ValueError):
@@ -86,6 +93,147 @@ def _to_tool_call(
     return tool_call.model_dump(mode="json"), None
 
 
+def _xmlish_tool_call_payload(raw: str) -> dict[str, Any] | None:
+    body = raw.strip()
+    if not body or body.startswith("{"):
+        return None
+    first_tag = body.find("<")
+    name_text = body[: first_tag if first_tag >= 0 else len(body)].strip()
+    if not name_text:
+        return None
+    args: dict[str, Any] = {}
+    for match in _ARG_PAIR_RE.finditer(body):
+        key = match.group("key").strip()
+        value = match.group("value").strip()
+        if key:
+            args[key] = _coerce_xmlish_arg_value(value)
+    return {"name": name_text, "arguments": args}
+
+
+def _coerce_xmlish_arg_value(value: str) -> Any:
+    text = value.strip()
+    if not text:
+        return ""
+    if text[0] in '[{"' or text in {"true", "false", "null"}:
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return text
+    return text
+
+
+# Gemma chat-template tool calls leak as text when the provider doesn't parse them
+# into structured tool_calls, e.g.:
+#   <|tool_call>call:chart_vegalite{chart_type:<|"|>bar<|"|>,data:[...]}<tool_call|>
+# markers (<|tool_call> / <tool_call|>; pipe placement varies) wrap a
+# ``call:NAME{...}`` body whose string values are delimited by ``<|"|>``.
+_GEMMA_CALL_RE = re.compile(r"call:\s*(?P<name>[A-Za-z0-9_]+)\s*\{")
+# A gemma string-delimiter token wrapping a quote: <|"|>, <|">, <||">, ...
+_GEMMA_QUOTE_RE = re.compile(r"<\|+\"\|*>")
+# Any other stray gemma control token: <|tool_call>, <tool_call|>, <||>, <|...>.
+_GEMMA_STRAY_RE = re.compile(r"<\|[^<>]*>|<[^<>]*\|>")
+# Unquoted JSON object key after { or , — quote it so json.loads accepts it.
+_BARE_KEY_RE = re.compile(r"([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)")
+
+
+def _gemma_tool_call_payloads(text: str) -> list[dict[str, Any]]:
+    """Parse gemma ``call:NAME{...}`` leaks into ``{name, arguments}`` dicts.
+
+    Best-effort: normalises gemma's ``<|"|>`` quote-tokens to ``"``, quotes bare
+    object keys, then ``json.loads``. Pathological bodies (e.g. multi-line code
+    with embedded quotes) may fail to parse — those are skipped, leaving behaviour
+    no worse than before."""
+    payloads: list[dict[str, Any]] = []
+    for m in _GEMMA_CALL_RE.finditer(text):
+        name = m.group("name")
+        # Brace-match the args body.
+        depth, i, n = 0, m.end() - 1, len(text)
+        end = None
+        while i < n:
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+            i += 1
+        if end is None:
+            continue
+        body = text[m.end() - 1 : end + 1]
+        normalised = _GEMMA_QUOTE_RE.sub('"', body)
+        normalised = _GEMMA_STRAY_RE.sub("", normalised)
+        normalised = _BARE_KEY_RE.sub(r'\1"\2"\3', normalised)
+        try:
+            args = json.loads(normalised)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(args, dict):
+            payloads.append({"name": name, "arguments": args})
+    return payloads
+
+
+# DeepSeek v4 emits tool calls in a Claude-style invoke/parameter XML wrapped in
+# fullwidth "DSML" markers when the provider doesn't parse them into native
+# tool_calls. ``｜`` is U+FF5C (FULLWIDTH VERTICAL LINE), doubled:
+#   <｜｜DSML｜｜tool_calls>
+#     <｜｜DSML｜｜invoke name="excel_set_cell">
+#       <｜｜DSML｜｜parameter name="sheet_name" string="true">Sales</｜｜DSML｜｜parameter>
+#       <｜｜DSML｜｜parameter name="value" string="false">1420</｜｜DSML｜｜parameter>
+#     </｜｜DSML｜｜invoke>
+#   </｜｜DSML｜｜tool_calls>
+# ``string="false"`` flags a non-string value (number/array/bool) → JSON-parse.
+_DSML_OPEN = r"<｜+DSML｜+"
+_DSML_CLOSE = r"</｜+DSML｜+"
+_DSML_INVOKE_RE = re.compile(
+    _DSML_OPEN + r"invoke\s+name=\"(?P<name>[^\"]+)\"\s*>"
+    r"(?P<body>[\s\S]*?)" + _DSML_CLOSE + r"invoke>"
+)
+_DSML_PARAM_RE = re.compile(
+    _DSML_OPEN + r"parameter\s+name=\"(?P<key>[^\"]+)\"(?P<attrs>[^>]*)>"
+    r"(?P<value>[\s\S]*?)" + _DSML_CLOSE + r"parameter>"
+)
+_DSML_BLOCK_RE = re.compile(
+    _DSML_OPEN + r"tool_calls>[\s\S]*?" + _DSML_CLOSE + r"tool_calls>"
+)
+# Any leftover stray DSML marker token, open or close: <｜｜DSML｜｜...> / </｜｜DSML｜｜...>.
+_DSML_STRAY_RE = re.compile(r"</?｜+DSML｜+[^>]*>")
+
+
+def _coerce_dsml_value(value: str, *, is_string: bool) -> Any:
+    text = value.strip()
+    if is_string:
+        return text
+    # Non-string (number / array / bool / null) — JSON-parse, else heuristics.
+    try:
+        return json.loads(text)
+    except (ValueError, TypeError):
+        return _coerce_xmlish_arg_value(text)
+
+
+def _dsml_tool_call_payloads(text: str) -> list[dict[str, Any]]:
+    """Parse deepseek ``<｜｜DSML｜｜invoke…>`` leaks into ``{name, arguments}`` dicts.
+
+    Best-effort: each ``invoke`` block contributes one tool call; its
+    ``parameter`` children become args, with ``string="false"`` values JSON-parsed
+    (numbers, arrays like ``[[2070],[600]]``). Malformed values fall back to the
+    xmlish coercion heuristic, never raising."""
+    payloads: list[dict[str, Any]] = []
+    for m in _DSML_INVOKE_RE.finditer(text):
+        name = m.group("name").strip()
+        if not name:
+            continue
+        args: dict[str, Any] = {}
+        for pm in _DSML_PARAM_RE.finditer(m.group("body")):
+            key = pm.group("key").strip()
+            if not key:
+                continue
+            is_string = 'string="true"' in (pm.group("attrs") or "")
+            args[key] = _coerce_dsml_value(pm.group("value"), is_string=is_string)
+        payloads.append({"name": name, "arguments": args})
+    return payloads
+
+
 def extract_text_form_tool_calls(
     text: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -93,8 +241,23 @@ def extract_text_form_tool_calls(
     if not isinstance(text, str) or not text.strip():
         return [], []
     candidates: list[tuple[str, str]] = []
+    xmlish_candidates: list[tuple[str, dict[str, Any]]] = []
+    # Gemma <|tool_call>call:NAME{...} leaks (only when its markers are present, so
+    # we don't mis-parse a normal ``call:`` mention in prose).
+    if "<|tool_call" in text or "<tool_call|" in text:
+        for payload in _gemma_tool_call_payloads(text):
+            xmlish_candidates.append(("gemma_tool_call", payload))
+    # DeepSeek v4 <｜｜DSML｜｜invoke…> leaks (gated on the DSML marker).
+    if "DSML" in text:
+        for payload in _dsml_tool_call_payloads(text):
+            xmlish_candidates.append(("deepseek_dsml", payload))
     for match in _TOOL_CALL_BLOCK_RE.finditer(text):
-        body = _extract_json_object(match.group("body"))
+        raw_body = match.group("body")
+        xmlish = _xmlish_tool_call_payload(raw_body)
+        if xmlish is not None:
+            xmlish_candidates.append(("tool_call_xmlish_block", xmlish))
+            continue
+        body = _extract_json_object(raw_body)
         if body:
             candidates.append(("tool_call_block", body))
     for match in _PYTHON_TAG_BLOCK_RE.finditer(text):
@@ -105,11 +268,19 @@ def extract_text_form_tool_calls(
         body = _extract_json_object(match.group("body"))
         if body:
             candidates.append(("tool_call_fence", body))
-    if not candidates:
+    if not candidates and not xmlish_candidates:
         return [], []
     planned: list[dict[str, Any]] = []
     parse_errors: list[dict[str, Any]] = []
-    for index, (source, raw_payload) in enumerate(candidates):
+    index = 0
+    for source, payload in xmlish_candidates:
+        parsed, parse_error = _to_tool_call(payload, index=index, source=source)
+        if parsed is not None:
+            planned.append(parsed)
+        if parse_error is not None:
+            parse_errors.append(parse_error)
+        index += 1
+    for source, raw_payload in candidates:
         try:
             payload = json.loads(raw_payload)
         except json.JSONDecodeError:
@@ -147,6 +318,11 @@ def strip_text_form_tool_calls(text: str) -> str:
     stripped = _TOOL_CALL_BLOCK_RE.sub("", text)
     stripped = _PYTHON_TAG_BLOCK_RE.sub("", stripped)
     stripped = _TOOL_CALL_FENCE_RE.sub("", stripped)
+    # DeepSeek DSML: drop the whole tool_calls block, any stray invoke blocks,
+    # then any leftover DSML marker tokens (truncated/unclosed wrappers).
+    stripped = _DSML_BLOCK_RE.sub("", stripped)
+    stripped = _DSML_INVOKE_RE.sub("", stripped)
+    stripped = _DSML_STRAY_RE.sub("", stripped)
     return stripped.strip()
 
 

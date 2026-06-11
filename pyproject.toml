@@ -24,6 +24,7 @@ dev = [
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
   "pytest-xdist>=3.6.0",
+  "playwright>=1.48.0",
 ]
 postgres = [
   "psycopg[binary]>=3.2.0",
@@ -31,6 +32,16 @@ postgres = [
 cli = [
   "prompt_toolkit>=3.0.43",
   "rich>=13.0.0",
+]
+instructor = [
+  "instructor>=1.7.0",
+]
+acp = [
+  "agent-client-protocol>=0.10.0",
+]
+server = [
+  "starlette>=0.40.0",
+  "uvicorn[standard]>=0.30.0",
 ]
 
 [project.scripts]
@@ -41,7 +52,9 @@ where = ["."]
 include = ["agent_driver*"]
 
 [tool.setuptools.package-data]
+"agent_driver" = ["py.typed"]
 "agent_driver.prompts.templates" = ["*.txt"]
+"agent_driver.skills.curated" = ["*/SKILL.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -66,3 +79,21 @@ target-version = ["py311"]
 [tool.isort]
 profile = "black"
 line_length = 88
+
+[tool.pylint.main]
+py-version = "3.11"
+jobs = 0
+recursive = true
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.pylint.messages_control]
+disable = [
+  "duplicate-code",
+  "fixme",
+  "missing-module-docstring",
+  "too-few-public-methods",
+  "too-many-arguments",
+  "too-many-locals",
+]

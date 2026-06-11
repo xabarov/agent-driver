@@ -69,6 +69,12 @@ async def test_compaction_flag_records_decision_and_audit() -> None:
     assert isinstance(failures, list)
     assert failures
     assert failures[0]["kind"] == "llm_compaction_failed"
+    event_names = [event.type.value for event in output.events]
+    assert "memory_compaction_started" in event_names
+    assert "memory_compacted" in event_names
+    assert event_names.index("memory_compaction_started") < event_names.index(
+        "memory_compacted"
+    )
 
 
 @pytest.mark.asyncio
@@ -100,3 +106,6 @@ async def test_partial_compaction_path_runs_when_llm_compaction_disabled() -> No
     assert output.metadata["compaction_result"]["mode"] == "partial"
     assert output.metadata["compaction_failures"] == []
     assert "post_compact_cleanup" in output.memory_audit
+    event_names = [event.type.value for event in output.events]
+    assert "memory_compaction_started" in event_names
+    assert "memory_compacted" in event_names

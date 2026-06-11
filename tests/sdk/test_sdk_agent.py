@@ -4,11 +4,25 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
 
-from agent_driver.contracts import AgentRunInput, RuntimeEventType, ToolCall, ToolManifest
+from agent_driver.contracts import (
+    AgentRunInput,
+    ControlKind,
+    ControlPriority,
+    ControlRequest,
+    RuntimeEventType,
+    ToolCall,
+    ToolManifest,
+)
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.contracts.enums import ApprovalMode, SideEffectClass, ToolRisk
+from agent_driver.contracts.enums import (
+    ApprovalMode,
+    ResumeAction,
+    SideEffectClass,
+    ToolRisk,
+)
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.llm.contracts import (
     LlmFinishReason,
@@ -18,7 +32,21 @@ from agent_driver.llm.contracts import (
     UsageSummary,
 )
 from agent_driver.runtime import RunnerConfig
-from agent_driver.sdk import Agent, build_default_registry, create_agent, sdk_config_from_env
+from agent_driver.runtime.control import InMemoryCommandQueueStore, SqliteCommandQueueStore
+from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.sdk import (
+    Agent,
+    ProviderStatusError,
+    RunHandle,
+    RunStream,
+    Session,
+    TraceSummary,
+    build_default_registry,
+    create_agent,
+    query,
+    sdk_config_from_env,
+    summarize_output,
+)
 from agent_driver.tools import ToolRegistry, ToolSet
 
 
@@ -51,6 +79,137 @@ async def test_sdk_create_agent_returns_facade_and_runs() -> None:
         )
     )
     assert output.status.value == "completed"
+
+
+@pytest.mark.asyncio
+async def test_sdk_top_level_query_and_agent_query_return_output() -> None:
+    """SDK should expose one-shot query helpers without low-level runner imports."""
+    agent = create_agent(provider=FakeProvider(response_text="agent ok"), tools=ToolSet.only())
+
+    agent_output = await agent.query("Hello")
+    top_level_output = await query(
+        "Hello",
+        provider=FakeProvider(response_text="top ok"),
+        tools=ToolSet.only(),
+    )
+
+    assert agent_output.answer == "agent ok"
+    assert top_level_output.answer == "top ok"
+
+
+@pytest.mark.asyncio
+async def test_sdk_run_handle_exposes_events_final_abort_and_checkpoint() -> None:
+    """RunHandle should hide runner internals while exposing run operations."""
+    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only())
+    handle = agent.start(
+        AgentRunInput(
+            input="background",
+            run_id="run_sdk_handle",
+            agent_id="agent",
+            graph_preset="single_react",
+        )
+    )
+
+    assert isinstance(handle, RunHandle)
+    output = await handle.final()
+    assert output.status.value == "completed"
+    assert handle.events()
+    assert handle.checkpoint() is not None
+    handle.abort()
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_helper_yields_text_deltas_and_final_output() -> None:
+    """Object stream helper should expose events, text_deltas, final_output and cursor."""
+    agent = create_agent(provider=_SlowStreamingProvider(response_text="ok"), tools=ToolSet.only())
+    stream = agent.stream_run(
+        AgentRunInput(
+            input="stream helper",
+            run_id="run_sdk_stream_helper",
+            agent_id="agent",
+            graph_preset="single_react",
+            stream=True,
+        )
+    )
+
+    assert isinstance(stream, RunStream)
+    deltas = [item async for item in stream.text_deltas()]
+    output = await stream.final_output()
+
+    assert "slow" in deltas
+    assert output.status.value == "completed"
+    assert stream.cursor > 0
+    stream.cancel()
+
+
+@pytest.mark.asyncio
+async def test_sdk_session_facade_send_history_runs_and_stream() -> None:
+    """Session should provide thread-scoped send/history/runs/stream helpers."""
+    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only())
+    session = agent.session("session_sdk")
+
+    assert isinstance(session, Session)
+    output = await session.send("Hello", run_id="run_sdk_session")
+    streamed = session.stream("Stream", run_id="run_sdk_session_stream")
+    stream_output = await streamed.final_output()
+
+    assert output.status.value == "completed"
+    assert stream_output.status.value == "completed"
+    assert [turn.metadata.get("run_id") for turn in session.history()] == [
+        "run_sdk_session",
+        "run_sdk_session_stream",
+    ]
+    assert session.runs() == ["run_sdk_session", "run_sdk_session_stream"]
+
+
+def test_sdk_control_methods_queue_commands() -> None:
+    """SDK facade should expose typed steering queue helpers."""
+    queue = InMemoryCommandQueueStore()
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        command_queue_store=queue,
+    )
+
+    control = agent.control(
+        ControlRequest(
+            kind=ControlKind.INTERRUPT,
+            run_id="run_sdk_control",
+            priority=ControlPriority.NOW,
+        )
+    )
+    follow_up = agent.enqueue("continue with this constraint", run_id="run_sdk_control")
+    model_change = agent.set_model("openai/gpt-4.1-mini", run_id="run_sdk_control")
+
+    pending = queue.list_pending(run_id="run_sdk_control")
+    events = agent.runner.deps.event_log.list_for_run("run_sdk_control")
+    assert control.ok is True
+    assert follow_up.ok is True
+    assert model_change.ok is True
+    assert [item.kind for item in pending] == [
+        ControlKind.INTERRUPT,
+        ControlKind.ENQUEUE_USER_MESSAGE,
+        ControlKind.SET_MODEL,
+    ]
+    assert any(event.type == RuntimeEventType.COMMAND_QUEUED for event in events)
+
+
+def test_sdk_cancel_queued_message_marks_item_cancelled() -> None:
+    """SDK facade should cancel queued command items by id."""
+    queue = InMemoryCommandQueueStore()
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        command_queue_store=queue,
+    )
+    response = agent.enqueue("later", run_id="run_sdk_cancel")
+
+    cancelled = agent.cancel_queued_message(response.queue_id or "")
+
+    assert cancelled.ok is True
+    assert queue.list_pending(run_id="run_sdk_cancel") == []
+    events = agent.runner.deps.event_log.list_for_run("run_sdk_cancel")
+    assert any(event.type == RuntimeEventType.COMMAND_CANCELLED for event in events)
 
 
 @pytest.mark.asyncio
@@ -102,6 +261,128 @@ class _CaptureRequestProvider(FakeProvider):
     async def complete(self, request: LlmRequest) -> LlmResponse:
         self.last_request = request
         return await super().complete(request)
+
+
+class _HTTPErrorProvider(FakeProvider):
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        http_request = httpx.Request("POST", "https://provider.example/v1/chat")
+        response = httpx.Response(
+            429,
+            request=http_request,
+            headers={"x-request-id": "req_123"},
+            json={"error": {"message": "rate limited"}},
+        )
+        raise httpx.HTTPStatusError("rate limited", request=http_request, response=response)
+
+
+@pytest.mark.asyncio
+async def test_sdk_set_model_control_affects_next_llm_request() -> None:
+    """Queued set_model controls should affect the next LLM boundary."""
+    provider = _CaptureRequestProvider()
+    queue = InMemoryCommandQueueStore()
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        command_queue_store=queue,
+    )
+    agent.set_model("openai/gpt-4.1-mini", run_id="run_sdk_model_control")
+
+    await agent.run(
+        AgentRunInput(
+            input="hello",
+            run_id="run_sdk_model_control",
+            agent_id="agent",
+            graph_preset="single_react",
+        )
+    )
+
+    assert provider.last_request is not None
+    assert provider.last_request.model == "openai/gpt-4.1-mini"
+    assert queue.list_pending(run_id="run_sdk_model_control") == []
+    events = agent.runner.deps.event_log.list_for_run("run_sdk_model_control")
+    assert any(event.type == RuntimeEventType.COMMAND_DEQUEUED for event in events)
+    assert any(event.type == RuntimeEventType.CONTROL_APPLIED for event in events)
+
+
+@pytest.mark.asyncio
+async def test_sdk_enqueue_control_appends_user_message_at_next_llm_boundary() -> None:
+    """Queued user messages should be appended before the next LLM request."""
+    provider = _CaptureRequestProvider()
+    queue = InMemoryCommandQueueStore()
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        command_queue_store=queue,
+    )
+    agent.enqueue("steer this next", run_id="run_sdk_enqueue_control")
+
+    await agent.run(
+        AgentRunInput(
+            input="original task",
+            run_id="run_sdk_enqueue_control",
+            agent_id="agent",
+            graph_preset="single_react",
+        )
+    )
+
+    assert provider.last_request is not None
+    contents = [message.content for message in provider.last_request.messages]
+    assert "original task" in contents
+    assert contents[-1] == "steer this next"
+    assert queue.list_pending(run_id="run_sdk_enqueue_control") == []
+
+
+@pytest.mark.asyncio
+async def test_sdk_command_queue_survives_runner_recreation_before_llm_boundary(
+    tmp_path,
+) -> None:
+    """Queued controls should survive a pre-LLM restart and then apply once."""
+    path = tmp_path / "steering_queue.db"
+    first_queue = SqliteCommandQueueStore(path=str(path))
+    first_agent = create_agent(
+        provider=FakeProvider(response_text="unused"),
+        tools=ToolSet.only(),
+        command_queue_store=first_queue,
+        config=RunnerConfig(fail_after_step="run_started"),
+    )
+    queued = first_agent.enqueue("persisted steer", run_id="run_sdk_queue_restart")
+
+    with pytest.raises(RuntimeExecutionError):
+        await first_agent.run(
+            AgentRunInput(
+                input="original task",
+                run_id="run_sdk_queue_restart",
+                agent_id="agent",
+                graph_preset="single_react",
+            )
+        )
+
+    assert [item.queue_id for item in first_queue.list_pending()] == [queued.queue_id]
+
+    provider = _CaptureRequestProvider()
+    second_queue = SqliteCommandQueueStore(path=str(path))
+    second_agent = create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        command_queue_store=second_queue,
+    )
+
+    await second_agent.run(
+        AgentRunInput(
+            input="original task",
+            run_id="run_sdk_queue_restart",
+            agent_id="agent",
+            graph_preset="single_react",
+        )
+    )
+
+    assert provider.last_request is not None
+    contents = [message.content for message in provider.last_request.messages]
+    assert contents[-1] == "persisted steer"
+    assert second_queue.list_pending(run_id="run_sdk_queue_restart") == []
+    events = second_agent.runner.deps.event_log.list_for_run("run_sdk_queue_restart")
+    assert any(event.type == RuntimeEventType.COMMAND_DEQUEUED for event in events)
+    assert any(event.type == RuntimeEventType.CONTROL_APPLIED for event in events)
 
 
 class _ToolLoopProvider(FakeProvider):
@@ -403,6 +684,45 @@ async def test_sdk_resume_approve_shortcut_executes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sdk_resume_accepts_approved_prompts() -> None:
+    """resume() accepts approved_prompts (Phase 11 H13) and threads it through.
+
+    Regression: hosts (e.g. excel_ai's /decide endpoint) pass
+    ``approved_prompts=...`` into ``Agent.resume``; the convenience method used
+    to omit the parameter, raising ``TypeError: unexpected keyword argument``.
+    """
+    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only("file_write"))
+    paused = await agent.run(
+        AgentRunInput(
+            input="Write file.",
+            run_id="run_sdk_resume_ap",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy={
+                "approval_required_for_risk": "medium",
+                "metadata": {
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="file_write",
+                            args={"path": "/tmp/sdk-resume-ap.txt", "content": "x"},
+                        ).model_dump(mode="json")
+                    ]
+                },
+            },
+        )
+    )
+    assert paused.interrupt is not None
+    # The empty-list case mirrors the host's ``approved_prompts or None`` path.
+    resumed = await agent.resume(
+        run_id="run_sdk_resume_ap",
+        interrupt_id=paused.interrupt.interrupt_id,
+        action=ResumeAction.APPROVE,
+        approved_prompts=[],
+    )
+    assert resumed.status.value == "completed"
+
+
+@pytest.mark.asyncio
 async def test_sdk_run_text_uses_agent_defaults() -> None:
     """SDK run_text should build AgentRunInput from text and defaults."""
     agent = create_agent(
@@ -506,6 +826,8 @@ def test_sdk_config_from_env_returns_bootstrap_fields(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_DRIVER_BASE_URL", "https://example.com/v1")
     monkeypatch.setenv("AGENT_DRIVER_MODEL", "test-model")
     monkeypatch.setenv("AGENT_DRIVER_API_KEY", "secret")
+    monkeypatch.setenv("AGENT_DRIVER_TIMEOUT_S", "12.5")
+    monkeypatch.setenv("AGENT_DRIVER_MAX_RETRIES", "5")
     config = sdk_config_from_env()
     assert config.run_live_tests is True
     assert config.runtime_store_kind == "sqlite"
@@ -513,6 +835,8 @@ def test_sdk_config_from_env_returns_bootstrap_fields(monkeypatch) -> None:
     assert config.base_url == "https://example.com/v1"
     assert config.model == "test-model"
     assert config.api_key == "secret"
+    assert config.timeout_s == 12.5
+    assert config.max_retries == 5
 
 
 def test_sdk_create_agent_rejects_unknown_toolset_names() -> None:
@@ -522,3 +846,31 @@ def test_sdk_create_agent_rejects_unknown_toolset_names() -> None:
             provider=FakeProvider(response_text="ok"),
             tools=ToolSet.only("missing_tool"),
         )
+
+
+@pytest.mark.asyncio
+async def test_sdk_wraps_provider_status_errors_with_request_id() -> None:
+    """SDK callers should get typed provider errors with request IDs."""
+    agent = create_agent(provider=_HTTPErrorProvider(response_text="unused"), tools=ToolSet.only())
+
+    with pytest.raises(ProviderStatusError) as exc_info:
+        await agent.query("hello")
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.request_id == "req_123"
+    assert "rate limited" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_sdk_output_context_and_trace_summary_contract() -> None:
+    """SDK outputs should expose context diagnostics and stable trace summary."""
+    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only())
+    output = await agent.query("Hello", run_id="run_sdk_trace_summary")
+
+    assert output.context.pressure == "ok"
+    assert output.context.recommendation == "continue"
+    summary = summarize_output(output)
+    assert isinstance(summary, TraceSummary)
+    assert summary.run_id == "run_sdk_trace_summary"
+    assert agent.summarize(output).run_id == summary.run_id
+    assert agent.support_bundle(output)["trace_summary"]["run_id"] == summary.run_id

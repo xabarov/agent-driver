@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from agent_driver.contracts.tools import ToolManifest
 from agent_driver.tools.registry.types import ToolHandler
@@ -91,6 +92,32 @@ class ToolRegistry:
     def list_aliases(self) -> dict[str, str]:
         """Phase 12 H21 — read-only snapshot of the alias → canonical map."""
         return dict(self._alias_index)
+
+    def catalog(
+        self,
+        *,
+        projection: Literal["sdk", "prompt", "full"] = "sdk",
+    ) -> list[dict[str, object]]:
+        """Return stable catalog projections for SDK/UI callers."""
+        rows: list[dict[str, object]] = []
+        for registered in self.list_registered():
+            manifest = registered.manifest
+            base: dict[str, object] = {
+                "name": manifest.name,
+                "description": manifest.description,
+                "risk": manifest.risk.value,
+                "side_effect": manifest.side_effect.value,
+                "approval_mode": manifest.approval_mode.value,
+                "aliases": list(manifest.aliases),
+                "metadata": dict(manifest.metadata),
+            }
+            if projection in {"prompt", "full"}:
+                base["args_schema"] = manifest.args_schema or {}
+                base["remediation_hints"] = list(manifest.remediation_hints)
+            if projection == "full":
+                base.update(manifest.model_dump(mode="json"))
+            rows.append(base)
+        return rows
 
 
 __all__ = ["RegisteredTool", "ToolRegistry"]

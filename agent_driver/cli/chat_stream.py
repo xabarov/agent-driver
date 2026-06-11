@@ -16,6 +16,8 @@ _TERMINAL_EVENTS = {"run_completed", "run_failed", "run_cancelled"}
 _TOKEN_PRESSURE_LABELS = {
     "ok": "ok",
     "warning": "warn",
+    "early_warning": "early",
+    "delegate_or_summarize": "delegate",
     "compact_recommended": "compact",
     "blocking": "blocking",
 }

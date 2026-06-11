@@ -7,8 +7,9 @@ from agent_driver.contracts.enums import (
     SubagentGroupStatus,
     SubagentJoinPolicy,
     SubagentStatus,
+    SubagentTerminalState,
 )
-from agent_driver.contracts.subagents import SubagentGroup, SubagentRun
+from agent_driver.contracts.subagents import MergeProvenance, SubagentGroup, SubagentRun
 from agent_driver.subagents import InMemorySubagentStore
 
 
@@ -47,6 +48,38 @@ def test_subagent_store_idempotent_spawn() -> None:
     )
     assert first.subagent_run_id == second.subagent_run_id
     assert len(store.list_runs("run_1")) == 1
+
+
+def test_subagent_store_idempotent_spawn_updates_terminal_row() -> None:
+    """Pending idempotent row should be replaced by terminal update."""
+    store = InMemorySubagentStore()
+    pending = SubagentRun(
+        subagent_run_id="sub_1",
+        parent_run_id="run_1",
+        parent_attempt_id="att_1",
+        task_id="task_1",
+        task_type="analysis",
+        description="child",
+        execution_mode=SubagentExecutionMode.SYNC,
+        fanout_slot=1,
+        status=SubagentStatus.RUNNING,
+        metadata={},
+    )
+    completed = pending.model_copy(
+        update={
+            "status": SubagentStatus.COMPLETED,
+            "terminal_state": SubagentTerminalState.SUCCEEDED,
+            "merge_provenance": MergeProvenance(strategy="test", source_kind="child"),
+        }
+    )
+
+    store.upsert_run(pending, idempotency_key="dup")
+    store.upsert_run(completed, idempotency_key="dup")
+
+    rows = store.list_runs("run_1")
+    assert len(rows) == 1
+    assert rows[0].subagent_run_id == "sub_1"
+    assert rows[0].status == SubagentStatus.COMPLETED
 
 
 def test_subagent_group_persist_and_replace() -> None:

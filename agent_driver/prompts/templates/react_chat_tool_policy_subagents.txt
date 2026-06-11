@@ -1,0 +1,7 @@
+## Subagent Delegation
+
+- When `agent_tool` is available and the user explicitly asks to delegate, use it before the final answer.
+- You may also use `agent_tool` for complex tasks with independent subtasks: compare alternatives, draft plus critique, research plus verification, or implementation plus review.
+- Do not use `agent_tool` for simple factual questions, short translations, small rewrites, greetings, or tasks that one assistant pass can answer clearly.
+- Child tasks must be self-contained and bounded: include the concrete task, expected output, constraints, and enough context for the child to work without reading this whole conversation.
+- After a subagent completes, synthesize the child result yourself. Do not end with only a status update such as "the subagent finished".

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agent_driver.contracts.context import PlanApprovalPayload
 from agent_driver.contracts.enums import (
     GuardrailDecision,
     InterruptReason,
@@ -13,11 +14,20 @@ from agent_driver.contracts.enums import (
 )
 from agent_driver.contracts.interrupts import InterruptRequest
 from agent_driver.contracts.tools import ToolError, ToolResultEnvelope
+from agent_driver.runtime.planning_check import is_exit_plan_mode_tool
+from agent_driver.tools.context import (
+    tool_call_context_scope,
+    tool_progress_scope,
+)
 from agent_driver.tools.executor.blocks import append_blocked_call
 from agent_driver.tools.executor.specs import (
     AllowedSpec,
     BlockSpec,
     merge_guardrail_decisions,
+)
+from agent_driver.tools.executor.spill import (
+    should_spill_payload,
+    spill_payload_to_artifact,
 )
 from agent_driver.tools.executor.trace import (
     build_tool_trace,
@@ -25,14 +35,6 @@ from agent_driver.tools.executor.trace import (
     trace_spec_denied,
 )
 from agent_driver.tools.guardrails import GuardrailPipeline, enforce_output_budget
-from agent_driver.tools.context import (
-    tool_call_context_scope,
-    tool_progress_scope,
-)
-from agent_driver.tools.executor.spill import (
-    should_spill_payload,
-    spill_payload_to_artifact,
-)
 
 
 def _bounded_structured_output(
@@ -169,10 +171,13 @@ async def execute_allowed_path(
                 progress=progress,
             )
 
-        with tool_call_context_scope(
-            run_id=str(spec.run_metadata.get("run_id") or ""),
-            thread_id=str(spec.run_metadata.get("thread_id") or ""),
-        ), tool_progress_scope(_record_progress):
+        with (
+            tool_call_context_scope(
+                run_id=str(spec.run_metadata.get("run_id") or ""),
+                thread_id=str(spec.run_metadata.get("thread_id") or ""),
+            ),
+            tool_progress_scope(_record_progress),
+        ):
             raw = await spec.registered.handler(spec.call.args)
         raw_guard = await guardrails.on_tool_result(
             {"tool_name": spec.call.tool_name, "result": raw}
@@ -194,6 +199,10 @@ async def execute_allowed_path(
             raw = _planning_update_payload(raw if isinstance(raw, dict) else {})
         if spec.call.tool_name == "ask_user_question":
             return _append_clarification_interrupt(spec=spec, raw=raw)
+        if is_exit_plan_mode_tool(spec.call.tool_name) and not spec.call.metadata.get(
+            "approved_interrupt_id"
+        ):
+            return _append_plan_approval_interrupt(spec=spec, raw=raw)
         # Phase 12 H18 — disk-spill for oversized handler outputs.
         # When the manifest has ``max_result_size_chars`` set AND the
         # executor has an ArtifactStore wired, persist the full payload
@@ -211,7 +220,7 @@ async def execute_allowed_path(
                 store=spec.artifact_store,
                 tool_name=spec.call.tool_name,
                 run_id=str(spec.run_metadata.get("run_id") or ""),
-                tool_call_id=str(spec.run_metadata.get("attempt_id") or ""),
+                tool_call_id=spec.call.tool_call_id,
             )
             if spilled is not None:
                 raw = spilled[0]
@@ -296,6 +305,9 @@ def _append_clarification_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) -
     choices = raw.get("choices")
     if not isinstance(choices, list):
         choices = []
+    questions = raw.get("questions")
+    if not isinstance(questions, list):
+        questions = []
     allow_multiple = bool(raw.get("allow_multiple", False))
     run_id, attempt_id = _interrupt_identifiers(spec)
     interrupt = InterruptRequest(
@@ -312,6 +324,7 @@ def _append_clarification_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) -
             "args": spec.call.args,
             "prompt": prompt,
             "choices": choices,
+            "questions": questions,
             "allow_multiple": allow_multiple,
         },
         allowed_actions=[
@@ -336,6 +349,82 @@ def _append_clarification_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) -
             manifest=spec.manifest,
             summary="clarification requested",
             error_code="clarification_required",
+        )
+    )
+    spec.result.append(envelope=envelope, trace=trace, interrupt=interrupt)
+    return True
+
+
+def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
+    """Append plan approval interrupt when approval-exit tool has plan content."""
+    if not isinstance(raw, dict):
+        return False
+    plan_raw = raw.get("plan_approval")
+    if not isinstance(plan_raw, dict):
+        return False
+    content = str(plan_raw.get("content") or "").strip()
+    if not content:
+        return False
+    run_id, attempt_id = _interrupt_identifiers(spec)
+    plan_payload = PlanApprovalPayload(
+        plan_id=str(
+            plan_raw.get("plan_id") or f"plan_{spec.call.tool_call_id or spec.index}"
+        ),
+        run_id=run_id,
+        agent_id=str(spec.run_metadata.get("agent_id") or "agent"),
+        content=content,
+        content_hash=str(plan_raw.get("content_hash") or ""),
+        path=(str(plan_raw.get("path")) if plan_raw.get("path") is not None else None),
+        metadata={
+            "source_tool": spec.call.tool_name,
+            **spec.run_metadata,
+        },
+    )
+    interrupt = InterruptRequest(
+        interrupt_id=f"int_{spec.call.tool_call_id or spec.index}",
+        run_id=run_id,
+        attempt_id=attempt_id,
+        checkpoint_id="checkpoint_pending",
+        reason=InterruptReason.PLAN_APPROVAL_REQUIRED,
+        title=plan_payload.title,
+        description=plan_payload.description,
+        proposed_action={
+            "tool_name": spec.call.tool_name,
+            "tool_call_id": spec.call.tool_call_id,
+            "args": spec.call.args,
+            "plan_approval": plan_payload.model_dump(mode="json"),
+        },
+        allowed_actions=[
+            ResumeAction.APPROVE,
+            ResumeAction.REJECT,
+            ResumeAction.EDIT,
+            ResumeAction.CANCEL,
+        ],
+        editable_fields=["content", "path"],
+        metadata={
+            "plan_id": plan_payload.plan_id,
+            "content_hash": plan_payload.content_hash,
+            **spec.run_metadata,
+        },
+    )
+    envelope = ToolResultEnvelope(
+        call=spec.call,
+        decision=ToolPolicyDecision.INTERRUPT,
+        summary=str(raw.get("summary") or "plan approval requested"),
+        structured_output={
+            **raw,
+            "plan_approval": plan_payload.model_dump(mode="json"),
+        },
+        interrupt=interrupt.model_dump(mode="json"),
+        metadata=dict(spec.run_metadata),
+    )
+    trace = build_tool_trace(
+        trace_spec_denied(
+            index=spec.index,
+            call=spec.call,
+            manifest=spec.manifest,
+            summary="plan approval requested",
+            error_code=InterruptReason.PLAN_APPROVAL_REQUIRED.value,
         )
     )
     spec.result.append(envelope=envelope, trace=trace, interrupt=interrupt)

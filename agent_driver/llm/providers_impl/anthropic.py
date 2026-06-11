@@ -38,7 +38,12 @@ import httpx
 
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.usage import UsageSummary
-from agent_driver.llm.base import HttpClientConfig, ProviderBase, StreamRequest
+from agent_driver.llm.base import (
+    HttpClientConfig,
+    ProviderBase,
+    StreamRequest,
+    provider_request_id,
+)
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmProviderKind,
@@ -110,6 +115,28 @@ def _normalize_messages(messages: list[ChatMessage]) -> tuple[str, list[dict[str
             continue
         converted.append({"role": role, "content": str(message.content or "")})
     return "\n".join(system_parts), converted
+
+
+def _mark_last_message_for_cache(messages: list[dict[str, Any]]) -> None:
+    """Attach an ephemeral cache breakpoint to the final message in place.
+
+    Anthropic caches the request prefix up to and including the outermost
+    ``cache_control`` marker. Marking the last message means the entire
+    conversation sent this turn becomes the cached prefix the *next* turn reads
+    back (the next turn only appends), so a growing multi-turn history is billed
+    at cache-read rates instead of re-sending the whole transcript each turn.
+    Content is normalized to a block array so the marker rides the last block.
+    """
+    if not messages:
+        return
+    last = messages[-1]
+    content = last.get("content")
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}]
+        last["content"] = content
+    if isinstance(content, list) and content:
+        # Shallow-copy the final block so we never mutate a caller-shared dict.
+        content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
 
 
 def _extract_text_from_content(content: Any) -> str:
@@ -295,6 +322,11 @@ class AnthropicProvider(ProviderBase):
 
     def _request_payload(self, request: LlmRequest, *, stream: bool) -> dict[str, Any]:
         system_text, messages = _normalize_messages(request.messages)
+        if request.enable_prompt_cache:
+            # Third cache breakpoint (after tools + system): the conversation.
+            # Together they tier the prefix static-tools → system → transcript,
+            # so each layer that is unchanged next turn reads from cache.
+            _mark_last_message_for_cache(messages)
         payload: dict[str, Any] = {
             "model": request.model or self._model,
             "messages": messages,
@@ -382,11 +414,22 @@ class AnthropicProvider(ProviderBase):
                     headers=self._headers(stream=False),
                 )
             response.raise_for_status()
-            return normalize_anthropic_completion_payload(
+            llm_response = normalize_anthropic_completion_payload(
                 response.json(),
                 provider_name=self.name,
                 fallback_model=str(request.model or self._model),
             )
+            request_id = provider_request_id(response.headers)
+            if request_id:
+                llm_response = llm_response.model_copy(
+                    update={
+                        "metadata": {
+                            **llm_response.metadata,
+                            "provider_request_id": request_id,
+                        }
+                    }
+                )
+            return llm_response
 
         handled_errors: tuple[type[BaseException], ...] = (httpx.HTTPError, ValueError)
         return await self.execute_with_telemetry(_op, handled_exceptions=handled_errors)

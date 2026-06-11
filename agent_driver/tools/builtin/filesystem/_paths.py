@@ -6,10 +6,16 @@ import fnmatch
 from pathlib import Path
 from typing import Any
 
-from agent_driver.tools.context import get_workspace_cwd, get_workspace_jail_root
+from agent_driver.tools.context import (
+    get_fs_io,
+    get_workspace_cwd,
+    get_workspace_jail_root,
+)
 
 MAX_BYTES_DEFAULT = 64_000
 MAX_OFFSET_DEFAULT = 1_000_000
+
+
 def _ensure_within_workspace_jail(path: Path) -> None:
     """Reject paths outside run-scoped workspace when jail root is set."""
     root = get_workspace_jail_root()
@@ -95,6 +101,30 @@ def read_text_with_size_guard(path: Path, *, max_bytes: int) -> str:
         raise ValueError(f"file exceeds max_bytes ({size}>{max_bytes})")
     with path.open("r", encoding="utf-8", newline="") as handle:
         return handle.read()
+
+
+async def read_text_routed(path: Path, *, max_bytes: int) -> str:
+    """Read ``path`` via the run-scoped file IO if set, else local disk.
+
+    The size guard is enforced either way (post-read for the routed backend).
+    Path validation/jailing has already happened in ``resolve_file_path``; this
+    only redirects where the bytes come from.
+    """
+    file_io = get_fs_io()
+    if file_io is None:
+        return read_text_with_size_guard(path, max_bytes=max_bytes)
+    content = await file_io.read_text(str(path))
+    ensure_text_size(content, max_bytes=max_bytes)
+    return content
+
+
+async def write_text_routed(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` via the run-scoped file IO, else disk."""
+    file_io = get_fs_io()
+    if file_io is None:
+        path.write_text(content, encoding="utf-8")
+        return
+    await file_io.write_text(str(path), content)
 
 
 def ensure_text_size(text: str, *, max_bytes: int) -> None:

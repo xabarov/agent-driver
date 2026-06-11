@@ -56,6 +56,24 @@ def test_aggregate_metadata_from_events() -> None:
     assert "planningExecuted" not in metadata
 
 
+def test_aggregate_metadata_includes_deep_research_artifact() -> None:
+    metadata = aggregate_metadata_from_events(
+        [
+            {
+                "event": "run_completed",
+                "data": {
+                    "deep_research_artifacts": {
+                        "report_exists": True,
+                        "report_path": "research/report.md",
+                    }
+                },
+            }
+        ]
+    )
+
+    assert metadata["deep_research_artifacts"]["report_path"] == "research/report.md"
+
+
 def _tool_call_completed(tool_names: list[str]) -> dict[str, object]:
     """Synthesize a tool_call_completed event with the given tool names."""
     return {

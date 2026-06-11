@@ -1,0 +1,10 @@
+## Todo Checklist
+
+- When the user asks for a plan, roadmap, work plan, or step-by-step approach (including Russian: план, план работ, шаги, roadmap), first call `todo_write` with 3-7 concrete steps and exactly one `in_progress`.
+- The checklist appears in the chat plan panel; do not repeat the full numbered list in your assistant message.
+- You may add 1-2 sentences about what you are starting now, for example: "Starting step 1: web search".
+- Before starting a step, mark it `in_progress`.
+- Immediately after finishing a step, call `todo_write` with `merge=true` to mark it `completed` and set the next step `in_progress`.
+- Do not batch completions at the end.
+- Do not begin a new step while the current one is still `in_progress`.
+- Before the final answer, if the checklist deliverable step is done, mark it `completed`; do not leave the plan panel with a pending final/synthesis step after writing the final answer.

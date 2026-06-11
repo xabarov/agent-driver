@@ -125,9 +125,15 @@ def test_tally_accumulates_explicit_cost():
 
 def test_ledger_routes_usage_to_per_model_tally():
     ledger = CostLedger()
-    ledger.accumulate(_usage(model="haiku-a", input_tokens=100, output_tokens=50, cost=0.01))
-    ledger.accumulate(_usage(model="haiku-a", input_tokens=200, output_tokens=100, cost=0.02))
-    ledger.accumulate(_usage(model="opus-b", input_tokens=50, output_tokens=25, cost=0.5))
+    ledger.accumulate(
+        _usage(model="haiku-a", input_tokens=100, output_tokens=50, cost=0.01)
+    )
+    ledger.accumulate(
+        _usage(model="haiku-a", input_tokens=200, output_tokens=100, cost=0.02)
+    )
+    ledger.accumulate(
+        _usage(model="opus-b", input_tokens=50, output_tokens=25, cost=0.5)
+    )
     assert set(ledger.per_model.keys()) == {"haiku-a", "opus-b"}
     assert ledger.per_model["haiku-a"].input_tokens == 300
     assert ledger.per_model["haiku-a"].api_calls == 2
@@ -155,9 +161,7 @@ def test_ledger_ignores_usage_without_model_name():
     """No-op when usage.model_name is None — protects against partial
     provider responses."""
     ledger = CostLedger()
-    ledger.accumulate(
-        UsageSummary(input_tokens=100, output_tokens=50, model_name=None)
-    )
+    ledger.accumulate(UsageSummary(input_tokens=100, output_tokens=50, model_name=None))
     assert ledger.per_model == {}
 
 
@@ -173,9 +177,9 @@ def test_ledger_computes_cost_from_pricing_when_explicit_cost_missing():
             cost=None,
         )
     )
-    assert ledger.per_model[
-        "claude-haiku-4-5-20251001"
-    ].cost_usd == pytest.approx(2.8, rel=1e-3)
+    assert ledger.per_model["claude-haiku-4-5-20251001"].cost_usd == pytest.approx(
+        2.8, rel=1e-3
+    )
 
 
 # -- per-tool duration --------------------------------------------------
@@ -202,7 +206,9 @@ def test_ledger_ignores_negative_tool_duration():
 
 
 def test_register_pricing_overrides_lookup():
-    register_pricing("my-custom-model", Pricing(input_per_million=99.0, output_per_million=199.0))
+    register_pricing(
+        "my-custom-model", Pricing(input_per_million=99.0, output_per_million=199.0)
+    )
     p = lookup_pricing("my-custom-model")
     assert p is not None
     assert p.input_per_million == 99.0
@@ -244,3 +250,24 @@ def test_ledger_round_trips_through_pydantic():
     assert restored.total_cost_usd() == 0.05
     assert restored.per_tool_duration_ms["shell"] == 42.0
     assert restored.per_model["a"].input_tokens == 100
+
+
+def test_openrouter_open_weight_pricing_registered() -> None:
+    """The OpenRouter open-weight list prices resolve via the registry."""
+    from agent_driver.contracts.usage import UsageSummary
+    from agent_driver.observability.cost_ledger import (
+        estimate_cost_usd,
+        lookup_pricing,
+    )
+
+    assert lookup_pricing("qwen/qwen-2.5-7b-instruct") is not None
+    assert lookup_pricing("qwen/qwen3.5-397b-a17b") is not None
+    # 1M in + 1M out at $0.04/$0.10 → $0.14.
+    cost = estimate_cost_usd(
+        UsageSummary(
+            input_tokens=1_000_000,
+            output_tokens=1_000_000,
+            model_name="qwen/qwen-2.5-7b-instruct",
+        )
+    )
+    assert cost == pytest.approx(0.14)

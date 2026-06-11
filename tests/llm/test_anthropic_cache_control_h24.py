@@ -27,7 +27,9 @@ def _make_provider() -> AnthropicProvider:
     )
 
 
-def _make_request(*, enable_prompt_cache: bool, tools: list[dict] | None = None) -> LlmRequest:
+def _make_request(
+    *, enable_prompt_cache: bool, tools: list[dict] | None = None
+) -> LlmRequest:
     return LlmRequest(
         messages=[
             ChatMessage(role=ChatRole.SYSTEM, content="You are a recon agent."),
@@ -45,7 +47,11 @@ def test_default_keeps_system_as_string_no_cache_markers():
         _make_request(
             enable_prompt_cache=False,
             tools=[
-                {"name": "subfinder", "description": "passive subdomain enum", "input_schema": {}},
+                {
+                    "name": "subfinder",
+                    "description": "passive subdomain enum",
+                    "input_schema": {},
+                },
                 {"name": "httpx", "description": "live probe", "input_schema": {}},
             ],
         ),
@@ -141,3 +147,46 @@ def test_default_field_is_false():
         messages=[ChatMessage(role=ChatRole.USER, content="ping")],
     )
     assert request.enable_prompt_cache is False
+
+
+# --- D5: conversation cache breakpoint ---------------------------------------
+
+
+def test_default_leaves_conversation_uncached():
+    """Without opt-in, the last message keeps its plain string content."""
+    payload = _make_provider()._request_payload(
+        _make_request(enable_prompt_cache=False), stream=False
+    )
+    assert payload["messages"][-1]["content"] == "Scan example.org"
+
+
+def test_opt_in_marks_last_message_as_cache_breakpoint():
+    """The conversation prefix is cached: marker rides the last message."""
+    payload = _make_provider()._request_payload(
+        _make_request(enable_prompt_cache=True), stream=False
+    )
+    last = payload["messages"][-1]
+    assert last["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert last["content"][-1]["text"] == "Scan example.org"
+
+
+def test_opt_in_marks_only_the_final_message():
+    """Only the outermost (last) message carries the breakpoint."""
+    request = LlmRequest(
+        messages=[
+            ChatMessage(role=ChatRole.SYSTEM, content="sys"),
+            ChatMessage(role=ChatRole.USER, content="first"),
+            ChatMessage(role=ChatRole.ASSISTANT, content="reply"),
+            ChatMessage(role=ChatRole.USER, content="second"),
+        ],
+        enable_prompt_cache=True,
+    )
+    payload = _make_provider()._request_payload(request, stream=False)
+    earlier = payload["messages"][:-1]
+    for message in earlier:
+        content = message["content"]
+        blocks = content if isinstance(content, list) else [{"text": content}]
+        assert all("cache_control" not in b for b in blocks)
+    assert payload["messages"][-1]["content"][-1]["cache_control"] == {
+        "type": "ephemeral"
+    }

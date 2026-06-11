@@ -20,6 +20,7 @@ class SubagentParentHandoff:
     artifact_refs: list[dict[str, object]]
     digest_refs: list[dict[str, object]]
     planning_state: dict[str, object] | None
+    workspace_cwd: str | None = None
 
 
 def parent_handoff_from_legacy_kwargs(
@@ -49,6 +50,7 @@ def parent_handoff_from_legacy_kwargs(
         artifact_refs=parent_artifact_refs,
         digest_refs=parent_digest_refs,
         planning_state=parent_planning_state,
+        workspace_cwd=None,
     )
 
 

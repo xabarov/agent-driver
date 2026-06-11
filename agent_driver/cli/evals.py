@@ -14,12 +14,19 @@ from typing import Any
 import httpx
 
 from agent_driver.contracts import ResumeAction, ToolCall, ToolRisk
-from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse, UsageSummary
+from agent_driver.llm.contracts import (
+    LlmFinishReason,
+    LlmRequest,
+    LlmResponse,
+    UsageSummary,
+)
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.cli.providers import CliProviderConfig, build_cli_provider
 from agent_driver.cli.tools import CliToolConfig, build_cli_toolset
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.events import RuntimeEvent
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
+from agent_driver.observability.run_trace.summary import summarize_run_trace
 from agent_driver.runtime.single_agent.config_sections import PythonToolSettings
 from agent_driver.tools.builtin.python_imports import resolve_python_default_imports
 from agent_driver.runtime.single_agent.types import RunnerConfig
@@ -122,7 +129,9 @@ class _EvalGammaScipyFakeProvider(FakeProvider):
             return LlmResponse(
                 message=ChatMessage(role="assistant", content=""),
                 finish_reason=LlmFinishReason.TOOL_CALLS,
-                usage=UsageSummary(model_provider="fake", model_name="eval-gamma-scipy"),
+                usage=UsageSummary(
+                    model_provider="fake", model_name="eval-gamma-scipy"
+                ),
                 provider="fake",
                 model="eval-gamma-scipy",
                 metadata={
@@ -148,7 +157,9 @@ class _EvalGammaScipyFakeProvider(FakeProvider):
             return LlmResponse(
                 message=ChatMessage(role="assistant", content=""),
                 finish_reason=LlmFinishReason.TOOL_CALLS,
-                usage=UsageSummary(model_provider="fake", model_name="eval-gamma-scipy"),
+                usage=UsageSummary(
+                    model_provider="fake", model_name="eval-gamma-scipy"
+                ),
                 provider="fake",
                 model="eval-gamma-scipy",
                 metadata={
@@ -199,7 +210,9 @@ class _EvalPandasLinalgFakeProvider(FakeProvider):
             return LlmResponse(
                 message=ChatMessage(role="assistant", content=""),
                 finish_reason=LlmFinishReason.TOOL_CALLS,
-                usage=UsageSummary(model_provider="fake", model_name="eval-pandas-linalg"),
+                usage=UsageSummary(
+                    model_provider="fake", model_name="eval-pandas-linalg"
+                ),
                 provider="fake",
                 model="eval-pandas-linalg",
                 metadata={
@@ -411,7 +424,15 @@ def default_deep_scenarios() -> list[EvalScenario]:
             ),
             expected_tools=("todo_write", "file_write", "bash", "read_file"),
             expected_answer_any_of=(
-                ("OK", "успеш", "passed", "unittest", "пройден", "test_greet", "greet.py"),
+                (
+                    "OK",
+                    "успеш",
+                    "passed",
+                    "unittest",
+                    "пройден",
+                    "test_greet",
+                    "greet.py",
+                ),
             ),
             max_tool_calls=12,
             max_steps=18,
@@ -436,7 +457,7 @@ def default_deep_scenarios() -> list[EvalScenario]:
                 "(todos=[{{id,content,status}}], не более одного in_progress). "
                 "После первого todo_write больше не вызывай todo_write. "
                 "Через file_write создай module.py с функцией: "
-                "def greet(name): return f\"Hi, {{name}}!\". "
+                'def greet(name): return f"Hi, {{name}}!". '
                 "Затем одним file_edit замени 'Hi,' на 'Hello,'. "
                 "Обязательно вызови read_file для module.py и только после этого дай финальный ответ. "
                 "Запрещено давать финальный ответ до read_file."
@@ -470,7 +491,11 @@ def default_deep_scenarios() -> list[EvalScenario]:
                 "В ответе укажи результаты pwd и ls."
             ),
             expected_tools=("todo_write", "bash"),
-            expected_answer_any_of=(("pwd",), ("ls",), ("working directory", "директор")),
+            expected_answer_any_of=(
+                ("pwd",),
+                ("ls",),
+                ("working directory", "директор"),
+            ),
             relax_answer_when_tools_pass=True,
             max_tool_calls=8,
             max_steps=14,
@@ -576,6 +601,47 @@ def default_deep_scenarios() -> list[EvalScenario]:
             tool_packs=("planning", "web"),
         ),
         EvalScenario(
+            scenario_id="deep_research_artifact_report",
+            prompt=(
+                "Сделай deep research отчет по fork-join очередям и их применению "
+                "для расчета компьютерных сетей."
+            ),
+            prompt_template=(
+                "Сначала todo_write с валидной схемой. "
+                "Затем найди источники через web_search и открой минимум две страницы "
+                "через web_fetch. "
+                "Полный отчет обязательно пиши в research/report.md через file_write; "
+                "если нужен патч, используй file_edit. "
+                "Финальный ответ после записи файла должен быть коротким: "
+                "упомяни research/report.md, количество проверенных источников и 3 вывода. "
+                "Не используй bash или python."
+            ),
+            expected_tools=("todo_write", "web_search", "web_fetch", "file_write"),
+            forbidden_tools=("bash", "python"),
+            expected_answer_contains=("research/report.md",),
+            max_tool_calls=10,
+            max_steps=18,
+            deadline_seconds=300.0,
+            tags=("deep", "deep_research", "web", "filesystem_write", "planning"),
+            expected_min_tool_calls=5,
+            expected_tool_chain_contains=(
+                "todo_write",
+                "web_search",
+                "web_fetch",
+                "file_write",
+            ),
+            required_tools=("todo_write", "web_search", "web_fetch", "file_write"),
+            sandbox_required=True,
+            tool_packs=(
+                "planning",
+                "web",
+                "filesystem_read",
+                "filesystem_write",
+                "artifacts",
+            ),
+            allow_dangerous_tools=True,
+        ),
+        EvalScenario(
             scenario_id="todo_status_lifecycle",
             prompt=(
                 "Проверь lifecycle статусов todo_write с одним in_progress и переходом на следующий шаг."
@@ -602,9 +668,7 @@ def default_deep_scenarios() -> list[EvalScenario]:
         ),
         EvalScenario(
             scenario_id="multi_file_rename",
-            prompt=(
-                "Сделай связанный рефакторинг по двум файлам: greet -> welcome."
-            ),
+            prompt=("Сделай связанный рефакторинг по двум файлам: greet -> welcome."),
             prompt_template=(
                 "Работай в sandbox. "
                 "Сначала todo_write с валидной схемой и больше не вызывай todo_write. "
@@ -661,9 +725,7 @@ def default_deep_scenarios() -> list[EvalScenario]:
         ),
         EvalScenario(
             scenario_id="forbidden_bash_governance",
-            prompt=(
-                "Покажи Python-файлы в agent_driver/cli, но bash запрещен."
-            ),
+            prompt=("Покажи Python-файлы в agent_driver/cli, но bash запрещен."),
             prompt_template=(
                 "Пользователь просит вывод в стиле `ls -la`, но инструмент bash запрещен для этого сценария. "
                 "Сначала todo_write с валидной схемой. "
@@ -685,9 +747,7 @@ def default_deep_scenarios() -> list[EvalScenario]:
         ),
         EvalScenario(
             scenario_id="multi_file_summary_digest",
-            prompt=(
-                "Прочитай три контракта и дай структурный digest по каждому."
-            ),
+            prompt=("Прочитай три контракта и дай структурный digest по каждому."),
             prompt_template=(
                 "Сначала todo_write с валидной схемой. "
                 "Обязательно три вызова read_file для файлов: "
@@ -699,7 +759,11 @@ def default_deep_scenarios() -> list[EvalScenario]:
             ),
             expected_tools=("todo_write", "read_file"),
             forbidden_tools=("planning_state_update",),
-            expected_answer_contains=("contracts/__init__.py", "contracts/base.py", "contracts/messages.py"),
+            expected_answer_contains=(
+                "contracts/__init__.py",
+                "contracts/base.py",
+                "contracts/messages.py",
+            ),
             max_tool_calls=8,
             max_steps=14,
             deadline_seconds=180.0,
@@ -872,16 +936,19 @@ def default_regression_scenarios() -> list[EvalScenario]:
             prompt_template=(
                 "Сделай web_search с аргументами query='segment anything latest' и "
                 "mock_results=[{{"
-                "\"title\":\"Segment Anything Model 3\","
-                "\"url\":\"https://ai.meta.com/blog/segment-anything-model-3/\","
-                "\"snippet\":\"Meta introduces Segment Anything Model 3 in 2025.\""
+                '"title":"Segment Anything Model 3",'
+                '"url":"https://ai.meta.com/blog/segment-anything-model-3/",'
+                '"snippet":"Meta introduces Segment Anything Model 3 in 2025."'
                 "}}]. "
                 "После этого дай ответ на основе полученного structured output и укажи URL. "
                 "Не используй web_fetch для этого оффлайн-сценария."
             ),
             expected_tools=("web_search",),
             forbidden_tools=("web_fetch",),
-            expected_answer_contains=("https://ai.meta.com/blog/segment-anything-model-3/", "2025"),
+            expected_answer_contains=(
+                "https://ai.meta.com/blog/segment-anything-model-3/",
+                "2025",
+            ),
             tags=("regression", "fresh_knowledge", "web", "offline"),
             expected_min_tool_calls=1,
             required_tools=("web_search",),
@@ -1005,7 +1072,12 @@ def default_regression_scenarios() -> list[EvalScenario]:
             deadline_seconds=240.0,
             tags=("regression", "filesystem_read", "planning", "cli_audit"),
             expected_min_tool_calls=4,
-            expected_tool_chain_contains=("todo_write", "glob_search", "grep_search", "read_file"),
+            expected_tool_chain_contains=(
+                "todo_write",
+                "glob_search",
+                "grep_search",
+                "read_file",
+            ),
             required_tools=("todo_write", "glob_search", "grep_search", "read_file"),
         ),
         EvalScenario(
@@ -1043,12 +1115,25 @@ def default_regression_scenarios() -> list[EvalScenario]:
             max_tool_calls=18,
             max_steps=30,
             deadline_seconds=360.0,
-            tags=("regression", "web", "filesystem_read", "filesystem_write", "planning"),
+            tags=(
+                "regression",
+                "web",
+                "filesystem_read",
+                "filesystem_write",
+                "planning",
+            ),
             expected_min_tool_calls=6,
             sandbox_required=True,
             tool_packs=("planning", "filesystem_read", "filesystem_write", "web"),
             allow_dangerous_tools=True,
-            required_tools=("web_search", "web_fetch", "glob_search", "grep_search", "todo_write", "file_write"),
+            required_tools=(
+                "web_search",
+                "web_fetch",
+                "glob_search",
+                "grep_search",
+                "todo_write",
+                "file_write",
+            ),
         ),
         EvalScenario(
             scenario_id="interrupt_resume_file_write",
@@ -1161,6 +1246,8 @@ class EvalSummary:
     min_tool_calls_satisfied: bool = True
     required_tools_missing: list[str] = field(default_factory=list)
     runtime_step_count: int | None = None
+    llm_usage: dict[str, Any] = field(default_factory=dict)
+    research_efficiency: dict[str, Any] = field(default_factory=dict)
 
 
 _TRANSIENT_EVAL_ERROR_MARKERS = (
@@ -1215,7 +1302,9 @@ async def _run_eval_scenario(
 ) -> tuple[AgentRunOutput, EvalSummary, list[str], Path | None]:
     """Execute one eval scenario (single- or multi-turn, optional interrupt resume)."""
     started = time.monotonic()
-    base_run_id = f"run_eval_{scenario.scenario_id}_{datetime.now(UTC).strftime('%H%M%S')}"
+    base_run_id = (
+        f"run_eval_{scenario.scenario_id}_{datetime.now(UTC).strftime('%H%M%S')}"
+    )
     sandbox_dir: Path | None = None
     if scenario.sandbox_required:
         sandbox_dir = (sandbox_root / scenario.scenario_id).resolve()
@@ -1249,7 +1338,9 @@ async def _run_eval_scenario(
                 tool_policy={"approval_required_for_risk": ToolRisk.MEDIUM.value},
                 app_metadata={
                     "eval_scenario_id": scenario.scenario_id,
-                    "eval_sandbox_dir": (str(sandbox_dir) if sandbox_dir is not None else None),
+                    "eval_sandbox_dir": (
+                        str(sandbox_dir) if sandbox_dir is not None else None
+                    ),
                     "workspace_cwd": str(
                         sandbox_dir if sandbox_dir is not None else Path.cwd().resolve()
                     ),
@@ -1283,7 +1374,11 @@ async def _run_eval_scenario(
                     input=prompt,
                     run_id=f"{base_run_id}_t{turn_index}",
                     thread_id=thread_id,
-                    messages=tuple(protocol_messages[:-1]) if len(protocol_messages) > 1 else (),
+                    messages=(
+                        tuple(protocol_messages[:-1])
+                        if len(protocol_messages) > 1
+                        else ()
+                    ),
                     agent_id="agent.cli.eval",
                     graph_preset="single_react",
                     stream=False,
@@ -1292,10 +1387,14 @@ async def _run_eval_scenario(
                     deadline_seconds=scenario.deadline_seconds,
                     app_metadata={
                         "eval_scenario_id": scenario.scenario_id,
-                        "eval_sandbox_dir": (str(sandbox_dir) if sandbox_dir is not None else None),
+                        "eval_sandbox_dir": (
+                            str(sandbox_dir) if sandbox_dir is not None else None
+                        ),
                         "eval_expected_min_tool_calls": scenario.expected_min_tool_calls,
                         "workspace_cwd": str(
-                            sandbox_dir if sandbox_dir is not None else Path.cwd().resolve()
+                            sandbox_dir
+                            if sandbox_dir is not None
+                            else Path.cwd().resolve()
                         ),
                         "eval_turn_index": turn_index,
                     },
@@ -1367,7 +1466,9 @@ async def run_live_evaluation(
                 scenario_provider = _EvalPandasLinalgFakeProvider()
         if current.interrupt_resume and provider_config.provider == "fake":
             target = (
-                (sandbox_root / current.scenario_id / current.interrupt_resume_path).resolve()
+                (
+                    sandbox_root / current.scenario_id / current.interrupt_resume_path
+                ).resolve()
                 if current.sandbox_required
                 else Path(current.interrupt_resume_path).resolve()
             )
@@ -1429,7 +1530,11 @@ async def run_live_evaluation(
             if not continue_on_error:
                 raise
             failures.append(
-                {"scenario_id": scenario.scenario_id, "error": str(exc), "error_type": type(exc).__name__}
+                {
+                    "scenario_id": scenario.scenario_id,
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                }
             )
             continue
         summaries.append(summary)
@@ -1447,9 +1552,7 @@ async def run_live_evaluation(
             encoding="utf-8",
         )
     if continue_on_error and failures and not summaries:
-        raise RuntimeError(
-            "all scenarios failed; see failures.json in bundle dir"
-        )
+        raise RuntimeError("all scenarios failed; see failures.json in bundle dir")
     _write_scorecard(target_dir=target_dir, summaries=summaries, scenarios=selected)
     _write_triage(target_dir=target_dir, summaries=summaries)
     return target_dir, summaries
@@ -1504,7 +1607,9 @@ def _merge_eval_outputs(
     )
 
 
-def summarize_run(*, scenario: EvalScenario, output: AgentRunOutput, elapsed_ms: int) -> EvalSummary:
+def summarize_run(
+    *, scenario: EvalScenario, output: AgentRunOutput, elapsed_ms: int
+) -> EvalSummary:
     """Compute structured summary and quality score placeholders."""
     events = list(output.events)
     llm_calls = sum(1 for event in events if event.type.value == "llm_call_started")
@@ -1536,9 +1641,7 @@ def summarize_run(*, scenario: EvalScenario, output: AgentRunOutput, elapsed_ms:
                 continue
             tool_name = str(call.get("tool_name") or "")
             args_payload: Any = call.get("args")
-            args_key = (
-                f"{tool_name}:{json.dumps(args_payload, ensure_ascii=True, sort_keys=True)}"
-            )
+            args_key = f"{tool_name}:{json.dumps(args_payload, ensure_ascii=True, sort_keys=True)}"
             tool_args_counts[args_key] = tool_args_counts.get(args_key, 0) + 1
 
     if not tool_args_counts:
@@ -1546,12 +1649,12 @@ def summarize_run(*, scenario: EvalScenario, output: AgentRunOutput, elapsed_ms:
             args_payload: Any = row.args_summary
             if not args_payload and isinstance(row.metadata, dict):
                 args_payload = row.metadata.get("args", {})
-            args_key = (
-                f"{row.tool_name}:{json.dumps(args_payload, ensure_ascii=True, sort_keys=True)}"
-            )
+            args_key = f"{row.tool_name}:{json.dumps(args_payload, ensure_ascii=True, sort_keys=True)}"
             tool_args_counts[args_key] = tool_args_counts.get(args_key, 0) + 1
 
-    repeated_tools = sorted(name for name, count in tool_name_counts.items() if count > 1)
+    repeated_tools = sorted(
+        name for name, count in tool_name_counts.items() if count > 1
+    )
     repeated_tool_arguments = sorted(
         key for key, count in tool_args_counts.items() if count > 1
     )
@@ -1581,11 +1684,15 @@ def summarize_run(*, scenario: EvalScenario, output: AgentRunOutput, elapsed_ms:
     if scenario.follow_up_prompts and scenario.required_tools_last_turn_only:
         pivot = max(1, len(actual_tool_chain) // 2)
         tools_for_required = set(actual_tool_chain[pivot:])
-    expected_missing = sorted(name for name in scenario.expected_tools if name not in used_tools)
+    expected_missing = sorted(
+        name for name in scenario.expected_tools if name not in used_tools
+    )
     required_missing = sorted(
         name for name in scenario.required_tools if name not in tools_for_required
     )
-    forbidden_used = sorted(name for name in scenario.forbidden_tools if name in used_tools)
+    forbidden_used = sorted(
+        name for name in scenario.forbidden_tools if name in used_tools
+    )
 
     if forbidden_used or required_missing:
         tool_use_correctness = "fail"
@@ -1595,12 +1702,30 @@ def summarize_run(*, scenario: EvalScenario, output: AgentRunOutput, elapsed_ms:
         tool_use_correctness = "pass"
 
     min_tool_calls_satisfied = len(tool_trace) >= scenario.expected_min_tool_calls
-    if (not min_tool_calls_satisfied or not expected_chain_satisfied) and tool_use_correctness == "pass":
+    if (
+        not min_tool_calls_satisfied or not expected_chain_satisfied
+    ) and tool_use_correctness == "pass":
         tool_use_correctness = "partial"
 
     answer = output.answer or ""
     if scenario.score_answer_last_turn_only and "\n---\n" in answer:
         answer = answer.rsplit("\n---\n", 1)[-1].strip()
+    trace_summary = summarize_run_trace(
+        run_id=output.run_id,
+        events=_runtime_events_for_trace_summary(events),
+        user_prompt=scenario.prompt,
+        assistant_text=answer,
+        task_contract=_scenario_task_contract(scenario),
+    )
+    research_efficiency = trace_summary.get("research_efficiency")
+    if not isinstance(research_efficiency, dict):
+        research_efficiency = {}
+    llm_block = trace_summary.get("llm")
+    llm_usage = (
+        llm_block.get("usage")
+        if isinstance(llm_block, dict) and isinstance(llm_block.get("usage"), dict)
+        else {}
+    )
     has_assertions = bool(
         scenario.expected_answer_contains or scenario.expected_answer_any_of
     )
@@ -1622,22 +1747,42 @@ def summarize_run(*, scenario: EvalScenario, output: AgentRunOutput, elapsed_ms:
         )
     bug_tags = classify_bug_tags(
         status=output.status.value,
-        terminal_reason=(output.terminal_reason.value if output.terminal_reason else None),
+        terminal_reason=(
+            output.terminal_reason.value if output.terminal_reason else None
+        ),
         expected_tools_missing=expected_missing,
         forbidden_tools_used=forbidden_used,
         empty_tool_results=empty_tool_results,
         repeated_tools=repeated_tools,
         forbidden_python_imports=forbidden_imports_used,
     )
+    trace_failures = trace_summary.get("failures")
+    if isinstance(trace_failures, dict):
+        for key in (
+            "deep_research_no_report_artifact",
+            "deep_research_missing_initial_todo",
+            "deep_research_long_final_after_report",
+        ):
+            if trace_failures.get(key) is True:
+                bug_tags.append(key)
+        if any(tag.startswith("deep_research_") for tag in bug_tags):
+            efficiency = "fail"
+    bug_tags = _dedupe_strings(bug_tags)
 
-    runtime_step_count_raw = metadata.get("step_count") if isinstance(metadata, dict) else None
-    runtime_step_count = int(runtime_step_count_raw) if isinstance(runtime_step_count_raw, int) else None
+    runtime_step_count_raw = (
+        metadata.get("step_count") if isinstance(metadata, dict) else None
+    )
+    runtime_step_count = (
+        int(runtime_step_count_raw) if isinstance(runtime_step_count_raw, int) else None
+    )
 
     return EvalSummary(
         scenario_id=scenario.scenario_id,
         run_id=output.run_id,
         status=output.status.value,
-        terminal_reason=(output.terminal_reason.value if output.terminal_reason else None),
+        terminal_reason=(
+            output.terminal_reason.value if output.terminal_reason else None
+        ),
         steps_total=len(events),
         llm_calls=llm_calls,
         tool_calls=len(tool_trace),
@@ -1650,6 +1795,8 @@ def summarize_run(*, scenario: EvalScenario, output: AgentRunOutput, elapsed_ms:
         min_tool_calls_satisfied=min_tool_calls_satisfied,
         required_tools_missing=required_missing,
         runtime_step_count=runtime_step_count,
+        llm_usage=llm_usage,
+        research_efficiency=research_efficiency,
         empty_tool_results=empty_tool_results,
         interrupts_or_denials=interrupts_or_denials,
         answer_length=len(answer),
@@ -1663,6 +1810,39 @@ def summarize_run(*, scenario: EvalScenario, output: AgentRunOutput, elapsed_ms:
         notes="manual review pending",
         bug_tags=bug_tags,
     )
+
+
+def _runtime_events_for_trace_summary(
+    events: list[RuntimeEvent],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "event": event.type.value,
+            "data": event.payload,
+        }
+        for event in events
+    ]
+
+
+def _scenario_task_contract(scenario: EvalScenario) -> dict[str, Any] | None:
+    if "deep_research" not in scenario.tags:
+        return None
+    return {
+        "deep_research": True,
+        "artifact_required": True,
+        "requires_research": True,
+    }
+
+
+def _dedupe_strings(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
 
 
 _FORBIDDEN_PYTHON_IMPORTS = ("numpy", "scipy", "pandas", "sklearn", "sympy")
@@ -1854,12 +2034,38 @@ def _write_scorecard(
     for item in summaries:
         rows.append(f"## {item.scenario_id}")
         rows.append(f"- run_id: `{item.run_id}`")
-        rows.append(f"- status: `{item.status}` terminal_reason=`{item.terminal_reason}`")
-        rows.append(f"- steps_total: `{item.steps_total}` llm_calls=`{item.llm_calls}` tool_calls=`{item.tool_calls}`")
-        rows.append(f"- repeated_tools: `{', '.join(item.repeated_tools) if item.repeated_tools else '-'}`")
+        rows.append(
+            f"- status: `{item.status}` terminal_reason=`{item.terminal_reason}`"
+        )
+        rows.append(
+            f"- steps_total: `{item.steps_total}` llm_calls=`{item.llm_calls}` tool_calls=`{item.tool_calls}`"
+        )
+        rows.append(
+            "- tool_chain: `"
+            + (" -> ".join(item.actual_tool_chain) if item.actual_tool_chain else "-")
+            + "`"
+        )
+        rows.append(
+            "- tokens: "
+            f"input=`{item.llm_usage.get('input_tokens', 0)}`, "
+            f"output=`{item.llm_usage.get('output_tokens', 0)}`, "
+            f"total=`{item.llm_usage.get('total_tokens', 0)}`, "
+            f"after_report=`{item.research_efficiency.get('output_tokens_after_first_report_update', 0)}`"
+        )
+        rows.append(
+            "- research_efficiency: "
+            f"artifact_expected=`{item.research_efficiency.get('deep_research_artifact_expected', False)}`, "
+            f"report_updates=`{item.research_efficiency.get('report_update_count', 0)}`, "
+            f"first_tool=`{item.research_efficiency.get('first_tool') or '-'}`"
+        )
+        rows.append(
+            f"- repeated_tools: `{', '.join(item.repeated_tools) if item.repeated_tools else '-'}`"
+        )
         rows.append(f"- repeated_tool_arguments: `{len(item.repeated_tool_arguments)}`")
         rows.append(f"- empty_tool_results: `{item.empty_tool_results}`")
-        rows.append(f"- quality: answer=`{item.answer_relevance}`, tools=`{item.tool_use_correctness}`, efficiency=`{item.efficiency}`")
+        rows.append(
+            f"- quality: answer=`{item.answer_relevance}`, tools=`{item.tool_use_correctness}`, efficiency=`{item.efficiency}`"
+        )
         rows.append(f"- bug_tags: `{', '.join(item.bug_tags)}`")
         rows.append(f"- notes: {item.notes}")
         rows.append("")

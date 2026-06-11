@@ -1,0 +1,190 @@
+# ACP adapter — serve an agent to editors over the Agent Client Protocol
+
+The ACP adapter exposes any agent-driver agent to [Agent Client Protocol](https://agentclientprotocol.com)
+clients (Zed and other editors) over **stdio** — no HTTP server, no open ports,
+no auth surface. It is a thin translator: it maps the runtime's streamed
+answer, tool timeline, and approval interrupts onto ACP `session_update` /
+`request_permission` messages, and maps the client's permission choices back
+onto the runtime's resume actions. No business logic lives in the adapter.
+
+This is Phase 1 of the [platform-adapters plan](platform-adapters-plan-2026-06-10.md).
+
+## Install
+
+The adapter needs one optional dependency, gated behind the `[acp]` extra:
+
+```bash
+pip install 'agent-driver[acp]'
+```
+
+The core import graph never pulls it in — only code that opts into ACP imports
+`agent_driver.adapters.acp`.
+
+## Run
+
+```bash
+agent-driver acp --provider openrouter --model <model> --permission-mode standard
+```
+
+`agent-driver acp` builds an agent from the same provider / tool / store /
+permission options as `agent-driver chat`, then serves it over ACP on
+stdin/stdout. Useful flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--provider` / `--model` / `--base-url` / `--api-key` | Provider selection (same as `chat`). |
+| `--permission-mode {yolo,standard,strict}` | Gate tool calls. `standard`/`strict` raise an approval interrupt that becomes an ACP `request_permission`; `yolo` (default) never asks. |
+| `--tools` / `--tool` / `--tool-pack` | Which tools the agent may call. |
+| `--acp-name` / `--acp-version` | Identity advertised to the client on `initialize`. |
+| `--acp-unstable` | Negotiate the unstable ACP protocol variant. |
+| `--store-kind` … | Persistence for checkpoints / event log (same as `chat`). |
+
+The process speaks JSON-RPC on stdio and runs until the client disconnects
+(stdin EOF).
+
+### Zed configuration
+
+Point Zed at the command in `settings.json` (`agent_servers`):
+
+```json
+{
+  "agent_servers": {
+    "agent-driver": {
+      "command": "agent-driver",
+      "args": ["acp", "--provider", "openrouter", "--model", "<model>", "--permission-mode", "standard"]
+    }
+  }
+}
+```
+
+## Protocol mapping
+
+| ACP method | Adapter behavior |
+| --- | --- |
+| `initialize` | Advertises `agent_info` (name/version) and capabilities (`image=false`, `audio=false`, `load_session=true`, session `resume`). No auth methods (stdio). |
+| `authenticate` | No-op (no auth on stdio). |
+| `new_session(cwd, …)` | Allocates a session bound to a fresh runtime thread; remembers `cwd` as the workspace; advertises the available permission `modes`. |
+| `load_session(session_id, …)` | Re-registers the session and **replays its recorded transcript** (user + assistant turns) via `session_update` before returning. |
+| `resume_session(session_id, …)` | Re-registers the session and continues it **without** replaying history. (Routed under the unstable protocol.) |
+| `set_session_mode(session_id, mode_id)` | Switches the session's permission posture. Maps `default`/`yolo`/`standard`/`strict` to a per-run tool gate (see below). |
+| `prompt(prompt, session_id)` | Runs one turn. Emits the answer as `update_agent_message_text`, the tool timeline as `start_tool_call` + `update_tool_call`, and bridges approval interrupts to `request_permission`. Records the turn into the session transcript. Returns a `PromptResponse` with the mapped stop reason. |
+| `cancel(session_id)` | Flags the session and aborts the in-flight run; the turn returns `stop_reason="cancelled"`. |
+
+### Session modes
+
+`set_session_mode` maps an ACP mode id onto the runtime permission gate, applied
+per run for that session:
+
+| Mode | Behavior |
+| --- | --- |
+| `default` | Use the agent's construction-time gate (e.g. `--permission-mode`). |
+| `yolo` | Allow every tool call without asking (overrides the default gate). |
+| `standard` | Ask before dangerous tool calls. |
+| `strict` | Ask before dangerous *and* cautious tool calls. |
+
+Switching the mode emits a `current_mode_update` so the editor reflects the
+active posture.
+
+### Session management
+
+`list_sessions` returns the adapter's known sessions; `fork_session` branches a
+session into a new one (copying its transcript + mode); `close_session` discards
+a session's adapter-side state. `fork_session` / `close_session` are routed under
+the unstable protocol (`use_unstable_protocol=True`); `list_sessions` is stable.
+`set_session_model` is not implemented — the adapter serves a single fixed model.
+
+### Slash commands
+
+`new_session` / `load_session` advertise a small set of slash commands via
+`available_commands_update`, handled in-band by the adapter (no model call):
+
+| Command | Behavior |
+| --- | --- |
+| `/clear` | Clear the conversation transcript and start fresh. |
+| `/help` | List the available slash commands. |
+
+### Stop reasons
+
+The terminal run status (and `terminal_reason`) maps onto ACP's stop reasons:
+
+| Run outcome | ACP `stop_reason` |
+| --- | --- |
+| Completed normally | `end_turn` |
+| Operator cancelled | `cancelled` |
+| Step / budget / deadline limit | `max_turn_requests` |
+| Approval rejected, policy/guardrail block, runtime/model error | `refusal` |
+
+ACP has no error stop reason, so a rejected or failed run is surfaced as a
+`refusal` rather than a misleading `end_turn`.
+
+### Permission round-trip
+
+When a run pauses on a tool-approval interrupt (e.g. under
+`--permission-mode standard`), the adapter:
+
+1. Builds a `ToolCallUpdate` + `PermissionOption`s from the interrupt's allowed
+   actions (`approve` → `allow_once`, `reject` → `reject_once`).
+2. Calls `conn.request_permission(...)` and waits for the client's choice.
+3. Maps the chosen `option_id` back to a `ResumeAction` and resumes the run.
+4. Continues streaming the resumed turn.
+
+A reject ends the run as a `refusal`; an approve resumes it to completion. The
+runtime does **not** re-ask an already-approved call, so an `allow_once`
+outcome cannot loop.
+
+### Client filesystem (editor-native edits)
+
+When the connected client advertises the `fs` capability in `initialize`
+(`fs.readTextFile` / `fs.writeTextFile`), the agent's file tools route their
+reads and writes **through the editor** rather than local disk — using
+`fs/read_text_file` and `fs/write_text_file`. So the agent sees the editor's
+unsaved buffer contents and its edits land in the user's buffers (visible,
+undoable) instead of silently touching disk.
+
+Mechanics: the adapter sets a run-scoped `AsyncFileIO` (`fs_io_scope`) around the
+run; the builtin `read_file` / `file_write` / `file_edit` / `file_patch` tools
+pick it up and await the client calls. Path validation and the workspace jail
+still run locally (the file must resolve within the workspace) — only the byte
+transfer is redirected. Each op falls back to local disk when its specific
+capability is absent, and when the client advertises no `fs` capability the
+tools behave exactly as before (local disk).
+
+### Client terminal (commands in the editor's terminal)
+
+When the client advertises the `terminal` capability, the `bash` tool runs its
+(already policy-checked) command in the **editor's terminal** via the
+`terminal/*` lifecycle — `terminal/create` → `terminal/wait_for_exit` →
+`terminal/output` → `terminal/release` — instead of a local subprocess. The user
+sees the command run in their editor, and its output/exit code flow back into the
+agent.
+
+Mechanics mirror the filesystem seam: the adapter sets a run-scoped
+`AsyncCommandRunner` (`command_runner_scope`) around the run; the `bash` tool
+picks it up. The read-only command policy still runs first (only the execution
+venue changes). With no `terminal` capability the tool runs locally as before.
+
+## Embedding directly
+
+To serve an agent you constructed yourself (bypassing the CLI):
+
+```python
+from agent_driver.adapters.acp import serve_acp
+
+serve_acp(agent, name="my-agent", version="1.0.0")  # blocking, stdio
+```
+
+or `serve_acp_async(...)` inside an existing event loop. See
+[`examples/cookbook/16_acp_adapter.py`](examples/cookbook/16_acp_adapter.py) for
+an offline, in-process round-trip driven by a fake ACP client.
+
+## Not yet implemented
+
+- Live token-by-token streaming (the answer is emitted once per leg, not
+  incrementally) and reasoning/thought deltas.
+- `set_session_model` / `fork_session` / `list_sessions` (single fixed model).
+- `set_session_model` (single fixed model), `elicitation/*` (structured form
+  prompts), `document/*` (editor file lifecycle), `nes/*` (next-edit
+  suggestions), and image/audio prompt content. (Edit-family tools emit a `diff`
+  content block, and `todo_write` emits an `AgentPlanUpdate`, so edits and the
+  plan render natively in the editor.)
+- Image / audio prompt content blocks (text only).

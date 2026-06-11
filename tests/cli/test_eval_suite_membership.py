@@ -15,6 +15,7 @@ def test_deep_suite_contains_only_problematic_and_new_scenarios() -> None:
         "loop_detection_force_final",
         "workspace_cwd_relative_paths",
         "web_zero_results_honest_finalize",
+        "deep_research_artifact_report",
         "todo_status_lifecycle",
         "multi_file_rename",
         "python_sandbox_arithmetic",

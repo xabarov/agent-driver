@@ -68,14 +68,16 @@ async def test_custom_tool_decorator_registers_with_profile_overrides() -> None:
     assert out["summary"] == "hello sdk"
 
 
-def test_tool_from_function_requires_remediation_hints() -> None:
-    """Custom tool registration should fail without remediation hints."""
+def test_tool_from_function_defaults_remediation_hints() -> None:
+    """Custom tool registration should default remediation hints."""
 
-    async def bad_tool(topic: str) -> dict[str, object]:
+    async def good_tool(topic: str) -> dict[str, object]:
         return {"summary": topic}
 
-    with pytest.raises(ValueError, match="remediation_hints"):
-        _ = tool_from_function(bad_tool)
+    definition = tool_from_function(good_tool)
+
+    assert definition.manifest.remediation_hints
+    assert "good_tool" in definition.manifest.remediation_hints[0]
 
 
 def test_custom_tool_docs_include_arg_descriptions_and_hints() -> None:

@@ -36,6 +36,7 @@ from agent_driver.contracts.context.artifacts import (
 from agent_driver.context.artifacts.in_memory import InMemoryArtifactStore
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.tools import GovernedToolExecutor, ToolRegistry
+from agent_driver.tools.context import workspace_cwd_scope
 from agent_driver.tools.executor.spill import (
     PREVIEW_MAX_CHARS,
     should_spill_payload,
@@ -54,7 +55,9 @@ def _build_run_input(run_id: str) -> AgentRunInput:
     )
 
 
-def _make_large_tool(registry: ToolRegistry, *, size_chars: int, max_result: int | None):
+def _make_large_tool(
+    registry: ToolRegistry, *, size_chars: int, max_result: int | None
+):
     """Register a tool returning a JSON payload of approximately `size_chars`."""
 
     async def _handler(_args):
@@ -81,39 +84,51 @@ def _make_large_tool(registry: ToolRegistry, *, size_chars: int, max_result: int
 
 
 def test_should_spill_false_when_no_store():
-    assert should_spill_payload(
-        payload={"items": ["a"] * 100000},
-        max_result_size_chars=100,
-        store=None,
-    ) is False
+    assert (
+        should_spill_payload(
+            payload={"items": ["a"] * 100000},
+            max_result_size_chars=100,
+            store=None,
+        )
+        is False
+    )
 
 
 def test_should_spill_false_when_no_threshold():
     store = InMemoryArtifactStore()
-    assert should_spill_payload(
-        payload={"items": ["a"] * 100000},
-        max_result_size_chars=None,
-        store=store,
-    ) is False
+    assert (
+        should_spill_payload(
+            payload={"items": ["a"] * 100000},
+            max_result_size_chars=None,
+            store=store,
+        )
+        is False
+    )
 
 
 def test_should_spill_false_when_under_threshold():
     store = InMemoryArtifactStore()
-    assert should_spill_payload(
-        payload={"summary": "ok"},
-        max_result_size_chars=10000,
-        store=store,
-    ) is False
+    assert (
+        should_spill_payload(
+            payload={"summary": "ok"},
+            max_result_size_chars=10000,
+            store=store,
+        )
+        is False
+    )
 
 
 def test_should_spill_true_when_over_threshold():
     store = InMemoryArtifactStore()
     payload = {"items": list(range(2000))}  # JSON >> 100 bytes
-    assert should_spill_payload(
-        payload=payload,
-        max_result_size_chars=100,
-        store=store,
-    ) is True
+    assert (
+        should_spill_payload(
+            payload=payload,
+            max_result_size_chars=100,
+            store=store,
+        )
+        is True
+    )
 
 
 def test_spill_returns_replacement_with_preview_and_ref():
@@ -141,6 +156,29 @@ def test_spill_returns_replacement_with_preview_and_ref():
     assert decoded == payload
 
 
+def test_spill_mirrors_payload_to_workspace_tool_results(tmp_path):
+    store = InMemoryArtifactStore()
+    payload = {"items": list(range(2000)), "summary": "lots"}
+    with workspace_cwd_scope(tmp_path):
+        result = spill_payload_to_artifact(
+            payload=payload,
+            store=store,
+            tool_name="bulk_tool",
+            run_id="r1",
+            tool_call_id="call_bulk",
+        )
+
+    assert result is not None
+    replacement, _ = result
+    assert replacement["workspace_artifact_path"] == "tool-results/call_bulk.json"
+    assert (
+        replacement["persisted_artifact"]["workspace_path"]
+        == "tool-results/call_bulk.json"
+    )
+    mirrored = tmp_path / "tool-results" / "call_bulk.json"
+    assert json.loads(mirrored.read_text(encoding="utf-8")) == payload
+
+
 def test_spill_failure_returns_none_caller_falls_back():
     """Mock store that raises → spill returns None; caller falls back."""
 
@@ -162,7 +200,7 @@ def test_spill_failure_returns_none_caller_falls_back():
 
 
 @pytest.mark.asyncio
-async def test_executor_spills_large_output_when_store_wired():
+async def test_executor_spills_large_output_when_store_wired(tmp_path):
     """Large output + manifest opted in + store on executor → spilled."""
     registry = ToolRegistry()
     _make_large_tool(registry, size_chars=80000, max_result=10000)
@@ -172,16 +210,26 @@ async def test_executor_spills_large_output_when_store_wired():
     provider = FakeProvider(response_text="ok")
     response = await provider.complete(
         llm_request_with_planned_calls(
-            planned=[ToolCall(tool_name="bulk_tool", args={})]
+            planned=[
+                ToolCall(
+                    tool_name="bulk_tool",
+                    tool_call_id="call_bulk",
+                    args={},
+                )
+            ]
         )
     )
-    result = await executor.execute(_build_run_input("r_spill"), response)
+    with workspace_cwd_scope(tmp_path):
+        result = await executor.execute(_build_run_input("r_spill"), response)
 
     envelope = result.envelopes[0]
     raw = envelope.structured_output
     assert raw.get("persisted") is True
     assert "persisted_artifact" in raw
     artifact_id = raw["persisted_artifact"]["artifact_id"]
+    assert raw["workspace_artifact_path"] == "tool-results/call_bulk.json"
+    assert raw["persisted_artifact"]["workspace_path"] == "tool-results/call_bulk.json"
+    assert (tmp_path / "tool-results" / "call_bulk.json").is_file()
     # Store has the full payload available.
     stored = store.get(artifact_id)
     assert stored is not None

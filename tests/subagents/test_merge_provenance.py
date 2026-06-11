@@ -41,7 +41,11 @@ def test_merge_append_keeps_summary() -> None:
 def test_merge_vote_picks_consensus() -> None:
     merged, provenance = merge_subagent_outputs(
         merge_mode=SubagentMergeMode.VOTE,
-        runs=[_completed("a", "same"), _completed("b", "same"), _completed("c", "other")],
+        runs=[
+            _completed("a", "same"),
+            _completed("b", "same"),
+            _completed("c", "other"),
+        ],
     )
     assert merged.strip() == "same"
     assert provenance.metadata["mode"] == "vote"

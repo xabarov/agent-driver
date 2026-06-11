@@ -1,10 +1,18 @@
-import { AlertTriangle, Bot, User } from "lucide-react";
+import { AlertTriangle, BookOpenCheck, Bot, MessageSquare, Search, User } from "lucide-react";
 
 import { cn } from "../../lib/cn";
-import { MarkdownRenderer } from "../../lib/markdown";
+import { MarkdownRenderer, StreamingMarkdownRenderer } from "../../lib/markdown";
+import {
+  extractAssistantLinkSources,
+  mergeSourceEvidence,
+} from "../../lib/sourceEvidence";
 import type { ChatMessage } from "../../store/chatStore";
 import { useChatStore } from "../../store/chatStore";
+import { Badge } from "../ui/badge";
 import { AssistantStreaming } from "./AssistantStreaming";
+import { CitationShelf } from "./CitationShelf";
+import { CompactionNoticeCard } from "./CompactionNoticeCard";
+import { DeepResearchPanel } from "./DeepResearchPanel";
 import { MessageActions } from "./MessageActions";
 import { PlanningCard } from "./PlanningCard";
 import { ToolCallCard } from "./ToolCallCard";
@@ -21,17 +29,17 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
   if (message.role === "tool") {
     return <ToolCallCard message={message} />;
   }
+  if (message.role === "compaction") {
+    return <CompactionNoticeCard message={message} />;
+  }
 
   if (message.role === "user") {
     return (
-      <div
-        className="group flex justify-end gap-3 outline-none"
-        tabIndex={-1}
-      >
-        <div className="flex min-w-0 max-w-[85%] flex-col items-end">
+      <div className="group flex justify-end gap-2.5 outline-none" tabIndex={-1}>
+        <div className="flex min-w-0 max-w-[78%] flex-col items-end sm:max-w-[70%]">
           <div
             className={cn(
-              "rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
+              "rounded-2xl rounded-tr-md px-4 py-2.5 text-sm leading-relaxed shadow-sm",
               "bg-[hsl(var(--chat-user-bg))] text-[hsl(var(--chat-user-fg))]",
             )}
           >
@@ -44,7 +52,7 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
             onDelete={() => deleteMessage(message.id)}
           />
         </div>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary">
+        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-secondary">
           <User className="h-4 w-4 text-muted-foreground" />
         </div>
       </div>
@@ -59,13 +67,22 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
   // assistant bubble for that case only.
   const planningFabricated =
     !message.pending && message.metadata?.planningExecuted === "fabricated";
+  const sources = mergeSourceEvidence([
+    ...(message.sources ?? []),
+    ...(message.content ? extractAssistantLinkSources(message.content) : []),
+  ]);
+  const researchMode = message.metadata?.researchMode ?? message.metadata?.research_mode;
+  const researchProfile =
+    message.metadata?.researchProfile ?? message.metadata?.research_profile;
+  const researchBadge = formatResearchBadge(researchMode, researchProfile);
+  const ResearchBadgeIcon = researchBadge?.Icon;
 
   return (
-    <div className="group flex gap-3 outline-none" tabIndex={-1}>
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15">
-        <Bot className="h-4 w-4 text-primary" />
+    <div className="group flex gap-2.5 outline-none" tabIndex={-1}>
+      <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-background shadow-sm">
+        <Bot className="h-3.5 w-3.5 text-primary" />
       </div>
-      <div className="relative min-w-0 max-w-[92%] flex-1">
+      <div className="relative min-w-0 max-w-[min(100%,58rem)] flex-1">
         {planningFabricated ? (
           <div
             role="alert"
@@ -77,28 +94,48 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
           >
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <span>
-              The agent wrote a plan but never invoked a data tool to execute
-              it — the answer below is likely fabricated. Try re-asking with
-              an explicit instruction to use the tools.
+              The agent wrote a plan but never invoked a data tool to execute it — the
+              answer below is likely fabricated. Try re-asking with an explicit
+              instruction to use the tools.
             </span>
           </div>
         ) : null}
         <div
           className={cn(
-            "rounded-2xl px-4 py-3 text-sm leading-relaxed",
-            "bg-[hsl(var(--chat-assistant-bg))]",
+            "rounded-lg border border-border/70 px-4 py-3 text-sm leading-relaxed shadow-sm shadow-black/5",
+            "bg-[hsl(var(--chat-assistant-bg))] text-foreground",
+            "dark:border-border/80 dark:shadow-none",
           )}
         >
-          {message.content ? (
-            message.pending ? (
-              <div className="whitespace-pre-wrap">{message.content}</div>
-            ) : (
-              <MarkdownRenderer content={message.content} />
-            )
+          {researchBadge && ResearchBadgeIcon ? (
+            <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              <Badge
+                variant="outline"
+                className={cn(
+                  "gap-1.5 border-border/80 bg-background/70 px-2 py-0.5 font-medium",
+                  researchBadge.kind === "deep" &&
+                    "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+                )}
+              >
+                <ResearchBadgeIcon className="h-3.5 w-3.5" />
+                {researchBadge.label}
+              </Badge>
+            </div>
+          ) : null}
+          {message.content && message.pending ? (
+            <StreamingMarkdownRenderer content={message.content} />
+          ) : null}
+          {message.content && !message.pending ? (
+            <MarkdownRenderer content={message.content} />
           ) : null}
           {message.planningSnapshot ? (
-            <PlanningCard snapshot={message.planningSnapshot} streaming={message.pending} />
+            <PlanningCard
+              snapshot={message.planningSnapshot}
+              streaming={message.pending}
+            />
           ) : null}
+          {!message.pending ? <CitationShelf sources={sources} /> : null}
+          <DeepResearchPanel state={message.deepResearch} />
           {message.pending ? <AssistantStreaming /> : null}
         </div>
         {showActions ? (
@@ -115,4 +152,30 @@ export function MessageBubble({ message, onRetryAssistant }: MessageBubbleProps)
       </div>
     </div>
   );
+}
+
+function formatResearchBadge(
+  mode: string | undefined,
+  profile: string | undefined,
+):
+  | {
+      label: string;
+      kind: "chat" | "web" | "deep";
+      Icon: typeof Search;
+    }
+  | undefined {
+  if (mode === "deep") {
+    return {
+      label: `Deep: ${profile === "hard" ? "Hard" : "Medium"}`,
+      kind: "deep",
+      Icon: BookOpenCheck,
+    };
+  }
+  if (mode === "web") {
+    return { label: "Web", kind: "web", Icon: Search };
+  }
+  if (mode === "chat") {
+    return { label: "Chat", kind: "chat", Icon: MessageSquare };
+  }
+  return undefined;
 }

@@ -9,7 +9,7 @@ from agent_driver.tools.builtin.filesystem._paths import (
     MAX_BYTES_DEFAULT,
     as_int,
     as_optional_int,
-    read_text_with_size_guard,
+    read_text_routed,
     resolve_file_path,
 )
 
@@ -65,18 +65,22 @@ async def read_file_handler(args: dict[str, Any]) -> dict[str, Any]:
     """Read file and return numbered lines."""
     path = resolve_file_path(args.get("path"))
     max_bytes = as_int(args.get("max_bytes"), default=MAX_BYTES_DEFAULT, minimum=1)
-    raw = read_text_with_size_guard(path, max_bytes=max_bytes)
+    raw = await read_text_routed(path, max_bytes=max_bytes)
     lines = raw.splitlines()
     sliced, start_index = slice_lines(
         lines,
         offset=as_optional_int(args.get("offset")),
         limit=as_optional_int(args.get("limit")),
     )
-    numbered = [f"{idx + 1}|{value}" for idx, value in enumerate(sliced, start=start_index)]
+    numbered = [
+        f"{idx + 1}|{value}" for idx, value in enumerate(sliced, start=start_index)
+    ]
     line_range = (
         f"{start_index + 1}-{start_index + len(sliced)}" if sliced else "empty-range"
     )
-    summary = f"{path} ({len(sliced)} lines, file_lines={len(lines)}, range={line_range})"
+    summary = (
+        f"{path} ({len(sliced)} lines, file_lines={len(lines)}, range={line_range})"
+    )
     return {
         "summary": summary,
         "path": str(path),

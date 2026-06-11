@@ -16,12 +16,29 @@ _RISK_RANK = {
 
 _BUILTIN_PACKS: dict[str, tuple[str, ...]] = {
     "filesystem_read": ("read_file", "glob_search", "grep_search"),
-    "filesystem_write": ("file_write", "file_edit", "notebook_edit"),
+    "filesystem_write": ("file_write", "file_edit", "file_patch", "notebook_edit"),
+    "artifacts": ("artifact_list", "artifact_read", "artifact_preview"),
     "web": ("web_fetch", "web_search"),
+    "source_tools": ("source_read", "pdf_read", "browser_read"),
     "shell": ("bash", "powershell_tool"),
     "python_exec": ("python",),
     "code_intelligence": ("lsp_tool",),
-    "planning": ("planning_state_update", "todo_write", "ask_user_question"),
+    "planning_progress": (
+        "planning_state_update",
+        "todo_write",
+        "ask_user_question",
+    ),
+    "planning_approval": (
+        "enter_plan_mode",
+        "exit_plan_mode_v2",
+    ),
+    "planning": (
+        "planning_state_update",
+        "todo_write",
+        "ask_user_question",
+        "enter_plan_mode",
+        "exit_plan_mode_v2",
+    ),
     "tasking": (
         "task_create",
         "task_get",
@@ -46,6 +63,7 @@ _BUILTIN_PACKS: dict[str, tuple[str, ...]] = {
     ),
     "discovery": (
         "skill_tool",
+        "skill_view",
         "tool_search",
         "brief_tool",
         "agent_tool",
@@ -113,6 +131,16 @@ class ToolSet:
           Suitable for dev consoles where mistakes should be reversible.
         * ``"all"``  — no filter (same as ``ToolSet.all()``). Suitable for
           trusted operators in production engagements.
+        * ``"research_light"`` — source-backed short answers with web tools and
+          visible progress only; excludes subagents, artifact writes, shell, and
+          Python.
+        * ``"deep_research_medium"`` — artifact-first Deep Research with one
+          bounded child, web verification, parent-owned report writes, and
+          artifact preview/read; excludes shell, Python, and hard-only source
+          ladder tools.
+        * ``"deep_research_hard"`` — medium plus hard source-reading ladder
+          tools (``source_read``, ``pdf_read``, ``browser_read``). Browser action
+          tools are still not included.
 
         Raises ``ValueError`` for unknown preset names so misconfigured UIs
         fail loudly rather than silently selecting an empty surface.
@@ -139,8 +167,29 @@ class ToolSet:
             )
         if key == "all":
             return cls.all()
+        if key == "research_light":
+            return cls.packs("web", "planning_progress")
+        if key == "deep_research_medium":
+            return cls.packs(
+                "web",
+                "filesystem_read",
+                "filesystem_write",
+                "artifacts",
+                "planning_progress",
+            ).with_explicit_tools("skill_tool", "skill_view", "agent_tool")
+        if key == "deep_research_hard":
+            return cls.packs(
+                "web",
+                "source_tools",
+                "filesystem_read",
+                "filesystem_write",
+                "artifacts",
+                "planning_progress",
+            ).with_explicit_tools("skill_tool", "skill_view", "agent_tool")
         raise ValueError(
-            f"unknown ToolSet preset '{name}'; expected one of off, safe, dev, all"
+            "unknown ToolSet preset "
+            f"'{name}'; expected one of off, safe, dev, all, research_light, "
+            "deep_research_medium, deep_research_hard"
         )
 
     def with_max_risk(self, max_risk: ToolRisk) -> "ToolSet":
@@ -200,6 +249,25 @@ class ToolSet:
         return ToolSet(
             names=self.names,
             excluded_names=tuple(sorted(existing)),
+            max_risk=self.max_risk,
+            side_effects=self.side_effects,
+            profile=self.profile,
+            application_tags=self.application_tags,
+        )
+
+    def with_explicit_tools(self, *names: str) -> "ToolSet":
+        """Return copy that also includes explicit tool names."""
+        existing = tuple(self.names or ())
+        return ToolSet(
+            names=tuple(
+                dict.fromkeys(
+                    [
+                        *existing,
+                        *(item.strip() for item in names if item.strip()),
+                    ]
+                )
+            ),
+            excluded_names=self.excluded_names,
             max_risk=self.max_risk,
             side_effects=self.side_effects,
             profile=self.profile,

@@ -14,6 +14,35 @@ class PlanningTodoStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class PlanningModeState(StrEnum):
+    """Approval lifecycle for a durable plan artifact."""
+
+    DISABLED = "disabled"
+    COLLECTING = "collecting"
+    AWAITING_APPROVAL = "awaiting_approval"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+
+
+class PlanningHintLevel(StrEnum):
+    """Runtime hint for whether a request should enter planning mode."""
+
+    NONE = "none"
+    SUGGESTED = "suggested"
+    REQUIRED = "required"
+
+
+class PlanningPolicyMode(StrEnum):
+    """Force-planning runtime policy mode."""
+
+    OFF = "off"
+    PROMPT_ONLY = "prompt_only"
+    REQUIRED_FOR_WRITES = "required_for_writes"
+    REQUIRED_FOR_RISKY_TOOLS = "required_for_risky_tools"
+    ALWAYS_FOR_MULTISTEP = "always_for_multistep"
+
+
 class ObservationSource(StrEnum):
     """Source of observation preview captured for model-facing memory."""
 
@@ -42,4 +71,12 @@ class TrimAction(StrEnum):
     DROPPED = "dropped"
 
 
-__all__ = ["ObservationSource", "ObservationTrust", "PlanningTodoStatus", "TrimAction"]
+__all__ = [
+    "ObservationSource",
+    "ObservationTrust",
+    "PlanningModeState",
+    "PlanningHintLevel",
+    "PlanningPolicyMode",
+    "PlanningTodoStatus",
+    "TrimAction",
+]

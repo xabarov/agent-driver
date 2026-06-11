@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from threading import Lock
 from typing import Any
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.scheduler.schedule import Schedule, ScheduleError
+from agent_driver.scheduler.store import (
+    InMemoryJobStore,
+    JobExistsError,
+    JobStore,
+    ScheduledJob,
+)
 from agent_driver.tools.builtin._intent import build_intent_payload
 from agent_driver.tools.registry import ToolRegistry
 
@@ -22,12 +30,28 @@ _SEND_USER_FILE_TOOL = "send_user_file_tool"
 
 @dataclass(slots=True)
 class _AutomationStore:
-    cron_jobs: dict[str, dict[str, Any]] = field(default_factory=dict)
     pr_subscriptions: dict[str, dict[str, Any]] = field(default_factory=dict)
     lock: Lock = field(default_factory=Lock)
 
 
 _AUTOMATION_STORE = _AutomationStore()
+
+# Cron jobs are backed by a durable JobStore abstraction so the tool surface
+# and the Scheduler share one source of truth. The default is process-local
+# (preserving prior behavior); a host calls ``configure_cron_store`` with a
+# ``SqliteJobStore`` to make jobs durable and schedulable across restarts.
+_CRON_STORE: JobStore = InMemoryJobStore()
+
+
+def configure_cron_store(store: JobStore) -> None:
+    """Point the cron_* tools at a specific (e.g. durable) job store."""
+    global _CRON_STORE  # pylint: disable=global-statement
+    _CRON_STORE = store
+
+
+def cron_store() -> JobStore:
+    """Return the job store the cron_* tools currently write to."""
+    return _CRON_STORE
 
 
 def register_automation_tools(registry: ToolRegistry) -> None:
@@ -249,42 +273,61 @@ async def _workflow_handler(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _cron_row(job: ScheduledJob) -> dict[str, Any]:
+    """Build the intent-envelope response row for a stored cron job."""
+    intent = job.metadata.get("intent")
+    if isinstance(intent, dict):
+        return intent
+    return build_intent_payload(
+        source_tool=_CRON_CREATE_TOOL,
+        adapter_kind="automation",
+        id_prefix="cron",
+        payload={
+            "job_name": job.job_name,
+            "schedule": job.schedule,
+            "command": job.command,
+        },
+    )
+
+
 async def _cron_create_handler(args: dict[str, Any]) -> dict[str, Any]:
     job_name = _required_str(args.get("job_name"), field_name="job_name")
     schedule = _required_str(args.get("schedule"), field_name="schedule")
     command = _required_str(args.get("command"), field_name="command")
-    with _AUTOMATION_STORE.lock:
-        if job_name in _AUTOMATION_STORE.cron_jobs:
-            raise ValueError(f"cron job already exists: {job_name}")
-        row = build_intent_payload(
-            source_tool=_CRON_CREATE_TOOL,
-            adapter_kind="automation",
-            id_prefix="cron",
-            payload={
-                "job_name": job_name,
-                "schedule": schedule,
-                "command": command,
-            },
-        )
-        _AUTOMATION_STORE.cron_jobs[job_name] = row
+    try:
+        Schedule.parse(schedule)
+    except ScheduleError as exc:
+        raise ValueError(f"invalid schedule: {exc}") from exc
+    row = build_intent_payload(
+        source_tool=_CRON_CREATE_TOOL,
+        adapter_kind="automation",
+        id_prefix="cron",
+        payload={"job_name": job_name, "schedule": schedule, "command": command},
+    )
+    job = ScheduledJob(
+        job_name=job_name,
+        schedule=schedule,
+        command=command,
+        created_at=datetime.now(tz=timezone.utc),
+        metadata={"intent": row},
+    )
+    try:
+        _CRON_STORE.add(job)
+    except JobExistsError as exc:
+        raise ValueError(str(exc)) from exc
     return {"summary": f"cron created: {job_name}", "cron_job": row}
 
 
 async def _cron_delete_handler(args: dict[str, Any]) -> dict[str, Any]:
     job_name = _required_str(args.get("job_name"), field_name="job_name")
-    with _AUTOMATION_STORE.lock:
-        row = _AUTOMATION_STORE.cron_jobs.pop(job_name, None)
-    if row is None:
+    job = _CRON_STORE.get(job_name)
+    if job is None or not _CRON_STORE.delete(job_name):
         raise ValueError(f"unknown cron job: {job_name}")
-    return {"summary": f"cron deleted: {job_name}", "deleted_cron_job": row}
+    return {"summary": f"cron deleted: {job_name}", "deleted_cron_job": _cron_row(job)}
 
 
 async def _cron_list_handler(_args: dict[str, Any]) -> dict[str, Any]:
-    with _AUTOMATION_STORE.lock:
-        rows = [
-            _AUTOMATION_STORE.cron_jobs[name]
-            for name in sorted(_AUTOMATION_STORE.cron_jobs)
-        ]
+    rows = [_cron_row(job) for job in _CRON_STORE.list()]
     return {"summary": f"{len(rows)} cron jobs listed", "cron_jobs": rows}
 
 
@@ -362,9 +405,15 @@ def _required_str(raw: Any, *, field_name: str) -> str:
 
 
 def _reset_automation_store_for_tests() -> None:
+    global _CRON_STORE  # pylint: disable=global-statement
+    _CRON_STORE = InMemoryJobStore()
     with _AUTOMATION_STORE.lock:
-        _AUTOMATION_STORE.cron_jobs.clear()
         _AUTOMATION_STORE.pr_subscriptions.clear()
 
 
-__all__ = ["register_automation_tools", "_reset_automation_store_for_tests"]
+__all__ = [
+    "configure_cron_store",
+    "cron_store",
+    "register_automation_tools",
+    "_reset_automation_store_for_tests",
+]

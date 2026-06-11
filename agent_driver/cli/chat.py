@@ -25,6 +25,7 @@ from agent_driver.cli.tui.renderer import build_renderer
 from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.storage import RuntimeEventLog
+from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.sdk import Agent
 from agent_driver.cli.sessions import SessionStore
 from agent_driver.cli.tui.plan_panel import format_plan_panel, plan_progress_footer
@@ -475,6 +476,7 @@ async def run_chat_session(
     animate: bool = False,
     input_reader: Callable[[str], str] | None = None,
     output: Callable[[str], None] | None = None,
+    tool_gate: ToolGate | None = None,
 ) -> int:
     """Run interactive chat loop until explicit exit or EOF."""
     write = output or (lambda text: print(text, end="", flush=True))
@@ -679,7 +681,8 @@ async def run_chat_session(
                     max_tool_calls=max_tool_calls,
                     deadline_seconds=deadline_seconds,
                     app_metadata=app_metadata,
-                )
+                ),
+                tool_gate=tool_gate,
             )
             try:
                 (

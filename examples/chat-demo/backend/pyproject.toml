@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "FastAPI backend for agent-driver chat demo."
 requires-python = ">=3.11"
 dependencies = [
+  "arize-phoenix-otel>=0.16.0",
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
   "pydantic-settings>=2.5.0",
@@ -29,4 +30,3 @@ include = ["app*"]
 testpaths = ["tests"]
 addopts = "-q"
 asyncio_mode = "auto"
-

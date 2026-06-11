@@ -1,13 +1,33 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from app.api.chat import (
+    _chat_tool_policy,
+    _effective_chat_preset,
+    _effective_research_mode,
+    _task_contract_for_trace_summary,
+)
+from app.config import Settings
+from app.schemas.chat import ChatMessageRequest
+from app.services.agent_factory import _tool_config_from_preset
+
+from agent_driver.runtime.chat_policy import initial_tool_choice_for_chat
+
 
 async def test_tools_default_preset(client) -> None:
     response = await client.get("/api/tools")
     assert response.status_code == 200
     payload = response.json()
     names = {item["name"] for item in payload["tools"]}
-    assert "web_search" in names
-    assert "todo_write" in names
+    assert names == {
+        "agent_tool",
+        "python",
+        "skill_tool",
+        "skill_view",
+        "web_fetch",
+        "web_search",
+    }
     assert "read_file" not in names
     assert "bash" not in names
     assert payload["workspace"]["mode"] == "session"
@@ -17,33 +37,354 @@ async def test_tools_off_preset_query(client) -> None:
     response = await client.get("/api/tools", params={"preset": "off"})
     assert response.status_code == 200
     payload = response.json()
-    assert payload["tools"] == []
-
-
-async def test_tools_workspace_preset_includes_readonly_filesystem(client) -> None:
-    response = await client.get("/api/tools", params={"preset": "workspace", "session_id": "session_a"})
-    assert response.status_code == 200
-    payload = response.json()
     names = {item["name"] for item in payload["tools"]}
-    assert "web_search" in names
-    assert "read_file" in names
-    assert "grep_search" in names
-    assert "file_write" not in names
-    assert payload["workspace"]["sessionId"] == "session_a"
+    assert names == {"agent_tool", "python"}
 
 
-async def test_tools_dev_preset_includes_workspace_write_and_shell(client) -> None:
+async def test_tools_web_search_preset_only_shows_search(client) -> None:
+    response = await client.get("/api/tools", params={"preset": "web_search"})
+    assert response.status_code == 200
+    names = {item["name"] for item in response.json()["tools"]}
+    assert names == {"agent_tool", "python", "web_search"}
+
+
+async def test_tools_web_fetch_preset_only_shows_fetch(client) -> None:
+    response = await client.get("/api/tools", params={"preset": "web_fetch"})
+    assert response.status_code == 200
+    names = {item["name"] for item in response.json()["tools"]}
+    assert names == {"agent_tool", "python", "web_fetch"}
+
+
+async def test_tools_agents_preset_shows_agent_tool(client) -> None:
+    response = await client.get("/api/tools", params={"preset": "agents"})
+    assert response.status_code == 200
+    names = {item["name"] for item in response.json()["tools"]}
+    assert names == {"agent_tool", "python"}
+
+
+async def test_tools_deep_research_preset_shows_agent_tool(client) -> None:
+    response = await client.get("/api/tools", params={"preset": "deep_research"})
+    assert response.status_code == 200
+    names = {item["name"] for item in response.json()["tools"]}
+    assert "agent_tool" in names
+    assert "python" not in names
+    assert {"skill_tool", "skill_view", "web_fetch", "web_search"}.issubset(names)
+
+
+async def test_tools_profile_presets_have_expected_surfaces(client) -> None:
+    light = await client.get("/api/tools", params={"preset": "research_light"})
+    medium = await client.get("/api/tools", params={"preset": "deep_research_medium"})
+    hard = await client.get("/api/tools", params={"preset": "deep_research_hard"})
+
+    assert light.status_code == 200
+    assert medium.status_code == 200
+    assert hard.status_code == 200
+    light_names = {item["name"] for item in light.json()["tools"]}
+    medium_names = {item["name"] for item in medium.json()["tools"]}
+    hard_names = {item["name"] for item in hard.json()["tools"]}
+    assert light_names == {"web_fetch", "web_search"}
+    assert {"agent_tool", "skill_tool", "skill_view"}.issubset(medium_names)
+    assert {"agent_tool", "skill_tool", "skill_view", "source_read"}.issubset(
+        hard_names
+    )
+    assert "source_read" not in medium_names
+    assert "python" not in medium_names
+    assert "python" not in hard_names
+
+
+async def test_tools_legacy_dev_preset_still_hides_filesystem_from_public_endpoint(
+    client,
+) -> None:
     response = await client.get("/api/tools", params={"preset": "dev"})
     assert response.status_code == 200
     names = {item["name"] for item in response.json()["tools"]}
-    assert {"web_search", "read_file", "file_write", "bash"}.issubset(names)
+    assert "read_file" not in names
+    assert "write_file" not in names
+    assert "bash" not in names
 
 
 async def test_workspace_sample_import_populates_session_workspace(client) -> None:
-    response = await client.post("/api/workspace/sample", params={"session_id": "session_sample"})
+    response = await client.post(
+        "/api/workspace/sample", params={"session_id": "session_sample"}
+    )
     assert response.status_code == 200
     payload = response.json()
     assert payload["ok"] is True
     assert "README.md" in payload["files"]
     assert payload["workspace"]["sessionId"] == "session_sample"
     assert payload["workspace"]["fileCount"] >= 3
+
+
+def test_chat_tool_policy_adds_adaptive_planning_hint() -> None:
+    """Chat requests should carry adaptive planning metadata into the runtime."""
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="Add adaptive planning support and update runtime tests",
+        ),
+        settings=Settings(),
+    )
+    hint = policy.metadata["planning_hint"]
+    assert isinstance(hint, dict)
+    assert hint["level"] == "suggested"
+
+
+def test_chat_tool_policy_adds_force_planning_mode() -> None:
+    """Chat-demo env can choose the force-planning runtime mode."""
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="write a file",
+            force_planning=True,
+        ),
+        settings=Settings(CHAT_DEMO_FORCE_PLANNING_MODE="prompt_only"),
+    )
+    force_planning = policy.metadata["force_planning"]
+    assert isinstance(force_planning, dict)
+    assert force_planning["enabled"] is True
+    assert force_planning["mode"] == "prompt_only"
+
+
+def test_chat_tool_policy_denies_clarification_tools_for_deliverable_request() -> None:
+    """A direct final/draft request should not pause on another clarification."""
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="напиши реферат, не план, начни с введения",
+        ),
+        settings=Settings(),
+    )
+    assert policy.metadata["deliverable_request"]["enabled"] is True
+    assert set(policy.denied_tools or ()) == {
+        "ask_user_question",
+        "enter_plan_mode",
+        "exit_plan_mode_v2",
+    }
+
+
+def test_chat_tool_policy_treats_report_contract_as_deliverable_request() -> None:
+    """Task contract and hard deliverable policy should not disagree."""
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="составь план поиска информации и написания реферата по Fender",
+        ),
+        settings=Settings(),
+    )
+    assert policy.metadata["task_contract"]["kind"] == "deliverable"
+    assert policy.metadata["deliverable_request"]["enabled"] is True
+    assert "ask_user_question" in set(policy.denied_tools or ())
+
+
+def test_initial_tool_choice_keeps_research_deliverable_auto() -> None:
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="составь план поиска в интернете и написания реферата"
+        ),
+        settings=Settings(),
+    )
+    assert initial_tool_choice_for_chat(policy=policy, preset="web") is None
+    assert initial_tool_choice_for_chat(policy=policy, preset="off") is None
+
+
+def test_chat_tool_policy_denies_clarification_for_research_request() -> None:
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="найди в интернете краткую информацию о Fender Jazzmaster",
+        ),
+        settings=Settings(),
+    )
+
+    assert policy.metadata["task_contract"]["kind"] == "research"
+    assert policy.metadata["research_request"]["enabled"] is True
+    assert policy.denied_tools == ["ask_user_question"]
+    assert initial_tool_choice_for_chat(policy=policy, preset="web") is None
+
+
+def test_chat_tool_policy_accepts_deep_research_mode() -> None:
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="найди источники и подготовь отчет",
+            research_depth="deep_parallel_research",
+        ),
+        settings=Settings(),
+    )
+
+    assert policy.metadata["deep_research_mode"]["enabled"] is True
+    assert policy.metadata["task_contract"]["research_depth"] == (
+        "deep_parallel_research"
+    )
+    assert policy.metadata["task_contract"]["research_profile"] == "medium"
+    assert policy.metadata["task_contract"]["requires_research"] is True
+
+
+def test_chat_tool_policy_accepts_hard_research_profile() -> None:
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="сделай глубокий аудит источников и отчет",
+            research_mode="deep",
+            research_profile="hard",
+            profile_source="user_selected",
+        ),
+        settings=Settings(),
+    )
+
+    task_contract = policy.metadata["task_contract"]
+    deep_mode = policy.metadata["deep_research_mode"]
+    assert task_contract["research_profile"] == "hard"
+    assert task_contract["profile_source"] == "user_selected"
+    assert task_contract["hard_options"]["allow_browser_action"] is False
+    assert deep_mode["research_profile"] == "hard"
+
+
+def test_deep_research_mode_uses_artifact_tool_preset() -> None:
+    body = ChatMessageRequest(
+        message="найди источники и подготовь отчет",
+        tool_preset="web",
+        research_depth="deep_parallel_research",
+    )
+
+    assert _effective_chat_preset(body) == "deep_research_medium"
+
+
+def test_deep_research_tool_preset_enables_deep_mode_metadata() -> None:
+    body = ChatMessageRequest(
+        message="найди источники и подготовь отчет",
+        tool_preset="deep_research",
+    )
+    policy = _chat_tool_policy(body=body, settings=Settings())
+
+    assert _effective_research_mode(body) == "deep"
+    assert _effective_chat_preset(body) == "deep_research_medium"
+    assert policy.metadata["deep_research_mode"]["enabled"] is True
+    assert policy.metadata["task_contract"]["research_mode"] == "deep"
+    assert policy.metadata["task_contract"]["research_profile"] == "medium"
+
+
+def test_trace_summary_contract_prefers_run_deep_research_metadata() -> None:
+    record = SimpleNamespace(
+        metadata_by_run=[
+            (
+                "run_1",
+                {
+                    "research_mode": "deep",
+                    "research_profile": "medium",
+                    "research_depth": "deep_parallel_research",
+                    "profile_source": "scenario_forced",
+                },
+            )
+        ]
+    )
+
+    contract = _task_contract_for_trace_summary(
+        record=record,
+        run_id="run_1",
+        user_prompt="Сделай отчет с проверенными источниками.",
+    )
+
+    assert contract is not None
+    assert contract["research_mode"] == "deep"
+    assert contract["research_depth"] == "deep_parallel_research"
+    assert contract["research_profile"] == "medium"
+
+
+def test_hard_research_mode_uses_hard_tool_preset() -> None:
+    body = ChatMessageRequest(
+        message="найди источники и подготовь отчет",
+        research_mode="deep",
+        research_profile="hard",
+    )
+
+    assert _effective_chat_preset(body) == "deep_research_hard"
+
+
+def test_legacy_web_search_preset_is_not_widened_to_full_web() -> None:
+    body = ChatMessageRequest(
+        message="найди быстрые ссылки",
+        tool_preset="web_search",
+    )
+
+    assert _effective_chat_preset(body) == "web_search"
+
+
+def test_research_mode_web_maps_to_full_web() -> None:
+    body = ChatMessageRequest(
+        message="найди быстрые ссылки",
+        tool_preset="off",
+        research_mode="web",
+    )
+
+    assert _effective_chat_preset(body) == "research_light"
+
+
+def test_deep_research_preset_includes_scoped_artifact_tools() -> None:
+    config = _tool_config_from_preset("deep_research_medium")
+
+    assert set(config.tools) == {"agent_tool", "skill_tool", "skill_view"}
+    assert set(config.tool_packs) == {
+        "web",
+        "planning_progress",
+        "filesystem_read",
+        "filesystem_write",
+        "artifacts",
+    }
+    assert "shell" not in config.tool_packs
+    assert "discovery" not in config.tool_packs
+    assert config.allow_dangerous_tools is True
+    assert config.enable_python is False
+
+
+def test_hard_deep_research_preset_includes_source_read() -> None:
+    config = _tool_config_from_preset("deep_research_hard")
+
+    assert "source_tools" in set(config.tool_packs)
+    assert "shell" not in config.tool_packs
+    assert config.enable_python is False
+
+
+def test_research_light_preset_excludes_subagents_and_python() -> None:
+    config = _tool_config_from_preset("research_light")
+
+    assert config.tools == ()
+    assert set(config.tool_packs) == {"web", "planning_progress"}
+    assert config.enable_python is False
+
+
+def test_chat_tool_policy_denies_web_tools_for_plan_only() -> None:
+    policy = _chat_tool_policy(
+        body=ChatMessageRequest(
+            message="составь только план поиска информации по истории Fender, без реферата",
+        ),
+        settings=Settings(),
+    )
+
+    assert policy.metadata["task_contract"]["kind"] == "plan"
+    assert policy.metadata["plan_only_request"]["enabled"] is True
+    assert set(policy.denied_tools or ()) == {"web_search", "web_fetch"}
+    assert initial_tool_choice_for_chat(policy=policy, preset="web") is None
+
+
+def test_public_chat_presets_exclude_modal_plan_approval_tools() -> None:
+    """Public chat can show live todo progress without plan approval loops."""
+    for preset in (
+        "off",
+        "web_search",
+        "web_fetch",
+        "web",
+        "agents",
+        "safe",
+        "workspace",
+    ):
+        config = _tool_config_from_preset(preset)
+        selected = set(config.tools) | set(config.tool_packs)
+        assert "planning_progress" in selected
+        assert "planning" not in selected
+
+    dev_config = _tool_config_from_preset("dev")
+    assert "planning" in set(dev_config.tool_packs)
+
+
+def test_public_chat_presets_include_agent_tool_without_dangerous_tools() -> None:
+    for preset in ("off", "web_search", "web_fetch", "web", "agents"):
+        config = _tool_config_from_preset(preset)
+        assert "agent_tool" in set(config.tools)
+        assert config.enable_python is True
+        assert "shell" not in config.tool_packs
+        assert "filesystem_write" not in config.tool_packs
+        assert config.allow_dangerous_tools is False

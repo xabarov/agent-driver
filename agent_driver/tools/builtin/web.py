@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
-from html import unescape
-import ipaddress
 import os
 import re
+from hashlib import sha256
+from html import unescape
 from typing import Any
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 
@@ -19,25 +18,37 @@ from agent_driver.contracts import (
     ToolManifest,
     ToolRisk,
 )
+from agent_driver.tools.builtin.web_common import (
+    _BLOCKED_STATUS_CODES,
+    _as_float,
+    _as_int,
+    _clean_html_text,
+    _error_message,
+    _extract_mode,
+    _extract_og_metadata,
+    _extract_payload_text,
+    _fetch_url_bytes_with_retry,
+    _fetch_url_text,
+    _fetch_url_text_with_retry,
+    _HttpPayload,
+    _is_text_content_type,
+    _mock_fetch_payload,
+    _validate_http_url,
+)
 from agent_driver.tools.registry import ToolRegistry
 
 _WEB_FETCH_TOOL = "web_fetch"
 _WEB_SEARCH_TOOL = "web_search"
+_SOURCE_READ_TOOL = "source_read"
+_PDF_READ_TOOL = "pdf_read"
+_BROWSER_READ_TOOL = "browser_read"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _DEFAULT_MAX_BYTES = 150_000
 _DEFAULT_MAX_RESULTS = 5
 _DEFAULT_PREVIEW_CHARS = 1_500
 _WEB_FETCH_MAX_CHARS_CAP = 8_000
 _WEB_FETCH_EXCERPT_CHARS = 2_000
-_DEFAULT_USER_AGENT = "agent-driver/0.1"
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
-_BLOCKED_STATUS_CODES = {401, 403}
-_TEXT_CONTENT_TYPES = (
-    "text/",
-    "application/json",
-    "application/xml",
-    "application/xhtml+xml",
-)
+_PDF_READ_MAX_BYTES_CAP = 5_000_000
 _RESULT_LINK_RE = re.compile(
     r'<a[^>]+class="[^"]*result-link[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
     re.IGNORECASE | re.DOTALL,
@@ -47,29 +58,15 @@ _RESULT_LINK_ALT_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _SITE_OPERATOR_RE = re.compile(r"\bsite:\S+\b", re.IGNORECASE)
-_TAG_RE = re.compile(r"<[^>]+>")
-_SCRIPT_STYLE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
-_META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
-_META_ATTR_RE = re.compile(
-    r'([A-Za-z_:.-]+)\s*=\s*("([^"]*)"|\'([^\']*)\'|([^\s>]+))',
-    re.IGNORECASE,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class _HttpPayload:
-    url: str
-    status_code: int
-    content_type: str
-    text: str
-    bytes_total: int
-    bytes_loaded: int
 
 
 def register_web_tools(registry: ToolRegistry) -> None:
     """Register built-in web fetch/search tools."""
     registry.register(_web_fetch_manifest(), _web_fetch_handler)
     registry.register(_web_search_manifest(), _web_search_handler)
+    registry.register(_source_read_manifest(), _source_read_handler)
+    registry.register(_pdf_read_manifest(), _pdf_read_handler)
+    registry.register(_browser_read_manifest(), _browser_read_handler)
 
 
 def _web_fetch_manifest() -> ToolManifest:
@@ -114,6 +111,23 @@ def _web_fetch_manifest() -> ToolManifest:
                 "allow_private_host": {
                     "type": "boolean",
                     "description": "Allow localhost/private host targets",
+                },
+                "mock_status_code": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 599,
+                    "description": (
+                        "Optional offline HTTP status for deterministic tests; "
+                        "when present, no network call is made"
+                    ),
+                },
+                "mock_content": {
+                    "type": "string",
+                    "description": "Optional offline response body for tests",
+                },
+                "mock_content_type": {
+                    "type": "string",
+                    "description": "Optional offline content type for tests",
                 },
             },
             "required": ["url"],
@@ -166,6 +180,174 @@ def _web_search_manifest() -> ToolManifest:
     )
 
 
+def _source_read_manifest() -> ToolManifest:
+    return ToolManifest(
+        name=_SOURCE_READ_TOOL,
+        description=(
+            "Read a cited source URL for hard Deep Research verification. "
+            "Uses the same HTTP safety limits as web_fetch and returns text content."
+        ),
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.EXTERNAL_ACTION,
+        approval_mode=ApprovalMode.ON_POLICY_MATCH,
+        timeout_seconds=15.0,
+        output_char_budget=9000,
+        idempotent=True,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "HTTP(S) source URL"},
+                "timeout_seconds": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 60,
+                    "description": "Per-request timeout",
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "minimum": 256,
+                    "maximum": 1_000_000,
+                    "description": "Response byte cap before decode",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": 64,
+                    "maximum": 50_000,
+                    "description": "Maximum returned content chars",
+                },
+                "extract_mode": {
+                    "type": "string",
+                    "enum": ["raw", "text", "markdown"],
+                    "description": "Response extraction mode",
+                },
+                "allow_private_host": {
+                    "type": "boolean",
+                    "description": "Allow localhost/private host targets",
+                },
+                "mock_status_code": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 599,
+                    "description": "Optional offline status for deterministic tests",
+                },
+                "mock_content": {
+                    "type": "string",
+                    "description": "Optional offline response body for tests",
+                },
+                "mock_content_type": {
+                    "type": "string",
+                    "description": "Optional offline content type for tests",
+                },
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+        output_type="json",
+    )
+
+
+def _pdf_read_manifest() -> ToolManifest:
+    return ToolManifest(
+        name=_PDF_READ_TOOL,
+        description=(
+            "Validate and read a PDF source for hard Deep Research. Returns "
+            "structured PDF status and page-range citation hints; PDFs without "
+            "extractable text are not treated as verified text evidence."
+        ),
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.EXTERNAL_ACTION,
+        approval_mode=ApprovalMode.ON_POLICY_MATCH,
+        timeout_seconds=20.0,
+        output_char_budget=9000,
+        idempotent=True,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "HTTP(S) PDF URL"},
+                "page_start": {"type": "integer", "minimum": 1},
+                "page_end": {"type": "integer", "minimum": 1},
+                "timeout_seconds": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 60,
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "minimum": 256,
+                    "maximum": _PDF_READ_MAX_BYTES_CAP,
+                },
+                "allow_private_host": {"type": "boolean"},
+                "mock_pdf_bytes": {
+                    "type": "string",
+                    "description": "Optional offline PDF bytes as latin-1 text.",
+                },
+                "mock_extracted_text": {
+                    "type": "string",
+                    "description": "Optional deterministic extracted PDF text.",
+                },
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+        output_type="json",
+    )
+
+
+def _browser_read_manifest() -> ToolManifest:
+    return ToolManifest(
+        name=_BROWSER_READ_TOOL,
+        description=(
+            "Hard-profile read-only rendered-page fallback. Current implementation "
+            "uses the same URL safety checks as web_fetch and does not perform "
+            "browser actions, cookies, typing, or private-network access."
+        ),
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.EXTERNAL_ACTION,
+        approval_mode=ApprovalMode.ON_POLICY_MATCH,
+        timeout_seconds=20.0,
+        output_char_budget=9000,
+        idempotent=True,
+        args_schema={
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "HTTP(S) page URL"},
+                "timeout_seconds": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 60,
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "minimum": 256,
+                    "maximum": 1_000_000,
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": 64,
+                    "maximum": 50_000,
+                },
+                "mock_status_code": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 599,
+                },
+                "mock_content": {"type": "string"},
+                "mock_content_type": {"type": "string"},
+                "fallback_reason": {
+                    "type": "string",
+                    "description": (
+                        "Why source_read/pdf_read were insufficient and rendered "
+                        "fallback is needed"
+                    ),
+                },
+            },
+            "required": ["url"],
+            "additionalProperties": False,
+        },
+        output_type="json",
+    )
+
+
 async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
     url = _validate_http_url(
         args.get("url"),
@@ -178,22 +360,25 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
     requested_max_chars = _as_int(args.get("max_chars"), default=5_000, minimum=64)
     max_chars = min(requested_max_chars, _WEB_FETCH_MAX_CHARS_CAP)
     extract_mode = _extract_mode(args.get("extract_mode"))
-    try:
-        payload = await _fetch_url_text_with_retry(
-            url=url,
-            timeout_seconds=timeout_seconds,
-            max_bytes=max_bytes,
-        )
-    except httpx.TimeoutException as exc:
-        return _web_fetch_unavailable_payload(
-            url=url,
-            extract_mode=extract_mode,
-            timeout_seconds=timeout_seconds,
-            max_chars=max_chars,
-            reason=f"timeout: {_error_message(exc)}",
-        )
-    except (httpx.HTTPError, ValueError) as exc:
-        raise ValueError(f"web_fetch failed: {exc}") from exc
+    if args.get("mock_status_code") is not None:
+        payload = _mock_fetch_payload(url, args)
+    else:
+        try:
+            payload = await _fetch_url_text_with_retry(
+                url=url,
+                timeout_seconds=timeout_seconds,
+                max_bytes=max_bytes,
+            )
+        except httpx.TimeoutException as exc:
+            return _web_fetch_unavailable_payload(
+                url=url,
+                extract_mode=extract_mode,
+                timeout_seconds=timeout_seconds,
+                max_chars=max_chars,
+                reason=f"timeout: {_error_message(exc)}",
+            )
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ValueError(f"web_fetch failed: {exc}") from exc
     if not _is_text_content_type(payload.content_type):
         raise ValueError(f"unsupported content type: {payload.content_type}")
     if payload.status_code in _BLOCKED_STATUS_CODES:
@@ -255,6 +440,170 @@ async def _web_fetch_handler(args: dict[str, Any]) -> dict[str, Any]:
         "content": content,
         "truncated": truncated,
         "max_chars_applied": max_chars,
+    }
+
+
+async def _source_read_handler(args: dict[str, Any]) -> dict[str, Any]:
+    payload = await _web_fetch_handler(args)
+    content = str(payload.get("content") or "")
+    return {
+        **payload,
+        "summary": f"source_read: {payload.get('summary', '')}",
+        "source_read": True,
+        "source_kind": "url",
+        "verified_text": bool(content) and payload.get("blocked") is not True,
+        "content_sha256": (
+            sha256(content.encode("utf-8")).hexdigest() if content else ""
+        ),
+    }
+
+
+async def _pdf_read_handler(args: dict[str, Any]) -> dict[str, Any]:
+    url = _validate_http_url(
+        args.get("url"),
+        allow_private_host=bool(args.get("allow_private_host", False)),
+    )
+    page_start = _as_int(args.get("page_start"), default=1, minimum=1)
+    page_end = _as_int(args.get("page_end"), default=page_start, minimum=page_start)
+    max_bytes = min(
+        _as_int(args.get("max_bytes"), default=_DEFAULT_MAX_BYTES, minimum=256),
+        _PDF_READ_MAX_BYTES_CAP,
+    )
+    mock_pdf = args.get("mock_pdf_bytes")
+    if isinstance(mock_pdf, str):
+        data = mock_pdf.encode("latin-1", errors="replace")
+        bytes_total = len(data)
+        status_code = int(args.get("mock_status_code") or 200)
+    else:
+        timeout_seconds = _as_float(
+            args.get("timeout_seconds"), default=_DEFAULT_TIMEOUT_SECONDS, minimum=0.1
+        )
+        try:
+            data, status_code, bytes_total = await _fetch_url_bytes_with_retry(
+                url=url,
+                timeout_seconds=timeout_seconds,
+                max_bytes=max_bytes,
+            )
+        except httpx.TimeoutException as exc:
+            return _pdf_error_payload(
+                url=url,
+                page_start=page_start,
+                page_end=page_end,
+                error="timeout",
+                detail=_error_message(exc),
+            )
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ValueError(f"pdf_read failed: {exc}") from exc
+    if bytes_total > max_bytes:
+        return _pdf_error_payload(
+            url=url,
+            page_start=page_start,
+            page_end=page_end,
+            error="pdf_too_large",
+            detail=f"{bytes_total} bytes exceeds {max_bytes}",
+            status_code=status_code,
+        )
+    if not data.startswith(b"%PDF"):
+        return _pdf_error_payload(
+            url=url,
+            page_start=page_start,
+            page_end=page_end,
+            error="invalid_pdf",
+            detail="missing PDF magic bytes",
+            status_code=status_code,
+        )
+    extracted = str(args.get("mock_extracted_text") or "")
+    if not extracted.strip():
+        return {
+            "summary": (
+                f"pdf_read validated {url} but text extraction is unavailable; "
+                "do not treat this PDF as verified textual evidence."
+            ),
+            "url": url,
+            "status_code": status_code,
+            "pdf_read": True,
+            "source_kind": "pdf",
+            "status": "partial",
+            "page_start": page_start,
+            "page_end": page_end,
+            "bytes_total": bytes_total,
+            "bytes_loaded": len(data),
+            "text": "",
+            "excerpt": "",
+            "page_citations": [],
+            "verified_text": False,
+            "error": "text_extraction_unavailable",
+        }
+    excerpt = extracted[:_WEB_FETCH_EXCERPT_CHARS]
+    return {
+        "summary": f"pdf_read extracted text from {url} pages {page_start}-{page_end}",
+        "url": url,
+        "status_code": status_code,
+        "pdf_read": True,
+        "source_kind": "pdf",
+        "status": "verified",
+        "page_start": page_start,
+        "page_end": page_end,
+        "bytes_total": bytes_total,
+        "bytes_loaded": len(data),
+        "text": extracted,
+        "excerpt": excerpt,
+        "page_citations": [
+            {"page": page, "url": url} for page in range(page_start, page_end + 1)
+        ],
+        "verified_text": True,
+    }
+
+
+async def _browser_read_handler(args: dict[str, Any]) -> dict[str, Any]:
+    fallback_reason = str(
+        args.get("fallback_reason") or "source_read_or_pdf_read_insufficient"
+    ).strip()
+    payload = await _web_fetch_handler(
+        {
+            **args,
+            "extract_mode": "text",
+            "allow_private_host": False,
+        }
+    )
+    return {
+        **payload,
+        "summary": f"browser_read fallback: {payload.get('summary', '')}",
+        "browser_read": True,
+        "source_kind": "rendered_page",
+        "status": "verified" if payload.get("blocked") is not True else "blocked",
+        "fallback_reason": fallback_reason,
+        "browser_fallback_reason": fallback_reason,
+        "rendered": False,
+        "browser_action_allowed": False,
+        "screenshot_artifact": None,
+    }
+
+
+def _pdf_error_payload(
+    *,
+    url: str,
+    page_start: int,
+    page_end: int,
+    error: str,
+    detail: str,
+    status_code: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "summary": f"pdf_read could not verify text for {url}: {error}",
+        "url": url,
+        "status_code": status_code,
+        "pdf_read": True,
+        "source_kind": "pdf",
+        "status": "failed",
+        "page_start": page_start,
+        "page_end": page_end,
+        "text": "",
+        "excerpt": "",
+        "page_citations": [],
+        "verified_text": False,
+        "error": error,
+        "detail": detail,
     }
 
 
@@ -479,17 +828,12 @@ def _normalize_mock_results(
 
 
 def _resolve_search_backend() -> str:
-    raw = str(os.environ.get("AGENT_DRIVER_WEB_SEARCH_BACKEND") or "ddg").strip().lower()
+    raw = (
+        str(os.environ.get("AGENT_DRIVER_WEB_SEARCH_BACKEND") or "ddg").strip().lower()
+    )
     if raw in {"ddg", "tavily", "brave"}:
         return raw
     return "ddg"
-
-
-def _error_message(exc: Exception) -> str:
-    text = str(exc).strip()
-    if text:
-        return text
-    return repr(exc)
 
 
 def _parse_duckduckgo_html(html: str, *, max_results: int) -> list[dict[str, str]]:
@@ -530,57 +874,6 @@ def _normalize_search_href(raw_href: str) -> str:
             if target:
                 return target
     return href
-
-
-async def _fetch_url_text(
-    *,
-    url: str,
-    timeout_seconds: float,
-    max_bytes: int,
-) -> _HttpPayload:
-    headers = {"User-Agent": _DEFAULT_USER_AGENT}
-    async with httpx.AsyncClient(follow_redirects=True, timeout=timeout_seconds) as client:
-        response = await client.get(url, headers=headers)
-    if response.status_code not in _BLOCKED_STATUS_CODES:
-        response.raise_for_status()
-    content = response.content
-    bytes_total = len(content)
-    if len(content) > max_bytes:
-        content = content[:max_bytes]
-    bytes_loaded = len(content)
-    text = content.decode(response.encoding or "utf-8", errors="replace")
-    return _HttpPayload(
-        url=str(response.url),
-        status_code=response.status_code,
-        content_type=response.headers.get("content-type", "").lower(),
-        text=text,
-        bytes_total=bytes_total,
-        bytes_loaded=bytes_loaded,
-    )
-
-
-async def _fetch_url_text_with_retry(
-    *,
-    url: str,
-    timeout_seconds: float,
-    max_bytes: int,
-) -> _HttpPayload:
-    last_error: httpx.TimeoutException | None = None
-    for attempt in range(3):
-        try:
-            return await _fetch_url_text(
-                url=url,
-                timeout_seconds=timeout_seconds,
-                max_bytes=max_bytes,
-            )
-        except httpx.TimeoutException as exc:
-            last_error = exc
-            if attempt == 2:
-                raise
-            await asyncio.sleep(0.5 + (0.5 * attempt))
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("web fetch failed without specific exception")
 
 
 def _is_retryable_search_exception(exc: Exception) -> bool:
@@ -665,7 +958,9 @@ async def _brave_search(
     raw_payload = response.json()
     payload = raw_payload if isinstance(raw_payload, dict) else {}
     web_payload = payload.get("web", {}) if isinstance(payload.get("web"), dict) else {}
-    rows = _normalize_mock_results(web_payload.get("results", []), max_results=max_results)
+    rows = _normalize_mock_results(
+        web_payload.get("results", []), max_results=max_results
+    )
     return _search_payload(
         query=query,
         source="brave",
@@ -673,143 +968,6 @@ async def _brave_search(
         max_results=max_results,
         parse_status="ok" if rows else "parse_failed",
     )
-
-
-def _validate_http_url(raw: Any, *, allow_private_host: bool = False) -> str:
-    if not isinstance(raw, str) or not raw.strip():
-        raise ValueError("url must be a non-empty string")
-    value = raw.strip()
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError("url scheme must be http or https")
-    if not parsed.netloc:
-        raise ValueError("url must include host")
-    if not allow_private_host:
-        host = (parsed.hostname or "").strip().lower()
-        if host in _LOCAL_HOSTS:
-            raise ValueError("private/localhost hosts are blocked by policy")
-        if host:
-            try:
-                addr = ipaddress.ip_address(host)
-            except ValueError:
-                addr = None
-            if addr is not None and (addr.is_private or addr.is_loopback):
-                raise ValueError("private/localhost hosts are blocked by policy")
-    return value
-
-
-def _is_text_content_type(content_type: str) -> bool:
-    if not content_type:
-        return True
-    base = content_type.split(";", maxsplit=1)[0].strip().lower()
-    return any(base.startswith(prefix) for prefix in _TEXT_CONTENT_TYPES)
-
-
-def _clean_html_text(raw: str) -> str:
-    no_tags = _TAG_RE.sub(" ", raw)
-    return " ".join(unescape(no_tags).split())
-
-
-def _extract_mode(raw: Any) -> str:
-    value = str(raw or "raw").strip().lower()
-    if value not in {"raw", "text", "markdown"}:
-        raise ValueError("extract_mode must be one of: raw, text, markdown")
-    return value
-
-
-def _extract_payload_text(*, text: str, content_type: str, mode: str) -> str:
-    if mode == "raw":
-        return text
-    is_html = "html" in content_type
-    if not is_html:
-        return text
-    html_without_embeds = _SCRIPT_STYLE_RE.sub(" ", text)
-    metadata = _extract_og_metadata(html_without_embeds)
-    if mode == "text":
-        body = _clean_html_text(html_without_embeds)
-        return _prepend_metadata_text(body=body, metadata=metadata)
-    normalized = _TAG_RE.sub("\n", html_without_embeds)
-    cleaned = "\n".join(line.strip() for line in normalized.splitlines() if line.strip())
-    body = unescape(cleaned)
-    return _prepend_metadata_text(body=body, metadata=metadata)
-
-
-def _extract_og_metadata(raw_html: str) -> dict[str, str]:
-    fields = {
-        "og:title": "title",
-        "og:description": "description",
-        "og:url": "url",
-        "article:published_time": "published_time",
-    }
-    metadata: dict[str, str] = {}
-    html = _SCRIPT_STYLE_RE.sub(" ", raw_html)
-    for match in _META_TAG_RE.finditer(html):
-        attrs = _extract_tag_attributes(match.group(0))
-        key = str(attrs.get("property") or attrs.get("name") or "").strip().lower()
-        if key not in fields:
-            continue
-        content = str(attrs.get("content") or "").strip()
-        if not content:
-            continue
-        target_key = fields[key]
-        if target_key not in metadata:
-            metadata[target_key] = unescape(content)
-    return metadata
-
-
-def _extract_tag_attributes(raw_tag: str) -> dict[str, str]:
-    attrs: dict[str, str] = {}
-    for match in _META_ATTR_RE.finditer(raw_tag):
-        name = str(match.group(1) or "").strip().lower()
-        value = (
-            match.group(3)
-            if match.group(3) is not None
-            else match.group(4)
-            if match.group(4) is not None
-            else match.group(5)
-            if match.group(5) is not None
-            else ""
-        )
-        if name:
-            attrs[name] = value
-    return attrs
-
-
-def _prepend_metadata_text(*, body: str, metadata: dict[str, str]) -> str:
-    lines: list[str] = []
-    if metadata.get("title"):
-        lines.append(f"Title: {metadata['title']}")
-    if metadata.get("description"):
-        lines.append(f"Description: {metadata['description']}")
-    if metadata.get("url"):
-        lines.append(f"URL: {metadata['url']}")
-    if metadata.get("published_time"):
-        lines.append(f"Published: {metadata['published_time']}")
-    if not lines:
-        return body
-    meta_text = "\n".join(lines)
-    body_text = body.strip()
-    if body_text:
-        return f"{meta_text}\n{body_text}"
-    return meta_text
-
-
-def _as_int(raw: Any, *, default: int, minimum: int) -> int:
-    if raw is None:
-        return default
-    value = int(raw)
-    if value < minimum:
-        raise ValueError(f"value must be >= {minimum}")
-    return value
-
-
-def _as_float(raw: Any, *, default: float, minimum: float) -> float:
-    if raw is None:
-        return default
-    value = float(raw)
-    if value < minimum:
-        raise ValueError(f"value must be >= {minimum}")
-    return value
 
 
 __all__ = ["register_web_tools"]

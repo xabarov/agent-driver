@@ -68,6 +68,121 @@ async def eval_run_command(
     return 0
 
 
+async def eval_compare_command(  # pylint: disable=import-outside-toplevel
+    args: argparse.Namespace,
+    *,
+    build_cli_toolset: Callable[[object], object],
+    tool_config_from_args: Callable[[argparse.Namespace], object],
+    tool_error: type[Exception],
+) -> int:
+    """Run the general suite baseline-vs-treatment on an open-weight tier.
+
+    Flips exactly one harness axis (``--treatment``) off vs on and reports the
+    median delta. ``--offline`` uses the fake provider for a deterministic dry
+    run (no network); otherwise the open-weight OpenRouter preset is used.
+
+    Imports are function-local to keep the heavier eval/batch subtree off the
+    CLI's startup path (it only loads when ``eval compare`` actually runs).
+    """
+    from agent_driver.batch import BatchRunner
+    from agent_driver.evals import (
+        general_task_suite,
+        openweight_provider_spec,
+        render_comparison,
+        run_comparison,
+    )
+    from agent_driver.llm.providers_impl.fake import FakeProvider
+    from agent_driver.runtime import RunnerConfig
+    from agent_driver.sdk import create_agent
+
+    offline = bool(getattr(args, "offline", False))
+    tier = str(getattr(args, "tier", "mid"))
+    axis = str(getattr(args, "treatment", "prompt_cache"))
+
+    # Each axis maps to (config builder over a treatment flag, baseline label,
+    # treatment label). Only axes that flip cleanly off/on over the general
+    # suite are offered; per-model auxiliary routing and subagent routing need a
+    # richer suite/second provider, so they stay SDK-only.
+    axes = {
+        "prompt_cache": (
+            lambda t: RunnerConfig(enable_prompt_cache=t),
+            "prompt_cache_off",
+            "prompt_cache_on",
+        ),
+        "tool_arg_truncation": (
+            lambda t: RunnerConfig(enable_tool_arg_truncation=t),
+            "arg_trunc_off",
+            "arg_trunc_on",
+        ),
+        "tool_concurrency": (
+            lambda t: RunnerConfig(tool_concurrency_limit=None if t else 1),
+            "serial",
+            "parallel",
+        ),
+    }
+    if axis not in axes:
+        print(f"eval compare error: unknown --treatment axis {axis!r}")
+        return 2
+    config_for, baseline_label, treatment_label = axes[axis]
+
+    def _provider():
+        if offline:
+            return FakeProvider(response_text="done")
+        from agent_driver.llm import resolve_provider
+
+        return resolve_provider(openweight_provider_spec(tier))
+
+    # No-op-axis guard: prompt_cache only does anything on the Anthropic
+    # provider, but this command resolves the open-weight OpenRouter preset, so
+    # both sides send identical requests — any "delta" is environment/noise, not
+    # the flag. Warn so the operator picks an axis that's actually active here.
+    if axis == "prompt_cache" and not offline:
+        print(
+            "eval compare warning: --treatment prompt_cache is a no-op on the "
+            "open-weight OpenRouter preset (non-Anthropic); both sides are "
+            "identical. Use --treatment tool_concurrency for an active axis."
+        )
+
+    try:
+        toolset = build_cli_toolset(tool_config_from_args(args))
+    except tool_error as exc:
+        print(f"eval compare error: {exc}")
+        return 2
+
+    def _agent(*, treatment: bool):
+        return create_agent(
+            provider=_provider(), tools=toolset, config=config_for(treatment)
+        )
+
+    report = await run_comparison(
+        BatchRunner(_agent(treatment=False), concurrency=int(args.concurrency)),
+        BatchRunner(_agent(treatment=True), concurrency=int(args.concurrency)),
+        general_task_suite(),
+        repeats=int(args.repeats),
+        baseline_label=baseline_label,
+        treatment_label=treatment_label,
+        max_total_cost_usd=(
+            float(args.max_cost_usd) if args.max_cost_usd is not None else None
+        ),
+    )
+    print(render_comparison(report))
+    print(
+        json.dumps(
+            {
+                "axis": axis,
+                "tier": tier,
+                "repeats": int(args.repeats),
+                "offline": offline,
+                "success_rate_delta": report.success_rate_delta,
+                "cost_usd_median_delta": report.cost_usd_median_delta,
+                "latency_ms_median_delta": report.latency_ms_median_delta,
+            },
+            ensure_ascii=True,
+        )
+    )
+    return 0
+
+
 def eval_inspect_command(
     args: argparse.Namespace,
     *,
@@ -75,7 +190,9 @@ def eval_inspect_command(
     render_eval_inspect: Callable[[EvalSummary], str],
 ) -> int:
     if bool(args.summary_json) == bool(args.artifact_json):
-        print("eval inspect error: pass exactly one of --summary-json or --artifact-json")
+        print(
+            "eval inspect error: pass exactly one of --summary-json or --artifact-json"
+        )
         return 2
     if args.artifact_json:
         path = Path(args.artifact_json)
@@ -106,7 +223,11 @@ def eval_inspect_command(
         return 2
     rows = payload
     if args.scenario_id:
-        rows = [item for item in rows if isinstance(item, dict) and item.get("scenario_id") == args.scenario_id]
+        rows = [
+            item
+            for item in rows
+            if isinstance(item, dict) and item.get("scenario_id") == args.scenario_id
+        ]
     if not rows:
         print("eval inspect> no rows")
         return 0
@@ -123,4 +244,4 @@ def eval_inspect_command(
     return 0
 
 
-__all__ = ["eval_inspect_command", "eval_run_command"]
+__all__ = ["eval_compare_command", "eval_inspect_command", "eval_run_command"]

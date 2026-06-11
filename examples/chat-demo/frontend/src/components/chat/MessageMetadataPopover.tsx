@@ -26,6 +26,9 @@ export function MessageMetadataPopover({
   const hasContent = hasMetadataContent(metadata);
   const provider = metadata?.provider?.toLowerCase() ?? "";
   const showActivityLink = provider.includes("openrouter");
+  const researchMode = metadata?.researchMode ?? metadata?.research_mode;
+  const researchProfile = metadata?.researchProfile ?? metadata?.research_profile;
+  const profileSource = metadata?.profileSource ?? metadata?.profile_source;
 
   return (
     <Popover>
@@ -71,6 +74,21 @@ export function MessageMetadataPopover({
                 {formatDurationSec(metadata.durationMs)}
               </dd>
             </div>
+            {researchMode ? (
+              <div className="flex justify-between gap-4 border-t border-border pt-1.5">
+                <dt className="text-muted-foreground">Research mode</dt>
+                <dd className="font-medium capitalize">
+                  {researchMode}
+                  {researchProfile ? ` · ${researchProfile}` : ""}
+                </dd>
+              </div>
+            ) : null}
+            {profileSource ? (
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Profile source</dt>
+                <dd className="font-medium">{profileSource.replaceAll("_", " ")}</dd>
+              </div>
+            ) : null}
           </dl>
         ) : (
           <p className="text-muted-foreground">No usage data for this message.</p>

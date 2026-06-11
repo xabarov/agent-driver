@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
-
 from app.deps import get_agent_bundle
+from app.observability import tracing_status
 from app.schemas.meta import HealthResponse, ProviderStatusView
 from app.services.agent_factory import AgentBundle
+from fastapi import APIRouter, Depends
 
 router = APIRouter(tags=["meta"])
 
@@ -28,5 +28,5 @@ async def health(bundle: AgentBundle = Depends(get_agent_bundle)) -> HealthRespo
             request_count=status.request_count,
             error_count=status.error_count,
         ),
+        tracing=tracing_status(),
     )
-

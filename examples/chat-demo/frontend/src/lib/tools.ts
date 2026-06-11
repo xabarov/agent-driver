@@ -1,24 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { fetchTools } from "./api";
-import type { ToolPreset } from "../store/settingsStore";
+import { normalizeToolPreset, type ToolPreset } from "../store/settingsStore";
 
 export function toolsQueryKey(preset: ToolPreset, sessionId?: string) {
-  return ["tools", preset, sessionId ?? "no-session"] as const;
+  return ["tools", normalizeToolPreset(preset), sessionId ?? "no-session"] as const;
 }
 
 export function useToolsForPreset(preset: ToolPreset, sessionId?: string) {
+  const normalized = normalizeToolPreset(preset);
   return useQuery({
-    queryKey: toolsQueryKey(preset, sessionId),
-    queryFn: () => fetchTools(preset, sessionId),
+    queryKey: toolsQueryKey(normalized, sessionId),
+    queryFn: () => fetchTools(normalized, sessionId),
     staleTime: 30_000,
   });
 }
 
 export const PRESET_HINTS: Record<ToolPreset, string> = {
-  off: "No tools — text-only replies.",
-  safe: "Web search/fetch and planning only — no filesystem access.",
-  workspace: "Safe tools plus read-only search over this session workspace.",
-  dev: "Workspace read/write tools plus governed shell.",
-  all: "Full tool surface including dangerous tools.",
+  off: "Web tools disabled. Planning, delegation, and Python stay available to the agent.",
+  web_search: "Search the web for current information. Python remains available for exact calculations.",
+  web_fetch: "Fetch and read content from URLs. Python remains available for exact calculations.",
+  web: "Search the web and fetch URL content. Python remains available for exact calculations.",
 };

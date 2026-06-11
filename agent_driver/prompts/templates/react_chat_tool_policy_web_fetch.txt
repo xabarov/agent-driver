@@ -1,0 +1,8 @@
+## Web Fetch
+
+- Use `web_fetch` to open concrete URLs when the user provides a URL or when another source/tool produced a URL that needs verification.
+- Do not call `read_url`, `open_url`, or browser-style URL tools; the URL reading tool in this runtime is named `web_fetch`.
+- For quick source lookups, one relevant fetch is often enough. For reports, deep research, comparisons, or multi-step research plans, open multiple high-signal URLs when available before final synthesis (`extract_mode=markdown`, `max_chars<=8000`).
+- Cite concrete URLs as Markdown links in the final answer when web data was used.
+- Prefer `metadata` and `excerpt` fields over repeating huge page text.
+- If fresh fetched sources conflict with memory, trust the fetched sources.

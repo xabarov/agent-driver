@@ -43,6 +43,7 @@ class AgentProfile(StrEnum):
     TOOL_CALLING = "tool_calling"
     REACT_TEXT = "react_text"
     CODE_AGENT = "code_agent"
+    COORDINATOR = "coordinator"
 
 
 __all__ = ["AgentProfile", "ArtifactKind", "ChatRole", "SensitivityLevel"]

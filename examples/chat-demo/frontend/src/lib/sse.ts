@@ -1,7 +1,15 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 
-import type { ToolPreset } from "../store/settingsStore";
+import type {
+  HardResearchOptions,
+  ProfileSource,
+  ResearchMode,
+  ResearchProfile,
+  ToolPreset,
+} from "../store/settingsStore";
 import type { RunStreamEvent } from "./events";
+
+export type ChatRequestToolPreset = ToolPreset | "deep_research";
 
 interface StreamMeta {
   sessionId?: string;
@@ -13,10 +21,15 @@ class FatalSseError extends Error {}
 export interface StartChatStreamOptions {
   message: string;
   sessionId?: string;
-  toolPreset?: ToolPreset;
+  toolPreset?: ChatRequestToolPreset;
   model?: string;
   retryFromRunId?: string;
   clientRequestId?: string;
+  researchDepth?: "deep_parallel_research";
+  researchMode?: ResearchMode;
+  researchProfile?: ResearchProfile;
+  profileSource?: ProfileSource;
+  hardResearchOptions?: HardResearchOptions;
   signal?: AbortSignal;
   lastEventId?: string;
   onEvent: (event: RunStreamEvent) => void;
@@ -92,6 +105,17 @@ export async function startChatStream(opts: StartChatStreamOptions): Promise<voi
         model: opts.model,
         retry_from_run_id: opts.retryFromRunId,
         client_request_id: opts.clientRequestId,
+        research_depth: opts.researchDepth,
+        research_mode: opts.researchMode,
+        research_profile: opts.researchProfile,
+        profile_source: opts.profileSource,
+        hard_options: opts.hardResearchOptions
+          ? {
+              allow_pdf_read: opts.hardResearchOptions.allowPdfRead,
+              allow_browser_read: opts.hardResearchOptions.allowBrowserRead,
+              allow_browser_action: opts.hardResearchOptions.allowBrowserAction,
+            }
+          : undefined,
       }),
       signal: opts.signal,
     },

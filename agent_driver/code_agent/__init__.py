@@ -21,6 +21,15 @@ from agent_driver.code_agent.executor import (
     FakeRestrictedCodeExecutor,
 )
 from agent_driver.code_agent.subprocess_executor import SubprocessRestrictedCodeExecutor
+from agent_driver.code_agent.sandbox import (
+    DEFAULT_RESULT_VARS,
+    run_sandboxed,
+    SandboxError,
+    SandboxLimits,
+    SandboxPolicyError,
+    SandboxResult,
+    SandboxTimeoutError,
+)
 from agent_driver.code_agent.policy import PolicyViolation, validate_code_action
 from agent_driver.code_agent.profile import run_code_agent_stage
 from agent_driver.code_agent.prompt import render_code_agent_prompt
@@ -58,4 +67,11 @@ __all__ = [
     "E2BPythonBackend",
     "WasmPythonBackend",
     "create_python_backend",
+    "run_sandboxed",
+    "SandboxLimits",
+    "SandboxResult",
+    "SandboxError",
+    "SandboxTimeoutError",
+    "SandboxPolicyError",
+    "DEFAULT_RESULT_VARS",
 ]

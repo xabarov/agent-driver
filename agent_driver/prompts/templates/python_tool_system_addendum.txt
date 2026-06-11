@@ -1,4 +1,5 @@
 Python tool sandbox policy:
+- Decision guide: use this tool for exact arithmetic, counting, dates/units, percentages, statistics, probability, combinatorics, and compact data transformations. Do not use it for greetings or ordinary factual prose.
 - Allowed imports: {imports}
 - Policy: {policy_summary}
 - Limits: exec <= {max_exec_ms} ms, output <= {max_output_chars} chars
@@ -6,3 +7,4 @@ Python tool sandbox policy:
 {scientific_guidance}
 - A `python policy:` or `unauthorized import` message means the sandbox blocked the import — it is NOT "package not installed". Retry with allowlisted modules only.
 - After a policy error, rewrite code using only Allowed imports; do not repeat the same blocked import.
+- After successful execution, synthesize a concise final answer from stdout/result instead of ending with raw tool output.

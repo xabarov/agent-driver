@@ -155,7 +155,8 @@ def _resolve_action_and_inferred(
         choice = body["choice"]
         if not isinstance(choice, int) or choice not in _LEGACY_CHOICE_MAP:
             raise ValueError(
-                f"unknown choice: {choice!r}; expected 1 (approve), 2 (edit), 3 (cancel)"
+                f"unknown choice: {choice!r}; expected 1 (approve), "
+                "2 (edit), 3 (cancel)"
             )
         return _LEGACY_CHOICE_MAP[choice], None, None
     opaque_value = body.get("resume", body.get("answer", body.get("value")))
@@ -231,9 +232,11 @@ def resume_command_from_payload(
     body = dict(payload)
 
     interrupt_id = _resolve_interrupt_id(body, default_interrupt_id)
-    action, inferred_message, inferred_edited_tool_args = _resolve_action_and_inferred(
-        body, value_to_action
-    )
+    (
+        action,
+        inferred_message,
+        inferred_edited_tool_args,
+    ) = _resolve_action_and_inferred(body, value_to_action)
 
     message = _validated_optional_string(body.get("message"), "message")
     if message is None:

@@ -35,7 +35,7 @@ def test_fixture_retention_gate_enforces_recall_provenance_and_audit() -> None:
         ],
         retained_observations=list(fixture.observation_rows),
         audit={
-            "token_pressure": {"state": "warning"},
+            "token_pressure": {"state": "early_warning"},
             "trim_audit": [{"record_id": "trim_1"}],
             "microcompaction_audit": [{"record_id": "micro_1"}],
         },

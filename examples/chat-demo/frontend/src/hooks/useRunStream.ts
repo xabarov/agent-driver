@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { cancelRun, fetchInterrupt } from "../lib/api";
+import { cancelQueuedCommand, cancelRun, controlRun, fetchInterrupt } from "../lib/api";
 import {
   buildLastEventId,
   getAssistantSnapshotContent,
@@ -11,19 +11,27 @@ import {
   isTokenDelta,
   isToolCallCompleted,
   isToolCallStarted,
+  parseCompactionNotice,
+  parseDeepResearchArtifactEvent,
+  parseDeepResearchProgress,
+  parseSourceLedgerEvent,
+  parseSubagentLifecycleEvent,
   parseToolStatesFromEvent,
   type RunStreamEvent,
 } from "../lib/events";
 import { invalidateSessions, sessionDetailQueryKey } from "../lib/sessions";
 import { resumeRunStream, startChatStream } from "../lib/sse";
+import { workspaceArtifactsQueryKey } from "../lib/workspaceArtifacts";
 import { parseLlmCompletedData } from "../lib/messageMetadata";
 import { parsePlanningSnapshot } from "../lib/planning";
-import { formatStreamError } from "../lib/streamError";
+import { formatRunFailure, formatStreamError } from "../lib/streamError";
 import { useChatStore } from "../store/chatStore";
-import { useSettingsStore } from "../store/settingsStore";
+import { normalizeToolPreset, useSettingsStore } from "../store/settingsStore";
 
 interface RunStreamController {
   sendMessage: (message: string) => Promise<void>;
+  steerRun: (message: string) => Promise<void>;
+  cancelSteering: (queueId: string) => Promise<void>;
   retryAssistant: (assistantId: string) => Promise<void>;
   resumeInterrupt: (payload: {
     action: string;
@@ -49,6 +57,10 @@ function applyStreamEvent(
     return;
   }
   store.setLastSeq(event.seq);
+  if (!store.runId && event.run_id) {
+    store.setRunId(event.run_id);
+    store.setAssistantRunId(assistantId, event.run_id);
+  }
   if (event.event === "run_started") {
     store.setStreaming(true);
   }
@@ -78,6 +90,24 @@ function applyStreamEvent(
       store.updateToolCompleted(tool.toolCallId, tool);
     }
   }
+  const subagentLifecycle = parseSubagentLifecycleEvent(event);
+  if (subagentLifecycle) {
+    store.applySubagentLifecycle(assistantId, subagentLifecycle);
+  }
+  const compactionNotice = parseCompactionNotice(event);
+  if (compactionNotice) {
+    store.upsertCompactionNotice(assistantId, compactionNotice);
+  }
+  const sourceLedger = parseSourceLedgerEvent(event);
+  const researchProgress = parseDeepResearchProgress(event);
+  const researchArtifact = parseDeepResearchArtifactEvent(event);
+  if (sourceLedger || researchProgress || researchArtifact) {
+    store.updateDeepResearch(assistantId, {
+      ledger: sourceLedger,
+      progress: researchProgress,
+      artifact: researchArtifact,
+    });
+  }
   if (event.event === "llm_call_completed" || event.event === "run_completed") {
     const snapshot = parsePlanningSnapshot(event.data.planning_snapshot);
     if (snapshot) {
@@ -90,6 +120,24 @@ function applyStreamEvent(
       store.appendAssistantMetadata(assistantId, patch);
     }
   }
+  if (event.event === "command_dequeued") {
+    const queueId = typeof event.data.queue_id === "string" ? event.data.queue_id : "";
+    if (queueId) {
+      store.updateSteeringControl(queueId, "dequeued");
+    }
+  }
+  if (event.event === "control_applied") {
+    const queueId = typeof event.data.queue_id === "string" ? event.data.queue_id : "";
+    if (queueId) {
+      store.updateSteeringControl(queueId, "applied");
+    }
+  }
+  if (event.event === "command_cancelled") {
+    const queueId = typeof event.data.queue_id === "string" ? event.data.queue_id : "";
+    if (queueId) {
+      store.updateSteeringControl(queueId, "cancelled");
+    }
+  }
   if (isTerminalEvent(event) && event.data.usage && typeof event.data.usage === "object") {
     const patch = parseLlmCompletedData({ usage: event.data.usage as Record<string, unknown> });
     if (Object.keys(patch).length > 0) {
@@ -97,12 +145,8 @@ function applyStreamEvent(
     }
   }
   if (event.event === "run_failed") {
-    const reason =
-      typeof event.data.error === "string"
-        ? event.data.error
-        : typeof event.data.message === "string"
-          ? event.data.message
-          : "Run failed";
+    const reason = formatRunFailure(event.data);
+    store.replaceAssistantContent(assistantId, `**Run failed**\n\n${reason}`);
     store.setLastError(reason);
     store.setStreaming(false);
     store.finishTurn(assistantId);
@@ -118,6 +162,7 @@ function applyStreamEvent(
             runId,
             interruptId: interrupt.interrupt_id,
             reason: interrupt.reason,
+            assistantId,
             title: interrupt.title ?? undefined,
             description: interrupt.description ?? undefined,
             proposedAction: interrupt.proposed_action,
@@ -129,6 +174,7 @@ function applyStreamEvent(
             runId,
             interruptId: "",
             reason: String(event.data.reason ?? "approval_required"),
+            assistantId,
             allowedActions: ["approve", "reject", "cancel"],
           });
         });
@@ -138,7 +184,12 @@ function applyStreamEvent(
 
 export function useRunStream(): RunStreamController {
   const queryClient = useQueryClient();
-  const toolPreset = useSettingsStore((state) => state.toolPreset);
+  const toolPreset = normalizeToolPreset(useSettingsStore((state) => state.toolPreset));
+  const researchDepth = useSettingsStore((state) => state.researchDepth);
+  const researchMode = useSettingsStore((state) => state.researchMode);
+  const researchProfile = useSettingsStore((state) => state.researchProfile);
+  const profileSource = useSettingsStore((state) => state.profileSource);
+  const hardResearchOptions = useSettingsStore((state) => state.hardResearchOptions);
   const model = useSettingsStore((state) => state.model);
   const abortRef = useRef<AbortController | null>(null);
   const activeAssistantRef = useRef<string | null>(null);
@@ -151,6 +202,21 @@ export function useRunStream(): RunStreamController {
         queryKey: sessionDetailQueryKey(current.sessionId),
       });
     }
+    if (current.runId) {
+      void queryClient.invalidateQueries({
+        queryKey: ["deep-research-state", current.runId],
+      });
+    }
+  }, [queryClient]);
+
+  const invalidateWorkspaceArtifacts = useCallback(() => {
+    const current = useChatStore.getState();
+    if (!current.sessionId) {
+      return;
+    }
+    void queryClient.invalidateQueries({
+      queryKey: workspaceArtifactsQueryKey(current.sessionId),
+    });
   }, [queryClient]);
 
   const stopStreaming = useCallback(() => {
@@ -180,7 +246,9 @@ export function useRunStream(): RunStreamController {
         await runner(assistantId, controller.signal);
       } catch (error) {
         const store = useChatStore.getState();
-        store.setLastError(formatStreamError(error));
+        const message = formatStreamError(error);
+        store.replaceAssistantContent(assistantId, `**Run failed**\n\n${message}`);
+        store.setLastError(message);
         store.finishTurn(assistantId);
         store.setStreaming(false);
       } finally {
@@ -199,8 +267,24 @@ export function useRunStream(): RunStreamController {
         await startChatStream({
           message: trimmed,
           sessionId: state.sessionId,
-          toolPreset,
+          toolPreset:
+            researchMode === "chat"
+              ? "off"
+              : researchMode === "web"
+                ? "web"
+                : "deep_research",
           model: model || undefined,
+          researchDepth:
+            researchMode === "deep" || researchDepth === "deep_parallel_research"
+              ? "deep_parallel_research"
+              : undefined,
+          researchMode,
+          researchProfile: researchMode === "deep" ? researchProfile : "light",
+          profileSource,
+          hardResearchOptions:
+            researchMode === "deep" && researchProfile === "hard"
+              ? hardResearchOptions
+              : undefined,
           retryFromRunId,
           clientRequestId,
           signal,
@@ -217,6 +301,9 @@ export function useRunStream(): RunStreamController {
           },
           onEvent: (event) => {
             applyStreamEvent(event, activeId);
+            if (event.event === "artifact_created" || event.event === "artifact_updated") {
+              invalidateWorkspaceArtifacts();
+            }
             if (isTerminalEvent(event)) {
               useChatStore.getState().finishTurn(activeId);
               useChatStore.getState().setPendingInterrupt(undefined);
@@ -226,7 +313,18 @@ export function useRunStream(): RunStreamController {
         });
       });
     },
-    [invalidateAfterTerminal, model, runStream, toolPreset],
+    [
+      hardResearchOptions,
+      invalidateAfterTerminal,
+      invalidateWorkspaceArtifacts,
+      model,
+      profileSource,
+      researchDepth,
+      researchMode,
+      researchProfile,
+      runStream,
+      toolPreset,
+    ],
   );
 
   const sendMessage = useCallback(
@@ -240,6 +338,42 @@ export function useRunStream(): RunStreamController {
     },
     [streamUserMessage],
   );
+
+  const steerRun = useCallback(async (message: string) => {
+    const trimmed = message.trim();
+    const runId = useChatStore.getState().runId;
+    if (!trimmed || !runId) {
+      return;
+    }
+    try {
+      const response = await controlRun(runId, {
+        kind: "enqueue_user_message",
+        priority: "next",
+        payload: { message: trimmed },
+      });
+      if (response.queue_id) {
+        useChatStore.getState().addSteeringControl({
+          queueId: response.queue_id,
+          message: trimmed,
+          status: "queued",
+        });
+      }
+    } catch (error) {
+      useChatStore.getState().setLastError(formatStreamError(error));
+    }
+  }, []);
+
+  const cancelSteering = useCallback(async (queueId: string) => {
+    if (!queueId) {
+      return;
+    }
+    try {
+      await cancelQueuedCommand(queueId);
+      useChatStore.getState().updateSteeringControl(queueId, "cancelled");
+    } catch (error) {
+      useChatStore.getState().setLastError(formatStreamError(error));
+    }
+  }, []);
 
   const retryAssistant = useCallback(
     async (assistantId: string) => {
@@ -267,9 +401,11 @@ export function useRunStream(): RunStreamController {
     }) => {
       const state = useChatStore.getState();
       const interrupt = state.pendingInterrupt;
-      const assistantId = [...state.messages]
-        .reverse()
-        .find((item) => item.role === "assistant" && item.pending)?.id;
+      const assistantId =
+        interrupt?.assistantId ??
+        [...state.messages]
+          .reverse()
+          .find((item) => item.role === "assistant")?.id;
       if (!interrupt || !assistantId || !interrupt.interruptId) {
         return;
       }
@@ -301,5 +437,12 @@ export function useRunStream(): RunStreamController {
     [invalidateAfterTerminal, model, runStream, toolPreset],
   );
 
-  return { sendMessage, retryAssistant, resumeInterrupt, stopStreaming };
+  return {
+    sendMessage,
+    steerRun,
+    cancelSteering,
+    retryAssistant,
+    resumeInterrupt,
+    stopStreaming,
+  };
 }

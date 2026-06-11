@@ -4,9 +4,13 @@ from __future__ import annotations
 
 EXPECTED_BUILTIN_TOOL_NAMES = {
     "read_file",
+    "artifact_list",
+    "artifact_preview",
+    "artifact_read",
     "task_create",
     "workflow_tool",
     "file_edit",
+    "file_patch",
     "mcp_tool",
     "team_create_tool",
     "web_search",
@@ -29,6 +33,7 @@ EXPECTED_BUILTIN_TOOL_NAMES = {
     "mcp_auth",
     "exit_plan_mode_v2",
     "skill_tool",
+    "skill_view",
     "send_message_tool",
     "notebook_edit",
     "enter_plan_mode",
@@ -49,6 +54,9 @@ EXPECTED_BUILTIN_TOOL_NAMES = {
     "todo_write",
     "ask_user_question",
     "task_output",
+    "source_read",
+    "pdf_read",
+    "browser_read",
     "web_fetch",
 }
 

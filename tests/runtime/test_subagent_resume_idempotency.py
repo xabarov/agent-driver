@@ -65,3 +65,4 @@ async def test_subagent_reexecution_with_same_idempotency_key_does_not_duplicate
         max_child_runs=4,
     )
     assert len(store.list_runs("run_1")) == 1
+    assert store.list_runs("run_1")[0].status.value == "completed"

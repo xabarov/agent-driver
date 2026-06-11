@@ -32,7 +32,6 @@ from agent_driver.llm.tool_result_unpacker import (
     normalize_attachment,
 )
 
-
 # A 1x1 transparent PNG, base64-encoded.
 _TINY_PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNgAAIAAAU"
@@ -61,21 +60,39 @@ def test_normalize_missing_mime_dropped():
 
 
 def test_normalize_invalid_mime_dropped():
-    assert normalize_attachment({"kind": "image", "mime_type": "png", "data": _TINY_PNG_B64}) is None
+    assert (
+        normalize_attachment(
+            {"kind": "image", "mime_type": "png", "data": _TINY_PNG_B64}
+        )
+        is None
+    )
 
 
 def test_normalize_empty_data_dropped():
-    assert normalize_attachment({"kind": "image", "mime_type": "image/png", "data": ""}) is None
+    assert (
+        normalize_attachment({"kind": "image", "mime_type": "image/png", "data": ""})
+        is None
+    )
 
 
 def test_normalize_unknown_kind_dropped():
     """Future ``kind`` values (audio, video) are added on a separate slice;
     today only ``image`` is recognized."""
-    assert normalize_attachment({"kind": "audio", "mime_type": "audio/wav", "data": _TINY_PNG_B64}) is None
+    assert (
+        normalize_attachment(
+            {"kind": "audio", "mime_type": "audio/wav", "data": _TINY_PNG_B64}
+        )
+        is None
+    )
 
 
 def test_normalize_corrupt_base64_dropped():
-    assert normalize_attachment({"kind": "image", "mime_type": "image/png", "data": "!!!not base64!!!"}) is None
+    assert (
+        normalize_attachment(
+            {"kind": "image", "mime_type": "image/png", "data": "!!!not base64!!!"}
+        )
+        is None
+    )
 
 
 def test_normalize_default_kind_is_image():
@@ -95,9 +112,10 @@ def test_normalize_non_dict_dropped():
 def test_normalize_oversized_dropped():
     # Build a base64 payload longer than 20MB — drop without crashing.
     huge = "A" * (20 * 1024 * 1024 + 1024)
-    assert normalize_attachment(
-        {"kind": "image", "mime_type": "image/png", "data": huge}
-    ) is None
+    assert (
+        normalize_attachment({"kind": "image", "mime_type": "image/png", "data": huge})
+        is None
+    )
 
 
 # --- extract_attachments_from_structured_output -----------------------------
@@ -224,8 +242,11 @@ def test_payload_tool_message_with_attachments_emits_content_list():
                 content="",
                 metadata={
                     "tool_calls": [
-                        {"id": "call_1", "type": "function",
-                         "function": {"name": "screenshot", "arguments": "{}"}},
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "screenshot", "arguments": "{}"},
+                        },
                     ]
                 },
             ),
@@ -266,10 +287,10 @@ def test_payload_tool_message_without_attachments_stays_flat_string():
     assert payload["messages"][0]["content"] == '{"summary": "ok"}'
 
 
-def test_payload_non_tool_role_ignores_attachments_metadata():
-    """Attachments are tool-role only. A user-role message that happens to
-    have attachments metadata (defensive: shouldn't happen in production)
-    keeps the flat-string codepath."""
+def test_payload_user_role_emits_image_blocks_from_attachments():
+    """A user-role message carrying image attachments emits the OpenAI
+    content-list (text + image_url) — multimodal image input reaches a vision
+    model, not only tool-role screenshots."""
     provider = _make_provider()
     request = LlmRequest(
         messages=[
@@ -281,8 +302,9 @@ def test_payload_non_tool_role_ignores_attachments_metadata():
         ]
     )
     payload = provider._payload(request, stream=False)
-    # Falls through to the flat content shape.
-    assert payload["messages"][0]["content"] == "hi"
+    content = payload["messages"][0]["content"]
+    assert isinstance(content, list)
+    assert any(block["type"] == "image_url" for block in content)
 
 
 def test_payload_empty_attachments_list_stays_flat_string():

@@ -2,6 +2,8 @@
 
 const TOOL_CALL_BLOCK_RE =
   /(^|\n)?[ \t]*<\s*tool_call\s*>\s*[\s\S]*?\s*<\s*\/\s*tool_call\s*>[ \t]*(\n|$)?/gi;
+const ORPHAN_TOOL_CALL_JSON_RE =
+  /(^|\n)?[ \t]*\{[\s\S]*?"name"\s*:\s*"[a-zA-Z0-9_]+"[\s\S]*?"arguments"\s*:[\s\S]*?\}\s*<\s*\/\s*tool_call\s*>[ \t]*(\n|$)?/gi;
 const PYTHON_TAG_BLOCK_RE =
   /(^|\n)?[ \t]*<\|python_tag\|>\s*[\s\S]*?\s*<\|eom_id\|>[ \t]*(\n|$)?/gi;
 const TOOL_CALL_FENCE_RE =
@@ -21,6 +23,9 @@ export function stripTextFormToolCalls(text: string): string {
   }
   return text
     .replace(TOOL_CALL_BLOCK_RE, (_match, before: string, after: string) =>
+      preserveLineBreak(before, after),
+    )
+    .replace(ORPHAN_TOOL_CALL_JSON_RE, (_match, before: string, after: string) =>
       preserveLineBreak(before, after),
     )
     .replace(PYTHON_TAG_BLOCK_RE, (_match, before: string, after: string) =>

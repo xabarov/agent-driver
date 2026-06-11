@@ -149,10 +149,7 @@ def test_orchestrator_state_snapshot_reports_circuit_breaker() -> None:
 
 def test_partial_compaction_prefix_summary_keeps_recent_tail() -> None:
     """Partial compaction should summarize prefix and keep recent tail."""
-    messages = [
-        {"role": "user", "content": f"msg-{idx}"}
-        for idx in range(10)
-    ]
+    messages = [{"role": "user", "content": f"msg-{idx}"} for idx in range(10)]
     out = build_partial_compaction(
         messages=messages,
         retain_recent_messages=4,
@@ -161,3 +158,30 @@ def test_partial_compaction_prefix_summary_keeps_recent_tail() -> None:
     assert out.prompt_messages[0]["role"] == "system"
     assert "Partial compaction summary" in out.prompt_messages[0]["content"]
     assert len(out.prompt_messages) == 5
+
+
+def test_partial_compaction_preserves_leading_system_policy() -> None:
+    """Partial compaction must not summarize away the stable system prompt."""
+    messages = [
+        {"role": "system", "content": "Base ReAct policy. Keep me verbatim."},
+    ]
+    messages.extend({"role": "user", "content": f"old-{idx}"} for idx in range(8))
+
+    out = build_partial_compaction(
+        messages=messages,
+        retain_recent_messages=3,
+        prefix_mode=True,
+    )
+
+    assert out.prompt_messages[0] == {
+        "role": "system",
+        "content": "Base ReAct policy. Keep me verbatim.",
+    }
+    assert out.prompt_messages[1]["role"] == "system"
+    assert "Partial compaction summary" in out.prompt_messages[1]["content"]
+    assert [item["content"] for item in out.prompt_messages[-3:]] == [
+        "old-5",
+        "old-6",
+        "old-7",
+    ]
+    assert out.metadata["protected_head_count"] == 1

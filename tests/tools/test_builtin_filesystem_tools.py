@@ -78,6 +78,69 @@ async def test_read_file_resolves_relative_path_with_workspace_scope(tmp_path) -
 
 
 @pytest.mark.asyncio
+async def test_artifact_tools_list_read_and_preview_workspace_artifacts(
+    tmp_path,
+) -> None:
+    """Artifact tools should expose bounded research artifact reads."""
+    report = tmp_path / "research" / "report.md"
+    report.parent.mkdir()
+    report.write_text("# Report\n\nbody\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    list_tool = registry.get("artifact_list")
+    read_tool = registry.get("artifact_read")
+    preview_tool = registry.get("artifact_preview")
+    assert list_tool is not None
+    assert read_tool is not None
+    assert preview_tool is not None
+
+    with workspace_cwd_scope(tmp_path):
+        listed = await list_tool.handler({})
+        read = await read_tool.handler({"path": "research/report.md"})
+        preview = await preview_tool.handler({"path": "research/report.md"})
+
+    assert listed["artifacts"][0]["path"] == "research/report.md"
+    assert listed["artifacts"][0]["kind"] == "report"
+    assert read["content"] == "# Report\n\nbody\n"
+    assert read["truncated"] is False
+    assert preview["headings"] == ["# Report"]
+    assert preview["preview"] == "# Report\n\nbody\n"
+
+
+@pytest.mark.asyncio
+async def test_artifact_tools_reject_non_artifact_paths(tmp_path) -> None:
+    """Artifact tools should not become a second unrestricted read_file."""
+    (tmp_path / "note.txt").write_text("secret", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    read_tool = registry.get("artifact_read")
+    assert read_tool is not None
+
+    with workspace_cwd_scope(tmp_path):
+        with pytest.raises(ValueError, match="known artifact"):
+            await read_tool.handler({"path": "note.txt"})
+
+
+@pytest.mark.asyncio
+async def test_artifact_read_truncates_large_artifact(tmp_path) -> None:
+    """artifact_read should return a bounded preview instead of failing."""
+    report = tmp_path / "research" / "report.md"
+    report.parent.mkdir()
+    report.write_text("abcdef", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    read_tool = registry.get("artifact_read")
+    assert read_tool is not None
+
+    with workspace_cwd_scope(tmp_path):
+        out = await read_tool.handler({"path": "research/report.md", "max_bytes": 3})
+
+    assert out["content"] == "abc"
+    assert out["truncated"] is True
+    assert out["size_bytes"] == 6
+
+
+@pytest.mark.asyncio
 async def test_glob_respects_gitignore(tmp_path) -> None:
     """glob_search should skip paths matched by .gitignore patterns."""
     (tmp_path / ".gitignore").write_text("ignored.py\n", encoding="utf-8")
@@ -337,7 +400,9 @@ async def test_grep_marks_more_lines_in_file_when_capped(tmp_path) -> None:
     register_filesystem_tools(registry)
     tool = registry.get("grep_search")
     assert tool is not None
-    out = await tool.handler({"base_dir": str(tmp_path), "pattern": "hit", "max_matches": 1})
+    out = await tool.handler(
+        {"base_dir": str(tmp_path), "pattern": "hit", "max_matches": 1}
+    )
     assert out["matches"][0]["more_lines_in_file"] is True
 
 
@@ -489,6 +554,104 @@ async def test_file_edit_fails_on_occurrence_mismatch(tmp_path) -> None:
                 "old_text": "name=old",
                 "new_text": "name=new",
                 "expected_occurrences": 2,
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_file_patch_applies_multiple_replacements(tmp_path) -> None:
+    """file_patch should apply ordered exact replacements in one call."""
+    target = tmp_path / "report.md"
+    target.write_text("alpha\nbeta\nalpha\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_patch")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "patches": [
+                {
+                    "old_text": "alpha",
+                    "new_text": "ALPHA",
+                    "expected_occurrences": 2,
+                },
+                {"old_text": "beta", "new_text": "BETA"},
+            ],
+        }
+    )
+    assert out["operation"] == "patch"
+    assert out["replacements"] == 3
+    assert [item["replacements"] for item in out["patches_applied"]] == [2, 1]
+    assert target.read_text(encoding="utf-8") == "ALPHA\nBETA\nALPHA\n"
+
+
+@pytest.mark.asyncio
+async def test_file_patch_dry_run_preserves_file(tmp_path) -> None:
+    """file_patch dry_run should expose preview without writing the patch."""
+    target = tmp_path / "report.md"
+    target.write_text("one\ntwo\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_patch")
+    assert tool is not None
+    out = await tool.handler(
+        {
+            "path": str(target),
+            "patches": [
+                {"old_text": "one", "new_text": "ONE"},
+                {"old_text": "two", "new_text": "TWO"},
+            ],
+            "dry_run": True,
+        }
+    )
+    assert out["dry_run"] is True
+    assert out["preview"]["after"] == "ONE\nTWO\n"
+    assert target.read_text(encoding="utf-8") == "one\ntwo\n"
+
+
+@pytest.mark.asyncio
+async def test_file_patch_fails_on_patch_occurrence_mismatch(tmp_path) -> None:
+    """file_patch should stop before writing when any patch count mismatches."""
+    target = tmp_path / "report.md"
+    target.write_text("alpha\nbeta\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_patch")
+    assert tool is not None
+    with pytest.raises(ValueError, match="index=1"):
+        await tool.handler(
+            {
+                "path": str(target),
+                "patches": [
+                    {"old_text": "alpha", "new_text": "ALPHA"},
+                    {
+                        "old_text": "beta",
+                        "new_text": "BETA",
+                        "expected_occurrences": 2,
+                    },
+                ],
+            }
+        )
+    assert target.read_text(encoding="utf-8") == "alpha\nbeta\n"
+
+
+@pytest.mark.asyncio
+async def test_file_patch_rejects_too_many_patch_items(tmp_path) -> None:
+    """file_patch should enforce its schema-sized batch limit at runtime."""
+    target = tmp_path / "report.md"
+    target.write_text("alpha\n", encoding="utf-8")
+    registry = ToolRegistry()
+    register_filesystem_tools(registry)
+    tool = registry.get("file_patch")
+    assert tool is not None
+    with pytest.raises(ValueError, match="at most 50"):
+        await tool.handler(
+            {
+                "path": str(target),
+                "patches": [
+                    {"old_text": "alpha", "new_text": "alpha"} for _ in range(51)
+                ],
             }
         )
 

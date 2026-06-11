@@ -14,6 +14,7 @@ from agent_driver.contracts.enums import (
 )
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolCall, ToolManifest, ToolPolicyOutcome
+from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.tools.executor.result import GovernedExecutionResult
 from agent_driver.tools.registry import RegisteredTool
 
@@ -52,6 +53,11 @@ class ExecSpec:
     call: ToolCall
     index: int
     current_tool_calls: int
+    # A0.2 — optional per-call gate forwarded from
+    # ``GovernedToolExecutor.execute(...)``. Lives on ExecSpec rather
+    # than the executor instance so concurrent runs on the same
+    # executor (multi-tenant) can carry their own gates.
+    tool_gate: ToolGate | None = None
 
 
 @dataclass(frozen=True, slots=True)

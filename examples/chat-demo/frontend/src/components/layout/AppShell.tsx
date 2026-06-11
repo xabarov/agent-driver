@@ -25,28 +25,44 @@ export function AppShell({ header, sidebar, children }: AppShellProps) {
               : "fixed inset-y-0 left-0 z-40 -translate-x-full lg:translate-x-0",
           )}
         >
+          {mobileOpen ? (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="absolute right-2 top-2 z-50 h-8 w-8 lg:hidden"
+              onClick={() => setMobileOpen(false)}
+              aria-label="Close sidebar"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          ) : null}
           {sidebar}
         </aside>
         {mobileOpen ? (
           <button
             type="button"
-            className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+            className="fixed inset-0 z-30 bg-black/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden"
             aria-label="Close sidebar"
             onClick={() => setMobileOpen(false)}
           />
         ) : null}
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center gap-2 border-b border-border px-3 py-2 lg:hidden">
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              onClick={() => setMobileOpen((value) => !value)}
-            >
-              {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-            </Button>
-          </div>
-          <header className="shrink-0 border-b border-border px-4 py-2">{header}</header>
+          <header className="shrink-0 border-b border-border px-3 py-2 lg:px-4">
+            <div className="flex min-w-0 items-start gap-2">
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-9 w-9 shrink-0 lg:hidden"
+                onClick={() => setMobileOpen((value) => !value)}
+                aria-label={mobileOpen ? "Close sidebar" : "Open sidebar"}
+              >
+                {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+              </Button>
+              <div className="min-w-0 flex-1">{header}</div>
+            </div>
+          </header>
           <main className="flex min-h-0 flex-1 flex-col">{children}</main>
         </div>
       </div>

@@ -150,6 +150,81 @@ def test_agent_run_output_round_trip() -> None:
     assert restored.interrupt is not None
 
 
+def test_agent_run_input_tool_choice_defaults_to_none() -> None:
+    """Without an explicit value, ``tool_choice`` is ``None`` — preserves
+    the legacy behaviour where the provider sets ``"auto"``."""
+    req = AgentRunInput(
+        input="hello",
+        agent_id="agent.default",
+        graph_preset="single_react",
+        model_role="default",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    )
+    assert req.tool_choice is None
+
+
+def test_agent_run_input_tool_choice_accepts_string_forms() -> None:
+    """Standard string forms (``"auto"`` / ``"required"`` / ``"none"``) and
+    arbitrary string passthrough for experimental backends."""
+    for choice in ("auto", "required", "none", "vendor-specific"):
+        req = AgentRunInput(
+            input="hello",
+            agent_id="agent.default",
+            graph_preset="single_react",
+            model_role="default",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+            tool_choice=choice,
+        )
+        assert req.tool_choice == choice
+
+
+def test_agent_run_input_tool_choice_accepts_specific_tool_object() -> None:
+    """``{"type": "tool", "name": "X"}`` shape that forces a named tool —
+    this is the primary motivation: callers can guarantee a chart is
+    rendered / a structured-output schema is filled / etc."""
+    choice = {"type": "tool", "name": "chart_vegalite"}
+    req = AgentRunInput(
+        input="hello",
+        agent_id="agent.default",
+        graph_preset="single_react",
+        model_role="default",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        tool_choice=choice,
+    )
+    assert req.tool_choice == choice
+
+
+def test_agent_run_input_tool_choice_rejects_non_json_payload() -> None:
+    """Non-string / non-dict / non-null is rejected — the validator must
+    refuse silently coercing types so downstream provider adapters never
+    receive garbage."""
+    with pytest.raises(ValidationError):
+        AgentRunInput(
+            input="hello",
+            agent_id="agent.default",
+            graph_preset="single_react",
+            model_role="default",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+            tool_choice=123,  # type: ignore[arg-type]
+        )
+
+
+def test_agent_run_input_tool_choice_roundtrips_via_json() -> None:
+    """Field roundtrips through ``model_dump`` / ``model_validate`` so
+    transport (queue / HTTP / checkpoint) preserves the value."""
+    choice = {"type": "tool", "name": "chart_vegalite"}
+    req = AgentRunInput(
+        input="hello",
+        agent_id="agent.default",
+        graph_preset="single_react",
+        model_role="default",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        tool_choice=choice,
+    )
+    restored = AgentRunInput.model_validate(req.model_dump(mode="json"))
+    assert restored.tool_choice == choice
+
+
 def test_agent_run_input_accepts_profile_and_serialization_policy() -> None:
     """Allow profile and serialization policy in run input."""
     req = AgentRunInput(
@@ -167,6 +242,17 @@ def test_agent_run_input_accepts_profile_and_serialization_policy() -> None:
     assert req.agent_profile == AgentProfile.CODE_AGENT
     assert req.serialization_policy is not None
     assert req.serialization_policy.schema_version == "v2"
+
+
+def test_agent_run_input_accepts_coordinator_profile() -> None:
+    """Coordinator should be a first-class run profile."""
+    req = AgentRunInput(
+        input="coordinate this",
+        agent_id="agent.coordinator",
+        graph_preset="single_react",
+        agent_profile=AgentProfile.COORDINATOR,
+    )
+    assert req.agent_profile == AgentProfile.COORDINATOR
 
 
 def test_agent_run_output_accepts_new_projection_and_group_fields() -> None:

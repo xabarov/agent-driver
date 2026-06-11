@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from collections.abc import Sequence
 import json
 import sys
+from collections.abc import Sequence
 
 from agent_driver.adapters import (
     cli_follow_lines,
@@ -17,17 +17,9 @@ from agent_driver.adapters import (
     is_rich_available,
 )
 from agent_driver.cli.chat import run_chat_session
-from agent_driver.cli.config import (
-    config_to_dict,
-    load_cli_config,
-    resolve_with_env,
-)
-from agent_driver.cli.evals import (
-    LiveEvalSkipped,
-    live_scenarios_for_suite,
-    render_eval_inspect,
-    render_eval_timeline,
-    run_live_evaluation,
+from agent_driver.cli.commands.acp import acp_command as _acp_command_impl
+from agent_driver.cli.commands.evals import (
+    eval_compare_command as _eval_compare_command_impl,
 )
 from agent_driver.cli.commands.evals import (
     eval_inspect_command as _eval_inspect_command_impl,
@@ -35,6 +27,8 @@ from agent_driver.cli.commands.evals import (
 from agent_driver.cli.commands.evals import eval_run_command as _eval_run_command_impl
 from agent_driver.cli.commands.ops import doctor_command as _doctor_command_impl
 from agent_driver.cli.commands.ops import resume_command as _resume_command_impl
+from agent_driver.cli.commands.run_chat import chat_command as _chat_command_impl
+from agent_driver.cli.commands.run_chat import run_command as _run_command_impl
 from agent_driver.cli.commands.runtime_views import (
     export_command as _export_command_impl,
 )
@@ -49,6 +43,19 @@ from agent_driver.cli.commands.runtime_views import (
 )
 from agent_driver.cli.commands.runtime_views import tail_command as _tail_command_impl
 from agent_driver.cli.commands.runtime_views import tree_command as _tree_command_impl
+from agent_driver.cli.commands.serve import serve_command as _serve_command_impl
+from agent_driver.cli.config import (
+    config_to_dict,
+    load_cli_config,
+    resolve_with_env,
+)
+from agent_driver.cli.evals import (
+    LiveEvalSkipped,
+    live_scenarios_for_suite,
+    render_eval_inspect,
+    render_eval_timeline,
+    run_live_evaluation,
+)
 from agent_driver.cli.parser import build_parser as _build_parser_impl
 from agent_driver.cli.providers import (
     CliProviderConfig,
@@ -57,9 +64,8 @@ from agent_driver.cli.providers import (
 )
 from agent_driver.cli.tools import CliToolConfig, CliToolConfigError, build_cli_toolset
 from agent_driver.runtime import RuntimeStoreFactoryConfig, create_runtime_store_bundle
-from agent_driver.cli.commands.run_chat import chat_command as _chat_command_impl
-from agent_driver.cli.commands.run_chat import run_command as _run_command_impl
 from agent_driver.sdk import create_agent
+
 
 def _build_parser() -> argparse.ArgumentParser:
     return _build_parser_impl()
@@ -139,6 +145,36 @@ async def _chat_command(args: argparse.Namespace) -> int:
         build_cli_toolset=build_cli_toolset,
         create_agent=create_agent,
         run_chat_session=run_chat_session,
+        provider_error=CliProviderConfigError,
+        tool_error=CliToolConfigError,
+    )
+
+
+async def _acp_command(args: argparse.Namespace) -> int:
+    return await _acp_command_impl(
+        args,
+        store_config_from_args=_store_config_from_args,
+        provider_config_from_args=_provider_config_from_args,
+        tool_config_from_args=_tool_config_from_args,
+        create_runtime_store_bundle=create_runtime_store_bundle,
+        build_cli_provider=build_cli_provider,
+        build_cli_toolset=build_cli_toolset,
+        create_agent=create_agent,
+        provider_error=CliProviderConfigError,
+        tool_error=CliToolConfigError,
+    )
+
+
+async def _serve_command(args: argparse.Namespace) -> int:
+    return await _serve_command_impl(
+        args,
+        store_config_from_args=_store_config_from_args,
+        provider_config_from_args=_provider_config_from_args,
+        tool_config_from_args=_tool_config_from_args,
+        create_runtime_store_bundle=create_runtime_store_bundle,
+        build_cli_provider=build_cli_provider,
+        build_cli_toolset=build_cli_toolset,
+        create_agent=create_agent,
         provider_error=CliProviderConfigError,
         tool_error=CliToolConfigError,
     )
@@ -244,6 +280,15 @@ async def _eval_run_command(args: argparse.Namespace) -> int:
         provider_error=CliProviderConfigError,
         tool_error=CliToolConfigError,
         live_eval_skipped=LiveEvalSkipped,
+    )
+
+
+async def _eval_compare_command(args: argparse.Namespace) -> int:
+    return await _eval_compare_command_impl(
+        args,
+        build_cli_toolset=build_cli_toolset,
+        tool_config_from_args=_tool_config_from_args,
+        tool_error=CliToolConfigError,
     )
 
 
@@ -379,6 +424,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         except KeyboardInterrupt:
             print("chat> interrupted")
             return 130
+    if args.command == "acp":
+        try:
+            return asyncio.run(_acp_command(args))
+        except KeyboardInterrupt:
+            return 130
+    if args.command == "serve":
+        try:
+            return asyncio.run(_serve_command(args))
+        except KeyboardInterrupt:
+            return 130
     if args.command == "replay":
         return _replay_command(args)
     if args.command == "tail":
@@ -414,6 +469,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.eval_command == "run":
             try:
                 return asyncio.run(_eval_run_command(args))
+            except KeyboardInterrupt:
+                print("eval> interrupted")
+                return 130
+        if args.eval_command == "compare":
+            try:
+                return asyncio.run(_eval_compare_command(args))
             except KeyboardInterrupt:
                 print("eval> interrupted")
                 return 130

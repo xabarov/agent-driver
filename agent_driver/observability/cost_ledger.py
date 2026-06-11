@@ -109,6 +109,11 @@ _DEFAULT_PRICING: dict[str, Pricing] = {
     ),
     "gpt-4o": Pricing(input_per_million=2.5, output_per_million=10.0),
     "gpt-4o-mini": Pricing(input_per_million=0.15, output_per_million=0.6),
+    # OpenRouter open-weight list prices (per openrouter.ai, 2026-06).
+    "qwen/qwen-2.5-7b-instruct": Pricing(
+        input_per_million=0.04, output_per_million=0.10
+    ),
+    "qwen/qwen3.5-397b-a17b": Pricing(input_per_million=0.39, output_per_million=2.34),
 }
 
 
@@ -197,19 +202,48 @@ class CostLedger(ContractModel):
             for tally in self.per_model.values()
         )
 
+    def cache_hit_rate(self) -> float:
+        """Fraction of prompt tokens served from cache across all models.
+
+        ``cache_read / (input + cache_read)`` — 0.0 when nothing was cached.
+        """
+        cache_read = sum(t.cache_read_tokens for t in self.per_model.values())
+        prompt = sum(t.input_tokens for t in self.per_model.values()) + cache_read
+        return cache_read / prompt if prompt else 0.0
+
     def summary(self) -> dict[str, Any]:
         """Compact dict for logs / observability emission."""
         return {
             "total_cost_usd": round(self.total_cost_usd(), 6),
             "total_tokens": self.total_tokens(),
+            "cache_hit_rate": round(self.cache_hit_rate(), 4),
             "models": sorted(self.per_model.keys()),
             "tool_count": len(self.per_tool_duration_ms),
         }
 
 
+def format_cost_summary(ledger: CostLedger) -> str:
+    """Render a human-friendly per-model cost/token table for operators."""
+    if not ledger.per_model:
+        return "no model usage recorded"
+    lines = [f"{'model':<30} {'in':>8} {'out':>8} {'cache':>8} {'usd':>9}"]
+    for name in sorted(ledger.per_model):
+        tally = ledger.per_model[name]
+        lines.append(
+            f"{name[:30]:<30} {tally.input_tokens:>8} {tally.output_tokens:>8} "
+            f"{tally.cache_read_tokens:>8} {tally.cost_usd:>9.4f}"
+        )
+    lines.append(
+        f"{'TOTAL (hit ' + format(ledger.cache_hit_rate(), '.0%') + ')':<30} "
+        f"{'':>8} {'':>8} {'':>8} {ledger.total_cost_usd():>9.4f}"
+    )
+    return "\n".join(lines)
+
+
 __all__ = [
     "CostLedger",
     "ModelTokenTally",
+    "format_cost_summary",
     "Pricing",
     "estimate_cost_usd",
     "lookup_pricing",

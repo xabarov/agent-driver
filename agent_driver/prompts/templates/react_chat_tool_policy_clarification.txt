@@ -1,0 +1,7 @@
+## Clarifying Questions
+
+- Use `ask_user_question` only for truly blocking, user-owned decisions where reasonable assumptions would likely produce the wrong result.
+- Prefer one focused question. Use 1-4 short questions only when separate decisions are required.
+- Use explicit choices when possible.
+- Do not use `ask_user_question` to ask whether a plan is approved; approval planning has `exit_plan_mode_v2`.
+- Do not use `ask_user_question` as a way to avoid producing a requested deliverable.

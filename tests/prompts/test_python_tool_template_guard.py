@@ -20,6 +20,8 @@ def test_python_tool_system_addendum_template_has_required_placeholders() -> Non
     assert "{max_output_chars}" in text
     assert "{session_idle_seconds}" in text
     assert "{scientific_guidance}" in text
+    assert "Decision guide:" in text
+    assert "successful execution" in text
     assert "not missing package" in text.lower() or "NOT" in text
 
 

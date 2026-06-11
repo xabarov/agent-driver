@@ -4,11 +4,41 @@ import {
   type AssistantMessageMetadata,
 } from "./messageMetadata";
 import { parsePlanningSnapshot } from "./planning";
+import {
+  mergeSourceEvidence,
+  normalizeSourceEvidenceList,
+  type SourceEvidence,
+} from "./sourceEvidence";
 import { stripTextFormToolCalls } from "./stripToolCalls";
 import type { ChatMessage, ToolCallStatus } from "../store/chatStore";
 import type { PlanningSnapshot } from "./planning";
 
-const PLANNING_TOOL_NAMES = new Set(["todo_write", "planning_state_update"]);
+export interface SourceLedger {
+  searchCandidates: SourceEvidence[];
+  verifiedReads: SourceEvidence[];
+  failedReads: SourceEvidence[];
+  blockedReads: SourceEvidence[];
+  assistantLinks: SourceEvidence[];
+}
+
+export interface DeepResearchState {
+  ledger?: SourceLedger;
+  artifact?: DeepResearchArtifact;
+  progress: Array<{ seq: number; event: string; label: string }>;
+}
+
+export interface DeepResearchArtifact {
+  reportPath: string;
+  reportSizeBytes?: number;
+  capturedLongAnswers?: number;
+  lastUpdateReason?: string;
+}
+
+const CONTROL_TOOL_NAMES = new Set([
+  "todo_write",
+  "planning_state_update",
+  "ask_user_question",
+]);
 
 export type StreamEventName =
   | "run_started"
@@ -25,6 +55,8 @@ export type StreamEventName =
   | "interrupt_requested"
   | "run_paused"
   | "checkpoint_saved"
+  | "memory_compaction_started"
+  | "memory_compacted"
   | "node_started"
   | "node_completed"
   | "run_completed"
@@ -63,23 +95,170 @@ export interface ParsedToolState {
   resultPreview?: string;
   risk?: string;
   durationMs?: number;
+  sources?: SourceEvidence[];
+}
+
+export interface ParsedSteeringEvent {
+  seq: number;
+  event: string;
+  queueId: string;
+  controlId?: string;
+  kind?: string;
+  priority?: string;
+}
+
+export interface ParsedSubagentChildRun {
+  taskId: string;
+  subagentRunId?: string;
+  childRunId?: string;
+  status: "spawned" | "running" | "completed" | "failed" | "cancelled";
+  description?: string;
+  outputPreview?: string;
+  usedTools?: string[];
+  warning?: string;
+}
+
+export interface ParsedSubagentLifecycleEvent {
+  seq: number;
+  event:
+    | "subagent_group_started"
+    | "subagent_group_joined"
+    | "subagent_group_join_waiting"
+    | "subagent_group_failed"
+    | "subagent_spawned"
+    | "subagent_started"
+    | "subagent_completed";
+  groupId?: string;
+  joinState?: string;
+  childRun?: ParsedSubagentChildRun;
+}
+
+export interface ParsedCompactionNotice {
+  compactionId: string;
+  status: "running" | "done" | "failed";
+  mode?: string;
+  reason?: string;
+  failureKind?: string;
+  summarizedMessageCount?: number;
+  attempts?: number;
+}
+
+function sourceLedgerList(raw: unknown): SourceEvidence[] {
+  return normalizeSourceEvidenceList(raw);
+}
+
+export function parseSourceLedgerEvent(
+  event: RunStreamEvent<Record<string, unknown>>,
+): SourceLedger | undefined {
+  if (event.event !== "source_ledger_updated") {
+    return undefined;
+  }
+  return {
+    searchCandidates: sourceLedgerList(
+      event.data.search_candidates ?? event.data.searchCandidates,
+    ),
+    verifiedReads: sourceLedgerList(
+      event.data.verified_reads ?? event.data.verifiedReads,
+    ),
+    failedReads: sourceLedgerList(event.data.failed_reads ?? event.data.failedReads),
+    blockedReads: sourceLedgerList(
+      event.data.blocked_reads ?? event.data.blockedReads,
+    ),
+    assistantLinks: sourceLedgerList(
+      event.data.assistant_links ?? event.data.assistantLinks,
+    ),
+  };
+}
+
+export function parseDeepResearchProgress(
+  event: RunStreamEvent<Record<string, unknown>>,
+): { seq: number; event: string; label: string } | undefined {
+  if (
+    event.event !== "research_progress" &&
+    event.event !== "citation_coverage_updated" &&
+    event.event !== "source_ledger_updated"
+  ) {
+    return undefined;
+  }
+  const label =
+    textValue(event.data.status) ??
+    textValue(event.data.reason) ??
+    event.event.replaceAll("_", " ");
+  return { seq: event.seq, event: event.event, label };
+}
+
+export function parseDeepResearchArtifactPayload(
+  raw: unknown,
+): DeepResearchArtifact | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  const exists = record.report_exists ?? record.reportExists;
+  if (exists === false) {
+    return undefined;
+  }
+  const path = textValue(record.report_path) ?? textValue(record.reportPath);
+  if (!path) {
+    return undefined;
+  }
+  return {
+    reportPath: path,
+    reportSizeBytes: numberValue(
+      record.report_size_bytes ?? record.reportSizeBytes,
+    ),
+    capturedLongAnswers: numberValue(
+      record.captured_long_answers ?? record.capturedLongAnswers,
+    ),
+    lastUpdateReason:
+      textValue(record.last_update_reason) ?? textValue(record.lastUpdateReason),
+  };
+}
+
+export function parseDeepResearchArtifactEvent(
+  event: RunStreamEvent<Record<string, unknown>>,
+): DeepResearchArtifact | undefined {
+  if (
+    event.event !== "run_completed" &&
+    event.event !== "artifact_created" &&
+    event.event !== "artifact_updated"
+  ) {
+    return undefined;
+  }
+  if (event.event === "artifact_created" || event.event === "artifact_updated") {
+    return parseDeepResearchArtifactPayload({
+      report_exists: true,
+      report_path: event.data.path,
+      report_size_bytes: event.data.size_bytes ?? event.data.bytes,
+      last_update_reason: event.event,
+    });
+  }
+  return parseDeepResearchArtifactPayload(
+    event.data.deep_research_artifacts ?? event.data.deepResearchArtifacts,
+  );
 }
 
 export function isTokenDelta(event: RunStreamEvent<Record<string, unknown>>): boolean {
   return event.event === "token_delta";
 }
 
-export function getTokenDeltaText(event: RunStreamEvent<Record<string, unknown>>): string {
+export function getTokenDeltaText(
+  event: RunStreamEvent<Record<string, unknown>>,
+): string {
   const delta = event.data.delta_text;
   return typeof delta === "string" ? delta : "";
 }
 
-export function getAssistantSnapshotContent(event: RunStreamEvent<Record<string, unknown>>): string | undefined {
+export function getAssistantSnapshotContent(
+  event: RunStreamEvent<Record<string, unknown>>,
+): string | undefined {
   const content = event.data.content;
   return typeof content === "string" ? content : undefined;
 }
 
-export function isTerminalEvent(event: RunStreamEvent<Record<string, unknown>>): boolean {
+export function isTerminalEvent(
+  event: RunStreamEvent<Record<string, unknown>>,
+): boolean {
   return (
     event.event === "run_completed" ||
     event.event === "run_failed" ||
@@ -87,28 +266,113 @@ export function isTerminalEvent(event: RunStreamEvent<Record<string, unknown>>):
   );
 }
 
-export function isToolCallStarted(event: RunStreamEvent<Record<string, unknown>>): boolean {
+export function isToolCallStarted(
+  event: RunStreamEvent<Record<string, unknown>>,
+): boolean {
   return event.event === "tool_call_started";
 }
 
-export function isToolCallCompleted(event: RunStreamEvent<Record<string, unknown>>): boolean {
+export function isToolCallCompleted(
+  event: RunStreamEvent<Record<string, unknown>>,
+): boolean {
   return event.event === "tool_call_completed";
 }
 
-export function isInterruptEvent(event: RunStreamEvent<Record<string, unknown>>): boolean {
+export function isInterruptEvent(
+  event: RunStreamEvent<Record<string, unknown>>,
+): boolean {
   return event.event === "interrupt_requested" || event.event === "run_paused";
 }
 
+function textValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+export function parseCompactionNotice(
+  event: RunStreamEvent<Record<string, unknown>>,
+): ParsedCompactionNotice | undefined {
+  if (
+    event.event !== "memory_compaction_started" &&
+    event.event !== "memory_compacted"
+  ) {
+    return undefined;
+  }
+  if (event.event === "memory_compacted" && event.data.outcome === "skipped") {
+    return undefined;
+  }
+  const compactionId =
+    textValue(event.data.compaction_id) ??
+    textValue(event.data.compactionId) ??
+    `${event.run_id}:compaction:${event.seq}`;
+  const outcome = textValue(event.data.outcome);
+  const status =
+    outcome === "failure"
+      ? "failed"
+      : event.event === "memory_compacted"
+        ? "done"
+        : "running";
+  return {
+    compactionId,
+    status,
+    mode: textValue(event.data.mode),
+    reason: textValue(event.data.reason),
+    failureKind:
+      textValue(event.data.failure_kind) ?? textValue(event.data.failureKind),
+    summarizedMessageCount:
+      numberValue(event.data.summarized_message_count) ??
+      numberValue(event.data.summarizedMessageCount),
+  };
+}
+
+function summarizePrimitive(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return undefined;
+}
+
 function summarizeArgs(args: unknown): string | undefined {
-  if (!args || typeof args !== "object") {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
     return undefined;
   }
-  try {
-    const text = JSON.stringify(args);
-    return text.length > 120 ? `${text.slice(0, 120)}...` : text;
-  } catch {
-    return undefined;
+
+  const record = args as Record<string, unknown>;
+  const preferred: Array<[string, string]> = [
+    ["query", "query"],
+    ["url", "url"],
+    ["path", "path"],
+    ["pattern", "pattern"],
+    ["max_results", "max results"],
+    ["max_chars", "max chars"],
+  ];
+  const parts = preferred
+    .map(([key, label]) => {
+      const value = summarizePrimitive(record[key]);
+      return value ? `${label}: ${value}` : undefined;
+    })
+    .filter((value): value is string => Boolean(value));
+
+  if (!parts.length) {
+    for (const [key, rawValue] of Object.entries(record)) {
+      const value = summarizePrimitive(rawValue);
+      if (value) {
+        parts.push(`${key}: ${value}`);
+      }
+      if (parts.length >= 3) {
+        break;
+      }
+    }
   }
+
+  const text = parts.join(" · ");
+  return text.length > 160 ? `${text.slice(0, 157)}...` : text || undefined;
 }
 
 function toolStateKey(tool: Record<string, unknown>, index: number): string {
@@ -120,6 +384,35 @@ function toolStateKey(tool: Record<string, unknown>, index: number): string {
   return `${name}:${index}`;
 }
 
+function toolSources(
+  tool: Record<string, unknown>,
+  status: ToolCallStatus,
+): SourceEvidence[] | undefined {
+  if (status !== "done") {
+    return undefined;
+  }
+  const statusCode = tool.status_code;
+  if (
+    typeof statusCode === "number" &&
+    Number.isFinite(statusCode) &&
+    statusCode >= 400
+  ) {
+    return undefined;
+  }
+  if (tool.error_code || tool.error) {
+    return undefined;
+  }
+  const resultSummary = tool.result_summary;
+  if (
+    typeof resultSummary === "string" &&
+    /\bHTTP\s+[45]\d\d\b/i.test(resultSummary)
+  ) {
+    return undefined;
+  }
+  const sources = normalizeSourceEvidenceList(tool.sources);
+  return sources.length ? sources : undefined;
+}
+
 export function parseToolStatesFromEvent(
   event: RunStreamEvent<Record<string, unknown>>,
 ): ParsedToolState[] {
@@ -127,50 +420,181 @@ export function parseToolStatesFromEvent(
   if (!Array.isArray(tools)) {
     const singleName = event.data.tool_name;
     if (typeof singleName === "string") {
+      const status = event.event === "tool_call_completed" ? "done" : "running";
       return [
         {
           toolCallId: String(event.data.tool_call_id ?? singleName),
           name: singleName,
-          status: event.event === "tool_call_completed" ? "done" : "running",
-          args: typeof event.data.args === "object" ? (event.data.args as Record<string, unknown>) : undefined,
+          status,
+          args:
+            typeof event.data.args === "object"
+              ? (event.data.args as Record<string, unknown>)
+              : undefined,
           argsSummary: summarizeArgs(event.data.args),
           resultPreview:
             typeof event.data.result_summary === "string"
               ? event.data.result_summary
               : undefined,
+          sources: toolSources(event.data, status),
         },
       ];
     }
     return [];
   }
   return tools
-    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .filter(
+      (item): item is Record<string, unknown> =>
+        typeof item === "object" && item !== null,
+    )
     .map((tool, index) => {
       const rawStatus = tool.status;
-      let status: ToolCallStatus = event.event === "tool_call_completed" ? "done" : "running";
-      if (rawStatus === "failed" || rawStatus === "error") {
+      let status: ToolCallStatus =
+        event.event === "tool_call_completed" ? "done" : "running";
+      if (rawStatus === "denied") {
+        status = "denied";
+      } else if (rawStatus === "failed" || rawStatus === "error") {
         status = "failed";
       }
       return {
         toolCallId: toolStateKey(tool, index),
         name: String(tool.tool_name ?? "?"),
         status,
-        args: typeof tool.args === "object" ? (tool.args as Record<string, unknown>) : undefined,
+        args:
+          typeof tool.args === "object"
+            ? (tool.args as Record<string, unknown>)
+            : undefined,
         argsSummary: summarizeArgs(tool.args),
         resultPreview:
           typeof tool.result_summary === "string" ? tool.result_summary : undefined,
         risk: typeof tool.risk === "string" ? tool.risk : undefined,
-        durationMs:
-          typeof tool.duration_ms === "number" ? tool.duration_ms : undefined,
+        durationMs: typeof tool.duration_ms === "number" ? tool.duration_ms : undefined,
+        sources: toolSources(tool, status),
       };
     });
 }
 
-export function buildLastEventId(runId: string | undefined, seq: number): string | undefined {
+export function buildLastEventId(
+  runId: string | undefined,
+  seq: number,
+): string | undefined {
   if (!runId || seq <= 0) {
     return undefined;
   }
   return `${runId}:${seq}`;
+}
+
+export function parseSteeringEvents(
+  events: RunStreamEvent<Record<string, unknown>>[],
+): ParsedSteeringEvent[] {
+  return events
+    .filter((event) =>
+      [
+        "control_requested",
+        "command_queued",
+        "command_dequeued",
+        "command_cancelled",
+        "control_applied",
+      ].includes(event.event),
+    )
+    .map((event) => {
+      const queueId = event.data.queue_id;
+      const controlId = event.data.control_id;
+      const kind = event.data.kind;
+      const priority = event.data.priority;
+      return {
+        seq: event.seq,
+        event: event.event,
+        queueId: typeof queueId === "string" ? queueId : "",
+        controlId: typeof controlId === "string" ? controlId : undefined,
+        kind: typeof kind === "string" ? kind : undefined,
+        priority: typeof priority === "string" ? priority : undefined,
+      };
+    })
+    .filter((event) => event.queueId);
+}
+
+function lifecycleText(value: unknown): string | undefined {
+  return textValue(value);
+}
+
+function lifecycleTextList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items = value.filter(
+    (item): item is string => typeof item === "string" && item.trim().length > 0,
+  );
+  return items.length ? items : undefined;
+}
+
+function lifecycleStatus(
+  eventName: ParsedSubagentLifecycleEvent["event"],
+  rawStatus: unknown,
+): ParsedSubagentChildRun["status"] {
+  const status = typeof rawStatus === "string" ? rawStatus.toLowerCase() : "";
+  if (status === "failed" || status === "error" || status === "timeout") {
+    return "failed";
+  }
+  if (status === "cancelled" || status === "canceled" || status === "stopped") {
+    return "cancelled";
+  }
+  if (status === "completed" || status === "done") {
+    return "completed";
+  }
+  if (eventName === "subagent_spawned") {
+    return "spawned";
+  }
+  if (eventName === "subagent_completed") {
+    return "completed";
+  }
+  return "running";
+}
+
+export function parseSubagentLifecycleEvent(
+  event: RunStreamEvent<Record<string, unknown>>,
+): ParsedSubagentLifecycleEvent | undefined {
+  if (
+    event.event !== "subagent_group_started" &&
+    event.event !== "subagent_group_joined" &&
+    event.event !== "subagent_group_join_waiting" &&
+    event.event !== "subagent_group_failed" &&
+    event.event !== "subagent_spawned" &&
+    event.event !== "subagent_started" &&
+    event.event !== "subagent_completed"
+  ) {
+    return undefined;
+  }
+  const eventName = event.event;
+  const taskId =
+    lifecycleText(event.data.task_id) ??
+    lifecycleText(event.data.subagent_run_id) ??
+    lifecycleText(event.data.child_run_id);
+  return {
+    seq: event.seq,
+    event: eventName,
+    groupId: lifecycleText(event.data.group_id),
+    joinState: lifecycleText(event.data.join_state),
+    childRun: taskId
+      ? {
+          taskId,
+          subagentRunId: lifecycleText(event.data.subagent_run_id),
+          childRunId: lifecycleText(event.data.child_run_id),
+          status: lifecycleStatus(eventName, event.data.status),
+          description: lifecycleText(event.data.description),
+          outputPreview:
+            lifecycleText(event.data.output_preview) ??
+            lifecycleText(event.data.summary) ??
+            lifecycleText(event.data.result_summary),
+          usedTools:
+            lifecycleTextList(event.data.used_tools) ??
+            lifecycleTextList(event.data.tool_names),
+          warning:
+            lifecycleText(event.data.warning) ??
+            lifecycleText(event.data.error) ??
+            lifecycleText(event.data.reason),
+        }
+      : undefined,
+  };
 }
 
 function applyPlanningToAssistantMessage(
@@ -180,7 +604,9 @@ function applyPlanningToAssistantMessage(
   content: string,
   metadata?: AssistantMessageMetadata,
 ): void {
-  const index = messages.findIndex((item) => item.id === assistantId && item.role === "assistant");
+  const index = messages.findIndex(
+    (item) => item.id === assistantId && item.role === "assistant",
+  );
   if (index >= 0 && messages[index].role === "assistant") {
     messages[index] = { ...messages[index], planningSnapshot: snapshot };
     return;
@@ -195,13 +621,92 @@ function applyPlanningToAssistantMessage(
   });
 }
 
-export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>[]): ChatMessage[] {
+function applySubagentLifecycleToLatestTool(
+  messages: ChatMessage[],
+  lifecycle: ParsedSubagentLifecycleEvent,
+): void {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "tool" || message.name !== "agent_tool") {
+      continue;
+    }
+    const current = message.subagent ?? {};
+    const nextChildren = [...(current.childRuns ?? [])];
+    if (lifecycle.childRun) {
+      const childIndex = nextChildren.findIndex(
+        (child) =>
+          child.taskId === lifecycle.childRun?.taskId ||
+          Boolean(
+            lifecycle.childRun?.subagentRunId &&
+            child.subagentRunId === lifecycle.childRun.subagentRunId,
+          ) ||
+          Boolean(
+            lifecycle.childRun?.childRunId &&
+            child.childRunId === lifecycle.childRun.childRunId,
+          ),
+      );
+      if (childIndex < 0) {
+        nextChildren.push(lifecycle.childRun);
+      } else {
+        nextChildren[childIndex] = {
+          ...nextChildren[childIndex],
+          ...lifecycle.childRun,
+        };
+      }
+    }
+    let groupStatus = current.groupStatus;
+    if (lifecycle.event === "subagent_group_started") {
+      groupStatus = "running";
+    } else if (lifecycle.event === "subagent_group_joined") {
+      groupStatus = "joined";
+    } else if (lifecycle.event === "subagent_group_join_waiting") {
+      groupStatus = "waiting";
+    } else if (lifecycle.event === "subagent_group_failed") {
+      groupStatus = "failed";
+    }
+    messages[index] = {
+      ...message,
+      subagent: {
+        ...current,
+        groupId: lifecycle.groupId ?? current.groupId,
+        groupStatus,
+        joinState: lifecycle.joinState ?? current.joinState,
+        childRuns: nextChildren,
+      },
+    };
+    return;
+  }
+}
+
+function upsertCompactionMessage(
+  messages: ChatMessage[],
+  notice: ParsedCompactionNotice,
+): void {
+  const index = messages.findIndex(
+    (message) => message.role === "compaction" && message.compactionId === notice.compactionId,
+  );
+  if (index >= 0 && messages[index].role === "compaction") {
+    messages[index] = { ...messages[index], ...notice };
+    return;
+  }
+  messages.push({
+    id: `compaction_replay_${notice.compactionId}`,
+    role: "compaction",
+    ...notice,
+  });
+}
+
+export function eventsToMessages(
+  events: RunStreamEvent<Record<string, unknown>>[],
+): ChatMessage[] {
   const messages: ChatMessage[] = [];
   let assistantId: string | null = null;
   let assistantContent = "";
   let assistantRawContent = "";
   let assistantMetadata: AssistantMessageMetadata | undefined = undefined;
   let assistantPlanningSnapshot: PlanningSnapshot | undefined = undefined;
+  let assistantDeepResearch: DeepResearchState | undefined = undefined;
+  let runSources: SourceEvidence[] = [];
   let seq = 0;
 
   const flushAssistant = () => {
@@ -213,6 +718,8 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
         pending: false,
         metadata: assistantMetadata,
         planningSnapshot: assistantPlanningSnapshot,
+        deepResearch: assistantDeepResearch,
+        sources: runSources.length ? runSources : undefined,
       });
     }
     assistantId = null;
@@ -220,6 +727,7 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
     assistantRawContent = "";
     assistantMetadata = undefined;
     assistantPlanningSnapshot = undefined;
+    assistantDeepResearch = undefined;
   };
 
   for (const event of events) {
@@ -231,7 +739,10 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
       assistantContent = "";
       assistantRawContent = "";
     }
-    if (event.event === "assistant_message_completed" || event.event === "assistant_message_replaced") {
+    if (
+      event.event === "assistant_message_completed" ||
+      event.event === "assistant_message_replaced"
+    ) {
       const content = getAssistantSnapshotContent(event);
       if (content !== undefined) {
         if (!assistantId) {
@@ -242,6 +753,17 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
       }
     }
     if (event.event === "assistant_message_tombstoned") {
+      if (assistantId && assistantPlanningSnapshot) {
+        messages.push({
+          id: assistantId,
+          role: "assistant",
+          content: "",
+          pending: false,
+          metadata: assistantMetadata,
+          planningSnapshot: assistantPlanningSnapshot,
+          deepResearch: assistantDeepResearch,
+        });
+      }
       assistantId = null;
       assistantContent = "";
       assistantRawContent = "";
@@ -286,14 +808,16 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
           pending: false,
           metadata: assistantMetadata,
           planningSnapshot: assistantPlanningSnapshot,
+          deepResearch: assistantDeepResearch,
         });
         assistantContent = "";
         assistantRawContent = "";
         assistantMetadata = undefined;
         assistantPlanningSnapshot = undefined;
+        assistantDeepResearch = undefined;
       }
       for (const tool of parseToolStatesFromEvent(event)) {
-        if (PLANNING_TOOL_NAMES.has(tool.name)) {
+        if (CONTROL_TOOL_NAMES.has(tool.name)) {
           continue;
         }
         messages.push({
@@ -306,6 +830,7 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
           args: tool.args,
           resultPreview: tool.resultPreview,
           risk: tool.risk,
+          sources: tool.sources,
         });
       }
     }
@@ -324,8 +849,11 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
         }
       }
       for (const tool of parseToolStatesFromEvent(event)) {
-        if (PLANNING_TOOL_NAMES.has(tool.name)) {
+        if (CONTROL_TOOL_NAMES.has(tool.name)) {
           continue;
+        }
+        if (tool.sources?.length) {
+          runSources = mergeSourceEvidence([...runSources, ...tool.sources]);
         }
         const index = messages.findIndex(
           (item) => item.role === "tool" && item.toolCallId === tool.toolCallId,
@@ -344,9 +872,32 @@ export function eventsToMessages(events: RunStreamEvent<Record<string, unknown>>
             resultPreview: tool.resultPreview,
             risk: tool.risk,
             durationMs: tool.durationMs,
+            sources: tool.sources,
           });
         }
       }
+    }
+    const subagentLifecycle = parseSubagentLifecycleEvent(event);
+    if (subagentLifecycle) {
+      applySubagentLifecycleToLatestTool(messages, subagentLifecycle);
+    }
+    const compactionNotice = parseCompactionNotice(event);
+    if (compactionNotice) {
+      flushAssistant();
+      upsertCompactionMessage(messages, compactionNotice);
+    }
+    const ledger = parseSourceLedgerEvent(event);
+    const progress = parseDeepResearchProgress(event);
+    const artifact = parseDeepResearchArtifactEvent(event);
+    if (ledger || progress || artifact) {
+      const current = assistantDeepResearch as DeepResearchState | undefined;
+      assistantDeepResearch = {
+        ledger: ledger ?? current?.ledger,
+        artifact: artifact ?? current?.artifact,
+        progress: progress
+          ? [...(current?.progress ?? []), progress].slice(-6)
+          : (current?.progress ?? []),
+      };
     }
     if (isTerminalEvent(event)) {
       flushAssistant();

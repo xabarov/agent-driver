@@ -168,3 +168,112 @@ agent = create_agent(
     config=runner_config,
 )
 ```
+
+## 7) Plan approval resume shortcut
+
+```python
+from agent_driver.sdk import resume_command_from_payload
+
+# When a run pauses with output.interrupt, pass its id back to the SDK.
+approved = await agent.approve(
+    run_id=output.run_id,
+    interrupt_id=output.interrupt.interrupt_id,
+)
+
+# HTTP handlers can normalize their JSON body first.
+resume = resume_command_from_payload(
+    {
+        "interrupt_id": output.interrupt.interrupt_id,
+        "action": "approve",
+        "approved_by": "operator@example.com",
+    }
+)
+approved = await agent.run(
+    AgentRunInput(
+        run_id=output.run_id,
+        agent_id="backend-agent",
+        graph_preset="single_react",
+        resume=resume,
+    )
+)
+```
+
+## 8) Mid-run steering queue
+
+```python
+from agent_driver.contracts import ControlPriority
+
+# Delivered at the next runtime boundary.
+agent.enqueue(
+    "Use the existing migration plan; do not restart discovery.",
+    run_id="run_backend_stream_1",
+    priority=ControlPriority.NEXT,
+)
+
+# Delivered later, useful for background child notifications or soft nudges.
+agent.enqueue(
+    "When the verifier finishes, synthesize its risk notes first.",
+    run_id="run_backend_stream_1",
+    priority=ControlPriority.LATER,
+)
+
+agent.set_model("openai/gpt-4.1-mini", run_id="run_backend_stream_1")
+agent.set_permission_mode("tools_safe", run_id="run_backend_stream_1")
+```
+
+## 9) Continue an existing child subagent
+
+```python
+from agent_driver.contracts import AgentRunInput, ToolCall, ToolPolicyInput
+
+output = await agent.run(
+    AgentRunInput(
+        input="continue child",
+        run_id="run_parent_1",
+        agent_id="backend-agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            metadata={
+                "planned_tool_calls": [
+                    ToolCall(
+                        tool_name="send_message_tool",
+                        args={
+                            "subagent_run_id": "sub_child_1",
+                            "message": "Correction: use the latest API docs.",
+                            "metadata": {"priority": "later"},
+                        },
+                    ).model_dump(mode="json")
+                ]
+            }
+        ),
+    )
+)
+```
+
+## 10) Stop a child subagent
+
+```python
+from agent_driver.contracts import AgentRunInput, ToolCall, ToolPolicyInput
+
+output = await agent.run(
+    AgentRunInput(
+        input="stop child",
+        run_id="run_parent_1",
+        agent_id="backend-agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            metadata={
+                "planned_tool_calls": [
+                    ToolCall(
+                        tool_name="task_stop_tool",
+                        args={
+                            "subagent_run_id": "sub_child_1",
+                            "reason": "Superseded by verifier result.",
+                        },
+                    ).model_dump(mode="json")
+                ]
+            }
+        ),
+    )
+)
+```

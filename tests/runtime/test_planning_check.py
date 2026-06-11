@@ -8,8 +8,12 @@ from agent_driver.contracts.enums import ApprovalMode, SideEffectClass, ToolRisk
 from agent_driver.contracts.runtime import AgentRunOutput, RuntimeEvent
 from agent_driver.contracts.tools.results import ToolTrace
 from agent_driver.runtime.planning_check import (
+    CANONICAL_EXIT_PLAN_MODE_TOOL,
+    EXIT_PLAN_MODE_TOOL_NAMES,
+    LEGACY_EXIT_PLAN_MODE_TOOL_ALIASES,
     PLANNING_TOOL_NAMES,
     data_tool_called,
+    is_exit_plan_mode_tool,
     planning_executed,
     planning_executed_across,
     planning_tool_called,
@@ -62,7 +66,15 @@ def test_planning_tool_names_includes_canonical_tools() -> None:
     assert "todo_write" in PLANNING_TOOL_NAMES
     assert "planning_state_update" in PLANNING_TOOL_NAMES
     assert "enter_plan_mode" in PLANNING_TOOL_NAMES
+    assert "exit_plan_mode_v2" in PLANNING_TOOL_NAMES
     assert "exit_plan_mode" in PLANNING_TOOL_NAMES
+    assert CANONICAL_EXIT_PLAN_MODE_TOOL == "exit_plan_mode_v2"
+    assert EXIT_PLAN_MODE_TOOL_NAMES == frozenset(
+        {"exit_plan_mode_v2", "exit_plan_mode"}
+    )
+    assert LEGACY_EXIT_PLAN_MODE_TOOL_ALIASES == frozenset({"exit_plan_mode"})
+    assert is_exit_plan_mode_tool("exit_plan_mode_v2") is True
+    assert is_exit_plan_mode_tool("exit_plan_mode") is True
     # ask_user_question is deliberately NOT a planning tool — it's HITL.
     assert "ask_user_question" not in PLANNING_TOOL_NAMES
 

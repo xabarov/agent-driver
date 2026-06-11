@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 from agent_driver.context import (
     planning_state_set_step,
     planning_state_set_todo_status,
     planning_state_upsert_todo,
 )
+from agent_driver.context.planning import plan_content_hash
 from agent_driver.contracts.context import PlanningState, PlanningStep, TodoState
 from agent_driver.contracts.enums import (
     ApprovalMode,
@@ -203,27 +205,105 @@ async def _ask_user_question_tool(args: dict[str, Any]) -> dict[str, Any]:
     prompt = str(args.get("prompt") or "").strip()
     if not prompt:
         raise ValueError("prompt is required")
-    choices = args.get("choices")
-    normalized_choices: list[dict[str, str]] = []
-    if choices is not None:
-        if not isinstance(choices, list) or len(choices) < 2:
-            raise ValueError("choices must be a list with at least 2 items")
-        for row in choices:
-            if not isinstance(row, dict):
-                raise ValueError("choice rows must be objects")
-            choice_id = str(row.get("id") or "").strip()
-            label = str(row.get("label") or "").strip()
-            if not choice_id or not label:
-                raise ValueError("choice.id and choice.label are required")
-            normalized_choices.append({"id": choice_id, "label": label})
+    normalized_questions = _normalize_ask_user_questions(args, fallback_prompt=prompt)
+    first_question = normalized_questions[0]
+    normalized_choices = [
+        {
+            "id": str(choice["id"]),
+            "label": str(choice["label"]),
+        }
+        for choice in first_question.get("choices", [])
+    ]
     allow_multiple = bool(args.get("allow_multiple", False))
     return {
         "summary": "ask_user_question prepared interrupt payload",
         "prompt": prompt,
         "choices": normalized_choices,
+        "questions": normalized_questions,
         "allow_multiple": allow_multiple,
         "interrupt_reason": InterruptReason.CLARIFICATION_REQUIRED.value,
     }
+
+
+def _normalize_ask_user_questions(
+    args: dict[str, Any], *, fallback_prompt: str
+) -> list[dict[str, Any]]:
+    questions = args.get("questions")
+    if questions is None:
+        choices = _normalize_ask_user_choices(args.get("choices"), required=False)
+        return [
+            {
+                "id": "q1",
+                "header": "Clarify",
+                "question": fallback_prompt,
+                "choices": choices,
+            }
+        ]
+    if not isinstance(questions, list) or not 1 <= len(questions) <= 4:
+        raise ValueError("questions must contain 1-4 items")
+    normalized: list[dict[str, Any]] = []
+    seen_question_ids: set[str] = set()
+    seen_headers: set[str] = set()
+    for index, row in enumerate(questions, start=1):
+        if not isinstance(row, dict):
+            raise ValueError("question rows must be objects")
+        question_id = str(row.get("id") or f"q{index}").strip()
+        header = str(row.get("header") or "").strip()
+        question = str(row.get("question") or "").strip()
+        preview = str(row.get("preview") or "").strip()
+        if not question_id or not header or not question:
+            raise ValueError(
+                "question.id, question.header, and question.question are required"
+            )
+        if len(header) > 12:
+            raise ValueError("question.header must be 12 characters or fewer")
+        if question_id in seen_question_ids:
+            raise ValueError("question ids must be unique")
+        if header.lower() in seen_headers:
+            raise ValueError("question headers must be unique")
+        seen_question_ids.add(question_id)
+        seen_headers.add(header.lower())
+        item: dict[str, Any] = {
+            "id": question_id,
+            "header": header,
+            "question": question,
+            "choices": _normalize_ask_user_choices(row.get("choices"), required=True),
+        }
+        if preview:
+            item["preview"] = preview
+        normalized.append(item)
+    return normalized
+
+
+def _normalize_ask_user_choices(
+    choices: object, *, required: bool
+) -> list[dict[str, str]]:
+    if choices is None and not required:
+        return []
+    if not isinstance(choices, list) or not 2 <= len(choices) <= 4:
+        raise ValueError("choices must contain 2-4 items")
+    normalized: list[dict[str, str]] = []
+    seen_ids: set[str] = set()
+    seen_labels: set[str] = set()
+    for row in choices:
+        if not isinstance(row, dict):
+            raise ValueError("choice rows must be objects")
+        choice_id = str(row.get("id") or "").strip()
+        label = str(row.get("label") or "").strip()
+        description = str(row.get("description") or "").strip()
+        if not choice_id or not label:
+            raise ValueError("choice.id and choice.label are required")
+        if choice_id in seen_ids:
+            raise ValueError("choice ids must be unique")
+        if label.lower() in seen_labels:
+            raise ValueError("choice labels must be unique")
+        seen_ids.add(choice_id)
+        seen_labels.add(label.lower())
+        item = {"id": choice_id, "label": label}
+        if description:
+            item["description"] = description
+        normalized.append(item)
+    return normalized
 
 
 def _register_todo_write_tool(registry: ToolRegistry) -> None:
@@ -261,7 +341,10 @@ def _register_todo_write_tool(registry: ToolRegistry) -> None:
                                 "id": {"type": "string"},
                                 "content": {
                                     "type": "string",
-                                    "description": "Required for new todos; optional for merge=true status updates of existing todos.",
+                                    "description": (
+                                        "Required for new todos; optional for "
+                                        "merge=true status updates of existing todos."
+                                    ),
                                 },
                                 "status": {
                                     "type": "string",
@@ -293,7 +376,15 @@ def _register_ask_user_question_tool(registry: ToolRegistry) -> None:
     registry.register(
         ToolManifest(
             name="ask_user_question",
-            description="Create structured clarification request for user.",
+            description=(
+                "Create a bounded clarification request for genuinely blocking "
+                "user-owned decisions. Prefer one focused question; use 1-4 "
+                "questions only when separate decisions are required. Each "
+                "structured question must have a short unique header (12 "
+                "characters or fewer) and 2-4 unique options. Keep option "
+                "labels short. Do not use this tool to ask whether a plan is "
+                "approved or to avoid producing a requested deliverable."
+            ),
             risk=ToolRisk.LOW,
             side_effect=SideEffectClass.NONE,
             approval_mode=ApprovalMode.NEVER,
@@ -301,7 +392,52 @@ def _register_ask_user_question_tool(registry: ToolRegistry) -> None:
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string"},
-                    "choices": {"type": "array"},
+                    "choices": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 4,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "label": {"type": "string"},
+                                "description": {"type": "string"},
+                            },
+                            "required": ["id", "label"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "questions": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 4,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "header": {"type": "string", "maxLength": 12},
+                                "question": {"type": "string"},
+                                "preview": {"type": "string"},
+                                "choices": {
+                                    "type": "array",
+                                    "minItems": 2,
+                                    "maxItems": 4,
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "label": {"type": "string"},
+                                            "description": {"type": "string"},
+                                        },
+                                        "required": ["id", "label"],
+                                        "additionalProperties": False,
+                                    },
+                                },
+                            },
+                            "required": ["header", "question", "choices"],
+                            "additionalProperties": False,
+                        },
+                    },
                     "allow_multiple": {"type": "boolean"},
                 },
                 "required": ["prompt"],
@@ -327,13 +463,28 @@ async def _enter_plan_mode_tool(args: dict[str, Any]) -> dict[str, Any]:
 
 async def _exit_plan_mode_v2_tool(args: dict[str, Any]) -> dict[str, Any]:
     reason = str(args.get("reason") or "").strip()
+    content = str(args.get("content") or args.get("plan") or "").strip()
+    path = str(args.get("path") or "").strip() or None
+    plan_id = str(args.get("plan_id") or f"plan_{uuid4().hex[:12]}").strip()
     summary = "exited plan mode"
     if reason:
         summary = f"exited plan mode: {reason}"
+    approval_payload = None
+    if content:
+        approval_payload = {
+            "plan_id": plan_id,
+            "content": content,
+            "content_hash": plan_content_hash(content),
+            "path": path,
+        }
     return {
         "summary": summary,
-        "applied_args": {"planning_mode": "agent"},
+        "applied_args": {"planning_mode": "agent", "plan_id": plan_id},
         "planning_state": {"mode": "agent"},
+        "plan_approval": approval_payload,
+        "interrupt_reason": (
+            InterruptReason.PLAN_APPROVAL_REQUIRED.value if content else None
+        ),
     }
 
 
@@ -343,13 +494,31 @@ def _register_enter_plan_mode_tool(registry: ToolRegistry) -> None:
     registry.register(
         ToolManifest(
             name="enter_plan_mode",
-            description="Switch planning state to plan mode.",
+            description=(
+                "Switch planning state to plan mode for non-trivial implementation "
+                "work before side-effecting execution."
+            ),
             risk=ToolRisk.LOW,
             side_effect=SideEffectClass.NONE,
             approval_mode=ApprovalMode.NEVER,
             args_schema={
                 "type": "object",
-                "properties": {"reason": {"type": "string"}},
+                "properties": {
+                    "reason": {"type": "string"},
+                    "plan_id": {"type": "string"},
+                    "content": {
+                        "type": "string",
+                        "description": "Plan content to present for approval.",
+                    },
+                    "plan": {
+                        "type": "string",
+                        "description": "Alias for content.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional plan artifact path.",
+                    },
+                },
                 "additionalProperties": False,
             },
             output_type="json",
@@ -364,13 +533,31 @@ def _register_exit_plan_mode_v2_tool(registry: ToolRegistry) -> None:
     registry.register(
         ToolManifest(
             name="exit_plan_mode_v2",
-            description="Switch planning state back to agent mode.",
+            description=(
+                "Present a concrete plan for approval and switch planning state "
+                "back to agent mode."
+            ),
             risk=ToolRisk.LOW,
             side_effect=SideEffectClass.NONE,
             approval_mode=ApprovalMode.NEVER,
             args_schema={
                 "type": "object",
-                "properties": {"reason": {"type": "string"}},
+                "properties": {
+                    "reason": {"type": "string"},
+                    "plan_id": {"type": "string"},
+                    "content": {
+                        "type": "string",
+                        "description": "Approval-ready plan content.",
+                    },
+                    "plan": {
+                        "type": "string",
+                        "description": "Alias for content.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional plan artifact path.",
+                    },
+                },
                 "additionalProperties": False,
             },
             output_type="json",

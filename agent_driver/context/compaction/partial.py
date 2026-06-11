@@ -28,11 +28,22 @@ def build_partial_compaction(
             prompt_messages=list(messages),
             metadata={"strategy": "no_op", "reason": "below_threshold"},
         )
+    leading_system = _leading_system_messages(messages) if prefix_mode else []
+    compaction_body = messages[len(leading_system) :]
+    if len(compaction_body) <= retain_recent_messages + 1:
+        return PartialCompactionOutput(
+            prompt_messages=[*leading_system, *compaction_body],
+            metadata={
+                "strategy": "no_op",
+                "reason": "protected_head_below_threshold",
+                "protected_head_count": len(leading_system),
+            },
+        )
     if prefix_mode:
-        prefix = messages[:-retain_recent_messages]
-        suffix = messages[-retain_recent_messages:]
+        prefix = compaction_body[:-retain_recent_messages]
+        suffix = compaction_body[-retain_recent_messages:]
         summary = _summarize_slice(prefix)
-        prompt_messages = [summary, *suffix]
+        prompt_messages = [*leading_system, summary, *suffix]
         strategy = "prefix_summary"
         summarized_count = len(prefix)
     else:
@@ -48,8 +59,19 @@ def build_partial_compaction(
             "strategy": strategy,
             "summarized_message_count": summarized_count,
             "retained_message_count": len(prompt_messages),
+            "protected_head_count": len(leading_system),
         },
     )
+
+
+def _leading_system_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Preserve stable system policy blocks outside compaction summaries."""
+    protected: list[dict[str, str]] = []
+    for item in messages:
+        if str(item.get("role", "")).strip().lower() != "system":
+            break
+        protected.append(dict(item))
+    return protected
 
 
 def _summarize_slice(messages: list[dict[str, str]]) -> dict[str, str]:
@@ -64,7 +86,8 @@ def _summarize_slice(messages: list[dict[str, str]]) -> dict[str, str]:
             break
     return {
         "role": "system",
-        "content": "Partial compaction summary:\n" + ("\n".join(rows) if rows else "- (empty)"),
+        "content": "Partial compaction summary:\n"
+        + ("\n".join(rows) if rows else "- (empty)"),
     }
 
 

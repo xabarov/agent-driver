@@ -1,0 +1,359 @@
+"""Runtime enforcement for :class:`~agent_driver.contracts.node_contract.NodeContract`.
+
+The schema lives in ``contracts/node_contract.py``; this module is the runtime
+*behaviour* behind its three opt-in layers. Everything here is a no-op unless the
+run's ``AgentRunInput.node_contract`` is active, so other consumers of the library
+are unaffected.
+
+* **Layer A** — ``unsatisfiable_tool_names`` diffs the declared ``allowed_tools`` /
+  ``finalize_when_tools`` against the live registry so a policy↔registry mismatch
+  surfaces as a structured warning instead of an empty result.
+* **Layer B** — ``build_prelude`` (proactive, woven into the system prompt by
+  :class:`NodeContractLifecycleHook`) plus ``tool_use_violation_pending`` /
+  ``build_tool_use_reprompt`` / ``stamp_no_tool_use_violation`` (reactive guard in
+  the finalize step) turn a zero-tool-call finalize into a recoverable reprompt and
+  then a typed violation — never a silent generic reply.
+* **Layer C** — ``declarative_finalize_satisfied`` and the ``on_tool_evidence`` hook
+  let a run finalize directly from tool evidence with no extra LLM continuation;
+  ``build_evidence_answer`` synthesises the terminal answer from the envelopes.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING
+
+from agent_driver.runtime.lifecycle_hooks import BaseRunLifecycleHook
+from agent_driver.runtime.metadata_state import get_tool_loop_state
+
+if TYPE_CHECKING:
+    from agent_driver.contracts.node_contract import NodeContract
+    from agent_driver.contracts.runtime import AgentRunInput
+    from agent_driver.llm.contracts import LlmRequest
+    from agent_driver.runtime.single_agent.types import RunContext
+
+# --- metadata keys (kept stable; mirrored into AgentRunOutput.metadata) --------
+NODE_CONTRACT_PRELUDE_KEY = "node_contract_prelude"
+TOOL_POLICY_WARNINGS_KEY = "tool_policy_warnings"
+NODE_CONTRACT_VIOLATION_KEY = "node_contract_violation"
+TOOL_USE_REPROMPT_COUNT_KEY = "tool_use_contract_reprompt_count"
+EARLY_FINALIZE_ANSWER_KEY = "early_finalize_answer"
+EARLY_FINALIZE_REASON_KEY = "node_contract_early_finalize_reason"
+
+# Continuation reason tag used by ``_build_continuation_transition``.
+_REPROMPT_REASON = "node_contract_tool_use"
+
+
+def contract_of(run_input: "AgentRunInput") -> "NodeContract":
+    """Return the run's node contract (always present; default is inert)."""
+    return run_input.node_contract
+
+
+def is_active(run_input: "AgentRunInput") -> bool:
+    """Whether any node-contract layer is engaged for this run."""
+    contract = run_input.node_contract
+    return contract is not None and contract.is_active()
+
+
+# --- Layer A: policy ↔ registry validation -------------------------------------
+def unsatisfiable_tool_names(
+    run_input: "AgentRunInput", callable_names: Iterable[str]
+) -> list[str]:
+    """Declared tool names (allowlist + finalize set) not callable in the registry.
+
+    Returns ``[]`` unless ``require_callable_tools`` is set. Order-preserving and
+    de-duplicated so the warning lists each missing name once.
+    """
+    contract = run_input.node_contract
+    if not contract.require_callable_tools:
+        return []
+    callable_set = {str(name) for name in callable_names}
+    declared: list[str] = []
+    declared.extend(run_input.tool_policy.allowed_tools or [])
+    declared.extend(contract.finalize_when_tools)
+    return [
+        name
+        for name in dict.fromkeys(str(item) for item in declared)
+        if name and name not in callable_set
+    ]
+
+
+# --- Layer B: proactive prelude ------------------------------------------------
+def build_prelude(
+    run_input: "AgentRunInput", callable_names: Sequence[str]
+) -> str | None:
+    """Build the system-prompt addendum that makes tools + target unmissable.
+
+    ``None`` when ``require_tool_use`` is off or no callable tool would surface —
+    there is nothing honest to promise the model in that case.
+    """
+    contract = run_input.node_contract
+    if not contract.require_tool_use:
+        return None
+    names = [str(name) for name in callable_names if str(name)]
+    allowed = run_input.tool_policy.allowed_tools
+    if allowed:
+        allowed_set = {str(name) for name in allowed}
+        filtered = [name for name in names if name in allowed_set]
+        names = filtered or [str(name) for name in allowed]
+    names = list(dict.fromkeys(names))
+    if not names:
+        return None
+    tool_list = ", ".join(names)
+    lines = [
+        "## Tool-use contract (workflow node)",
+        (
+            "You are running as a tool-using workflow node with working tools "
+            f"available right now: {tool_list}."
+        ),
+        (
+            "Call the appropriate tool(s) to complete the task. Do NOT claim you "
+            "lack tools or that you can only provide instructions, and do NOT ask "
+            "which target to use — act on the information already given."
+        ),
+    ]
+    if contract.target:
+        lines.append(
+            f"The target is `{contract.target}`. Use it directly; never ask for it."
+        )
+    if contract.task_hint:
+        lines.append(f"Task: {contract.task_hint}.")
+    return "\n".join(lines)
+
+
+def inject_system_prelude(request: "LlmRequest", prelude: str) -> "LlmRequest":
+    """Return a copy of ``request`` with ``prelude`` woven into the system message."""
+    messages = [message.model_copy(deep=True) for message in request.messages]
+    for message in messages:
+        if str(getattr(message, "role", "")) == "system":
+            existing = message.content or ""
+            if prelude in existing:
+                return request
+            message.content = (
+                f"{existing.rstrip()}\n\n{prelude}" if existing else prelude
+            )
+            return request.model_copy(update={"messages": messages})
+    # No system message present — prepend one.
+    from agent_driver.contracts.enums import ChatRole
+    from agent_driver.contracts.messages import ChatMessage
+
+    messages.insert(0, ChatMessage(role=ChatRole.SYSTEM, content=prelude))
+    return request.model_copy(update={"messages": messages})
+
+
+# --- Layer B: reactive reprompt + escalation -----------------------------------
+def tool_use_violation_pending(context: "RunContext") -> bool:
+    """``require_tool_use`` is on and the run is about to finalize with zero calls."""
+    contract = context.run_input.node_contract
+    if not contract.require_tool_use:
+        return False
+    return context.tool_calls == 0
+
+
+def reprompt_budget_remaining(context: "RunContext") -> bool:
+    """Whether another tool-use reprompt is allowed under ``max_tool_use_reprompts``."""
+    contract = context.run_input.node_contract
+    used = int(context.metadata.get(TOOL_USE_REPROMPT_COUNT_KEY, 0))
+    return used < contract.max_tool_use_reprompts
+
+
+def build_tool_use_reprompt(run_input: "AgentRunInput") -> str:
+    """Nudge text re-stating the contract when the model produced no tool call."""
+    contract = run_input.node_contract
+    lines = [
+        "You have not called any tool, but this node requires tool use and the "
+        "tools are available to you now. Call the appropriate tool to perform the "
+        "task — do not answer in prose and do not say tools are unavailable.",
+    ]
+    if contract.target:
+        lines.append(f"Target: `{contract.target}` (already known — do not ask).")
+    if contract.task_hint:
+        lines.append(f"Task: {contract.task_hint}.")
+    return " ".join(lines)
+
+
+def stamp_no_tool_use_violation(context: "RunContext") -> dict:
+    """Record a typed ``no_tool_use`` violation on metadata (never a silent answer)."""
+    violation = {
+        "kind": "no_tool_use",
+        "detail": (
+            "node contract requires tool use but the run finalized with zero tool "
+            "calls after exhausting reprompts"
+        ),
+        "reprompts": int(context.metadata.get(TOOL_USE_REPROMPT_COUNT_KEY, 0)),
+        "max_reprompts": context.run_input.node_contract.max_tool_use_reprompts,
+    }
+    context.metadata[NODE_CONTRACT_VIOLATION_KEY] = violation
+    return violation
+
+
+# --- Layer C: early finalize from tool evidence --------------------------------
+def successful_tool_names(context: "RunContext") -> set[str]:
+    """Tool names that produced a non-error, non-denied envelope this run."""
+    names: set[str] = set()
+    for item in get_tool_loop_state(context).tool_results():
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        name = call.get("tool_name")
+        if not isinstance(name, str) or not name:
+            continue
+        if item.get("error"):
+            continue
+        decision = str(item.get("decision") or "").lower()
+        if decision in {"deny", "interrupt"}:
+            continue
+        names.add(name)
+    return names
+
+
+def declarative_finalize_satisfied(context: "RunContext") -> bool:
+    """Whether every ``finalize_when_tools`` entry has a successful envelope."""
+    contract = context.run_input.node_contract
+    if not contract.finalize_when_tools:
+        return False
+    succeeded = successful_tool_names(context)
+    return all(name in succeeded for name in contract.finalize_when_tools)
+
+
+def executed_tools_summary(context: "RunContext") -> list[dict]:
+    """Machine-readable per-call summary of executed tools for downstream consumers."""
+    rows: list[dict] = []
+    for item in get_tool_loop_state(context).tool_results():
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        error = item.get("error") if isinstance(item.get("error"), dict) else None
+        structured = item.get("structured_output")
+        rows.append(
+            {
+                "tool_name": call.get("tool_name"),
+                "tool_call_id": call.get("tool_call_id"),
+                "status": "failed" if error else "completed",
+                "summary": item.get("summary"),
+                "structured_output": (
+                    structured if isinstance(structured, dict) else None
+                ),
+                "error_code": error.get("code") if error else None,
+            }
+        )
+    return rows
+
+
+def build_evidence_answer(context: "RunContext") -> str:
+    """Synthesise a terminal answer from tool evidence (no model turn needed)."""
+    rows = [
+        row for row in executed_tools_summary(context) if row["status"] == "completed"
+    ]
+    if not rows:
+        return "Tool execution completed; see the structured tool summary."
+    parts: list[str] = ["Completed via tool execution:"]
+    for row in rows:
+        summary = row.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            parts.append(f"- {row['tool_name']}: {summary.strip()}")
+        else:
+            parts.append(f"- {row['tool_name']}: completed")
+    return "\n".join(parts)
+
+
+def set_early_finalize(context: "RunContext", *, answer: str, reason: str) -> None:
+    """Stash the early-finalize answer + reason so the finalize step prefers them."""
+    context.metadata[EARLY_FINALIZE_ANSWER_KEY] = answer
+    context.metadata[EARLY_FINALIZE_REASON_KEY] = reason
+
+
+def early_finalize_answer(context: "RunContext") -> str | None:
+    """Return the stashed early-finalize answer, if any."""
+    value = context.metadata.get(EARLY_FINALIZE_ANSWER_KEY)
+    return value if isinstance(value, str) and value.strip() else None
+
+
+# --- machine-readable output summary -------------------------------------------
+def output_summary(context: "RunContext") -> dict | None:
+    """Compact ``node_contract`` block for ``AgentRunOutput.metadata`` (or ``None``).
+
+    Emitted whenever the contract is active OR a node-contract signal was recorded
+    (warning / violation / early finalize), so a host always learns the outcome.
+    """
+    run_input = context.run_input
+    warnings = context.metadata.get(TOOL_POLICY_WARNINGS_KEY) or []
+    violation = context.metadata.get(NODE_CONTRACT_VIOLATION_KEY)
+    early_reason = context.metadata.get(EARLY_FINALIZE_REASON_KEY)
+    if (
+        not is_active(run_input)
+        and not warnings
+        and violation is None
+        and not early_reason
+    ):
+        return None
+    contract = run_input.node_contract
+    return {
+        "active": is_active(run_input),
+        "require_tool_use": contract.require_tool_use,
+        "require_callable_tools": contract.require_callable_tools,
+        "finalize_when_tools": list(contract.finalize_when_tools),
+        "tool_calls": context.tool_calls,
+        "executed_tools": executed_tools_summary(context),
+        "tool_policy_warnings": list(warnings) if isinstance(warnings, list) else [],
+        "violation": violation if isinstance(violation, dict) else None,
+        "early_finalize_reason": (
+            early_reason if isinstance(early_reason, str) else None
+        ),
+        "reprompts": int(context.metadata.get(TOOL_USE_REPROMPT_COUNT_KEY, 0)),
+    }
+
+
+# --- built-in lifecycle hook (proactive prelude injection) ---------------------
+class NodeContractLifecycleHook(BaseRunLifecycleHook):
+    """Built-in hook that injects the Layer-B prelude into the system prompt.
+
+    Always registered but inert unless ``require_tool_use`` is set and a prelude
+    was prepared at run start. Reading tool names off the run-start registry keeps
+    the promise honest: the prelude only names tools that will actually surface.
+    """
+
+    name = "node_contract"
+
+    async def before_llm_request(
+        self, context: "RunContext", request: "LlmRequest"
+    ) -> "LlmRequest | None":
+        """Weave the prepared tool-use prelude into the request's system message."""
+        contract = context.run_input.node_contract
+        if not contract.require_tool_use:
+            return None
+        prelude = context.metadata.get(NODE_CONTRACT_PRELUDE_KEY)
+        if not isinstance(prelude, str) or not prelude.strip():
+            return None
+        if not request.tools:
+            # No tools surfaced this turn — promising them would be a lie. Layer A
+            # already recorded the policy↔registry mismatch.
+            return None
+        return inject_system_prelude(request, prelude)
+
+
+__all__ = [
+    "EARLY_FINALIZE_ANSWER_KEY",
+    "EARLY_FINALIZE_REASON_KEY",
+    "NODE_CONTRACT_PRELUDE_KEY",
+    "NODE_CONTRACT_VIOLATION_KEY",
+    "NodeContractLifecycleHook",
+    "TOOL_POLICY_WARNINGS_KEY",
+    "TOOL_USE_REPROMPT_COUNT_KEY",
+    "build_evidence_answer",
+    "build_prelude",
+    "build_tool_use_reprompt",
+    "contract_of",
+    "declarative_finalize_satisfied",
+    "early_finalize_answer",
+    "executed_tools_summary",
+    "inject_system_prelude",
+    "is_active",
+    "output_summary",
+    "reprompt_budget_remaining",
+    "set_early_finalize",
+    "stamp_no_tool_use_violation",
+    "successful_tool_names",
+    "tool_use_violation_pending",
+    "unsatisfiable_tool_names",
+]

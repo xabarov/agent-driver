@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+
 import httpx
 import pytest
 
@@ -47,7 +48,9 @@ def test_openai_completion_reads_openrouter_cost_from_usage() -> None:
     """OpenRouter-style total_cost should map to cost_usd_estimate."""
     payload = {
         "model": "qwen/test",
-        "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "choices": [
+            {"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+        ],
         "usage": {
             "prompt_tokens": 100,
             "completion_tokens": 50,
@@ -67,7 +70,9 @@ def test_openai_completion_reads_openrouter_cost_from_usage() -> None:
 def test_openai_completion_estimates_cost_from_per_1k_rate() -> None:
     payload = {
         "model": "gpt-test",
-        "choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+        "choices": [
+            {"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+        ],
         "usage": {"prompt_tokens": 1000, "completion_tokens": 0, "total_tokens": 1000},
     }
     response = normalize_openai_completion_payload(
@@ -113,6 +118,55 @@ def test_openai_completion_normalizes_tool_calls_into_planned_metadata() -> None
     assert planned[0]["tool_name"] == "web_search"
 
 
+def test_openai_completion_preserves_reasoning_details_for_tool_turns() -> None:
+    payload = {
+        "model": "openai/gpt-5.5",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_details": [
+                        {
+                            "type": "reasoning.encrypted",
+                            "data": "opaque",
+                            "id": "r1",
+                            "format": "openai-responses-v1",
+                            "index": 0,
+                        }
+                    ],
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "web_fetch",
+                                "arguments": '{"url":"https://example.com"}',
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    }
+
+    response = normalize_openai_completion_payload(
+        payload, provider_name="openrouter", fallback_model="openai/gpt-5.5"
+    )
+
+    assert response.metadata["provider_reasoning_details"] == [
+        {
+            "type": "reasoning.encrypted",
+            "data": "opaque",
+            "id": "r1",
+            "format": "openai-responses-v1",
+            "index": 0,
+        }
+    ]
+    assert response.metadata["provider_reasoning_details_count"] == 1
+
+
 def test_openai_completion_fallback_parses_text_form_tool_call() -> None:
     """Fallback parser should extract text-form tool calls from assistant content."""
     payload = {
@@ -122,8 +176,8 @@ def test_openai_completion_fallback_parses_text_form_tool_call() -> None:
                 "message": {
                     "role": "assistant",
                     "content": (
-                        "<tool_call>{\"name\":\"glob_search\",\"arguments\":"
-                        "{\"pattern\":\"README.md\"}}</tool_call>"
+                        '<tool_call>{"name":"glob_search","arguments":'
+                        '{"pattern":"README.md"}}</tool_call>'
                     ),
                 },
                 "finish_reason": "tool_calls",
@@ -136,6 +190,37 @@ def test_openai_completion_fallback_parses_text_form_tool_call() -> None:
     planned = response.metadata.get("planned_tool_calls")
     assert isinstance(planned, list) and planned
     assert planned[0]["tool_name"] == "glob_search"
+    assert response.metadata.get("text_form_tool_calls_parsed") is True
+
+
+def test_openai_completion_fallback_parses_xmlish_text_form_tool_call() -> None:
+    """GLM/OpenRouter may emit arg_key/arg_value text-form tool calls."""
+    payload = {
+        "model": "glm-test",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        "<tool_call>web_fetch"
+                        "<arg_key>url</arg_key>"
+                        "<arg_value>https://example.com/a</arg_value>"
+                        "</tool_call>"
+                    ),
+                },
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+    response = normalize_openai_completion_payload(
+        payload, provider_name="openai-compat", fallback_model="fallback"
+    )
+
+    planned = response.metadata.get("planned_tool_calls")
+    assert isinstance(planned, list) and planned
+    assert planned[0]["tool_name"] == "web_fetch"
+    assert planned[0]["args"] == {"url": "https://example.com/a"}
     assert response.metadata.get("text_form_tool_calls_parsed") is True
 
 
@@ -196,8 +281,8 @@ def test_openai_stream_chunk_fallback_parses_text_form_tool_call() -> None:
             {
                 "delta": {
                     "content": (
-                        "<|python_tag|>{\"name\":\"web_search\",\"parameters\":"
-                        "{\"query\":\"agent-driver\"}}<|eom_id|>"
+                        '<|python_tag|>{"name":"web_search","parameters":'
+                        '{"query":"agent-driver"}}<|eom_id|>'
                     )
                 },
                 "finish_reason": "tool_calls",
@@ -211,6 +296,30 @@ def test_openai_stream_chunk_fallback_parses_text_form_tool_call() -> None:
     assert isinstance(planned, list) and planned
     assert planned[0]["tool_name"] == "web_search"
     assert event.metadata.get("text_form_tool_calls_parsed") is True
+
+
+def test_openai_stream_chunk_marks_tool_call_delta_as_meaningful() -> None:
+    """Streaming tool-call fragments are progress even before final arguments parse."""
+    chunk = {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "function": {"name": "web_search", "arguments": ""},
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            }
+        ]
+    }
+    event = normalize_openai_stream_chunk(
+        chunk, provider_name="openai-compat", fallback_model="fallback"
+    )
+    assert event.metadata.get("stream_tool_call_delta") is True
 
 
 def test_openai_usage_metadata_includes_cached_tokens_when_present() -> None:
@@ -356,6 +465,318 @@ async def test_openai_stream_adapter_ignores_empty_choices_chunk() -> None:
     request = LlmRequest(messages=[ChatMessage(role="user", content="hi")], stream=True)
     events = [event async for event in provider.stream(request)]
     assert [event.delta_text for event in events] == ["", "ok"]
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_adapter_parses_split_text_form_tool_call() -> None:
+    """Fallback parser should see text-form tool calls split across chunks."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chat/completions"):
+            first = {
+                "choices": [
+                    {
+                        "delta": {
+                            "content": (
+                                '<tool_call>{"name":"web_search","arguments":'
+                                '{"query":"Fen'
+                            )
+                        },
+                        "finish_reason": None,
+                    }
+                ]
+            }
+            second = {
+                "choices": [
+                    {
+                        "delta": {"content": 'der","max_results":5}}</tool_call>'},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+            body = "\n".join(
+                [
+                    f"data: {json.dumps(first)}",
+                    f"data: {json.dumps(second)}",
+                    "data: [DONE]",
+                ]
+            )
+            return httpx.Response(200, text=body)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(404, json={})
+
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleProvider.Config(
+            name="openai-mock",
+            base_url="https://mock.local/v1",
+            api_key=None,
+            model="gpt-test",
+            http_client_config=HttpClientConfig(transport=httpx.MockTransport(handler)),
+        )
+    )
+
+    events = [
+        event
+        async for event in provider.stream(
+            LlmRequest(messages=[ChatMessage(role="user", content="hi")], stream=True)
+        )
+    ]
+
+    assert [event.delta_text for event in events[:2]] == [
+        '<tool_call>{"name":"web_search","arguments":{"query":"Fen',
+        'der","max_results":5}}</tool_call>',
+    ]
+    planned = events[-1].metadata.get("planned_tool_calls")
+    assert isinstance(planned, list) and planned
+    assert planned[0]["tool_name"] == "web_search"
+    assert planned[0]["args"] == {"query": "Fender", "max_results": 5}
+    assert events[-1].metadata.get("text_form_tool_calls_parsed") is True
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_adapter_recovers_forced_tool_args_as_text() -> None:
+    """Some OpenAI-compatible models stream only args when tool_choice is forced."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chat/completions"):
+            body = "\n".join(
+                [
+                    'data: {"choices":[{"delta":{"content":"0.5, \\"query"},"finish_reason":null}]}',
+                    (
+                        'data: {"choices":[{"delta":{"content":"\\": \\"история Fender\\"}'
+                        '\\n</tool_call>"},"finish_reason":"stop"}]}'
+                    ),
+                    "data: [DONE]",
+                ]
+            )
+            return httpx.Response(200, text=body)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(404, json={})
+
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleProvider.Config(
+            name="openai-mock",
+            base_url="https://mock.local/v1",
+            api_key=None,
+            model="gpt-test",
+            http_client_config=HttpClientConfig(transport=httpx.MockTransport(handler)),
+        )
+    )
+
+    events = [
+        event
+        async for event in provider.stream(
+            LlmRequest(
+                messages=[ChatMessage(role="user", content="hi")],
+                stream=True,
+                tool_choice={"type": "tool", "name": "web_search"},
+            )
+        )
+    ]
+
+    planned = events[-1].metadata.get("planned_tool_calls")
+    assert isinstance(planned, list) and planned
+    assert planned[0]["tool_name"] == "web_search"
+    assert planned[0]["args"] == {"query": "история Fender"}
+    assert events[-1].metadata.get("text_form_tool_calls_parsed") is True
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_adapter_recovers_forced_web_search_positional_text() -> (
+    None
+):
+    """Qwen/OpenRouter can stream positional args for forced web_search."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chat/completions"):
+            body = "\n".join(
+                [
+                    (
+                        'data: {"choices":[{"delta":{"content":"0: '
+                        '\\"Fender Stratocaster история\\"}} </tool_call>"},"finish_reason":"stop"}]}'
+                    ),
+                    "data: [DONE]",
+                ]
+            )
+            return httpx.Response(200, text=body)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(404, json={})
+
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleProvider.Config(
+            name="openai-mock",
+            base_url="https://mock.local/v1",
+            api_key=None,
+            model="gpt-test",
+            http_client_config=HttpClientConfig(transport=httpx.MockTransport(handler)),
+        )
+    )
+
+    events = [
+        event
+        async for event in provider.stream(
+            LlmRequest(
+                messages=[ChatMessage(role="user", content="hi")],
+                stream=True,
+                tool_choice={"type": "tool", "name": "web_search"},
+            )
+        )
+    ]
+
+    planned = events[-1].metadata.get("planned_tool_calls")
+    assert isinstance(planned, list) and planned
+    assert planned[0]["tool_name"] == "web_search"
+    assert planned[0]["args"] == {"query": "Fender Stratocaster история"}
+    assert events[-1].metadata.get("text_form_tool_calls_parsed") is True
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_adapter_recovers_forced_web_search_positional_object() -> (
+    None
+):
+    """Qwen/OpenRouter can stream indexed JSON-object args for web_search."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chat/completions"):
+            body = "\n".join(
+                [
+                    (
+                        'data: {"choices":[{"delta":{"content":"0: {'
+                        '\\"query\\": \\"история Fender Stratocaster\\"}} '
+                        '</tool_call>"},"finish_reason":"stop"}]}'
+                    ),
+                    "data: [DONE]",
+                ]
+            )
+            return httpx.Response(200, text=body)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(404, json={})
+
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleProvider.Config(
+            name="openai-mock",
+            base_url="https://mock.local/v1",
+            api_key=None,
+            model="gpt-test",
+            http_client_config=HttpClientConfig(transport=httpx.MockTransport(handler)),
+        )
+    )
+
+    events = [
+        event
+        async for event in provider.stream(
+            LlmRequest(
+                messages=[ChatMessage(role="user", content="hi")],
+                stream=True,
+                tool_choice={"type": "tool", "name": "web_search"},
+            )
+        )
+    ]
+
+    planned = events[-1].metadata.get("planned_tool_calls")
+    assert isinstance(planned, list) and planned
+    assert planned[0]["tool_name"] == "web_search"
+    assert planned[0]["args"] == {"query": "история Fender Stratocaster"}
+    assert events[-1].metadata.get("text_form_tool_calls_parsed") is True
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_adapter_recovers_forced_args_with_prefix_noise() -> None:
+    """Forced tool args can arrive with numeric prefix and trailing braces."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chat/completions"):
+            body = "\n".join(
+                [
+                    (
+                        'data: {"choices":[{"delta":{"content":"0.1, '
+                        '\\"query\\": \\"история Fender Stratocaster\\"}} '
+                        '</tool_call>"},"finish_reason":"stop"}]}'
+                    ),
+                    "data: [DONE]",
+                ]
+            )
+            return httpx.Response(200, text=body)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(404, json={})
+
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleProvider.Config(
+            name="openai-mock",
+            base_url="https://mock.local/v1",
+            api_key=None,
+            model="gpt-test",
+            http_client_config=HttpClientConfig(transport=httpx.MockTransport(handler)),
+        )
+    )
+
+    events = [
+        event
+        async for event in provider.stream(
+            LlmRequest(
+                messages=[ChatMessage(role="user", content="hi")],
+                stream=True,
+                tool_choice={"type": "tool", "name": "web_search"},
+            )
+        )
+    ]
+
+    planned = events[-1].metadata.get("planned_tool_calls")
+    assert isinstance(planned, list) and planned
+    assert planned[0]["tool_name"] == "web_search"
+    assert planned[0]["args"] == {"query": "история Fender Stratocaster"}
+    assert events[-1].metadata.get("text_form_tool_calls_parsed") is True
+
+
+@pytest.mark.asyncio
+async def test_openai_stream_adapter_suppresses_text_form_tools_when_disabled() -> None:
+    """tool_choice='none' should prevent text-form tool-call execution loops."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chat/completions"):
+            body = "\n".join(
+                [
+                    (
+                        'data: {"choices":[{"delta":{"content":"<tool_call>{'
+                        '\\"name\\":\\"web_search\\",\\"arguments\\":{'
+                        '\\"query\\":\\"Fender\\"}}</tool_call>"},"finish_reason":"stop"}]}'
+                    ),
+                    "data: [DONE]",
+                ]
+            )
+            return httpx.Response(200, text=body)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(200, json={"data": []})
+        return httpx.Response(404, json={})
+
+    provider = OpenAICompatibleProvider(
+        config=OpenAICompatibleProvider.Config(
+            name="openai-mock",
+            base_url="https://mock.local/v1",
+            api_key=None,
+            model="gpt-test",
+            http_client_config=HttpClientConfig(transport=httpx.MockTransport(handler)),
+        )
+    )
+
+    events = [
+        event
+        async for event in provider.stream(
+            LlmRequest(
+                messages=[ChatMessage(role="user", content="hi")],
+                stream=True,
+                tool_choice="none",
+            )
+        )
+    ]
+
+    assert events[0].metadata.get("planned_tool_calls") is None
+    assert events[0].metadata.get("text_form_tool_calls_suppressed") is True
 
 
 @pytest.mark.asyncio

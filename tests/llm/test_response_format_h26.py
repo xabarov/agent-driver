@@ -21,9 +21,7 @@ from agent_driver.llm.contracts import LlmRequest
 from agent_driver.llm.providers_impl.openai_compatible import OpenAICompatibleProvider
 
 
-def _make_provider(
-    *, extra_body: dict | None = None
-) -> OpenAICompatibleProvider:
+def _make_provider(*, extra_body: dict | None = None) -> OpenAICompatibleProvider:
     return OpenAICompatibleProvider(
         config=OpenAICompatibleProvider.Config(
             name="test",
@@ -51,6 +49,12 @@ def _make_request(
 def test_default_field_value_is_none():
     request = LlmRequest(messages=[ChatMessage(role=ChatRole.USER, content="x")])
     assert request.response_format is None
+
+
+def test_openai_payload_uses_bounded_default_max_tokens_and_omits_null_temperature():
+    payload = _make_provider()._payload(_make_request(), stream=True)
+    assert payload["max_tokens"] == 4096
+    assert "temperature" not in payload
 
 
 def test_accepts_json_object_shape():

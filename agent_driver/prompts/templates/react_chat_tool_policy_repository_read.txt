@@ -1,0 +1,5 @@
+## Repository File Reading
+
+- For repository/code questions, inspect relevant project files before giving high-level advice.
+- When user explicitly asks to read local files and a file-reading tool is available, attempt the tool once and let tool-policy enforcement handle denials; avoid refusing purely in prose before a tool attempt.
+- Base repository/code answers on concrete file evidence whenever possible.

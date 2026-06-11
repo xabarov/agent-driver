@@ -185,7 +185,7 @@ def evaluate_baseline_strategies() -> dict[str, dict[str, float]]:
         audit={
             "trim_audit": [{}],
             "microcompaction_audit": [],
-            "token_pressure": {"state": "warning"},
+            "token_pressure": {"state": "early_warning"},
         },
         used_tokens_estimate=8300,
         budget_limit=12000,

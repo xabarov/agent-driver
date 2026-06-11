@@ -1,6 +1,26 @@
 """Deterministic evaluation harness, dataset runners, and baseline reports."""
 
+from agent_driver.evals.aggregate import (
+    MetricSummary,
+    RunAggregate,
+    aggregate_trajectories,
+    percentile,
+)
 from agent_driver.evals.baseline import compare_reports
+from agent_driver.evals.compare import (
+    ComparisonReport,
+    compare_aggregates,
+    render_comparison,
+    run_comparison,
+)
+from agent_driver.evals.presets import (
+    DEFAULT_TEMPERATURE,
+    OPENWEIGHT_MODELS,
+    OpenWeightPreset,
+    openweight_preset,
+    openweight_provider_spec,
+)
+from agent_driver.evals.suites import general_task_suite, suite_categories
 from agent_driver.evals.context_quality import (
     ContextQualityFixture,
     build_synthetic_context_quality_fixture,
@@ -52,7 +72,22 @@ __all__ = [
     "DatasetCase",
     "EvalReport",
     "EvaluatorResult",
+    "ComparisonReport",
+    "MetricSummary",
     "ReportComparison",
+    "RunAggregate",
+    "aggregate_trajectories",
+    "compare_aggregates",
+    "render_comparison",
+    "run_comparison",
+    "percentile",
+    "DEFAULT_TEMPERATURE",
+    "OPENWEIGHT_MODELS",
+    "OpenWeightPreset",
+    "openweight_preset",
+    "openweight_provider_spec",
+    "general_task_suite",
+    "suite_categories",
     "build_support_bundle",
     "ContextQualityFixture",
     "build_synthetic_context_quality_fixture",

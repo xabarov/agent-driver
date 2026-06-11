@@ -17,6 +17,8 @@ from agent_driver.contracts.context import (
     ContextBudget,
     ObservationMemory,
     ObservationProvenance,
+    PlanApprovalPayload,
+    PlanArtifact,
     PlanningState,
     PlanningStep,
     SessionRef,
@@ -27,6 +29,14 @@ from agent_driver.contracts.context import (
     TrimAuditRecord,
     TrimmedContext,
     TurnDigest,
+)
+from agent_driver.contracts.control import (
+    CommandQueueItem,
+    CommandQueueStatus,
+    ControlKind,
+    ControlPriority,
+    ControlRequest,
+    ControlResponse,
 )
 from agent_driver.contracts.enums import (
     AgentProfile,
@@ -41,6 +51,7 @@ from agent_driver.contracts.enums import (
     ObservationSource,
     ObservationTrust,
     ParentStateWriteMode,
+    PlanningModeState,
     PlanningTodoStatus,
     ResumeAction,
     RunStatus,
@@ -64,6 +75,15 @@ from agent_driver.contracts.enums import (
     WarningSource,
 )
 from agent_driver.contracts.events import RuntimeEvent, new_runtime_event
+from agent_driver.contracts.hook_chains import (
+    HookAction,
+    HookActionType,
+    HookChainConfig,
+    HookCondition,
+    HookRule,
+    HookTrigger,
+    HookTriggerEvent,
+)
 from agent_driver.contracts.interrupts import (
     ApprovalPayload,
     InterruptRequest,
@@ -71,10 +91,25 @@ from agent_driver.contracts.interrupts import (
 )
 from agent_driver.contracts.memory import MemoryProjection
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.contracts.profiles import PromptRenderResult, PromptTemplate
-from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
+from agent_driver.contracts.profiles import (
+    HarnessProfile,
+    PromptRenderResult,
+    PromptTemplate,
+)
+from agent_driver.contracts.runtime import (
+    AgentRunInput,
+    AgentRunOutput,
+    ContextDiagnostics,
+)
+from agent_driver.contracts.node_contract import FinalizeNow, NodeContract
 from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 from agent_driver.contracts.stream import RunStreamEvent
+from agent_driver.contracts.subagent_mailbox import (
+    SubagentMailboxDirection,
+    SubagentMailboxItem,
+    SubagentMailboxKind,
+    SubagentMailboxStatus,
+)
 from agent_driver.contracts.subagents import MergeProvenance, SubagentGroup, SubagentRun
 from agent_driver.contracts.tools import (
     ToolCall,
@@ -91,6 +126,8 @@ __all__ = [
     "AgentRunInput",
     "AgentRunOutput",
     "AgentProfile",
+    "NodeContract",
+    "FinalizeNow",
     "ApprovalMode",
     "ApprovalPayload",
     "ArtifactKind",
@@ -98,6 +135,8 @@ __all__ = [
     "ChatMessage",
     "ChatRole",
     "CheckpointRef",
+    "CommandQueueItem",
+    "CommandQueueStatus",
     "SessionRef",
     "SessionMemory",
     "SessionTurn",
@@ -113,22 +152,38 @@ __all__ = [
     "TodoState",
     "ObservationMemory",
     "ObservationProvenance",
+    "PlanApprovalPayload",
+    "PlanArtifact",
     "ContextBudget",
     "TrimAuditRecord",
     "TrimmedContext",
     "ContractModel",
+    "ControlKind",
+    "ControlPriority",
+    "ControlRequest",
+    "ControlResponse",
+    "ContextDiagnostics",
     "EventSeverity",
     "GuardrailDecision",
     "CompactionMode",
     "CompactionSkipReason",
+    "HookAction",
+    "HookActionType",
+    "HookChainConfig",
+    "HookCondition",
+    "HookRule",
+    "HookTrigger",
+    "HookTriggerEvent",
     "InterruptReason",
     "InterruptRequest",
     "ExecutorSerializationPolicy",
     "MemoryProjection",
     "MergeProvenance",
     "PromptRenderResult",
+    "HarnessProfile",
     "PromptTemplate",
     "ParentStateWriteMode",
+    "PlanningModeState",
     "RedactionInfo",
     "ResumeAction",
     "ResumeCommand",
@@ -145,6 +200,10 @@ __all__ = [
     "SubagentJoinPolicy",
     "SubagentExecutionMode",
     "SubagentMergeMode",
+    "SubagentMailboxDirection",
+    "SubagentMailboxItem",
+    "SubagentMailboxKind",
+    "SubagentMailboxStatus",
     "SubagentRun",
     "SubagentStatus",
     "SubagentTerminalState",

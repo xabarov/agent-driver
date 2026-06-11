@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from agent_driver.contracts import AgentProfile, ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.contracts import (
+    AgentProfile,
+    ApprovalMode,
+    SideEffectClass,
+    ToolManifest,
+    ToolRisk,
+)
 from agent_driver.tools import (
     ToolRegistry,
     ToolSet,
@@ -49,6 +55,35 @@ def test_toolset_supports_discovery_pack() -> None:
     filtered = ToolSet.packs("discovery").apply(registry)
     names = set(filtered.list_names())
     assert {"skill_tool", "tool_search", "brief_tool", "agent_tool"}.issubset(names)
+
+
+def test_toolset_supports_artifacts_pack() -> None:
+    """Artifacts pack should expose read-only workspace artifact helpers."""
+    registry = _registry_with_defaults()
+    filtered = ToolSet.packs("artifacts").apply(registry)
+    assert set(filtered.list_names()) == {
+        "artifact_list",
+        "artifact_read",
+        "artifact_preview",
+    }
+
+
+def test_toolset_supports_hard_source_tools_pack() -> None:
+    """source_tools pack should expose the hard-profile evidence ladder."""
+    registry = _registry_with_defaults()
+    filtered = ToolSet.packs("source_tools").apply(registry)
+    assert set(filtered.list_names()) == {
+        "source_read",
+        "pdf_read",
+        "browser_read",
+    }
+
+
+def test_toolset_filesystem_write_pack_includes_file_patch() -> None:
+    """filesystem_write pack should expose batched exact replacement edits."""
+    registry = _registry_with_defaults()
+    filtered = ToolSet.packs("filesystem_write").apply(registry)
+    assert "file_patch" in filtered.list_names()
 
 
 def test_toolset_filters_by_application_tags() -> None:
@@ -101,7 +136,12 @@ def test_toolset_empty_side_effect_and_tag_filters_do_not_drop_tools() -> None:
 def test_toolset_without_excludes_named_tools() -> None:
     """without() should drop excluded names after pack composition."""
     registry = _registry_with_defaults()
-    names = ToolSet.packs("filesystem_read").without("glob_search").apply(registry).list_names()
+    names = (
+        ToolSet.packs("filesystem_read")
+        .without("glob_search")
+        .apply(registry)
+        .list_names()
+    )
     assert "read_file" in names
     assert "glob_search" not in names
 
@@ -156,6 +196,61 @@ def test_from_preset_all_matches_all_factory() -> None:
     a = ToolSet.from_preset("all").apply(registry).list_names()
     b = ToolSet.all().apply(registry).list_names()
     assert sorted(a) == sorted(b)
+
+
+def test_from_preset_research_light_excludes_artifacts_subagents_and_code() -> None:
+    registry = _registry_with_defaults()
+    names = set(ToolSet.from_preset("research_light").apply(registry).list_names())
+
+    assert {"web_search", "web_fetch", "todo_write"}.issubset(names)
+    assert "agent_tool" not in names
+    assert "file_write" not in names
+    assert "artifact_preview" not in names
+    assert "bash" not in names
+    assert "python" not in names
+
+
+def test_from_preset_deep_research_medium_excludes_shell_python_and_hard_tools() -> (
+    None
+):
+    registry = _registry_with_defaults()
+    names = set(
+        ToolSet.from_preset("deep_research_medium").apply(registry).list_names()
+    )
+
+    assert {
+        "agent_tool",
+        "skill_tool",
+        "skill_view",
+        "todo_write",
+        "web_search",
+        "web_fetch",
+        "read_file",
+        "file_write",
+        "file_edit",
+        "file_patch",
+        "artifact_preview",
+        "artifact_read",
+        "artifact_list",
+    }.issubset(names)
+    assert "bash" not in names
+    assert "python" not in names
+    assert "source_read" not in names
+    assert "pdf_read" not in names
+    assert "browser_read" not in names
+
+
+def test_from_preset_deep_research_hard_adds_source_ladder_without_browser_action() -> (
+    None
+):
+    registry = _registry_with_defaults()
+    names = set(ToolSet.from_preset("deep_research_hard").apply(registry).list_names())
+
+    assert {"source_read", "pdf_read", "browser_read"}.issubset(names)
+    assert "agent_tool" in names
+    assert "bash" not in names
+    assert "python" not in names
+    assert "browser_action" not in names
 
 
 def test_from_preset_normalizes_whitespace_and_case() -> None:

@@ -1,0 +1,10 @@
+## Web Search
+
+- For `web_search`, use plain keywords; do not use `site:` operators because the default DuckDuckGo backend does not return parseable results for them.
+- For external research questions, run `web_search` before relying on memory.
+- Treat search results as candidates. For reports, deep research, comparisons, or user requests that say "go by the plan", do not treat result snippets as the whole evidence layer when a page-reading tool is available.
+- Use search result `metadata`, `url`, and `excerpt` fields to choose sources; do not treat them as the whole evidence base for report-like work.
+- When a final answer relies on web search, include Markdown links to the concrete result URLs you used.
+- If fresh search results conflict with memory, trust the fetched/search result evidence.
+- Do not read local repository files for purely external web/news/research questions unless the user explicitly asks about this project or gives a local path.
+- If web search results are empty, state that clearly and ask for clarification rather than repeating many similar searches.

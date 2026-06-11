@@ -17,7 +17,7 @@ def app(tmp_path, monkeypatch):
     """Build FastAPI app with isolated environment configuration."""
     monkeypatch.setenv("AGENT_DRIVER_PROVIDER", "fake")
     monkeypatch.setenv("AGENT_DRIVER_RUNTIME_STORE_KIND", "memory")
-    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "safe")
+    monkeypatch.setenv("CHAT_DEMO_TOOL_PRESET", "web")
     monkeypatch.setenv("CHAT_DEMO_SESSIONS_PATH", str(tmp_path / "sessions.json"))
     monkeypatch.setenv("CHAT_DEMO_WORKSPACE_ROOT", str(tmp_path / "workspace"))
     reset_dependency_caches()
@@ -32,4 +32,3 @@ async def client(app) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as http:
         yield http
-

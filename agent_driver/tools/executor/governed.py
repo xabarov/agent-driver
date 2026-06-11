@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import re
 from typing import Any
 
 from agent_driver.contracts.enums import GuardrailDecision, ToolPolicyDecision
@@ -16,6 +18,15 @@ from agent_driver.contracts.interrupts import (
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolCall, ToolResultEnvelope
 from agent_driver.llm.contracts import LlmResponse
+from agent_driver.runtime.planning_policy import tool_policy_with_planned_tool_hint
+from agent_driver.runtime.tool_gate import (
+    ToolGate,
+    ToolGateAllow,
+    ToolGateAsk,
+    ToolGateContext,
+    ToolGateDeny,
+    ToolGateResult,
+)
 from agent_driver.tools.executor.allowed import execute_allowed_path
 from agent_driver.tools.executor.blocks import append_blocked_call
 from agent_driver.tools.executor.partition import (
@@ -45,6 +56,13 @@ logger = logging.getLogger(__name__)
 # host from spawning unbounded coroutines when a model emits a long
 # read-only fan-out (e.g. 30 file_reads). Mirrors openclaude
 # ``CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY``.
+from agent_driver.tools.executor.normalization import (
+    _coerce_json_string_args,  # re-exported for back-compat (tests import here)
+)
+from agent_driver.tools.executor.normalization import (  # noqa: F401
+    _normalize_tool_alias,
+)
+
 DEFAULT_CONCURRENCY_LIMIT = 8
 
 
@@ -61,7 +79,11 @@ def _match_run_approved_prompts(
     in parsing are swallowed (logged at WARNING) so a malformed entry
     can't make policy decisions unsafe (default = INTERRUPT preserved).
     """
-    raw = run_input.app_metadata.get("approved_prompts") if run_input.app_metadata else None
+    raw = (
+        run_input.app_metadata.get("approved_prompts")
+        if run_input.app_metadata
+        else None
+    )
     if not isinstance(raw, list) or not raw:
         return None
     approved: list[AllowedPrompt] = []
@@ -91,8 +113,7 @@ def _read_concurrency_limit_env() -> int:
         value = int(raw)
     except ValueError:
         logger.warning(
-            "AGENT_DRIVER_TOOL_CONCURRENCY=%r is not an integer; "
-            "falling back to %d",
+            "AGENT_DRIVER_TOOL_CONCURRENCY=%r is not an integer; " "falling back to %d",
             raw,
             DEFAULT_CONCURRENCY_LIMIT,
         )
@@ -167,6 +188,7 @@ class GovernedToolExecutor:
         llm_response: LlmResponse,
         *,
         current_tool_calls: int = 0,
+        tool_gate: "ToolGate | None" = None,
     ) -> GovernedExecutionResult:
         """Run policy + guardrails + tool handlers for planned calls.
 
@@ -176,57 +198,203 @@ class GovernedToolExecutor:
         capping the per-batch coroutine count. Stops further units
         (parallel or serial) when any prior call records an interrupt or
         a STOP-style policy decision.
+
+        A0.2 — when ``tool_gate`` is supplied, every planned call is
+        passed through the gate AFTER the static
+        :func:`evaluate_tool_policy` returns ALLOW. The gate can flip
+        the decision to DENY (blocked envelope) or INTERRUPT
+        (operator approval). See :mod:`agent_driver.runtime.tool_gate`.
         """
         result = GovernedExecutionResult()
-        planned_calls = extract_planned_tool_calls(llm_response)
-        # Phase 11 H15 — apply pre_tool_use hook chain BEFORE partition
-        # so concurrency-safety decisions see the transformed call.
-        # Hook errors are isolated; on any exception the original call
-        # for THAT hook is preserved (see ``_apply_pre_hooks``).
-        if self._tool_hooks:
-            transformed: list[ToolCall] = []
-            for call in planned_calls:
-                transformed.append(await self._apply_pre_hooks(call))
-            planned_calls = transformed
-        units = partition_concurrent_calls(
+        planned_calls = self._normalize_planned_calls(llm_response)
+        planned_calls = await self._apply_pre_hook_stage(planned_calls)
+        run_input = self._apply_policy_hint_stage(
+            run_input,
+            planned_calls,
+            current_tool_calls=current_tool_calls,
+        )
+        units = self._partition_stage(planned_calls)
+        await self._execute_units_stage(
+            units=units,
+            run_input=run_input,
+            result=result,
+            current_tool_calls=current_tool_calls,
+            tool_gate=tool_gate,
+        )
+        return result
+
+    def _lookup_manifest(self, tool_name: str):
+        registered = self._registry.get(tool_name)
+        return registered.manifest if registered is not None else None
+
+    def _normalize_planned_calls(self, llm_response: LlmResponse) -> list[ToolCall]:
+        """Extract planned calls and normalize explicit compatibility aliases."""
+        available_tool_names = tuple(self._registry.list_names())
+        return [
+            _normalize_tool_alias(call, available_tool_names=available_tool_names)
+            for call in extract_planned_tool_calls(llm_response)
+        ]
+
+    async def _apply_pre_hook_stage(
+        self, planned_calls: list[ToolCall]
+    ) -> list[ToolCall]:
+        """Run pre_tool_use hooks before concurrency partitioning."""
+        if not self._tool_hooks:
+            return planned_calls
+        transformed: list[ToolCall] = []
+        for call in planned_calls:
+            transformed.append(await self._apply_pre_hooks(call))
+        return transformed
+
+    def _apply_policy_hint_stage(
+        self,
+        run_input: AgentRunInput,
+        planned_calls: list[ToolCall],
+        *,
+        current_tool_calls: int,
+    ) -> AgentRunInput:
+        """Enrich run policy with planned-tool context before execution."""
+        if not planned_calls:
+            return run_input
+        return run_input.model_copy(
+            update={
+                "tool_policy": tool_policy_with_planned_tool_hint(
+                    run_input.tool_policy,
+                    planned_calls,
+                    manifest_lookup=self._lookup_manifest,
+                    current_tool_calls=current_tool_calls,
+                )
+            }
+        )
+
+    def _partition_stage(
+        self, planned_calls: list[ToolCall]
+    ) -> list[SerialCall[ToolCall] | ParallelBatch[ToolCall]]:
+        """Partition planned calls into serial and concurrency-safe units."""
+        return partition_concurrent_calls(
             planned_calls,
             is_safe=lambda c: is_call_concurrency_safe(
                 c, manifest_lookup=self._lookup_manifest
             ),
         )
 
+    async def _execute_units_stage(
+        self,
+        *,
+        units: list[SerialCall[ToolCall] | ParallelBatch[ToolCall]],
+        run_input: AgentRunInput,
+        result: GovernedExecutionResult,
+        current_tool_calls: int,
+        tool_gate: "ToolGate | None" = None,
+    ) -> None:
+        """Execute partitioned units and collect envelopes/traces in order."""
         next_index = 1
         for unit in units:
             if isinstance(unit, SerialCall):
-                stop = await self._execute_one_call(
+                stop = await self._execute_one_call_traced(
                     ExecSpec(
                         result=result,
                         run_input=run_input,
                         call=unit.item,
                         index=next_index,
                         current_tool_calls=current_tool_calls,
+                        tool_gate=tool_gate,
                     )
                 )
                 next_index += 1
                 if stop:
-                    return result
+                    return
                 continue
-            # ParallelBatch
             stop = await self._execute_parallel_batch(
                 batch=unit,
                 run_input=run_input,
                 result=result,
                 start_index=next_index,
                 current_tool_calls=current_tool_calls,
+                tool_gate=tool_gate,
             )
             next_index += len(unit.items)
             if stop:
-                return result
-        return result
+                return
 
-    def _lookup_manifest(self, tool_name: str):
-        registered = self._registry.get(tool_name)
-        return registered.manifest if registered is not None else None
+    async def _apply_tool_gate(
+        self,
+        *,
+        gate: "ToolGate",
+        policy,
+        call: ToolCall,
+        manifest,
+        run_input: AgentRunInput,
+        current_tool_calls: int,
+    ):
+        """A0.2 — invoke the caller-supplied tool gate; translate to
+        a policy decision flip.
+
+        Returns a (possibly updated) ``ToolPolicyOutcome``. A gate
+        exception is logged and treated as DENY with the exception
+        text as reason — fail-closed by design (better to block one
+        call than to silently bypass an operator-level risk check).
+
+        ``policy`` is ``ToolPolicyOutcome``; left untyped above so the
+        signature stays compatible with the implicit late-bound import.
+        """
+        gate_ctx = ToolGateContext(
+            tool_name=call.tool_name,
+            args=dict(call.args),
+            run_id=run_input.run_id,
+            thread_id=run_input.thread_id,
+            agent_id=run_input.agent_id,
+            risk=manifest.risk.value,
+            side_effect=manifest.side_effect.value,
+            current_tool_calls=current_tool_calls,
+        )
+        try:
+            result: ToolGateResult = await gate(gate_ctx)
+        except Exception as exc:  # pragma: no cover - simple translation
+            logger.warning(
+                "tool_gate raised for %r; treating as DENY (fail-closed): %s",
+                call.tool_name,
+                exc,
+                exc_info=True,
+            )
+            return policy.model_copy(
+                update={
+                    "decision": ToolPolicyDecision.DENY,
+                    "reason": f"tool_gate raised: {exc}",
+                }
+            )
+        if isinstance(result, ToolGateAllow):
+            return policy
+        if isinstance(result, ToolGateDeny):
+            return policy.model_copy(
+                update={
+                    "decision": ToolPolicyDecision.DENY,
+                    "reason": f"tool_gate denied: {result.reason}",
+                }
+            )
+        if isinstance(result, ToolGateAsk):
+            return policy.model_copy(
+                update={
+                    "decision": ToolPolicyDecision.INTERRUPT,
+                    "reason": result.message,
+                    "interrupt_reason": "approval_required",
+                    # Carry the host's optional heading override through to the
+                    # interrupt (ToolGateAsk.title is documented to override the
+                    # default "Approval required for '<tool>'" heading).
+                    "interrupt_title": result.title,
+                }
+            )
+        logger.warning(
+            "tool_gate returned unsupported result type %r for %r; treating as DENY",
+            type(result).__name__,
+            call.tool_name,
+        )
+        return policy.model_copy(
+            update={
+                "decision": ToolPolicyDecision.DENY,
+                "reason": f"tool_gate returned unsupported result: {type(result).__name__}",
+            }
+        )
 
     async def _invoke_hook_with_timeout(
         self,
@@ -329,8 +497,7 @@ class GovernedToolExecutor:
                 continue
             except Exception:
                 logger.warning(
-                    "tool_hook %r raised in pre_tool_use; preserving "
-                    "previous call",
+                    "tool_hook %r raised in pre_tool_use; preserving " "previous call",
                     getattr(hook, "name", type(hook).__name__),
                     exc_info=True,
                 )
@@ -425,6 +592,7 @@ class GovernedToolExecutor:
         result: GovernedExecutionResult,
         start_index: int,
         current_tool_calls: int,
+        tool_gate: "ToolGate | None" = None,
     ) -> bool:
         """Run a parallel batch; merge sub-results into ``result`` in order.
 
@@ -454,13 +622,14 @@ class GovernedToolExecutor:
         async def run_one(call: ToolCall, index: int) -> GovernedExecutionResult:
             async with semaphore:
                 sub_result = GovernedExecutionResult()
-                await self._execute_one_call(
+                await self._execute_one_call_traced(
                     ExecSpec(
                         result=sub_result,
                         run_input=run_input,
                         call=call,
                         index=index,
                         current_tool_calls=current_tool_calls,
+                        tool_gate=tool_gate,
                     )
                 )
                 return sub_result
@@ -489,6 +658,54 @@ class GovernedToolExecutor:
                 stop_overall = True
         return stop_overall
 
+    async def _execute_one_call_traced(self, spec: ExecSpec) -> bool:
+        """Wrap :meth:`_execute_one_call` in an OpenInference TOOL span.
+
+        Phoenix then renders the tool call with its name, args, result and — when
+        the call is denied/failed — a red error status carrying the reason (e.g.
+        the SQLAlchemy "concurrent operations" message that made chart_vegalite
+        get denied). The status/result are read back from the ToolTrace this call
+        appends. No-op + never raises when tracing is off.
+        """
+        from agent_driver.observability.openinference import (  # noqa: PLC0415
+            SPAN_KIND_TOOL,
+            oi_span,
+            record_status,
+            set_io,
+            set_tool,
+        )
+
+        call = spec.call
+        before = len(spec.result.traces)
+        with oi_span(call.tool_name, kind=SPAN_KIND_TOOL) as span:
+            set_tool(
+                span,
+                name=call.tool_name,
+                arguments=dict(call.args or {}),
+                call_id=getattr(call, "tool_call_id", None),
+            )
+            stop = await self._execute_one_call(spec)
+            new_traces = spec.result.traces[before:]
+            trace = new_traces[-1] if new_traces else None
+            if trace is not None:
+                status_value = getattr(getattr(trace, "status", None), "value", "")
+                ok = status_value == "completed"
+                set_io(span, output=getattr(trace, "result_summary", None))
+                record_status(
+                    span,
+                    ok=ok,
+                    description=(
+                        None
+                        if ok
+                        else (
+                            getattr(trace, "result_summary", None)
+                            or getattr(trace, "error_code", None)
+                            or status_value
+                        )
+                    ),
+                )
+            return stop
+
     async def _execute_one_call(self, spec: ExecSpec) -> bool:
         """Execute one tool call, returning True when loop must stop."""
         result = spec.result
@@ -499,6 +716,7 @@ class GovernedToolExecutor:
             "run_id": run_input.run_id,
             "thread_id": run_input.thread_id,
             "attempt_id": f"attempt_{index}",
+            "agent_id": run_input.agent_id,
             "agent_profile": run_input.agent_profile.value,
             "prompt_template_id": run_input.prompt_template_id,
             "prompt_template_version": run_input.prompt_template_version,
@@ -556,6 +774,35 @@ class GovernedToolExecutor:
                         "interrupt_reason": None,
                     }
                 )
+        # A0.2 — dynamic per-call tool gate. Runs ONLY when policy is
+        # ALLOW (denial / interrupt are already final). The gate sees
+        # the planned call's args + manifest risk + side_effect, returns
+        # Allow / Deny / Ask. Errors are caught and treated as Deny
+        # (fail-closed) so a malformed gate can't silently bypass
+        # operator-level checks.
+        #
+        # Skip the gate for a call the operator already approved via a
+        # prior interrupt (``approved_interrupt_id`` set on resume). A
+        # stateless gate (e.g. ``build_permission_gate``) re-evaluates the
+        # same risky call identically and would ASK again, re-parking the
+        # run on the very interrupt the operator just cleared — an infinite
+        # approve/ask loop. This mirrors the static-policy short-circuit
+        # above that collapses INTERRUPT->ALLOW for approved calls.
+        if (
+            policy.decision == ToolPolicyDecision.ALLOW
+            and spec.tool_gate is not None
+            and not (
+                isinstance(approved_interrupt_id, str) and approved_interrupt_id.strip()
+            )
+        ):
+            policy = await self._apply_tool_gate(
+                gate=spec.tool_gate,
+                policy=policy,
+                call=call,
+                manifest=manifest,
+                run_input=run_input,
+                current_tool_calls=spec.current_tool_calls + spec.index - 1,
+            )
         if policy.decision == ToolPolicyDecision.DENY:
             self._append_block(
                 result=result,

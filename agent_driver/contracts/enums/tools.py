@@ -36,6 +36,7 @@ class InterruptReason(StrEnum):
     """Reason for pausing the run and requesting input."""
 
     APPROVAL_REQUIRED = "approval_required"
+    PLAN_APPROVAL_REQUIRED = "plan_approval_required"
     CLARIFICATION_REQUIRED = "clarification_required"
     GUARDRAIL_REVIEW = "guardrail_review"
     TOOL_ARGS_REVIEW = "tool_args_review"

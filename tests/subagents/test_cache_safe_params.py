@@ -16,8 +16,6 @@ Pins:
 
 from __future__ import annotations
 
-import pytest
-
 from agent_driver.contracts import (
     AgentRunInput,
     ToolManifest,
@@ -161,7 +159,10 @@ def test_apply_preserves_existing_metadata():
     params = compute_cache_safe_params(run_input=run, model="m")
     updated = apply_to_child_run_input(run, params)
     assert updated.app_metadata.get("unrelated") == "preserved"
-    assert updated.app_metadata.get(CACHE_SAFE_METADATA_KEY)["cache_key"] == params.cache_key
+    assert (
+        updated.app_metadata.get(CACHE_SAFE_METADATA_KEY)["cache_key"]
+        == params.cache_key
+    )
 
 
 def test_apply_does_not_mutate_original():
@@ -213,7 +214,10 @@ def test_provider_hint_openai_uses_extra_body():
     hint = provider_cache_hint_for(params=params, provider_kind="openai_compatible")
     assert hint.kind == "openai_compatible"
     assert "extra_body" in hint.request_overrides
-    assert hint.request_overrides["extra_body"]["_cache_safe_params"]["cache_key"] == params.cache_key
+    assert (
+        hint.request_overrides["extra_body"]["_cache_safe_params"]["cache_key"]
+        == params.cache_key
+    )
     assert hint.message_cache_breakpoint is None
 
 
