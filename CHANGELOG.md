@@ -7,6 +7,25 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — reliable tool-first workflow nodes (`NodeContract`)
+- Opt-in `AgentRunInput.node_contract` runtime enforcement for harness/workflow
+  nodes (see [docs/node-contract.md](docs/node-contract.md)):
+  - **Layer A** (`require_callable_tools`): run-start policy↔registry validation;
+    uncallable `allowed_tools` / `finalize_when_tools` surface a
+    `node_contract_warning` event + `output.metadata["node_contract"]
+    ["tool_policy_warnings"]` instead of being silently dropped.
+  - **Layer B** (`require_tool_use`): proactive tool-use prelude (tools + target)
+    woven into the system prompt, plus a reactive guard that reprompts a
+    zero-tool-call finalize (`max_tool_use_reprompts`) and then stamps a typed
+    `no_tool_use` violation rather than returning a silent generic answer.
+  - **Layer C** (`finalize_when_tools` + the `on_tool_evidence` lifecycle hook):
+    finalize directly from sufficient tool evidence with no extra LLM
+    continuation; terminal answer + tool outputs preserved.
+- `RunLifecycleHook.on_tool_evidence(context, envelopes) -> FinalizeNow | None`
+  escape hatch (`stop_after_tool_evidence` / `finalize_when_tools_satisfy_contract`).
+- `tool_call_completed` event rows now carry `output_preview` + `structured_output`
+  for downstream normalization.
+
 ### Added — cross-harness capabilities (E1–E8 + T0)
 - Auxiliary cheap-model routing for side tasks (`RunnerConfig.auxiliary_provider`
   / `auxiliary_model`); compaction spend separated by model in the cost ledger.

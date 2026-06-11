@@ -90,6 +90,7 @@ class RuntimeEventType(StrEnum):
     ARTIFACT_UPDATED = "artifact_updated"
     MEMORY_COMPACTION_STARTED = "memory_compaction_started"
     MEMORY_COMPACTED = "memory_compacted"
+    NODE_CONTRACT_WARNING = "node_contract_warning"
     WARNING = "warning"
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"

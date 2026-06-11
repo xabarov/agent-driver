@@ -118,12 +118,63 @@ class SingleAgentStepMixin:
             results=[item.model_dump(mode="json") for item in result.envelopes],
         )
 
+    def _apply_node_contract_run_start(self, context: RunContext) -> None:
+        """Layer A + prelude prep: validate allowed_tools and stage the prelude.
+
+        Opt-in and inert unless ``AgentRunInput.node_contract`` is active. Diffs the
+        declared tool names against the live registry (Layer A) and prepares the
+        Layer-B proactive prelude from the tools that will actually surface, so the
+        :class:`NodeContractLifecycleHook` can weave it into the system prompt.
+        """
+        from agent_driver.runtime.single_agent import node_contract as nc
+        from agent_driver.runtime.single_agent.llm_step.build import (
+            effective_tool_names_from_registry,
+        )
+
+        run_input = context.run_input
+        if not nc.is_active(run_input):
+            return
+        registry = self._deps.tool_registry
+        registered = (
+            tuple(registry.list_names())
+            if registry is not None and hasattr(registry, "list_names")
+            else ()
+        )
+        unsatisfiable = nc.unsatisfiable_tool_names(run_input, registered)
+        if unsatisfiable:
+            context.metadata[nc.TOOL_POLICY_WARNINGS_KEY] = unsatisfiable
+            self._emit(
+                EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType.NODE_CONTRACT_WARNING,
+                    payload={
+                        "kind": "tool_policy_unsatisfiable",
+                        "tools": list(unsatisfiable),
+                        "detail": (
+                            "declared allowed_tools / finalize_when_tools are not "
+                            "callable in the registry"
+                        ),
+                    },
+                )
+            )
+        policy = run_input.tool_policy
+        surfaced = effective_tool_names_from_registry(
+            registry,
+            allowed=tuple(policy.allowed_tools) if policy.allowed_tools else None,
+            denied=tuple(policy.denied_tools) if policy.denied_tools else None,
+        )
+        prelude = nc.build_prelude(run_input, surfaced)
+        if prelude:
+            context.metadata[nc.NODE_CONTRACT_PRELUDE_KEY] = prelude
+
     async def _execute_run_started(self, context: RunContext) -> RuntimeStepResult:
         from agent_driver.runtime.single_agent.planning.state import (
             apply_planning_state_seed_from_metadata,
         )
 
         apply_planning_state_seed_from_metadata(context)
+        self._apply_node_contract_run_start(context)
         await dispatch_run_start(self._deps.lifecycle_hooks, context)
         self._emit(
             EventSpec(
@@ -217,6 +268,16 @@ class SingleAgentStepMixin:
             self._save_checkpoint(context, latest_output=None, node_id="finalize")
             self._maybe_fail_after_step("finalize")
             return continuation
+        node_contract_reprompt = self._maybe_node_contract_tool_use_reprompt(context)
+        if node_contract_reprompt is not None:
+            context.step_count += 1
+            get_loop_control_state(context).set_step_transition(
+                next_step="llm_call",
+                tool_calls=context.tool_calls,
+            )
+            self._save_checkpoint(context, latest_output=None, node_id="finalize")
+            self._maybe_fail_after_step("finalize")
+            return node_contract_reprompt
         terminal_answer = self._sanitize_terminal_answer(context)
         if terminal_answer:
             completed_payload["answer"] = terminal_answer
@@ -274,6 +335,36 @@ class SingleAgentStepMixin:
             output.model_dump(mode="json")
         )
         return RuntimeStepResult(next_step="done")
+
+    def _maybe_node_contract_tool_use_reprompt(
+        self, context: RunContext
+    ) -> RuntimeStepResult | None:
+        """Layer B reactive guard: reprompt a zero-tool-call finalize, then escalate.
+
+        Returns a continuation transition (back to ``llm_call``) while the reprompt
+        budget remains, ``None`` otherwise. On the final attempt it stamps a typed
+        ``no_tool_use`` violation so the run finalizes with a structured error rather
+        than a silent generic answer.
+        """
+        from agent_driver.runtime.single_agent import node_contract as nc
+
+        if not nc.tool_use_violation_pending(context):
+            return None
+        if not nc.reprompt_budget_remaining(context):
+            nc.stamp_no_tool_use_violation(context)
+            return None
+        text = (
+            context.llm_response.message.content
+            if context.llm_response is not None
+            else ""
+        )
+        return _build_continuation_transition(
+            context,
+            text=text or "",
+            nudge=nc.build_tool_use_reprompt(context.run_input),
+            reason=nc._REPROMPT_REASON,
+            count_key=nc.TOOL_USE_REPROMPT_COUNT_KEY,
+        )
 
     async def _execute_step(self, context: RunContext) -> RuntimeStepResult:
         if context.step_name == "run_started":

@@ -37,12 +37,12 @@ from agent_driver.runtime.metadata_state import (
     get_planning_runtime_state,
     get_streaming_runtime_state,
 )
-from agent_driver.runtime.research_evidence import (
-    research_source_ledger_from_tool_results,
-)
 from agent_driver.runtime.research_artifacts import (
     deep_research_report_artifact_exists,
     deep_research_source_ledger_artifact_exists,
+)
+from agent_driver.runtime.research_evidence import (
+    research_source_ledger_from_tool_results,
 )
 from agent_driver.runtime.single_agent.finalization.output_builders import (
     build_memory_audit,
@@ -60,16 +60,15 @@ from agent_driver.subagents import summarize_child_runs_for_parent
 
 def _deep_research_terminal_handoff_ready(context: RunContext) -> bool:
     task_contract = context.run_input.tool_policy.metadata.get("task_contract")
-    deep_contract = (
-        isinstance(task_contract, dict)
-        and (
-            task_contract.get("research_mode") == "deep"
-            or task_contract.get("research_depth") == "deep_parallel_research"
-            or task_contract.get("research_depth") == "source_verified_report"
-        )
+    deep_contract = isinstance(task_contract, dict) and (
+        task_contract.get("research_mode") == "deep"
+        or task_contract.get("research_depth") == "deep_parallel_research"
+        or task_contract.get("research_depth") == "source_verified_report"
     )
     metadata_enabled = (
-        isinstance(context.run_input.tool_policy.metadata.get("deep_research_mode"), dict)
+        isinstance(
+            context.run_input.tool_policy.metadata.get("deep_research_mode"), dict
+        )
         or context.run_input.app_metadata.get("research_mode") == "deep"
     )
     if not (deep_contract or metadata_enabled):
@@ -233,6 +232,15 @@ class SingleAgentOutputMixin:
 
     def _sanitize_terminal_answer(self, context: RunContext) -> str | None:
         """Strip text-form tool call markup from the final assistant answer."""
+        from agent_driver.runtime.single_agent.node_contract import (
+            early_finalize_answer,
+        )
+
+        # Layer C: an early finalize from tool evidence synthesises the terminal
+        # answer from envelopes with no model turn — prefer it when present.
+        early = early_finalize_answer(context)
+        if early is not None:
+            return early
         if context.llm_response is None:
             return None
         raw = context.llm_response.message.content
@@ -397,6 +405,11 @@ class SingleAgentOutputMixin:
         research_contract = context.metadata.get("research_session_contract")
         if isinstance(research_contract, dict):
             metadata["research_session_contract"] = dict(research_contract)
+        from agent_driver.runtime.single_agent.node_contract import output_summary
+
+        node_contract_summary = output_summary(context)
+        if node_contract_summary is not None:
+            metadata["node_contract"] = node_contract_summary
         return metadata
 
     def _approval_payload_from_context(

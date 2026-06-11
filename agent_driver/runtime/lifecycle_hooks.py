@@ -21,7 +21,9 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from agent_driver.contracts.events import RuntimeEvent
+    from agent_driver.contracts.node_contract import FinalizeNow
     from agent_driver.contracts.runtime import AgentRunOutput
+    from agent_driver.contracts.tools.results import ToolResultEnvelope
     from agent_driver.llm.contracts import LlmRequest, LlmResponse
     from agent_driver.runtime.single_agent.types import RunContext
 
@@ -73,6 +75,21 @@ class RunLifecycleHook(Protocol):
         accept the answer and finish.
         """
 
+    async def on_tool_evidence(
+        self,
+        context: "RunContext",
+        envelopes: "list[ToolResultEnvelope]",
+    ) -> "FinalizeNow | None":
+        """Called after a tool stage that would otherwise loop back to the LLM.
+
+        ``envelopes`` are the tool results produced this turn. Return a
+        :class:`~agent_driver.contracts.node_contract.FinalizeNow` to finalize the
+        run *now* from tool evidence — the runtime skips the next LLM pass and uses
+        the directive's ``answer`` as the terminal answer. Return ``None`` to let
+        the loop continue normally (the default). This is the host escape hatch for
+        ``stop_after_tool_evidence`` / ``finalize_when_tools_satisfy_contract``.
+        """
+
     async def on_error(
         self,
         context: "RunContext",
@@ -110,6 +127,13 @@ class BaseRunLifecycleHook:
         self, context: "RunContext", *, answer: str
     ) -> "RevisionRequest | None":
         """No-op finalize hook; override to accept or request a revision."""
+
+    async def on_tool_evidence(
+        self,
+        context: "RunContext",
+        envelopes: "list[ToolResultEnvelope]",
+    ) -> "FinalizeNow | None":
+        """No-op tool-evidence hook; override to finalize from tool evidence."""
 
     async def on_error(
         self,
@@ -160,6 +184,30 @@ async def dispatch_finalize(
         if result is not None and revision is None:
             revision = result
     return revision
+
+
+async def dispatch_tool_evidence(
+    hooks: Iterable[RunLifecycleHook],
+    context: "RunContext",
+    envelopes: "list[ToolResultEnvelope]",
+) -> "FinalizeNow | None":
+    """Invoke ``on_tool_evidence`` for each hook; return the first finalize directive.
+
+    A hook that raises is logged and skipped (treated as "continue"), so a faulty
+    early-finalize hook degrades to normal looping rather than wedging the run.
+    """
+    directive: "FinalizeNow | None" = None
+    for hook in hooks:
+        try:
+            result = await hook.on_tool_evidence(context, envelopes)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception(
+                "lifecycle on_tool_evidence failed for hook %r", _hook_name(hook)
+            )
+            continue
+        if result is not None and directive is None:
+            directive = result
+    return directive
 
 
 async def dispatch_error(
@@ -222,4 +270,5 @@ __all__ = [
     "dispatch_error",
     "dispatch_finalize",
     "dispatch_run_start",
+    "dispatch_tool_evidence",
 ]

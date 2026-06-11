@@ -137,6 +137,13 @@ class SingleAgentRunner(
             )
 
             hooks.insert(0, MemoryLifecycleHook(memory_provider))
+        # Built-in node-contract hook: inert unless AgentRunInput.node_contract is
+        # active, so always-on registration is byte-for-byte safe for other runs.
+        from agent_driver.runtime.single_agent.node_contract import (
+            NodeContractLifecycleHook,
+        )
+
+        hooks.insert(0, NodeContractLifecycleHook())
         return tuple(hooks)
 
     @property

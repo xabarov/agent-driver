@@ -281,6 +281,10 @@ async def _finalize_tool_stage_transition(
             or text_form_planned
         )
     )
+    if continue_with_llm:
+        finalize_now = await _maybe_finalize_from_tool_evidence(host, context, result)
+        if finalize_now:
+            continue_with_llm = False
     loop_iterations = int(context.metadata.get("tool_loop_iterations", 0))
     if continue_with_llm:
         loop_iterations += 1
@@ -301,6 +305,36 @@ async def _finalize_tool_stage_transition(
     await host._maybe_execute_subagent_group(context)
     host._maybe_fail_after_step("tool_stage")
     return RuntimeStepResult(next_step="llm_call" if continue_with_llm else "finalize")
+
+
+async def _maybe_finalize_from_tool_evidence(
+    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
+) -> bool:
+    """Layer C: finalize directly from tool evidence, skipping the next LLM pass.
+
+    Two opt-in triggers: the declarative ``finalize_when_tools`` (every listed tool
+    has a successful envelope) and the programmatic ``on_tool_evidence`` lifecycle
+    hook (a host returns :class:`FinalizeNow`). When either fires we stash an
+    early-finalize answer so the finalize step can build the terminal output without
+    another model turn. Returns ``True`` when the run should finalize now.
+    """
+    from agent_driver.runtime.lifecycle_hooks import dispatch_tool_evidence
+    from agent_driver.runtime.single_agent import node_contract as nc
+
+    if nc.declarative_finalize_satisfied(context):
+        nc.set_early_finalize(
+            context,
+            answer=nc.build_evidence_answer(context),
+            reason="finalize_when_tools_satisfied",
+        )
+        return True
+    directive = await dispatch_tool_evidence(
+        host._deps.lifecycle_hooks, context, result.envelopes
+    )
+    if directive is not None:
+        nc.set_early_finalize(context, answer=directive.answer, reason=directive.reason)
+        return True
+    return False
 
 
 def _emit_tool_completed_if_needed(
@@ -356,6 +390,12 @@ def _emit_tool_completed_if_needed(
             ),
             "status": trace.status.value,
             "result_summary": trace.result_summary,
+            "output_preview": (
+                trace.result_summary[:240]
+                if isinstance(trace.result_summary, str)
+                else None
+            ),
+            "structured_output": None,
             "error_code": trace.error_code,
             "truncated": trace.truncated,
             "result_preview_paths": (
@@ -372,6 +412,7 @@ def _emit_tool_completed_if_needed(
             envelope = result.envelopes[index]
             structured = envelope.structured_output
             if isinstance(structured, dict):
+                row["structured_output"] = structured
                 remediation = structured.get("remediation")
                 if isinstance(remediation, str) and remediation.strip():
                     row["remediation"] = remediation.strip()
