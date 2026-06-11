@@ -38,6 +38,7 @@ PUBLIC_CONTRACT_FIELD_SNAPSHOTS: dict[str, tuple[str, ...]] = {
         "prompt_template_version",
         "serialization_policy",
         "tool_policy",
+        "node_contract",
         "deadline_seconds",
         "max_steps",
         "max_tool_calls",

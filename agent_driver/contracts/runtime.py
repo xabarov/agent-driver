@@ -14,6 +14,7 @@ from agent_driver.contracts.events import RuntimeEvent
 from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
 from agent_driver.contracts.memory import MemoryProjection
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.node_contract import NodeContract
 from agent_driver.contracts.profiles import PromptRenderResult
 from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 from agent_driver.contracts.subagents import SubagentGroup, SubagentRun
@@ -43,6 +44,11 @@ class AgentRunInput(ContractModel):
     prompt_template_version: int | None = None
     serialization_policy: ExecutorSerializationPolicy | None = None
     tool_policy: ToolPolicyInput = Field(default_factory=ToolPolicyInput)
+    node_contract: NodeContract = Field(default_factory=NodeContract)
+    """Opt-in contract-following config for workflow/harness runs (tool-use
+    enforcement, policy↔registry validation, early finalize from tool evidence).
+    The default is inert — an all-False contract leaves runtime behaviour
+    unchanged. See :class:`~agent_driver.contracts.node_contract.NodeContract`."""
     deadline_seconds: float | None = None
     max_steps: int | None = None
     max_tool_calls: int | None = None

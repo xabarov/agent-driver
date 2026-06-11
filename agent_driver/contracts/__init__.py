@@ -101,6 +101,7 @@ from agent_driver.contracts.runtime import (
     AgentRunOutput,
     ContextDiagnostics,
 )
+from agent_driver.contracts.node_contract import FinalizeNow, NodeContract
 from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.contracts.subagent_mailbox import (
@@ -125,6 +126,8 @@ __all__ = [
     "AgentRunInput",
     "AgentRunOutput",
     "AgentProfile",
+    "NodeContract",
+    "FinalizeNow",
     "ApprovalMode",
     "ApprovalPayload",
     "ArtifactKind",
