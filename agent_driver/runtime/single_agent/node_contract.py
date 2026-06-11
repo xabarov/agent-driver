@@ -142,12 +142,37 @@ def inject_system_prelude(request: "LlmRequest", prelude: str) -> "LlmRequest":
 
 
 # --- Layer B: reactive reprompt + escalation -----------------------------------
+def _is_disallowed_management_denial(item: dict) -> bool:
+    """Whether a tool result is a denied out-of-allowlist management call."""
+    structured = item.get("structured_output")
+    return (
+        isinstance(structured, dict)
+        and structured.get("error_kind") == "disallowed_management_tool"
+    )
+
+
+def meaningful_tool_call_count(context: "RunContext") -> int:
+    """Tool calls that count as real tool-use progress.
+
+    Excludes denied out-of-allowlist *management* calls (``todo_write`` …): a
+    model that only emits a disallowed ``todo_write`` has made no progress on the
+    node's assigned executable tools, so that denial alone must not satisfy
+    ``require_tool_use`` or unlock finalization. A genuine attempt at an allowed
+    tool (even if it errors) still counts, preserving prior behaviour.
+    """
+    return sum(
+        1
+        for item in get_tool_loop_state(context).tool_results()
+        if not _is_disallowed_management_denial(item)
+    )
+
+
 def tool_use_violation_pending(context: "RunContext") -> bool:
-    """``require_tool_use`` is on and the run is about to finalize with zero calls."""
+    """``require_tool_use`` is on and no meaningful tool call has been made yet."""
     contract = context.run_input.node_contract
     if not contract.require_tool_use:
         return False
-    return context.tool_calls == 0
+    return meaningful_tool_call_count(context) == 0
 
 
 def reprompt_budget_remaining(context: "RunContext") -> bool:

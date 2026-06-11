@@ -42,6 +42,11 @@ class BlockSpec:
     reason: str
     code: str
     stage: str | None = None
+    # Optional structured remediation payload for the denied envelope. When set
+    # (e.g. the ``disallowed_management_tool`` class) it overrides the default
+    # ``_force_planning_remediation`` so the model + runtime see a typed,
+    # machine-readable repair hint on ``ToolResultEnvelope.structured_output``.
+    structured_output: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
