@@ -244,9 +244,7 @@ class ProviderBase:
         async with self.stream_with_telemetry(
             handled_exceptions=request.handled_exceptions
         ):
-            async with self.build_async_client(
-                timeout_s=request.timeout_s
-            ) as client:
+            async with self.build_async_client(timeout_s=request.timeout_s) as client:
                 status_attempt = 0
                 while True:
                     status_attempt += 1
@@ -259,9 +257,31 @@ class ProviderBase:
                         )
                         try:
                             response = await stream_context.__aenter__()
-                        except (httpx.RemoteProtocolError, httpx.ReadError):
+                        except (
+                            httpx.RemoteProtocolError,
+                            httpx.ReadError,
+                            OSError,
+                        ) as exc:
+                            # ``RemoteProtocolError`` / ``ReadError`` are httpx's
+                            # typed transient stream-open failures. Raw TLS/socket
+                            # errors (``ssl.SSLError`` and other ``OSError``
+                            # subclasses, e.g. connection reset) can also surface
+                            # here on some transports *without* httpx wrapping —
+                            # treat them the same and retry within the stream-open
+                            # budget rather than letting them fail the whole run.
                             if attempt >= _STREAM_OPEN_RETRIES:
-                                raise
+                                # Budget exhausted. httpx errors propagate as-is
+                                # (already typed); a raw transport error is
+                                # normalized to ``httpx.TransportError`` so upper
+                                # layers (``error_classifier`` /
+                                # ``stream_with_telemetry``) see a single,
+                                # provider-neutral transport type instead of an
+                                # untyped ``OSError`` that bypasses classification.
+                                if isinstance(exc, httpx.HTTPError):
+                                    raise
+                                raise httpx.TransportError(
+                                    str(exc) or exc.__class__.__name__
+                                ) from exc
                             await asyncio.sleep(
                                 _STREAM_OPEN_RETRY_BACKOFF_SECONDS * (attempt + 1)
                             )
