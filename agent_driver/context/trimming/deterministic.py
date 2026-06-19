@@ -11,6 +11,12 @@ from agent_driver.contracts.context import (
 )
 from agent_driver.contracts.enums import TrimAction
 
+# When the final (current-turn) message overflows the char budget it is truncated rather than
+# dropped, so the request never ends up with zero messages. This floor guarantees the truncated
+# turn keeps a meaningful slice even under heavy budget pressure.
+_MIN_LAST_MESSAGE_CHARS = 512
+_TRUNCATION_MARKER = "\n…[truncated to fit context budget]"
+
 
 def _format_observation_lines(observation_rows: list[dict[str, Any]]) -> list[str]:
     """Render bounded observations into prompt lines."""
@@ -187,6 +193,45 @@ def _trim_messages_to_budget(
                     action=TrimAction.REPLACED_WITH_ARTIFACT,
                     reason="budget_overflow_tool_stub",
                     metadata={"length": len(content), "tool_stub": True},
+                )
+            )
+            continue
+        if index == len(working_messages) - 1:
+            # Never drop the final message (the current turn): truncating it keeps the request
+            # valid. Dropping it can leave zero messages, which providers reject outright
+            # ("Input required: specify prompt or messages"). Rebalance by dropping older kept
+            # messages first so the current turn keeps a meaningful budget.
+            budget_left = max_chars - running_chars
+            while kept and budget_left < min(len(content), _MIN_LAST_MESSAGE_CHARS):
+                removed = kept.pop(0)
+                removed_content = str(removed.get("content", ""))
+                running_chars = max(0, running_chars - len(removed_content))
+                budget_left = max_chars - running_chars
+                audit.append(
+                    TrimAuditRecord(
+                        record_id=f"trim_rebalance_last_{index}_{len(kept)}",
+                        kind="message",
+                        action=TrimAction.DROPPED,
+                        reason="budget_rebalanced_for_last_message",
+                        metadata={"length": len(removed_content)},
+                    )
+                )
+            keep_chars = max(_MIN_LAST_MESSAGE_CHARS if not kept else 0, min(len(content), budget_left))
+            keep_chars = min(len(content), max(keep_chars, 1))
+            truncated_message = dict(message)
+            new_content = content[:keep_chars].rstrip()
+            if len(new_content) < len(content):
+                new_content = f"{new_content}{_TRUNCATION_MARKER}"
+            truncated_message["content"] = new_content
+            kept.append(truncated_message)
+            running_chars += len(new_content)
+            audit.append(
+                TrimAuditRecord(
+                    record_id=f"trim_{index}",
+                    kind="message",
+                    action=TrimAction.TRUNCATED,
+                    reason="budget_overflow_last_message",
+                    metadata={"length": len(content), "kept_length": len(new_content)},
                 )
             )
             continue

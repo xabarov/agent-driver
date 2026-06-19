@@ -114,3 +114,32 @@ def test_trim_context_keeps_stub_for_latest_tool_message() -> None:
     tool_rows = [row for row in trimmed.prompt_messages if str(row.get("role")) == "tool"]
     assert tool_rows
     assert "trimmed" in str(tool_rows[-1].get("content", "")).lower()
+
+
+def test_trim_context_truncates_oversized_last_message_instead_of_dropping() -> None:
+    """A single oversized current-turn message must be truncated, never dropped to empty.
+
+    Regression: dropping it left zero messages, which providers reject with
+    "Input required: specify 'prompt' or 'messages'".
+    """
+    messages = [{"role": "user", "content": "я" * 8000}]
+    budget = ContextBudget(max_chars=6000, max_messages=24)
+    trimmed = trim_context(budget=budget, prompt_messages=messages)
+    assert len(trimmed.prompt_messages) == 1
+    assert trimmed.prompt_messages[0]["role"] == "user"
+    assert 0 < len(str(trimmed.prompt_messages[0]["content"])) <= 6100
+    assert any(record.action == TrimAction.TRUNCATED for record in trimmed.audit)
+
+
+def test_trim_context_preserves_last_message_with_history() -> None:
+    """The final turn survives (truncated) even when earlier messages are dropped to make room."""
+    messages = [
+        {"role": "system", "content": "policy"},
+        {"role": "user", "content": "old turn"},
+        {"role": "user", "content": "я" * 9000},
+    ]
+    budget = ContextBudget(max_chars=6000, max_messages=24)
+    trimmed = trim_context(budget=budget, prompt_messages=messages)
+    assert trimmed.prompt_messages, "request must never end up empty"
+    assert trimmed.prompt_messages[-1]["role"] == "user"
+    assert len(str(trimmed.prompt_messages[-1]["content"])) > 0

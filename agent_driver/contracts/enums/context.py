@@ -69,6 +69,7 @@ class TrimAction(StrEnum):
     DIGESTED = "digested"
     REPLACED_WITH_ARTIFACT = "replaced_with_artifact"
     DROPPED = "dropped"
+    TRUNCATED = "truncated"
 
 
 __all__ = [
