@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — real PDF text extraction for hard Deep Research
+- `pdf_read` now extracts page-aware text from fetched PDFs via the optional
+  `[pdf]` extra (pypdf) instead of only echoing injected mock text. Outcomes are
+  explicit: real extraction → `status="verified"` with per-page `page_citations`
+  and `total_pages`; extractor not installed → `text_extraction_unavailable`;
+  scanned/image-only PDF → `no_extractable_text`; malformed structure past the
+  magic-byte check → `pdf_parse_failed`. Non-verified outcomes keep
+  `verified_text=False` so they are never treated as verified evidence. Core
+  stays dependency-light — absent the extra, behaviour degrades gracefully.
+
 ### Added — reliable tool-first workflow nodes (`NodeContract`)
 - Opt-in `AgentRunInput.node_contract` runtime enforcement for harness/workflow
   nodes (see [docs/node-contract.md](docs/node-contract.md)):

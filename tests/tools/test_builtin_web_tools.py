@@ -4,8 +4,8 @@
 
 from __future__ import annotations
 
-import pytest
 import httpx
+import pytest
 
 from agent_driver.tools.builtin.web import register_web_tools
 from agent_driver.tools.registry import ToolRegistry
@@ -169,6 +169,112 @@ async def test_pdf_read_reports_too_large_mock_pdf() -> None:
 
     assert out["verified_text"] is False
     assert out["error"] == "pdf_too_large"
+
+
+def _one_page_pdf(text: str) -> str:
+    """Build a minimal single-page PDF (latin-1 string) with `text` as content.
+
+    Returned as a str so it rides the tool's offline `mock_pdf_bytes` arg; an
+    empty `text` produces a page with no extractable text (a scanned-PDF stand-in).
+    """
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        None,  # content stream, filled below
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    stream = b"BT /F1 24 Tf 72 700 Td (" + text.encode("latin-1") + b") Tj ET"
+    objs[3] = (
+        b"<< /Length "
+        + str(len(stream)).encode()
+        + b" >>\nstream\n"
+        + stream
+        + b"\nendstream"
+    )
+    out = b"%PDF-1.4\n"
+    offsets = []
+    for index, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += str(index).encode() + b" 0 obj\n" + body + b"\nendobj\n"
+    xref_pos = len(out)
+    out += b"xref\n0 " + str(len(objs) + 1).encode() + b"\n0000000000 65535 f \n"
+    for off in offsets:
+        out += ("%010d 00000 n \n" % off).encode()
+    out += b"trailer\n<< /Size " + str(len(objs) + 1).encode() + b" /Root 1 0 R >>\n"
+    out += b"startxref\n" + str(xref_pos).encode() + b"\n%%EOF"
+    return out.decode("latin-1")
+
+
+@pytest.mark.asyncio
+async def test_pdf_read_real_extraction_returns_verified_text() -> None:
+    """With the [pdf] extra, pdf_read extracts real page-aware text from a PDF."""
+    pytest.importorskip("pypdf")
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("pdf_read")
+    assert tool is not None
+
+    out = await tool.handler(
+        {
+            "url": "https://example.com/real.pdf",
+            "mock_pdf_bytes": _one_page_pdf("Quantum entanglement verified"),
+            "page_start": 1,
+            "page_end": 1,
+        }
+    )
+
+    assert out["status"] == "verified"
+    assert out["verified_text"] is True
+    assert "Quantum entanglement verified" in out["text"]
+    assert out["total_pages"] == 1
+    assert out["page_citations"] == [{"page": 1, "url": "https://example.com/real.pdf"}]
+
+
+@pytest.mark.asyncio
+async def test_pdf_read_scanned_pdf_is_not_verified() -> None:
+    """A PDF with no extractable text (scanned) must not be verified evidence."""
+    pytest.importorskip("pypdf")
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("pdf_read")
+    assert tool is not None
+
+    out = await tool.handler(
+        {
+            "url": "https://example.com/scan.pdf",
+            "mock_pdf_bytes": _one_page_pdf(""),
+        }
+    )
+
+    assert out["status"] == "partial"
+    assert out["verified_text"] is False
+    assert out["error"] == "no_extractable_text"
+    assert out["page_citations"] == []
+
+
+@pytest.mark.asyncio
+async def test_pdf_read_without_extractor_reports_unavailable(monkeypatch) -> None:
+    """When the [pdf] extra is absent, a real PDF degrades to 'unavailable'."""
+    import agent_driver.tools.builtin.web as web_module
+
+    monkeypatch.setattr(web_module, "_extract_pdf_text", lambda *a, **k: None)
+    registry = ToolRegistry()
+    register_web_tools(registry)
+    tool = registry.get("pdf_read")
+    assert tool is not None
+
+    out = await tool.handler(
+        {
+            "url": "https://example.com/real.pdf",
+            "mock_pdf_bytes": "%PDF-1.4\nbody",
+        }
+    )
+
+    assert out["status"] == "partial"
+    assert out["verified_text"] is False
+    assert out["error"] == "text_extraction_unavailable"
 
 
 @pytest.mark.asyncio

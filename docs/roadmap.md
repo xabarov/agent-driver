@@ -29,9 +29,11 @@ drove the last cycles are now shipped and archived (see
 what is left. The genuinely-open threads are narrow:
 
 1. Deep Research hard-profile hardening.
-   The phase gate ships soft/optional by design; hard claim auditing
-   (`research/claims.jsonl`) and a real (non-mock) PDF extractor are scaffolded
-   but not production. Gate behind a live chat-demo health check.
+   Real page-aware PDF extraction now ships behind the optional `[pdf]` extra
+   (`pdf_read`, 2026-06-23). Remaining: hard claim auditing
+   (`research/claims.jsonl`) is scaffolded but not enforced; the phase gate
+   stays soft/optional by design. Gate further hardening behind a live
+   chat-demo health check.
 
 2. Live cost discipline for the eval harness.
    The deterministic artifact/rewrite-loop scenarios pass; the live
