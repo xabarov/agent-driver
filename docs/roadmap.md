@@ -21,33 +21,36 @@ chat applications:
 
 ## Current Priorities
 
-The cross-workstream execution order is tracked in
-[Unified work plan](unified-work-plan-2026-05-31.md). Treat that page as the
-active sequence for artifact-first Deep Research, eval harness work, storage
-convergence and optional SDK gateway/tool-server productization.
+The large cross-harness, platform-adapter, deep-research and refactor plans that
+drove the last cycles are now shipped and archived (see
+[June 2026 archive](archive/2026-06/README.md) and
+[May 2026 archive](archive/2026-05/README.md)); the
+[Unified work plan](unified-work-plan-2026-05-31.md) keeps the slim record of
+what is left. The genuinely-open threads are narrow:
 
-1. Make long Deep Research artifact-first.
-   Report drafts should live in session workspace files, while chat stays a
-   concise progress/final surface.
+1. Deep Research hard-profile hardening.
+   The phase gate ships soft/optional by design; hard claim auditing
+   (`research/claims.jsonl`) and a real (non-mock) PDF extractor are scaffolded
+   but not production. Gate behind a live chat-demo health check.
 
-2. Measure the rewrite-loop fix.
-   Add deterministic scenarios and trace assertions before expanding the
-   workflow or spending on live provider runs.
+2. Live cost discipline for the eval harness.
+   The deterministic artifact/rewrite-loop scenarios pass; the live
+   GPT-5.5 cost-regression gate is operational work, not code. Keep the live
+   ladder cheap-to-expensive and record run IDs only when they explain a current
+   regression or acceptance result.
 
-3. Keep provider/model debugging disciplined.
-   Cheap model preflight comes before expensive acceptance gates; run IDs stay
-   in docs only when they explain a current regression or acceptance result.
+3. Deferred-by-choice (decide before building).
+   N7 heavy platform adapters (Telegram/Slack + delivery routing) and the
+   remaining ACP client methods (`tool_terminal_ref`, `session/set_model`,
+   `elicitation/*`) wait on explicit demand + a scope/dependency decision.
 
-4. Finish infrastructure convergence deliberately.
-   Storage backend ordering/serialization and eval result contracts are active
-   infrastructure work, not old refactor leftovers.
+4. Keep closed work closed.
+   Skills, SDK P0/P1, context pressure, structural splits, the E1–E8 /
+   review-cycle / platform-adapter / node-contract plans and old OpenClaude/
+   Hermes plans are archived decision records — do not reopen them from stale
+   checkboxes unless fresh traces show a regression.
 
-5. Keep closed work closed.
-   Skills, SDK P0/P1, context pressure, structural splits and old OpenClaude/
-   Hermes plans should remain decision records unless fresh traces show a
-   regression.
-
-6. Keep docs short and current.
+5. Keep docs short and current.
    Add concise pages for live concepts; avoid restoring old exploratory notes
    or active-looking checklists in reference docs.
 
@@ -64,22 +67,31 @@ convergence and optional SDK gateway/tool-server productization.
 
 ## Current Docs Map
 
-- [Unified work plan](unified-work-plan-2026-05-31.md)
-- [Gap analysis and horizontal work plan](gap-analysis-and-plan-2026-06-09.md)
-- [Review cycle 2 — next gaps](review-cycle-2-2026-06-09.md)
-- [Improvement plan E1–E8 (cross-harness backlog)](improvement-plan-e1-e8-2026-06-09.md)
-- [SDK refactor + review cycle 3 (post-E8 consolidation)](sdk-refactor-and-review-cycle-3-2026-06-09.md)
-- [Testing & comparison plan (low-budget, open-weight)](testing-plan-2026-06-09.md)
+Active plans / status:
+
+- [Unified work plan](unified-work-plan-2026-05-31.md) — slim record of remaining
+  work after the shipped cycles.
+- [Efficient Deep Research workspace architecture](efficient-deep-research-workspace-architecture-2026-05-31.md)
+- [Research quality summary](research-quality-improvement-plan-2026-05-31.md)
+- [Provider and model debugging](provider-model-debugging.md)
+- [Runtime metadata inventory](runtime-metadata.md)
+
+Guides / reference:
+
 - [Embedding agent-driver (public API surface)](embedding.md)
 - [Extending agent-driver](extending.md)
 - [Runtime overview](runtime.md)
 - [SDK](sdk.md)
 - [Planning and control](planning-and-control.md)
 - [Built-in tools](builtin-tools.md)
+- [Node contract](node-contract.md)
 - [Chat demo](chat-demo.md)
-- [Provider and model debugging](provider-model-debugging.md)
-- [Research quality summary](research-quality-improvement-plan-2026-05-31.md)
-- [Efficient Deep Research workspace architecture](efficient-deep-research-workspace-architecture-2026-05-31.md)
-- [Deep Research live hardening plan](deep-research-live-hardening-plan-2026-05-31.md)
-- [Runtime metadata inventory](runtime-metadata.md)
 - [Testing](testing.md)
+
+Closed plans (decision history):
+
+- [June 2026 archive](archive/2026-06/README.md) — cross-harness backlog
+  (E1–E8 / gap analysis / review cycle 2 / SDK cycle 3 / testing), platform
+  adapters, ACP deepening, node contract, tracing, refactor, python sandbox.
+- [May 2026 archive](archive/2026-05/README.md) — earlier phase logs +
+  Deep Research live hardening.

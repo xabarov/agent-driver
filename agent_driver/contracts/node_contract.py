@@ -19,7 +19,7 @@ the loop in three opt-in layers:
   successful evidence, the run finalizes directly — no extra LLM continuation.
 
 Absent (the default), behaviour is byte-for-byte unchanged. See
-``docs/node-contract-plan-2026-06-11.md``.
+``docs/archive/2026-06/node-contract-plan-2026-06-11.md``.
 """
 
 from __future__ import annotations

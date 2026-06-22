@@ -5,7 +5,7 @@ The A2A adapter exposes an agent-driver agent over the
 discover and call it. Like MCP, it is hand-rolled JSON-RPC 2.0 (no `a2a` SDK
 dependency) served on the same ASGI stack as the OpenAI server.
 
-This is Phase 4 of the [platform-adapters plan](platform-adapters-plan-2026-06-10.md);
+This is Phase 4 of the [platform-adapters plan](archive/2026-06/platform-adapters-plan-2026-06-10.md);
 it reuses the Phase-2 ASGI stack and bearer auth.
 
 ## Install

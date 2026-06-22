@@ -9,7 +9,7 @@ agent-driver can expose an agent as an **MCP server** so external MCP clients
 - **Streamable HTTP** — this doc. Serves the same core over HTTP on the Phase-2
   ASGI stack (the `[server]` extra: Starlette + uvicorn).
 
-This is Phase 3 of the [platform-adapters plan](platform-adapters-plan-2026-06-10.md);
+This is Phase 3 of the [platform-adapters plan](archive/2026-06/platform-adapters-plan-2026-06-10.md);
 it reuses the existing MCP JSON-RPC core and the OpenAI server's bearer auth.
 
 ## Install

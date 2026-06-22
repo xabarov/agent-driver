@@ -7,7 +7,7 @@ translator: OpenAI request → `AgentRunInput`, and the runtime's answer / token
 stream → a `chat.completion` object or `chat.completion.chunk` SSE frames. No
 business logic lives in the adapter.
 
-This is Phase 2 of the [platform-adapters plan](platform-adapters-plan-2026-06-10.md).
+This is Phase 2 of the [platform-adapters plan](archive/2026-06/platform-adapters-plan-2026-06-10.md).
 
 ## Install
 

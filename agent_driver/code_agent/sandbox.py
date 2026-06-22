@@ -6,7 +6,7 @@ This is a deliberately *lower-level* sibling to the contract-based
 returns the actual result **object** (e.g. a pandas ``DataFrame``) so the caller
 can apply its own serialization.
 
-Isolation model (see ``docs/python-sandbox-design-2026-06-04.md``):
+Isolation model (see ``docs/archive/2026-06/python-sandbox-design-2026-06-04.md``):
 
 * code runs in a fresh ``spawn`` subprocess — a sandbox escape is confined to a
   throwaway process, not the host (which may hold DB creds / object-store keys);

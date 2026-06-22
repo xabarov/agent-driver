@@ -23,23 +23,24 @@ current, and tied to code that exists in the repository.
 
 ## Plans And Status
 
-- [Platform adapters plan](platform-adapters-plan-2026-06-10.md) - Phase 1 ACP
-  adapter (stdio, editors) and Phase 2 OpenAI-compatible HTTP/SSE server, both
-  behind optional extras; deferred MCP-HTTP/A2A/AG-UI/gRPC.
-- [Unified work plan](unified-work-plan-2026-05-31.md) - active cross-stream
-  order for the remaining work: artifact-first Deep Research, eval harness,
-  storage convergence, optional SDK gateway/tool-server, and docs hygiene.
+- [Roadmap](roadmap.md) - short current direction, the few genuinely-open
+  threads, verification loop, and quality bar. Start here.
+- [Unified work plan](unified-work-plan-2026-05-31.md) - slim record of the work
+  left after the shipped cycles (Deep Research hard-profile hardening, live eval
+  cost discipline, deferred-by-choice adapters).
 - [Efficient Deep Research workspace architecture](efficient-deep-research-workspace-architecture-2026-05-31.md) -
-  active design for research artifacts, scoped file tools, source storage and
-  the long-answer rewrite-loop fix.
+  design for research artifacts, scoped file tools, source storage and the
+  long-answer rewrite-loop fix.
 - [Provider and model debugging](provider-model-debugging.md) - OpenRouter,
   Phoenix, reasoning/tool-call failures, and live model matrix practice.
 - [Research quality summary](research-quality-improvement-plan-2026-05-31.md) -
   completed research baseline, evidence decisions, and acceptance run IDs.
 - [Runtime metadata inventory](runtime-metadata.md) - current
   `RunContext.metadata` owner map for runtime state refactoring.
-- [Roadmap](roadmap.md) - short current direction, verification loop, and
-  quality bar.
+
+The large delivered plans (cross-harness backlog, platform adapters, ACP
+deepening, node contract, tracing, refactor, python sandbox, Deep Research live
+hardening) are closed - see the archive READMEs under Decision Records.
 
 ## Decision Records
 
@@ -50,8 +51,10 @@ current, and tied to code that exists in the repository.
 - [Agent Driver refactoring record](agent-driver-refactoring-plan-2026-05-31.md) -
   compact structural decision record for closed refactor phases and remaining
   storage/eval infrastructure work.
+- [Archived June 2026 plans](archive/2026-06/README.md) - cross-harness backlog,
+  platform adapters, node contract, tracing, refactor, and python sandbox.
 - [Archived May 2026 plans](archive/2026-05/README.md) - closed historical
-  phase logs.
+  phase logs + Deep Research live hardening.
 
 ## Recipes And Patterns
 
