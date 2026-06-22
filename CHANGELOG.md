@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — enforce the hard-profile claim audit (opt-in)
+- The hard Deep Research claim audit (`research/claims.jsonl`, auto-derived from
+  the source ledger) is now enforceable at final-readiness, not just observed.
+  Two new repair reasons gate finalization for a hard run: `hard_claims_unverified`
+  (no verified claim row yet) and `hard_claims_unsupported` (the audit still lists
+  unsupported claims). Each carries a targeted repair nudge + tool-choice override
+  (open a source / re-read the audit). Enforcement is **opt-in** via
+  `task_contract.hard_options.enforce_claims_audit` — default hard-profile
+  behaviour is unchanged.
+
 ### Added — real PDF text extraction for hard Deep Research
 - `pdf_read` now extracts page-aware text from fetched PDFs via the optional
   `[pdf]` extra (pypdf) instead of only echoing injected mock text. Outcomes are

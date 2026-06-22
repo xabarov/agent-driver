@@ -45,6 +45,8 @@ from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
     REPAIR_CHILD_SYNTHESIS_PENDING,
     REPAIR_FINAL_MISSING_SOURCE_LINKS,
+    REPAIR_HARD_CLAIMS_UNSUPPORTED,
+    REPAIR_HARD_CLAIMS_UNVERIFIED,
     REPAIR_INSUFFICIENT_SOURCE_DIVERSITY,
     REPAIR_MISSING_FETCHED_SOURCES,
     REPAIR_MISSING_RESEARCH_EVIDENCE,
@@ -294,6 +296,21 @@ def _force_research_repair_tool_choice(
         if _tool_available_for_repair(context, "web_fetch"):
             get_tool_loop_state(context).set_tool_choice_override(
                 {"type": "tool", "name": "web_fetch"}
+            )
+            return
+    if REPAIR_HARD_CLAIMS_UNVERIFIED in reasons:
+        # No verified claim yet — open a real source so the audit gains support.
+        for tool_name in ("source_read", "pdf_read", "web_fetch"):
+            if _tool_available_for_repair(context, tool_name):
+                get_tool_loop_state(context).set_tool_choice_override(
+                    {"type": "tool", "name": tool_name}
+                )
+                return
+    if REPAIR_HARD_CLAIMS_UNSUPPORTED in reasons:
+        # Unsupported claims present — re-open the audit so the model can fix them.
+        if _tool_available_for_repair(context, "read_file"):
+            get_tool_loop_state(context).set_tool_choice_override(
+                {"type": "tool", "name": "read_file"}
             )
             return
     if REPAIR_UNFINISHED_TODOS in reasons:
@@ -932,6 +949,18 @@ def _research_contract_repair_nudge(
         fragments.append(message)
     if REPAIR_FINAL_MISSING_SOURCE_LINKS in reasons:
         fragments.append("the final answer must include visible source links")
+    if REPAIR_HARD_CLAIMS_UNVERIFIED in reasons:
+        fragments.append(
+            "this hard-profile run has no verified claim in research/claims.jsonl "
+            "yet: open and read at least one real source with source_read/pdf_read "
+            "(not search results), so the claim audit carries verified support"
+        )
+    if REPAIR_HARD_CLAIMS_UNSUPPORTED in reasons:
+        fragments.append(
+            "research/claims.jsonl still lists unsupported claims: read_file it, then "
+            "either back each claim with a verified source read or remove it — do not "
+            "finalize while a claim has no verified support"
+        )
     artifact_hint = deep_research_artifact_repair_hint(context)
     if artifact_hint:
         fragments.append(artifact_hint)

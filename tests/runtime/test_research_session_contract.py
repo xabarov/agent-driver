@@ -9,6 +9,8 @@ from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_REPAIR_NEEDED,
     REPAIR_CHILD_SYNTHESIS_PENDING,
     REPAIR_FINAL_MISSING_SOURCE_LINKS,
+    REPAIR_HARD_CLAIMS_UNSUPPORTED,
+    REPAIR_HARD_CLAIMS_UNVERIFIED,
     REPAIR_MISSING_FETCHED_SOURCES,
     REPAIR_MISSING_RESEARCH_EVIDENCE,
     REPAIR_PARENT_REVIEW_PENDING,
@@ -16,6 +18,42 @@ from agent_driver.runtime.research_session_contract import (
     build_research_session_contract,
     parent_review_actions_seen,
 )
+
+
+def _hard_claims_contract(*, enforce: bool, verified: int, unsupported: int):
+    # A hard-profile contract with no research requirement, so only the
+    # hard-claims gate can drive final-readiness — isolating that gate.
+    return build_research_session_contract(
+        task_contract=None,
+        tool_results=[],
+        hard_profile=True,
+        enforce_hard_claims=enforce,
+        claims_verified_count=verified,
+        claims_unsupported_count=unsupported,
+    )
+
+
+def test_hard_claims_gate_is_opt_in() -> None:
+    contract = _hard_claims_contract(enforce=False, verified=0, unsupported=0)
+    assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
+
+
+def test_hard_claims_requires_a_verified_claim_when_enforced() -> None:
+    contract = _hard_claims_contract(enforce=True, verified=0, unsupported=0)
+    assert contract.final_readiness.status == FINAL_READINESS_REPAIR_NEEDED
+    assert REPAIR_HARD_CLAIMS_UNVERIFIED in contract.final_readiness.reasons
+
+
+def test_hard_claims_allowed_with_verified_support() -> None:
+    contract = _hard_claims_contract(enforce=True, verified=2, unsupported=0)
+    assert contract.final_readiness.status == FINAL_READINESS_ALLOWED
+
+
+def test_hard_claims_blocks_on_unsupported_rows() -> None:
+    contract = _hard_claims_contract(enforce=True, verified=2, unsupported=1)
+    assert contract.final_readiness.status == FINAL_READINESS_REPAIR_NEEDED
+    assert REPAIR_HARD_CLAIMS_UNSUPPORTED in contract.final_readiness.reasons
+    assert REPAIR_HARD_CLAIMS_UNVERIFIED not in contract.final_readiness.reasons
 
 
 def _tool_result(tool_name: str, *, url: str | None = None) -> dict[str, object]:
@@ -256,8 +294,7 @@ def test_research_contract_rolls_up_child_verified_reads() -> None:
     }
     assert len(contract.source_ledger.verified_reads) == 6
     assert all(
-        row.get("origin") == "child"
-        for row in contract.source_ledger.verified_reads
+        row.get("origin") == "child" for row in contract.source_ledger.verified_reads
     )
     assert REPAIR_MISSING_RESEARCH_EVIDENCE not in contract.final_readiness.reasons
     assert REPAIR_MISSING_FETCHED_SOURCES not in contract.final_readiness.reasons
@@ -290,9 +327,12 @@ def test_parent_review_read_step_satisfied_by_any_research_artifact() -> None:
         [_path_result("file_patch", path="research/sources.jsonl")]
     )
     assert seen_patch["file_patch"] is False
-    assert parent_review_actions_seen(
-        [_path_result("file_patch", path="research/report.md")]
-    )["file_patch"] is True
+    assert (
+        parent_review_actions_seen(
+            [_path_result("file_patch", path="research/report.md")]
+        )["file_patch"]
+        is True
+    )
 
 
 def test_deep_research_parent_review_pending_after_child_join() -> None:

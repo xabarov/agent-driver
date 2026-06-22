@@ -303,3 +303,49 @@ def test_contract_repair_uses_captured_report_instead_of_full_prompt(
         "type": "tool",
         "name": "todo_write",
     }
+
+
+def _enable_claims_enforcement(context: RunContext) -> None:
+    task_contract = context.run_input.tool_policy.metadata["task_contract"]
+    task_contract["hard_options"] = {"enforce_claims_audit": True}
+
+
+def test_hard_claims_enforcement_clears_once_audit_has_verified_support(
+    tmp_path: Path,
+) -> None:
+    from agent_driver.runtime.research_session_contract import (
+        REPAIR_HARD_CLAIMS_UNVERIFIED,
+        build_research_session_contract_from_context,
+    )
+
+    context = _context(tmp_path, hard=True)
+    _enable_claims_enforcement(context)
+
+    # No claims audit yet → the opt-in hard gate blocks finalization.
+    blocked = build_research_session_contract_from_context(context)
+    assert REPAIR_HARD_CLAIMS_UNVERIFIED in blocked.final_readiness.reasons
+
+    persist_deep_research_claims_matrix(
+        context,
+        {
+            "verified_reads": [{"url": "https://example.com/a", "source_kind": "url"}],
+            "blocked_reads": [],
+            "failed_reads": [],
+        },
+    )
+
+    # The claims matrix now carries a verified row → the gate clears.
+    cleared = build_research_session_contract_from_context(context)
+    assert REPAIR_HARD_CLAIMS_UNVERIFIED not in cleared.final_readiness.reasons
+
+
+def test_hard_claims_enforcement_is_opt_in_from_context(tmp_path: Path) -> None:
+    from agent_driver.runtime.research_session_contract import (
+        REPAIR_HARD_CLAIMS_UNVERIFIED,
+        build_research_session_contract_from_context,
+    )
+
+    # Hard profile, but no enforce_claims_audit opt-in → no claims gate.
+    context = _context(tmp_path, hard=True)
+    contract = build_research_session_contract_from_context(context)
+    assert REPAIR_HARD_CLAIMS_UNVERIFIED not in contract.final_readiness.reasons

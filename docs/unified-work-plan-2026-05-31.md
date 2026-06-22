@@ -32,10 +32,11 @@ The earlier unified phases 0–8 plus the 2026-05/06 follow-on cycles are done:
 ## Remaining work (narrow)
 
 1. Deep Research hard-profile hardening. Real page-aware PDF extraction ships
-   behind the optional `[pdf]` extra (`pdf_read`, 2026-06-23). Remaining: hard
-   claim auditing (`research/claims.jsonl`) is scaffolded but not enforced; the
-   phase gate stays soft/optional by design. Gate further hardening behind a
-   green chat-demo health check.
+   behind the optional `[pdf]` extra (`pdf_read`, 2026-06-23). Hard claim
+   auditing (`research/claims.jsonl`) is now enforceable at final-readiness via
+   `hard_options.enforce_claims_audit` (opt-in, 2026-06-23). Remaining: enable
+   it by default only behind a green chat-demo health check; the phase gate
+   stays soft/optional by design.
 
 2. Live cost discipline for the eval harness. Deterministic scenarios pass; the
    live GPT-5.5 cost-regression gate is operational, not code. Keep the live
