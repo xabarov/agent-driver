@@ -13,6 +13,11 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+
+# The Agent Client Protocol package is an optional `[acp]` extra; skip cleanly
+# when absent so the full suite still collects without it installed.
+pytest.importorskip("acp")
+
 from acp import schema
 
 from agent_driver.adapters.acp import AgentAcpServer
