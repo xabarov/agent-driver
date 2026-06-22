@@ -117,6 +117,17 @@ Extract `research_signals.py` / `subagent_signals.py` / `python_signals.py` /
 `artifact_signals.py`; `summary.py` becomes a thin façade that imports + keeps
 back-compat re-exports (12 test files import internals). Risk: MEDIUM.
 
+**Done 2026-06-23.** `summary.py` 2316 → 604 (façade keeps `summarize_run_trace`
++ control/notes/runtime-marker helpers). Helpers split into `_common.py` (238,
+shared primitives + constants), `python_signals.py` (62), `artifact_signals.py`
+(272), `subagent_signals.py` (388), `research_signals.py` (887). Import DAG is
+acyclic (`_common` ← `artifact_signals` ← `subagent_signals` ← `research_signals`)
+— `_common` breaks the subagent↔research cycle by owning the child-evidence and
+deep-research-contract primitives both clusters need. No external module imports
+internals (the "12 test files" reference was stale), so no re-export shim was
+needed beyond `__all__ = ["summarize_run_trace"]`. Suite unchanged (2219
+outcomes, green); pylint clean (no undefined/unused-import/cyclic-import).
+
 ### C2. `cli/evals.py` (2149 → providers / scenarios / scoring / reporting)
 Split fake providers, scenario defs, scoring, and reporting; keep the harness +
 `EvalSummary` in `evals.py` with re-exports. Risk: MEDIUM-HIGH (10+ call sites,
