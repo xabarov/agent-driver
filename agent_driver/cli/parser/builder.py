@@ -385,7 +385,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     eval_compare.add_argument(
         "--treatment",
-        choices=("prompt_cache", "tool_arg_truncation", "tool_concurrency"),
+        choices=(
+            "prompt_cache",
+            "tool_arg_truncation",
+            "tool_concurrency",
+            "budget_grace",
+        ),
         default="prompt_cache",
         help="Harness axis to flip off vs on (one axis at a time).",
     )

@@ -30,11 +30,12 @@ cases. Keep this runtime domain-neutral; domain-specific guards belong in the co
 
 ## Gotchas paid for in time
 
-- **No default step cap.** `_terminal_from_limits`
-  (`agent_driver/runtime/single_agent/lifecycle/journal.py`) only honors caller-supplied
-  `max_steps` / `max_tool_calls` / `deadline_seconds` / `cost_budget_usd` — all default `None`.
-  If a run never reaches `final_answer` (e.g. an executor that always raises), the step loop
-  runs forever and `journal._next_seq` is O(n) per emit → RAM climbs into GBs and it looks
-  like a hang. Any test/caller that may not reach final_answer MUST set `max_steps`
-  (`max_steps=2` allows one LLM step + the tool/code step, then terminates with the trace
-  recorded).
+- **Loop termination (was: no default cap; now backstopped).** `_terminal_from_limits`
+  (`agent_driver/runtime/single_agent/lifecycle/journal.py`) honors caller-supplied
+  `AgentRunInput` limits, all default `None`. A run that never reaches `final_answer` used
+  to loop forever (`journal._next_seq` is O(n) per emit → RAM into GBs). Now two
+  `RunnerConfig` knobs cover it: `default_max_steps` (default 80) backstops when per-run
+  `max_steps` is None; `budget_grace_enabled` (default True) grants one bounded forced-final
+  synthesis turn on step/tool-call exhaustion (cost excluded) so the run returns a best-effort
+  answer instead of bare FAILED. To test the *pure cap*, set
+  `RunnerConfig(budget_grace_enabled=False)`. A/B grace via `eval compare --treatment budget_grace`.

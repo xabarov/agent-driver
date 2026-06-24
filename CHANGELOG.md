@@ -7,6 +7,34 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — defensive default step backstop + soft-budget grace (loop termination)
+Driven by a reference-runtime comparison (hermes-agent ships a hard 90-iteration
+cap; openclaude leans on auto-compaction) and a live forced-budget experiment
+(qwen3.6-plus, OpenRouter): a multi-step task with `max_tool_calls=2`, 3 repeats
+per side. Grace OFF → 3/3 `FAILED` with a **0-length** answer; grace ON → 3/3
+`COMPLETED` with a **~1.7k-char best-effort** answer synthesised from the partial
+context already gathered. (A noisy full-suite A/B was the wrong instrument here:
+grace only fires on the minority of runs that actually hit a budget, so run-to-run
+sampling variance swamps the signal — the forced-budget experiment isolates it.)
+
+- **`RunnerConfig.default_max_steps`** (default `80`) — a config-level backstop on
+  the agent step loop. `AgentRunInput`'s `max_steps`/`max_tool_calls`/`deadline`/
+  `cost_budget` all default to `None`, so a run whose model never reaches a final
+  answer (e.g. a tool that always fails, a tool-calling spiral) looped forever and
+  `journal._next_seq` is O(n) per emit → RAM into the GBs. The backstop applies only
+  when the per-run `max_steps` is `None`; set `default_max_steps=None` to opt back
+  into a fully unbounded loop. High enough to never truncate legitimate deep runs.
+- **`RunnerConfig.budget_grace_enabled`** (default `True`) — when a *soft* budget
+  (max_steps / max_tool_calls, including the backstop) is exhausted, grant one
+  bounded forced-final synthesis window (tools disabled) so the model returns a
+  best-effort answer from what it already gathered, instead of a bare `FAILED` with
+  an empty answer — the "grace call" both reference runtimes ship. Bounded by 2 extra
+  LLM steps so a model that ignores tools-disabled still terminates deterministically.
+  A **cost** ceiling is deliberately excluded (a money cap should hard-stop, not spend
+  one more call). New `budget_grace` axis on `agent-driver eval compare` to A/B it.
+  +5 runtime tests. Changes terminal semantics: step/tool-call exhaustion now tends to
+  `COMPLETED` (best-effort) rather than `FAILED`; disable per-run with the config flag.
+
 ### Added — opt-in `success_field` on `ToolManifest` (self-reported failures → FAILED)
 - Tools that return a structured `{"success": False, "error": ...}` payload instead
   of raising were marked `COMPLETED` by the executor, forcing every consumer (FE

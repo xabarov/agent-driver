@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -392,6 +393,9 @@ async def run_live_evaluation(
                 include_scientific_stack=include_scientific,
                 default_imports=python_imports,
             ),
+            # Benchmark A/B toggle for the soft-budget grace window (default on);
+            # set AGENT_DRIVER_BUDGET_GRACE=0 to measure the hard-fail baseline.
+            budget_grace_enabled=os.getenv("AGENT_DRIVER_BUDGET_GRACE", "1") != "0",
         )
         created = create_agent(
             provider=scenario_provider,

@@ -184,6 +184,9 @@ async def test_single_agent_runner_max_steps_exceeded() -> None:
         provider=provider,
         checkpoint_store=checkpoints,
         event_log=events,
+        # Isolate pure cap enforcement; the forced-final grace window (default
+        # on) is covered separately in test_budget_grace.
+        config=RunnerConfig(budget_grace_enabled=False),
     )
     output = await runner.run(
         AgentRunInput(

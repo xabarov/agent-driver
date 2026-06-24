@@ -14,3 +14,6 @@ htmlcov/
 dist/
 build/
 .agent-driver/
+
+# Reference repos cloned for architecture analysis only — never committed
+reference/
