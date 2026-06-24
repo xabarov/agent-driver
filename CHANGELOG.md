@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed — deferred tools are now actually omitted from the LLM schema list
+- `manifest.should_defer=True` was honored by the registry (`list_non_deferred`)
+  but NOT by the single-agent request builder, which enumerated tool schemas via
+  `list_registered` — so deferred tools still shipped in every prompt (the
+  deference was a silent no-op). `_request_tools_from_registry` now skips
+  `manifest.is_deferred()` tools from the schema enumeration (an explicit request
+  allowlist naming one overrides). Deferred tools stay invocable (gated by
+  `evaluate_tool_policy`, not the schema layer) and discoverable via
+  `tool_search`. +3 tests. Surfaced wiring excel-ai's schema-cost reduction.
+
 ### Fixed — DeepSeek DSML tool-call parser tolerates ASCII pipes + whitespace
 - The fallback text-form tool-call parser (`llm/tool_call_parser.py`) only matched
   DeepSeek's `DSML` tool-call leak when wrapped in the canonical FULLWIDTH `｜`

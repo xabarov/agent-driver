@@ -172,13 +172,23 @@ def _request_tools_from_registry(
     if not names:
         return []
     allowed_names = set(names)
+    # Phase 12 H21 — deferred tools (``manifest.should_defer``) are OMITTED from
+    # the schema enumeration so bulky/niche tool sets don't inflate every prompt.
+    # They stay invocable (``evaluate_tool_policy`` doesn't gate on is_deferred)
+    # and discoverable via the ``tool_search`` tool. An EXPLICIT request allowlist
+    # naming a deferred tool overrides the omission (the caller asked for it).
+    explicit_allow = set(allowed) if allowed is not None else set()
     rows = getattr(registry, "list_registered", None)
     if not callable(rows):
         return []
     schemas: list[dict[str, Any]] = []
     for item in rows():
-        if item.manifest.name in allowed_names:
-            schemas.append(_tool_schema_from_manifest(item.manifest))
+        manifest = item.manifest
+        if manifest.name not in allowed_names:
+            continue
+        if manifest.is_deferred() and manifest.name not in explicit_allow:
+            continue
+        schemas.append(_tool_schema_from_manifest(manifest))
     return schemas
 
 
