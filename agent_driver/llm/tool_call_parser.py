@@ -183,8 +183,17 @@ def _gemma_tool_call_payloads(text: str) -> list[dict[str, Any]]:
 #     </｜｜DSML｜｜invoke>
 #   </｜｜DSML｜｜tool_calls>
 # ``string="false"`` flags a non-string value (number/array/bool) → JSON-parse.
-_DSML_OPEN = r"<｜+DSML｜+"
-_DSML_CLOSE = r"</｜+DSML｜+"
+#
+# Pipe tolerance: the canonical marker uses U+FF5C (FULLWIDTH VERTICAL LINE) but
+# the same tool-call leak is observed with ASCII ``|`` pipes and with whitespace
+# around the pipes/word (e.g. ``< | DSML | tool_calls>``) depending on the
+# provider/proxy and how the text is re-encoded. Accept any mix of ``｜``/``|``
+# plus optional surrounding whitespace so the leak is parsed (→ executed) instead
+# of leaking into the answer. Safe: every entry point is gated on the literal
+# ``"DSML"`` being present, so prose can't false-match.
+_DSML_PIPES = r"[｜|]+\s*"
+_DSML_OPEN = r"<\s*" + _DSML_PIPES + r"DSML\s*" + _DSML_PIPES
+_DSML_CLOSE = r"</\s*" + _DSML_PIPES + r"DSML\s*" + _DSML_PIPES
 _DSML_INVOKE_RE = re.compile(
     _DSML_OPEN + r"invoke\s+name=\"(?P<name>[^\"]+)\"\s*>"
     r"(?P<body>[\s\S]*?)" + _DSML_CLOSE + r"invoke>"
@@ -196,8 +205,9 @@ _DSML_PARAM_RE = re.compile(
 _DSML_BLOCK_RE = re.compile(
     _DSML_OPEN + r"tool_calls>[\s\S]*?" + _DSML_CLOSE + r"tool_calls>"
 )
-# Any leftover stray DSML marker token, open or close: <｜｜DSML｜｜...> / </｜｜DSML｜｜...>.
-_DSML_STRAY_RE = re.compile(r"</?｜+DSML｜+[^>]*>")
+# Any leftover stray DSML marker token, open or close: <｜｜DSML｜｜...> / </｜｜DSML｜｜...>
+# (fullwidth or ASCII pipes, optional whitespace — see _DSML_PIPES rationale).
+_DSML_STRAY_RE = re.compile(r"</?\s*" + _DSML_PIPES + r"DSML\s*" + _DSML_PIPES + r"[^>]*>")
 
 
 def _coerce_dsml_value(value: str, *, is_string: bool) -> Any:

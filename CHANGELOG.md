@@ -7,6 +7,17 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed — DeepSeek DSML tool-call parser tolerates ASCII pipes + whitespace
+- The fallback text-form tool-call parser (`llm/tool_call_parser.py`) only matched
+  DeepSeek's `DSML` tool-call leak when wrapped in the canonical FULLWIDTH `｜`
+  (U+FF5C). The same leak appears with ASCII `|` pipes and whitespace around the
+  markers (e.g. `< | DSML | tool_calls>`) depending on the provider/proxy + how the
+  text is re-encoded; those variants parsed to **zero** tool calls, so the calls
+  leaked into the answer AND never executed (model "describes but doesn't act").
+  The DSML open/close/stray patterns now accept any mix of `｜`/`|` + optional
+  whitespace. Still gated on the literal `"DSML"` marker, so prose can't false-match.
+  Surfaced while debugging excel-ai edit runs on DeepSeek-v4-flash via OpenRouter.
+
 ### Added — enforce the hard-profile claim audit (opt-in)
 - The hard Deep Research claim audit (`research/claims.jsonl`, auto-derived from
   the source ledger) is now enforceable at final-readiness, not just observed.

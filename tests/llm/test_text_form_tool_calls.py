@@ -103,3 +103,37 @@ def test_dsml_marker_absent_is_noop() -> None:
     # Plain prose mentioning DSML-free text must not trigger the parser.
     planned, errors = extract_text_form_tool_calls("Обычный ответ без инструментов.")
     assert planned == [] and errors == []
+
+
+# The same DeepSeek leak is observed with ASCII ``|`` pipes (and whitespace
+# around the markers) instead of the canonical fullwidth ``｜`` — depending on the
+# provider/proxy + re-encoding. All variants must parse → execute, not leak.
+_DSML_FW = (
+    "<｜｜DSML｜｜tool_calls>"
+    "<｜｜DSML｜｜invoke name=\"excel_write_table\">"
+    "<｜｜DSML｜｜parameter name=\"sheet_name\" string=\"true\">Sales</｜｜DSML｜｜parameter>"
+    "</｜｜DSML｜｜invoke>"
+    "</｜｜DSML｜｜tool_calls>"
+)
+
+
+def test_extract_deepseek_dsml_ascii_pipe_variant() -> None:
+    planned, errors = extract_text_form_tool_calls(_DSML_FW.replace("｜", "|"))
+    assert errors == []
+    assert [c["tool_name"] for c in planned] == ["excel_write_table"]
+    assert planned[0]["args"] == {"sheet_name": "Sales"}
+
+
+def test_extract_deepseek_dsml_ascii_spaced_variant() -> None:
+    spaced = (
+        "Готово.\n"
+        "< | DSML | tool_calls>"
+        "< | DSML | invoke name=\"excel_write_table\">"
+        "< | DSML | parameter name=\"sheet_name\" string=\"true\">Sales</ | DSML | parameter>"
+        "</ | DSML | invoke></ | DSML | tool_calls>"
+    )
+    planned, errors = extract_text_form_tool_calls(spaced)
+    assert errors == []
+    assert [c["tool_name"] for c in planned] == ["excel_write_table"]
+    # The leak is stripped from the user-facing prose, leaving the clean text.
+    assert strip_text_form_tool_calls(spaced) == "Готово."
