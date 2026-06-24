@@ -61,6 +61,27 @@ def trace_spec_completed(
     )
 
 
+def trace_spec_failed(
+    *,
+    index: int,
+    call: ToolCall,
+    manifest: ToolManifest,
+    summary: str | None,
+    error_code: str | None,
+    truncated: bool = False,
+) -> TraceSpec:
+    """Spec for a tool that executed but self-reported failure (success_field)."""
+    return TraceSpec(
+        index=index,
+        call=call,
+        manifest=manifest,
+        status=ToolTraceStatus.FAILED,
+        summary=summary,
+        error_code=error_code,
+        truncated=truncated,
+    )
+
+
 def build_denied_trace_for_block(spec: BlockSpec) -> ToolTrace:
     """Build ToolTrace for a blocked policy/guardrail envelope."""
     return build_tool_trace(

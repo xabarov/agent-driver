@@ -7,6 +7,27 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — opt-in `success_field` on `ToolManifest` (self-reported failures → FAILED)
+- Tools that return a structured `{"success": False, "error": ...}` payload instead
+  of raising were marked `COMPLETED` by the executor, forcing every consumer (FE
+  timeline, eval harness, Phoenix) to re-classify status itself. `ToolManifest` now
+  accepts `success_field: str | None` (default `None` — unchanged for all existing
+  tools). When set and the structured output carries that field with a **falsy**
+  value, the executor (`tools/executor/allowed.py`) marks the trace `FAILED`, lifts
+  the payload's `error` into the trace `result_summary`/`error_code`, and attaches a
+  `ToolError` to the envelope. Decision stays `ALLOW` (the tool executed; only the
+  outcome failed). A missing field never forces a false `FAILED` (conservative). New
+  `trace_spec_failed` helper. +9 tests. Removes excel-ai's per-consumer status
+  re-classification band-aid and makes `DENIED`/`ERROR`/`FAILED` honest end-to-end.
+
+### Fixed — broaden the `code_action` except clause (runtime errors → FAILED, not crash)
+- `run_code_agent_stage` (`code_agent/profile.py`) caught only `CodeExecutionError`;
+  any other exception from a tool called via `code_action` (KeyError/TypeError/
+  network) propagated uncaught and crashed the whole run instead of producing a
+  FAILED trace. A fallback `except Exception` now maps these to a redacted
+  `code_runtime_error` FAILED trace (redacted to the exception type so a raw message
+  can't leak untrusted internals). The interpreter is the trust boundary. +1 test.
+
 ### Fixed — deferred tools are now actually omitted from the LLM schema list
 - `manifest.should_defer=True` was honored by the registry (`list_non_deferred`)
   but NOT by the single-agent request builder, which enumerated tool schemas via

@@ -81,6 +81,50 @@ async def test_code_agent_profile_parses_fenced_code_action_from_response_text()
     )
 
 
+class _RaisingCodeExecutor:
+    """Executor whose ``execute`` raises a non-CodeExecutionError exception."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    async def execute(self, **_kwargs):  # noqa: ANN003 - test stub
+        raise self._exc
+
+
+@pytest.mark.asyncio
+async def test_code_agent_profile_maps_runtime_error_to_failed_trace() -> None:
+    """A non-interpreter exception from the executor is a tool failure, not a crash."""
+    runner = FakeSingleStepRunner(
+        provider=FakeProvider(response_text="ignored"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            code_executor=_RaisingCodeExecutor(KeyError("missing_col")),
+        ),
+    )
+    # The run must not propagate the KeyError; it records a FAILED code_action
+    # trace carrying the redacted runtime-error summary. A raising executor
+    # never reaches final_answer, so bound the loop with max_steps — otherwise
+    # the deterministic step loop runs forever (limits default to None).
+    output = await runner.run(
+        AgentRunInput(
+            input="do arithmetic",
+            run_id="run_code_profile_runtime_error",
+            agent_id="agent",
+            graph_preset="single_react",
+            agent_profile=AgentProfile.CODE_AGENT,
+            tool_policy={"metadata": {"code_action": "final_answer(2 + 2)"}},
+            max_steps=2,
+        )
+    )
+    results = output.metadata["tool_results"]
+    assert results
+    summary = results[0]["summary"]
+    assert summary == "code_runtime_error: KeyError"
+    # Redacted to the exception type — the raw message must not leak.
+    assert "missing_col" not in summary
+
+
 @pytest.mark.asyncio
 async def test_code_agent_profile_interrupts_side_effect_tool() -> None:
     """Side-effecting tools in code profile should request approval."""

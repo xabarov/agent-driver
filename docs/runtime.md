@@ -49,6 +49,32 @@ Important runtime guards today:
   answer with `tool_choice=none`;
 - chat-mode reminders keep planning and deliverable mode visible to the model.
 
+### Envelope ↔ trace ordering invariant
+
+For every tool stage the governed executor produces two parallel, **index-aligned**
+lists in a single `GovernedExecutionResult`: `envelopes[i]` is the result payload for
+the call whose status is `traces[i]`. `result.append(...)` only ever appends to both
+together, so the 1:1 ordering holds by construction — there is no key to join on; the
+index *is* the join.
+
+This invariant propagates verbatim into the run output and events:
+
+- `AgentRunOutput.metadata["tool_results"][i]` ↔ `metadata["tool_trace"][i]`
+  (both extended together by `ToolLoopState.append_stage_outputs`, in stage order
+  across all stages of the run);
+- `AgentRunOutput.tool_trace[i]` mirrors the same row;
+- the `TOOL_CALL_COMPLETED` event's `statuses[i]` is `result.traces[i].status`.
+
+Consumers (FE timeline, eval harness, Phoenix exporter) should **zip by position**
+rather than cursor-walk or match on tool name — positional pairing is the contract.
+
+A tool trace status is one of `completed` / `failed` / `denied` / `timed_out`
+(`STARTED` is transient). Two ways a call ends `FAILED` without raising: a tool whose
+manifest sets `success_field` self-reports failure (see `ToolManifest.success_field`),
+and a `code_action` whose body raises a non-`CodeExecutionError` (mapped to a redacted
+`code_runtime_error`). In both cases the matching `envelopes[i]` carries the `error`
+payload, so the positional pairing stays honest.
+
 ## Events And Replay
 
 The runtime emits typed events for run lifecycle, LLM chunks, tools, planning,

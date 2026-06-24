@@ -95,6 +95,18 @@ class ToolManifest(ContractModel):
     # ArtifactStore into the executor; without one, ``max_result_size_chars``
     # is treated as informational only and the legacy truncation runs.
     max_result_size_chars: int | None = None
+    # Opt-in self-reported failure detection. Some tools return a structured
+    # ``{"success": False, "error": ...}`` payload instead of raising — by
+    # default the executor marks such a call COMPLETED, so every consumer (FE
+    # timeline, eval harness, Phoenix) has to re-classify status itself. Set
+    # ``success_field`` to the name of the boolean field in the tool's
+    # structured output; when that field is present and falsy, the executor
+    # marks the trace FAILED, lifts the payload's ``error`` into the trace
+    # ``result_summary``/``error_code``, and attaches a ``ToolError`` to the
+    # envelope. Absent or truthy → COMPLETED as before (conservative: a
+    # missing field never forces a false FAILED). ``None`` (default) keeps the
+    # historical behaviour for every existing tool.
+    success_field: str | None = None
     args_schema: dict[str, Any] | None = None
     output_type: str | None = None
     output_schema: dict[str, Any] | None = None
@@ -161,6 +173,14 @@ class ToolManifest(ContractModel):
         if self.always_load:
             return False
         return self.should_defer
+
+    @field_validator("success_field")
+    @classmethod
+    def validate_success_field(cls, value: str | None) -> str | None:
+        """Reject an empty success_field; ``None`` stays the opt-out default."""
+        if value is not None and not value.strip():
+            raise ValueError("success_field must be a non-empty field name or None")
+        return value
 
     @field_validator("timeout_seconds")
     @classmethod
