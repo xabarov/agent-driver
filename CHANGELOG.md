@@ -7,6 +7,21 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — self-consistency / sample-and-vote primitive (`sdk.run_self_consistent`)
+- A generic runtime technique for beating per-task LLM non-determinism: run the SAME
+  agent run N times and keep the plurality-vote answer. Works exactly when the model is
+  right more often than any single wrong answer — the correct value is the plurality
+  while wrong answers scatter, so voting recovers it. `run_self_consistent(agent,
+  run_input, samples=N, key=...)` runs N samples concurrently (distinct run_ids, optional
+  concurrency bound), maps each output to a caller-supplied hashable vote token (default:
+  trimmed answer; abstain on empty/failed/raised), plurality-votes (deterministic
+  lowest-index tie-break), and returns the backing output as `consensus` + the vote
+  distribution + `confidence`. Model/domain-agnostic — the caller's `key` carries any
+  domain normalization. +7 tests. Validated live on excel-ai's hardest task
+  (ratio_ru_decimal, deepseek-v4-flash): wrong samples scatter (gt=31 → [31,31,31,31,8]),
+  so single-run 0.75 lifts to voted 1.00 (4/4). The one lever that attacks the per-task
+  variance floor directly (stronger models are incompatible/worse) — pure harness.
+
 ### Added — defensive default step backstop + soft-budget grace (loop termination)
 Driven by a reference-runtime comparison (hermes-agent ships a hard 90-iteration
 cap; openclaude leans on auto-compaction) and a live forced-budget experiment
