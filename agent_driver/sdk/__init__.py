@@ -33,12 +33,18 @@ from agent_driver.sdk.subagent import (
     SubagentToolPolicy,
     run_subagent,
 )
+from agent_driver.sdk.self_consistency import (
+    SelfConsistencyResult,
+    run_self_consistent,
+)
 from agent_driver.sdk.trace import TraceSummary, summarize_output, support_bundle
 from agent_driver.tools import ToolSet
 
 __all__ = [
     "Agent",
     "AgentDefaults",
+    "SelfConsistencyResult",
+    "run_self_consistent",
     "AsyncSubagentManager",
     "BackgroundSubagent",
     "AgentDriverSDKError",
