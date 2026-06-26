@@ -83,6 +83,7 @@ class RunnerConfig:
     include_planning_prompt: bool
     default_max_steps: int | None
     budget_grace_enabled: bool
+    defer_primer: Callable[[Any], Any] | None
     subagent_store: SubagentStore | None
     subagent_mailbox_store: SubagentMailboxStore | None
     code_executor: CodeActionExecutor | None
@@ -149,6 +150,11 @@ class RunnerConfig:
         # return a best-effort answer instead of a bare FAILED with an empty
         # answer. Set False to restore the hard-fail-on-budget behaviour.
         self.budget_grace_enabled = kwargs.pop("budget_grace_enabled", True)
+        # Optional defer primer: a ``Callable[[DeferPrimerInput], Iterable[str]]``
+        # that, before each LLM step, selects which currently-deferred tools to
+        # surface into the schema list (see ``llm_step.defer_primer``). None
+        # (default) keeps the pure ``tool_search``-only deferral behaviour.
+        self.defer_primer = kwargs.pop("defer_primer", None)
         self.subagent_store = kwargs.pop("subagent_store", None)
         self.subagent_mailbox_store = kwargs.pop("subagent_mailbox_store", None)
         self.code_executor = kwargs.pop("code_executor", None)

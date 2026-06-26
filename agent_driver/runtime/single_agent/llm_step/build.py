@@ -64,6 +64,10 @@ class LlmRequestBuildContext:
     request_allowed_tools: tuple[str, ...] | None = None
     enable_prompt_cache: bool = False
     harness_profiles: tuple[HarnessProfile, ...] = ()
+    # Deferred tools the defer-primer selected as relevant this step. They are
+    # surfaced into the schema list even though ``should_defer`` is set, without
+    # depending on the model calling ``tool_search``. Empty = no priming.
+    surface_deferred_tools: tuple[str, ...] = ()
 
 
 def _normalize_trimmed_messages(
@@ -141,6 +145,7 @@ def _request_tools_from_registry(
     *,
     allowed: tuple[str, ...] | None = None,
     denied: tuple[str, ...] | None = None,
+    surface_deferred: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """Build the LLM-visible tool list, applying allow/deny filters.
 
@@ -175,9 +180,13 @@ def _request_tools_from_registry(
     # Phase 12 H21 — deferred tools (``manifest.should_defer``) are OMITTED from
     # the schema enumeration so bulky/niche tool sets don't inflate every prompt.
     # They stay invocable (``evaluate_tool_policy`` doesn't gate on is_deferred)
-    # and discoverable via the ``tool_search`` tool. An EXPLICIT request allowlist
-    # naming a deferred tool overrides the omission (the caller asked for it).
+    # and discoverable via the ``tool_search`` tool. A deferred tool is surfaced
+    # anyway when it's named in the EXPLICIT request allowlist (the caller asked
+    # for it) OR selected by the defer primer for this step (``surface_deferred``)
+    # — both still pass through the allow/deny gate above, so a denied tool can
+    # never leak in via priming.
     explicit_allow = set(allowed) if allowed is not None else set()
+    surfaced = set(surface_deferred)
     rows = getattr(registry, "list_registered", None)
     if not callable(rows):
         return []
@@ -186,7 +195,11 @@ def _request_tools_from_registry(
         manifest = item.manifest
         if manifest.name not in allowed_names:
             continue
-        if manifest.is_deferred() and manifest.name not in explicit_allow:
+        if (
+            manifest.is_deferred()
+            and manifest.name not in explicit_allow
+            and manifest.name not in surfaced
+        ):
             continue
         schemas.append(_tool_schema_from_manifest(manifest))
     return schemas
@@ -357,6 +370,7 @@ def build_single_agent_llm_request(
         ctx.registry,
         allowed=request_allowed,
         denied=request_denied,
+        surface_deferred=ctx.surface_deferred_tools,
     )
     if harness_profile is not None:
         request_tools = apply_tool_overrides(request_tools, harness_profile)

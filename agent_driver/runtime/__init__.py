@@ -43,6 +43,11 @@ from agent_driver.runtime.single_agent.lifecycle.rubric_hook import (
 from agent_driver.runtime.single_agent.lifecycle.config_sections import (  # noqa: F401  pylint: disable=useless-import-alias
     CapabilitySettings as CapabilitySettings,
 )
+from agent_driver.runtime.single_agent.llm_step.defer_primer import (
+    DeferPrimer,
+    DeferPrimerInput,
+    keyword_relevance_primer,
+)
 from agent_driver.runtime.single_agent.types import RunnerConfig, RuntimeStepResult
 from agent_driver.runtime.sqlite_store import SqliteRuntimeStore
 from agent_driver.runtime.state import RuntimeState
@@ -76,6 +81,9 @@ __all__ = [
     "CapabilitySettings",
     "RunnerConfig",
     "RuntimeStepResult",
+    "DeferPrimer",
+    "DeferPrimerInput",
+    "keyword_relevance_primer",
     "InMemoryCheckpointStore",
     "InMemoryEventLog",
     "POSTGRES_CAPABILITIES",

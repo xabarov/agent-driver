@@ -7,6 +7,28 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — defer primer: retrieval-primed surfacing of deferred tools (model-agnostic)
+- Deferred tools (`manifest.should_defer`) are omitted from the schema list to keep the
+  per-call prompt small, and normally re-surface only when the model calls `tool_search`.
+  But weaker models often **don't** call it (deepseek-v4-flash never does), so a
+  deferred-but-needed tool silently drops out of reach — which capped deferral at a tiny
+  safe set and blocked the bigger prompt-cost win. The defer primer removes the dependency
+  on model cooperation: before each LLM step the runtime scores the currently-deferred
+  tools against the live conversation and surfaces the relevant ones **directly** into the
+  schema list (via the existing explicit-allow path in `_request_tools_from_registry`).
+  The long tail stays deferred; `tool_search` remains the backstop for whatever the primer
+  misses. So deferral now works on any model, not just one that calls `tool_search`.
+- **`RunnerConfig.defer_primer`** (default `None` → unchanged pure-`tool_search` behaviour):
+  a `Callable[[DeferPrimerInput], Iterable[str]]` returning the deferred-tool names to
+  surface this step. A surfaced name still passes through the allow/deny gate, so priming
+  can never leak a denied tool. `keyword_relevance_primer()` is a generic, language-neutral
+  default — two signals: an exact tool-name mention in the conversation (strong; models
+  routinely name a remembered tool whose schema is absent) and meaningful token overlap of
+  name+description (weak), top-`max_tools` over `min_overlap`. A domain consumer can pass a
+  smarter primer (synonym map, embeddings) without touching the runtime — the relevance
+  policy is the consumer's, the surfacing mechanism is the runtime's. New
+  `runtime/single_agent/llm_step/defer_primer.py`; +11 tests.
+
 ### Added — self-consistency / sample-and-vote primitive (`sdk.run_self_consistent`)
 - A generic runtime technique for beating per-task LLM non-determinism: run the SAME
   agent run N times and keep the plurality-vote answer. Works exactly when the model is
