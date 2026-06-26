@@ -7,6 +7,21 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — single-provider backoff-retry (transient failover for one-provider setups)
+- `HealthAwareRouter` falls over to a sibling provider on a transient failure (timeout / 5xx /
+  transport), but with a **single** configured provider there is nothing to rotate to, so the
+  same blip hard-failed the request — even though retrying the same provider after a short
+  backoff would have recovered it (e.g. an OpenRouter latency spike that resolves in seconds).
+- The router now backs off and retries the **same** provider a bounded number of times when it
+  is the only one configured and the failure is provider-down (`classified.marks_unhealthy`:
+  timeout / overloaded / 5xx / transport / unknown). Deterministic per-request failures (auth,
+  content policy, context overflow) still fail fast and never retry. **Multi-provider routing is
+  unchanged** — exhaustion across two providers still fails fast (no extra same-provider loop).
+- **`HealthAwareRouter(single_provider_retry_max=2, single_provider_retry_base_seconds=1.0,
+  single_provider_retry_cap_seconds=8.0)`** — exponential backoff capped; `single_provider_retry_max=0`
+  restores the previous hard-fail-on-first-error behaviour. Tests:
+  `tests/llm/test_router_single_provider_retry.py`.
+
 ### Added — defer primer: retrieval-primed surfacing of deferred tools (model-agnostic)
 - Deferred tools (`manifest.should_defer`) are omitted from the schema list to keep the
   per-call prompt small, and normally re-surface only when the model calls `tool_search`.
