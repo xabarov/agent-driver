@@ -77,6 +77,21 @@ def _bounded_structured_output(
     return payload, False
 
 
+def _raw_summary_candidate(raw: Any) -> str | None:
+    """Extract the best compact tool summary from common handler fields."""
+    if not isinstance(raw, dict):
+        return None
+    for key in ("summary", "result_summary", "observation"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    for key in ("output_preview", "content"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip() and len(value) <= 2000:
+            return value
+    return None
+
+
 def _planning_update_payload(raw: dict[str, Any]) -> dict[str, Any]:
     """Normalize planning tool output payload for runtime state updates."""
     applied_args = raw.get("applied_args")
@@ -261,7 +276,7 @@ async def execute_allowed_path(
             raw,
             max_chars=spec.manifest.output_char_budget,
         )
-        summary = raw.get("summary") if isinstance(raw.get("summary"), str) else None
+        summary = _raw_summary_candidate(raw)
         bounded_summary, truncated = enforce_output_budget(
             summary, spec.manifest.output_char_budget
         )

@@ -692,7 +692,7 @@ def _compact_tool_payload_for_protocol(
         )
         return payload
     if tool_name != "web_fetch":
-        return structured
+        return _compact_generic_tool_payload_for_protocol(structured)
     metadata = structured.get("metadata")
     compact: dict[str, Any] = {
         "untrusted_data_notice": (
@@ -714,6 +714,27 @@ def _compact_tool_payload_for_protocol(
     if isinstance(excerpt, str) and len(excerpt) > 2500:
         compact["excerpt"] = excerpt[:2500]
     return compact
+
+
+def _compact_generic_tool_payload_for_protocol(structured: dict[str, Any]) -> dict[str, Any]:
+    """Keep compact summaries visible before bulky raw-output previews."""
+    payload = dict(structured)
+    summary = payload.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        for key in ("result_summary", "observation"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                summary = value
+                payload["summary"] = value
+                break
+    if not isinstance(summary, str) or not summary.strip():
+        return payload
+    for key in ("output_preview", "output", "stdout", "stderr", "content"):
+        value = payload.get(key)
+        if isinstance(value, str) and len(value) > 1000:
+            payload[key] = value[:240].rstrip() + "\n... [raw output omitted from protocol payload; use summary/artifacts]"
+            payload[f"{key}_omitted_chars"] = len(value) - 240
+    return payload
 
 
 def _append_tool_call_parse_error_feedback(

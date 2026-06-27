@@ -872,6 +872,55 @@ def test_update_tool_protocol_messages_includes_truncated_and_error_code() -> No
     assert payload["error_code"] == "tool_policy_denied"
 
 
+def test_update_tool_protocol_messages_prefers_summary_over_bulky_output_preview() -> None:
+    llm_response = LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=""),
+        finish_reason=LlmFinishReason.TOOL_CALLS,
+        usage=UsageSummary(model_provider="fake", model_name="fake"),
+        provider="fake",
+        model="fake",
+        metadata={
+            "planned_tool_calls": [
+                ToolCall(
+                    tool_name="enum_probe",
+                    tool_call_id="call_1",
+                    args={"target": "lab"},
+                ).model_dump(mode="json")
+            ]
+        },
+    )
+    summary = "enum_probe: Domain: WORKGROUP; Users (1): testuser; Shares (2): public"
+    envelope = ToolResultEnvelope(
+        call=ToolCall(tool_name="enum_probe", tool_call_id="call_1", args={"target": "lab"}),
+        decision=ToolPolicyDecision.ALLOW,
+        summary=summary,
+        structured_output={
+            "tool_id": "enum_probe",
+            "status": "succeeded",
+            "result_summary": summary,
+            "output_preview": "ENUM TOOL BANNER\n" + ("raw line\n" * 300),
+        },
+    )
+    context = SimpleNamespace(
+        llm_response=llm_response,
+        run_input=SimpleNamespace(messages=(), input="hello"),
+        metadata={},
+    )
+
+    _update_tool_protocol_messages(
+        context=context, result=ToolExecutionResult(envelopes=[envelope], traces=[])
+    )
+
+    rows = context.metadata["protocol_messages"]
+    tool_rows = [row for row in rows if row.get("role") == ChatRole.TOOL.value]
+    payload = json.loads(tool_rows[-1]["content"])
+    assert payload["summary"] == summary
+    assert payload["result_summary"] == summary
+    assert "testuser" in payload["summary"]
+    assert "omitted from protocol payload" in payload["output_preview"]
+    assert payload["output_preview_omitted_chars"] > 0
+
+
 def test_update_tool_protocol_messages_preserves_reasoning_details() -> None:
     reasoning_details = [
         {

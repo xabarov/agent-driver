@@ -97,6 +97,25 @@ async def test_no_success_field_keeps_completed_on_failure_payload():
     assert result.envelopes[0].error is None
 
 
+@pytest.mark.asyncio
+async def test_completed_tool_uses_result_summary_when_summary_absent():
+    """Generic handlers may expose compact facts as result_summary."""
+    registry = ToolRegistry()
+    _register(
+        registry,
+        payload={
+            "result_summary": "enum_probe: Users (1): testuser; Shares (1): public",
+            "output_preview": "ENUM TOOL BANNER\n" + ("raw line\n" * 300),
+        },
+    )
+
+    result = await _run(registry, "r_result_summary")
+
+    assert result.traces[0].status == ToolTraceStatus.COMPLETED
+    assert result.traces[0].result_summary == "enum_probe: Users (1): testuser; Shares (1): public"
+    assert result.envelopes[0].summary == "enum_probe: Users (1): testuser; Shares (1): public"
+
+
 # -- opt-in failure detection ----------------------------------------------
 
 
