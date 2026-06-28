@@ -157,7 +157,7 @@ def evaluate_tool_policy(
     current_tool_calls: int,
 ) -> ToolPolicyOutcome:
     """Evaluate runtime policy for one planned tool call."""
-    allowed = set(policy.allowed_tools or [])
+    allowed = set(policy.allowed_tools) if policy.allowed_tools is not None else None
     denied = set(policy.denied_tools or [])
     outcome = ToolPolicyOutcome(
         decision=ToolPolicyDecision.ALLOW,
@@ -180,7 +180,7 @@ def evaluate_tool_policy(
             reason="tool call requires approval by run policy mode",
             interrupt_reason="approval_required",
         )
-    elif allowed and call.tool_name not in allowed:
+    elif allowed is not None and call.tool_name not in allowed:
         outcome = ToolPolicyOutcome(
             decision=ToolPolicyDecision.DENY,
             reason=f"tool '{call.tool_name}' is not in allowed_tools",

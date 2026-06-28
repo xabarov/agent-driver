@@ -26,10 +26,6 @@ from agent_driver.runtime.single_agent.research.gating import (
     _maybe_build_continuation_transition,
     _tool_gate_for_context,
 )
-
-# Hard backstop on goal-gate (rubric) revision loops, independent of any
-# hook's own iteration budget — prevents an always-revising hook from looping.
-_MAX_RUBRIC_REVISIONS = 10
 from agent_driver.runtime.single_agent.tool_stage import execute_tool_stage_step
 from agent_driver.runtime.single_agent.tool_stage.subagent_execution import (
     maybe_execute_subagent_group,
@@ -43,6 +39,10 @@ from agent_driver.runtime.single_agent.types import (
     TerminalResult,
 )
 from agent_driver.runtime.tools import ToolExecutionResult
+
+# Hard backstop on goal-gate (rubric) revision loops, independent of any
+# hook's own iteration budget — prevents an always-revising hook from looping.
+_MAX_RUBRIC_REVISIONS = 10
 
 
 class SingleAgentStepMixin:
@@ -161,7 +161,11 @@ class SingleAgentStepMixin:
         policy = run_input.tool_policy
         surfaced = effective_tool_names_from_registry(
             registry,
-            allowed=tuple(policy.allowed_tools) if policy.allowed_tools else None,
+            allowed=(
+                tuple(policy.allowed_tools)
+                if policy.allowed_tools is not None
+                else None
+            ),
             denied=tuple(policy.denied_tools) if policy.denied_tools else None,
         )
         prelude = nc.build_prelude(run_input, surfaced)
