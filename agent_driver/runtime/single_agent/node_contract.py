@@ -345,6 +345,8 @@ def _compact_mapping(mapping: dict[str, Any], *, keys: Sequence[str]) -> str:
                 for item in value[:4]
                 if _clean_answer_fragment(item, max_chars=80)
             )
+        elif isinstance(value, bool):
+            text = str(value)
         else:
             text = _clean_answer_fragment(value, max_chars=120)
         if text:
@@ -374,6 +376,16 @@ def _compact_structured_finding(finding: Any) -> str:
                 "url",
                 "target",
                 "host",
+                "asset",
+                "bucket",
+                "exists",
+                "provider",
+                "public_read",
+                "public_write",
+                "public_full_control",
+                "objects_enumerated",
+                "service",
+                "status",
                 "value",
             ),
         )
@@ -428,6 +440,11 @@ def _compact_structured_output(structured: Any) -> list[str]:
                 "tags_count",
                 "hit_count",
                 "document_count",
+                "buckets_reported",
+                "buckets_existing",
+                "public_read_buckets",
+                "public_write_buckets",
+                "public_full_control_buckets",
             ),
         )
         if metric_text:

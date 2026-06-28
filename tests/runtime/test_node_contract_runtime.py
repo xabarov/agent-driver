@@ -95,6 +95,46 @@ def _build_structured_finding_registry() -> ToolRegistry:
     return registry
 
 
+def _build_storage_finding_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+
+    async def _handler(_args):
+        return {
+            "summary": "s3scanner checked 2 bucket(s).",
+            "findings": [
+                {
+                    "type": "s3_bucket",
+                    "bucket": "zionlab-priv",
+                    "exists": "exists",
+                    "provider": "custom",
+                    "public_read": False,
+                    "public_write": False,
+                    "public_full_control": False,
+                    "objects_enumerated": False,
+                },
+                {
+                    "type": "s3_bucket",
+                    "bucket": "zionlab-pub",
+                    "exists": "exists",
+                    "provider": "custom",
+                    "public_read": True,
+                    "public_write": False,
+                    "public_full_control": False,
+                    "objects_enumerated": True,
+                },
+            ],
+            "targets": ["zionlab-priv", "zionlab-pub"],
+            "metrics": {
+                "buckets_reported": 2,
+                "buckets_existing": 2,
+                "public_read_buckets": 1,
+            },
+        }
+
+    registry.register(_lookup_manifest("lookup_a"), _handler)
+    return registry
+
+
 def _runner(registry: ToolRegistry, provider: FakeProvider, **config_kwargs):
     return FakeSingleStepRunner(
         provider=provider,
@@ -402,6 +442,28 @@ async def test_finalize_when_tools_answer_includes_structured_evidence() -> None
     assert "CVE-2020-1747" in output.answer
     assert "PyYAML" in output.answer
     assert "findings=1" in output.answer
+
+
+@pytest.mark.asyncio
+async def test_finalize_when_tools_answer_includes_storage_finding_fields() -> None:
+    """Early finalization should keep typed finding identity, not only finding types."""
+    provider = _ImmediateToolProvider()
+    runner = _runner(_build_storage_finding_registry(), provider)
+    output = await runner.run(
+        _run_input(
+            NodeContract(finalize_when_tools=["lookup_a"]),
+            allowed=["lookup_a"],
+            run_id="run_finalize_storage_structured",
+        )
+    )
+
+    assert output.status.value == "completed"
+    assert output.answer.startswith("Tool evidence summary:")
+    assert "zionlab-pub" in output.answer
+    assert "public_read=True" in output.answer
+    assert "zionlab-priv" in output.answer
+    assert "public_read=False" in output.answer
+    assert "public_read_buckets=1" in output.answer
 
 
 # --- Layer C: on_tool_evidence host hook finalizes now --------------------------
