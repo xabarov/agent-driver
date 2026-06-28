@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +20,7 @@ from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmRequest,
     LlmResponse,
+    LlmStreamEvent,
     UsageSummary,
 )
 from agent_driver.llm.providers_impl.fake import FakeProvider
@@ -425,6 +427,71 @@ class _ForceFinalNativeToolCallRetryProvider(FakeProvider):
             provider="deliverable",
             model="test-model",
             metadata={"planned_tool_calls": [leaked_call]},
+        )
+
+
+class _ForceFinalStreamingDsmlTextToolCallProvider(FakeProvider):
+    """Streaming provider that prints DSML markup after tool_choice=none."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.requests: list[LlmRequest] = []
+
+    async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            yield LlmStreamEvent(
+                event="tool_calls",
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="web_search",
+                            tool_call_id="web_initial_stream",
+                            args={
+                                "query": "Fender history",
+                                "mock_results": [
+                                    {
+                                        "title": "Fender",
+                                        "url": "https://example.com/fender",
+                                        "snippet": "history",
+                                    }
+                                ],
+                            },
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+            yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.TOOL_CALLS)
+            return
+        yield LlmStreamEvent(
+            event="delta",
+            delta_text=(
+                "<｜｜DSML｜｜tool_calls>\n"
+                "<｜｜DSML｜｜invoke name=\"web_search\">\n"
+                "<｜｜DSML｜｜parameter name=\"query\" string=\"true\">"
+                "repeat Fender"
+                "</｜｜DSML｜｜parameter>\n"
+                "</｜｜DSML｜｜invoke>\n"
+                "</｜｜DSML｜｜tool_calls>"
+            ),
+        )
+        yield LlmStreamEvent(
+            event="done",
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+        )
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="Вот streaming итог без tools."),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+            provider="deliverable",
+            model="test-model",
+            metadata={},
         )
 
 
@@ -846,6 +913,32 @@ async def test_force_final_retry_suppresses_native_tool_call_metadata() -> None:
     )
 
     assert output.answer == "Вот итог без новых tools, несмотря на leaked metadata."
+    assert len(provider.requests) == 3
+    assert provider.requests[1].tool_choice == "none"
+    assert provider.requests[2].tools == []
+    assert output.metadata["tool_calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_force_final_stream_retries_and_suppresses_text_tool_call() -> None:
+    provider = _ForceFinalStreamingDsmlTextToolCallProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only("web_search"))
+    output = await agent.run(
+        AgentRunInput(
+            input="найди и дай итог",
+            run_id="run_force_final_stream_dsml_text_tool_call",
+            agent_id="agent",
+            graph_preset="single_react",
+            stream=True,
+            tool_policy=ToolPolicyInput(
+                metadata={"deliverable_request": {"enabled": True}}
+            ),
+            max_steps=10,
+            max_tool_calls=2,
+        )
+    )
+
+    assert output.answer == "Вот streaming итог без tools."
     assert len(provider.requests) == 3
     assert provider.requests[1].tool_choice == "none"
     assert provider.requests[2].tools == []

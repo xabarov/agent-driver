@@ -101,7 +101,12 @@ async def complete_request(  # pylint: disable=too-many-branches
                     request=request,
                     response=response,
                 )
-            return response
+            return await retry_forced_final_without_tools(
+                host,
+                context,
+                request=request,
+                response=response,
+            )
         except httpx.HTTPStatusError as exc:
             if (
                 recover_context_overflow is not None
