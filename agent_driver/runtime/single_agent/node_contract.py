@@ -20,7 +20,7 @@ are unaffected.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from agent_driver.runtime.lifecycle_hooks import BaseRunLifecycleHook
 from agent_driver.runtime.metadata_state import get_tool_loop_state
@@ -323,6 +323,129 @@ def executed_tools_summary(context: "RunContext") -> list[dict]:
     return rows
 
 
+def _clean_answer_fragment(value: Any, *, max_chars: int = 180) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = " ".join(text.split())
+    if len(text) > max_chars:
+        return text[: max_chars - 3].rstrip() + "..."
+    return text
+
+
+def _compact_mapping(mapping: dict[str, Any], *, keys: Sequence[str]) -> str:
+    parts: list[str] = []
+    for key in keys:
+        value = mapping.get(key)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, list):
+            text = ", ".join(
+                _clean_answer_fragment(item, max_chars=80)
+                for item in value[:4]
+                if _clean_answer_fragment(item, max_chars=80)
+            )
+        else:
+            text = _clean_answer_fragment(value, max_chars=120)
+        if text:
+            parts.append(f"{key}={text}")
+        if len(parts) >= 6:
+            break
+    return ", ".join(parts)
+
+
+def _compact_structured_finding(finding: Any) -> str:
+    if isinstance(finding, dict):
+        ftype = _clean_answer_fragment(
+            finding.get("type") or finding.get("kind") or finding.get("name"),
+            max_chars=60,
+        )
+        details = _compact_mapping(
+            finding,
+            keys=(
+                "vulnerability_id",
+                "template_id",
+                "severity",
+                "title",
+                "package",
+                "installed_version",
+                "fixed_version",
+                "parameter",
+                "url",
+                "target",
+                "host",
+                "value",
+            ),
+        )
+        if ftype and details:
+            return f"{ftype}: {details}"
+        return ftype or details
+    return _clean_answer_fragment(finding)
+
+
+def _compact_structured_output(structured: Any) -> list[str]:
+    if not isinstance(structured, dict):
+        return []
+    parts: list[str] = []
+    for key in ("summary", "result_summary", "observation"):
+        text = _clean_answer_fragment(structured.get(key), max_chars=240)
+        if text:
+            parts.append(text)
+            break
+    findings = structured.get("findings")
+    if isinstance(findings, list) and findings:
+        compact = [
+            item
+            for item in (_compact_structured_finding(finding) for finding in findings[:5])
+            if item
+        ]
+        if compact:
+            parts.append(f"findings: {'; '.join(compact)}")
+    targets = structured.get("targets")
+    if isinstance(targets, list) and targets:
+        compact_targets = []
+        for target in targets[:5]:
+            if isinstance(target, dict):
+                text = _clean_answer_fragment(
+                    target.get("host") or target.get("target") or target.get("value")
+                )
+            else:
+                text = _clean_answer_fragment(target)
+            if text:
+                compact_targets.append(text)
+        if compact_targets:
+            parts.append(f"targets: {', '.join(compact_targets)}")
+    metrics = structured.get("metrics")
+    if isinstance(metrics, dict):
+        metric_text = _compact_mapping(
+            metrics,
+            keys=(
+                "findings",
+                "targets",
+                "issues",
+                "count",
+                "vulnerable_params",
+                "tags_count",
+                "hit_count",
+                "document_count",
+            ),
+        )
+        if metric_text:
+            parts.append(f"metrics: {metric_text}")
+    results = structured.get("results")
+    if isinstance(results, list) and results and not any(
+        part.startswith("findings:") for part in parts
+    ):
+        compact_results = [
+            text
+            for text in (_clean_answer_fragment(item, max_chars=90) for item in results[:5])
+            if text
+        ]
+        if compact_results:
+            parts.append(f"results: {', '.join(compact_results)}")
+    return parts[:4]
+
+
 def build_evidence_answer(context: "RunContext") -> str:
     """Synthesise a terminal answer from tool evidence (no model turn needed)."""
     rows = [
@@ -330,8 +453,12 @@ def build_evidence_answer(context: "RunContext") -> str:
     ]
     if not rows:
         return "Tool execution completed; see the structured tool summary."
-    parts: list[str] = ["Completed via tool execution:"]
+    parts: list[str] = ["Tool evidence summary:"]
     for row in rows:
+        structured_parts = _compact_structured_output(row.get("structured_output"))
+        if structured_parts:
+            parts.append(f"- {row['tool_name']}: " + "; ".join(structured_parts))
+            continue
         summary = row.get("summary")
         if isinstance(summary, str) and summary.strip():
             parts.append(f"- {row['tool_name']}: {summary.strip()}")

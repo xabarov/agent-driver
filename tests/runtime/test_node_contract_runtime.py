@@ -71,6 +71,30 @@ def _build_registry(*names: str) -> ToolRegistry:
     return registry
 
 
+def _build_structured_finding_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+
+    async def _handler(args):
+        return {
+            "summary": "scan completed",
+            "findings": [
+                {
+                    "type": "vulnerability",
+                    "vulnerability_id": "CVE-2020-1747",
+                    "package": "PyYAML",
+                    "installed_version": "5.1",
+                    "fixed_version": "5.3.1",
+                    "target": args.get("target", "unknown"),
+                }
+            ],
+            "targets": [{"host": args.get("target", "unknown")}],
+            "metrics": {"findings": 1, "targets": 1},
+        }
+
+    registry.register(_lookup_manifest("lookup_a"), _handler)
+    return registry
+
+
 def _runner(registry: ToolRegistry, provider: FakeProvider, **config_kwargs):
     return FakeSingleStepRunner(
         provider=provider,
@@ -356,6 +380,28 @@ async def test_finalize_when_tools_skips_extra_llm_continuation() -> None:
         for row in summary["executed_tools"]
     )
     assert output.answer and "lookup_a" in output.answer
+
+
+@pytest.mark.asyncio
+async def test_finalize_when_tools_answer_includes_structured_evidence() -> None:
+    """Early finalization should produce an answer-ready summary, not a generic stub."""
+    provider = _ImmediateToolProvider()
+    runner = _runner(_build_structured_finding_registry(), provider)
+    output = await runner.run(
+        _run_input(
+            NodeContract(finalize_when_tools=["lookup_a"]),
+            allowed=["lookup_a"],
+            run_id="run_finalize_structured",
+        )
+    )
+
+    assert output.status.value == "completed"
+    assert provider.calls == 1
+    assert output.answer.startswith("Tool evidence summary:")
+    assert "Completed via tool execution" not in output.answer
+    assert "CVE-2020-1747" in output.answer
+    assert "PyYAML" in output.answer
+    assert "findings=1" in output.answer
 
 
 # --- Layer C: on_tool_evidence host hook finalizes now --------------------------
