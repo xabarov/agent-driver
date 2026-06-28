@@ -301,6 +301,71 @@ class _ForceFinalProgressProvider(FakeProvider):
         )
 
 
+class _ForceFinalDsmlTextToolCallProvider(FakeProvider):
+    """Provider that prints DSML tool-call markup after tool_choice=none."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+                provider="deliverable",
+                model="test-model",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="web_search",
+                            tool_call_id="web_initial",
+                            args={
+                                "query": "Fender history",
+                                "mock_results": [
+                                    {
+                                        "title": "Fender",
+                                        "url": "https://example.com/fender",
+                                        "snippet": "history",
+                                    }
+                                ],
+                            },
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+        if len(self.requests) == 2:
+            return LlmResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content=(
+                        "<｜｜DSML｜｜tool_calls>\n"
+                        "<｜｜DSML｜｜invoke name=\"web_search\">\n"
+                        "<｜｜DSML｜｜parameter name=\"query\" string=\"true\">"
+                        "repeat Fender"
+                        "</｜｜DSML｜｜parameter>\n"
+                        "</｜｜DSML｜｜invoke>\n"
+                        "</｜｜DSML｜｜tool_calls>"
+                    ),
+                ),
+                finish_reason=LlmFinishReason.STOP,
+                usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+                provider="deliverable",
+                model="test-model",
+                metadata={},
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="Вот итог без новых tools."),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+            provider="deliverable",
+            model="test-model",
+            metadata={},
+        )
+
+
 class _PrematureTodoFinalProvider(FakeProvider):
     """Provider that tries to stop while session todos are still open."""
 
@@ -673,6 +738,31 @@ async def test_force_final_still_continues_after_progress_only_text() -> None:
     assert len(provider.requests) == 3
     assert provider.requests[1].tool_choice == "none"
     assert provider.requests[2].tool_choice == "none"
+
+
+@pytest.mark.asyncio
+async def test_force_final_retries_and_suppresses_dsml_text_tool_call() -> None:
+    provider = _ForceFinalDsmlTextToolCallProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only("web_search"))
+    output = await agent.run(
+        AgentRunInput(
+            input="найди и дай итог",
+            run_id="run_force_final_dsml_text_tool_call",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(
+                metadata={"deliverable_request": {"enabled": True}}
+            ),
+            max_steps=10,
+            max_tool_calls=2,
+        )
+    )
+
+    assert output.answer == "Вот итог без новых tools."
+    assert len(provider.requests) == 3
+    assert provider.requests[1].tool_choice == "none"
+    assert provider.requests[2].tools == []
+    assert output.metadata["tool_calls"] == 1
 
 
 @pytest.mark.asyncio
