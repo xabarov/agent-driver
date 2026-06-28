@@ -221,6 +221,26 @@ class _ImmediateToolProvider(FakeProvider):
         return _text_response("done")
 
 
+class _DiscoveryThenRequiredToolProvider(FakeProvider):
+    """Calls discovery, tries to finalize, then obeys the required-tool reprompt."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.calls = 0
+        self.user_texts: list[str] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.calls += 1
+        self.user_texts.append(
+            " ".join(m.content for m in request.messages if m.role == "user")
+        )
+        if self.calls == 1:
+            return _tool_call_response("lookup_a", target="example-input-x")
+        if self.calls == 2:
+            return _text_response("I found lookup_a results; finalizing now.")
+        return _tool_call_response("lookup_b", target="example-input-x")
+
+
 @pytest.mark.asyncio
 async def test_prelude_injected_into_system_prompt() -> None:
     """The proactive prelude names the callable tools + target on turn 1."""
@@ -238,6 +258,58 @@ async def test_prelude_injected_into_system_prompt() -> None:
     assert "lookup_a" in first_system
     assert "culmen.com" in first_system
     assert "tool-using workflow node" in first_system
+
+
+@pytest.mark.asyncio
+async def test_required_completed_tool_reprompts_before_final_answer() -> None:
+    """A discovery-only tool call does not satisfy a required terminal tool."""
+    provider = _DiscoveryThenRequiredToolProvider()
+    runner = _runner(_build_registry("lookup_a", "lookup_b"), provider)
+    output = await runner.run(
+        _run_input(
+            NodeContract(
+                require_tool_use=True,
+                require_completed_tools=["lookup_b"],
+                finalize_when_tools=["lookup_b"],
+                max_tool_use_reprompts=1,
+            ),
+            run_id="run_required_tool",
+        )
+    )
+
+    assert output.status.value == "completed"
+    assert provider.calls == 3
+    assert any(t.tool_name == "lookup_a" for t in output.tool_trace)
+    assert any(t.tool_name == "lookup_b" for t in output.tool_trace)
+    summary = output.metadata["node_contract"]
+    assert summary["require_completed_tools"] == ["lookup_b"]
+    assert summary["reprompts"] == 1
+    assert summary["violation"] is None
+    assert summary["early_finalize_reason"] == "finalize_when_tools_satisfied"
+    assert "lookup_b" in output.answer
+    assert "required tool(s) have not completed successfully" in provider.user_texts[-1]
+
+
+@pytest.mark.asyncio
+async def test_missing_required_completed_tool_stamps_violation() -> None:
+    """Persistent premature finalization is a typed missing-required-tools violation."""
+    provider = _AlwaysProseProvider()
+    runner = _runner(_build_registry("lookup_a", "lookup_b"), provider)
+    output = await runner.run(
+        _run_input(
+            NodeContract(
+                require_completed_tools=["lookup_b"],
+                max_tool_use_reprompts=1,
+            ),
+            run_id="run_missing_required_tool",
+        )
+    )
+
+    violation = output.metadata["node_contract"]["violation"]
+    assert violation["kind"] == "missing_required_tools"
+    assert violation["missing_tools"] == ["lookup_b"]
+    assert violation["reprompts"] == 1
+    assert provider.calls == 2
 
 
 # --- Layer A: policy↔registry mismatch surfaces a structured warning -----------

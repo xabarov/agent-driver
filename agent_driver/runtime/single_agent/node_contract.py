@@ -9,9 +9,8 @@ are unaffected.
   ``finalize_when_tools`` against the live registry so a policy↔registry mismatch
   surfaces as a structured warning instead of an empty result.
 * **Layer B** — ``build_prelude`` (proactive, woven into the system prompt by
-  :class:`NodeContractLifecycleHook`) plus ``tool_use_violation_pending`` /
-  ``build_tool_use_reprompt`` / ``stamp_no_tool_use_violation`` (reactive guard in
-  the finalize step) turn a zero-tool-call finalize into a recoverable reprompt and
+  :class:`NodeContractLifecycleHook`) plus the reactive finalize guards turn a
+  zero-tool-call or missing-required-tool finalize into a recoverable reprompt and
   then a typed violation — never a silent generic reply.
 * **Layer C** — ``declarative_finalize_satisfied`` and the ``on_tool_evidence`` hook
   let a run finalize directly from tool evidence with no extra LLM continuation;
@@ -71,6 +70,7 @@ def unsatisfiable_tool_names(
     declared: list[str] = []
     declared.extend(run_input.tool_policy.allowed_tools or [])
     declared.extend(contract.finalize_when_tools)
+    declared.extend(contract.require_completed_tools)
     return [
         name
         for name in dict.fromkeys(str(item) for item in declared)
@@ -118,6 +118,12 @@ def build_prelude(
         )
     if contract.task_hint:
         lines.append(f"Task: {contract.task_hint}.")
+    if contract.require_completed_tools:
+        required = ", ".join(str(name) for name in contract.require_completed_tools)
+        lines.append(
+            "Do not finalize until these required tool(s) have completed successfully: "
+            f"{required}."
+        )
     return "\n".join(lines)
 
 
@@ -205,6 +211,58 @@ def stamp_no_tool_use_violation(context: "RunContext") -> dict:
             "node contract requires tool use but the run finalized with zero tool "
             "calls after exhausting reprompts"
         ),
+        "reprompts": int(context.metadata.get(TOOL_USE_REPROMPT_COUNT_KEY, 0)),
+        "max_reprompts": context.run_input.node_contract.max_tool_use_reprompts,
+    }
+    context.metadata[NODE_CONTRACT_VIOLATION_KEY] = violation
+    return violation
+
+
+def missing_required_tools(context: "RunContext") -> list[str]:
+    """Required terminal tools that have not produced a successful envelope."""
+    contract = context.run_input.node_contract
+    if not contract.require_completed_tools:
+        return []
+    succeeded = successful_tool_names(context)
+    return [
+        name
+        for name in dict.fromkeys(str(item) for item in contract.require_completed_tools)
+        if name and name not in succeeded
+    ]
+
+
+def required_tools_violation_pending(context: "RunContext") -> bool:
+    """Whether finalization is blocked by missing required completed tools."""
+    return bool(missing_required_tools(context))
+
+
+def build_required_tools_reprompt(context: "RunContext") -> str:
+    """Nudge text requiring the missing terminal tool(s) before finalization."""
+    missing = missing_required_tools(context)
+    missing_text = ", ".join(missing)
+    lines = [
+        "This node cannot finalize yet because required tool(s) have not completed "
+        f"successfully: {missing_text}. Call the missing required tool(s) now. "
+        "Do not answer in prose until the required tool evidence exists.",
+    ]
+    contract = context.run_input.node_contract
+    if contract.target:
+        lines.append(f"Target: `{contract.target}` (already known — do not ask).")
+    if contract.task_hint:
+        lines.append(f"Task: {contract.task_hint}.")
+    return " ".join(lines)
+
+
+def stamp_required_tools_violation(context: "RunContext") -> dict:
+    """Record a typed missing-required-tools violation on metadata."""
+    missing = missing_required_tools(context)
+    violation = {
+        "kind": "missing_required_tools",
+        "detail": (
+            "node contract requires specific completed tools but the run finalized "
+            "without successful evidence from all required tools after exhausting reprompts"
+        ),
+        "missing_tools": missing,
         "reprompts": int(context.metadata.get(TOOL_USE_REPROMPT_COUNT_KEY, 0)),
         "max_reprompts": context.run_input.node_contract.max_tool_use_reprompts,
     }
@@ -317,6 +375,7 @@ def output_summary(context: "RunContext") -> dict | None:
         "active": is_active(run_input),
         "require_tool_use": contract.require_tool_use,
         "require_callable_tools": contract.require_callable_tools,
+        "require_completed_tools": list(contract.require_completed_tools),
         "finalize_when_tools": list(contract.finalize_when_tools),
         "tool_calls": context.tool_calls,
         "executed_tools": executed_tools_summary(context),
@@ -367,6 +426,7 @@ __all__ = [
     "TOOL_USE_REPROMPT_COUNT_KEY",
     "build_evidence_answer",
     "build_prelude",
+    "build_required_tools_reprompt",
     "build_tool_use_reprompt",
     "contract_of",
     "declarative_finalize_satisfied",
@@ -378,7 +438,9 @@ __all__ = [
     "reprompt_budget_remaining",
     "set_early_finalize",
     "stamp_no_tool_use_violation",
+    "stamp_required_tools_violation",
     "successful_tool_names",
     "tool_use_violation_pending",
+    "required_tools_violation_pending",
     "unsatisfiable_tool_names",
 ]

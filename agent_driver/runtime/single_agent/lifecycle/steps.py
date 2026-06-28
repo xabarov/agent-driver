@@ -282,6 +282,16 @@ class SingleAgentStepMixin:
             self._save_checkpoint(context, latest_output=None, node_id="finalize")
             self._maybe_fail_after_step("finalize")
             return node_contract_reprompt
+        node_contract_reprompt = self._maybe_node_contract_required_tools_reprompt(context)
+        if node_contract_reprompt is not None:
+            context.step_count += 1
+            get_loop_control_state(context).set_step_transition(
+                next_step="llm_call",
+                tool_calls=context.tool_calls,
+            )
+            self._save_checkpoint(context, latest_output=None, node_id="finalize")
+            self._maybe_fail_after_step("finalize")
+            return node_contract_reprompt
         terminal_answer = self._sanitize_terminal_answer(context)
         if terminal_answer:
             completed_payload["answer"] = terminal_answer
@@ -366,6 +376,30 @@ class SingleAgentStepMixin:
             context,
             text=text or "",
             nudge=nc.build_tool_use_reprompt(context.run_input),
+            reason=nc._REPROMPT_REASON,
+            count_key=nc.TOOL_USE_REPROMPT_COUNT_KEY,
+        )
+
+    def _maybe_node_contract_required_tools_reprompt(
+        self, context: RunContext
+    ) -> RuntimeStepResult | None:
+        """Reactive guard: require declared terminal tools before finalization."""
+        from agent_driver.runtime.single_agent import node_contract as nc
+
+        if not nc.required_tools_violation_pending(context):
+            return None
+        if not nc.reprompt_budget_remaining(context):
+            nc.stamp_required_tools_violation(context)
+            return None
+        text = (
+            context.llm_response.message.content
+            if context.llm_response is not None
+            else ""
+        )
+        return _build_continuation_transition(
+            context,
+            text=text or "",
+            nudge=nc.build_required_tools_reprompt(context),
             reason=nc._REPROMPT_REASON,
             count_key=nc.TOOL_USE_REPROMPT_COUNT_KEY,
         )

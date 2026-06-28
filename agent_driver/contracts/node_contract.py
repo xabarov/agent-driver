@@ -14,6 +14,9 @@ the loop in three opt-in layers:
   calls is treated as a *recoverable* violation — the runtime reprompts with the
   concrete tools + target, then (if still unsatisfied) stamps a structured
   violation rather than returning a silent generic answer.
+* **B2 — required completed tools** (``require_completed_tools``): finalizing
+  before specific terminal tools have completed is treated as a recoverable
+  violation, using the same bounded reprompt/error path as ``require_tool_use``.
 * **C — early finalize from tool evidence** (``finalize_when_tools`` and the
   ``on_tool_evidence`` lifecycle hook): once the declared tools have produced
   successful evidence, the run finalizes directly — no extra LLM continuation.
@@ -65,6 +68,12 @@ class NodeContract(ContractModel):
     """One-line task description for the proactive prelude (e.g. "enumerate passive
     subdomains")."""
 
+    require_completed_tools: list[str] = Field(default_factory=list)
+    """Tool names that must produce a successful (non-error) envelope before a
+    final answer is accepted. Useful for multi-tool workflow nodes where a
+    discovery/listing tool may run first, but a terminal action tool must still
+    complete before finalization."""
+
     # --- Layer C: early finalize from tool evidence ------------------------
     finalize_when_tools: list[str] = Field(default_factory=list)
     """Once every listed tool has produced a successful (non-error) envelope, the
@@ -82,6 +91,7 @@ class NodeContract(ContractModel):
         return bool(
             self.require_callable_tools
             or self.require_tool_use
+            or self.require_completed_tools
             or self.finalize_when_tools
         )
 
