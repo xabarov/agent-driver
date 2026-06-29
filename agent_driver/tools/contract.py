@@ -234,6 +234,8 @@ def manifest_from_contract(contract: Mapping[str, Any]) -> ToolManifest:
     - ``timeout_seconds`` — positive float or ``None``
     - ``output_char_budget`` — positive int or ``None``
     - ``max_result_size_chars`` — positive int or ``None`` (artifact spill threshold)
+    - ``success_field`` — optional boolean output field; falsy values mark
+      structured self-reported tool failures
     - ``idempotent`` — bool (default ``True``)
     - ``args_schema`` — JSON schema dict or ``None``
     - ``output_type`` / ``output_schema``
@@ -273,6 +275,7 @@ def manifest_from_contract(contract: Mapping[str, Any]) -> ToolManifest:
     timeout_seconds = contract_dict.pop("timeout_seconds", 30.0)
     output_char_budget = contract_dict.pop("output_char_budget", 4000)
     max_result_size_chars = contract_dict.pop("max_result_size_chars", None)
+    success_field = contract_dict.pop("success_field", None)
     idempotent = bool(contract_dict.pop("idempotent", True))
     args_schema = contract_dict.pop("args_schema", None)
     output_type = contract_dict.pop("output_type", None)
@@ -311,6 +314,7 @@ def manifest_from_contract(contract: Mapping[str, Any]) -> ToolManifest:
         timeout_seconds=timeout_seconds,
         output_char_budget=output_char_budget,
         max_result_size_chars=max_result_size_chars,
+        success_field=success_field,
         idempotent=idempotent,
         args_schema=args_schema,
         output_type=output_type,
