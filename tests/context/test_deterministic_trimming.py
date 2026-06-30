@@ -113,7 +113,10 @@ def test_trim_context_keeps_stub_for_latest_tool_message() -> None:
     )
     tool_rows = [row for row in trimmed.prompt_messages if str(row.get("role")) == "tool"]
     assert tool_rows
-    assert "trimmed" in str(tool_rows[-1].get("content", "")).lower()
+    stub_content = str(tool_rows[-1].get("content", "")).lower()
+    assert "trimmed" in stub_content
+    assert "sourced evidence" in stub_content
+    assert "dropped due to context budget" not in stub_content
 
 
 def test_trim_context_truncates_oversized_last_message_instead_of_dropping() -> None:

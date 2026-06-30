@@ -78,6 +78,8 @@ def test_validate_inserts_stub_for_missing_tool_result() -> None:
     assert result.messages[1].tool_call_id == "call_1"
     assert result.messages[1].name == "web_search"
     assert result.messages[1].metadata["tool_trim_stub"] is True
+    assert "sourced evidence" in (result.messages[1].content or "")
+    assert "dropped due to context budget" not in (result.messages[1].content or "")
     assert "inserted_missing_tool_result_stubs" in result.repairs
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from agent_driver.context.trimming.tool_stub import build_tool_trim_stub_content
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
 
@@ -132,10 +133,9 @@ def _repair_tool_call_pairing(
                         role=ChatRole.TOOL,
                         name=_tool_name_for_call(tool_calls, call_id),
                         tool_call_id=call_id,
-                        content=(
-                            "[trimmed] Prior tool result was dropped due to "
-                            "context budget. Re-run the tool if exact values are "
-                            "needed."
+                        content=build_tool_trim_stub_content(
+                            tool_name=_tool_name_for_call(tool_calls, call_id),
+                            tool_call_id=call_id,
                         ),
                         metadata={"tool_trim_stub": True},
                     )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_driver.context.trimming.tool_stub import build_tool_trim_stub_content
 from agent_driver.contracts.context import (
     ContextBudget,
     TrimAuditRecord,
@@ -117,14 +118,13 @@ def _trim_messages_to_budget(
     def _tool_stub(message: dict[str, object]) -> dict[str, object]:
         name = str(message.get("name") or "tool")
         tool_call_id = str(message.get("tool_call_id") or "")
-        suffix = f" id={tool_call_id}" if tool_call_id else ""
         return {
             "role": "tool",
             "name": name,
             "tool_call_id": tool_call_id or None,
-            "content": (
-                f"[trimmed] Prior tool result for {name}{suffix} was dropped due to context "
-                "budget. Re-run the tool if exact values are needed."
+            "content": build_tool_trim_stub_content(
+                tool_name=name,
+                tool_call_id=tool_call_id,
             ),
             "metadata": {"tool_trim_stub": True},
         }
