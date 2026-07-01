@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -35,7 +36,10 @@ from agent_driver.llm.provider_capabilities import (
     ProviderCapabilityProfile,
     resolve_openai_compatible_capabilities,
 )
-from agent_driver.llm.tool_call_parser import extract_text_form_tool_calls
+from agent_driver.llm.tool_call_parser import (
+    extract_text_form_tool_call_details,
+    strip_text_form_tool_call_ranges,
+)
 from agent_driver.llm.providers_impl.openai_compatible.normalization import (
     first_choice as _first_choice,
     forced_tool_choice_name as _forced_tool_choice_name,
@@ -58,6 +62,23 @@ from agent_driver.llm.providers_impl.openai_compatible.normalization import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_TEXT_FORM_STREAM_HOLDBACK_CHARS = 64
+_TEXT_FORM_OPENER_PATTERNS = (
+    re.compile(r"<\s*tool_call\b", re.IGNORECASE),
+    re.compile(r"tool_call\s*:", re.IGNORECASE),
+    re.compile(r"<\|\s*python_tag\|>", re.IGNORECASE),
+    re.compile(r"<\|?\s*tool_call|<\s*tool_call\s*\|", re.IGNORECASE),
+    re.compile(r"<\s*[｜|]+\s*DSML\b", re.IGNORECASE),
+)
+_TEXT_FORM_OPENER_ALIASES = (
+    "<tool_call",
+    "< tool_call",
+    "<|tool_call",
+    "<|python_tag|>",
+    "<｜dsml",
+    "<|dsml",
+    "tool_call:",
+)
 
 
 def _log_rejected_request(*, request: LlmRequest, status_code: int, body: str) -> None:
@@ -69,6 +90,56 @@ def _log_rejected_request(*, request: LlmRequest, status_code: int, body: str) -
         format_payload_debug_line(request),
         body[:500],
     )
+
+
+def _first_text_form_opener_start(text: str) -> int | None:
+    starts = [
+        m.start()
+        for pattern in _TEXT_FORM_OPENER_PATTERNS
+        if (m := pattern.search(text))
+    ]
+    if not starts:
+        return None
+    return min(starts)
+
+
+def _split_stream_visible_text(buffer: str) -> tuple[str, str]:
+    """Return (safe_to_emit_now, pending_buffer) for text-form tool-call holdback."""
+    if not buffer:
+        return "", ""
+    opener_start = _first_text_form_opener_start(buffer)
+    if opener_start is not None:
+        return buffer[:opener_start], buffer[opener_start:]
+    partial_start = _partial_text_form_opener_tail_start(buffer)
+    if partial_start is not None:
+        return buffer[:partial_start], buffer[partial_start:]
+    return buffer, ""
+
+
+def _partial_text_form_opener_tail_start(buffer: str) -> int | None:
+    tail_start = max(0, len(buffer) - _TEXT_FORM_STREAM_HOLDBACK_CHARS)
+    lower = buffer.lower()
+    for index in range(tail_start, len(buffer)):
+        fragment = lower[index:]
+        if any(alias.startswith(fragment) for alias in _TEXT_FORM_OPENER_ALIASES):
+            return index
+    if re.search(r"<\s*$", buffer[tail_start:]):
+        return buffer.rfind("<")
+    return None
+
+
+def _flush_stream_visible_text(buffer: str) -> tuple[str, dict[str, Any]]:
+    """Strip recognized text-form tool-call ranges from held stream text."""
+    if not buffer:
+        return "", {}
+    details = extract_text_form_tool_call_details(buffer)
+    metadata: dict[str, Any] = {}
+    if details.tool_calls or details.parse_errors:
+        metadata["text_form_tool_calls_parsed"] = True
+    if details.ranges:
+        metadata["text_form_tool_call_ranges"] = details.ranges
+        return strip_text_form_tool_call_ranges(buffer, details.ranges), metadata
+    return buffer, metadata
 
 
 class OpenAICompatibleProvider(ProviderBase):
@@ -224,6 +295,7 @@ class OpenAICompatibleProvider(ProviderBase):
         async with self.stream_client_with_telemetry(stream_request) as lines:
             pending_tool_calls: dict[int, dict[str, Any]] = {}
             text_chunks: list[str] = []
+            held_text = ""
             forced_tool_name = _forced_tool_choice_name(request.tool_choice)
             async for line in lines:
                 if not line or not line.startswith("data: "):
@@ -273,12 +345,45 @@ class OpenAICompatibleProvider(ProviderBase):
                     fallback_model=str(request.model or self._model),
                     cost_per_1k_tokens=float(self.status.cost_per_1k_tokens or 0.0),
                 )
+                if event.delta_text:
+                    original_delta_text = event.delta_text
+                    held_text += event.delta_text
+                    visible_text, held_text = _split_stream_visible_text(held_text)
+                    update: dict[str, Any] = {"delta_text": visible_text}
+                    if (
+                        not visible_text
+                        and held_text
+                        and _first_text_form_opener_start(held_text) is not None
+                    ):
+                        update["metadata"] = {
+                            **event.metadata,
+                            "text_form_tool_call_holdback": True,
+                        }
+                    elif visible_text != original_delta_text and held_text:
+                        update["metadata"] = {
+                            **event.metadata,
+                            "text_form_tool_call_holdback": True,
+                        }
+                    event = event.model_copy(update=update)
                 yield self._event_with_capability_metadata(
                     _suppress_text_form_tool_calls_when_tools_disabled(
                         event,
                         tool_choice=request.tool_choice,
                     )
                 )
+            if held_text:
+                visible_text, visible_metadata = _flush_stream_visible_text(held_text)
+                if request.tool_choice == "none" and visible_metadata:
+                    visible_metadata["text_form_tool_calls_suppressed"] = True
+                    visible_metadata.pop("planned_tool_calls", None)
+                if visible_text or visible_metadata:
+                    yield self._event_with_capability_metadata(
+                        LlmStreamEvent(
+                            event="delta",
+                            delta_text=visible_text,
+                            metadata=visible_metadata,
+                        )
+                    )
             if pending_tool_calls:
                 flattened = [
                     pending_tool_calls[idx] for idx in sorted(pending_tool_calls)
@@ -297,7 +402,8 @@ class OpenAICompatibleProvider(ProviderBase):
                     )
             elif text_chunks and request.tool_choice != "none":
                 text = "".join(text_chunks)
-                text_planned, text_errors = extract_text_form_tool_calls(text)
+                details = extract_text_form_tool_call_details(text)
+                text_planned, text_errors = details.tool_calls, details.parse_errors
                 if not text_planned:
                     text_planned = _planned_tool_call_from_forced_text(
                         tool_name=forced_tool_name,
@@ -309,6 +415,8 @@ class OpenAICompatibleProvider(ProviderBase):
                         metadata["planned_tool_calls"] = text_planned
                     if text_errors:
                         metadata["tool_call_parse_errors"] = text_errors
+                    if details.ranges:
+                        metadata["text_form_tool_call_ranges"] = details.ranges
                     yield self._event_with_capability_metadata(
                         LlmStreamEvent(event="tool_calls", metadata=metadata)
                     )

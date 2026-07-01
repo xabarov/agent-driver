@@ -98,6 +98,9 @@ async def complete_streaming_request(
     last_meaningful_event_at = monotonic()
     streaming_state = StreamingRuntimeState(context.metadata)
     streaming_state.mark_started()
+    context.metadata["assistant_stream_events_seen"] = 0
+    context.metadata["assistant_stream_token_chunks_seen"] = 0
+    context.metadata["assistant_stream_reasoning_chunks_seen"] = 0
     emit_step_event(
         host,
         context,
@@ -197,6 +200,10 @@ def _is_meaningful_stream_item(item: Any) -> bool:
     meaningful_metadata_keys = {
         "planned_tool_calls",
         "tool_call_parse_errors",
+        "text_form_tool_call_ranges",
+        "text_form_tool_calls_parsed",
+        "text_form_tool_calls_suppressed",
+        "text_form_tool_call_holdback",
         "stream_tool_call_delta",
         "output_audio_delta",
     }
@@ -229,9 +236,13 @@ def _collect_stream_item(
     audio_state: dict[str, Any],
 ) -> None:
     """Append one provider stream event and emit durable deltas."""
+    context.metadata["assistant_stream_events_seen"] = (
+        int(context.metadata.get("assistant_stream_events_seen") or 0) + 1
+    )
     chunk = item.delta_text or ""
     if chunk:
         delta_chunks.append(chunk)
+        context.metadata["assistant_stream_token_chunks_seen"] = len(delta_chunks)
         StreamingRuntimeState(context.metadata).set_content("".join(delta_chunks))
         emit_token_delta_events(
             host, context, [chunk], start_index=len(delta_chunks) - 1
@@ -239,6 +250,9 @@ def _collect_stream_item(
     reasoning_chunk = item.delta_reasoning or ""
     if reasoning_chunk:
         reasoning_chunks.append(reasoning_chunk)
+        context.metadata["assistant_stream_reasoning_chunks_seen"] = len(
+            reasoning_chunks
+        )
         emit_reasoning_delta_events(
             host,
             context,
@@ -265,9 +279,29 @@ def _collect_stream_item(
                 stream_metadata["provider_reasoning_details"] = existing
         if "planned_tool_calls" in item.metadata:
             stream_metadata["planned_tool_calls"] = item.metadata["planned_tool_calls"]
+            context.metadata["assistant_stream_tool_intent_seen"] = True
         if "tool_call_parse_errors" in item.metadata:
             stream_metadata["tool_call_parse_errors"] = item.metadata[
                 "tool_call_parse_errors"
+            ]
+            context.metadata["assistant_stream_tool_intent_seen"] = True
+        if "text_form_tool_call_ranges" in item.metadata:
+            stream_metadata["text_form_tool_call_ranges"] = item.metadata[
+                "text_form_tool_call_ranges"
+            ]
+            context.metadata["assistant_stream_tool_intent_seen"] = True
+        if "text_form_tool_calls_parsed" in item.metadata:
+            stream_metadata["text_form_tool_calls_parsed"] = item.metadata[
+                "text_form_tool_calls_parsed"
+            ]
+            context.metadata["assistant_stream_tool_intent_seen"] = True
+        if "text_form_tool_calls_suppressed" in item.metadata:
+            stream_metadata["text_form_tool_calls_suppressed"] = item.metadata[
+                "text_form_tool_calls_suppressed"
+            ]
+        if "text_form_tool_call_holdback" in item.metadata:
+            stream_metadata["text_form_tool_call_holdback"] = item.metadata[
+                "text_form_tool_call_holdback"
             ]
         audio_delta = item.metadata.get("output_audio_delta")
         if isinstance(audio_delta, dict):

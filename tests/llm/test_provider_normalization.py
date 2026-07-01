@@ -118,6 +118,87 @@ def test_openai_completion_normalizes_tool_calls_into_planned_metadata() -> None
     assert planned[0]["tool_name"] == "web_search"
 
 
+@pytest.mark.parametrize(
+    ("raw_arguments", "expected_args", "expected_reason"),
+    [
+        (
+            '{"query":"agent-driver"',
+            {"query": "agent-driver"},
+            "balanced_truncated_object",
+        ),
+        (
+            '{"outer":{"query":"agent-driver"',
+            {"outer": {"query": "agent-driver"}},
+            "balanced_truncated_object",
+        ),
+        (
+            '{"query":"agent-driver',
+            {"query": "agent-driver"},
+            "closed_truncated_string",
+        ),
+        ('{"query":"agent-driver",}', {"query": "agent-driver"}, "trailing_commas"),
+        (
+            '{"items":["a","b",]}',
+            {"items": ["a", "b"]},
+            "trailing_commas",
+        ),
+        ('{"query": None}', {"query": None}, "python_literals"),
+        ("   ", {}, None),
+        (
+            '{"query":"agent-driver"}}',
+            {"query": "agent-driver"},
+            "extra_closing_delimiter",
+        ),
+        (
+            '{"query":"agent\u0001driver"}',
+            {"query": "agent driver"},
+            "unescaped_control_chars",
+        ),
+    ],
+)
+def test_openai_completion_repairs_malformed_tool_arguments(
+    raw_arguments: str,
+    expected_args: dict,
+    expected_reason: str | None,
+) -> None:
+    payload = {
+        "model": "gpt-test",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "web_search",
+                                "arguments": raw_arguments,
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    }
+    response = normalize_openai_completion_payload(
+        payload, provider_name="openai-compat", fallback_model="fallback"
+    )
+
+    assert response.metadata.get("tool_call_parse_errors") is None
+    planned = response.metadata.get("planned_tool_calls")
+    assert isinstance(planned, list) and planned
+    assert planned[0]["args"] == expected_args
+    metadata = planned[0]["metadata"]
+    if expected_reason is None:
+        assert metadata.get("provider_args_repaired") is None
+    else:
+        assert metadata["provider_args_repaired"] is True
+        assert expected_reason in metadata["provider_args_repair_reasons"]
+
+
 def test_openai_completion_preserves_reasoning_details_for_tool_turns() -> None:
     payload = {
         "model": "openai/gpt-5.5",
@@ -523,15 +604,15 @@ async def test_openai_stream_adapter_parses_split_text_form_tool_call() -> None:
         )
     ]
 
-    assert [event.delta_text for event in events[:2]] == [
-        '<tool_call>{"name":"web_search","arguments":{"query":"Fen',
-        'der","max_results":5}}</tool_call>',
-    ]
+    visible_text = "".join(event.delta_text for event in events)
+    assert "<tool_call>" not in visible_text
+    assert "web_search" not in visible_text
     planned = events[-1].metadata.get("planned_tool_calls")
     assert isinstance(planned, list) and planned
     assert planned[0]["tool_name"] == "web_search"
     assert planned[0]["args"] == {"query": "Fender", "max_results": 5}
     assert events[-1].metadata.get("text_form_tool_calls_parsed") is True
+    assert events[-1].metadata.get("text_form_tool_call_ranges")
 
 
 @pytest.mark.asyncio
