@@ -148,6 +148,8 @@ def recover_force_final_stream_response(
         return None
     if streaming_state.completed():
         return None
+    if context.metadata.get("assistant_stream_tool_intent_seen") is True:
+        return None
     content = streaming_state.content()
     if not isinstance(content, str) or len(content.strip()) < 200:
         return None
@@ -241,6 +243,8 @@ def emit_non_stream_retry_assistant_message(
     host: StreamRecoveryHost,
     context: RunContext,
     response: LlmResponse,
+    *,
+    replacement_reason: str = "empty_forced_final_no_tools_retry",
 ) -> None:
     """Emit replacement events for a successful no-tools non-stream retry."""
     content = (response.message.content or "").strip()
@@ -257,7 +261,7 @@ def emit_non_stream_retry_assistant_message(
             "finish_reason": response.finish_reason.value,
             "provider": response.provider,
             "model": response.model,
-            "replacement_reason": "empty_forced_final_no_tools_retry",
+            "replacement_reason": replacement_reason,
         },
     )
 

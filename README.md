@@ -99,8 +99,16 @@ async for delta in stream.text_deltas():
 Optional live checks:
 
 ```bash
-AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests
+cp .env.template .env
+set -a && . ./.env && set +a
+.venv/bin/python -m pytest -m live tests
 ```
+
+The template documents the live provider, timeout, runtime-store, Postgres,
+server auth, and Python tool variables. Live provider checks require
+`AGENT_DRIVER_API_KEY`, `AGENT_DRIVER_BASE_URL`, `AGENT_DRIVER_MODEL`, and
+`AGENT_DRIVER_RUN_LIVE_TESTS=1`; Postgres checks additionally require
+`AGENT_DRIVER_RUN_POSTGRES_TESTS=1` and `AGENT_DRIVER_POSTGRES_DSN`.
 
 ## Documentation map
 

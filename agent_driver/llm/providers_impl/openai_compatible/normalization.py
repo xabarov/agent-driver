@@ -10,7 +10,10 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.tools import ToolCall
 from agent_driver.contracts.usage import UsageSummary
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse, LlmStreamEvent
-from agent_driver.llm.tool_call_parser import extract_text_form_tool_calls
+from agent_driver.llm.tool_call_parser import (
+    extract_text_form_tool_call_details,
+    repair_tool_call_arguments_json,
+)
 
 
 def map_finish_reason(reason: str | None) -> LlmFinishReason:
@@ -127,6 +130,7 @@ def planned_tool_calls_from_openai(
             continue
         raw_args = function.get("arguments", "{}")
         args: dict[str, Any] = {}
+        repair_metadata: dict[str, Any] = {}
         if isinstance(raw_args, str):
             stripped = raw_args.strip()
             if stripped:
@@ -144,14 +148,22 @@ def planned_tool_calls_from_openai(
                             }
                         )
                 except json.JSONDecodeError:
-                    parse_errors.append(
-                        {
-                            "index": index,
-                            "tool_name": name,
-                            "error": "arguments_json_parse_failed",
-                            "raw_arguments": stripped,
+                    repaired = repair_tool_call_arguments_json(stripped)
+                    if repaired is None:
+                        parse_errors.append(
+                            {
+                                "index": index,
+                                "tool_name": name,
+                                "error": "arguments_json_parse_failed",
+                                "raw_arguments": stripped,
+                            }
+                        )
+                    else:
+                        args = repaired["arguments"]
+                        repair_metadata = {
+                            "provider_args_repaired": True,
+                            "provider_args_repair_reasons": repaired["repairs"],
                         }
-                    )
         elif isinstance(raw_args, dict):
             args = raw_args
         try:
@@ -163,7 +175,7 @@ def planned_tool_calls_from_openai(
                     if isinstance(item.get("id"), str) and str(item.get("id")).strip()
                     else None
                 ),
-                metadata={"provider_tool_call_index": index},
+                metadata={"provider_tool_call_index": index, **repair_metadata},
             )
         except (TypeError, ValueError):
             continue
@@ -288,12 +300,14 @@ def normalize_openai_completion_payload(
         message_payload.get("tool_calls")
     )
     if not planned_tool_calls and text:
-        text_planned, text_errors = extract_text_form_tool_calls(text)
-        if text_planned:
-            planned_tool_calls = text_planned
+        details = extract_text_form_tool_call_details(text)
+        if details.tool_calls:
+            planned_tool_calls = details.tool_calls
             metadata["text_form_tool_calls_parsed"] = True
-        if text_errors:
-            parse_errors.extend(text_errors)
+        if details.parse_errors:
+            parse_errors.extend(details.parse_errors)
+        if details.ranges:
+            metadata["text_form_tool_call_ranges"] = details.ranges
     if planned_tool_calls:
         metadata["planned_tool_calls"] = planned_tool_calls
     if parse_errors:
@@ -312,9 +326,7 @@ def normalize_openai_completion_payload(
             if isinstance(transcript, str):
                 text = transcript
     return LlmResponse(
-        message=ChatMessage(
-            role="assistant", content=text, metadata=message_metadata
-        ),
+        message=ChatMessage(role="assistant", content=text, metadata=message_metadata),
         finish_reason=map_finish_reason(choice.get("finish_reason")),
         usage=usage,
         provider=provider_name,
@@ -358,12 +370,14 @@ def normalize_openai_stream_chunk(
         choice_payload.get("tool_calls")
     )
     if not planned_tool_calls and text:
-        text_planned, text_errors = extract_text_form_tool_calls(text)
-        if text_planned:
-            planned_tool_calls = text_planned
+        details = extract_text_form_tool_call_details(text)
+        if details.tool_calls:
+            planned_tool_calls = details.tool_calls
             metadata["text_form_tool_calls_parsed"] = True
-        if text_errors:
-            parse_errors.extend(text_errors)
+        if details.parse_errors:
+            parse_errors.extend(details.parse_errors)
+        if details.ranges:
+            metadata["text_form_tool_call_ranges"] = details.ranges
     if planned_tool_calls:
         metadata["planned_tool_calls"] = planned_tool_calls
     if parse_errors:

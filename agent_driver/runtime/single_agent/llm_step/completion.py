@@ -200,12 +200,186 @@ async def complete_request(  # pylint: disable=too-many-branches
                 and getattr(exc, "emitted_chunks", 0) > 0
             ):
                 raise
+            if isinstance(
+                exc, LlmStreamIdleTimeout
+            ) and _should_retry_stream_failure_without_streaming(
+                context, request, attempt
+            ):
+                return await _retry_stream_failure_without_streaming(
+                    host,
+                    context,
+                    request=request,
+                    exc=exc,
+                    transition_reason="stream_idle_timeout",
+                )
             if attempt == 0:
                 continue
+            raise
+        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+            if _should_retry_stream_failure_without_streaming(
+                context, request, attempt
+            ):
+                return await _retry_stream_failure_without_streaming(
+                    host,
+                    context,
+                    request=request,
+                    exc=exc,
+                    transition_reason="provider_stream_open_failed",
+                )
             raise
     if last_timeout is not None:
         raise last_timeout
     raise RuntimeError("unreachable")
+
+
+def _should_retry_stream_failure_without_streaming(
+    context: RunContext,
+    request: Any,
+    attempt: int,
+) -> bool:
+    if attempt != 0 or not getattr(request, "stream", False):
+        return False
+    if context.metadata.get("provider_stream_non_stream_fallback") is True:
+        return False
+    if _stream_has_useful_output(context):
+        return False
+    return callable(getattr(request, "model_copy", None))
+
+
+def _stream_has_useful_output(context: RunContext) -> bool:
+    # Empty provider heartbeat events are not user-visible output, but they prove
+    # the stream opened. Keep those failures diagnosable instead of silently
+    # converting a malformed stream into a non-stream success.
+    events_seen = context.metadata.get("assistant_stream_events_seen")
+    if isinstance(events_seen, int) and events_seen > 0:
+        return True
+    if context.metadata.get("assistant_stream_tool_intent_seen") is True:
+        return True
+    content = context.metadata.get("assistant_stream_content")
+    if isinstance(content, str) and content:
+        return True
+    for key in (
+        "assistant_stream_token_chunks_seen",
+        "assistant_stream_reasoning_chunks_seen",
+    ):
+        value = context.metadata.get(key)
+        if isinstance(value, int) and value > 0:
+            return True
+    return False
+
+
+async def _retry_stream_failure_without_streaming(
+    host: LlmCompletionHost,
+    context: RunContext,
+    *,
+    request: Any,
+    exc: BaseException,
+    transition_reason: str,
+) -> LlmResponse:
+    diagnostics = _stream_failure_retry_diagnostics(
+        context,
+        request,
+        exc,
+        provider_name=host._deps.provider.name,
+        transition_reason=transition_reason,
+    )
+    context.metadata["provider_stream_non_stream_fallback"] = True
+    context.metadata["provider_stream_fallback_diagnostics"] = diagnostics
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.WARNING,
+        payload={
+            "warning": (
+                "Provider stream failed before useful output; "
+                "retrying once without streaming."
+            ),
+            "signal_id": "provider_stream_non_stream_fallback",
+            "severity": "warning",
+            "provider_diagnostics": diagnostics,
+        },
+    )
+    fallback_response = await host._deps.provider.complete(
+        request.model_copy(update={"stream": False})
+    )
+    fallback_response = _mark_no_tool_text_form_suppression(
+        context, request, fallback_response
+    )
+    emit_non_stream_retry_assistant_message(
+        host,
+        context,
+        fallback_response,
+        replacement_reason="provider_stream_non_stream_fallback",
+    )
+    metadata = dict(fallback_response.metadata or {})
+    metadata["provider_stream_non_stream_fallback"] = True
+    metadata["provider_stream_fallback_diagnostics"] = diagnostics
+    if (fallback_response.message.content or "").strip():
+        metadata["token_chunks_emitted"] = True
+    fallback_response = fallback_response.model_copy(update={"metadata": metadata})
+    return await retry_forced_final_without_tools(
+        host,
+        context,
+        request=request,
+        response=fallback_response,
+    )
+
+
+def _stream_failure_retry_diagnostics(
+    context: RunContext,
+    request: Any,
+    exc: BaseException,
+    *,
+    provider_name: str,
+    transition_reason: str,
+) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "transition_reason": transition_reason,
+        "provider": provider_name,
+        "model": getattr(request, "model", None) or "stream-model",
+        "exception_type": type(exc).__name__,
+        "exception_message": str(exc),
+        "stream_events_seen": int(
+            context.metadata.get("assistant_stream_events_seen") or 0
+        ),
+        "token_chunks_seen": int(
+            context.metadata.get("assistant_stream_token_chunks_seen") or 0
+        ),
+        "reasoning_chunks_seen": int(
+            context.metadata.get("assistant_stream_reasoning_chunks_seen") or 0
+        ),
+        "assistant_stream_started": context.metadata.get("assistant_stream_started")
+        is True,
+        "assistant_stream_completed": context.metadata.get("assistant_stream_completed")
+        is True,
+        "assistant_stream_tool_intent_seen": context.metadata.get(
+            "assistant_stream_tool_intent_seen"
+        )
+        is True,
+    }
+    chain = _exception_chain(exc)
+    if chain:
+        diagnostics["exception_chain"] = chain
+    if isinstance(exc, LlmStreamIdleTimeout):
+        diagnostics["idle_timeout_seconds"] = exc.idle_timeout_seconds
+        diagnostics["idle_timeout_emitted_chunks"] = exc.emitted_chunks
+    return diagnostics
+
+
+def _exception_chain(exc: BaseException) -> list[dict[str, str]]:
+    chain: list[dict[str, str]] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(
+            {
+                "type": type(current).__name__,
+                "message": str(current),
+            }
+        )
+        current = current.__cause__ or current.__context__
+    return chain
 
 
 async def retry_forced_final_without_tools(
@@ -277,7 +451,10 @@ def _mark_no_tool_text_form_suppression(
     request. Preserve that evidence diagnostically while removing executable
     planned calls from the final-only response.
     """
-    if context.metadata.get("force_final_answer") is not True:
+    context_metadata = getattr(context, "metadata", {})
+    if not isinstance(context_metadata, dict):
+        context_metadata = {}
+    if context_metadata.get("force_final_answer") is not True:
         return response
     tool_choice = getattr(request, "tool_choice", None)
     request_tools = getattr(request, "tools", None)

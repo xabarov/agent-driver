@@ -83,8 +83,13 @@ Live tests are opt-in and should load secrets from `.env` without printing
 them:
 
 ```bash
-AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests
+cp .env.template .env
+set -a && . ./.env && set +a
+.venv/bin/python -m pytest -m live tests
 ```
 
 Prefer deterministic fake-provider tests for CI-style regressions. Use live
 provider checks to validate product behavior, prompt quality, and tracing.
+The `.env.template` file lists the required provider variables and optional
+runtime-store knobs. Postgres-backed runtime checks need
+`AGENT_DRIVER_RUN_POSTGRES_TESTS=1` plus `AGENT_DRIVER_POSTGRES_DSN`.
