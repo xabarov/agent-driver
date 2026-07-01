@@ -45,6 +45,12 @@ REPAIR_FINAL_MISSING_SOURCE_LINKS = "final_missing_source_links"
 REPAIR_UNFINISHED_TODOS = "unfinished_todos"
 REPAIR_CHILD_SYNTHESIS_PENDING = "child_synthesis_pending"
 REPAIR_PARENT_REVIEW_PENDING = "parent_review_pending"
+# Hard-profile claim audit (opt-in: only enforced when the task contract sets
+# hard_options.enforce_claims_audit). The scaffold in research_artifacts auto
+# -derives research/claims.jsonl from the source ledger; these gates make a
+# hard run finish only once that audit carries verified support.
+REPAIR_HARD_CLAIMS_UNVERIFIED = "hard_claims_unverified"
+REPAIR_HARD_CLAIMS_UNSUPPORTED = "hard_claims_unsupported"
 
 DEEP_RESEARCH_PHASE_PLAN = "plan"
 DEEP_RESEARCH_PHASE_DISCOVER = "discover"
@@ -158,6 +164,10 @@ class ResearchSessionContract:
     plan_created: bool = False
     child_synthesis_pending: bool = False
     parent_review_pending: bool = False
+    hard_profile: bool = False
+    enforce_hard_claims: bool = False
+    claims_verified_count: int = 0
+    claims_unsupported_count: int = 0
 
     @property
     def final_readiness(self) -> ResearchFinalReadiness:
@@ -170,6 +180,8 @@ class ResearchSessionContract:
             reasons.append(REPAIR_UNFINISHED_TODOS)
         if self.requires_research:
             reasons.extend(self._research_repair_reasons())
+        if self.hard_profile and self.enforce_hard_claims:
+            reasons.extend(self._hard_claims_repair_reasons())
         if reasons:
             return ResearchFinalReadiness(
                 status=FINAL_READINESS_REPAIR_NEEDED,
@@ -202,6 +214,17 @@ class ResearchSessionContract:
             reasons.append(REPAIR_INSUFFICIENT_SOURCE_DIVERSITY)
         elif self.enforce_final_source_links and not self.final_has_source_links:
             reasons.append(REPAIR_FINAL_MISSING_SOURCE_LINKS)
+        return reasons
+
+    def _hard_claims_repair_reasons(self) -> list[str]:
+        reasons: list[str] = []
+        # No verified claim row means the claims audit is missing, empty, or
+        # carries only inaccessible/unsupported rows — the hard run has no
+        # verified evidence to stand on yet.
+        if self.claims_verified_count <= 0:
+            reasons.append(REPAIR_HARD_CLAIMS_UNVERIFIED)
+        if self.claims_unsupported_count > 0:
+            reasons.append(REPAIR_HARD_CLAIMS_UNSUPPORTED)
         return reasons
 
     def model_dump(self) -> dict[str, Any]:
@@ -244,6 +267,10 @@ def build_research_session_contract(
     source_ledger_artifact_exists: bool = False,
     child_synthesis_pending: bool = False,
     child_source_ledgers: object = None,
+    hard_profile: bool = False,
+    enforce_hard_claims: bool = False,
+    claims_verified_count: int = 0,
+    claims_unsupported_count: int = 0,
 ) -> ResearchSessionContract:
     """Build the final-readiness contract from current runtime state."""
     requires_research = (
@@ -318,6 +345,10 @@ def build_research_session_contract(
         plan_created=plan_created,
         child_synthesis_pending=child_synthesis_pending,
         parent_review_pending=parent_review_pending,
+        hard_profile=hard_profile,
+        enforce_hard_claims=enforce_hard_claims,
+        claims_verified_count=claims_verified_count,
+        claims_unsupported_count=claims_unsupported_count,
     )
 
 
@@ -352,7 +383,47 @@ def build_research_session_contract_from_context(
         ),
         child_synthesis_pending=_child_synthesis_pending(context),
         child_source_ledgers=child_source_ledgers_from_context(context),
+        **_hard_claims_state_from_context(context),
     )
+
+
+def _hard_claims_state_from_context(context: RunContext) -> dict[str, Any]:
+    """Derive the hard-profile claim-audit gate inputs from run context.
+
+    Enforcement is opt-in: ``hard_options.enforce_claims_audit`` must be set on
+    the task contract, so default hard-profile behaviour is unchanged. The
+    verified/unsupported counts come from the claims-matrix metadata recorded by
+    ``persist_deep_research_claims_matrix``.
+    """
+    task_contract = _task_contract_from_context(context)
+    hard_profile = (
+        isinstance(task_contract, dict)
+        and task_contract.get("research_profile") == "hard"
+    )
+    hard_options = (
+        task_contract.get("hard_options") if isinstance(task_contract, dict) else None
+    )
+    enforce = bool(
+        isinstance(hard_options, dict) and hard_options.get("enforce_claims_audit")
+    )
+    artifacts = context.metadata.get("deep_research_artifacts")
+    verified = unsupported = 0
+    if isinstance(artifacts, dict):
+        verified = _coerce_count(artifacts.get("claims_verified_count"))
+        unsupported = _coerce_count(artifacts.get("claims_unsupported_count"))
+    return {
+        "hard_profile": hard_profile,
+        "enforce_hard_claims": enforce,
+        "claims_verified_count": verified,
+        "claims_unsupported_count": unsupported,
+    }
+
+
+def _coerce_count(value: object) -> int:
+    try:
+        return max(0, int(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
 
 
 def has_source_links(text: str) -> bool:
@@ -918,9 +989,8 @@ def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
 
 
 def _report_artifact_confirmed_if_possible(context: RunContext) -> bool:
-    if (
-        "workspace_cwd" in context.metadata
-        or isinstance(context.metadata.get("deep_research_artifacts"), dict)
+    if "workspace_cwd" in context.metadata or isinstance(
+        context.metadata.get("deep_research_artifacts"), dict
     ):
         from agent_driver.runtime.research_artifacts import (
             deep_research_report_artifact_exists,
@@ -966,6 +1036,8 @@ __all__ = [
     "DEEP_RESEARCH_PHASE_WRITE",
     "REPAIR_FINAL_MISSING_SOURCE_LINKS",
     "REPAIR_CHILD_SYNTHESIS_PENDING",
+    "REPAIR_HARD_CLAIMS_UNSUPPORTED",
+    "REPAIR_HARD_CLAIMS_UNVERIFIED",
     "REPAIR_INSUFFICIENT_SOURCE_DIVERSITY",
     "REPAIR_MISSING_FETCHED_SOURCES",
     "REPAIR_MISSING_RESEARCH_EVIDENCE",

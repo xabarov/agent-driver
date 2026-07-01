@@ -658,6 +658,7 @@ def _update_tool_protocol_messages(
         )
     _append_denial_recovery_message(context, result, messages)
     _append_unknown_tool_recovery_message(context, result, messages)
+    _append_disallowed_management_tool_recovery_hint(context, result, messages)
     _append_python_policy_recovery_hint(context, result, messages)
     _append_tool_call_parse_error_feedback(context, result, messages)
     append_todo_progress_hint_after_substantive_tool(context, result, messages)
@@ -691,7 +692,7 @@ def _compact_tool_payload_for_protocol(
         )
         return payload
     if tool_name != "web_fetch":
-        return structured
+        return _compact_generic_tool_payload_for_protocol(structured)
     metadata = structured.get("metadata")
     compact: dict[str, Any] = {
         "untrusted_data_notice": (
@@ -713,6 +714,27 @@ def _compact_tool_payload_for_protocol(
     if isinstance(excerpt, str) and len(excerpt) > 2500:
         compact["excerpt"] = excerpt[:2500]
     return compact
+
+
+def _compact_generic_tool_payload_for_protocol(structured: dict[str, Any]) -> dict[str, Any]:
+    """Keep compact summaries visible before bulky raw-output previews."""
+    payload = dict(structured)
+    summary = payload.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        for key in ("result_summary", "observation"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                summary = value
+                payload["summary"] = value
+                break
+    if not isinstance(summary, str) or not summary.strip():
+        return payload
+    for key in ("output_preview", "output", "stdout", "stderr", "content"):
+        value = payload.get(key)
+        if isinstance(value, str) and len(value) > 1000:
+            payload[key] = value[:240].rstrip() + "\n... [raw output omitted from protocol payload; use summary/artifacts]"
+            payload[f"{key}_omitted_chars"] = len(value) - 240
+    return payload
 
 
 def _append_tool_call_parse_error_feedback(
@@ -836,6 +858,55 @@ def _append_tool_call_parse_error_feedback(
     messages.append(ChatMessage(role=ChatRole.USER, content=body))
     seen_keys_list = list(seen_keys)
     context.metadata["parse_error_feedback_sent_keys"] = seen_keys_list
+
+
+def _append_disallowed_management_tool_recovery_hint(
+    context: RunContext, result: ToolExecutionResult, messages: list[ChatMessage]
+) -> None:
+    """Append a one-shot repair hint after a disallowed management-tool denial.
+
+    A scoped node restricts ``allowed_tools`` to real executable tools; when the
+    model emits an out-of-schema management call (``todo_write`` …) the governed
+    executor denies it with ``structured_output.error_kind ==
+    'disallowed_management_tool'``. Surface a user-role hint that the tool is
+    unavailable *for this run* and list the allowed executable tools, so the
+    model retries with them instead of finalizing with "I cannot execute tools".
+    """
+    blocked: str | None = None
+    allowed: list[str] = []
+    for envelope in result.envelopes:
+        structured = envelope.structured_output
+        if not isinstance(structured, dict):
+            continue
+        if structured.get("error_kind") != "disallowed_management_tool":
+            continue
+        blocked = envelope.call.tool_name
+        raw_allowed = structured.get("allowed_tools")
+        if isinstance(raw_allowed, list):
+            allowed = [str(name) for name in raw_allowed if str(name)]
+        break
+    if blocked is None:
+        return
+    # Dedup so a model that keeps emitting management calls doesn't accrete hints.
+    sent = context.metadata.get("disallowed_management_tool_hint_sent")
+    if not isinstance(sent, list):
+        sent = []
+    if blocked in sent:
+        return
+    sent.append(blocked)
+    context.metadata["disallowed_management_tool_hint_sent"] = sent
+    allowed_text = ", ".join(allowed) if allowed else "(none configured)"
+    messages.append(
+        ChatMessage(
+            role=ChatRole.USER,
+            content=(
+                f"The tool '{blocked}' is a planning/management tool and is not "
+                "available for this run — this node executes a fixed tool "
+                "allowlist. Do not call it again and do not say you lack tools. "
+                f"Call one of the allowed executable tools now: {allowed_text}."
+            ),
+        )
+    )
 
 
 def _append_python_policy_recovery_hint(

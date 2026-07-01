@@ -662,6 +662,115 @@ def test_policy_denies_explicit_denied_tool() -> None:
     assert outcome.decision.value == "deny"
 
 
+def test_policy_empty_allowlist_denies_every_tool() -> None:
+    """An explicit empty allowlist means no tools, not unrestricted tools."""
+    call = ToolCall(tool_name="lookup")
+    manifest = ToolManifest(name="lookup", description="Lookup")
+    outcome = evaluate_tool_policy(
+        policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            allowed_tools=[],
+        ),
+        manifest=manifest,
+        call=call,
+        current_tool_calls=0,
+    )
+    assert outcome.decision.value == "deny"
+    assert "not in allowed_tools" in outcome.reason
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_empty_allowlist_blocks_handler() -> None:
+    """Executor must enforce allowed_tools=[] even if a call is planned."""
+    registry = ToolRegistry()
+    called = False
+
+    async def _lookup(_args):
+        nonlocal called
+        called = True
+        return {"summary": "ran"}
+
+    registry.register(
+        ToolManifest(
+            name="lookup",
+            description="Lookup",
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.READ_ONLY,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _lookup,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="hello",
+        run_id="run_empty_allowlist_blocks",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            allowed_tools=[],
+        ),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(planned=[ToolCall(tool_name="lookup", args={})])
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert called is False
+    assert result.traces[0].status.value == "denied"
+    assert result.traces[0].error_code == "policy_denied"
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_allowlist_blocks_sibling_tool() -> None:
+    """A scoped allowlist must deny sibling tools planned out of schema."""
+    registry = ToolRegistry()
+    called: list[str] = []
+
+    async def _tool(args):
+        called.append(str(args["tool"]))
+        return {"summary": "ran"}
+
+    for name in ("dalfox", "xsser"):
+        registry.register(
+            ToolManifest(
+                name=name,
+                description=f"{name} scanner",
+                risk=ToolRisk.LOW,
+                side_effect=SideEffectClass.READ_ONLY,
+                approval_mode=ApprovalMode.NEVER,
+            ),
+            _tool,
+        )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="run dalfox only",
+        run_id="run_allowlist_blocks_sibling",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            allowed_tools=["dalfox"],
+        ),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[ToolCall(tool_name="xsser", args={"tool": "xsser"})]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert called == []
+    assert result.traces[0].tool_name == "xsser"
+    assert result.traces[0].status.value == "denied"
+    assert result.traces[0].error_code == "policy_denied"
+    assert "not in allowed_tools" in (result.envelopes[0].error.message or "")
+
+
 def test_policy_force_planning_denies_write_without_approved_plan() -> None:
     """Force planning should block side-effecting tools until a plan is approved."""
     call = ToolCall(tool_name="file_write")

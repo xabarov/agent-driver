@@ -24,6 +24,34 @@ class CodeAgentStageResult:
     has_final_answer: bool = False
 
 
+def _code_failure_result(
+    *,
+    action: Any,
+    context: Any,
+    summary: str,
+    error_code: str,
+) -> CodeAgentStageResult:
+    """Build a FAILED code-action stage result (interpreter or runtime error)."""
+    envelope = ToolResultEnvelope(
+        call=ToolCall(tool_name="code_action", args={"action_id": action.action_id}),
+        summary=summary,
+        metadata={"phase": "code_agent"},
+    )
+    trace = ToolTrace(
+        step=context.tool_calls + 1,
+        tool_name="code_action",
+        status=ToolTraceStatus.FAILED,
+        risk=ToolRisk.MEDIUM,
+        side_effect=SideEffectClass.READ_ONLY,
+        approval_mode=ApprovalMode.NEVER,
+        result_summary=summary,
+        error_code=error_code,
+    )
+    return CodeAgentStageResult(
+        envelopes=[envelope], traces=[trace], has_final_answer=False
+    )
+
+
 def _called_tool_names(code: str) -> set[str]:
     """Extract direct callable names referenced in code action."""
     try:
@@ -81,25 +109,24 @@ async def run_code_agent_stage(
             callable_tools=callable_tools,
         )
     except CodeExecutionError as exc:
-        envelope = ToolResultEnvelope(
-            call=ToolCall(
-                tool_name="code_action", args={"action_id": action.action_id}
-            ),
+        # Canonical interpreter-error path: keep the rich error context.
+        return _code_failure_result(
+            action=action,
+            context=context,
             summary=f"interpreter_error: {exc}",
-            metadata={"phase": "code_agent"},
-        )
-        trace = ToolTrace(
-            step=context.tool_calls + 1,
-            tool_name="code_action",
-            status=ToolTraceStatus.FAILED,
-            risk=ToolRisk.MEDIUM,
-            side_effect=SideEffectClass.READ_ONLY,
-            approval_mode=ApprovalMode.NEVER,
-            result_summary=envelope.summary,
             error_code="interpreter_error",
         )
-        return CodeAgentStageResult(
-            envelopes=[envelope], traces=[trace], has_final_answer=False
+    except Exception as exc:  # noqa: BLE001 - the executor is the trust boundary
+        # Any other exception raised inside the executor (a tool called via
+        # code_action raising KeyError/TypeError/network, a serialization fault,
+        # etc.) is a tool failure, not a runtime bug — produce a FAILED trace
+        # instead of crashing the whole run. Redact to the exception type so a
+        # raw message can't leak untrusted internals into the summary.
+        return _code_failure_result(
+            action=action,
+            context=context,
+            summary=f"code_runtime_error: {type(exc).__name__}",
+            error_code="code_runtime_error",
         )
     envelope = ToolResultEnvelope(
         call=ToolCall(tool_name="code_action", args={"action_id": action.action_id}),

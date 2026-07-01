@@ -105,6 +105,7 @@ PUBLIC_CONTRACT_FIELD_SNAPSHOTS: dict[str, tuple[str, ...]] = {
         "always_load",
         "aliases",
         "max_result_size_chars",
+        "success_field",
         "args_schema",
         "output_type",
         "output_schema",

@@ -71,6 +71,70 @@ def _build_registry(*names: str) -> ToolRegistry:
     return registry
 
 
+def _build_structured_finding_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+
+    async def _handler(args):
+        return {
+            "summary": "scan completed",
+            "findings": [
+                {
+                    "type": "vulnerability",
+                    "vulnerability_id": "CVE-2020-1747",
+                    "package": "PyYAML",
+                    "installed_version": "5.1",
+                    "fixed_version": "5.3.1",
+                    "target": args.get("target", "unknown"),
+                }
+            ],
+            "targets": [{"host": args.get("target", "unknown")}],
+            "metrics": {"findings": 1, "targets": 1},
+        }
+
+    registry.register(_lookup_manifest("lookup_a"), _handler)
+    return registry
+
+
+def _build_storage_finding_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+
+    async def _handler(_args):
+        return {
+            "summary": "s3scanner checked 2 bucket(s).",
+            "findings": [
+                {
+                    "type": "s3_bucket",
+                    "bucket": "zionlab-priv",
+                    "exists": "exists",
+                    "provider": "custom",
+                    "public_read": False,
+                    "public_write": False,
+                    "public_full_control": False,
+                    "objects_enumerated": False,
+                },
+                {
+                    "type": "s3_bucket",
+                    "bucket": "zionlab-pub",
+                    "exists": "exists",
+                    "provider": "custom",
+                    "public_read": True,
+                    "public_write": False,
+                    "public_full_control": False,
+                    "objects_enumerated": True,
+                },
+            ],
+            "targets": ["zionlab-priv", "zionlab-pub"],
+            "metrics": {
+                "buckets_reported": 2,
+                "buckets_existing": 2,
+                "public_read_buckets": 1,
+            },
+        }
+
+    registry.register(_lookup_manifest("lookup_a"), _handler)
+    return registry
+
+
 def _runner(registry: ToolRegistry, provider: FakeProvider, **config_kwargs):
     return FakeSingleStepRunner(
         provider=provider,
@@ -221,6 +285,26 @@ class _ImmediateToolProvider(FakeProvider):
         return _text_response("done")
 
 
+class _DiscoveryThenRequiredToolProvider(FakeProvider):
+    """Calls discovery, tries to finalize, then obeys the required-tool reprompt."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.calls = 0
+        self.user_texts: list[str] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.calls += 1
+        self.user_texts.append(
+            " ".join(m.content for m in request.messages if m.role == "user")
+        )
+        if self.calls == 1:
+            return _tool_call_response("lookup_a", target="example-input-x")
+        if self.calls == 2:
+            return _text_response("I found lookup_a results; finalizing now.")
+        return _tool_call_response("lookup_b", target="example-input-x")
+
+
 @pytest.mark.asyncio
 async def test_prelude_injected_into_system_prompt() -> None:
     """The proactive prelude names the callable tools + target on turn 1."""
@@ -238,6 +322,58 @@ async def test_prelude_injected_into_system_prompt() -> None:
     assert "lookup_a" in first_system
     assert "culmen.com" in first_system
     assert "tool-using workflow node" in first_system
+
+
+@pytest.mark.asyncio
+async def test_required_completed_tool_reprompts_before_final_answer() -> None:
+    """A discovery-only tool call does not satisfy a required terminal tool."""
+    provider = _DiscoveryThenRequiredToolProvider()
+    runner = _runner(_build_registry("lookup_a", "lookup_b"), provider)
+    output = await runner.run(
+        _run_input(
+            NodeContract(
+                require_tool_use=True,
+                require_completed_tools=["lookup_b"],
+                finalize_when_tools=["lookup_b"],
+                max_tool_use_reprompts=1,
+            ),
+            run_id="run_required_tool",
+        )
+    )
+
+    assert output.status.value == "completed"
+    assert provider.calls == 3
+    assert any(t.tool_name == "lookup_a" for t in output.tool_trace)
+    assert any(t.tool_name == "lookup_b" for t in output.tool_trace)
+    summary = output.metadata["node_contract"]
+    assert summary["require_completed_tools"] == ["lookup_b"]
+    assert summary["reprompts"] == 1
+    assert summary["violation"] is None
+    assert summary["early_finalize_reason"] == "finalize_when_tools_satisfied"
+    assert "lookup_b" in output.answer
+    assert "required tool(s) have not completed successfully" in provider.user_texts[-1]
+
+
+@pytest.mark.asyncio
+async def test_missing_required_completed_tool_stamps_violation() -> None:
+    """Persistent premature finalization is a typed missing-required-tools violation."""
+    provider = _AlwaysProseProvider()
+    runner = _runner(_build_registry("lookup_a", "lookup_b"), provider)
+    output = await runner.run(
+        _run_input(
+            NodeContract(
+                require_completed_tools=["lookup_b"],
+                max_tool_use_reprompts=1,
+            ),
+            run_id="run_missing_required_tool",
+        )
+    )
+
+    violation = output.metadata["node_contract"]["violation"]
+    assert violation["kind"] == "missing_required_tools"
+    assert violation["missing_tools"] == ["lookup_b"]
+    assert violation["reprompts"] == 1
+    assert provider.calls == 2
 
 
 # --- Layer A: policy↔registry mismatch surfaces a structured warning -----------
@@ -284,6 +420,50 @@ async def test_finalize_when_tools_skips_extra_llm_continuation() -> None:
         for row in summary["executed_tools"]
     )
     assert output.answer and "lookup_a" in output.answer
+
+
+@pytest.mark.asyncio
+async def test_finalize_when_tools_answer_includes_structured_evidence() -> None:
+    """Early finalization should produce an answer-ready summary, not a generic stub."""
+    provider = _ImmediateToolProvider()
+    runner = _runner(_build_structured_finding_registry(), provider)
+    output = await runner.run(
+        _run_input(
+            NodeContract(finalize_when_tools=["lookup_a"]),
+            allowed=["lookup_a"],
+            run_id="run_finalize_structured",
+        )
+    )
+
+    assert output.status.value == "completed"
+    assert provider.calls == 1
+    assert output.answer.startswith("Tool evidence summary:")
+    assert "Completed via tool execution" not in output.answer
+    assert "CVE-2020-1747" in output.answer
+    assert "PyYAML" in output.answer
+    assert "findings=1" in output.answer
+
+
+@pytest.mark.asyncio
+async def test_finalize_when_tools_answer_includes_storage_finding_fields() -> None:
+    """Early finalization should keep typed finding identity, not only finding types."""
+    provider = _ImmediateToolProvider()
+    runner = _runner(_build_storage_finding_registry(), provider)
+    output = await runner.run(
+        _run_input(
+            NodeContract(finalize_when_tools=["lookup_a"]),
+            allowed=["lookup_a"],
+            run_id="run_finalize_storage_structured",
+        )
+    )
+
+    assert output.status.value == "completed"
+    assert output.answer.startswith("Tool evidence summary:")
+    assert "zionlab-pub" in output.answer
+    assert "public_read=True" in output.answer
+    assert "zionlab-priv" in output.answer
+    assert "public_read=False" in output.answer
+    assert "public_read_buckets=1" in output.answer
 
 
 # --- Layer C: on_tool_evidence host hook finalizes now --------------------------

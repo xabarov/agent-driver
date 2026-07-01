@@ -1,5 +1,6 @@
 """Shared Agent Skills parsing, listing and viewing helpers."""
 
+from agent_driver.skills.curated import CURATED_RESEARCH_SKILL_NAMES, curated_skills_dir
 from agent_driver.skills.models import SkillInvocation, SkillManifest
 from agent_driver.skills.parser import (
     SKILL_FILENAME,
@@ -14,7 +15,7 @@ from agent_driver.skills.registry import (
     skill_manifest_payload,
     view_skill,
 )
-from agent_driver.skills.curated import CURATED_RESEARCH_SKILL_NAMES, curated_skills_dir
+from agent_driver.skills.render import render_skill_entry
 
 __all__ = [
     "SKILL_FILENAME",
@@ -27,6 +28,7 @@ __all__ = [
     "list_skill_manifests",
     "load_skill_manifest",
     "parse_frontmatter",
+    "render_skill_entry",
     "skill_manifest_payload",
     "split_frontmatter",
     "view_skill",

@@ -27,6 +27,7 @@ from agent_driver.tools.builtin.web_common import (
     _extract_mode,
     _extract_og_metadata,
     _extract_payload_text,
+    _extract_pdf_text,
     _fetch_url_bytes_with_retry,
     _fetch_url_text,
     _fetch_url_text_with_retry,
@@ -250,9 +251,10 @@ def _pdf_read_manifest() -> ToolManifest:
     return ToolManifest(
         name=_PDF_READ_TOOL,
         description=(
-            "Validate and read a PDF source for hard Deep Research. Returns "
-            "structured PDF status and page-range citation hints; PDFs without "
-            "extractable text are not treated as verified text evidence."
+            "Validate and read a PDF source for hard Deep Research. Extracts "
+            "page-aware text when the optional [pdf] extra is installed and "
+            "returns per-page citations; scanned PDFs, missing extractor, or "
+            "PDFs without extractable text are not treated as verified evidence."
         ),
         risk=ToolRisk.MEDIUM,
         side_effect=SideEffectClass.EXTERNAL_ACTION,
@@ -512,47 +514,72 @@ async def _pdf_read_handler(args: dict[str, Any]) -> dict[str, Any]:
             detail="missing PDF magic bytes",
             status_code=status_code,
         )
-    extracted = str(args.get("mock_extracted_text") or "")
-    if not extracted.strip():
-        return {
-            "summary": (
-                f"pdf_read validated {url} but text extraction is unavailable; "
-                "do not treat this PDF as verified textual evidence."
+    mock_extracted = str(args.get("mock_extracted_text") or "")
+    if mock_extracted.strip():
+        return _pdf_verified_payload(
+            url=url,
+            status_code=status_code,
+            page_start=page_start,
+            page_end=page_end,
+            bytes_total=bytes_total,
+            bytes_loaded=len(data),
+            text=mock_extracted,
+            page_citations=[
+                {"page": page, "url": url} for page in range(page_start, page_end + 1)
+            ],
+        )
+    extraction = _extract_pdf_text(data, page_start=page_start, page_end=page_end)
+    if extraction is None:
+        return _pdf_unverified_payload(
+            url=url,
+            status_code=status_code,
+            page_start=page_start,
+            page_end=page_end,
+            bytes_total=bytes_total,
+            bytes_loaded=len(data),
+            error="text_extraction_unavailable",
+            summary=(
+                f"pdf_read validated {url} but text extraction is unavailable "
+                "(install the [pdf] extra); do not treat this PDF as verified "
+                "textual evidence."
             ),
-            "url": url,
-            "status_code": status_code,
-            "pdf_read": True,
-            "source_kind": "pdf",
-            "status": "partial",
-            "page_start": page_start,
-            "page_end": page_end,
-            "bytes_total": bytes_total,
-            "bytes_loaded": len(data),
-            "text": "",
-            "excerpt": "",
-            "page_citations": [],
-            "verified_text": False,
-            "error": "text_extraction_unavailable",
-        }
-    excerpt = extracted[:_WEB_FETCH_EXCERPT_CHARS]
-    return {
-        "summary": f"pdf_read extracted text from {url} pages {page_start}-{page_end}",
-        "url": url,
-        "status_code": status_code,
-        "pdf_read": True,
-        "source_kind": "pdf",
-        "status": "verified",
-        "page_start": page_start,
-        "page_end": page_end,
-        "bytes_total": bytes_total,
-        "bytes_loaded": len(data),
-        "text": extracted,
-        "excerpt": excerpt,
-        "page_citations": [
-            {"page": page, "url": url} for page in range(page_start, page_end + 1)
-        ],
-        "verified_text": True,
-    }
+        )
+    if extraction.parse_error:
+        return _pdf_error_payload(
+            url=url,
+            page_start=page_start,
+            page_end=page_end,
+            error="pdf_parse_failed",
+            detail=extraction.parse_error,
+            status_code=status_code,
+        )
+    if not extraction.has_text:
+        return _pdf_unverified_payload(
+            url=url,
+            status_code=status_code,
+            page_start=page_start,
+            page_end=page_end,
+            bytes_total=bytes_total,
+            bytes_loaded=len(data),
+            error="no_extractable_text",
+            summary=(
+                f"pdf_read validated {url} but found no extractable text "
+                "(likely a scanned PDF); do not treat this PDF as verified "
+                "textual evidence."
+            ),
+        )
+    pages_with_text = [(page, text) for page, text in extraction.pages if text.strip()]
+    return _pdf_verified_payload(
+        url=url,
+        status_code=status_code,
+        page_start=pages_with_text[0][0],
+        page_end=pages_with_text[-1][0],
+        bytes_total=bytes_total,
+        bytes_loaded=len(data),
+        text="\n\n".join(text for _, text in pages_with_text),
+        page_citations=[{"page": page, "url": url} for page, _ in pages_with_text],
+        total_pages=extraction.total_pages,
+    )
 
 
 async def _browser_read_handler(args: dict[str, Any]) -> dict[str, Any]:
@@ -577,6 +604,69 @@ async def _browser_read_handler(args: dict[str, Any]) -> dict[str, Any]:
         "rendered": False,
         "browser_action_allowed": False,
         "screenshot_artifact": None,
+    }
+
+
+def _pdf_verified_payload(
+    *,
+    url: str,
+    status_code: int | None,
+    page_start: int,
+    page_end: int,
+    bytes_total: int,
+    bytes_loaded: int,
+    text: str,
+    page_citations: list[dict[str, Any]],
+    total_pages: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "summary": f"pdf_read extracted text from {url} pages {page_start}-{page_end}",
+        "url": url,
+        "status_code": status_code,
+        "pdf_read": True,
+        "source_kind": "pdf",
+        "status": "verified",
+        "page_start": page_start,
+        "page_end": page_end,
+        "bytes_total": bytes_total,
+        "bytes_loaded": bytes_loaded,
+        "text": text,
+        "excerpt": text[:_WEB_FETCH_EXCERPT_CHARS],
+        "page_citations": page_citations,
+        "verified_text": True,
+    }
+    if total_pages is not None:
+        payload["total_pages"] = total_pages
+    return payload
+
+
+def _pdf_unverified_payload(
+    *,
+    url: str,
+    status_code: int | None,
+    page_start: int,
+    page_end: int,
+    bytes_total: int,
+    bytes_loaded: int,
+    error: str,
+    summary: str,
+) -> dict[str, Any]:
+    return {
+        "summary": summary,
+        "url": url,
+        "status_code": status_code,
+        "pdf_read": True,
+        "source_kind": "pdf",
+        "status": "partial",
+        "page_start": page_start,
+        "page_end": page_end,
+        "bytes_total": bytes_total,
+        "bytes_loaded": bytes_loaded,
+        "text": "",
+        "excerpt": "",
+        "page_citations": [],
+        "verified_text": False,
+        "error": error,
     }
 
 

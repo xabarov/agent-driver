@@ -49,6 +49,16 @@ _CODE_AGENT_FIELDS = {item.name for item in fields(CodeAgentSettings)}
 _PYTHON_TOOL_FIELDS = {item.name for item in fields(PythonToolSettings)}
 _CAPABILITY_FIELDS = {item.name for item in fields(CapabilitySettings)}
 
+# Defensive backstop on the agent step loop. A run whose model never emits a
+# final answer (e.g. a tool that always fails, or a tool-calling spiral) would
+# otherwise loop forever, because AgentRunInput.max_steps/max_tool_calls/
+# deadline all default to None. This config-level default applies ONLY when the
+# run's own max_steps is None, so any explicit per-run budget still wins. Set
+# RunnerConfig(default_max_steps=None) to opt back into a fully unbounded loop.
+# Chosen high enough to never truncate legitimate deep/agentic runs (reference
+# runtimes cap at 50-90 iterations); this is a safety net, not a tight budget.
+DEFAULT_MAX_STEPS_BACKSTOP = 80
+
 
 @dataclass(init=False)
 class RunnerConfig:
@@ -71,6 +81,9 @@ class RunnerConfig:
     context_store: ContextStore | None
     observation_max_chars: int
     include_planning_prompt: bool
+    default_max_steps: int | None
+    budget_grace_enabled: bool
+    defer_primer: Callable[[Any], Any] | None
     subagent_store: SubagentStore | None
     subagent_mailbox_store: SubagentMailboxStore | None
     code_executor: CodeActionExecutor | None
@@ -129,6 +142,19 @@ class RunnerConfig:
         self.context_store = kwargs.pop("context_store", None)
         self.observation_max_chars = kwargs.pop("observation_max_chars", 400)
         self.include_planning_prompt = kwargs.pop("include_planning_prompt", False)
+        self.default_max_steps = kwargs.pop(
+            "default_max_steps", DEFAULT_MAX_STEPS_BACKSTOP
+        )
+        # When a soft budget (max_steps / max_tool_calls / cost) is exhausted,
+        # grant one forced-final synthesis turn (tools disabled) so the run can
+        # return a best-effort answer instead of a bare FAILED with an empty
+        # answer. Set False to restore the hard-fail-on-budget behaviour.
+        self.budget_grace_enabled = kwargs.pop("budget_grace_enabled", True)
+        # Optional defer primer: a ``Callable[[DeferPrimerInput], Iterable[str]]``
+        # that, before each LLM step, selects which currently-deferred tools to
+        # surface into the schema list (see ``llm_step.defer_primer``). None
+        # (default) keeps the pure ``tool_search``-only deferral behaviour.
+        self.defer_primer = kwargs.pop("defer_primer", None)
         self.subagent_store = kwargs.pop("subagent_store", None)
         self.subagent_mailbox_store = kwargs.pop("subagent_mailbox_store", None)
         self.code_executor = kwargs.pop("code_executor", None)

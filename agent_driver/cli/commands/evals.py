@@ -119,6 +119,11 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
             "serial",
             "parallel",
         ),
+        "budget_grace": (
+            lambda t: RunnerConfig(budget_grace_enabled=t),
+            "grace_off",
+            "grace_on",
+        ),
     }
     if axis not in axes:
         print(f"eval compare error: unknown --treatment axis {axis!r}")

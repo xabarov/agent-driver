@@ -26,10 +26,6 @@ from agent_driver.runtime.single_agent.research.gating import (
     _maybe_build_continuation_transition,
     _tool_gate_for_context,
 )
-
-# Hard backstop on goal-gate (rubric) revision loops, independent of any
-# hook's own iteration budget — prevents an always-revising hook from looping.
-_MAX_RUBRIC_REVISIONS = 10
 from agent_driver.runtime.single_agent.tool_stage import execute_tool_stage_step
 from agent_driver.runtime.single_agent.tool_stage.subagent_execution import (
     maybe_execute_subagent_group,
@@ -43,6 +39,10 @@ from agent_driver.runtime.single_agent.types import (
     TerminalResult,
 )
 from agent_driver.runtime.tools import ToolExecutionResult
+
+# Hard backstop on goal-gate (rubric) revision loops, independent of any
+# hook's own iteration budget — prevents an always-revising hook from looping.
+_MAX_RUBRIC_REVISIONS = 10
 
 
 class SingleAgentStepMixin:
@@ -161,7 +161,11 @@ class SingleAgentStepMixin:
         policy = run_input.tool_policy
         surfaced = effective_tool_names_from_registry(
             registry,
-            allowed=tuple(policy.allowed_tools) if policy.allowed_tools else None,
+            allowed=(
+                tuple(policy.allowed_tools)
+                if policy.allowed_tools is not None
+                else None
+            ),
             denied=tuple(policy.denied_tools) if policy.denied_tools else None,
         )
         prelude = nc.build_prelude(run_input, surfaced)
@@ -278,6 +282,16 @@ class SingleAgentStepMixin:
             self._save_checkpoint(context, latest_output=None, node_id="finalize")
             self._maybe_fail_after_step("finalize")
             return node_contract_reprompt
+        node_contract_reprompt = self._maybe_node_contract_required_tools_reprompt(context)
+        if node_contract_reprompt is not None:
+            context.step_count += 1
+            get_loop_control_state(context).set_step_transition(
+                next_step="llm_call",
+                tool_calls=context.tool_calls,
+            )
+            self._save_checkpoint(context, latest_output=None, node_id="finalize")
+            self._maybe_fail_after_step("finalize")
+            return node_contract_reprompt
         terminal_answer = self._sanitize_terminal_answer(context)
         if terminal_answer:
             completed_payload["answer"] = terminal_answer
@@ -362,6 +376,30 @@ class SingleAgentStepMixin:
             context,
             text=text or "",
             nudge=nc.build_tool_use_reprompt(context.run_input),
+            reason=nc._REPROMPT_REASON,
+            count_key=nc.TOOL_USE_REPROMPT_COUNT_KEY,
+        )
+
+    def _maybe_node_contract_required_tools_reprompt(
+        self, context: RunContext
+    ) -> RuntimeStepResult | None:
+        """Reactive guard: require declared terminal tools before finalization."""
+        from agent_driver.runtime.single_agent import node_contract as nc
+
+        if not nc.required_tools_violation_pending(context):
+            return None
+        if not nc.reprompt_budget_remaining(context):
+            nc.stamp_required_tools_violation(context)
+            return None
+        text = (
+            context.llm_response.message.content
+            if context.llm_response is not None
+            else ""
+        )
+        return _build_continuation_transition(
+            context,
+            text=text or "",
+            nudge=nc.build_required_tools_reprompt(context),
             reason=nc._REPROMPT_REASON,
             count_key=nc.TOOL_USE_REPROMPT_COUNT_KEY,
         )

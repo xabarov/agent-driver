@@ -28,6 +28,9 @@ from agent_driver.runtime.single_agent.llm import (
     _request_tools_from_registry,
     build_single_agent_llm_request,
 )
+from agent_driver.runtime.single_agent.llm_step.build import (
+    effective_tool_names_from_registry,
+)
 
 
 def _manifest(name: str) -> ToolManifest:
@@ -77,6 +80,12 @@ def test_empty_allowed_tuple_returns_no_tools() -> None:
     registry = _FakeRegistry(["a", "b"])
     tools = _request_tools_from_registry(registry, allowed=())
     assert tools == []
+
+
+def test_effective_tool_names_empty_allowed_tuple_returns_no_tools() -> None:
+    """Prelude/tool-name helpers preserve explicit empty allowlists."""
+    registry = _FakeRegistry(["a", "b"])
+    assert effective_tool_names_from_registry(registry, allowed=()) == ()
 
 
 def test_denied_tuple_strips_named_tools() -> None:

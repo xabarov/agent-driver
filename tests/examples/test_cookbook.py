@@ -11,6 +11,24 @@ import pytest
 _COOKBOOK = Path(__file__).resolve().parents[2] / "examples" / "cookbook"
 _SCRIPTS = sorted(p.name for p in _COOKBOOK.glob("[0-9]*.py"))
 
+# Top-level modules shipped only by optional `[extra]` installs. An example that
+# imports one of these should be skipped — not failed — when the extra is absent,
+# so the suite still runs on a base install. A ModuleNotFoundError for anything
+# *not* in this set is a real breakage and must surface.
+_OPTIONAL_MODULES = frozenset(
+    {
+        "acp",  # [acp]
+        "starlette",  # [server]
+        "uvicorn",  # [server]
+        "psycopg",  # [postgres]
+        "prompt_toolkit",  # [cli]
+        "rich",  # [cli]
+        "instructor",  # [instructor]
+        "opentelemetry",  # observability extra
+        "playwright",  # [dev]
+    }
+)
+
 
 def _load_main(script: str):
     spec = importlib.util.spec_from_file_location(
@@ -18,7 +36,12 @@ def _load_main(script: str):
     )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except ModuleNotFoundError as exc:
+        if exc.name in _OPTIONAL_MODULES:
+            pytest.skip(f"optional dependency {exc.name!r} not installed")
+        raise
     return module.main
 
 

@@ -9,9 +9,8 @@ are unaffected.
   ``finalize_when_tools`` against the live registry so a policy↔registry mismatch
   surfaces as a structured warning instead of an empty result.
 * **Layer B** — ``build_prelude`` (proactive, woven into the system prompt by
-  :class:`NodeContractLifecycleHook`) plus ``tool_use_violation_pending`` /
-  ``build_tool_use_reprompt`` / ``stamp_no_tool_use_violation`` (reactive guard in
-  the finalize step) turn a zero-tool-call finalize into a recoverable reprompt and
+  :class:`NodeContractLifecycleHook`) plus the reactive finalize guards turn a
+  zero-tool-call or missing-required-tool finalize into a recoverable reprompt and
   then a typed violation — never a silent generic reply.
 * **Layer C** — ``declarative_finalize_satisfied`` and the ``on_tool_evidence`` hook
   let a run finalize directly from tool evidence with no extra LLM continuation;
@@ -21,7 +20,7 @@ are unaffected.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from agent_driver.runtime.lifecycle_hooks import BaseRunLifecycleHook
 from agent_driver.runtime.metadata_state import get_tool_loop_state
@@ -71,6 +70,7 @@ def unsatisfiable_tool_names(
     declared: list[str] = []
     declared.extend(run_input.tool_policy.allowed_tools or [])
     declared.extend(contract.finalize_when_tools)
+    declared.extend(contract.require_completed_tools)
     return [
         name
         for name in dict.fromkeys(str(item) for item in declared)
@@ -118,6 +118,12 @@ def build_prelude(
         )
     if contract.task_hint:
         lines.append(f"Task: {contract.task_hint}.")
+    if contract.require_completed_tools:
+        required = ", ".join(str(name) for name in contract.require_completed_tools)
+        lines.append(
+            "Do not finalize until these required tool(s) have completed successfully: "
+            f"{required}."
+        )
     return "\n".join(lines)
 
 
@@ -142,12 +148,37 @@ def inject_system_prelude(request: "LlmRequest", prelude: str) -> "LlmRequest":
 
 
 # --- Layer B: reactive reprompt + escalation -----------------------------------
+def _is_disallowed_management_denial(item: dict) -> bool:
+    """Whether a tool result is a denied out-of-allowlist management call."""
+    structured = item.get("structured_output")
+    return (
+        isinstance(structured, dict)
+        and structured.get("error_kind") == "disallowed_management_tool"
+    )
+
+
+def meaningful_tool_call_count(context: "RunContext") -> int:
+    """Tool calls that count as real tool-use progress.
+
+    Excludes denied out-of-allowlist *management* calls (``todo_write`` …): a
+    model that only emits a disallowed ``todo_write`` has made no progress on the
+    node's assigned executable tools, so that denial alone must not satisfy
+    ``require_tool_use`` or unlock finalization. A genuine attempt at an allowed
+    tool (even if it errors) still counts, preserving prior behaviour.
+    """
+    return sum(
+        1
+        for item in get_tool_loop_state(context).tool_results()
+        if not _is_disallowed_management_denial(item)
+    )
+
+
 def tool_use_violation_pending(context: "RunContext") -> bool:
-    """``require_tool_use`` is on and the run is about to finalize with zero calls."""
+    """``require_tool_use`` is on and no meaningful tool call has been made yet."""
     contract = context.run_input.node_contract
     if not contract.require_tool_use:
         return False
-    return context.tool_calls == 0
+    return meaningful_tool_call_count(context) == 0
 
 
 def reprompt_budget_remaining(context: "RunContext") -> bool:
@@ -180,6 +211,58 @@ def stamp_no_tool_use_violation(context: "RunContext") -> dict:
             "node contract requires tool use but the run finalized with zero tool "
             "calls after exhausting reprompts"
         ),
+        "reprompts": int(context.metadata.get(TOOL_USE_REPROMPT_COUNT_KEY, 0)),
+        "max_reprompts": context.run_input.node_contract.max_tool_use_reprompts,
+    }
+    context.metadata[NODE_CONTRACT_VIOLATION_KEY] = violation
+    return violation
+
+
+def missing_required_tools(context: "RunContext") -> list[str]:
+    """Required terminal tools that have not produced a successful envelope."""
+    contract = context.run_input.node_contract
+    if not contract.require_completed_tools:
+        return []
+    succeeded = successful_tool_names(context)
+    return [
+        name
+        for name in dict.fromkeys(str(item) for item in contract.require_completed_tools)
+        if name and name not in succeeded
+    ]
+
+
+def required_tools_violation_pending(context: "RunContext") -> bool:
+    """Whether finalization is blocked by missing required completed tools."""
+    return bool(missing_required_tools(context))
+
+
+def build_required_tools_reprompt(context: "RunContext") -> str:
+    """Nudge text requiring the missing terminal tool(s) before finalization."""
+    missing = missing_required_tools(context)
+    missing_text = ", ".join(missing)
+    lines = [
+        "This node cannot finalize yet because required tool(s) have not completed "
+        f"successfully: {missing_text}. Call the missing required tool(s) now. "
+        "Do not answer in prose until the required tool evidence exists.",
+    ]
+    contract = context.run_input.node_contract
+    if contract.target:
+        lines.append(f"Target: `{contract.target}` (already known — do not ask).")
+    if contract.task_hint:
+        lines.append(f"Task: {contract.task_hint}.")
+    return " ".join(lines)
+
+
+def stamp_required_tools_violation(context: "RunContext") -> dict:
+    """Record a typed missing-required-tools violation on metadata."""
+    missing = missing_required_tools(context)
+    violation = {
+        "kind": "missing_required_tools",
+        "detail": (
+            "node contract requires specific completed tools but the run finalized "
+            "without successful evidence from all required tools after exhausting reprompts"
+        ),
+        "missing_tools": missing,
         "reprompts": int(context.metadata.get(TOOL_USE_REPROMPT_COUNT_KEY, 0)),
         "max_reprompts": context.run_input.node_contract.max_tool_use_reprompts,
     }
@@ -240,6 +323,146 @@ def executed_tools_summary(context: "RunContext") -> list[dict]:
     return rows
 
 
+def _clean_answer_fragment(value: Any, *, max_chars: int = 180) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = " ".join(text.split())
+    if len(text) > max_chars:
+        return text[: max_chars - 3].rstrip() + "..."
+    return text
+
+
+def _compact_mapping(mapping: dict[str, Any], *, keys: Sequence[str]) -> str:
+    parts: list[str] = []
+    for key in keys:
+        value = mapping.get(key)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, list):
+            text = ", ".join(
+                _clean_answer_fragment(item, max_chars=80)
+                for item in value[:4]
+                if _clean_answer_fragment(item, max_chars=80)
+            )
+        elif isinstance(value, bool):
+            text = str(value)
+        else:
+            text = _clean_answer_fragment(value, max_chars=120)
+        if text:
+            parts.append(f"{key}={text}")
+        if len(parts) >= 6:
+            break
+    return ", ".join(parts)
+
+
+def _compact_structured_finding(finding: Any) -> str:
+    if isinstance(finding, dict):
+        ftype = _clean_answer_fragment(
+            finding.get("type") or finding.get("kind") or finding.get("name"),
+            max_chars=60,
+        )
+        details = _compact_mapping(
+            finding,
+            keys=(
+                "vulnerability_id",
+                "template_id",
+                "severity",
+                "title",
+                "package",
+                "installed_version",
+                "fixed_version",
+                "parameter",
+                "url",
+                "target",
+                "host",
+                "asset",
+                "bucket",
+                "exists",
+                "provider",
+                "public_read",
+                "public_write",
+                "public_full_control",
+                "objects_enumerated",
+                "service",
+                "status",
+                "value",
+            ),
+        )
+        if ftype and details:
+            return f"{ftype}: {details}"
+        return ftype or details
+    return _clean_answer_fragment(finding)
+
+
+def _compact_structured_output(structured: Any) -> list[str]:
+    if not isinstance(structured, dict):
+        return []
+    parts: list[str] = []
+    for key in ("summary", "result_summary", "observation"):
+        text = _clean_answer_fragment(structured.get(key), max_chars=240)
+        if text:
+            parts.append(text)
+            break
+    findings = structured.get("findings")
+    if isinstance(findings, list) and findings:
+        compact = [
+            item
+            for item in (_compact_structured_finding(finding) for finding in findings[:5])
+            if item
+        ]
+        if compact:
+            parts.append(f"findings: {'; '.join(compact)}")
+    targets = structured.get("targets")
+    if isinstance(targets, list) and targets:
+        compact_targets = []
+        for target in targets[:5]:
+            if isinstance(target, dict):
+                text = _clean_answer_fragment(
+                    target.get("host") or target.get("target") or target.get("value")
+                )
+            else:
+                text = _clean_answer_fragment(target)
+            if text:
+                compact_targets.append(text)
+        if compact_targets:
+            parts.append(f"targets: {', '.join(compact_targets)}")
+    metrics = structured.get("metrics")
+    if isinstance(metrics, dict):
+        metric_text = _compact_mapping(
+            metrics,
+            keys=(
+                "findings",
+                "targets",
+                "issues",
+                "count",
+                "vulnerable_params",
+                "tags_count",
+                "hit_count",
+                "document_count",
+                "buckets_reported",
+                "buckets_existing",
+                "public_read_buckets",
+                "public_write_buckets",
+                "public_full_control_buckets",
+            ),
+        )
+        if metric_text:
+            parts.append(f"metrics: {metric_text}")
+    results = structured.get("results")
+    if isinstance(results, list) and results and not any(
+        part.startswith("findings:") for part in parts
+    ):
+        compact_results = [
+            text
+            for text in (_clean_answer_fragment(item, max_chars=90) for item in results[:5])
+            if text
+        ]
+        if compact_results:
+            parts.append(f"results: {', '.join(compact_results)}")
+    return parts[:4]
+
+
 def build_evidence_answer(context: "RunContext") -> str:
     """Synthesise a terminal answer from tool evidence (no model turn needed)."""
     rows = [
@@ -247,8 +470,12 @@ def build_evidence_answer(context: "RunContext") -> str:
     ]
     if not rows:
         return "Tool execution completed; see the structured tool summary."
-    parts: list[str] = ["Completed via tool execution:"]
+    parts: list[str] = ["Tool evidence summary:"]
     for row in rows:
+        structured_parts = _compact_structured_output(row.get("structured_output"))
+        if structured_parts:
+            parts.append(f"- {row['tool_name']}: " + "; ".join(structured_parts))
+            continue
         summary = row.get("summary")
         if isinstance(summary, str) and summary.strip():
             parts.append(f"- {row['tool_name']}: {summary.strip()}")
@@ -292,6 +519,7 @@ def output_summary(context: "RunContext") -> dict | None:
         "active": is_active(run_input),
         "require_tool_use": contract.require_tool_use,
         "require_callable_tools": contract.require_callable_tools,
+        "require_completed_tools": list(contract.require_completed_tools),
         "finalize_when_tools": list(contract.finalize_when_tools),
         "tool_calls": context.tool_calls,
         "executed_tools": executed_tools_summary(context),
@@ -342,6 +570,7 @@ __all__ = [
     "TOOL_USE_REPROMPT_COUNT_KEY",
     "build_evidence_answer",
     "build_prelude",
+    "build_required_tools_reprompt",
     "build_tool_use_reprompt",
     "contract_of",
     "declarative_finalize_satisfied",
@@ -353,7 +582,9 @@ __all__ = [
     "reprompt_budget_remaining",
     "set_early_finalize",
     "stamp_no_tool_use_violation",
+    "stamp_required_tools_violation",
     "successful_tool_names",
     "tool_use_violation_pending",
+    "required_tools_violation_pending",
     "unsatisfiable_tool_names",
 ]

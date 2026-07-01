@@ -305,3 +305,58 @@ def _as_float(raw: Any, *, default: float, minimum: float) -> float:
     if value < minimum:
         raise ValueError(f"value must be >= {minimum}")
     return value
+
+
+@dataclass(frozen=True)
+class _PdfExtraction:
+    """Page-aware text from a PDF, via the optional ``[pdf]`` extra (pypdf).
+
+    ``pages`` holds ``(page_number, text)`` for the clamped requested range. A
+    scanned/image-only PDF yields empty per-page strings, so ``has_text`` is
+    False and the caller must not treat it as verified textual evidence.
+    """
+
+    total_pages: int
+    pages: tuple[tuple[int, str], ...]
+    parse_error: str | None = None
+
+    @property
+    def has_text(self) -> bool:
+        return any(text.strip() for _, text in self.pages)
+
+
+def _extract_pdf_text(
+    data: bytes, *, page_start: int, page_end: int
+) -> _PdfExtraction | None:
+    """Extract per-page text from PDF bytes using the optional ``[pdf]`` extra.
+
+    Returns ``None`` when pypdf is not installed — the caller then reports
+    ``text_extraction_unavailable`` and does not present the PDF as verified
+    evidence (degrades gracefully, keeping the core dependency-light). When
+    pypdf is present the page range is clamped to the document and each page's
+    text is extracted; a malformed PDF surfaces ``parse_error`` and a scanned
+    PDF surfaces empty per-page text.
+    """
+    try:
+        from pypdf import PdfReader  # optional [pdf] extra
+    except ImportError:
+        return None
+    import io
+
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        total_pages = len(reader.pages)
+    except Exception as exc:  # malformed structure past the magic-byte check
+        return _PdfExtraction(total_pages=0, pages=(), parse_error=_error_message(exc))
+    if total_pages == 0:
+        return _PdfExtraction(total_pages=0, pages=())
+    start = max(1, page_start)
+    end = min(page_end, total_pages)
+    pages: list[tuple[int, str]] = []
+    for number in range(start, end + 1):
+        try:
+            text = reader.pages[number - 1].extract_text() or ""
+        except Exception:  # one bad page must not fail the whole read
+            text = ""
+        pages.append((number, text.strip()))
+    return _PdfExtraction(total_pages=total_pages, pages=tuple(pages))

@@ -112,6 +112,7 @@ from agent_driver.contracts.subagent_mailbox import (
 )
 from agent_driver.contracts.subagents import MergeProvenance, SubagentGroup, SubagentRun
 from agent_driver.contracts.tools import (
+    MANAGEMENT_TOOL_NAMES,
     ToolCall,
     ToolError,
     ToolManifest,
@@ -211,6 +212,7 @@ __all__ = [
     "ToolCall",
     "ToolError",
     "ToolManifest",
+    "MANAGEMENT_TOOL_NAMES",
     "ToolPolicyInput",
     "ToolPolicyDecision",
     "ToolPolicyMode",

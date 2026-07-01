@@ -13,7 +13,11 @@ from agent_driver.contracts.enums import (
     ToolPolicyDecision,
 )
 from agent_driver.contracts.interrupts import InterruptRequest
-from agent_driver.contracts.tools import ToolError, ToolResultEnvelope
+from agent_driver.contracts.tools import (
+    ToolError,
+    ToolManifest,
+    ToolResultEnvelope,
+)
 from agent_driver.runtime.planning_check import is_exit_plan_mode_tool
 from agent_driver.tools.context import (
     tool_call_context_scope,
@@ -33,6 +37,7 @@ from agent_driver.tools.executor.trace import (
     build_tool_trace,
     trace_spec_completed,
     trace_spec_denied,
+    trace_spec_failed,
 )
 from agent_driver.tools.guardrails import GuardrailPipeline, enforce_output_budget
 
@@ -72,6 +77,21 @@ def _bounded_structured_output(
     return payload, False
 
 
+def _raw_summary_candidate(raw: Any) -> str | None:
+    """Extract the best compact tool summary from common handler fields."""
+    if not isinstance(raw, dict):
+        return None
+    for key in ("summary", "result_summary", "observation"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    for key in ("output_preview", "content"):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip() and len(value) <= 2000:
+            return value
+    return None
+
+
 def _planning_update_payload(raw: dict[str, Any]) -> dict[str, Any]:
     """Normalize planning tool output payload for runtime state updates."""
     applied_args = raw.get("applied_args")
@@ -89,6 +109,34 @@ def _interrupt_identifiers(spec: AllowedSpec) -> tuple[str, str]:
     run_id = str(spec.run_metadata.get("run_id") or "run_pending")
     attempt_id = str(spec.run_metadata.get("attempt_id") or f"attempt_{spec.index}")
     return run_id, attempt_id
+
+
+def _success_field_failure(
+    *, manifest: ToolManifest, raw: Any
+) -> tuple[str, str] | None:
+    """Detect an opt-in self-reported tool failure.
+
+    Returns ``(message, error_code)`` when the manifest declares
+    ``success_field`` and the structured output carries that field with a
+    falsy value; otherwise ``None`` (field absent or truthy → COMPLETED).
+    A missing field never forces a false FAILED.
+    """
+    field = manifest.success_field
+    if not field or not isinstance(raw, dict) or field not in raw:
+        return None
+    if raw.get(field):
+        return None
+    error = raw.get("error")
+    if isinstance(error, dict):
+        code = str(error.get("code") or "tool_reported_failure")
+        message = str(error.get("message") or error)
+    elif error:
+        code = "tool_reported_failure"
+        message = str(error)
+    else:
+        code = "tool_reported_failure"
+        message = f"{manifest.name} reported {field}=False"
+    return message, code
 
 
 def _append_tool_handler_exception(*, spec: AllowedSpec, error: Exception) -> None:
@@ -228,7 +276,7 @@ async def execute_allowed_path(
             raw,
             max_chars=spec.manifest.output_char_budget,
         )
-        summary = raw.get("summary") if isinstance(raw.get("summary"), str) else None
+        summary = _raw_summary_candidate(raw)
         bounded_summary, truncated = enforce_output_budget(
             summary, spec.manifest.output_char_budget
         )
@@ -280,15 +328,36 @@ async def execute_allowed_path(
                     )
                 }
             )
-            trace = build_tool_trace(
-                trace_spec_completed(
-                    index=spec.index,
-                    call=spec.call,
-                    manifest=spec.manifest,
-                    summary=envelope.summary,
-                    truncated=envelope.truncated,
+            failure = _success_field_failure(manifest=spec.manifest, raw=raw)
+            if failure is not None:
+                # The tool ran and was policy-allowed, but self-reported
+                # failure. Keep decision=ALLOW (it executed) yet make the
+                # failure honest: FAILED trace + error on the envelope, so
+                # no consumer has to re-classify status downstream.
+                message, error_code = failure
+                envelope = envelope.model_copy(
+                    update={"error": ToolError(code=error_code, message=message)}
                 )
-            )
+                trace = build_tool_trace(
+                    trace_spec_failed(
+                        index=spec.index,
+                        call=spec.call,
+                        manifest=spec.manifest,
+                        summary=message,
+                        error_code=error_code,
+                        truncated=envelope.truncated,
+                    )
+                )
+            else:
+                trace = build_tool_trace(
+                    trace_spec_completed(
+                        index=spec.index,
+                        call=spec.call,
+                        manifest=spec.manifest,
+                        summary=envelope.summary,
+                        truncated=envelope.truncated,
+                    )
+                )
         spec.result.append(
             envelope=envelope,
             trace=trace,

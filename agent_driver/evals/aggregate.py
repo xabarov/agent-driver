@@ -3,7 +3,7 @@
 Turns a list of :class:`Trajectory` (typically the same item run K times, or a
 whole suite run K times) into median + 5–95% interval summaries per economic
 metric. Stochastic agents need median-of-N, never best-of-N — a single pass can
-hide large variance (see docs/testing-plan-2026-06-09.md). Pure, deterministic,
+hide large variance (see docs/archive/2026-06/testing-plan-2026-06-09.md). Pure, deterministic,
 dependency-free so it is fully offline-testable.
 """
 

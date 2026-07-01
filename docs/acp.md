@@ -7,7 +7,7 @@ answer, tool timeline, and approval interrupts onto ACP `session_update` /
 `request_permission` messages, and maps the client's permission choices back
 onto the runtime's resume actions. No business logic lives in the adapter.
 
-This is Phase 1 of the [platform-adapters plan](platform-adapters-plan-2026-06-10.md).
+This is Phase 1 of the [platform-adapters plan](archive/2026-06/platform-adapters-plan-2026-06-10.md).
 
 ## Install
 

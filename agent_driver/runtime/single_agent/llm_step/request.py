@@ -42,6 +42,9 @@ from agent_driver.runtime.single_agent.llm_step.build import (
     LlmRequestBuildContext,
     build_single_agent_llm_request,
 )
+from agent_driver.runtime.single_agent.llm_step.defer_primer import (
+    surfaced_deferred_tool_names,
+)
 from agent_driver.runtime.single_agent.llm_step.prompt import (
     append_runtime_attachment_messages,
     effective_code_agent_imports,
@@ -92,6 +95,66 @@ def microcompact_context_observations(
         estimated_tokens_saved=micro.estimated_tokens_saved,
     )
     return micro.observations
+
+
+_PRIMER_CONVERSATION_CHAR_CAP = 8000
+
+
+def _primer_conversation_text(
+    context: RunContext,
+    protocol_messages: tuple[ChatMessage, ...] | None,
+) -> str:
+    """Concatenate recent conversation content for defer-primer relevance.
+
+    Used only for keyword matching — never sent to the model — so a cheap
+    char-capped join of the most recent messages is sufficient. Falls back to
+    ``run_input.messages`` / ``run_input.input`` when no protocol transcript
+    has been assembled yet (e.g. the very first step).
+    """
+    parts: list[str] = []
+    if protocol_messages:
+        parts = [msg.content for msg in protocol_messages if msg.content]
+    elif context.run_input.messages:
+        parts = [msg.content for msg in context.run_input.messages if msg.content]
+    elif context.run_input.input:
+        parts = [context.run_input.input]
+    if not parts:
+        return ""
+    text = "\n".join(parts)
+    # Keep the tail: the most recent turns carry the live intent.
+    if len(text) > _PRIMER_CONVERSATION_CHAR_CAP:
+        text = text[-_PRIMER_CONVERSATION_CHAR_CAP:]
+    return text
+
+
+def _surface_deferred_tools(
+    host: LlmRequestPrepHost,
+    context: RunContext,
+    protocol_messages: tuple[ChatMessage, ...] | None,
+) -> tuple[str, ...]:
+    """Select deferred tools to surface this step via the configured primer.
+
+    Returns an empty tuple when no primer is configured (the default), the
+    registry exposes no manifests, or nothing is currently deferred — so the
+    pure ``tool_search`` path is unchanged.
+    """
+    primer = getattr(host._config, "defer_primer", None)
+    if primer is None:
+        return ()
+    registry = host._deps.tool_registry
+    rows = getattr(registry, "list_registered", None)
+    if not callable(rows):
+        return ()
+    deferred = tuple(
+        item.manifest for item in rows() if item.manifest.is_deferred()
+    )
+    if not deferred:
+        return ()
+    return surfaced_deferred_tool_names(
+        deferred,
+        _primer_conversation_text(context, protocol_messages),
+        primer,
+    )
 
 
 def build_trimmed_request(
@@ -200,6 +263,9 @@ def build_trimmed_request(
             request_allowed_tools=request_allowed_tools,
             enable_prompt_cache=host._config.enable_prompt_cache,
             harness_profiles=host._config.harness_profiles,
+            surface_deferred_tools=_surface_deferred_tools(
+                host, context, protocol_messages
+            ),
         )
     )
 

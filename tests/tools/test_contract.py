@@ -133,6 +133,19 @@ def test_metadata_preserves_host_specific_fields() -> None:
     assert manifest.metadata["capabilities"] == ["web", "vuln-scanning"]
 
 
+def test_success_field_preserved() -> None:
+    """Tool contracts can opt into structured self-reported failure handling."""
+    manifest = manifest_from_contract(
+        {
+            "name": "web_request_analyze",
+            "description": "Fetch and analyze a URL.",
+            "success_field": "success",
+        }
+    )
+
+    assert manifest.success_field == "success"
+
+
 def test_unknown_top_level_field_rejected() -> None:
     """Unknown top-level keys raise to catch contract drift early."""
     with pytest.raises(ValueError, match="unknown contract fields"):

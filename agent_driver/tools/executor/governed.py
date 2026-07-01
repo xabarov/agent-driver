@@ -16,7 +16,11 @@ from agent_driver.contracts.interrupts import (
     find_matching_prompt,
 )
 from agent_driver.contracts.runtime import AgentRunInput
-from agent_driver.contracts.tools import ToolCall, ToolResultEnvelope
+from agent_driver.contracts.tools import (
+    MANAGEMENT_TOOL_NAMES,
+    ToolCall,
+    ToolResultEnvelope,
+)
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.planning_policy import tool_policy_with_planned_tool_hint
 from agent_driver.runtime.tool_gate import (
@@ -28,7 +32,10 @@ from agent_driver.runtime.tool_gate import (
     ToolGateResult,
 )
 from agent_driver.tools.executor.allowed import execute_allowed_path
-from agent_driver.tools.executor.blocks import append_blocked_call
+from agent_driver.tools.executor.blocks import (
+    append_blocked_call,
+    disallowed_management_tool_remediation,
+)
 from agent_driver.tools.executor.partition import (
     ParallelBatch,
     SerialCall,
@@ -126,6 +133,27 @@ def _read_concurrency_limit_env() -> int:
         )
         return DEFAULT_CONCURRENCY_LIMIT
     return value
+
+
+def _management_tool_denial_remediation(
+    run_input: AgentRunInput, tool_name: str
+) -> dict[str, object] | None:
+    """Structured repair payload when a management tool is denied by the allowlist.
+
+    Returns ``None`` (no special handling) unless the run has an active
+    ``allowed_tools`` allowlist that omits this management tool — i.e. the scoped
+    workflow-node case. When ``allowed_tools`` is ``None`` (no allowlist) or
+    already includes the tool, behaviour is unchanged: chat/planning runs that
+    grant these tools keep executing them normally.
+    """
+    if tool_name not in MANAGEMENT_TOOL_NAMES:
+        return None
+    allowed = run_input.tool_policy.allowed_tools
+    if not allowed or tool_name in set(allowed):
+        return None
+    return disallowed_management_tool_remediation(
+        tool_name=tool_name, allowed_tools=allowed
+    )
 
 
 class GovernedToolExecutor:
@@ -812,6 +840,9 @@ class GovernedToolExecutor:
                     manifest=manifest,
                     code="policy_denied",
                     reason=policy.reason,
+                    structured_output=_management_tool_denial_remediation(
+                        run_input, call.tool_name
+                    ),
                 ),
             )
             return False

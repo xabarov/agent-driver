@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from agent_driver.contracts.enums import ChatRole, RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse
+from agent_driver.llm.tool_call_parser import extract_text_form_tool_calls
 from agent_driver.prompts import force_final_answer_user_message
 from agent_driver.runtime.metadata_state import (
     get_streaming_runtime_state,
@@ -222,6 +223,13 @@ def forced_final_no_tools_retry_reason(
     planned = response.metadata.get("planned_tool_calls")
     if isinstance(planned, list) and planned:
         return "tool_call"
+    request_is_no_tools_boundary = request.tool_choice == "none" or not request.tools
+    if request_is_no_tools_boundary:
+        text_planned, text_errors = extract_text_form_tool_calls(
+            response.message.content or ""
+        )
+        if text_planned or text_errors:
+            return "tool_call"
     if response.finish_reason != LlmFinishReason.STOP:
         return None
     if (response.message.content or "").strip():

@@ -43,6 +43,9 @@ server = [
   "starlette>=0.40.0",
   "uvicorn[standard]>=0.30.0",
 ]
+pdf = [
+  "pypdf>=4.0.0",
+]
 
 [project.scripts]
 agent-driver = "agent_driver.cli.main:main"

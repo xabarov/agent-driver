@@ -12,7 +12,11 @@ def extract_planned_tool_calls(llm_response: LlmResponse) -> list[ToolCall]:
     payload = llm_response.metadata.get("planned_tool_calls")
     if not isinstance(payload, list):
         payload = []
-    if not payload and llm_response.message.content:
+    if (
+        not payload
+        and llm_response.message.content
+        and llm_response.metadata.get("suppress_text_form_tool_calls") is not True
+    ):
         parsed_payload, _ = extract_text_form_tool_calls(llm_response.message.content)
         payload = parsed_payload
     calls: list[ToolCall] = []

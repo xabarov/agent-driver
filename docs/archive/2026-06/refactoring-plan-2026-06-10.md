@@ -117,10 +117,38 @@ Extract `research_signals.py` / `subagent_signals.py` / `python_signals.py` /
 `artifact_signals.py`; `summary.py` becomes a thin façade that imports + keeps
 back-compat re-exports (12 test files import internals). Risk: MEDIUM.
 
+**Done 2026-06-23.** `summary.py` 2316 → 604 (façade keeps `summarize_run_trace`
++ control/notes/runtime-marker helpers). Helpers split into `_common.py` (238,
+shared primitives + constants), `python_signals.py` (62), `artifact_signals.py`
+(272), `subagent_signals.py` (388), `research_signals.py` (887). Import DAG is
+acyclic (`_common` ← `artifact_signals` ← `subagent_signals` ← `research_signals`)
+— `_common` breaks the subagent↔research cycle by owning the child-evidence and
+deep-research-contract primitives both clusters need. No external module imports
+internals (the "12 test files" reference was stale), so no re-export shim was
+needed beyond `__all__ = ["summarize_run_trace"]`. Suite unchanged (2219
+outcomes, green); pylint clean (no undefined/unused-import/cyclic-import).
+
 ### C2. `cli/evals.py` (2149 → providers / scenarios / scoring / reporting)
 Split fake providers, scenario defs, scoring, and reporting; keep the harness +
 `EvalSummary` in `evals.py` with re-exports. Risk: MEDIUM-HIGH (10+ call sites,
 test imports across parts). Test-time only, so no runtime risk.
+
+**Done 2026-06-23.** `evals.py` 2149 → 735 (harness: `run_live_evaluation`,
+`_run_eval_scenario*`, `summarize_run`, `EvalSummary`, retry/merge, plus a
+re-export block). The `_run_eval_scenario` chain deliberately stays in `evals.py`
+so `monkeypatch.setattr(evals_module, "_run_eval_scenario", …)` in
+`tests/cli/test_eval_harness.py` keeps hitting the call inside
+`_run_eval_scenario_with_retry`. Parts extracted to `eval_providers.py` (255,
+four fake providers), `eval_scenarios.py` (900, `EvalScenario` + `default_*` +
+suite membership), `eval_scoring.py` (117, answer-matching + bug tags),
+`eval_reporting.py` (206, render + artifact writers). DAG is acyclic
+(`eval_scenarios` is the leaf type owner; scoring/reporting → scenarios;
+harness → all parts). `EvalSummary` stays in the harness, so `eval_reporting`
+references it only under `TYPE_CHECKING` (annotation-only) to avoid a cycle.
+`evals.py` re-exports every moved name (public `__all__` + the private
+`_EvalGamma*` / `_answer_matches_expectations` / `_write_scorecard` the tests
+import). Suite unchanged (2219 outcomes, green); pylint message categories
+identical to the original minus the dropped `too-many-lines`.
 
 ### C3 (DEFER). Research modules — `runtime/research_session_contract.py` (986)
 and `runtime/single_agent/research/gating.py` (958). High coupling + mutual

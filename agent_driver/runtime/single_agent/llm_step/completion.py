@@ -66,6 +66,9 @@ async def complete_request(  # pylint: disable=too-many-branches
         try:
             if not is_stream_enabled(context.run_input):
                 response = await host._deps.provider.complete(request)
+                response = _mark_no_tool_text_form_suppression(
+                    context, request, response
+                )
                 return await retry_forced_final_without_tools(
                     host,
                     context,
@@ -73,6 +76,7 @@ async def complete_request(  # pylint: disable=too-many-branches
                     response=response,
                 )
             response = await complete_streaming_request(host, context, request)
+            response = _mark_no_tool_text_form_suppression(context, request, response)
             if should_retry_empty_forced_final_non_stream(context, response):
                 context.metadata["empty_forced_final_retry"] = "non_streaming"
                 emit_step_event(
@@ -97,7 +101,12 @@ async def complete_request(  # pylint: disable=too-many-branches
                     request=request,
                     response=response,
                 )
-            return response
+            return await retry_forced_final_without_tools(
+                host,
+                context,
+                request=request,
+                response=response,
+            )
         except httpx.HTTPStatusError as exc:
             if (
                 recover_context_overflow is not None
@@ -241,8 +250,48 @@ async def retry_forced_final_without_tools(
     retry_response = await host._deps.provider.complete(
         request_without_tools(request, provider_name=provider_name)
     )
+    retry_response = _mark_no_tool_text_form_suppression(
+        context,
+        request,
+        retry_response,
+        suppress_native_planned=True,
+    )
     emit_non_stream_retry_assistant_message(host, context, retry_response)
     return retry_response
+
+
+def _mark_no_tool_text_form_suppression(
+    context: RunContext,
+    request: Any,
+    response: LlmResponse,
+    *,
+    suppress_native_planned: bool = False,
+) -> LlmResponse:
+    """Prevent forced-final/no-tools responses from executing leaked tool calls.
+
+    Some OpenAI-compatible providers can stream tool-call markup as assistant
+    text even when the runtime requested ``tool_choice="none"``. The provider
+    adapter suppresses parsed text-form tool-call events in that case, but the
+    later tool stage also has a compatibility parser over ``message.content``.
+    Providers can also return native tool-call metadata despite the no-tools
+    request. Preserve that evidence diagnostically while removing executable
+    planned calls from the final-only response.
+    """
+    if context.metadata.get("force_final_answer") is not True:
+        return response
+    tool_choice = getattr(request, "tool_choice", None)
+    request_tools = getattr(request, "tools", None)
+    no_tools_request = not request_tools
+    if tool_choice != "none" and not no_tools_request:
+        return response
+    metadata = dict(response.metadata or {})
+    planned = metadata.get("planned_tool_calls")
+    if suppress_native_planned and isinstance(planned, list) and planned:
+        metadata["suppressed_planned_tool_calls"] = planned
+        metadata.pop("planned_tool_calls", None)
+    metadata.pop("tool_call_parse_errors", None)
+    metadata["suppress_text_form_tool_calls"] = True
+    return response.model_copy(update={"metadata": metadata})
 
 
 __all__ = ["complete_request", "retry_forced_final_without_tools"]
