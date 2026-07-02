@@ -136,6 +136,10 @@ def test_trace_summary_exposes_runtime_timeline_diagnostics_for_reconnect() -> N
     assert diagnostics["terminal_event"] == "run_completed"
     assert diagnostics["reconnect_cursor"] == "run_chat_timeline:5"
     assert diagnostics["tool_call_count"] == 1
+    lifecycle = summary["run_lifecycle"]
+    assert lifecycle["state"] == "completed"
+    assert lifecycle["last_seq"] == 5
+    assert lifecycle["reconnect_cursor"] == "run_chat_timeline:5"
 
 
 def test_trace_summary_passes_research_with_web_tool() -> None:

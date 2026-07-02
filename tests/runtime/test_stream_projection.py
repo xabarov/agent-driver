@@ -10,10 +10,13 @@ from agent_driver.contracts import RuntimeEventType, new_runtime_event
 from agent_driver.runtime.events import InMemoryEventLog
 from agent_driver.runtime.sqlite_store import SqliteRuntimeStore
 from agent_driver.runtime.stream import (
+    RunLifecycleState,
     backfill_stream_events,
+    classify_run_lifecycle_from_events,
     project_run_timeline,
     project_runtime_event_timeline,
     project_runtime_events,
+    summarize_run_lifecycle,
     summarize_runtime_session_diagnostics,
 )
 
@@ -306,3 +309,147 @@ def test_runtime_session_diagnostics_reports_terminal_cursor_and_counts() -> Non
     assert diagnostics.usage_present is True
     assert diagnostics.provider_route_profile_id == "openrouter:route"
     assert diagnostics.skills == ["deep-research-report"]
+
+
+@pytest.mark.parametrize(
+    ("event_types", "kwargs", "expected"),
+    [
+        ([RuntimeEventType.RUN_STARTED], {"active_task": True}, RunLifecycleState.RUNNING),
+        (
+            [RuntimeEventType.RUN_STARTED, RuntimeEventType.TOKEN_DELTA],
+            {"active_task": True},
+            RunLifecycleState.STREAMING,
+        ),
+        (
+            [RuntimeEventType.RUN_STARTED, RuntimeEventType.RUN_COMPLETED],
+            {},
+            RunLifecycleState.COMPLETED,
+        ),
+        (
+            [RuntimeEventType.RUN_STARTED, RuntimeEventType.RUN_FAILED],
+            {},
+            RunLifecycleState.FAILED,
+        ),
+        (
+            [RuntimeEventType.RUN_STARTED, RuntimeEventType.RUN_CANCELLED],
+            {},
+            RunLifecycleState.CANCELLED,
+        ),
+        (
+            [RuntimeEventType.RUN_STARTED, RuntimeEventType.INTERRUPT_REQUESTED],
+            {"checkpoint_available": True},
+            RunLifecycleState.AWAITING_INPUT,
+        ),
+        (
+            [RuntimeEventType.RUN_STARTED],
+            {"abort_requested": True, "abort_reason": "user_cancel"},
+            RunLifecycleState.CANCELLING,
+        ),
+        (
+            [RuntimeEventType.RUN_STARTED],
+            {"active_task": False, "orphan_reason": "task_missing"},
+            RunLifecycleState.ORPHANED,
+        ),
+    ],
+)
+def test_run_lifecycle_classifier_covers_core_states(
+    event_types: list[RuntimeEventType],
+    kwargs: dict[str, object],
+    expected: RunLifecycleState,
+) -> None:
+    events = project_runtime_events(
+        [
+            new_runtime_event(
+                event_type=event_type,
+                context={
+                    "run_id": "run_lifecycle",
+                    "attempt_id": "att_1",
+                    "seq": index,
+                },
+                options=(
+                    {"payload": {"interrupt_id": "int_1"}}
+                    if event_type == RuntimeEventType.INTERRUPT_REQUESTED
+                    else None
+                ),
+            )
+            for index, event_type in enumerate(event_types, start=1)
+        ]
+    )
+
+    assert classify_run_lifecycle_from_events(events, **kwargs) == expected
+
+
+def test_run_lifecycle_snapshot_reports_reconnect_resume_and_timeline() -> None:
+    events = project_runtime_events(
+        [
+            new_runtime_event(
+                event_type=RuntimeEventType.RUN_STARTED,
+                context={"run_id": "run_pause", "attempt_id": "att_1", "seq": 1},
+                options={"payload": {"session_id": "session_pause"}},
+            ),
+            new_runtime_event(
+                event_type=RuntimeEventType.INTERRUPT_REQUESTED,
+                context={"run_id": "run_pause", "attempt_id": "att_1", "seq": 2},
+                options={"payload": {"interrupt_id": "int_pause"}},
+            ),
+            new_runtime_event(
+                event_type=RuntimeEventType.CHECKPOINT_SAVED,
+                context={"run_id": "run_pause", "attempt_id": "att_1", "seq": 3},
+            ),
+        ]
+    )
+
+    snapshot = summarize_run_lifecycle(
+        events,
+        checkpoint_available=True,
+        durability="sqlite",
+    )
+
+    assert snapshot.run_id == "run_pause"
+    assert snapshot.session_id == "session_pause"
+    assert snapshot.state == RunLifecycleState.AWAITING_INPUT
+    assert snapshot.paused_interrupt_id == "int_pause"
+    assert snapshot.resume_available is True
+    assert snapshot.reconnect_cursor == "run_pause:3"
+    assert snapshot.timeline_diagnostics is not None
+    assert snapshot.timeline_diagnostics.durability == "sqlite"
+
+
+def test_run_lifecycle_snapshot_distinguishes_timeout_and_orphan() -> None:
+    failed = project_runtime_events(
+        [
+            new_runtime_event(
+                event_type=RuntimeEventType.RUN_STARTED,
+                context={"run_id": "run_timeout", "attempt_id": "att_1", "seq": 1},
+            ),
+            new_runtime_event(
+                event_type=RuntimeEventType.RUN_FAILED,
+                context={"run_id": "run_timeout", "attempt_id": "att_1", "seq": 2},
+                options={"payload": {"terminal_reason": "timed_out"}},
+            ),
+        ]
+    )
+    timeout = summarize_run_lifecycle(failed)
+    assert timeout.state == RunLifecycleState.TIMED_OUT
+    assert timeout.terminal_reason == "timed_out"
+
+    orphan = summarize_run_lifecycle(
+        project_runtime_events(
+            [
+                new_runtime_event(
+                    event_type=RuntimeEventType.RUN_STARTED,
+                    context={
+                        "run_id": "run_orphan",
+                        "attempt_id": "att_1",
+                        "seq": 1,
+                    },
+                )
+            ]
+        ),
+        active_task=False,
+        stale=True,
+        orphan_reason="stale_without_task",
+    )
+    assert orphan.state == RunLifecycleState.ORPHANED
+    assert orphan.orphaned is True
+    assert orphan.orphan_reason == "stale_without_task"

@@ -74,6 +74,42 @@ def test_provider_preflight_artifact_payload_prefers_provider_and_trace() -> Non
     assert payload["redaction"]["contains_raw_base_url"] is False
 
 
+def test_write_scenario_artifacts_writes_run_lifecycle(tmp_path) -> None:
+    live_probe = _load_live_probe_module()
+
+    class _Page:
+        class _Locator:
+            def inner_text(self, **_kwargs):
+                return "transcript"
+
+        def locator(self, *_args, **_kwargs):
+            return self._Locator()
+
+        def screenshot(self, **_kwargs):
+            return None
+
+    live_probe.ARTIFACT_DIR = tmp_path
+    scenario = live_probe.LiveScenario(name="lifecycle", prompt="hello")
+    artifact_dir = live_probe.write_scenario_artifacts(
+        page=_Page(),
+        scenario=scenario,
+        summary={
+            "run_id": "run_lifecycle",
+            "run_lifecycle": {
+                "run_id": "run_lifecycle",
+                "state": "completed",
+                "reconnect_cursor": "run_lifecycle:3",
+            },
+            "runtime_timeline": {"diagnostics": {"last_seq": 3}},
+        },
+        failures=[],
+    )
+
+    assert artifact_dir == tmp_path / "lifecycle"
+    assert (artifact_dir / "run-lifecycle.json").exists()
+    assert (artifact_dir / "runtime-timeline-diagnostics.json").exists()
+
+
 def test_research_budget_stop_detects_search_loop_before_diversity() -> None:
     live_probe = _load_live_probe_module()
     scenario = live_probe.LiveScenario(

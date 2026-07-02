@@ -22,7 +22,9 @@ from typing import TYPE_CHECKING, Any
 
 from agent_driver.contracts.enums import ResumeAction, RunStatus
 from agent_driver.contracts.runtime import AgentRunInput
+from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.runtime.abort import RunAbortHandle
+from agent_driver.runtime.stream import summarize_run_lifecycle
 from agent_driver.server.usage import chat_usage
 
 if TYPE_CHECKING:
@@ -67,6 +69,7 @@ class RunRecord:
 
     run_id: str
     created: int
+    thread_id: str | None = None
     status: str = QUEUED
     answer: str | None = None
     error: str | None = None
@@ -97,7 +100,30 @@ class RunRecord:
             body["usage"] = self.usage
         if self.error is not None:
             body["error"] = {"message": self.error}
+        body["lifecycle"] = self.lifecycle_snapshot()
         return body
+
+    def lifecycle_snapshot(self) -> dict[str, Any]:
+        """Canonical lifecycle snapshot derived from server-local state."""
+        active = self.task is not None and not self.task.done()
+        snapshot = summarize_run_lifecycle(
+            _server_stream_events(self),
+            active_task=active,
+            abort_requested=self.abort.is_aborted and self.status not in _TERMINAL,
+            abort_reason=self.abort.reason,
+            paused_interrupt_id=(
+                str(self.interrupt.get("interrupt_id"))
+                if isinstance(self.interrupt, dict)
+                and self.interrupt.get("interrupt_id")
+                else None
+            ),
+            resume_available=self.status == REQUIRES_ACTION,
+            durability="server_memory",
+            adapter_id="agent_driver.server.runs",
+            session_id=self.thread_id,
+            thread_id=self.thread_id,
+        )
+        return snapshot.model_dump(mode="json")
 
 
 class RunManager:
@@ -119,7 +145,7 @@ class RunManager:
     ) -> RunRecord:
         """Create a run record and spawn its background drive task."""
         run_id = f"run_{uuid.uuid4().hex[:12]}"
-        record = RunRecord(run_id=run_id, created=int(time.time()))
+        record = RunRecord(run_id=run_id, created=int(time.time()), thread_id=thread_id)
         self._runs[run_id] = record
         self._evict()
         run_input = AgentRunInput(
@@ -186,7 +212,11 @@ class RunManager:
     # -- internals ---------------------------------------------------------
 
     def _emit(self, record: RunRecord, event: str, data: dict[str, Any]) -> None:
-        payload = {"event": event, "data": {"run_id": record.run_id, **data}}
+        payload = {
+            "event": event,
+            "seq": len(record.events) + 1,
+            "data": {"run_id": record.run_id, **data},
+        }
         record.events.append(payload)
         terminal = event.split(".", 1)[-1] in _TERMINAL or event == "run.completed"
         for sub in record.subscribers:
@@ -267,6 +297,28 @@ class RunManager:
         terminal = [rid for rid, r in self._runs.items() if r.status in _TERMINAL]
         for rid in terminal[: len(self._runs) - self._max_runs]:
             self._runs.pop(rid, None)
+
+
+def _server_stream_events(record: RunRecord) -> list[RunStreamEvent]:
+    events: list[RunStreamEvent] = []
+    for index, event in enumerate(record.events, start=1):
+        data = event.get("data")
+        event_name = str(event.get("event") or "").replace(".", "_")
+        if not event_name:
+            continue
+        seq = event.get("seq")
+        events.append(
+            RunStreamEvent(
+                stream_id=f"{record.run_id}:{seq if isinstance(seq, int) else index}",
+                run_id=record.run_id,
+                attempt_id="server_attempt",
+                seq=seq if isinstance(seq, int) else index,
+                event=event_name,
+                source="server_run_record",
+                data=dict(data) if isinstance(data, dict) else {},
+            )
+        )
+    return events
 
 
 __all__ = ["RunManager", "RunRecord", "resume_action_for"]

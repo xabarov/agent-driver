@@ -63,7 +63,10 @@ from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.runtime.single_agent.lifecycle.continuation import (
     analyze_continuation_intent,
 )
-from agent_driver.runtime.stream import summarize_runtime_session_diagnostics
+from agent_driver.runtime.stream import (
+    summarize_run_lifecycle,
+    summarize_runtime_session_diagnostics,
+)
 
 from ._common import (
     _TERMINAL_EVENTS,
@@ -119,6 +122,7 @@ def summarize_run_trace(
     route_profile = _route_profile_summary(events)
     provider_preflight = _provider_preflight_summary(events)
     runtime_timeline = _runtime_timeline_summary(events)
+    run_lifecycle = _run_lifecycle_summary(events)
     prompt_surface = _prompt_surface_summary(events)
     runtime_markers = _runtime_markers(events)
     subagents = _subagent_summary(
@@ -324,6 +328,7 @@ def summarize_run_trace(
         "route_profile": route_profile,
         "provider_preflight": provider_preflight,
         "runtime_timeline": runtime_timeline,
+        "run_lifecycle": run_lifecycle,
         "prompt_surface": prompt_surface,
         "tool_calls": len(tool_names),
         "tool_names": tool_names,
@@ -424,6 +429,16 @@ def _runtime_timeline_summary(events: list[dict[str, object]]) -> dict[str, Any]
     return {"diagnostics": diagnostics.model_dump(mode="json")}
 
 
+def _run_lifecycle_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    stream_events = _stream_events_from_summary_events(events)
+    snapshot = summarize_run_lifecycle(
+        stream_events,
+        durability="trace_summary",
+        checkpoint_available=_checkpoint_available(events),
+    )
+    return snapshot.model_dump(mode="json")
+
+
 def _stream_events_from_summary_events(
     events: list[dict[str, object]],
 ) -> list[RunStreamEvent]:
@@ -463,6 +478,10 @@ def _stream_events_from_summary_events(
             )
         )
     return stream_events
+
+
+def _checkpoint_available(events: list[dict[str, object]]) -> bool:
+    return any(event.get("event") == "checkpoint_saved" for event in events)
 
 
 def _runtime_markers(events: list[dict[str, object]]) -> dict[str, list[str]]:

@@ -107,6 +107,8 @@ def test_trace_summary_exposes_route_profile_and_preflight() -> None:
     assert timeline["provider_route_profile_id"] == (
         "openrouter:openrouter:openai__gpt-5.5"
     )
+    assert summary["run_lifecycle"]["state"] == "completed"
+    assert summary["run_lifecycle"]["terminal_event"] == "run_completed"
 
 
 def test_trace_summary_exposes_runtime_timeline_diagnostics() -> None:
@@ -158,6 +160,10 @@ def test_trace_summary_exposes_runtime_timeline_diagnostics() -> None:
     assert diagnostics["tool_call_count"] == 1
     assert diagnostics["warning_count"] == 1
     assert diagnostics["retry_count"] == 1
+    lifecycle = summary["run_lifecycle"]
+    assert lifecycle["state"] == "failed"
+    assert lifecycle["last_seq"] == 4
+    assert lifecycle["reconnect_cursor"] == "run_test:4"
 
 
 def test_trace_summary_does_not_double_count_started_and_completed_tools() -> None:

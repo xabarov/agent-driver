@@ -9,6 +9,7 @@ from agent_driver.observability.trace_builder import build_trace_export
 from agent_driver.runtime.stream import (
     project_runtime_event_timeline,
     project_runtime_events,
+    summarize_run_lifecycle,
     summarize_runtime_session_diagnostics,
 )
 
@@ -58,6 +59,18 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
         else None,
         session_id=output.thread_id,
     )
+    lifecycle = summarize_run_lifecycle(
+        stream_events,
+        checkpoint_available=output.checkpoint is not None,
+        durability="runtime_output",
+        harness_id=str(output.metadata.get("harness_id"))
+        if output.metadata.get("harness_id")
+        else None,
+        adapter_id=str(output.metadata.get("adapter_id"))
+        if output.metadata.get("adapter_id")
+        else None,
+        session_id=output.thread_id,
+    )
     return {
         "run": {
             "run_id": output.run_id,
@@ -82,6 +95,7 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
                 for row in project_runtime_event_timeline(output.events)
             ],
         },
+        "run_lifecycle": lifecycle.model_dump(mode="json"),
         "route_profile": _latest_llm_payload(output, "route_profile"),
         "provider_preflight": _latest_llm_payload(output, "provider_preflight"),
         "metadata": _redact_value(output.metadata),
@@ -118,6 +132,16 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
                 ),
                 "redaction": {"safe_by_default": True},
             },
+        },
+        "run_lifecycle": {
+            "run_id": persisted_replay.get("run_id"),
+            "state": "unknown",
+            "last_seq": _last_persisted_seq(events if isinstance(events, list) else []),
+            "reconnect_cursor": _persisted_reconnect_cursor(
+                persisted_replay.get("run_id"),
+                events if isinstance(events, list) else [],
+            ),
+            "support_bundle_available": True,
         },
         "redaction": {
             "safe_by_default": True,

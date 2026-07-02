@@ -50,6 +50,9 @@ def test_run_completes() -> None:
     done = _poll(client, run_id, until={"completed"})
     assert done["answer"] == "async answer"
     assert done["usage"]["total_tokens"] >= 1
+    assert done["lifecycle"]["state"] == "completed"
+    assert done["lifecycle"]["terminal_event"] == "run_completed"
+    assert done["lifecycle"]["reconnect_cursor"].startswith(f"{run_id}:")
 
 
 def test_run_events_stream() -> None:
@@ -122,11 +125,15 @@ async def test_run_requires_action_then_approve() -> None:
 
     await _wait_status(record, {"requires_action"})
     assert record.interrupt and record.interrupt["interrupt_id"]
+    paused_lifecycle = record.public()["lifecycle"]
+    assert paused_lifecycle["state"] == "awaiting_input"
+    assert paused_lifecycle["resume_available"] is True
 
     assert await manager.approve(record.run_id, ResumeAction.APPROVE)
 
     await _wait_status(record, {"completed"})
     assert "all done" in (record.answer or "")
+    assert record.public()["lifecycle"]["state"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -136,9 +143,11 @@ async def test_run_stop_while_paused() -> None:
 
     await _wait_status(record, {"requires_action"})
     assert manager.stop(record.run_id)
+    assert record.public()["lifecycle"]["state"] == "cancelling"
 
     await _wait_status(record, {"cancelled", "completed", "failed"})
     assert record.status == "cancelled"
+    assert record.public()["lifecycle"]["state"] == "cancelled"
 
 
 def test_get_unknown_run_404() -> None:

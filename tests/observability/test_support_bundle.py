@@ -40,6 +40,8 @@ def test_runtime_support_bundle_redacts_sensitive_metadata_keys() -> None:
     assert bundle["runtime_timeline"]["diagnostics"]["run_id"] == "run_obs_bundle_1"
     assert bundle["runtime_timeline"]["diagnostics"]["terminal_event"] == "run_completed"
     assert bundle["runtime_timeline"]["rows"][0]["category"] == "lifecycle"
+    assert bundle["run_lifecycle"]["state"] == "completed"
+    assert bundle["run_lifecycle"]["terminal_event"] == "run_completed"
 
 
 def test_runtime_support_bundle_promotes_redacted_provider_preflight() -> None:
@@ -104,6 +106,7 @@ def test_runtime_support_bundle_promotes_redacted_provider_preflight() -> None:
     assert diagnostics["provider_route_profile_id"] == (
         "openrouter:openrouter:openai__gpt-5.5"
     )
+    assert bundle["run_lifecycle"]["reconnect_cursor"] == "run_obs_bundle_2:2"
 
 
 def test_persisted_support_bundle_redacts_event_payload_secrets() -> None:
@@ -119,3 +122,5 @@ def test_persisted_support_bundle_redacts_event_payload_secrets() -> None:
     assert bundle["events"][0]["payload"]["auth_token"] == "<redacted>"
     assert bundle["metadata"]["password"] == "<redacted>"
     assert bundle["runtime_timeline"]["diagnostics"]["durability"] == "persisted_replay"
+    assert bundle["run_lifecycle"]["run_id"] == "run_1"
+    assert bundle["run_lifecycle"]["reconnect_cursor"] is None

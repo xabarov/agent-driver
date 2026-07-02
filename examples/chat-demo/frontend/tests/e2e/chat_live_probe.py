@@ -1399,6 +1399,12 @@ def write_scenario_artifacts(
                 json.dumps(diagnostics, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+    run_lifecycle = summary.get("run_lifecycle")
+    if isinstance(run_lifecycle, dict):
+        (artifact_base / "run-lifecycle.json").write_text(
+            json.dumps(run_lifecycle, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     (artifact_base / "scenario.json").write_text(
         json.dumps(
             {
