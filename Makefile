@@ -1,9 +1,9 @@
-BLACK ?= ./.uv-bootstrap/bin/black
-ISORT ?= ./.uv-bootstrap/bin/isort
-PYLINT ?= ./.uv-bootstrap/bin/pylint
+BLACK ?= ./.venv/bin/black
+ISORT ?= ./.venv/bin/isort
+PYLINT ?= ./.venv/bin/pylint
 PYTEST ?= uv run pytest
 RUFF ?= ./.venv/bin/ruff
-PLAYWRIGHT_PY ?= ./.uv-bootstrap/bin/python
+PLAYWRIGHT_PY ?= ./.venv/bin/python
 CHAT_DEMO_URL ?= http://localhost:5174
 LINT_PATHS ?= agent_driver/subagents tests/subagents agent_driver/runtime/single_agent/subagent_stage.py tests/runtime/test_subagent_integration.py
 
