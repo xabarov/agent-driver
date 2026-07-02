@@ -142,6 +142,98 @@ def test_trace_summary_exposes_runtime_timeline_diagnostics_for_reconnect() -> N
     assert lifecycle["reconnect_cursor"] == "run_chat_timeline:5"
 
 
+def test_trace_summary_exposes_runtime_decision_steering_evidence() -> None:
+    summary = summarize_run_trace(
+        run_id="run_chat_decision",
+        user_prompt="Keep researching, then summarize",
+        assistant_text="Done.",
+        events=[
+            {
+                "event": "runtime_decision",
+                "run_id": "run_chat_decision",
+                "attempt_id": "attempt_1",
+                "seq": 2,
+                "data": {
+                    "decision_id": "dec_chat_steer",
+                    "run_id": "run_chat_decision",
+                    "attempt_id": "attempt_1",
+                    "seq": 2,
+                    "kind": "steering",
+                    "trigger": "control_applied",
+                    "action": "continue",
+                    "reason": "control_applied_at_step_boundary",
+                    "status": "applied",
+                    "redacted_metadata": {
+                        "kind": "enqueue_user_message",
+                        "priority": "next",
+                    },
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    decisions = summary["runtime_decisions"]
+    assert decisions["count"] == 1
+    assert decisions["counts_by_kind"] == {"steering": 1}
+    assert decisions["last_decision"]["redacted_metadata"]["kind"] == (
+        "enqueue_user_message"
+    )
+
+
+def test_trace_summary_exposes_deep_research_no_progress_decision() -> None:
+    summary = summarize_run_trace(
+        run_id="run_chat_research_loop",
+        user_prompt="Do deep research and write a cited report",
+        assistant_text="Report draft without sources.",
+        task_contract={
+            "kind": "research",
+            "requires_research": True,
+            "required_tools": ["web_fetch"],
+            "required_evidence": ["source_evidence"],
+        },
+        events=[
+            _completed_tool("web_search", args={"query": "same topic"}),
+            _completed_tool("web_search", args={"query": "same topic"}),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "failed",
+                            "error_code": "http_500",
+                            "args": {"url": "https://example.invalid/a"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "failed",
+                            "error_code": "http_500",
+                            "args": {"url": "https://example.invalid/b"},
+                        }
+                    ]
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    reasons = {
+        decision["reason"]
+        for decision in summary["runtime_decisions"]["decisions"]
+    }
+    assert "repeated_identical_tool_args" in reasons
+    assert "repeated_failed_tool_call" in reasons
+    assert "missing_required_tool_evidence" in reasons
+
+
 def test_trace_summary_passes_research_with_web_tool() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

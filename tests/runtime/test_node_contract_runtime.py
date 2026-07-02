@@ -233,6 +233,16 @@ async def test_zero_tool_finalize_reprompts_then_calls_tool() -> None:
     assert summary["reprompts"] >= 1
     assert summary["violation"] is None
     assert output.answer == "final answer with results"
+    decisions = [
+        event.payload
+        for event in output.events
+        if event.type == RuntimeEventType.RUNTIME_DECISION
+    ]
+    assert any(
+        decision["action"] == "retry"
+        and decision["reason"] == "node_contract_no_tool_use_reprompt"
+        for decision in decisions
+    )
 
 
 # --- Layer B: persistent refusal escalates to a structured violation -----------
@@ -265,6 +275,17 @@ async def test_persistent_no_tool_use_stamps_recoverable_violation() -> None:
     assert violation["reprompts"] == 1
     # One initial finalize + one reprompt → exactly two LLM turns.
     assert provider.calls == 2
+    decisions = [
+        event.payload
+        for event in output.events
+        if event.type == RuntimeEventType.RUNTIME_DECISION
+    ]
+    assert any(
+        decision["status"] == "failed"
+        and decision["reason"]
+        == "node_contract_no_tool_use_reprompt_budget_exhausted"
+        for decision in decisions
+    )
 
 
 # --- Layer B: proactive prelude reaches the system prompt ----------------------
@@ -352,6 +373,17 @@ async def test_required_completed_tool_reprompts_before_final_answer() -> None:
     assert summary["early_finalize_reason"] == "finalize_when_tools_satisfied"
     assert "lookup_b" in output.answer
     assert "required tool(s) have not completed successfully" in provider.user_texts[-1]
+    decisions = [
+        event.payload
+        for event in output.events
+        if event.type == RuntimeEventType.RUNTIME_DECISION
+    ]
+    assert any(
+        decision["action"] == "retry"
+        and decision["reason"] == "node_contract_required_tools_reprompt"
+        and decision["affected_tools"] == ["lookup_b"]
+        for decision in decisions
+    )
 
 
 @pytest.mark.asyncio
@@ -374,6 +406,29 @@ async def test_missing_required_completed_tool_stamps_violation() -> None:
     assert violation["missing_tools"] == ["lookup_b"]
     assert violation["reprompts"] == 1
     assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_tool_policy_denial_emits_runtime_decision() -> None:
+    provider = _ImmediateToolProvider(tool_name="lookup_b")
+    runner = _runner(_build_registry("lookup_a", "lookup_b"), provider)
+
+    output = await runner.run(
+        _run_input(NodeContract(), allowed=("lookup_a",), run_id="run_policy_deny")
+    )
+
+    decisions = [
+        event.payload
+        for event in output.events
+        if event.type == RuntimeEventType.RUNTIME_DECISION
+    ]
+    assert any(
+        decision["kind"] == "tool_guardrail"
+        and decision["action"] == "block"
+        and decision["reason"] == "tool_policy_denied"
+        and decision["affected_tools"] == ["lookup_b"]
+        for decision in decisions
+    )
 
 
 # --- Layer A: policy↔registry mismatch surfaces a structured warning -----------

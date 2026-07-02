@@ -18,6 +18,7 @@ from agent_driver.runtime.metadata_state import (
     get_cost_runtime_state,
     get_tool_loop_state,
 )
+from agent_driver.runtime.runtime_decisions import runtime_decision_payload
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
     RunContext,
@@ -62,6 +63,53 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
         )
         self._deps.event_log.append(event)
         return event
+
+    def _emit_runtime_decision(
+        self,
+        context: RunContext,
+        *,
+        kind: str,
+        trigger: str,
+        action: str,
+        reason: str,
+        status: str = "applied",
+        goal_id: str | None = None,
+        policy_id: str | None = None,
+        budget: dict[str, object] | None = None,
+        affected_tools: list[str] | None = None,
+        required_evidence: list[str] | None = None,
+        observed_evidence: list[str] | None = None,
+        product_tags: list[str] | None = None,
+        redacted_metadata: dict[str, object] | None = None,
+    ) -> RuntimeEvent:
+        """Emit one trace-safe runtime decision event."""
+
+        seq = self._next_seq(context.run_id)
+        return self._emit(
+            EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType.RUNTIME_DECISION,
+                payload=runtime_decision_payload(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    seq=seq,
+                    kind=kind,
+                    trigger=trigger,
+                    action=action,
+                    reason=reason,
+                    status=status,
+                    goal_id=goal_id,
+                    policy_id=policy_id,
+                    budget=budget,
+                    affected_tools=affected_tools,
+                    required_evidence=required_evidence,
+                    observed_evidence=observed_evidence,
+                    product_tags=product_tags,
+                    redacted_metadata=redacted_metadata,
+                ),
+            )
+        )
 
     def _save_checkpoint(
         self,

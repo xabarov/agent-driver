@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from agent_driver.contracts.runtime import AgentRunOutput
+from agent_driver.observability.run_trace.runtime_decisions import (
+    runtime_decision_summary,
+)
 from agent_driver.observability.trace_builder import build_trace_export
 from agent_driver.runtime.stream import (
     project_runtime_event_timeline,
@@ -71,6 +74,19 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
         else None,
         session_id=output.thread_id,
     )
+    runtime_decisions = runtime_decision_summary(
+        [
+            {
+                "event": event.type.value,
+                "run_id": event.run_id,
+                "attempt_id": event.attempt_id,
+                "seq": event.seq,
+                "data": event.payload,
+            }
+            for event in output.events
+        ],
+        run_id=output.run_id,
+    )
     return {
         "run": {
             "run_id": output.run_id,
@@ -96,6 +112,8 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
             ],
         },
         "run_lifecycle": lifecycle.model_dump(mode="json"),
+        "runtime_decisions": runtime_decisions,
+        "goal_state": runtime_decisions["goal_state"],
         "route_profile": _latest_llm_payload(output, "route_profile"),
         "provider_preflight": _latest_llm_payload(output, "provider_preflight"),
         "metadata": _redact_value(output.metadata),
@@ -110,6 +128,13 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
 def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str, Any]:
     """Build support bundle from replay payload loaded from persistent stores."""
     events = persisted_replay.get("events")
+    redacted_events = _redact_value(events if isinstance(events, list) else [])
+    runtime_decisions = runtime_decision_summary(
+        _persisted_events_for_summary(
+            redacted_events if isinstance(redacted_events, list) else []
+        ),
+        run_id=str(persisted_replay.get("run_id") or "persisted_replay"),
+    )
     return {
         "run": {
             "run_id": persisted_replay.get("run_id"),
@@ -118,7 +143,7 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
         },
         "latest_checkpoint": persisted_replay.get("latest_checkpoint"),
         "checkpoints": persisted_replay.get("checkpoints", []),
-        "events": _redact_value(events if isinstance(events, list) else []),
+        "events": redacted_events,
         "metadata": _redact_value(persisted_replay.get("metadata", {})),
         "runtime_timeline": {
             "diagnostics": {
@@ -143,12 +168,33 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
             ),
             "support_bundle_available": True,
         },
+        "runtime_decisions": runtime_decisions,
+        "goal_state": runtime_decisions["goal_state"],
         "redaction": {
             "safe_by_default": True,
             "contains_raw_prompt": False,
             "contains_raw_tool_outputs": False,
         },
     }
+
+
+def _persisted_events_for_summary(events: list[Any]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        event_name = event.get("event") or event.get("type")
+        data = event.get("data") or event.get("payload")
+        rows.append(
+            {
+                "event": event_name,
+                "run_id": event.get("run_id"),
+                "attempt_id": event.get("attempt_id"),
+                "seq": event.get("seq"),
+                "data": data if isinstance(data, dict) else {},
+            }
+        )
+    return rows
 
 
 def _last_persisted_seq(events: list[Any]) -> int | None:

@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from agent_driver.contracts.enums import (
     AgentProfile,
     ChatRole,
+    GuardrailDecision,
     RuntimeEventType,
     ToolPolicyDecision,
 )
@@ -121,6 +122,24 @@ class ToolStageHost(Protocol):
         self, context: RunContext, result: ToolExecutionResult
     ) -> Any: ...
     def _emit(self, event: EventSpec) -> None: ...
+    def _emit_runtime_decision(
+        self,
+        context: RunContext,
+        *,
+        kind: str,
+        trigger: str,
+        action: str,
+        reason: str,
+        status: str = "applied",
+        goal_id: str | None = None,
+        policy_id: str | None = None,
+        budget: dict[str, object] | None = None,
+        affected_tools: list[str] | None = None,
+        required_evidence: list[str] | None = None,
+        observed_evidence: list[str] | None = None,
+        product_tags: list[str] | None = None,
+        redacted_metadata: dict[str, object] | None = None,
+    ) -> Any: ...
     def _save_checkpoint(
         self, context: RunContext, *, latest_output: Any, node_id: str
     ) -> Any: ...
@@ -407,6 +426,9 @@ def _emit_tool_completed_if_needed(
                     else []
                 )
             ),
+            "risk": trace.risk.value,
+            "side_effect": trace.side_effect.value,
+            "approval_mode": trace.approval_mode.value,
         }
         if index < len(result.envelopes):
             envelope = result.envelopes[index]
@@ -445,6 +467,7 @@ def _emit_tool_completed_if_needed(
         event_type=RuntimeEventType.TOOL_CALL_COMPLETED,
         payload=payload,
     )
+    _emit_tool_policy_runtime_decisions(host, context, result)
     _emit_artifact_events_from_tool_result(host, context, result)
     tool_results_rows = get_tool_loop_state(context).tool_results()
     child_ledgers = child_source_ledgers_from_context(context)
@@ -524,6 +547,64 @@ def _emit_tool_completed_if_needed(
             event_type=RuntimeEventType.SOURCE_LEDGER_UPDATED,
             payload=source_ledger,
         )
+
+
+def _emit_tool_policy_runtime_decisions(
+    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
+) -> None:
+    for envelope in result.envelopes:
+        tool_name = envelope.call.tool_name
+        metadata: dict[str, object] = {
+            "tool_call_id": envelope.call.tool_call_id,
+            "policy_decision": envelope.decision.value,
+            "guardrail_decision": envelope.guardrail_decision.value,
+        }
+        if envelope.error is not None:
+            metadata["error_code"] = envelope.error.code
+        if envelope.decision == ToolPolicyDecision.DENY:
+            host._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="tool_denied",
+                action="block",
+                reason="tool_policy_denied",
+                policy_id="tool_policy",
+                affected_tools=[tool_name],
+                redacted_metadata=metadata,
+            )
+        elif envelope.decision == ToolPolicyDecision.INTERRUPT:
+            host._emit_runtime_decision(
+                context,
+                kind="approval",
+                trigger="tool_denied",
+                action="interrupt",
+                reason="tool_policy_interrupt",
+                policy_id="tool_policy",
+                affected_tools=[tool_name],
+                redacted_metadata=metadata,
+            )
+        if envelope.guardrail_decision == GuardrailDecision.BLOCK:
+            host._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="tool_denied",
+                action="block",
+                reason="tool_guardrail_blocked",
+                policy_id="tool_guardrail",
+                affected_tools=[tool_name],
+                redacted_metadata=metadata,
+            )
+        elif envelope.guardrail_decision == GuardrailDecision.SANITIZE:
+            host._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="tool_completed",
+                action="warn",
+                reason="tool_guardrail_sanitized",
+                policy_id="tool_guardrail",
+                affected_tools=[tool_name],
+                redacted_metadata=metadata,
+            )
 
 
 def _emit_artifact_events_from_tool_result(

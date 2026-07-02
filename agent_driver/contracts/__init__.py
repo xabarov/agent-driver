@@ -101,6 +101,12 @@ from agent_driver.contracts.runtime import (
     AgentRunOutput,
     ContextDiagnostics,
 )
+from agent_driver.contracts.runtime_decisions import (
+    GoalContract,
+    GoalEvaluatorResult,
+    GoalState,
+    RuntimeDecision,
+)
 from agent_driver.contracts.node_contract import FinalizeNow, NodeContract
 from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 from agent_driver.contracts.stream import RunStreamEvent
@@ -165,6 +171,9 @@ __all__ = [
     "ControlResponse",
     "ContextDiagnostics",
     "EventSeverity",
+    "GoalContract",
+    "GoalEvaluatorResult",
+    "GoalState",
     "GuardrailDecision",
     "CompactionMode",
     "CompactionSkipReason",
@@ -191,6 +200,7 @@ __all__ = [
     "RunStatus",
     "RunWarning",
     "RunStreamEvent",
+    "RuntimeDecision",
     "RuntimeEvent",
     "RuntimeEventType",
     "SensitivityLevel",

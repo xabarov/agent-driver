@@ -109,6 +109,54 @@ def test_runtime_support_bundle_promotes_redacted_provider_preflight() -> None:
     assert bundle["run_lifecycle"]["reconnect_cursor"] == "run_obs_bundle_2:2"
 
 
+def test_runtime_support_bundle_exposes_runtime_decisions() -> None:
+    output = AgentRunOutput(
+        run_id="run_obs_bundle_decisions",
+        attempt_id="attempt_1",
+        status=RunStatus.COMPLETED,
+        terminal_reason=TerminalReason.FINAL_ANSWER,
+        events=[
+            new_runtime_event(
+                event_type=RuntimeEventType.RUNTIME_DECISION,
+                context={
+                    "run_id": "run_obs_bundle_decisions",
+                    "attempt_id": "attempt_1",
+                    "seq": 1,
+                },
+                options={
+                    "payload": {
+                        "decision_id": "dec_support",
+                        "run_id": "run_obs_bundle_decisions",
+                        "attempt_id": "attempt_1",
+                        "seq": 1,
+                        "kind": "steering",
+                        "trigger": "control_applied",
+                        "action": "continue",
+                        "reason": "control_applied_at_step_boundary",
+                        "status": "applied",
+                    }
+                },
+            ),
+            new_runtime_event(
+                event_type=RuntimeEventType.RUN_COMPLETED,
+                context={
+                    "run_id": "run_obs_bundle_decisions",
+                    "attempt_id": "attempt_1",
+                    "seq": 2,
+                },
+            ),
+        ],
+    )
+
+    bundle = build_runtime_support_bundle(output)
+
+    assert bundle["runtime_decisions"]["count"] == 1
+    assert bundle["runtime_decisions"]["last_decision"]["reason"] == (
+        "control_applied_at_step_boundary"
+    )
+    assert bundle["goal_state"]["status"] == "inactive"
+
+
 def test_persisted_support_bundle_redacts_event_payload_secrets() -> None:
     """Persisted replay bundle should redact sensitive payload fields."""
     persisted = {

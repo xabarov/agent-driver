@@ -143,6 +143,16 @@ class SingleAgentStepMixin:
         unsatisfiable = nc.unsatisfiable_tool_names(run_input, registered)
         if unsatisfiable:
             context.metadata[nc.TOOL_POLICY_WARNINGS_KEY] = unsatisfiable
+            self._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="trace_violation",
+                action="warn",
+                reason="node_contract_unsatisfiable_tools",
+                status="failed",
+                affected_tools=list(unsatisfiable),
+                policy_id="node_contract",
+            )
             self._emit(
                 EventSpec(
                     run_id=context.run_id,
@@ -225,6 +235,19 @@ class SingleAgentStepMixin:
                     payload=payload,
                 )
             )
+            self._emit_runtime_decision(
+                context,
+                kind="steering",
+                trigger="control_applied",
+                action="continue",
+                reason="control_applied_at_step_boundary",
+                affected_tools=[],
+                redacted_metadata={
+                    "control_id": item.control_id,
+                    "kind": item.kind.value,
+                    "priority": item.priority.value,
+                },
+            )
         return await execute_llm_call_step(self, context)
 
     async def _execute_tool_stage(self, context: RunContext) -> RuntimeStepResult:
@@ -249,6 +272,14 @@ class SingleAgentStepMixin:
         force_final_reason = get_tool_loop_state(context).force_final_answer_reason()
         if isinstance(force_final_reason, str) and force_final_reason:
             completed_payload["force_final_reason"] = force_final_reason
+            self._emit_runtime_decision(
+                context,
+                kind="force_final",
+                trigger="finalize",
+                action="force_final",
+                reason=force_final_reason,
+                policy_id="tool_loop",
+            )
         continuation_reason = context.metadata.get("continuation_nudge_reason")
         if isinstance(continuation_reason, str) and continuation_reason:
             completed_payload["continuation_reason"] = continuation_reason
@@ -264,6 +295,14 @@ class SingleAgentStepMixin:
             completed_payload["planning_snapshot"] = snapshot
         continuation = _maybe_build_continuation_transition(context)
         if continuation is not None:
+            self._emit_runtime_decision(
+                context,
+                kind="force_final",
+                trigger="finalize",
+                action="continue",
+                reason=str(continuation_reason or "continuation_nudge"),
+                policy_id="continuation_detector",
+            )
             context.step_count += 1
             get_loop_control_state(context).set_step_transition(
                 next_step="llm_call",
@@ -366,11 +405,28 @@ class SingleAgentStepMixin:
             return None
         if not nc.reprompt_budget_remaining(context):
             nc.stamp_no_tool_use_violation(context)
+            self._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="finalize",
+                action="warn",
+                reason="node_contract_no_tool_use_reprompt_budget_exhausted",
+                status="failed",
+                policy_id="node_contract",
+            )
             return None
         text = (
             context.llm_response.message.content
             if context.llm_response is not None
             else ""
+        )
+        self._emit_runtime_decision(
+            context,
+            kind="retry",
+            trigger="finalize",
+            action="retry",
+            reason="node_contract_no_tool_use_reprompt",
+            policy_id="node_contract",
         )
         return _build_continuation_transition(
             context,
@@ -390,11 +446,30 @@ class SingleAgentStepMixin:
             return None
         if not nc.reprompt_budget_remaining(context):
             nc.stamp_required_tools_violation(context)
+            self._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="finalize",
+                action="warn",
+                reason="node_contract_required_tools_reprompt_budget_exhausted",
+                status="failed",
+                affected_tools=list(context.run_input.node_contract.finalize_when_tools),
+                policy_id="node_contract",
+            )
             return None
         text = (
             context.llm_response.message.content
             if context.llm_response is not None
             else ""
+        )
+        self._emit_runtime_decision(
+            context,
+            kind="retry",
+            trigger="finalize",
+            action="retry",
+            reason="node_contract_required_tools_reprompt",
+            affected_tools=list(context.run_input.node_contract.finalize_when_tools),
+            policy_id="node_contract",
         )
         return _build_continuation_transition(
             context,

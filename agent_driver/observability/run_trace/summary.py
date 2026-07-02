@@ -49,6 +49,9 @@ from agent_driver.observability.run_trace.research import (
 from agent_driver.observability.run_trace.research import (
     research_summary as _research_summary,
 )
+from agent_driver.observability.run_trace.runtime_decisions import (
+    runtime_decision_summary as _runtime_decision_summary,
+)
 from agent_driver.observability.run_trace.tools import assistant_text as _assistant_text
 from agent_driver.observability.run_trace.tools import count_events as _count_events
 from agent_driver.observability.run_trace.tools import event_data as _event_data
@@ -125,6 +128,11 @@ def summarize_run_trace(
     run_lifecycle = _run_lifecycle_summary(events)
     prompt_surface = _prompt_surface_summary(events)
     runtime_markers = _runtime_markers(events)
+    runtime_decisions = _runtime_decision_summary(
+        events,
+        run_id=run_id,
+        task_contract=task_contract,
+    )
     subagents = _subagent_summary(
         events,
         tool_names=tool_names,
@@ -337,6 +345,8 @@ def summarize_run_trace(
         "research_efficiency": research_efficiency,
         "deep_research_artifact_handoff_complete": deep_research_artifact_handoff_complete,
         "runtime_markers": runtime_markers,
+        "runtime_decisions": runtime_decisions,
+        "goal_state": runtime_decisions["goal_state"],
         "research": {
             "required": requires_research,
             "tools_used": [name for name in tool_names if name in _RESEARCH_TOOLS],

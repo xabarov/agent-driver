@@ -16,6 +16,7 @@ from agent_driver.contracts.memory import MemoryProjection
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.node_contract import NodeContract
 from agent_driver.contracts.profiles import PromptRenderResult
+from agent_driver.contracts.runtime_decisions import GoalContract
 from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 from agent_driver.contracts.subagents import SubagentGroup, SubagentRun
 from agent_driver.contracts.tools import ToolPolicyInput, ToolTrace
@@ -49,6 +50,10 @@ class AgentRunInput(ContractModel):
     enforcement, policy↔registry validation, early finalize from tool evidence).
     The default is inert — an all-False contract leaves runtime behaviour
     unchanged. See :class:`~agent_driver.contracts.node_contract.NodeContract`."""
+    goal_contract: GoalContract | None = None
+    """Optional bounded goal-supervision contract. Inert unless a host/runtime
+    policy explicitly evaluates it; stored on the run input so trace/support
+    projections can expose goal state without product-specific metadata."""
     deadline_seconds: float | None = None
     max_steps: int | None = None
     max_tool_calls: int | None = None

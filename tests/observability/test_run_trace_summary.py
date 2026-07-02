@@ -7,9 +7,13 @@ from typing import Any, cast
 from agent_driver.observability import summarize_run_trace
 
 
-def _completed_tool(name: str) -> dict[str, object]:
+def _completed_tool(
+    name: str, *, args: dict[str, object] | None = None
+) -> dict[str, object]:
     tool: dict[str, object] = {"tool_name": name, "status": "completed"}
-    if name == "agent_tool":
+    if args is not None:
+        tool["args"] = args
+    elif name == "agent_tool":
         tool["args"] = {
             "description": "Verify delegated facts",
             "task": "Check delegated facts and return a concise grounded summary.",
@@ -382,6 +386,144 @@ def test_trace_summary_collects_runtime_markers() -> None:
     assert summary["llm"]["force_final_reasons"] == ["deliverable_request"]
     assert summary["llm"]["continuation_reasons"] == ["progress_only_final"]
     assert summary["runtime_markers"]["force_final_reasons"] == ["deliverable_request"]
+
+
+def test_trace_summary_collects_runtime_decisions_without_raw_payloads() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Напиши итог",
+        assistant_text="Итог.",
+        events=[
+            {
+                "event": "runtime_decision",
+                "data": {
+                    "decision_id": "dec_1",
+                    "run_id": "run_test",
+                    "attempt_id": "attempt_1",
+                    "seq": 2,
+                    "kind": "retry",
+                    "trigger": "finalize",
+                    "action": "retry",
+                    "reason": "node_contract_no_tool_use_reprompt",
+                    "status": "applied",
+                    "affected_tools": ["lookup_a"],
+                    "redacted_metadata": {"policy_decision": "deny"},
+                    "raw_prompt": "must not leak",
+                    "tool_args": {"secret": "must not leak"},
+                },
+            },
+            {
+                "event": "runtime_decision",
+                "data": {
+                    "decision_id": "dec_2",
+                    "run_id": "run_test",
+                    "attempt_id": "attempt_1",
+                    "seq": 3,
+                    "kind": "tool_guardrail",
+                    "trigger": "trace_violation",
+                    "action": "warn",
+                    "reason": "missing_required_evidence",
+                    "status": "failed",
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    decisions = summary["runtime_decisions"]
+    assert decisions["count"] == 2
+    assert decisions["counts_by_kind"] == {"retry": 1, "tool_guardrail": 1}
+    assert decisions["retry_counts"] == {"node_contract_no_tool_use_reprompt": 1}
+    assert decisions["unsatisfied_requirements"] == ["missing_required_evidence"]
+    assert decisions["decisions"][0]["decision_id"] == "dec_1"
+    assert "raw_prompt" not in decisions["decisions"][0]
+    assert "tool_args" not in decisions["decisions"][0]
+    assert summary["goal_state"]["status"] == "inactive"
+
+
+def test_trace_summary_adds_diagnostic_tool_loop_decisions() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Research this and cite sources",
+        assistant_text="Done.",
+        task_contract={
+            "required_tools": ["web_fetch"],
+            "required_evidence": ["source_evidence"],
+        },
+        events=[
+            _completed_tool(
+                "web_search",
+                args={"query": "same query"},
+            ),
+            _completed_tool(
+                "web_search",
+                args={"query": "same query"},
+            ),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "failed",
+                            "error_code": "http_500",
+                            "args": {"url": "https://example.invalid/a"},
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "failed",
+                            "error_code": "http_500",
+                            "args": {"url": "https://example.invalid/b"},
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "read_file",
+                            "status": "completed",
+                            "args": {"path": "report.md"},
+                            "result_summary": "unchanged content",
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "read_file",
+                            "status": "completed",
+                            "args": {"path": "report.md"},
+                            "result_summary": "unchanged content",
+                        }
+                    ],
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    reasons = {
+        decision["reason"]
+        for decision in summary["runtime_decisions"]["decisions"]
+    }
+    assert "repeated_identical_tool_args" in reasons
+    assert "repeated_failed_tool_call" in reasons
+    assert "idempotent_read_no_progress" in reasons
+    assert "missing_required_tool_evidence" in reasons
+    assert summary["runtime_decisions"]["counts_by_kind"]["tool_guardrail"] >= 4
 
 
 def test_trace_summary_collects_subagent_markers() -> None:
