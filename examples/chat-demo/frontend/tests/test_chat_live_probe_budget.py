@@ -40,6 +40,40 @@ def test_research_budget_stop_waits_until_budget_is_exhausted() -> None:
     assert reason is None
 
 
+def test_provider_preflight_artifact_payload_prefers_provider_and_trace() -> None:
+    live_probe = _load_live_probe_module()
+
+    payload = live_probe.provider_preflight_artifact_payload(
+        provider_status={
+            "name": "openrouter",
+            "model": "openai/gpt-5.5",
+            "base_url_family": "openrouter",
+            "status": {"healthy": True},
+            "route_profile": {
+                "profile_id": "openrouter:openrouter:openai__gpt-5.5"
+            },
+            "provider_preflight": {
+                "preflight": {"status": "ok"},
+                "request_shape": {"tool_choice_policy": "provider_default"},
+            },
+        },
+        trace_summary={
+            "run_id": "run_1",
+            "route_profile": {"profile_id": "trace_profile"},
+            "provider_preflight": {"preflight": {"status": "degraded"}},
+        },
+        health_status={"provider": {"configured": True}},
+    )
+
+    assert payload["provider"]["base_url_family"] == "openrouter"
+    assert payload["route_profile"]["profile_id"] == (
+        "openrouter:openrouter:openai__gpt-5.5"
+    )
+    assert payload["trace"]["route_profile"]["profile_id"] == "trace_profile"
+    assert payload["redaction"]["safe_by_default"] is True
+    assert payload["redaction"]["contains_raw_base_url"] is False
+
+
 def test_research_budget_stop_detects_search_loop_before_diversity() -> None:
     live_probe = _load_live_probe_module()
     scenario = live_probe.LiveScenario(

@@ -29,7 +29,13 @@ from agent_driver.observability.run_trace.provider import (
     provider_profile_summary as _provider_profile_summary,
 )
 from agent_driver.observability.run_trace.provider import (
+    provider_preflight_summary as _provider_preflight_summary,
+)
+from agent_driver.observability.run_trace.provider import (
     provider_rejected as _provider_rejected,
+)
+from agent_driver.observability.run_trace.provider import (
+    route_profile_summary as _route_profile_summary,
 )
 from agent_driver.observability.run_trace.research import (
     RESEARCH_TOOLS as _RESEARCH_TOOLS,
@@ -108,6 +114,8 @@ def summarize_run_trace(
     )
     llm_calls = _llm_call_summary(events)
     provider_profile = _provider_profile_summary(events)
+    route_profile = _route_profile_summary(events)
+    provider_preflight = _provider_preflight_summary(events)
     prompt_surface = _prompt_surface_summary(events)
     runtime_markers = _runtime_markers(events)
     subagents = _subagent_summary(
@@ -310,6 +318,8 @@ def summarize_run_trace(
         "llm_calls": llm_calls["completed"],
         "llm": llm_calls,
         "provider_profile": provider_profile,
+        "route_profile": route_profile,
+        "provider_preflight": provider_preflight,
         "prompt_surface": prompt_surface,
         "tool_calls": len(tool_names),
         "tool_names": tool_names,

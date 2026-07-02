@@ -19,6 +19,10 @@ export interface ProviderResponse {
   name: string;
   model: string | null;
   base_url: string | null;
+  base_url_family?: string | null;
+  capability_profile?: Record<string, unknown> | null;
+  route_profile?: Record<string, unknown> | null;
+  provider_preflight?: Record<string, unknown> | null;
   status: ProviderStatusView;
 }
 

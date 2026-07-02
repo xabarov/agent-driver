@@ -33,6 +33,10 @@ class ProviderResponse(BaseModel):
     name: str
     model: str | None = None
     base_url: str | None = None
+    base_url_family: str | None = None
+    capability_profile: dict[str, object] | None = None
+    route_profile: dict[str, object] | None = None
+    provider_preflight: dict[str, object] | None = None
     status: ProviderStatusView
 
 

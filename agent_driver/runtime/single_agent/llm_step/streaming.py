@@ -262,6 +262,8 @@ def _collect_stream_item(
     if isinstance(item.metadata, dict):
         for key in (
             "provider_profile",
+            "route_profile",
+            "provider_preflight",
             "provider_reasoning_details_present",
             "provider_reasoning_details_count",
             "provider_reasoning_text_present",

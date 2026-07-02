@@ -36,6 +36,11 @@ from agent_driver.llm.provider_capabilities import (
     ProviderCapabilityProfile,
     resolve_openai_compatible_capabilities,
 )
+from agent_driver.llm.provider_route_profiles import (
+    ProviderRouteProfile,
+    preview_provider_preflight,
+    resolve_openai_compatible_route_profile,
+)
 from agent_driver.llm.tool_call_parser import (
     extract_text_form_tool_call_details,
     strip_text_form_tool_call_ranges,
@@ -166,8 +171,26 @@ class OpenAICompatibleProvider(ProviderBase):
             base_url=config.base_url,
             model=config.model,
         )
+        self._route_profile = resolve_openai_compatible_route_profile(
+            provider_name=config.name,
+            base_url=config.base_url,
+            model=config.model,
+            provider_kind=LlmProviderKind.OPENAI_COMPATIBLE,
+            capability_profile=self._capability_profile,
+        )
+        self._default_preflight = preview_provider_preflight(
+            provider_name=self.name,
+            provider_kind=LlmProviderKind.OPENAI_COMPATIBLE,
+            model=self._model,
+            route_profile=self._route_profile,
+            capability_profile=self._capability_profile,
+        )
         self.status.metadata["capability_profile"] = (
             self._capability_profile.to_metadata()
+        )
+        self.status.metadata["route_profile"] = self._route_profile.to_metadata()
+        self.status.metadata["provider_preflight"] = (
+            self._default_preflight.to_metadata()
         )
 
     @dataclass(slots=True)
@@ -202,17 +225,43 @@ class OpenAICompatibleProvider(ProviderBase):
         """Best-effort provider/model capability profile."""
         return self._capability_profile
 
-    def _with_capability_metadata(self, response: LlmResponse) -> LlmResponse:
+    @property
+    def route_profile(self) -> ProviderRouteProfile:
+        """Best-effort provider/model route profile."""
+        return self._route_profile
+
+    def _preflight_metadata(
+        self, request: LlmRequest | None = None
+    ) -> dict[str, Any]:
+        preflight = preview_provider_preflight(
+            provider_name=self.name,
+            provider_kind=LlmProviderKind.OPENAI_COMPATIBLE,
+            model=self._model,
+            route_profile=self._route_profile,
+            capability_profile=self._capability_profile,
+            request=request,
+        )
+        return preflight.to_metadata()
+
+    def _with_capability_metadata(
+        self, response: LlmResponse, *, request: LlmRequest | None = None
+    ) -> LlmResponse:
         metadata = {
             **response.metadata,
             "provider_profile": self._capability_profile.to_metadata(),
+            "route_profile": self._route_profile.to_metadata(),
+            "provider_preflight": self._preflight_metadata(request),
         }
         return response.model_copy(update={"metadata": metadata})
 
-    def _event_with_capability_metadata(self, event: LlmStreamEvent) -> LlmStreamEvent:
+    def _event_with_capability_metadata(
+        self, event: LlmStreamEvent, *, request: LlmRequest | None = None
+    ) -> LlmStreamEvent:
         metadata = {
             **event.metadata,
             "provider_profile": self._capability_profile.to_metadata(),
+            "route_profile": self._route_profile.to_metadata(),
+            "provider_preflight": self._preflight_metadata(request),
         }
         return event.model_copy(update={"metadata": metadata})
 
@@ -274,7 +323,7 @@ class OpenAICompatibleProvider(ProviderBase):
                         }
                     }
                 )
-            return self._with_capability_metadata(llm_response)
+            return self._with_capability_metadata(llm_response, request=request)
 
         return await self.execute_with_telemetry(
             _op, handled_exceptions=(httpx.HTTPError, ValueError)
@@ -369,7 +418,8 @@ class OpenAICompatibleProvider(ProviderBase):
                     _suppress_text_form_tool_calls_when_tools_disabled(
                         event,
                         tool_choice=request.tool_choice,
-                    )
+                    ),
+                    request=request,
                 )
             if held_text:
                 visible_text, visible_metadata = _flush_stream_visible_text(held_text)
@@ -382,7 +432,8 @@ class OpenAICompatibleProvider(ProviderBase):
                             event="delta",
                             delta_text=visible_text,
                             metadata=visible_metadata,
-                        )
+                        ),
+                        request=request,
                     )
             if pending_tool_calls:
                 flattened = [
@@ -398,7 +449,8 @@ class OpenAICompatibleProvider(ProviderBase):
                     if parse_errors:
                         metadata["tool_call_parse_errors"] = parse_errors
                     yield self._event_with_capability_metadata(
-                        LlmStreamEvent(event="tool_calls", metadata=metadata)
+                        LlmStreamEvent(event="tool_calls", metadata=metadata),
+                        request=request,
                     )
             elif text_chunks and request.tool_choice != "none":
                 text = "".join(text_chunks)
@@ -418,7 +470,8 @@ class OpenAICompatibleProvider(ProviderBase):
                     if details.ranges:
                         metadata["text_form_tool_call_ranges"] = details.ranges
                     yield self._event_with_capability_metadata(
-                        LlmStreamEvent(event="tool_calls", metadata=metadata)
+                        LlmStreamEvent(event="tool_calls", metadata=metadata),
+                        request=request,
                     )
 
 

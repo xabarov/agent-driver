@@ -257,10 +257,23 @@ def setup_minimal_api_routes(page: Page) -> None:
         lambda route: fulfill_json(
             route,
             {
-                "provider": "fake",
-                "configured": True,
+                "name": "fake",
                 "model": "concept-smoke",
                 "base_url": None,
+                "base_url_family": None,
+                "capability_profile": None,
+                "route_profile": None,
+                "provider_preflight": None,
+                "status": {
+                    "provider_name": "fake",
+                    "provider_kind": "fake",
+                    "healthy": True,
+                    "configured": True,
+                    "latency_ms": None,
+                    "avg_latency_ms": None,
+                    "request_count": 0,
+                    "error_count": 0,
+                },
             },
         ),
     )

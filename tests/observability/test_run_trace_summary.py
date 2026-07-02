@@ -67,6 +67,42 @@ def test_trace_summary_passes_research_with_web_tool() -> None:
     assert summary["llm"]["request_tool_names"] == [["web_search"]]
 
 
+def test_trace_summary_exposes_route_profile_and_preflight() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="hello",
+        assistant_text="hello",
+        events=[
+            {
+                "event": "llm_call_completed",
+                "data": {
+                    "provider_profile": {"provider_id": "openrouter"},
+                    "route_profile": {
+                        "profile_id": "openrouter:openrouter:openai__gpt-5.5",
+                        "base_url_family": "openrouter",
+                        "supports_forced_tool_choice": False,
+                    },
+                    "provider_preflight": {
+                        "preflight": {"status": "degraded"},
+                        "request_shape": {
+                            "tool_choice_policy": (
+                                "forced_tool_choice_downgraded_to_auto"
+                            )
+                        },
+                    },
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["route_profile"]["base_url_family"] == "openrouter"
+    assert summary["provider_preflight"]["preflight"]["status"] == "degraded"
+    assert summary["provider_preflight"]["request_shape"]["tool_choice_policy"] == (
+        "forced_tool_choice_downgraded_to_auto"
+    )
+
+
 def test_trace_summary_does_not_double_count_started_and_completed_tools() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

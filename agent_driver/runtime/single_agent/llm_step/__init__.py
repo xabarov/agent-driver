@@ -500,6 +500,12 @@ async def execute_llm_call_step(
     provider_profile = context.llm_response.metadata.get("provider_profile")
     if isinstance(provider_profile, dict):
         completed_payload["provider_profile"] = provider_profile
+    route_profile = context.llm_response.metadata.get("route_profile")
+    if isinstance(route_profile, dict):
+        completed_payload["route_profile"] = route_profile
+    provider_preflight = context.llm_response.metadata.get("provider_preflight")
+    if isinstance(provider_preflight, dict):
+        completed_payload["provider_preflight"] = provider_preflight
     provider_request_id = context.llm_response.metadata.get("provider_request_id")
     if isinstance(provider_request_id, str) and provider_request_id:
         completed_payload["provider_request_id"] = provider_request_id

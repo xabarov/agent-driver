@@ -733,6 +733,16 @@ def fetch_health_status(page: Page) -> dict[str, Any]:
     return response.json()
 
 
+def fetch_provider_status(page: Page) -> dict[str, Any]:
+    response = page.context.request.get(
+        f"{BASE_URL}/api/providers",
+        timeout=10000,
+    )
+    if not response.ok:
+        raise RuntimeError(f"provider status failed: {response.status}")
+    return response.json()
+
+
 def assert_observability_preflight(page: Page) -> dict[str, Any]:
     health = fetch_health_status(page)
     if not REQUIRE_OBSERVABILITY:
@@ -749,6 +759,41 @@ def assert_observability_preflight(page: Page) -> dict[str, Any]:
     if failures:
         raise AssertionError("observability preflight failed: " + "; ".join(failures))
     return health
+
+
+def provider_preflight_artifact_payload(
+    *,
+    provider_status: dict[str, Any] | None,
+    trace_summary: dict[str, Any],
+    health_status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    provider = provider_status if isinstance(provider_status, dict) else {}
+    trace_route = trace_summary.get("route_profile")
+    trace_preflight = trace_summary.get("provider_preflight")
+    health = health_status if isinstance(health_status, dict) else {}
+    return {
+        "provider": {
+            "name": provider.get("name"),
+            "model": provider.get("model"),
+            "base_url_family": provider.get("base_url_family"),
+            "status": provider.get("status"),
+        },
+        "route_profile": provider.get("route_profile"),
+        "provider_preflight": provider.get("provider_preflight"),
+        "trace": {
+            "run_id": trace_summary.get("run_id"),
+            "route_profile": trace_route if isinstance(trace_route, dict) else None,
+            "provider_preflight": (
+                trace_preflight if isinstance(trace_preflight, dict) else None
+            ),
+        },
+        "health_provider": health.get("provider") if isinstance(health, dict) else None,
+        "redaction": {
+            "safe_by_default": True,
+            "contains_api_key": False,
+            "contains_raw_base_url": False,
+        },
+    }
 
 
 def queue_steering_message(page: Page, run_id: str, message: str) -> dict[str, Any]:
@@ -1337,6 +1382,7 @@ def write_scenario_artifacts(
     workspace_artifacts: dict[str, Any] | None = None,
     workspace_preview: dict[str, Any] | None = None,
     health_status: dict[str, Any] | None = None,
+    provider_status: dict[str, Any] | None = None,
 ) -> Path:
     """Persist enough context to debug a live scenario without reopening the UI."""
     artifact_base = ARTIFACT_DIR / scenario.name
@@ -1373,6 +1419,20 @@ def write_scenario_artifacts(
             json.dumps(health_status, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+    if provider_status is not None:
+        (artifact_base / "provider.json").write_text(
+            json.dumps(provider_status, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    route_preflight = provider_preflight_artifact_payload(
+        provider_status=provider_status,
+        trace_summary=summary,
+        health_status=health_status,
+    )
+    (artifact_base / "route-preflight.json").write_text(
+        json.dumps(route_preflight, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     (artifact_base / "scorecard.md").write_text(
         render_scenario_scorecard(
             scenario=scenario,
@@ -1400,6 +1460,11 @@ def write_scenario_artifacts(
 def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
     open_new_chat(page)
     preflight_health = assert_observability_preflight(page)
+    provider_status: dict[str, Any] | None = None
+    try:
+        provider_status = fetch_provider_status(page)
+    except Exception:
+        provider_status = None
     page.route(
         "**/api/chat/messages",
         lambda route: route.continue_(
@@ -1457,6 +1522,11 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
     except Exception as exc:
         failures.append(f"health status check failed: {exc}")
     health_status = health_status or preflight_health
+    if provider_status is None:
+        try:
+            provider_status = fetch_provider_status(page)
+        except Exception as exc:
+            failures.append(f"provider status check failed: {exc}")
     if scenario.required_artifact_path is not None:
         try:
             workspace_artifacts = fetch_workspace_artifacts(page, ids.session_id)
@@ -1504,6 +1574,7 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
         workspace_artifacts=workspace_artifacts,
         workspace_preview=workspace_preview,
         health_status=health_status,
+        provider_status=provider_status,
     )
     if failures:
         raise AssertionError("; ".join(failures))

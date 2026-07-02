@@ -12,6 +12,8 @@ _SECRET_KEY_MARKERS = ("token", "secret", "password", "api_key", "auth")
 
 def _is_sensitive_key(key: str) -> bool:
     lower = key.lower()
+    if lower == "base_url" or lower.endswith("_base_url"):
+        return True
     return any(marker in lower for marker in _SECRET_KEY_MARKERS)
 
 
@@ -24,6 +26,16 @@ def _redact_value(value: Any) -> Any:
     if isinstance(value, list):
         return [_redact_value(item) for item in value]
     return value
+
+
+def _latest_llm_payload(output: AgentRunOutput, key: str) -> dict[str, Any] | None:
+    for event in sorted(output.events, key=lambda item: item.seq, reverse=True):
+        if event.type.value != "llm_call_completed":
+            continue
+        value = event.payload.get(key)
+        if isinstance(value, dict):
+            return _redact_value(value)
+    return None
 
 
 def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
@@ -46,6 +58,8 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
         "checkpoint": (
             output.checkpoint.model_dump(mode="json") if output.checkpoint else None
         ),
+        "route_profile": _latest_llm_payload(output, "route_profile"),
+        "provider_preflight": _latest_llm_payload(output, "provider_preflight"),
         "metadata": _redact_value(output.metadata),
         "redaction": {
             "safe_by_default": True,

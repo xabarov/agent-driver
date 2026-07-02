@@ -25,6 +25,13 @@ from agent_driver.llm.provider_descriptors import (
     register_provider_descriptor,
     resolve_provider,
 )
+from agent_driver.llm.provider_route_profiles import (
+    ProviderPreflightResult,
+    ProviderRouteProfile,
+    preview_provider_preflight,
+    request_shape_policy_summary,
+    resolve_openai_compatible_route_profile,
+)
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.llm.providers_impl import (
     FakeProvider,
@@ -42,8 +49,10 @@ __all__ = [
     "HealthAwareRouter",
     "LlmFinishReason",
     "ProviderDescriptor",
+    "ProviderPreflightResult",
     "ProviderErrorReason",
     "ProviderResolutionError",
+    "ProviderRouteProfile",
     "ProviderSpec",
     "ProviderTransport",
     "RecoveryAction",
@@ -51,6 +60,9 @@ __all__ = [
     "get_provider_descriptor",
     "list_provider_ids",
     "register_provider_descriptor",
+    "preview_provider_preflight",
+    "request_shape_policy_summary",
+    "resolve_openai_compatible_route_profile",
     "resolve_provider",
     "LlmProvider",
     "LlmProviderKind",
