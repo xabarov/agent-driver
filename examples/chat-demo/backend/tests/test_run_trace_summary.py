@@ -85,6 +85,59 @@ def test_trace_summary_exposes_provider_profile() -> None:
     }
 
 
+def test_trace_summary_exposes_runtime_timeline_diagnostics_for_reconnect() -> None:
+    summary = summarize_run_trace(
+        run_id="run_chat_timeline",
+        user_prompt="Fetch a source and write a report artifact",
+        assistant_text="Done. See research/report.md",
+        events=[
+            {
+                "event": "run_started",
+                "run_id": "run_chat_timeline",
+                "attempt_id": "attempt_1",
+                "seq": 1,
+                "data": {"harness_id": "chat-demo", "session_id": "session_1"},
+            },
+            {
+                "event": "tool_call_completed",
+                "run_id": "run_chat_timeline",
+                "attempt_id": "attempt_1",
+                "seq": 2,
+                "data": {"tool_name": "web_fetch", "status": "completed"},
+            },
+            {
+                "event": "source_ledger_updated",
+                "run_id": "run_chat_timeline",
+                "attempt_id": "attempt_1",
+                "seq": 3,
+                "data": {"status": "verified"},
+            },
+            {
+                "event": "artifact_updated",
+                "run_id": "run_chat_timeline",
+                "attempt_id": "attempt_1",
+                "seq": 4,
+                "data": {"path": "research/report.md"},
+            },
+            {
+                "event": "run_completed",
+                "run_id": "run_chat_timeline",
+                "attempt_id": "attempt_1",
+                "seq": 5,
+                "data": {},
+            },
+        ],
+    )
+
+    diagnostics = summary["runtime_timeline"]["diagnostics"]
+    assert diagnostics["harness_id"] == "chat-demo"
+    assert diagnostics["session_id"] == "session_1"
+    assert diagnostics["last_seq"] == 5
+    assert diagnostics["terminal_event"] == "run_completed"
+    assert diagnostics["reconnect_cursor"] == "run_chat_timeline:5"
+    assert diagnostics["tool_call_count"] == 1
+
+
 def test_trace_summary_passes_research_with_web_tool() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

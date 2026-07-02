@@ -6,18 +6,21 @@ current, and tied to code that exists in the repository.
 
 ## Start Here
 
+- [SDK](sdk.md) - product-facing `Agent`, `Session`, streaming, trace summary,
+  support bundle, self-consistency, and errors.
+- [Embedding](embedding.md) - supported public import surface and stability
+  policy for applications that depend on this package.
 - [Runtime overview](runtime.md) - runner loop, stores, events, tool execution,
-  and where durable state lives.
+  loop budgets, deferred-tool priming, and where durable state lives.
 - [Built-in tools](builtin-tools.md) - current tool packs and what each tool is
   for.
-- [SDK](sdk.md) - product-facing `Agent`, `Session`, streaming, trace summary,
-  support bundle, and errors.
 - [Planning and control](planning-and-control.md) - live todos, approval plans,
   clarification, steering, and subagents.
 - [Chat demo](chat-demo.md) - local demo stack, Phoenix tracing, provider/env
   setup, and concept checks.
 - [Provider and model debugging](provider-model-debugging.md) - OpenRouter,
-  Phoenix, reasoning/tool-call failures, and live model matrix practice.
+  route profiles, deterministic preflight, Phoenix, reasoning/tool-call
+  failures, and live model matrix practice.
 - [Testing](testing.md) - focused unit tests, quality pass, live checks, and
   Playwright smoke scenarios.
 
@@ -37,6 +40,8 @@ current, and tied to code that exists in the repository.
   completed research baseline, evidence decisions, and acceptance run IDs.
 - [Runtime metadata inventory](runtime-metadata.md) - current
   `RunContext.metadata` owner map for runtime state refactoring.
+- [Node contract](node-contract.md) - reliable tool-first workflow node
+  enforcement and direct finalize-from-evidence hooks.
 
 The large delivered plans (cross-harness backlog, platform adapters, ACP
 deepening, node contract, tracing, refactor, python sandbox, Deep Research live
@@ -64,6 +69,10 @@ hardening) are closed - see the archive READMEs under Decision Records.
 - [SDK errors](sdk-errors.md)
 - [SDK backend recipes](examples/sdk-backend-recipes.md)
 - [SDK toolset examples](examples/sdk-toolset-examples.md)
+- [Server](server.md)
+- [MCP Streamable-HTTP](mcp-http.md)
+- [ACP adapter](acp.md)
+- [A2A adapter](a2a.md)
 - [Forcing tool calls](patterns/forcing-tool-calls.md)
 - [Multi-mode prompts](patterns/multi-mode-prompts.md)
 - [Structured output](patterns/structured-output.md)

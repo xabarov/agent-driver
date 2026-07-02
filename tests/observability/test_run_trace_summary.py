@@ -101,6 +101,63 @@ def test_trace_summary_exposes_route_profile_and_preflight() -> None:
     assert summary["provider_preflight"]["request_shape"]["tool_choice_policy"] == (
         "forced_tool_choice_downgraded_to_auto"
     )
+    timeline = summary["runtime_timeline"]["diagnostics"]
+    assert timeline["timeline_row_count"] == 2
+    assert timeline["terminal_event"] == "run_completed"
+    assert timeline["provider_route_profile_id"] == (
+        "openrouter:openrouter:openai__gpt-5.5"
+    )
+
+
+def test_trace_summary_exposes_runtime_timeline_diagnostics() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="hello",
+        assistant_text="hello",
+        events=[
+            {
+                "event": "run_started",
+                "run_id": "run_test",
+                "attempt_id": "attempt_1",
+                "seq": 1,
+                "data": {
+                    "harness_id": "chat-demo",
+                    "session_id": "session_1",
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "run_id": "run_test",
+                "attempt_id": "attempt_1",
+                "seq": 2,
+                "data": {"tool_name": "web_fetch"},
+            },
+            {
+                "event": "llm_request_rejected",
+                "run_id": "run_test",
+                "attempt_id": "attempt_1",
+                "seq": 3,
+                "data": {"reason": "retry"},
+            },
+            {
+                "event": "run_failed",
+                "run_id": "run_test",
+                "attempt_id": "attempt_1",
+                "seq": 4,
+                "data": {},
+            },
+        ],
+    )
+
+    diagnostics = summary["runtime_timeline"]["diagnostics"]
+    assert diagnostics["harness_id"] == "chat-demo"
+    assert diagnostics["session_id"] == "session_1"
+    assert diagnostics["last_seq"] == 4
+    assert diagnostics["terminal_state"] == "failed"
+    assert diagnostics["reconnect_cursor"] == "run_test:4"
+    assert diagnostics["tool_call_count"] == 1
+    assert diagnostics["warning_count"] == 1
+    assert diagnostics["retry_count"] == 1
 
 
 def test_trace_summary_does_not_double_count_started_and_completed_tools() -> None:

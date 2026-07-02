@@ -37,6 +37,9 @@ def test_runtime_support_bundle_redacts_sensitive_metadata_keys() -> None:
     assert bundle["metadata"]["api_key"] == "<redacted>"
     assert bundle["metadata"]["nested"]["token"] == "<redacted>"
     assert bundle["metadata"]["nested"]["safe"] == "ok"
+    assert bundle["runtime_timeline"]["diagnostics"]["run_id"] == "run_obs_bundle_1"
+    assert bundle["runtime_timeline"]["diagnostics"]["terminal_event"] == "run_completed"
+    assert bundle["runtime_timeline"]["rows"][0]["category"] == "lifecycle"
 
 
 def test_runtime_support_bundle_promotes_redacted_provider_preflight() -> None:
@@ -96,6 +99,11 @@ def test_runtime_support_bundle_promotes_redacted_provider_preflight() -> None:
     )
     assert bundle["provider_preflight"]["request_shape"]["api_key"] == "<redacted>"
     assert bundle["metadata"]["base_url"] == "<redacted>"
+    diagnostics = bundle["runtime_timeline"]["diagnostics"]
+    assert diagnostics["timeline_row_count"] == 2
+    assert diagnostics["provider_route_profile_id"] == (
+        "openrouter:openrouter:openai__gpt-5.5"
+    )
 
 
 def test_persisted_support_bundle_redacts_event_payload_secrets() -> None:
@@ -110,3 +118,4 @@ def test_persisted_support_bundle_redacts_event_payload_secrets() -> None:
     bundle = build_persisted_support_bundle(persisted)
     assert bundle["events"][0]["payload"]["auth_token"] == "<redacted>"
     assert bundle["metadata"]["password"] == "<redacted>"
+    assert bundle["runtime_timeline"]["diagnostics"]["durability"] == "persisted_replay"

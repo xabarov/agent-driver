@@ -26,10 +26,10 @@ See [SDK](sdk.md) for the full `Agent` surface and [capabilities](sdk.md#capabil
 
 | Import | What you get |
 | --- | --- |
-| `agent_driver.sdk` | `create_agent`, `query`, `Agent`, `Session`, `ToolSet`, `run_subagent`, `SubagentSpec`, `SubagentResult`, `AsyncSubagentManager`, `BackgroundSubagent`, `fork_subagent`, SDK error types |
-| `agent_driver.runtime` | `RunnerConfig`, `CapabilitySettings`, runtime store factories, `RunAbortHandle` |
+| `agent_driver.sdk` | `create_agent`, `query`, `Agent`, `Session`, `ToolSet`, `run_self_consistent`, `run_subagent`, `SubagentSpec`, `SubagentResult`, `AsyncSubagentManager`, `BackgroundSubagent`, `fork_subagent`, trace/support helpers, SDK error types |
+| `agent_driver.runtime` | `RunnerConfig`, `CapabilitySettings`, `keyword_relevance_primer`, runtime store factories, `RunAbortHandle` |
 | `agent_driver.contracts` | `AgentRunInput` / `AgentRunOutput`, `HarnessProfile`, `ToolManifest`, enums, message/usage/event models |
-| `agent_driver.llm` | provider protocol + built-ins (`FakeProvider`, OpenAI-compatible, Ollama, Anthropic), `resolve_provider` / `ProviderSpec` / `ProviderDescriptor`, `HealthAwareRouter`, error classifier, `sanitize_request_messages` |
+| `agent_driver.llm` | provider protocol + built-ins (`FakeProvider`, OpenAI-compatible, Ollama, Anthropic), `resolve_provider` / `ProviderSpec` / `ProviderDescriptor`, `HealthAwareRouter`, `ProviderRouteProfile` / `ProviderPreflightResult`, request-shape policy helpers, error classifier, `sanitize_request_messages` |
 | `agent_driver.permissions` | `PermissionPolicy`, `PermissionRule` (incl. `path_under` scope predicate), `PermissionMode`, `build_permission_gate`, `classify_command` |
 | `agent_driver.memory` | `MemoryProvider`, `StoreBackedMemoryProvider`, `InMemoryMemoryStore`, `SqliteMemoryStore` |
 | `agent_driver.fs` | `FileBackend` protocol + `StateBackend` / `LocalFilesystemBackend` / `CompositeBackend`, `FileBackendError` |

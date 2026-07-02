@@ -20,6 +20,8 @@ Core entrypoints:
 - `create_agent(...)` builds an `Agent` facade with stores, tool registry and
   governed execution wired.
 - `query(...)` is a one-shot helper for simple integrations.
+- `run_self_consistent(...)` runs the same input multiple times and returns the
+  plurality-vote consensus plus the vote distribution.
 - `Agent.query(...)` and `Agent.run_text(...)` accept plain text.
 - `Agent.run(...)` accepts a full `AgentRunInput` for advanced control.
 - `Agent.session(...)` returns a thread-scoped `Session`.
@@ -42,6 +44,9 @@ equivalent, and `config.<field>` reads work either way.
 | `harness_profiles` | per-model prompt slots / tool exclusion / description overrides | first-match over `match_models` globs (case-insensitive) |
 | `tool_concurrency_limit` | cap parallel tool execution | else `AGENT_DRIVER_TOOL_CONCURRENCY` / default 8 |
 | `subagent_model_routing` | `{agent_type: model}` for child runs | explicit `forced_model` overrides; routed model rides `forced_model` |
+| `default_max_steps` | config-level backstop when `AgentRunInput.max_steps` is unset | default `80`; use `None` only for intentionally unbounded loops |
+| `budget_grace_enabled` | grants one bounded no-tools final-answer window after soft step/tool budgets | cost ceilings still hard-stop |
+| `defer_primer` | surfaces relevant deferred tools before each LLM step | `keyword_relevance_primer()` is the generic default helper; `None` keeps pure `tool_search` behavior |
 
 Tool-arg truncation (a cheap pre-compaction pass) lives in `CompactionSettings`
 (`enable_tool_arg_truncation`, `tool_arg_truncation_max_chars`).
@@ -58,6 +63,9 @@ Output diagnostics:
 - `agent.summarize(output)` or `summarize_output(output)` returns
   `TraceSummary`.
 - `agent.support_bundle(output)` returns a redacted support-bundle recipe.
+- Provider support artifacts can include `ProviderRouteProfile` /
+  `ProviderPreflightResult` metadata so callers can inspect request-shape
+  downgrades without making a live provider request.
 
 See also:
 

@@ -15,25 +15,30 @@ Current package version: `0.1.0`
 ## What is new in this iteration
 
 - SDK entrypoints: `create_agent`, `query`, `Session`, `RunHandle`, `RunStream`
-- Typed provider errors with request IDs when providers expose them
-- SDK trace summaries, support bundles, and context-pressure diagnostics
+- Self-consistency runs with plurality voting via `run_self_consistent`
+- Typed provider errors, request IDs, route profiles, and preflight summaries
+- SDK trace summaries, support bundles, context-pressure diagnostics, and
+  redaction-safe provider diagnostics
 - Tool-surface selection via `ToolSet`, built-in packs, and `tool(...)`
-- Durable runtime storage, governed tool execution, context compaction, evals
+- Deferred-tool priming, soft-budget final-answer grace, governed tool
+  execution, context compaction, evals
 
 ## Key capabilities
 
 - **SDK facade**: one-shot queries, sessions, streaming helpers, resume helpers,
-  custom tools, trace summaries, and support bundles
+  custom tools, self-consistency sampling, trace summaries, and support bundles
 - **Durable runtime**: checkpoint + event-log abstractions with in-memory, SQLite,
-  and PostgreSQL backends
+  and PostgreSQL backends, plus bounded step-loop defaults and budget grace
 - **Tool governance**: registry, manifests, risk/side-effect policy, guardrails,
-  and deterministic prompt docs
+  `success_field` failure mapping, and deterministic prompt docs
 - **Built-in tool packs**: filesystem, shell, web, planning, tasking, and MCP
   adapters
 - **Human-in-the-loop primitives**: structured question and planning/task update
   tools
 - **Observability and evals**: trace export, replay projections, dataset-based
   comparisons
+- **Provider diagnostics**: OpenAI-compatible route profiles, deterministic
+  preflight summaries, request-shape downgrade notes, and single-provider retry
 
 ## Requirements
 
@@ -110,6 +115,15 @@ server auth, and Python tool variables. Live provider checks require
 `AGENT_DRIVER_RUN_LIVE_TESTS=1`; Postgres checks additionally require
 `AGENT_DRIVER_RUN_POSTGRES_TESTS=1` and `AGENT_DRIVER_POSTGRES_DSN`.
 
+Common make targets:
+
+```bash
+make test
+make format-check
+make lint
+make selftest-fake
+```
+
 ## Documentation map
 
 - Embedding (public API surface + stability): `docs/embedding.md`
@@ -123,9 +137,13 @@ server auth, and Python tool variables. Live provider checks require
 - Errors: `docs/sdk-errors.md`
 - Runtime overview: `docs/runtime.md`
 - Planning and control: `docs/planning-and-control.md`
+- Provider/model debugging and route preflight: `docs/provider-model-debugging.md`
+- Node contract: `docs/node-contract.md`
 - Chat demo: `docs/chat-demo.md`
 - Testing: `docs/testing.md`
 - Built-in tools overview: `docs/builtin-tools.md`
+- Server surfaces: `docs/server.md`, `docs/mcp-http.md`, `docs/acp.md`,
+  `docs/a2a.md`
 - Roadmap: `docs/roadmap.md`
 
 ## Project status

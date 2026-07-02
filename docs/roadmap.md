@@ -9,13 +9,17 @@ This is the short current roadmap. Historical phase notes live in
 chat applications:
 
 - durable single-agent execution with checkpoints, event logs, resume, replay,
-  and clear runtime contracts;
+  bounded loop defaults, soft-budget grace, and clear runtime contracts;
 - governed tool execution with manifests, policy, guardrails, interrupts, and
-  bounded outputs;
+  bounded outputs, including opt-in self-reported failure mapping;
+- provider/model diagnostics with route profiles, deterministic preflight,
+  request-shape downgrade notes, and cheap-to-expensive live-gate practice;
 - chat-friendly planning that separates live progress from approval planning;
 - steerability through queued controls instead of ad hoc UI state;
 - subagents with durable child rows, mailbox handoff, background scheduling,
   and final synthesis;
+- variance reduction through SDK-level self-consistency sampling when a domain
+  can supply a stable vote key;
 - product verification through the chat demo, Phoenix traces, and Playwright
   concept checks.
 
@@ -55,6 +59,11 @@ what is left. The genuinely-open threads are narrow:
 5. Keep docs short and current.
    Add concise pages for live concepts; avoid restoring old exploratory notes
    or active-looking checklists in reference docs.
+
+6. Keep provider diagnostics cheap and redaction-safe.
+   Route/profile preflight belongs before live model spend. Support bundles and
+   harness artifacts should carry profile/preflight shape, not raw provider
+   payloads or secrets.
 
 ## Quality Bar
 

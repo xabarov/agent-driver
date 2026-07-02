@@ -1391,6 +1391,14 @@ def write_scenario_artifacts(
         json.dumps(summary, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    runtime_timeline = summary.get("runtime_timeline")
+    if isinstance(runtime_timeline, dict):
+        diagnostics = runtime_timeline.get("diagnostics")
+        if isinstance(diagnostics, dict):
+            (artifact_base / "runtime-timeline-diagnostics.json").write_text(
+                json.dumps(diagnostics, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
     (artifact_base / "scenario.json").write_text(
         json.dumps(
             {

@@ -43,6 +43,15 @@ guardrails, interrupts, output limits, and structured error envelopes.
 
 Important runtime guards today:
 
+- `RunnerConfig.default_max_steps` defaults to `80` when a run omits
+  `AgentRunInput.max_steps`; set it to `None` only for intentionally unbounded
+  loops;
+- `RunnerConfig.budget_grace_enabled` opens one bounded no-tools final-answer
+  window after soft step/tool budgets, so partial evidence can still produce a
+  model-authored answer;
+- `RunnerConfig.defer_primer` can surface a small set of relevant deferred
+  tools before a step; `keyword_relevance_primer()` provides a generic
+  name/description overlap policy, while `tool_search` remains the fallback;
 - force planning can block side-effecting tools until an approval plan exists;
 - deliverable requests can deny clarification/approval tools for that turn;
 - after substantive data tools, explicit deliverable turns can force a final
@@ -80,3 +89,16 @@ payload, so the positional pairing stays honest.
 The runtime emits typed events for run lifecycle, LLM chunks, tools, planning,
 interrupts, steering controls, subagents, warnings, and terminal output. The
 chat demo consumes these events over SSE and can replay persisted sessions.
+
+## Provider Diagnostics
+
+The provider layer exposes redaction-safe route diagnostics before any live
+request is made. `ProviderRouteProfile` records request-shaping facts for a
+provider/model/base-url family: tool-call support, forced tool-choice support,
+strict JSON support, reasoning support, request-id expectations, streaming, and
+token-field hints. `ProviderPreflightResult` wraps those facts with the
+deterministic request-shape policy and any downgrade notes.
+
+Use these payloads in support bundles, chat-demo provider status, live-probe
+artifacts, and downstream harnesses before spending provider tokens. The data
+must stay safe to persist: no API keys, auth headers, or raw base URLs.

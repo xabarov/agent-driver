@@ -59,9 +59,11 @@ from agent_driver.observability.run_trace.tools import tool_names as _tool_names
 from agent_driver.observability.run_trace.tools import (
     unknown_tool_summary as _unknown_tool_summary,
 )
+from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.runtime.single_agent.lifecycle.continuation import (
     analyze_continuation_intent,
 )
+from agent_driver.runtime.stream import summarize_runtime_session_diagnostics
 
 from ._common import (
     _TERMINAL_EVENTS,
@@ -116,6 +118,7 @@ def summarize_run_trace(
     provider_profile = _provider_profile_summary(events)
     route_profile = _route_profile_summary(events)
     provider_preflight = _provider_preflight_summary(events)
+    runtime_timeline = _runtime_timeline_summary(events)
     prompt_surface = _prompt_surface_summary(events)
     runtime_markers = _runtime_markers(events)
     subagents = _subagent_summary(
@@ -320,6 +323,7 @@ def summarize_run_trace(
         "provider_profile": provider_profile,
         "route_profile": route_profile,
         "provider_preflight": provider_preflight,
+        "runtime_timeline": runtime_timeline,
         "prompt_surface": prompt_surface,
         "tool_calls": len(tool_names),
         "tool_names": tool_names,
@@ -409,6 +413,56 @@ def _control_semantic_route(kind: object, priority: object) -> str | None:
     else:
         route = kind
     return route
+
+
+def _runtime_timeline_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    stream_events = _stream_events_from_summary_events(events)
+    diagnostics = summarize_runtime_session_diagnostics(
+        stream_events,
+        durability="trace_summary",
+    )
+    return {"diagnostics": diagnostics.model_dump(mode="json")}
+
+
+def _stream_events_from_summary_events(
+    events: list[dict[str, object]],
+) -> list[RunStreamEvent]:
+    stream_events: list[RunStreamEvent] = []
+    fallback_run_id = "run_unknown"
+    fallback_attempt_id = "attempt_unknown"
+    for index, event in enumerate(events, start=1):
+        event_name = event.get("event")
+        if not isinstance(event_name, str) or not event_name:
+            continue
+        data = event.get("data")
+        run_id = event.get("run_id")
+        attempt_id = event.get("attempt_id")
+        seq = event.get("seq")
+        stream_events.append(
+            RunStreamEvent(
+                schema_version="1.0",
+                stream_id=str(event.get("stream_id") or f"{run_id or fallback_run_id}:{seq or index}"),
+                run_id=run_id if isinstance(run_id, str) else fallback_run_id,
+                attempt_id=(
+                    attempt_id if isinstance(attempt_id, str) else fallback_attempt_id
+                ),
+                seq=seq if isinstance(seq, int) and seq > 0 else index,
+                event=event_name,
+                source="runtime_event",
+                data=dict(data) if isinstance(data, dict) else {},
+                runtime_event_id=(
+                    event.get("runtime_event_id")
+                    if isinstance(event.get("runtime_event_id"), str)
+                    else None
+                ),
+                created_at=(
+                    event.get("created_at")
+                    if isinstance(event.get("created_at"), str)
+                    else None
+                ),
+            )
+        )
+    return stream_events
 
 
 def _runtime_markers(events: list[dict[str, object]]) -> dict[str, list[str]]:
