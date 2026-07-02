@@ -142,6 +142,102 @@ def test_trace_summary_exposes_runtime_timeline_diagnostics_for_reconnect() -> N
     assert lifecycle["reconnect_cursor"] == "run_chat_timeline:5"
 
 
+def test_trace_summary_exposes_deep_research_provenance_contracts() -> None:
+    summary = summarize_run_trace(
+        run_id="run_chat_provenance",
+        user_prompt="Do deep research and write a cited report.",
+        assistant_text="Done. See research/report.md.",
+        task_contract={
+            "kind": "research",
+            "requires_research": True,
+            "artifact_required": True,
+            "required_evidence": [
+                "context_provenance",
+                "skill_attachments",
+                "artifact_provenance",
+                "source_evidence",
+            ],
+        },
+        events=[
+            {
+                "event": "run_started",
+                "run_id": "run_chat_provenance",
+                "attempt_id": "attempt_1",
+                "seq": 1,
+                "data": {
+                    "context_provenance": [
+                        {
+                            "context_id": "ctx_source_note_1",
+                            "kind": "source_note",
+                            "source_ref": "research/sources.jsonl#1",
+                            "status": "compacted",
+                        }
+                    ],
+                    "skill_attachments": [
+                        {
+                            "skill_id": "deep-research-report",
+                            "name": "deep-research-report",
+                            "source": "filesystem",
+                            "status": "attached",
+                            "activation_reason": "deep_research_profile",
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "run_id": "run_chat_provenance",
+                "attempt_id": "attempt_1",
+                "seq": 2,
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "tool_call_id": "fetch_1",
+                            "status": "completed",
+                            "source_evidence": [
+                                {
+                                    "id": "web_fetch:fetch_1:1",
+                                    "canonical_url": "https://example.com/source",
+                                    "domain": "example.com",
+                                    "source_type": "web_fetch",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "artifact_updated",
+                "run_id": "run_chat_provenance",
+                "attempt_id": "attempt_1",
+                "seq": 3,
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "tool_name": "file_write",
+                    "tool_call_id": "write_report",
+                },
+            },
+            {
+                "event": "run_completed",
+                "run_id": "run_chat_provenance",
+                "attempt_id": "attempt_1",
+                "seq": 4,
+                "data": {},
+            },
+        ],
+    )
+
+    assert summary["context_provenance"]["compacted_count"] == 1
+    assert summary["skill_attachments"]["attachments"][0]["name"] == (
+        "deep-research-report"
+    )
+    assert summary["artifact_provenance"]["paths"] == ["research/report.md"]
+    assert summary["source_evidence"]["domains"] == ["example.com"]
+    assert summary["provenance_contracts"]["status"] == "pass"
+
+
 def test_trace_summary_exposes_runtime_decision_steering_evidence() -> None:
     summary = summarize_run_trace(
         run_id="run_chat_decision",

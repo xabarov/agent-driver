@@ -8,6 +8,7 @@ from agent_driver.contracts.runtime import AgentRunOutput
 from agent_driver.observability.run_trace.runtime_decisions import (
     runtime_decision_summary,
 )
+from agent_driver.observability.provenance import build_provenance_summary
 from agent_driver.observability.trace_builder import build_trace_export
 from agent_driver.runtime.stream import (
     project_runtime_event_timeline,
@@ -87,6 +88,20 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
         ],
         run_id=output.run_id,
     )
+    provenance = build_provenance_summary(
+        events=[
+            {
+                "event": event.type.value,
+                "run_id": event.run_id,
+                "attempt_id": event.attempt_id,
+                "seq": event.seq,
+                "data": event.payload,
+            }
+            for event in output.events
+        ],
+        metadata=dict(output.metadata),
+        required_evidence=_required_evidence(output.metadata),
+    )
     return {
         "run": {
             "run_id": output.run_id,
@@ -114,6 +129,7 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
         "run_lifecycle": lifecycle.model_dump(mode="json"),
         "runtime_decisions": runtime_decisions,
         "goal_state": runtime_decisions["goal_state"],
+        **provenance,
         "route_profile": _latest_llm_payload(output, "route_profile"),
         "provider_preflight": _latest_llm_payload(output, "provider_preflight"),
         "metadata": _redact_value(output.metadata),
@@ -135,6 +151,14 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
         ),
         run_id=str(persisted_replay.get("run_id") or "persisted_replay"),
     )
+    metadata = _redact_value(persisted_replay.get("metadata", {}))
+    provenance = build_provenance_summary(
+        events=_persisted_events_for_summary(
+            redacted_events if isinstance(redacted_events, list) else []
+        ),
+        metadata=metadata if isinstance(metadata, dict) else {},
+        required_evidence=_required_evidence(metadata if isinstance(metadata, dict) else {}),
+    )
     return {
         "run": {
             "run_id": persisted_replay.get("run_id"),
@@ -144,7 +168,7 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
         "latest_checkpoint": persisted_replay.get("latest_checkpoint"),
         "checkpoints": persisted_replay.get("checkpoints", []),
         "events": redacted_events,
-        "metadata": _redact_value(persisted_replay.get("metadata", {})),
+        "metadata": metadata,
         "runtime_timeline": {
             "diagnostics": {
                 "run_id": persisted_replay.get("run_id"),
@@ -170,6 +194,7 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
         },
         "runtime_decisions": runtime_decisions,
         "goal_state": runtime_decisions["goal_state"],
+        **provenance,
         "redaction": {
             "safe_by_default": True,
             "contains_raw_prompt": False,
@@ -208,6 +233,13 @@ def _persisted_reconnect_cursor(run_id: object, events: list[Any]) -> str | None
     if not isinstance(run_id, str) or last_seq is None:
         return None
     return f"{run_id}:{last_seq}"
+
+
+def _required_evidence(metadata: dict[str, Any]) -> list[str]:
+    value = metadata.get("required_evidence")
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
 
 
 __all__ = ["build_persisted_support_bundle", "build_runtime_support_bundle"]

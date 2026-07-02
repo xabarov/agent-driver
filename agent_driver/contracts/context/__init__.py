@@ -23,6 +23,15 @@ from agent_driver.contracts.context.planning import (
     PlanningStep,
     TodoState,
 )
+from agent_driver.contracts.context.provenance import (
+    ArtifactProvenance,
+    ContextLedgerSummary,
+    ContextProvenanceRecord,
+    MemoryFactProvenance,
+    SideEffectTransaction,
+    SkillAttachment,
+    SourceEvidenceRecord,
+)
 from agent_driver.contracts.context.sessions import SessionRef, SessionTurn, TurnDigest
 from agent_driver.contracts.context.session_memory import SessionMemory
 from agent_driver.contracts.context.trimming import (
@@ -47,6 +56,13 @@ __all__ = [
     "PlanningState",
     "PlanningStep",
     "TodoState",
+    "ArtifactProvenance",
+    "ContextLedgerSummary",
+    "ContextProvenanceRecord",
+    "MemoryFactProvenance",
+    "SideEffectTransaction",
+    "SkillAttachment",
+    "SourceEvidenceRecord",
     "SessionRef",
     "SessionTurn",
     "TurnDigest",

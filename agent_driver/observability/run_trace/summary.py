@@ -52,6 +52,9 @@ from agent_driver.observability.run_trace.research import (
 from agent_driver.observability.run_trace.runtime_decisions import (
     runtime_decision_summary as _runtime_decision_summary,
 )
+from agent_driver.observability.provenance import (
+    build_provenance_summary as _build_provenance_summary,
+)
 from agent_driver.observability.run_trace.tools import assistant_text as _assistant_text
 from agent_driver.observability.run_trace.tools import count_events as _count_events
 from agent_driver.observability.run_trace.tools import event_data as _event_data
@@ -132,6 +135,11 @@ def summarize_run_trace(
         events,
         run_id=run_id,
         task_contract=task_contract,
+    )
+    provenance = _build_provenance_summary(
+        events=events,
+        metadata=_metadata_from_events(events),
+        required_evidence=_required_evidence(task_contract),
     )
     subagents = _subagent_summary(
         events,
@@ -320,6 +328,7 @@ def summarize_run_trace(
         "deep_research_hard_claims_unsupported": research_efficiency[
             "hard_claims_unsupported"
         ],
+        **provenance["contract_verdicts"]["violations"],
     }
     notes = _notes(
         failures=failures,
@@ -347,6 +356,13 @@ def summarize_run_trace(
         "runtime_markers": runtime_markers,
         "runtime_decisions": runtime_decisions,
         "goal_state": runtime_decisions["goal_state"],
+        "context_provenance": provenance["context_provenance"],
+        "memory_fact_provenance": provenance["memory_fact_provenance"],
+        "skill_attachments": provenance["skill_attachments"],
+        "artifact_provenance": provenance["artifact_provenance"],
+        "source_evidence": provenance["source_evidence"],
+        "side_effect_transactions": provenance["side_effect_transactions"],
+        "provenance_contracts": provenance["contract_verdicts"],
         "research": {
             "required": requires_research,
             "tools_used": [name for name in tool_names if name in _RESEARCH_TOOLS],
@@ -437,6 +453,38 @@ def _runtime_timeline_summary(events: list[dict[str, object]]) -> dict[str, Any]
         durability="trace_summary",
     )
     return {"diagnostics": diagnostics.model_dump(mode="json")}
+
+
+def _metadata_from_events(events: list[dict[str, object]]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for event in events:
+        data = _event_data(event)
+        event_metadata = data.get("metadata")
+        if isinstance(event_metadata, dict):
+            metadata.update(event_metadata)
+        if event.get("event") == "run_started":
+            for key in (
+                "context_provenance",
+                "memory_fact_provenance",
+                "skill_attachments",
+                "artifact_provenance",
+                "source_evidence",
+                "side_effect_transactions",
+                "required_evidence",
+            ):
+                value = data.get(key)
+                if value is not None:
+                    metadata[key] = value
+    return metadata
+
+
+def _required_evidence(task_contract: dict[str, Any] | None) -> list[str]:
+    if not isinstance(task_contract, dict):
+        return []
+    value = task_contract.get("required_evidence")
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
 
 
 def _run_lifecycle_summary(events: list[dict[str, object]]) -> dict[str, Any]:

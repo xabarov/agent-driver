@@ -28,6 +28,7 @@ from agent_driver.observability.phoenix import (
     start_otel_span,
     trace_otel_event_span,
 )
+from agent_driver.observability.provenance import build_provenance_summary
 from agent_driver.observability.run_trace.summary import summarize_run_trace
 from agent_driver.observability.support_bundle import (
     build_persisted_support_bundle,
@@ -45,6 +46,7 @@ __all__ = [
     "SpanAttributeResolver",
     "agent_run_otel_attributes",
     "build_persisted_support_bundle",
+    "build_provenance_summary",
     "build_runtime_support_bundle",
     "get_otel_tracer",
     "normalize_phoenix_http_endpoint",
