@@ -10,9 +10,7 @@ from agent_driver.contracts.base import ContractModel
 from agent_driver.contracts.policy import ValidationGateResult
 from agent_driver.contracts.validation import ensure_json_serializable
 
-_PACK_STATUSES = frozenset(
-    {"draft", "experimental", "active", "deprecated", "blocked"}
-)
+_PACK_STATUSES = frozenset({"draft", "experimental", "active", "deprecated", "blocked"})
 _SCENARIO_STATUSES = frozenset(
     {
         "candidate",
@@ -43,6 +41,8 @@ _ARTIFACT_TYPES = frozenset(
         "playwright_screenshot",
         "benchmark_json",
         "benchmark_markdown",
+        "adapter_compatibility_report",
+        "adapter_events",
         "command_output",
         "cost_latency_record",
         "skip_justification",
@@ -263,9 +263,7 @@ class EvidenceArtifactIndex(ContractModel):
     gates: list[ValidationGateResult] = Field(default_factory=list)
     artifacts: list[EvidenceArtifactRef] = Field(default_factory=list)
     skipped_gate_ids: list[str] = Field(default_factory=list)
-    redaction: dict[str, Any] = Field(
-        default_factory=lambda: {"safe_by_default": True}
-    )
+    redaction: dict[str, Any] = Field(default_factory=lambda: {"safe_by_default": True})
 
     @field_validator("redaction")
     @classmethod

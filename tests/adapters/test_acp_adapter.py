@@ -676,6 +676,41 @@ def test_tool_kind_and_text_update_mapping() -> None:
     assert text_update_for(noise) is None
 
 
+def test_acp_shared_harness_adapter_projection_redacts_and_declares_capability() -> (
+    None
+):
+    from agent_driver.adapters.acp.mapping import (
+        acp_harness_adapter_capability,
+        harness_adapter_events_for_stream,
+    )
+    from agent_driver.contracts import RuntimeEventType, new_runtime_event
+    from agent_driver.runtime.stream import project_runtime_events
+
+    rows = harness_adapter_events_for_stream(
+        project_runtime_events(
+            [
+                new_runtime_event(
+                    event_type=RuntimeEventType.RUN_STARTED,
+                    context={"run_id": "run_acp", "attempt_id": "att_1", "seq": 1},
+                ),
+                new_runtime_event(
+                    event_type=RuntimeEventType.TOKEN_DELTA,
+                    context={"run_id": "run_acp", "attempt_id": "att_1", "seq": 2},
+                    options={"payload": {"delta_text": "hello sk-secretsecretsecret"}},
+                ),
+            ]
+        ),
+        session_id="acp_session",
+    )
+
+    assert [row.cursor for row in rows] == ["run_acp:1", "run_acp:2"]
+    assert rows[1].display["summary"] == "hello <redacted>"
+    capability = acp_harness_adapter_capability()
+    assert capability.adapter_id == "acp"
+    assert capability.features["approvals"] == "supported"
+    assert capability.features["fork"] == "supported"
+
+
 def _text_block(text: str) -> Any:
     """Construct an ACP text content block across minor schema variants."""
     from acp import text_block

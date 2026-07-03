@@ -25,6 +25,18 @@ from agent_driver.harness.capability_packs import (
 from agent_driver.harness.capability_runner import (
     run_capability_pack_deterministic_gates,
 )
+from agent_driver.harness.adapter_protocol import (
+    build_harness_adapter_capability,
+    build_harness_adapter_compatibility_report,
+    project_harness_adapter_artifacts,
+    project_harness_adapter_events,
+    project_harness_adapter_run,
+    project_harness_adapter_session,
+    project_harness_support_bundle_refs,
+    render_harness_adapter_compatibility_markdown,
+    seed_harness_adapter_compatibility_reports,
+    write_harness_adapter_compatibility_artifacts,
+)
 from agent_driver.harness.continuous_validation import (
     audit_validation_evidence,
     render_validation_markdown,
@@ -41,8 +53,16 @@ __all__ = [
     "audit_validation_evidence",
     "build_capability_pack_dry_run",
     "build_capability_pack_resolution",
+    "build_harness_adapter_capability",
+    "build_harness_adapter_compatibility_report",
     "profile_excluded_tools",
+    "project_harness_adapter_artifacts",
+    "project_harness_adapter_events",
+    "project_harness_adapter_run",
+    "project_harness_adapter_session",
+    "project_harness_support_bundle_refs",
     "render_validation_markdown",
+    "render_harness_adapter_compatibility_markdown",
     "resolve_capability_pack",
     "run_capability_pack_deterministic_gates",
     "select_harness_profile",
@@ -52,8 +72,10 @@ __all__ = [
     "seed_excel_workbook_chat_pack",
     "seed_flake_records",
     "seed_harness_baselines",
+    "seed_harness_adapter_compatibility_reports",
     "seed_host_adoption_states",
     "seed_release_gate_policies",
     "seed_scenario_specs",
     "write_validation_audit_report",
+    "write_harness_adapter_compatibility_artifacts",
 ]

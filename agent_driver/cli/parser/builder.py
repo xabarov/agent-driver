@@ -438,6 +438,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional directory for validation_run.json and validation_report.md.",
     )
 
+    harness_adapter_parser = subparsers.add_parser(
+        "harness-adapter",
+        help="Build deterministic harness adapter compatibility reports.",
+    )
+    harness_adapter_sub = harness_adapter_parser.add_subparsers(
+        dest="harness_adapter_command", required=True
+    )
+    harness_adapter_compat = harness_adapter_sub.add_parser(
+        "compat",
+        help="Project offline evidence and optional run replay into adapter report.",
+    )
+    harness_adapter_compat.add_argument(
+        "--adapter",
+        required=True,
+        choices=("acp", "chat_demo", "excel_ai"),
+        help="Adapter/product compatibility target.",
+    )
+    harness_adapter_compat.add_argument(
+        "--evidence-index-dir",
+        required=True,
+        help="Directory containing evidence_index.json, or direct index path.",
+    )
+    harness_adapter_compat.add_argument(
+        "--run-id",
+        default=None,
+        help="Optional persisted run id to project into adapter events.",
+    )
+    harness_adapter_compat.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional host session id to attach to adapter rows.",
+    )
+    harness_adapter_compat.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Do not claim live/provider/Phoenix/Playwright evidence.",
+    )
+    harness_adapter_compat.add_argument(
+        "--output-dir",
+        default=None,
+        help="Optional directory for adapter compatibility report artifacts.",
+    )
+    add_store_options(harness_adapter_compat)
+
     resume_parser = subparsers.add_parser(
         "resume", help="Resume pending interrupt decisions."
     )

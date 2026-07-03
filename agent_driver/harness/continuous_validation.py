@@ -148,6 +148,52 @@ def seed_release_gate_policies() -> dict[str, ReleaseGatePolicy]:
             timeout_seconds=600,
             retry_budget=1,
         ),
+        "adapter_protocol_change": ReleaseGatePolicy(
+            policy_id="adapter_protocol_change",
+            change_types=[
+                "adapter_protocol",
+                "protocol_adapter",
+                "stream_projection",
+            ],
+            required_gate_ids=deterministic_required,
+            optional_gate_ids=sorted(_LIVE_GATE_IDS),
+            stale_allowed_gate_ids=sorted(_LIVE_GATE_IDS),
+            max_cost_usd=0,
+            timeout_seconds=90,
+            retry_budget=0,
+            redacted_metadata={
+                "rule": (
+                    "stream/projection changes require deterministic replay "
+                    "projection tests and adapter compatibility artifacts"
+                )
+            },
+        ),
+        "adapter_ui_projection_change": ReleaseGatePolicy(
+            policy_id="adapter_ui_projection_change",
+            change_types=["adapter_ui_projection", "ui_projection"],
+            required_gate_ids=deterministic_required,
+            ui_required_gate_ids=["playwright_ui"],
+            optional_gate_ids=["openrouter_live_preflight", "phoenix_trace"],
+            max_cost_usd=0,
+            timeout_seconds=300,
+            retry_budget=1,
+            redacted_metadata={
+                "rule": "UI-visible adapter projection changes require screenshots"
+            },
+        ),
+        "adapter_live_runtime_claim": ReleaseGatePolicy(
+            policy_id="adapter_live_runtime_claim",
+            change_types=["adapter_live_runtime", "live_runtime_claim"],
+            required_gate_ids=deterministic_required,
+            live_required_gate_ids=["openrouter_live_preflight", "phoenix_trace"],
+            optional_gate_ids=["playwright_ui", "benchmark_delta"],
+            max_cost_usd=1.0,
+            timeout_seconds=300,
+            retry_budget=1,
+            redacted_metadata={
+                "rule": "live runtime adapter claims require Phoenix trace evidence"
+            },
+        ),
     }
 
 
@@ -317,9 +363,7 @@ def write_validation_audit_report(
     json_path = root / "validation_run.json"
     md_path = root / "validation_report.md"
     serializable = {
-        key: value
-        for key, value in audit_payload.items()
-        if key != "markdown_report"
+        key: value for key, value in audit_payload.items() if key != "markdown_report"
     }
     json_path.write_text(
         json.dumps(serializable, ensure_ascii=True, indent=2) + "\n",
@@ -368,9 +412,7 @@ def render_validation_markdown(
         ]
     )
     for gate in validation_run.gate_results:
-        lines.append(
-            f"| {gate.gate_id} | {gate.status} | {gate.reason or ''} |"
-        )
+        lines.append(f"| {gate.gate_id} | {gate.status} | {gate.reason or ''} |")
     lines.extend(
         [
             "",
@@ -494,9 +536,7 @@ def _select_baselines(
         if isinstance(item["evidence_index"], EvidenceArtifactIndex)
     }
     return [
-        baseline
-        for baseline in all_baselines.values()
-        if baseline.pack_id in pack_ids
+        baseline for baseline in all_baselines.values() if baseline.pack_id in pack_ids
     ]
 
 
@@ -519,10 +559,15 @@ def _combined_gate_results(
         for gate in index.gates:
             status = gate.status
             reason = gate.reason
-            if no_live and gate.gate_id in _LIVE_GATE_IDS and status in {
-                "skipped",
-                "not_run",
-            }:
+            if (
+                no_live
+                and gate.gate_id in _LIVE_GATE_IDS
+                and status
+                in {
+                    "skipped",
+                    "not_run",
+                }
+            ):
                 status = "no_claim"
                 reason = reason or "no_live_mode_live_gate_not_executed"
             if status in {"skipped", "no_claim", "stale"} and reason:
@@ -795,6 +840,8 @@ def _known_artifact_type(artifact_type: str) -> str:
         "playwright_screenshot",
         "benchmark_json",
         "benchmark_markdown",
+        "adapter_compatibility_report",
+        "adapter_events",
         "skip_justification",
         "validation_run_json",
         "validation_report_markdown",

@@ -17,6 +17,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from agent_driver.contracts.harness_adapter import (
+    HarnessAdapterCapability,
+    HarnessAdapterEvent,
+)
+from agent_driver.contracts.stream import RunStreamEvent
+from agent_driver.harness import (
+    build_harness_adapter_capability,
+    project_harness_adapter_events,
+)
 from agent_driver.persistence.record_store import InMemoryRecordStore
 
 if TYPE_CHECKING:
@@ -30,6 +39,43 @@ A2A_PROTOCOL_VERSION = "0.2.5"
 _METHOD_NOT_FOUND = -32601
 _INVALID_PARAMS = -32602
 _TASK_NOT_FOUND = -32001
+
+
+def harness_adapter_events_for_a2a_stream(
+    events: list[RunStreamEvent],
+    *,
+    session_id: str | None = None,
+    source: str = "replay",
+) -> list[HarnessAdapterEvent]:
+    """Project A2A-consumed stream events through the shared harness contract."""
+    return project_harness_adapter_events(
+        events,
+        session_id=session_id,
+        source=source,
+    )
+
+
+def a2a_harness_adapter_capability() -> HarnessAdapterCapability:
+    """Return A2A's shared harness capability manifest."""
+    return build_harness_adapter_capability(
+        adapter_id="a2a",
+        product_family="generic_protocol",
+        durability_level="process_local",
+        features={
+            "streaming": "supported",
+            "replay": "supported",
+            "cursor_reconnect": "supported",
+            "approvals": "unsupported",
+            "interrupts": "no_claim",
+            "artifacts": "supported",
+            "support_bundles": "no_claim",
+            "fork": "unsupported",
+            "background_logs": "unsupported",
+            "ui_projection": "no_claim",
+            "live_gates": "no_claim",
+        },
+        scenario_ids=["harness_adapter.a2a.basic_task.v1"],
+    )
 
 
 def _text_from_parts(parts: Any) -> str:
@@ -184,4 +230,9 @@ def _err(request_id: Any, code: int, message: str) -> dict[str, Any]:
     }
 
 
-__all__ = ["A2aServer", "A2A_PROTOCOL_VERSION"]
+__all__ = [
+    "A2A_PROTOCOL_VERSION",
+    "A2aServer",
+    "a2a_harness_adapter_capability",
+    "harness_adapter_events_for_a2a_stream",
+]

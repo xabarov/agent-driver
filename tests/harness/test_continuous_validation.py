@@ -70,6 +70,22 @@ def test_continuous_validation_contracts_validate_seed_profiles() -> None:
         "openrouter_live_preflight",
         "phoenix_trace",
     ]
+    assert policies["adapter_protocol_change"].change_types == [
+        "adapter_protocol",
+        "protocol_adapter",
+        "stream_projection",
+    ]
+    assert policies["adapter_protocol_change"].required_gate_ids == [
+        "deterministic_tests",
+        "support_bundle_artifact",
+    ]
+    assert policies["adapter_ui_projection_change"].ui_required_gate_ids == [
+        "playwright_ui"
+    ]
+    assert policies["adapter_live_runtime_claim"].live_required_gate_ids == [
+        "openrouter_live_preflight",
+        "phoenix_trace",
+    ]
     assert adoption["excel_ai:excel_workbook_chat"].behavior_change_enabled is False
 
 

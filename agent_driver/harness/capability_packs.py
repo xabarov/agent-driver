@@ -204,6 +204,113 @@ def seed_scenario_specs() -> dict[str, HarnessScenarioSpec]:
                 "/tmp/chat-demo-live-capability-pack-research-report",
             ],
         ),
+        HarnessScenarioSpec(
+            scenario_id="harness_adapter.acp.basic_stream.v1",
+            status="deterministic",
+            product_adapter_id="acp",
+            prompt_seed="Project a basic ACP run stream into harness adapter rows.",
+            required_evidence=[
+                "adapter_event_projection",
+                "cursor_reconnect",
+                "redaction_validation",
+            ],
+            deterministic_gate_ids=["deterministic_tests"],
+            optional_live_gate_ids=["phoenix_trace", "playwright_ui"],
+            artifact_paths=[
+                "adapter_compatibility_report.json",
+                "adapter_events.jsonl",
+            ],
+            skip_conditions=[
+                "live gates remain no_claim in offline compatibility mode"
+            ],
+        ),
+        HarnessScenarioSpec(
+            scenario_id="harness_adapter.a2a.basic_task.v1",
+            status="deterministic",
+            product_adapter_id="a2a",
+            prompt_seed="Project a basic A2A task stream into harness adapter rows.",
+            required_evidence=[
+                "adapter_event_projection",
+                "cursor_reconnect",
+                "artifact_projection",
+            ],
+            deterministic_gate_ids=["deterministic_tests"],
+            optional_live_gate_ids=["phoenix_trace"],
+            artifact_paths=[
+                "adapter_compatibility_report.json",
+                "adapter_events.jsonl",
+            ],
+            skip_conditions=[
+                "live gates remain no_claim in offline compatibility mode"
+            ],
+        ),
+        HarnessScenarioSpec(
+            scenario_id="harness_adapter.openai_server.basic_run.v1",
+            status="deterministic",
+            product_adapter_id="openai_server",
+            prompt_seed="Project an OpenAI-compatible server run into harness adapter rows.",
+            required_evidence=[
+                "adapter_event_projection",
+                "cursor_reconnect",
+                "approval_projection",
+            ],
+            deterministic_gate_ids=["deterministic_tests"],
+            optional_live_gate_ids=["openrouter_live_preflight", "phoenix_trace"],
+            artifact_paths=[
+                "adapter_compatibility_report.json",
+                "adapter_events.jsonl",
+            ],
+            skip_conditions=[
+                "live gates remain no_claim in offline compatibility mode"
+            ],
+        ),
+        HarnessScenarioSpec(
+            scenario_id="harness_adapter.chat_demo.deep_research.v1",
+            status="deterministic",
+            product_adapter_id="chat_demo",
+            prompt_seed="Project deep-research source/report artifacts into adapter refs.",
+            required_evidence=[
+                "adapter_event_projection",
+                "source_evidence",
+                "artifact_provenance",
+            ],
+            deterministic_gate_ids=["deterministic_tests", "support_bundle_artifact"],
+            optional_live_gate_ids=[
+                "openrouter_live_preflight",
+                "phoenix_trace",
+                "playwright_ui",
+            ],
+            artifact_paths=[
+                "adapter_compatibility_report.json",
+                "adapter_events.jsonl",
+            ],
+            skip_conditions=["UI evidence is no_claim unless Playwright is executed"],
+        ),
+        HarnessScenarioSpec(
+            scenario_id="harness_adapter.excel_workbook_chat.v1",
+            status="deterministic",
+            product_adapter_id="excel_ai",
+            prompt_seed="Project workbook evidence, approvals and report artifacts into adapter refs.",
+            required_evidence=[
+                "adapter_event_projection",
+                "workbook_context",
+                "artifact_provenance",
+            ],
+            deterministic_gate_ids=["deterministic_tests", "support_bundle_artifact"],
+            optional_live_gate_ids=[
+                "openrouter_live_preflight",
+                "phoenix_trace",
+                "playwright_ui",
+                "benchmark_delta",
+            ],
+            artifact_paths=[
+                "adapter_compatibility_report.json",
+                "adapter_events.jsonl",
+            ],
+            skip_conditions=[
+                "Excel UI evidence is no_claim unless Playwright is executed"
+            ],
+        ),
     ]
     return {scenario.scenario_id: scenario for scenario in scenarios}
 
@@ -652,6 +759,7 @@ def _default_scenario_ids(adapter_id: str) -> list[str]:
         scenario.scenario_id
         for scenario in seed_scenario_specs().values()
         if scenario.product_adapter_id == adapter_id
+        and not scenario.scenario_id.startswith("harness_adapter.")
     ]
 
 

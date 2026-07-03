@@ -17,7 +17,12 @@ from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime.tool_gate import ToolGateAsk, ToolGateContext
 from agent_driver.sdk import ToolSet, create_agent
 from agent_driver.server.app import create_app
-from agent_driver.server.runs import RunManager
+from agent_driver.server.runs import (
+    RunManager,
+    RunRecord,
+    harness_adapter_events_for_server_run,
+    server_harness_adapter_capability,
+)
 
 
 def _body(content: str) -> dict[str, Any]:
@@ -176,3 +181,42 @@ def test_runs_auth_required() -> None:
         "/v1/runs", json=_body("hi"), headers={"Authorization": "Bearer sekret"}
     )
     assert ok.status_code == 202
+
+
+def test_server_shared_harness_adapter_projection_redacts_and_declares_capability() -> (
+    None
+):
+    record = RunRecord(
+        run_id="run_server",
+        created=123,
+        thread_id="session_server",
+    )
+    record.events = [
+        {
+            "event": "run.started",
+            "seq": 1,
+            "data": {"run_id": "run_server"},
+        },
+        {
+            "event": "run.requires_action",
+            "seq": 2,
+            "data": {
+                "run_id": "run_server",
+                "interrupt_id": "approval_server",
+                "tool_name": "bash",
+                "allowed_actions": ["approve", "reject"],
+                "api_key": "sk-should-not-leak",
+            },
+        },
+    ]
+
+    rows = harness_adapter_events_for_server_run(record)
+
+    assert [row.cursor for row in rows] == ["run_server:1", "run_server:2"]
+    assert rows[1].approval_request is not None
+    assert rows[1].approval_request.request_id == "approval_server"
+    assert rows[1].redacted_metadata["app_metadata"] == {}
+    capability = server_harness_adapter_capability()
+    assert capability.protocol == "openai_compatible_http"
+    assert capability.features["approvals"] == "supported"
+    assert capability.features["live_gates"] == "no_claim"

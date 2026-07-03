@@ -236,6 +236,67 @@ def test_cli_capability_pack_dry_run_rejects_mismatched_scenario(capsys) -> None
     assert "belongs to adapter" in output
 
 
+def test_cli_harness_adapter_compat_writes_report(tmp_path, capsys) -> None:
+    evidence_dir = tmp_path / "adapter-evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "evidence_index.json").write_text(
+        json.dumps(
+            {
+                "index_id": "adapter-cli",
+                "pack_id": "deep_research_chat_demo",
+                "scenario_ids": ["harness_adapter.chat_demo.deep_research.v1"],
+                "gates": [
+                    {
+                        "gate_id": "deterministic_tests",
+                        "status": "passed",
+                        "evidence_path": "adapter_compatibility_report.json",
+                    },
+                    {
+                        "gate_id": "phoenix_trace",
+                        "status": "not_run",
+                        "reason": "no_live_mode",
+                    },
+                ],
+                "artifacts": [
+                    {
+                        "artifact_id": "adapter_compatibility_report.json",
+                        "artifact_type": "adapter_compatibility_report",
+                        "path": "adapter_compatibility_report.json",
+                        "gate_id": "deterministic_tests",
+                    }
+                ],
+            },
+            ensure_ascii=True,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "adapter-report"
+
+    code = main(
+        [
+            "harness-adapter",
+            "compat",
+            "--adapter",
+            "chat_demo",
+            "--evidence-index-dir",
+            str(evidence_dir),
+            "--no-live",
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["adapter_id"] == "chat_demo"
+    assert payload["feature_statuses"]["live_gates"] == "no_claim"
+    assert payload["validation_gate_statuses"]["phoenix_trace"] == "no_claim"
+    assert (output_dir / "adapter_compatibility_report.json").is_file()
+    assert (output_dir / "adapter_compatibility_report.md").is_file()
+
+
 def test_cli_capability_pack_run_deterministic_writes_command_outputs(
     tmp_path, capsys
 ) -> None:
@@ -460,9 +521,7 @@ def test_chat_command_wires_memory_and_permission_flags(monkeypatch) -> None:
     resolved = cli_main._resolve_args_with_config_and_explicit(  # pylint: disable=protected-access
         args, explicit_options={"--provider", "--plain"}
     )
-    code = asyncio.run(
-        cli_main._chat_command(resolved)
-    )  # pylint: disable=protected-access
+    code = asyncio.run(cli_main._chat_command(resolved))  # pylint: disable=protected-access
     assert code == 0
     # A memory provider was constructed and handed to the agent.
     assert type(captured["memory_provider"]).__name__ == "StoreBackedMemoryProvider"
@@ -572,9 +631,7 @@ def test_chat_command_enables_compaction_flags(monkeypatch) -> None:
     resolved = cli_main._resolve_args_with_config_and_explicit(  # pylint: disable=protected-access
         args, explicit_options={"--provider", "--plain"}
     )
-    code = asyncio.run(
-        cli_main._chat_command(resolved)
-    )  # pylint: disable=protected-access
+    code = asyncio.run(cli_main._chat_command(resolved))  # pylint: disable=protected-access
     assert code == 0
     cfg = captured["config"]
     assert cfg is not None
@@ -607,9 +664,7 @@ def test_cli_explicit_flag_overrides_config(tmp_path, monkeypatch) -> None:
         "[cli]\nprovider='openrouter'\n",
         encoding="utf-8",
     )
-    args = cli_main._build_parser().parse_args(
-        ["chat", "--provider", "fake"]
-    )  # pylint: disable=protected-access
+    args = cli_main._build_parser().parse_args(["chat", "--provider", "fake"])  # pylint: disable=protected-access
     resolved = cli_main._resolve_args_with_config_and_explicit(  # pylint: disable=protected-access
         args, explicit_options={"--provider"}
     )
@@ -623,9 +678,7 @@ def test_cli_defaults_to_openrouter_chat(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("AGENT_DRIVER_BASE_URL", raising=False)
     monkeypatch.delenv("AGENT_DRIVER_MODEL", raising=False)
 
-    args = cli_main._build_parser().parse_args(
-        ["chat"]
-    )  # pylint: disable=protected-access
+    args = cli_main._build_parser().parse_args(["chat"])  # pylint: disable=protected-access
     resolved = cli_main._resolve_args_with_config_and_explicit(  # pylint: disable=protected-access
         args, explicit_options=set()
     )
@@ -654,9 +707,7 @@ def test_cli_loads_project_dotenv_for_openrouter(monkeypatch, tmp_path) -> None:
         encoding="utf-8",
     )
 
-    args = cli_main._build_parser().parse_args(
-        ["chat"]
-    )  # pylint: disable=protected-access
+    args = cli_main._build_parser().parse_args(["chat"])  # pylint: disable=protected-access
     resolved = cli_main._resolve_args_with_config_and_explicit(  # pylint: disable=protected-access
         args, explicit_options=set()
     )

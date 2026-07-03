@@ -21,6 +21,9 @@ from agent_driver.cli.commands.acp import acp_command as _acp_command_impl
 from agent_driver.cli.commands.capability_packs import (
     capability_pack_command as _capability_pack_command_impl,
 )
+from agent_driver.cli.commands.harness_adapter import (
+    harness_adapter_command as _harness_adapter_command_impl,
+)
 from agent_driver.cli.commands.evals import (
     eval_compare_command as _eval_compare_command_impl,
 )
@@ -261,6 +264,14 @@ def _capability_pack_command(args: argparse.Namespace) -> int:
     return _capability_pack_command_impl(args)
 
 
+def _harness_adapter_command(args: argparse.Namespace) -> int:
+    return _harness_adapter_command_impl(
+        args,
+        store_config_from_args=_store_config_from_args,
+        create_runtime_store_bundle=create_runtime_store_bundle,
+    )
+
+
 async def _resume_command(args: argparse.Namespace) -> int:
     return await _resume_command_impl(
         args,
@@ -468,6 +479,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _sessions_command(args)
     if args.command == "capability-pack":
         return _capability_pack_command(args)
+    if args.command == "harness-adapter":
+        return _harness_adapter_command(args)
     if args.command == "resume":
         try:
             return asyncio.run(_resume_command(args))

@@ -21,10 +21,18 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from agent_driver.contracts.enums import ResumeAction, RunStatus
+from agent_driver.contracts.harness_adapter import (
+    HarnessAdapterCapability,
+    HarnessAdapterEvent,
+)
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.stream import summarize_run_lifecycle
+from agent_driver.harness import (
+    build_harness_adapter_capability,
+    project_harness_adapter_events,
+)
 from agent_driver.server.usage import chat_usage
 
 if TYPE_CHECKING:
@@ -58,6 +66,43 @@ def resume_action_for(action: str) -> ResumeAction | None:
     return _ACTION_MAP.get((action or "").strip().lower())
 
 
+def harness_adapter_events_for_server_run(
+    record: "RunRecord",
+    *,
+    source: str = "replay",
+) -> list[HarnessAdapterEvent]:
+    """Project HTTP server run events through the shared harness contract."""
+    return project_harness_adapter_events(
+        _server_stream_events(record),
+        session_id=record.thread_id,
+        source=source,
+    )
+
+
+def server_harness_adapter_capability() -> HarnessAdapterCapability:
+    """Return the OpenAI-compatible server's shared harness capability manifest."""
+    return build_harness_adapter_capability(
+        adapter_id="openai_server",
+        product_family="generic_protocol",
+        protocol="openai_compatible_http",
+        durability_level="process_local",
+        features={
+            "streaming": "supported",
+            "replay": "supported",
+            "cursor_reconnect": "supported",
+            "approvals": "supported",
+            "interrupts": "supported",
+            "artifacts": "no_claim",
+            "support_bundles": "no_claim",
+            "fork": "unsupported",
+            "background_logs": "unsupported",
+            "ui_projection": "no_claim",
+            "live_gates": "no_claim",
+        },
+        scenario_ids=["harness_adapter.openai_server.basic_run.v1"],
+    )
+
+
 @dataclass
 class _Subscriber:
     queue: "asyncio.Queue[dict[str, Any] | None]"
@@ -79,9 +124,7 @@ class RunRecord:
     events: list[dict[str, Any]] = field(default_factory=list)
     subscribers: list[_Subscriber] = field(default_factory=list)
     # Resolved by an approval call to unblock the parked drive loop.
-    approval: (
-        "asyncio.Future[tuple[ResumeAction, str | None, dict[str, Any] | None]] | None"
-    ) = None
+    approval: "asyncio.Future[tuple[ResumeAction, str | None, dict[str, Any] | None]] | None" = None
     task: "asyncio.Task[None] | None" = None
 
     def public(self) -> dict[str, Any]:
@@ -321,4 +364,10 @@ def _server_stream_events(record: RunRecord) -> list[RunStreamEvent]:
     return events
 
 
-__all__ = ["RunManager", "RunRecord", "resume_action_for"]
+__all__ = [
+    "RunManager",
+    "RunRecord",
+    "harness_adapter_events_for_server_run",
+    "resume_action_for",
+    "server_harness_adapter_capability",
+]

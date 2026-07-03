@@ -38,6 +38,8 @@ _VALIDATION_ARTIFACT_TYPES = frozenset(
         "playwright_screenshot",
         "benchmark_json",
         "benchmark_markdown",
+        "adapter_compatibility_report",
+        "adapter_events",
         "skip_justification",
         "validation_run_json",
         "validation_report_markdown",
@@ -102,7 +104,9 @@ class ValidationArtifactRef(ContractModel):
     @field_validator("redacted_metadata")
     @classmethod
     def validate_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
-        return ensure_json_serializable(value, field_name="validation artifact metadata")
+        return ensure_json_serializable(
+            value, field_name="validation artifact metadata"
+        )
 
 
 class ValidationRunRecord(ContractModel):
@@ -272,7 +276,9 @@ class ReleaseGatePolicy(ContractModel):
     @field_validator("redacted_metadata")
     @classmethod
     def validate_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
-        return ensure_json_serializable(value, field_name="release gate policy metadata")
+        return ensure_json_serializable(
+            value, field_name="release gate policy metadata"
+        )
 
 
 class FlakeRecord(ContractModel):
@@ -342,9 +348,7 @@ class ValidationDashboardSummary(ContractModel):
     required_followups: list[str] = Field(default_factory=list)
     skipped_live_gates: list[str] = Field(default_factory=list)
     no_claim_gates: list[str] = Field(default_factory=list)
-    redaction: dict[str, Any] = Field(
-        default_factory=lambda: {"safe_by_default": True}
-    )
+    redaction: dict[str, Any] = Field(default_factory=lambda: {"safe_by_default": True})
 
     @field_validator("candidate_status")
     @classmethod
