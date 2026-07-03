@@ -34,6 +34,7 @@ _VALID_ACTIONS = frozenset(
         "ask_user",
         "mark_achieved",
         "mark_blocked",
+        "rollback",
         "warn",
     }
 )

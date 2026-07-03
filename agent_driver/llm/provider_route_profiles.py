@@ -120,6 +120,37 @@ class ProviderPreflightResult:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderRequestShapePlan:
+    """Deterministic policy plan for provider-specific request shaping."""
+
+    status: str
+    selected_action: str
+    reason: str
+    route_profile_id: str
+    downgrades: tuple[str, ...] = ()
+    request_shape: dict[str, Any] = field(default_factory=dict)
+    reshaped_request: LlmRequest | None = None
+
+    def to_metadata(self) -> dict[str, Any]:
+        """Return redaction-safe plan metadata for traces/support bundles."""
+        payload: dict[str, Any] = {
+            "status": self.status,
+            "selected_action": self.selected_action,
+            "reason": self.reason,
+            "route_profile_id": self.route_profile_id,
+            "downgrades": list(self.downgrades),
+            "request_shape": self.request_shape,
+        }
+        if self.reshaped_request is not None:
+            payload["reshaped_request"] = {
+                "tool_choice": self.reshaped_request.tool_choice,
+                "response_format": self.reshaped_request.response_format,
+                "metadata": self.reshaped_request.metadata,
+            }
+        return payload
+
+
 def resolve_openai_compatible_route_profile(
     *,
     provider_name: str,
@@ -207,6 +238,53 @@ def preview_provider_preflight(
         request_shape=request_shape,
         status=status,
         downgrades=tuple(downgrades),
+    )
+
+
+def build_provider_request_shape_plan(
+    *,
+    preflight: ProviderPreflightResult,
+    request: LlmRequest | None = None,
+    enforce: bool = False,
+) -> ProviderRequestShapePlan:
+    """Build an opt-in deterministic request-shape/fallback policy plan.
+
+    ``enforce=False`` reports the policy action without mutating the request.
+    ``enforce=True`` applies only deterministic, local downgrades. Provider
+    route switching remains a host/router action and is surfaced as a plan.
+    """
+
+    if preflight.status == "failed":
+        return ProviderRequestShapePlan(
+            status="blocked",
+            selected_action="switch_provider_route",
+            reason="provider_preflight_failed",
+            route_profile_id=preflight.route_profile.profile_id,
+            downgrades=preflight.downgrades,
+            request_shape=preflight.request_shape,
+        )
+    if not preflight.downgrades:
+        return ProviderRequestShapePlan(
+            status="ok",
+            selected_action="continue",
+            reason="provider_request_shape_supported",
+            route_profile_id=preflight.route_profile.profile_id,
+            request_shape=preflight.request_shape,
+        )
+
+    reshaped = (
+        _reshape_request_for_downgrades(request, preflight.downgrades)
+        if enforce and request is not None
+        else None
+    )
+    return ProviderRequestShapePlan(
+        status="reshaped" if reshaped is not None else "would_reshape",
+        selected_action="reshape_request",
+        reason="provider_request_shape_downgraded",
+        route_profile_id=preflight.route_profile.profile_id,
+        downgrades=preflight.downgrades,
+        request_shape=preflight.request_shape,
+        reshaped_request=reshaped,
     )
 
 
@@ -350,13 +428,34 @@ def _forced_tool_choice_name(tool_choice: object | None) -> str | None:
     return None
 
 
+def _reshape_request_for_downgrades(
+    request: LlmRequest,
+    downgrades: tuple[str, ...],
+) -> LlmRequest:
+    metadata = {
+        **request.metadata,
+        "provider_request_shape_policy": {
+            "applied": True,
+            "downgrades": list(downgrades),
+        },
+    }
+    updates: dict[str, Any] = {"metadata": metadata}
+    if "forced_tool_choice" in downgrades:
+        updates["tool_choice"] = "auto" if request.tools else None
+    if "strict_json_schema" in downgrades or "json_schema" in downgrades:
+        updates["response_format"] = {"type": "json_object"}
+    return request.model_copy(update=updates)
+
+
 def _normalize_id(value: str) -> str:
     return value.strip().lower().replace(" ", "_")
 
 
 __all__ = [
     "ProviderPreflightResult",
+    "ProviderRequestShapePlan",
     "ProviderRouteProfile",
+    "build_provider_request_shape_plan",
     "preview_provider_preflight",
     "request_shape_policy_summary",
     "resolve_openai_compatible_route_profile",

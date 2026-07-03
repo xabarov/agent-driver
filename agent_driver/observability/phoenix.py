@@ -110,6 +110,21 @@ def get_otel_tracer(tracer_name: str):
         return None
 
 
+def flush_phoenix_tracing(timeout_millis: int = 5000) -> bool:
+    """Best-effort flush for short-lived CLI traces."""
+    try:
+        from opentelemetry import trace
+
+        provider = trace.get_tracer_provider()
+        force_flush = getattr(provider, "force_flush", None)
+        if force_flush is None:
+            return False
+        result = force_flush(timeout_millis=timeout_millis)
+        return bool(result) if result is not None else True
+    except Exception:  # pragma: no cover - telemetry must not break runs
+        return False
+
+
 def start_otel_span(
     span_name: str,
     *,
@@ -293,6 +308,7 @@ def _reset_phoenix_tracing_for_tests() -> None:
 __all__ = [
     "PhoenixTracingConfig",
     "agent_run_otel_attributes",
+    "flush_phoenix_tracing",
     "get_otel_tracer",
     "normalize_phoenix_http_endpoint",
     "phoenix_tracing_status",

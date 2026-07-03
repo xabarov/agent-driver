@@ -105,6 +105,12 @@ def test_trace_summary_exposes_route_profile_and_preflight() -> None:
     assert summary["provider_preflight"]["request_shape"]["tool_choice_policy"] == (
         "forced_tool_choice_downgraded_to_auto"
     )
+    assert summary["policy_evaluations"]["would_fire_policy_ids"] == [
+        "provider_request_shape_preflight"
+    ]
+    assert summary["policy_evaluations"]["selected_actions"] == ["reshape_request"]
+    assert summary["run_supervisor_state"]["lifecycle_state"] == "completed"
+    assert summary["run_supervisor_state"]["heartbeat_status"] == "terminal"
     timeline = summary["runtime_timeline"]["diagnostics"]
     assert timeline["timeline_row_count"] == 2
     assert timeline["terminal_event"] == "run_completed"
@@ -113,6 +119,74 @@ def test_trace_summary_exposes_route_profile_and_preflight() -> None:
     )
     assert summary["run_lifecycle"]["state"] == "completed"
     assert summary["run_lifecycle"]["terminal_event"] == "run_completed"
+
+
+def test_trace_summary_exposes_validation_gate_artifacts() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="hello",
+        assistant_text="hello",
+        events=[
+            {
+                "event": "run_started",
+                "data": {
+                    "validation_gates": [
+                        {
+                            "gate_id": "support_bundle_artifact",
+                            "status": "passed",
+                            "evidence_path": "artifacts/support-bundle.json",
+                        }
+                    ]
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    gates = summary["validation_gates"]
+    assert gates["statuses"]["support_bundle_artifact"] == "passed"
+    assert gates["statuses"]["openrouter_live_preflight"] == "not_run"
+    assert gates["gates"][1]["evidence_path"] == "artifacts/support-bundle.json"
+
+
+def test_trace_summary_exposes_capability_pack_resolution_from_run_started() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="research",
+        assistant_text="done",
+        events=[
+            {
+                "event": "run_started",
+                "data": {
+                    "capability_pack_id": "excel_workbook_chat",
+                    "capability_adapter_id": "excel_ai",
+                    "capability_scenario_ids": [
+                        "excel.workbook_context.transaction.v1"
+                    ],
+                    "validation_gates": [
+                        {
+                            "gate_id": "deterministic_tests",
+                            "status": "passed",
+                            "evidence_path": "artifacts/capability-pack-tests.txt",
+                        }
+                    ],
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    resolution = summary["capability_pack_resolution"]
+    assert resolution["pack_id"] == "excel_workbook_chat"
+    assert resolution["adapter_id"] == "excel_ai"
+    assert resolution["required_evidence"][:3] == [
+        "context_provenance",
+        "artifact_provenance",
+        "side_effect_transactions",
+    ]
+    assert resolution["gate_statuses"]["deterministic_tests"] == "passed"
+    assert resolution["gate_statuses"]["phoenix_trace"] == "skipped"
+    assert resolution["redacted_metadata"]["no_runtime_behavior_change"] is True
 
 
 def test_trace_summary_exposes_runtime_timeline_diagnostics() -> None:

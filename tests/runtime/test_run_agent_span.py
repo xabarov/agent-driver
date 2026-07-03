@@ -15,8 +15,11 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
 
+from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput
-from agent_driver.llm.contracts import LlmResponse
+from agent_driver.contracts.tools import ToolCall
+from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse
+from agent_driver.contracts.usage import UsageSummary
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.observability import openinference as oi
 from agent_driver.runtime import (
@@ -26,6 +29,55 @@ from agent_driver.runtime import (
     RunnerConfig,
     fake_noop_tool_executor,
 )
+from agent_driver.sdk import create_agent
+from agent_driver.tools import ToolSet
+
+
+class _ParallelToolsThenFinalProvider(FakeProvider):
+    """First turn asks for real governed tools, second turn returns final answer."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        usage = UsageSummary(
+            input_tokens=7,
+            output_tokens=3,
+            total_tokens=10,
+            model_provider="fake",
+            model_name=request.model or "fake-model",
+        )
+        if len(self.requests) == 1:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                provider="fake",
+                model=request.model or "fake-model",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="glob_search",
+                            tool_call_id="glob_readme",
+                            args={"pattern": "README.md"},
+                        ).model_dump(mode="json"),
+                        ToolCall(
+                            tool_name="glob_search",
+                            tool_call_id="glob_pyproject",
+                            args={"pattern": "pyproject.toml"},
+                        ).model_dump(mode="json"),
+                    ]
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="found both files"),
+            finish_reason=LlmFinishReason.STOP,
+            usage=usage,
+            provider="fake",
+            model=request.model or "fake-model",
+        )
 
 
 @pytest.fixture()
@@ -99,3 +151,84 @@ async def test_nested_child_span_parents_to_the_run_span(exporter) -> None:
     # Native parenting: the child's parent is the run span — one trace root.
     assert spans["child.tool"].parent is not None
     assert spans["child.tool"].parent.span_id == spans["agent.run"].context.span_id
+
+
+@pytest.mark.asyncio
+async def test_streaming_llm_span_parents_to_the_run_span(exporter) -> None:
+    """Streaming chunks are collected inside the same LLM child span."""
+
+    runner = _build_runner(fake_noop_tool_executor)
+
+    await runner.run(
+        AgentRunInput(
+            input="stream it",
+            run_id="run_agent_span_stream",
+            agent_id="agent-test",
+            graph_preset="single_react",
+            stream=True,
+        )
+    )
+
+    spans = exporter.get_finished_spans()
+    run_spans = [s for s in spans if s.name == "agent.run"]
+    llm_spans = [
+        s for s in spans if s.attributes.get("openinference.span.kind") == "LLM"
+    ]
+    assert len(run_spans) == 1
+    assert len(llm_spans) == 1
+    assert llm_spans[0].context.trace_id == run_spans[0].context.trace_id
+    assert llm_spans[0].parent is not None
+    assert llm_spans[0].parent.span_id == run_spans[0].context.span_id
+
+
+@pytest.mark.asyncio
+async def test_real_runner_llm_and_parallel_tool_spans_parent_to_run_span(
+    exporter,
+) -> None:
+    """Actual SDK runtime keeps LLM and asyncio-gather tool spans under agent.run."""
+
+    provider = _ParallelToolsThenFinalProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only("glob_search"))
+
+    out = await agent.run(
+        AgentRunInput(
+            input="find repo metadata files",
+            run_id="run_real_hierarchy",
+            agent_id="agent-hierarchy",
+            graph_preset="single_react",
+            max_steps=8,
+            max_tool_calls=4,
+        )
+    )
+
+    assert out.status.value == "completed"
+    assert out.answer == "found both files"
+    assert len(provider.requests) == 2
+
+    spans = exporter.get_finished_spans()
+    run_spans = [s for s in spans if s.name == "agent.run"]
+    llm_spans = [
+        s for s in spans if s.attributes.get("openinference.span.kind") == "LLM"
+    ]
+    tool_spans = [
+        s for s in spans if s.attributes.get("openinference.span.kind") == "TOOL"
+    ]
+
+    assert len(run_spans) == 1
+    assert len(llm_spans) == 2
+    assert len(tool_spans) == 2
+    run_span = run_spans[0]
+
+    for span in [*llm_spans, *tool_spans]:
+        assert span.context.trace_id == run_span.context.trace_id
+        assert span.parent is not None
+        assert span.parent.span_id == run_span.context.span_id
+
+    assert {s.attributes["tool.name"] for s in tool_spans} == {"glob_search"}
+    assert {
+        s.attributes["tool_call.function.name"] for s in tool_spans
+    } == {"glob_search"}
+    assert {
+        s.attributes["tool_call.id"] for s in tool_spans
+    } == {"glob_readme", "glob_pyproject"}
+    assert all(s.attributes["llm.token_count.total"] == 10 for s in llm_spans)

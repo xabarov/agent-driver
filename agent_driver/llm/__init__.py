@@ -27,7 +27,9 @@ from agent_driver.llm.provider_descriptors import (
 )
 from agent_driver.llm.provider_route_profiles import (
     ProviderPreflightResult,
+    ProviderRequestShapePlan,
     ProviderRouteProfile,
+    build_provider_request_shape_plan,
     preview_provider_preflight,
     request_shape_policy_summary,
     resolve_openai_compatible_route_profile,
@@ -50,6 +52,7 @@ __all__ = [
     "LlmFinishReason",
     "ProviderDescriptor",
     "ProviderPreflightResult",
+    "ProviderRequestShapePlan",
     "ProviderErrorReason",
     "ProviderResolutionError",
     "ProviderRouteProfile",
@@ -57,6 +60,7 @@ __all__ = [
     "ProviderTransport",
     "RecoveryAction",
     "classify",
+    "build_provider_request_shape_plan",
     "get_provider_descriptor",
     "list_provider_ids",
     "register_provider_descriptor",

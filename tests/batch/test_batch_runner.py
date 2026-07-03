@@ -127,6 +127,57 @@ def test_report_aggregation_pure() -> None:
     assert report.skipped_resumed == 2
 
 
+def test_report_aggregates_policy_decisions_and_trace_violations() -> None:
+    trajectories = [
+        Trajectory(
+            item_id="a",
+            run_id="r1",
+            status="completed",
+            metadata={
+                "policy_evaluations": {
+                    "would_fire_policy_ids": [
+                        "required_source_evidence",
+                        "tool_loop_no_progress",
+                    ]
+                },
+                "trace_violations": [
+                    {"violation_id": "missing_source"},
+                    {"reason": "repeated_fetch"},
+                ],
+            },
+        ),
+        Trajectory(
+            item_id="b",
+            run_id="r2",
+            status="completed",
+            metadata={
+                "policy_evaluations": {
+                    "evaluations": [
+                        {
+                            "policy_id": "required_source_evidence",
+                            "status": "matched",
+                        },
+                        {"policy_id": "no_policy_match", "status": "not_matched"},
+                    ]
+                },
+                "failures": ["final_without_report_artifact"],
+            },
+        ),
+    ]
+
+    report = BatchReport.from_trajectories(trajectories)
+
+    assert report.policy_decisions == {
+        "required_source_evidence": 2,
+        "tool_loop_no_progress": 1,
+    }
+    assert report.trace_violations == {
+        "missing_source": 1,
+        "repeated_fetch": 1,
+        "final_without_report_artifact": 1,
+    }
+
+
 def test_batch_item_metadata_must_be_json() -> None:
     BatchItem(item_id="ok", input="hi", metadata={"k": "v"})
     with pytest.raises(ValueError):

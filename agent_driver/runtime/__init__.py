@@ -73,6 +73,7 @@ from agent_driver.runtime.tools import (
     fake_noop_tool_executor,
     wrap_governed_executor,
 )
+from agent_driver.runtime.validation_artifacts import write_validation_artifacts
 
 __all__ = [
     "FakeSingleStepRunner",
@@ -120,6 +121,7 @@ __all__ = [
     "ToolGateResult",
     "fake_noop_tool_executor",
     "wrap_governed_executor",
+    "write_validation_artifacts",
     # planning-check helpers (see planning_check.py)
     "PLANNING_TOOL_NAMES",
     "data_tool_called",

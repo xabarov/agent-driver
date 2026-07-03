@@ -150,7 +150,11 @@ def sdk_config_from_env() -> SdkConfig:
         provider=os.getenv("AGENT_DRIVER_PROVIDER"),
         base_url=os.getenv("AGENT_DRIVER_BASE_URL"),
         model=os.getenv("AGENT_DRIVER_MODEL"),
-        api_key=os.getenv("AGENT_DRIVER_API_KEY"),
+        api_key=(
+            os.getenv("AGENT_DRIVER_API_KEY")
+            or os.getenv("OPENROUTER_API_KEY")
+            or os.getenv("LLM_API_KEY")
+        ),
         transport=SdkTransportConfig(
             timeout_s=float(os.getenv("AGENT_DRIVER_TIMEOUT_S", "60")),
             max_retries=int(os.getenv("AGENT_DRIVER_MAX_RETRIES", "3")),

@@ -317,6 +317,41 @@ def build_parser() -> argparse.ArgumentParser:
         "--session-id", required=True, help="Session identifier."
     )
 
+    capability_pack_parser = subparsers.add_parser(
+        "capability-pack",
+        help="Inspect and dry-run harness capability packs.",
+    )
+    capability_pack_sub = capability_pack_parser.add_subparsers(
+        dest="capability_pack_command", required=True
+    )
+    capability_pack_dry_run = capability_pack_sub.add_parser(
+        "dry-run",
+        help="Resolve pack/scenario gates without executing commands.",
+    )
+    capability_pack_dry_run.add_argument(
+        "--pack-id",
+        required=True,
+        choices=("excel_workbook_chat", "deep_research_chat_demo"),
+        help="Capability pack id to resolve.",
+    )
+    capability_pack_dry_run.add_argument(
+        "--adapter-id",
+        choices=("excel_ai", "chat_demo"),
+        default=None,
+        help="Adapter manifest id; defaults from the selected pack family.",
+    )
+    capability_pack_dry_run.add_argument(
+        "--scenario-id",
+        action="append",
+        default=[],
+        help="Scenario id to include; defaults to all seed scenarios for adapter.",
+    )
+    capability_pack_dry_run.add_argument(
+        "--output-dir",
+        default=None,
+        help="Optional directory for dry-run manifest and evidence_index.json.",
+    )
+
     resume_parser = subparsers.add_parser(
         "resume", help="Resume pending interrupt decisions."
     )

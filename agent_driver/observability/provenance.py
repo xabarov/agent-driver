@@ -599,6 +599,9 @@ def _side_effect_seen(events: list[dict[str, object]]) -> bool:
             return True
         if event.get("event") == "tool_call_completed":
             for tool in _event_tools(_event_data(event)):
+                side_effect = _first_str(tool, "side_effect", "side_effect_class")
+                if side_effect and side_effect not in {"read_only", "read-only", "none"}:
+                    return True
                 name = _first_str(tool, "tool_name", "name")
                 if name and _side_effect_class(name) not in {None, "read-only"}:
                     return True

@@ -8,8 +8,12 @@ from agent_driver.contracts.runtime import AgentRunOutput
 from agent_driver.observability.run_trace.runtime_decisions import (
     runtime_decision_summary,
 )
+from agent_driver.harness.capability_packs import build_capability_pack_resolution
 from agent_driver.observability.provenance import build_provenance_summary
 from agent_driver.observability.trace_builder import build_trace_export
+from agent_driver.runtime.policy import build_observe_policy_summary
+from agent_driver.runtime.supervision import build_run_supervisor_state
+from agent_driver.runtime.validation import build_validation_gate_summary
 from agent_driver.runtime.stream import (
     project_runtime_event_timeline,
     project_runtime_events,
@@ -102,6 +106,41 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
         metadata=dict(output.metadata),
         required_evidence=_required_evidence(output.metadata),
     )
+    policy_evaluations = build_observe_policy_summary(
+        events=[
+            {
+                "event": event.type.value,
+                "run_id": event.run_id,
+                "attempt_id": event.attempt_id,
+                "seq": event.seq,
+                "data": event.payload,
+            }
+            for event in output.events
+        ],
+        run_id=output.run_id,
+        required_evidence=_required_evidence(output.metadata),
+        metadata=dict(output.metadata),
+    )
+    supervisor_state = build_run_supervisor_state(
+        events=[
+            {
+                "event": event.type.value,
+                "run_id": event.run_id,
+                "attempt_id": event.attempt_id,
+                "seq": event.seq,
+                "data": event.payload,
+                "created_at": event.created_at,
+            }
+            for event in output.events
+        ],
+        run_id=output.run_id,
+        policy_summary=policy_evaluations,
+        checkpoint_available=output.checkpoint is not None,
+        durability="runtime_output",
+        session_id=output.thread_id,
+        thread_id=output.thread_id,
+    )
+    capability_pack_resolution = build_capability_pack_resolution(dict(output.metadata))
     return {
         "run": {
             "run_id": output.run_id,
@@ -128,6 +167,10 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
         },
         "run_lifecycle": lifecycle.model_dump(mode="json"),
         "runtime_decisions": runtime_decisions,
+        "policy_evaluations": policy_evaluations,
+        "run_supervisor_state": supervisor_state.model_dump(mode="json"),
+        "capability_pack_resolution": capability_pack_resolution,
+        "validation_gates": build_validation_gate_summary(dict(output.metadata)),
         "goal_state": runtime_decisions["goal_state"],
         **provenance,
         "route_profile": _latest_llm_payload(output, "route_profile"),
@@ -158,6 +201,26 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
         ),
         metadata=metadata if isinstance(metadata, dict) else {},
         required_evidence=_required_evidence(metadata if isinstance(metadata, dict) else {}),
+    )
+    policy_evaluations = build_observe_policy_summary(
+        events=_persisted_events_for_summary(
+            redacted_events if isinstance(redacted_events, list) else []
+        ),
+        run_id=str(persisted_replay.get("run_id") or "persisted_replay"),
+        required_evidence=_required_evidence(metadata if isinstance(metadata, dict) else {}),
+        metadata=metadata if isinstance(metadata, dict) else {},
+    )
+    supervisor_state = build_run_supervisor_state(
+        events=_persisted_events_for_summary(
+            redacted_events if isinstance(redacted_events, list) else []
+        ),
+        run_id=str(persisted_replay.get("run_id") or "persisted_replay"),
+        policy_summary=policy_evaluations,
+        checkpoint_available=bool(persisted_replay.get("latest_checkpoint")),
+        durability="persisted_replay",
+    )
+    capability_pack_resolution = build_capability_pack_resolution(
+        metadata if isinstance(metadata, dict) else {}
     )
     return {
         "run": {
@@ -193,6 +256,12 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
             "support_bundle_available": True,
         },
         "runtime_decisions": runtime_decisions,
+        "policy_evaluations": policy_evaluations,
+        "run_supervisor_state": supervisor_state.model_dump(mode="json"),
+        "capability_pack_resolution": capability_pack_resolution,
+        "validation_gates": build_validation_gate_summary(
+            metadata if isinstance(metadata, dict) else {}
+        ),
         "goal_state": runtime_decisions["goal_state"],
         **provenance,
         "redaction": {

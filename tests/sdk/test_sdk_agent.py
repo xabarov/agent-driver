@@ -839,6 +839,16 @@ def test_sdk_config_from_env_returns_bootstrap_fields(monkeypatch) -> None:
     assert config.max_retries == 5
 
 
+def test_sdk_config_from_env_accepts_openrouter_alias(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_DRIVER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "llm-secret")
+
+    config = sdk_config_from_env()
+
+    assert config.api_key == "llm-secret"
+
+
 def test_sdk_create_agent_rejects_unknown_toolset_names() -> None:
     """SDK should fail fast when ToolSet.only includes missing tools."""
     with pytest.raises(ValueError, match="unknown tool names in ToolSet"):

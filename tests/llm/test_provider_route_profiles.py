@@ -10,6 +10,7 @@ from agent_driver.llm.provider_capabilities import (
     resolve_openai_compatible_capabilities,
 )
 from agent_driver.llm.provider_route_profiles import (
+    build_provider_request_shape_plan,
     preview_provider_preflight,
     resolve_openai_compatible_route_profile,
 )
@@ -180,6 +181,120 @@ def test_strict_json_supported_vs_downgraded() -> None:
         "strict_json_schema_downgraded_to_json_object_or_validation"
     )
     assert "strict_json_schema" in downgraded.downgrades
+
+
+def test_request_shape_plan_continues_when_route_supports_request() -> None:
+    request = _strict_json_request()
+    openai_profile = _profile("openai", "https://api.openai.com/v1", "gpt-4.1")
+    capability = resolve_openai_compatible_capabilities(
+        provider_name="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+    )
+    preflight = preview_provider_preflight(
+        provider_name="openai",
+        provider_kind="openai_compatible",
+        model="gpt-4.1",
+        route_profile=openai_profile,
+        capability_profile=capability,
+        request=request,
+    )
+
+    plan = build_provider_request_shape_plan(preflight=preflight, request=request)
+
+    assert plan.status == "ok"
+    assert plan.selected_action == "continue"
+    assert plan.reshaped_request is None
+
+
+def test_request_shape_plan_observes_route_downgrades_without_enforcement() -> None:
+    request = _strict_json_request()
+    unknown_profile = _profile("gateway", "https://llm.example.test/v1", "model-x")
+    capability = resolve_openai_compatible_capabilities(
+        provider_name="gateway",
+        base_url="https://llm.example.test/v1",
+        model="model-x",
+    )
+    preflight = preview_provider_preflight(
+        provider_name="gateway",
+        provider_kind="openai_compatible",
+        model="model-x",
+        route_profile=unknown_profile,
+        capability_profile=capability,
+        request=request,
+    )
+
+    plan = build_provider_request_shape_plan(
+        preflight=preflight,
+        request=request,
+        enforce=False,
+    )
+
+    assert plan.status == "would_reshape"
+    assert plan.selected_action == "reshape_request"
+    assert plan.reshaped_request is None
+    assert "strict_json_schema" in plan.downgrades
+
+
+def test_request_shape_plan_enforces_local_downgrades() -> None:
+    request = LlmRequest(
+        messages=[ChatMessage(role=ChatRole.USER, content="use tool as json")],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "description": "Lookup.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+        tool_choice={"type": "tool", "name": "lookup"},
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "answer",
+                "strict": True,
+                "schema": {"type": "object"},
+            },
+        },
+        metadata={"caller": "unit-test"},
+    )
+    openrouter_profile = _profile(
+        "openrouter",
+        "https://openrouter.ai/api/v1",
+        "openai/gpt-5.5",
+    )
+    capability = resolve_openai_compatible_capabilities(
+        provider_name="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        model="openai/gpt-5.5",
+    )
+    preflight = preview_provider_preflight(
+        provider_name="openrouter",
+        provider_kind="openai_compatible",
+        model="openai/gpt-5.5",
+        route_profile=openrouter_profile,
+        capability_profile=capability,
+        request=request,
+    )
+
+    plan = build_provider_request_shape_plan(
+        preflight=preflight,
+        request=request,
+        enforce=True,
+    )
+
+    assert plan.status == "reshaped"
+    assert plan.selected_action == "reshape_request"
+    assert plan.reshaped_request is not None
+    assert plan.reshaped_request.tool_choice == "auto"
+    assert plan.reshaped_request.response_format == {"type": "json_object"}
+    assert plan.reshaped_request.metadata["caller"] == "unit-test"
+    assert plan.reshaped_request.metadata["provider_request_shape_policy"] == {
+        "applied": True,
+        "downgrades": ["forced_tool_choice", "strict_json_schema"],
+    }
 
 
 def test_reasoning_and_request_id_policy_visible_on_provider_status() -> None:

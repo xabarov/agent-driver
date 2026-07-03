@@ -11,8 +11,21 @@ def test_contracts_public_exports_are_stable() -> None:
     required = {
         "AgentRunInput",
         "AgentRunOutput",
+        "CapabilityPackResolution",
+        "EvidenceArtifactIndex",
+        "EvidenceArtifactRef",
+        "HarnessAdapterManifest",
+        "HarnessCapabilityPack",
+        "HarnessPolicyProfile",
+        "HarnessReleaseGate",
+        "HarnessScenarioSpec",
+        "PolicyAction",
+        "PolicyEvaluation",
+        "PolicySignal",
+        "RunSupervisorState",
         "ToolManifest",
         "ToolTrace",
+        "ValidationGateResult",
         "RuntimeEvent",
         "RunStreamEvent",
         "InterruptRequest",
@@ -32,6 +45,7 @@ def test_runtime_public_exports_remain_runtime_focused() -> None:
         "RuntimeStoreFactoryConfig",
         "create_runtime_store_bundle",
         "wrap_governed_executor",
+        "write_validation_artifacts",
     }
     forbidden = {"ToolRegistry", "GovernedToolExecutor", "SubagentGroupSpec"}
     exports = set(runtime.__all__)

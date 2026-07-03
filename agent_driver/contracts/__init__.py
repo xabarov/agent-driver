@@ -7,6 +7,15 @@ from agent_driver.contracts.artifacts import (
     TraceRef,
 )
 from agent_driver.contracts.base import ContractModel
+from agent_driver.contracts.capability_packs import (
+    CapabilityPackResolution,
+    EvidenceArtifactIndex,
+    EvidenceArtifactRef,
+    HarnessAdapterManifest,
+    HarnessCapabilityPack,
+    HarnessReleaseGate,
+    HarnessScenarioSpec,
+)
 from agent_driver.contracts.checkpoints import CheckpointRef
 from agent_driver.contracts.context import (
     ArtifactPreview,
@@ -96,6 +105,14 @@ from agent_driver.contracts.profiles import (
     PromptRenderResult,
     PromptTemplate,
 )
+from agent_driver.contracts.policy import (
+    HarnessPolicyProfile,
+    PolicyAction,
+    PolicyEvaluation,
+    PolicySignal,
+    RunSupervisorState,
+    ValidationGateResult,
+)
 from agent_driver.contracts.runtime import (
     AgentRunInput,
     AgentRunOutput,
@@ -170,10 +187,18 @@ __all__ = [
     "ControlRequest",
     "ControlResponse",
     "ContextDiagnostics",
+    "CapabilityPackResolution",
     "EventSeverity",
+    "EvidenceArtifactIndex",
+    "EvidenceArtifactRef",
     "GoalContract",
     "GoalEvaluatorResult",
     "GoalState",
+    "HarnessAdapterManifest",
+    "HarnessCapabilityPack",
+    "HarnessPolicyProfile",
+    "HarnessReleaseGate",
+    "HarnessScenarioSpec",
     "GuardrailDecision",
     "CompactionMode",
     "CompactionSkipReason",
@@ -191,6 +216,9 @@ __all__ = [
     "MergeProvenance",
     "PromptRenderResult",
     "HarnessProfile",
+    "PolicyAction",
+    "PolicyEvaluation",
+    "PolicySignal",
     "PromptTemplate",
     "ParentStateWriteMode",
     "PlanningModeState",
@@ -200,6 +228,7 @@ __all__ = [
     "RunStatus",
     "RunWarning",
     "RunStreamEvent",
+    "RunSupervisorState",
     "RuntimeDecision",
     "RuntimeEvent",
     "RuntimeEventType",
@@ -237,6 +266,7 @@ __all__ = [
     "TrimAction",
     "TraceRef",
     "UsageSummary",
+    "ValidationGateResult",
     "WarningSeverity",
     "WarningSource",
     "new_runtime_event",

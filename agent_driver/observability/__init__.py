@@ -19,6 +19,7 @@ from agent_driver.observability.optional_exporters import (
 from agent_driver.observability.phoenix import (
     PhoenixTracingConfig,
     agent_run_otel_attributes,
+    flush_phoenix_tracing,
     get_otel_tracer,
     normalize_phoenix_http_endpoint,
     phoenix_tracing_status,
@@ -48,6 +49,7 @@ __all__ = [
     "build_persisted_support_bundle",
     "build_provenance_summary",
     "build_runtime_support_bundle",
+    "flush_phoenix_tracing",
     "get_otel_tracer",
     "normalize_phoenix_http_endpoint",
     "phoenix_tracing_status",

@@ -48,6 +48,8 @@ def test_compare_aggregates_computes_deltas() -> None:
         cost_usd=MetricSummary(median=0.10),
         latency_ms=MetricSummary(median=300.0),
         total_tokens=MetricSummary(median=2000.0),
+        policy_decision_count=MetricSummary(median=2.0),
+        trace_violation_count=MetricSummary(median=1.0),
     )
     treatment = RunAggregate(
         total_runs=5,
@@ -56,12 +58,16 @@ def test_compare_aggregates_computes_deltas() -> None:
         cost_usd=MetricSummary(median=0.06),
         latency_ms=MetricSummary(median=180.0),
         total_tokens=MetricSummary(median=1500.0),
+        policy_decision_count=MetricSummary(median=1.0),
+        trace_violation_count=MetricSummary(median=0.0),
     )
     report = compare_aggregates(baseline, treatment, repeats=5)
     assert report.success_rate_delta == pytest.approx(0.2)
     assert report.cost_usd_median_delta == pytest.approx(-0.04)  # cheaper
     assert report.latency_ms_median_delta == pytest.approx(-120.0)  # faster
     assert report.total_tokens_median_delta == pytest.approx(-500.0)
+    assert report.policy_decisions_median_delta == pytest.approx(-1.0)
+    assert report.trace_violations_median_delta == pytest.approx(-1.0)
 
 
 def test_render_comparison_includes_labels_and_rows() -> None:
@@ -75,6 +81,7 @@ def test_render_comparison_includes_labels_and_rows() -> None:
     text = render_comparison(report)
     assert "cache_off" in text and "cache_on" in text
     assert "success_rate" in text and "cost_usd" in text
+    assert "policy (med)" in text and "violations(med)" in text
     assert "repeats=5" in text
 
 

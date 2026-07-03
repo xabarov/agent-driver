@@ -56,8 +56,25 @@ def test_build_chat_app_metadata_includes_workspace_and_chat_mode(settings) -> N
     assert meta["chat_mode"] is True
     assert meta["session_id"] == "session_xyz"
     assert meta["stream_poll_interval_ms"] == settings.stream_poll_interval_ms
+    assert meta["harness_policy_profile"]["profile_id"] == (
+        "chat-demo-deep-research-observe"
+    )
+    assert meta["harness_policy_profile"]["mode"] == "observe"
     workspace = Path(str(meta["workspace_cwd"]))
     assert workspace == resolve_session_workspace(settings, "session_xyz")
+
+
+def test_build_chat_app_metadata_allows_opt_in_enforce_policy_mode(
+    settings, monkeypatch
+) -> None:
+    monkeypatch.setenv("CHAT_DEMO_HARNESS_POLICY_MODE", "enforce")
+
+    meta = build_chat_app_metadata(settings, "session_enforce")
+
+    profile = meta["harness_policy_profile"]
+    assert profile["profile_id"] == "chat-demo-deep-research-enforce"
+    assert profile["mode"] == "enforce"
+    assert "artifact_provenance_required" in profile["enabled_policy_ids"]
 
 
 def test_workspace_status_counts_session_files(settings) -> None:
@@ -202,9 +219,38 @@ def test_merge_resume_app_metadata_fills_missing_workspace(settings) -> None:
         session_store=store,
     )
     assert merged["chat_mode"] is True
+    assert merged["harness_policy_profile"]["profile_id"] == (
+        "chat-demo-deep-research-observe"
+    )
     assert Path(str(merged["workspace_cwd"])) == resolve_session_workspace(
         settings, "session_resume"
     )
+
+
+def test_merge_resume_app_metadata_allows_opt_in_enforce_policy_mode(
+    settings, monkeypatch
+) -> None:
+    from agent_driver.cli.sessions import SessionStore
+
+    monkeypatch.setenv("CHAT_DEMO_HARNESS_POLICY_MODE", "enforce")
+    store = SessionStore(path=settings.sessions_path)
+    store.upsert(
+        session_id="session_resume_enforce",
+        thread_id="thread_1",
+        run_ids=["run_resume_enforce"],
+        transcript=[],
+    )
+
+    merged = merge_resume_app_metadata(
+        settings,
+        base_metadata={},
+        run_id="run_resume_enforce",
+        session_store=store,
+    )
+
+    profile = merged["harness_policy_profile"]
+    assert profile["profile_id"] == "chat-demo-deep-research-enforce"
+    assert profile["mode"] == "enforce"
 
 
 def test_path_jail_rejects_outside_workspace(tmp_path) -> None:

@@ -18,6 +18,10 @@ from agent_driver.runtime.metadata_state import (
     get_cost_runtime_state,
     get_tool_loop_state,
 )
+from agent_driver.runtime.policy import (
+    build_observe_policy_summary,
+    policy_profile_from_metadata,
+)
 from agent_driver.runtime.runtime_decisions import runtime_decision_payload
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
@@ -110,6 +114,137 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
                 ),
             )
         )
+
+    def _emit_observe_policy_decisions(
+        self,
+        context: RunContext,
+        *,
+        trigger: str,
+    ) -> None:
+        """Emit opt-in observe/warn policy decisions from the current event log."""
+
+        profile = policy_profile_from_metadata(context.run_input.app_metadata)
+        if profile is None:
+            return
+        if profile.mode not in {"observe", "warn"}:
+            return
+        events = [
+            {
+                "event": event.type.value,
+                "run_id": event.run_id,
+                "attempt_id": event.attempt_id,
+                "seq": event.seq,
+                "data": event.payload,
+                "created_at": event.created_at,
+            }
+            for event in self._deps.event_log.list_for_run(context.run_id)
+        ]
+        goal_contract = (
+            context.run_input.goal_contract.model_dump(mode="json")
+            if context.run_input.goal_contract is not None
+            else None
+        )
+        policy_summary = build_observe_policy_summary(
+            events=events,
+            run_id=context.run_id,
+            profile=profile,
+            task_contract=goal_contract,
+            metadata=context.run_input.app_metadata,
+        )
+        for evaluation in policy_summary.get("evaluations", []):
+            if not isinstance(evaluation, dict):
+                continue
+            if evaluation.get("status") != "matched":
+                continue
+            evaluation_id = str(evaluation.get("evaluation_id") or "")
+            if self._policy_decision_already_emitted(context.run_id, evaluation_id):
+                continue
+            selected_action = str(evaluation.get("selected_action") or "warn")
+            runtime_kind, runtime_action = _runtime_decision_taxonomy(
+                policy_id=str(evaluation.get("policy_id") or ""),
+                selected_action=selected_action,
+            )
+            if profile.mode == "warn":
+                runtime_action = "warn"
+                status = "applied"
+            else:
+                status = "skipped"
+            reason = str(evaluation.get("reason") or "policy_would_fire")
+            self._emit_runtime_decision(
+                context,
+                kind=runtime_kind,
+                trigger=trigger,
+                action=runtime_action,
+                reason=reason,
+                status=status,
+                policy_id=str(evaluation.get("policy_id") or "harness_policy"),
+                budget=(
+                    evaluation.get("budget")
+                    if isinstance(evaluation.get("budget"), dict)
+                    else {}
+                ),
+                affected_tools=[
+                    item
+                    for item in evaluation.get("affected_tools", [])
+                    if isinstance(item, str)
+                ],
+                required_evidence=[
+                    item
+                    for item in evaluation.get("required_evidence", [])
+                    if isinstance(item, str)
+                ],
+                observed_evidence=[
+                    item
+                    for item in evaluation.get("observed_evidence", [])
+                    if isinstance(item, str)
+                ],
+                product_tags=list(profile.rollout_tags),
+                redacted_metadata={
+                    "policy_observe_projection": True,
+                    "policy_evaluation_id": evaluation_id,
+                    "policy_profile_id": profile.profile_id,
+                    "policy_mode": profile.mode,
+                    "selected_policy_action": selected_action,
+                    "enforcement_skipped_reason": evaluation.get(
+                        "enforcement_skipped_reason"
+                    ),
+                },
+            )
+            if profile.mode == "warn":
+                self._emit(
+                    EventSpec(
+                        run_id=context.run_id,
+                        attempt_id=context.attempt_id,
+                        event_type=RuntimeEventType.WARNING,
+                        payload={
+                            "source": "harness_policy",
+                            "policy_id": evaluation.get("policy_id"),
+                            "reason": reason,
+                            "selected_action": selected_action,
+                            "summary": (
+                                "Policy warning emitted in warn mode; runtime "
+                                "tool/model behavior was not changed."
+                            ),
+                        },
+                    )
+                )
+
+    def _policy_decision_already_emitted(
+        self,
+        run_id: str,
+        evaluation_id: str,
+    ) -> bool:
+        if not evaluation_id:
+            return False
+        for event in self._deps.event_log.list_for_run(run_id):
+            if event.type != RuntimeEventType.RUNTIME_DECISION:
+                continue
+            metadata = event.payload.get("redacted_metadata")
+            if not isinstance(metadata, dict):
+                continue
+            if metadata.get("policy_evaluation_id") == evaluation_id:
+                return True
+        return False
 
     def _save_checkpoint(
         self,
@@ -248,3 +383,34 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
 
 
 __all__ = ["SingleAgentJournalMixin"]
+
+
+def _runtime_decision_taxonomy(
+    *,
+    policy_id: str,
+    selected_action: str,
+) -> tuple[str, str]:
+    kind = "evidence"
+    if policy_id == "provider_request_shape_preflight":
+        kind = "retry"
+    elif policy_id == "tool_loop_no_progress":
+        kind = "tool_guardrail"
+    elif policy_id == "budget_threshold":
+        kind = "budget"
+    elif policy_id == "user_steering_interrupt":
+        kind = "steering"
+
+    action_map = {
+        "continue": "continue",
+        "warn": "warn",
+        "retry": "retry",
+        "force_final": "force_final",
+        "ask_user": "ask_user",
+        "interrupt_for_approval": "interrupt",
+        "block_tool": "block",
+        "abort": "block",
+        "mark_achieved": "mark_achieved",
+        "mark_blocked": "mark_blocked",
+        "fail_fast": "block",
+    }
+    return kind, action_map.get(selected_action, "warn")

@@ -40,6 +40,8 @@ class ComparisonReport(ContractModel):
     cost_usd_median_delta: float = 0.0
     latency_ms_median_delta: float = 0.0
     total_tokens_median_delta: float = 0.0
+    policy_decisions_median_delta: float = 0.0
+    trace_violations_median_delta: float = 0.0
 
 
 def compare_aggregates(
@@ -63,6 +65,10 @@ def compare_aggregates(
         - baseline.latency_ms.median,
         total_tokens_median_delta=treatment.total_tokens.median
         - baseline.total_tokens.median,
+        policy_decisions_median_delta=treatment.policy_decision_count.median
+        - baseline.policy_decision_count.median,
+        trace_violations_median_delta=treatment.trace_violation_count.median
+        - baseline.trace_violation_count.median,
     )
 
 
@@ -153,6 +159,20 @@ def render_comparison(report: ComparisonReport) -> str:
             b.total_tokens.median,
             t.total_tokens.median,
             report.total_tokens_median_delta,
+            ".0f",
+        ),
+        _row(
+            "policy (med)",
+            b.policy_decision_count.median,
+            t.policy_decision_count.median,
+            report.policy_decisions_median_delta,
+            ".0f",
+        ),
+        _row(
+            "violations(med)",
+            b.trace_violation_count.median,
+            t.trace_violation_count.median,
+            report.trace_violations_median_delta,
             ".0f",
         ),
     ]

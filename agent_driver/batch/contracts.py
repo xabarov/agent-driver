@@ -126,6 +126,8 @@ class BatchReport(ContractModel):
     by_status: dict[str, int] = Field(default_factory=dict)
     tool_usage: dict[str, int] = Field(default_factory=dict)
     total_tokens: int = 0
+    policy_decisions: dict[str, int] = Field(default_factory=dict)
+    trace_violations: dict[str, int] = Field(default_factory=dict)
 
     @staticmethod
     def from_trajectories(
@@ -134,12 +136,16 @@ class BatchReport(ContractModel):
         """Aggregate counts, status histogram, tool usage and tokens."""
         by_status: Counter[str] = Counter()
         tool_usage: Counter[str] = Counter()
+        policy_decisions: Counter[str] = Counter()
+        trace_violations: Counter[str] = Counter()
         total_tokens = 0
         for traj in trajectories:
             by_status[traj.status] += 1
             for call in traj.tool_calls:
                 tool_usage[call["tool_name"]] += 1
             total_tokens += traj.usage.get("total_tokens", 0)
+            policy_decisions.update(_policy_decision_ids(traj.metadata))
+            trace_violations.update(_trace_violation_ids(traj.metadata))
         return BatchReport(
             total=len(trajectories),
             completed=by_status.get("completed", 0),
@@ -150,7 +156,54 @@ class BatchReport(ContractModel):
             by_status=dict(by_status),
             tool_usage=dict(tool_usage),
             total_tokens=total_tokens,
+            policy_decisions=dict(policy_decisions),
+            trace_violations=dict(trace_violations),
         )
+
+
+def _policy_decision_ids(metadata: dict[str, Any]) -> list[str]:
+    policy = metadata.get("policy_evaluations")
+    if not isinstance(policy, dict):
+        return []
+    ids = policy.get("would_fire_policy_ids") or policy.get("policy_ids")
+    if isinstance(ids, list):
+        return [item for item in ids if isinstance(item, str) and item]
+    evaluations = policy.get("evaluations")
+    if not isinstance(evaluations, list):
+        return []
+    selected: list[str] = []
+    for row in evaluations:
+        if not isinstance(row, dict):
+            continue
+        if row.get("status") not in {None, "matched"}:
+            continue
+        policy_id = row.get("policy_id")
+        if isinstance(policy_id, str) and policy_id:
+            selected.append(policy_id)
+    return selected
+
+
+def _trace_violation_ids(metadata: dict[str, Any]) -> list[str]:
+    raw = (
+        metadata.get("trace_violations")
+        or metadata.get("violations")
+        or metadata.get("failures")
+    )
+    if not isinstance(raw, list):
+        return []
+    selected: list[str] = []
+    for row in raw:
+        if isinstance(row, str) and row:
+            selected.append(row)
+            continue
+        if not isinstance(row, dict):
+            continue
+        for key in ("violation_id", "policy_id", "id", "reason", "tag"):
+            value = row.get(key)
+            if isinstance(value, str) and value:
+                selected.append(value)
+                break
+    return selected
 
 
 __all__ = ["BatchItem", "BatchReport", "Trajectory"]

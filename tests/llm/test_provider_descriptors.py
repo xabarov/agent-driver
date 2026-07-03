@@ -42,6 +42,16 @@ def test_openrouter_from_env() -> None:
     assert provider.status.configured is True  # default base_url filled
 
 
+def test_openrouter_accepts_llm_api_key_alias() -> None:
+    provider = resolve_provider(
+        ProviderSpec(provider_id="openrouter"),
+        env={"AGENT_DRIVER_MODEL": "openai/gpt-4o-mini", "LLM_API_KEY": "k"},
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider.status.configured is True
+
+
 def test_vllm_requires_base_url_allows_no_key() -> None:
     provider = resolve_provider(
         ProviderSpec(

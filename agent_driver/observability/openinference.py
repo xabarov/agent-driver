@@ -34,6 +34,10 @@ _LLM_INVOCATION = "llm.invocation_parameters"
 _LLM_TOK_PROMPT = "llm.token_count.prompt"
 _LLM_TOK_COMPLETION = "llm.token_count.completion"
 _LLM_TOK_TOTAL = "llm.token_count.total"
+_LLM_FINISH_REASON = "llm.finish_reason"
+_LLM_COST_PROMPT = "llm.cost.prompt"
+_LLM_COST_COMPLETION = "llm.cost.completion"
+_LLM_COST_TOTAL = "llm.cost.total"
 _TOOL_NAME = "tool.name"
 _TOOL_DESCRIPTION = "tool.description"
 _TOOL_PARAMETERS = "tool.parameters"
@@ -121,6 +125,10 @@ def set_llm(
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
     total_tokens: int | None = None,
+    finish_reason: str | None = None,
+    prompt_cost: float | None = None,
+    completion_cost: float | None = None,
+    total_cost: float | None = None,
 ) -> None:
     """Set LLM semantic attributes (model, provider, params, messages, tokens).
 
@@ -136,6 +144,10 @@ def set_llm(
     _set(span, _LLM_TOK_PROMPT, prompt_tokens)
     _set(span, _LLM_TOK_COMPLETION, completion_tokens)
     _set(span, _LLM_TOK_TOTAL, total_tokens)
+    _set(span, _LLM_FINISH_REASON, finish_reason)
+    _set(span, _LLM_COST_PROMPT, prompt_cost)
+    _set(span, _LLM_COST_COMPLETION, completion_cost)
+    _set(span, _LLM_COST_TOTAL, total_cost)
     for i, msg in enumerate(input_messages or []):
         _set(span, f"llm.input_messages.{i}.message.role", msg.get("role"))
         _set(span, f"llm.input_messages.{i}.message.content", msg.get("content"))

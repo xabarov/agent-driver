@@ -142,6 +142,51 @@ def test_trace_summary_exposes_runtime_timeline_diagnostics_for_reconnect() -> N
     assert lifecycle["reconnect_cursor"] == "run_chat_timeline:5"
 
 
+def test_trace_summary_exposes_policy_supervisor_and_validation_gates() -> None:
+    summary = summarize_run_trace(
+        run_id="run_chat_policy",
+        user_prompt="Write a research report with sources",
+        assistant_text="Done.",
+        task_contract={"required_evidence": ["source_evidence"]},
+        events=[
+            {
+                "event": "run_started",
+                "run_id": "run_chat_policy",
+                "attempt_id": "attempt_1",
+                "seq": 1,
+                "data": {
+                    "harness_id": "chat-demo",
+                    "session_id": "session_1",
+                    "validation_gates": [
+                        {
+                            "gate_id": "support_bundle_artifact",
+                            "status": "passed",
+                            "evidence_path": "artifacts/chat-demo-support.json",
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "run_completed",
+                "run_id": "run_chat_policy",
+                "attempt_id": "attempt_1",
+                "seq": 2,
+                "data": {},
+            },
+        ],
+    )
+
+    assert summary["policy_evaluations"]["would_fire_policy_ids"] == [
+        "required_source_evidence"
+    ]
+    assert summary["run_supervisor_state"]["lifecycle_state"] == "completed"
+    assert summary["run_supervisor_state"]["heartbeat_status"] == "terminal"
+    assert summary["validation_gates"]["statuses"]["support_bundle_artifact"] == (
+        "passed"
+    )
+    assert summary["validation_gates"]["statuses"]["phoenix_trace"] == "not_run"
+
+
 def test_trace_summary_exposes_deep_research_provenance_contracts() -> None:
     summary = summarize_run_trace(
         run_id="run_chat_provenance",

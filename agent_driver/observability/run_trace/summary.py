@@ -55,6 +55,18 @@ from agent_driver.observability.run_trace.runtime_decisions import (
 from agent_driver.observability.provenance import (
     build_provenance_summary as _build_provenance_summary,
 )
+from agent_driver.harness.capability_packs import (
+    build_capability_pack_resolution as _build_capability_pack_resolution,
+)
+from agent_driver.runtime.policy import (
+    build_observe_policy_summary as _build_observe_policy_summary,
+)
+from agent_driver.runtime.supervision import (
+    build_run_supervisor_state as _build_run_supervisor_state,
+)
+from agent_driver.runtime.validation import (
+    build_validation_gate_summary as _build_validation_gate_summary,
+)
 from agent_driver.observability.run_trace.tools import assistant_text as _assistant_text
 from agent_driver.observability.run_trace.tools import count_events as _count_events
 from agent_driver.observability.run_trace.tools import event_data as _event_data
@@ -140,6 +152,23 @@ def summarize_run_trace(
         events=events,
         metadata=_metadata_from_events(events),
         required_evidence=_required_evidence(task_contract),
+    )
+    validation_gates = _build_validation_gate_summary(_metadata_from_events(events))
+    policy_evaluations = _build_observe_policy_summary(
+        events=events,
+        run_id=run_id,
+        task_contract=task_contract,
+        required_evidence=_required_evidence(task_contract),
+        metadata=_metadata_from_events(events),
+    )
+    supervisor_state = _build_run_supervisor_state(
+        events=events,
+        run_id=run_id,
+        policy_summary=policy_evaluations,
+        durability="trace_summary",
+    )
+    capability_pack_resolution = _build_capability_pack_resolution(
+        _metadata_from_events(events)
     )
     subagents = _subagent_summary(
         events,
@@ -355,6 +384,10 @@ def summarize_run_trace(
         "deep_research_artifact_handoff_complete": deep_research_artifact_handoff_complete,
         "runtime_markers": runtime_markers,
         "runtime_decisions": runtime_decisions,
+        "policy_evaluations": policy_evaluations,
+        "run_supervisor_state": supervisor_state.model_dump(mode="json"),
+        "capability_pack_resolution": capability_pack_resolution,
+        "validation_gates": validation_gates,
         "goal_state": runtime_decisions["goal_state"],
         "context_provenance": provenance["context_provenance"],
         "memory_fact_provenance": provenance["memory_fact_provenance"],
@@ -471,6 +504,18 @@ def _metadata_from_events(events: list[dict[str, object]]) -> dict[str, Any]:
                 "source_evidence",
                 "side_effect_transactions",
                 "required_evidence",
+                "validation_gates",
+                "validation_gate_results",
+                "capability_pack",
+                "harness_capability_pack",
+                "capability_pack_id",
+                "harness_capability_pack_id",
+                "capability_adapter_id",
+                "capability_adapter_manifest",
+                "capability_scenario_ids",
+                "capability_scenarios",
+                "capability_pack_overrides",
+                "capability_pack_resolution",
             ):
                 value = data.get(key)
                 if value is not None:

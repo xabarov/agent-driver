@@ -175,6 +175,65 @@ def test_cli_run_and_chat_accept_workspace_option(tmp_path) -> None:
     assert chat_args.workspace == str(tmp_path)
 
 
+def test_cli_capability_pack_dry_run_writes_evidence_index(tmp_path, capsys) -> None:
+    output_dir = tmp_path / "pack-dry-run"
+
+    code = main(
+        [
+            "capability-pack",
+            "dry-run",
+            "--pack-id",
+            "excel_workbook_chat",
+            "--scenario-id",
+            "excel.workbook_context.transaction.v1",
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "dry_run"
+    assert payload["executed_commands"] == []
+    resolution = payload["capability_pack_resolution"]
+    assert resolution["pack_id"] == "excel_workbook_chat"
+    assert resolution["gate_statuses"]["openrouter_live_preflight"] == "skipped"
+    assert (output_dir / "manifest.json").is_file()
+    assert (output_dir / "evidence_index.json").is_file()
+    assert (output_dir / "capability_pack_resolution.json").is_file()
+    assert (output_dir / "capability_pack_dry_run.json").is_file()
+    evidence_index = json.loads(
+        (output_dir / "evidence_index.json").read_text(encoding="utf-8")
+    )
+    assert evidence_index["pack_id"] == "excel_workbook_chat"
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert {row["artifact_type"] for row in manifest["artifacts"]} == {
+        "evidence_index",
+        "capability_pack_resolution",
+        "capability_pack_dry_run",
+    }
+
+
+def test_cli_capability_pack_dry_run_rejects_mismatched_scenario(capsys) -> None:
+    code = main(
+        [
+            "capability-pack",
+            "dry-run",
+            "--pack-id",
+            "deep_research_chat_demo",
+            "--adapter-id",
+            "chat_demo",
+            "--scenario-id",
+            "excel.workbook_context.transaction.v1",
+        ]
+    )
+
+    assert code == 2
+    output = capsys.readouterr().out
+    assert "capability-pack error:" in output
+    assert "belongs to adapter" in output
+
+
 def test_cli_chat_keyboard_interrupt_returns_130(monkeypatch, capsys) -> None:
     """Top-level chat command should hide traceback on KeyboardInterrupt."""
 
