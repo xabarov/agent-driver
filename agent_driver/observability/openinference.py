@@ -15,7 +15,11 @@ from __future__ import annotations
 import contextlib
 from typing import Any, Iterable, Mapping
 
-from agent_driver.observability.phoenix import get_otel_tracer, safe_json
+from agent_driver.observability.phoenix import (
+    get_otel_tracer,
+    phoenix_io_redacted,
+    safe_json,
+)
 
 _TRACER_NAME = "agent_driver"
 
@@ -50,9 +54,27 @@ SPAN_KIND_RETRIEVER = "RETRIEVER"
 SPAN_KIND_GUARDRAIL = "GUARDRAIL"
 
 
+_REDACT_PLACEHOLDER = "[redacted: raw-free PII policy]"
+
+
+def _is_content_key(key: str) -> bool:
+    """Content-bearing keys redacted in raw-free mode; metadata (model/tokens/kind/role) is kept."""
+    return (
+        key in ("input.value", "output.value")
+        or key.endswith(".message.content")
+        or key == "tool_call.function.arguments"
+    )
+
+
 def _set(span: Any, key: str, value: Any) -> None:
     if span is None or value is None:
         return
+    if _is_content_key(key):
+        try:
+            if phoenix_io_redacted():
+                value = _REDACT_PLACEHOLDER
+        except Exception:  # redaction check must never break a run
+            pass
     try:
         span.set_attribute(key, value)
     except Exception:  # telemetry must never break a run

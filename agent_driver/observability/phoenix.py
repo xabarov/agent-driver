@@ -23,6 +23,11 @@ class PhoenixTracingConfig:
     collector_endpoint: str | None = None
     auto_instrument: bool = False
     batch: bool = False
+    # When True, content-bearing span attributes (input/output values, LLM message content,
+    # tool-call arguments) are redacted before export — the span still renders (kind/model/tokens)
+    # but carries no raw text. For hosts behind a PII boundary (e.g. MeetScript) this keeps the
+    # trace store raw-free. Default False preserves existing rich-panel behavior.
+    redact_io: bool = False
 
 
 _TRACING_READY = False
@@ -30,6 +35,12 @@ _TRACING_ERROR: str | None = None
 _TRACING_CONFIGURED = False
 _TRACING_PROJECT_NAME: str | None = None
 _TRACING_ENDPOINT: str | None = None
+_TRACING_REDACT_IO = False
+
+
+def phoenix_io_redacted() -> bool:
+    """Whether content-bearing span attributes should be redacted before export."""
+    return _TRACING_REDACT_IO
 
 
 def normalize_phoenix_http_endpoint(endpoint: str) -> str:
@@ -45,12 +56,14 @@ def setup_phoenix_tracing(config: PhoenixTracingConfig) -> dict[str, object]:
     global _TRACING_READY, _TRACING_ERROR  # pylint: disable=global-statement
     global _TRACING_CONFIGURED  # pylint: disable=global-statement
     global _TRACING_PROJECT_NAME, _TRACING_ENDPOINT  # pylint: disable=global-statement
+    global _TRACING_REDACT_IO  # pylint: disable=global-statement
     if _TRACING_READY or _TRACING_ERROR is not None:
         return phoenix_tracing_status()
     if not config.enabled:
         return phoenix_tracing_status()
     _TRACING_CONFIGURED = True
     _TRACING_PROJECT_NAME = config.project_name
+    _TRACING_REDACT_IO = config.redact_io
     try:
         import inspect
 
