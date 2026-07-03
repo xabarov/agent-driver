@@ -41,6 +41,22 @@ def test_seed_capability_packs_validate_two_products() -> None:
     }
 
 
+def test_provider_catalog_scenarios_are_seeded() -> None:
+    scenarios = seed_scenario_specs()
+
+    assert {
+        "provider_catalog.plugin_registry.v1",
+        "provider_catalog.sanitizer_matrix.v1",
+        "provider_catalog.openrouter_preflight.v1",
+        "provider_catalog.excel_workbook_routes.v1",
+        "provider_catalog.chat_demo_research_routes.v1",
+    } <= set(scenarios)
+    assert scenarios["provider_catalog.sanitizer_matrix.v1"].artifact_paths == [
+        "provider_sanitizer_matrix.json",
+        "provider_compatibility_report.json",
+    ]
+
+
 def test_capability_pack_rejects_secret_values() -> None:
     with pytest.raises(ValueError, match="must not contain secret values"):
         HarnessCapabilityPack(

@@ -7,6 +7,7 @@ need to move together.
 ## Current Records
 
 - [Epic 008: Continuous Validation, Host Adoption, Release Gates](epics/008-continuous-validation-host-adoption-release-gates.md)
+- [Epic 012: Provider Plugin, Catalog and Model Routing](epics/012-provider-plugin-catalog-model-routing-plane.md)
 - [Checklist 008](checklists/08-continuous-validation-host-adoption-release-gates.md)
 - [Cross-Cutting Observations](observations.md)
 

@@ -438,6 +438,45 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional directory for validation_run.json and validation_report.md.",
     )
 
+    provider_catalog_parser = subparsers.add_parser(
+        "provider-catalog",
+        help="Build deterministic provider plugin/catalog/routing evidence.",
+    )
+    provider_catalog_sub = provider_catalog_parser.add_subparsers(
+        dest="provider_catalog_command", required=True
+    )
+    provider_catalog_audit = provider_catalog_sub.add_parser(
+        "audit",
+        help="Write offline provider compatibility reports and sanitizer matrix.",
+    )
+    provider_catalog_audit.add_argument(
+        "--scenario",
+        default="provider_catalog.sanitizer_matrix.v1",
+        choices=(
+            "provider_catalog.plugin_registry.v1",
+            "provider_catalog.sanitizer_matrix.v1",
+            "provider_catalog.openrouter_preflight.v1",
+            "provider_catalog.excel_workbook_routes.v1",
+            "provider_catalog.chat_demo_research_routes.v1",
+        ),
+        help="Provider catalog scenario id to label the deterministic report.",
+    )
+    provider_catalog_audit.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Keep provider/Phoenix/benchmark gates as no-claim.",
+    )
+    provider_catalog_audit.add_argument(
+        "--live",
+        action="store_true",
+        help="Reserved for future opt-in live provider probes.",
+    )
+    provider_catalog_audit.add_argument(
+        "--output-dir",
+        default=".agent-driver/provider-catalog/deterministic",
+        help="Directory for provider compatibility artifacts.",
+    )
+
     harness_adapter_parser = subparsers.add_parser(
         "harness-adapter",
         help="Build deterministic harness adapter compatibility reports.",

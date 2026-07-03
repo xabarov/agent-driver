@@ -76,3 +76,19 @@ the 2026-07-03 continuous-validation implementation, broad parallel scans over
 `.git`, virtualenvs, caches and generated reports hit "Too many open files".
 Future evidence inventory should target known artifact roots first and exclude
 generated directories before treating scan errors as missing evidence.
+
+## Provider Catalog Status Vocabulary
+
+Provider compatibility contracts and validation gates intentionally use
+different status vocabularies. Provider facts use `supported`, `degraded`,
+`blocked`, `cache_hit` and `no_claim`; validation gates use `passed`, `failed`,
+`blocked`, `skipped`, `stale` and `no_claim`. New provider-catalog reports must
+translate between those vocabularies at artifact boundaries instead of reusing
+provider fact statuses as gate statuses.
+
+## Provider Artifact Type Wiring
+
+When adding a new provider evidence artifact type, wire it through all artifact
+contracts together: `EvidenceArtifactRef`, `ValidationArtifactRef`,
+continuous-validation known artifact mapping, and gate-id mapping. Updating only
+one layer produces artifacts that write successfully but fail strict 008 audit.

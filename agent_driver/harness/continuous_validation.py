@@ -137,6 +137,38 @@ def seed_release_gate_policies() -> dict[str, ReleaseGatePolicy]:
             timeout_seconds=300,
             retry_budget=1,
         ),
+        "provider_catalog_contract_change": ReleaseGatePolicy(
+            policy_id="provider_catalog_contract_change",
+            change_types=[
+                "provider_catalog",
+                "provider_plugin",
+                "model_catalog",
+                "route_profile",
+                "request_sanitizer",
+            ],
+            required_gate_ids=[
+                "deterministic_tests",
+                "support_bundle_artifact",
+                "provider_catalog.sanitizer_matrix.v1",
+            ],
+            live_required_gate_ids=["phoenix_trace"],
+            optional_gate_ids=[
+                "provider_catalog.openrouter_preflight.v1",
+                "playwright_ui",
+                "benchmark_delta",
+            ],
+            stale_allowed_gate_ids=["playwright_ui", "benchmark_delta"],
+            max_cost_usd=0,
+            timeout_seconds=120,
+            retry_budget=0,
+            redacted_metadata={
+                "rule": (
+                    "provider contract changes require sanitizer matrix; live "
+                    "provider claims require Phoenix; quality/cost/latency "
+                    "claims require benchmark artifacts; UI changes require Playwright"
+                )
+            },
+        ),
         "ui_or_quality_change": ReleaseGatePolicy(
             policy_id="ui_or_quality_change",
             change_types=["ui", "quality", "benchmark"],
@@ -883,6 +915,9 @@ def _gate_id_for_artifact_type(artifact_type: str) -> str | None:
         "command_output": "deterministic_tests",
         "validation_gates": "support_bundle_artifact",
         "support_bundle": "support_bundle_artifact",
+        "provider_compatibility_report": "provider_catalog.sanitizer_matrix.v1",
+        "provider_catalog": "provider_catalog.plugin_registry.v1",
+        "provider_sanitizer_matrix": "provider_catalog.sanitizer_matrix.v1",
     }.get(artifact_type)
 
 
@@ -904,6 +939,9 @@ def _known_artifact_type(artifact_type: str) -> str:
         "benchmark_markdown",
         "adapter_compatibility_report",
         "adapter_events",
+        "provider_compatibility_report",
+        "provider_catalog",
+        "provider_sanitizer_matrix",
         "skip_justification",
         "validation_run_json",
         "validation_report_markdown",

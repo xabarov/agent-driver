@@ -70,6 +70,15 @@ def test_continuous_validation_contracts_validate_seed_profiles() -> None:
         "openrouter_live_preflight",
         "phoenix_trace",
     ]
+    assert "provider_catalog.sanitizer_matrix.v1" in policies[
+        "provider_catalog_contract_change"
+    ].required_gate_ids
+    assert policies["provider_catalog_contract_change"].live_required_gate_ids == [
+        "phoenix_trace"
+    ]
+    assert "benchmark_delta" in policies[
+        "provider_catalog_contract_change"
+    ].optional_gate_ids
     assert policies["adapter_protocol_change"].change_types == [
         "adapter_protocol",
         "protocol_adapter",

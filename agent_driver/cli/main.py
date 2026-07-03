@@ -33,6 +33,9 @@ from agent_driver.cli.commands.evals import (
 from agent_driver.cli.commands.evals import eval_run_command as _eval_run_command_impl
 from agent_driver.cli.commands.ops import doctor_command as _doctor_command_impl
 from agent_driver.cli.commands.ops import resume_command as _resume_command_impl
+from agent_driver.cli.commands.provider_catalog import (
+    provider_catalog_command as _provider_catalog_command_impl,
+)
 from agent_driver.cli.commands.run_chat import chat_command as _chat_command_impl
 from agent_driver.cli.commands.run_chat import run_command as _run_command_impl
 from agent_driver.cli.commands.runtime_views import (
@@ -272,6 +275,10 @@ def _harness_adapter_command(args: argparse.Namespace) -> int:
     )
 
 
+def _provider_catalog_command(args: argparse.Namespace) -> int:
+    return _provider_catalog_command_impl(args)
+
+
 async def _resume_command(args: argparse.Namespace) -> int:
     return await _resume_command_impl(
         args,
@@ -479,6 +486,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _sessions_command(args)
     if args.command == "capability-pack":
         return _capability_pack_command(args)
+    if args.command == "provider-catalog":
+        return _provider_catalog_command(args)
     if args.command == "harness-adapter":
         return _harness_adapter_command(args)
     if args.command == "resume":

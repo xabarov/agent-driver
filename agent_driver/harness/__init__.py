@@ -61,6 +61,12 @@ from agent_driver.harness.durable_lifecycle import (
     seed_durable_lifecycle_repository,
     write_durable_lifecycle_artifacts,
 )
+from agent_driver.llm.provider_catalog import (
+    build_provider_compatibility_report,
+    render_provider_compatibility_markdown,
+    seed_provider_plugin_registry,
+    write_provider_catalog_artifacts,
+)
 
 __all__ = [
     "apply_system_slots",
@@ -72,6 +78,7 @@ __all__ = [
     "build_harness_adapter_compatibility_report",
     "build_durable_lifecycle_compatibility_report",
     "build_lifecycle_hook_compatibility_report",
+    "build_provider_compatibility_report",
     "DurableLifecycleRepository",
     "profile_excluded_tools",
     "project_harness_adapter_artifacts",
@@ -83,6 +90,7 @@ __all__ = [
     "render_validation_markdown",
     "render_durable_lifecycle_compatibility_markdown",
     "render_harness_adapter_compatibility_markdown",
+    "render_provider_compatibility_markdown",
     "resolve_capability_pack",
     "run_capability_pack_deterministic_gates",
     "select_harness_profile",
@@ -99,9 +107,11 @@ __all__ = [
     "seed_lifecycle_hook_audit_records",
     "seed_lifecycle_hook_compatibility_reports",
     "seed_lifecycle_hook_registrations",
+    "seed_provider_plugin_registry",
     "seed_release_gate_policies",
     "seed_scenario_specs",
     "write_validation_audit_report",
     "write_durable_lifecycle_artifacts",
     "write_harness_adapter_compatibility_artifacts",
+    "write_provider_catalog_artifacts",
 ]
