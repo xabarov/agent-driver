@@ -194,6 +194,28 @@ def seed_release_gate_policies() -> dict[str, ReleaseGatePolicy]:
                 "rule": "live runtime adapter claims require Phoenix trace evidence"
             },
         ),
+        "lifecycle_hook_api_change": ReleaseGatePolicy(
+            policy_id="lifecycle_hook_api_change",
+            change_types=[
+                "lifecycle_hook_api",
+                "middleware",
+                "hook_contract",
+                "enforce_mode",
+            ],
+            required_gate_ids=deterministic_required,
+            optional_gate_ids=sorted(_LIVE_GATE_IDS),
+            stale_allowed_gate_ids=sorted(_LIVE_GATE_IDS),
+            max_cost_usd=0,
+            timeout_seconds=120,
+            retry_budget=0,
+            redacted_metadata={
+                "rule": (
+                    "lifecycle hook API changes require contract tests and replay "
+                    "fixtures; enforce-mode changes require host adoption evidence; "
+                    "UI changes require Playwright; live runtime claims require Phoenix"
+                )
+            },
+        ),
     }
 
 

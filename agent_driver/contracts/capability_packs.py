@@ -43,6 +43,8 @@ _ARTIFACT_TYPES = frozenset(
         "benchmark_markdown",
         "adapter_compatibility_report",
         "adapter_events",
+        "lifecycle_hook_compatibility_report",
+        "lifecycle_hook_audit",
         "command_output",
         "cost_latency_record",
         "skip_justification",

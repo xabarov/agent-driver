@@ -238,6 +238,10 @@ def test_seed_scenarios_include_adapter_compatibility_pack_targets() -> None:
     assert "harness_adapter.openai_server.basic_run.v1" in scenarios
     assert "harness_adapter.chat_demo.deep_research.v1" in scenarios
     assert "harness_adapter.excel_workbook_chat.v1" in scenarios
+    assert "lifecycle_hooks.tool_transform_audit.v1" in scenarios
+    assert "lifecycle_hooks.approval_interrupt_audit.v1" in scenarios
+    assert "lifecycle_hooks.excel_workbook_policy.v1" in scenarios
+    assert "lifecycle_hooks.chat_demo_research_policy.v1" in scenarios
 
 
 def test_seed_harness_adapter_compatibility_reports_cover_three_targets() -> None:

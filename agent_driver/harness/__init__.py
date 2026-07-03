@@ -46,6 +46,13 @@ from agent_driver.harness.continuous_validation import (
     seed_release_gate_policies,
     write_validation_audit_report,
 )
+from agent_driver.harness.lifecycle_hooks import (
+    build_lifecycle_hook_compatibility_report,
+    project_lifecycle_hook_audit_events,
+    seed_lifecycle_hook_audit_records,
+    seed_lifecycle_hook_compatibility_reports,
+    seed_lifecycle_hook_registrations,
+)
 
 __all__ = [
     "apply_system_slots",
@@ -55,12 +62,14 @@ __all__ = [
     "build_capability_pack_resolution",
     "build_harness_adapter_capability",
     "build_harness_adapter_compatibility_report",
+    "build_lifecycle_hook_compatibility_report",
     "profile_excluded_tools",
     "project_harness_adapter_artifacts",
     "project_harness_adapter_events",
     "project_harness_adapter_run",
     "project_harness_adapter_session",
     "project_harness_support_bundle_refs",
+    "project_lifecycle_hook_audit_events",
     "render_validation_markdown",
     "render_harness_adapter_compatibility_markdown",
     "resolve_capability_pack",
@@ -74,6 +83,9 @@ __all__ = [
     "seed_harness_baselines",
     "seed_harness_adapter_compatibility_reports",
     "seed_host_adoption_states",
+    "seed_lifecycle_hook_audit_records",
+    "seed_lifecycle_hook_compatibility_reports",
+    "seed_lifecycle_hook_registrations",
     "seed_release_gate_policies",
     "seed_scenario_specs",
     "write_validation_audit_report",

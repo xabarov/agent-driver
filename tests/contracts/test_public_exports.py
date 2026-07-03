@@ -19,6 +19,10 @@ def test_contracts_public_exports_are_stable() -> None:
         "HarnessPolicyProfile",
         "HarnessReleaseGate",
         "HarnessScenarioSpec",
+        "LifecycleHookCompatibilityReport",
+        "LifecycleHookEvent",
+        "LifecycleHookResult",
+        "LifecycleMiddlewareChain",
         "PolicyAction",
         "PolicyEvaluation",
         "PolicySignal",
@@ -43,6 +47,7 @@ def test_runtime_public_exports_remain_runtime_focused() -> None:
         "InMemoryEventLog",
         "SqliteRuntimeStore",
         "RuntimeStoreFactoryConfig",
+        "LifecycleMiddlewareAuditExecutor",
         "create_runtime_store_bundle",
         "wrap_governed_executor",
         "write_validation_artifacts",
@@ -69,5 +74,10 @@ def test_tools_public_exports_cover_governance_surface() -> None:
 
 def test_sdk_public_exports_cover_app_facing_facade() -> None:
     """SDK package should expose Agent facade and factory helper."""
-    required = {"Agent", "create_agent", "build_default_registry", "sdk_config_from_env"}
+    required = {
+        "Agent",
+        "create_agent",
+        "build_default_registry",
+        "sdk_config_from_env",
+    }
     assert required.issubset(set(sdk.__all__))

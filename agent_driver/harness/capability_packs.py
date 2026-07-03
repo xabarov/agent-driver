@@ -311,6 +311,98 @@ def seed_scenario_specs() -> dict[str, HarnessScenarioSpec]:
                 "Excel UI evidence is no_claim unless Playwright is executed"
             ],
         ),
+        HarnessScenarioSpec(
+            scenario_id="lifecycle_hooks.tool_transform_audit.v1",
+            status="deterministic",
+            product_adapter_id="acp",
+            prompt_seed="Record a tool hook transform audit row and re-run guardrail checks.",
+            required_evidence=[
+                "lifecycle_hook_audit",
+                "adapter_event_projection",
+                "redaction_validation",
+            ],
+            expected_policy_verdicts=["guardrails_after_transform"],
+            deterministic_gate_ids=["deterministic_tests"],
+            optional_live_gate_ids=["phoenix_trace"],
+            artifact_paths=[
+                "lifecycle_hook_compatibility_report.json",
+                "lifecycle_hook_audit.jsonl",
+            ],
+            skip_conditions=["live hook trace is no_claim unless explicitly run"],
+        ),
+        HarnessScenarioSpec(
+            scenario_id="lifecycle_hooks.approval_interrupt_audit.v1",
+            status="deterministic",
+            product_adapter_id="acp",
+            prompt_seed="Record approval requested/resolved and interrupt hook rows.",
+            required_evidence=[
+                "lifecycle_hook_audit",
+                "approval_projection",
+                "interrupt_projection",
+            ],
+            expected_policy_verdicts=["approval_requested"],
+            deterministic_gate_ids=["deterministic_tests"],
+            optional_live_gate_ids=["phoenix_trace"],
+            artifact_paths=[
+                "lifecycle_hook_compatibility_report.json",
+                "lifecycle_hook_audit.jsonl",
+            ],
+            skip_conditions=["host UI approval path is no_claim in offline mode"],
+        ),
+        HarnessScenarioSpec(
+            scenario_id="lifecycle_hooks.excel_workbook_policy.v1",
+            status="deterministic",
+            product_adapter_id="excel_ai",
+            prompt_seed="Model workbook context, edit approval and chart artifact hooks.",
+            required_evidence=[
+                "lifecycle_hook_audit",
+                "workbook_context",
+                "artifact_provenance",
+            ],
+            expected_policy_verdicts=[
+                "workbook_context_required",
+                "side_effect_transaction_required",
+            ],
+            deterministic_gate_ids=["deterministic_tests", "support_bundle_artifact"],
+            optional_live_gate_ids=[
+                "openrouter_live_preflight",
+                "phoenix_trace",
+                "playwright_ui",
+            ],
+            artifact_paths=[
+                "lifecycle_hook_compatibility_report.json",
+                "lifecycle_hook_audit.jsonl",
+            ],
+            skip_conditions=["Excel hook UI rows are no_claim unless UI changes land"],
+        ),
+        HarnessScenarioSpec(
+            scenario_id="lifecycle_hooks.chat_demo_research_policy.v1",
+            status="deterministic",
+            product_adapter_id="chat_demo",
+            prompt_seed="Model source evidence, report artifact and workspace write hooks.",
+            required_evidence=[
+                "lifecycle_hook_audit",
+                "source_evidence",
+                "artifact_provenance",
+            ],
+            expected_policy_verdicts=[
+                "required_source_evidence",
+                "artifact_provenance_required",
+            ],
+            deterministic_gate_ids=["deterministic_tests", "support_bundle_artifact"],
+            optional_live_gate_ids=[
+                "openrouter_live_preflight",
+                "phoenix_trace",
+                "playwright_ui",
+            ],
+            artifact_paths=[
+                "lifecycle_hook_compatibility_report.json",
+                "lifecycle_hook_audit.jsonl",
+            ],
+            skip_conditions=[
+                "deep research hook UI rows are no_claim unless UI changes land"
+            ],
+        ),
     ]
     return {scenario.scenario_id: scenario for scenario in scenarios}
 

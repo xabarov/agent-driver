@@ -86,6 +86,16 @@ def test_continuous_validation_contracts_validate_seed_profiles() -> None:
         "openrouter_live_preflight",
         "phoenix_trace",
     ]
+    assert policies["lifecycle_hook_api_change"].change_types == [
+        "lifecycle_hook_api",
+        "middleware",
+        "hook_contract",
+        "enforce_mode",
+    ]
+    assert policies["lifecycle_hook_api_change"].required_gate_ids == [
+        "deterministic_tests",
+        "support_bundle_artifact",
+    ]
     assert adoption["excel_ai:excel_workbook_chat"].behavior_change_enabled is False
 
 

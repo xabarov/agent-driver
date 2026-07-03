@@ -40,6 +40,8 @@ _VALIDATION_ARTIFACT_TYPES = frozenset(
         "benchmark_markdown",
         "adapter_compatibility_report",
         "adapter_events",
+        "lifecycle_hook_compatibility_report",
+        "lifecycle_hook_audit",
         "skip_justification",
         "validation_run_json",
         "validation_report_markdown",
