@@ -403,6 +403,125 @@ def seed_scenario_specs() -> dict[str, HarnessScenarioSpec]:
                 "deep research hook UI rows are no_claim unless UI changes land"
             ],
         ),
+        HarnessScenarioSpec(
+            scenario_id="durable_lifecycle.session_run_records.v1",
+            status="deterministic",
+            product_adapter_id="acp",
+            prompt_seed="Write and read durable session/run records and stable reconnect cursors.",
+            required_evidence=[
+                "durable_lifecycle_records",
+                "redaction_validation",
+                "cursor_reconnect",
+            ],
+            deterministic_gate_ids=["deterministic_tests", "support_bundle_artifact"],
+            optional_live_gate_ids=["phoenix_trace"],
+            artifact_paths=[
+                "durable_lifecycle_compatibility_report.json",
+                "durable_lifecycle_records.json",
+            ],
+            skip_conditions=["restart/live gates remain no_claim in offline mode"],
+        ),
+        HarnessScenarioSpec(
+            scenario_id="durable_lifecycle.interrupt_resume_plan.v1",
+            status="deterministic",
+            product_adapter_id="acp",
+            prompt_seed="Generate resume plans from checkpoint, interrupt and approval records.",
+            required_evidence=[
+                "checkpoint_index",
+                "interrupt_records",
+                "approval_records",
+                "resume_plan",
+            ],
+            expected_policy_verdicts=[
+                "checkpoint_only_no_claim",
+                "approval_required",
+                "side_effect_unsafe",
+            ],
+            deterministic_gate_ids=["deterministic_tests", "support_bundle_artifact"],
+            optional_live_gate_ids=["phoenix_trace"],
+            artifact_paths=[
+                "durable_lifecycle_compatibility_report.json",
+                "durable_lifecycle_records.json",
+            ],
+            skip_conditions=["live resume claims require Phoenix restart evidence"],
+        ),
+        HarnessScenarioSpec(
+            scenario_id="durable_lifecycle.background_attach_replay.v1",
+            status="deterministic",
+            product_adapter_id="openai_server",
+            prompt_seed="Distinguish active lease attach, replay-only, orphaned and terminal runs.",
+            required_evidence=[
+                "background_lease",
+                "background_logs",
+                "attach_plan",
+                "adapter_event_projection",
+            ],
+            deterministic_gate_ids=["deterministic_tests", "support_bundle_artifact"],
+            optional_live_gate_ids=["phoenix_trace"],
+            artifact_paths=[
+                "durable_lifecycle_compatibility_report.json",
+                "adapter_events.jsonl",
+            ],
+            skip_conditions=["process restart smoke is defined but not required"],
+        ),
+        HarnessScenarioSpec(
+            scenario_id="durable_lifecycle.excel_workbook_pause.v1",
+            status="deterministic",
+            product_adapter_id="excel_ai",
+            prompt_seed="Model a paused workbook run with approval and workbook context artifacts.",
+            required_evidence=[
+                "durable_lifecycle_records",
+                "workbook_context",
+                "approval_records",
+                "resume_plan",
+            ],
+            expected_policy_verdicts=[
+                "workbook_context_required",
+                "side_effect_idempotency_no_claim",
+            ],
+            deterministic_gate_ids=["deterministic_tests", "support_bundle_artifact"],
+            optional_live_gate_ids=[
+                "openrouter_live_preflight",
+                "phoenix_trace",
+                "playwright_ui",
+            ],
+            artifact_paths=[
+                "durable_lifecycle_compatibility_report.json",
+                "durable_lifecycle_records.json",
+            ],
+            skip_conditions=["Excel UI evidence is no_claim unless UI changes land"],
+        ),
+        HarnessScenarioSpec(
+            scenario_id="durable_lifecycle.chat_demo_research_pause.v1",
+            status="deterministic",
+            product_adapter_id="chat_demo",
+            prompt_seed="Model long-running research with sources, report artifact and steering interrupt.",
+            required_evidence=[
+                "durable_lifecycle_records",
+                "source_evidence",
+                "artifact_provenance",
+                "background_logs",
+                "resume_plan",
+            ],
+            expected_policy_verdicts=[
+                "workspace_side_effect_no_claim",
+                "replay_available",
+            ],
+            deterministic_gate_ids=["deterministic_tests", "support_bundle_artifact"],
+            optional_live_gate_ids=[
+                "openrouter_live_preflight",
+                "phoenix_trace",
+                "playwright_ui",
+            ],
+            artifact_paths=[
+                "durable_lifecycle_compatibility_report.json",
+                "durable_lifecycle_records.json",
+                "adapter_events.jsonl",
+            ],
+            skip_conditions=[
+                "chat-demo UI evidence is no_claim unless UI changes land"
+            ],
+        ),
     ]
     return {scenario.scenario_id: scenario for scenario in scenarios}
 

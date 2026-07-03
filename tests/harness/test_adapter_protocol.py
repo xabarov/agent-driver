@@ -242,6 +242,11 @@ def test_seed_scenarios_include_adapter_compatibility_pack_targets() -> None:
     assert "lifecycle_hooks.approval_interrupt_audit.v1" in scenarios
     assert "lifecycle_hooks.excel_workbook_policy.v1" in scenarios
     assert "lifecycle_hooks.chat_demo_research_policy.v1" in scenarios
+    assert "durable_lifecycle.session_run_records.v1" in scenarios
+    assert "durable_lifecycle.interrupt_resume_plan.v1" in scenarios
+    assert "durable_lifecycle.background_attach_replay.v1" in scenarios
+    assert "durable_lifecycle.excel_workbook_pause.v1" in scenarios
+    assert "durable_lifecycle.chat_demo_research_pause.v1" in scenarios
 
 
 def test_seed_harness_adapter_compatibility_reports_cover_three_targets() -> None:

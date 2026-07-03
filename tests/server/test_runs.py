@@ -10,6 +10,11 @@ import pytest
 from starlette.testclient import TestClient
 
 from agent_driver.contracts.enums import ResumeAction
+from agent_driver.contracts.durable_lifecycle import (
+    DurableApprovalStatus,
+    DurableInterruptStatus,
+    DurableLifecycleStatus,
+)
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.tools import ToolCall
 from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse
@@ -23,6 +28,7 @@ from agent_driver.server.runs import (
     harness_adapter_events_for_server_run,
     server_harness_adapter_capability,
 )
+from agent_driver.harness import DurableLifecycleRepository
 
 
 def _body(content: str) -> dict[str, Any]:
@@ -142,6 +148,33 @@ async def test_run_requires_action_then_approve() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_manager_optional_durable_lifecycle_writer_records_approval() -> None:
+    repository = DurableLifecycleRepository()
+    manager = RunManager(_gated_agent(), durable_lifecycle_writer=repository)
+    record = manager.start([ChatMessage(role="user", content="run echo")])
+
+    await _wait_status(record, {"requires_action"})
+    run = repository.get_run(record.run_id)
+    assert run is not None
+    assert run.status == DurableLifecycleStatus.PAUSED
+    assert run.durability_level.value == "process_local"
+    assert repository.attach_plan(record.run_id).verdict.value == "attach_live"
+    interrupt = next(iter(repository.interrupts.values()))
+    approval = next(iter(repository.approvals.values()))
+    assert interrupt.status == DurableInterruptStatus.PENDING
+    assert approval.status == DurableApprovalStatus.PENDING
+
+    assert await manager.approve(record.run_id, ResumeAction.APPROVE)
+    await _wait_status(record, {"completed"})
+
+    resolved_interrupt = repository.interrupts[interrupt.interrupt_id]
+    resolved_approval = repository.approvals[approval.approval_id]
+    assert resolved_interrupt.status == DurableInterruptStatus.RESOLVED
+    assert resolved_approval.status == DurableApprovalStatus.APPROVED
+    assert repository.get_run(record.run_id).status == DurableLifecycleStatus.COMPLETED
+
+
+@pytest.mark.asyncio
 async def test_run_stop_while_paused() -> None:
     manager = RunManager(_gated_agent())
     record = manager.start([ChatMessage(role="user", content="run echo")])
@@ -153,6 +186,22 @@ async def test_run_stop_while_paused() -> None:
     await _wait_status(record, {"cancelled", "completed", "failed"})
     assert record.status == "cancelled"
     assert record.public()["lifecycle"]["state"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_run_manager_optional_durable_lifecycle_writer_records_stop() -> None:
+    repository = DurableLifecycleRepository()
+    manager = RunManager(_gated_agent(), durable_lifecycle_writer=repository)
+    record = manager.start([ChatMessage(role="user", content="run echo")])
+
+    await _wait_status(record, {"requires_action"})
+    assert manager.stop(record.run_id)
+    await _wait_status(record, {"cancelled", "completed", "failed"})
+
+    run = repository.get_run(record.run_id)
+    assert run is not None
+    assert run.abort_request_id == f"{record.run_id}:runs_stop"
+    assert f"{record.run_id}:runs_stop" in repository.aborts
 
 
 def test_get_unknown_run_404() -> None:

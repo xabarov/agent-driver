@@ -96,6 +96,13 @@ def test_continuous_validation_contracts_validate_seed_profiles() -> None:
         "deterministic_tests",
         "support_bundle_artifact",
     ]
+    assert policies["durable_lifecycle_contract_change"].required_gate_ids == [
+        "deterministic_tests",
+        "support_bundle_artifact",
+    ]
+    assert policies["durable_lifecycle_resume_claim"].live_required_gate_ids == [
+        "phoenix_trace"
+    ]
     assert adoption["excel_ai:excel_workbook_chat"].behavior_change_enabled is False
 
 

@@ -15,12 +15,26 @@ and parked on ``RunStatus.PAUSED`` interrupts.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from agent_driver.contracts.enums import ResumeAction, RunStatus
+from agent_driver.contracts.durable_lifecycle import (
+    BackgroundRunLease,
+    DurableAbortRequestRecord,
+    DurableApprovalRecord,
+    DurableApprovalStatus,
+    DurableDurabilityLevel,
+    DurableInterruptRecord,
+    DurableInterruptStatus,
+    DurableLeaseStatus,
+    DurableLifecycleStatus,
+    DurableRunRecord,
+    DurableSessionRecord,
+)
 from agent_driver.contracts.harness_adapter import (
     HarnessAdapterCapability,
     HarnessAdapterEvent,
@@ -30,6 +44,7 @@ from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.stream import summarize_run_lifecycle
 from agent_driver.harness import (
+    DurableLifecycleRepository,
     build_harness_adapter_capability,
     project_harness_adapter_events,
 )
@@ -172,10 +187,17 @@ class RunRecord:
 class RunManager:
     """Owns the async runs for one server: start / get / events / approve / stop."""
 
-    def __init__(self, agent: "Agent", *, max_runs: int = 1024) -> None:
+    def __init__(
+        self,
+        agent: "Agent",
+        *,
+        max_runs: int = 1024,
+        durable_lifecycle_writer: DurableLifecycleRepository | None = None,
+    ) -> None:
         self._agent = agent
         self._runs: dict[str, RunRecord] = {}
         self._max_runs = max(1, max_runs)
+        self._durable_lifecycle_writer = durable_lifecycle_writer
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -199,6 +221,7 @@ class RunManager:
             graph_preset=self._agent.defaults.graph_preset,
             app_metadata={"openai_model": model} if model else {},
         )
+        self._durable_start(record)
         record.task = asyncio.create_task(self._drive(record, run_input))
         return record
 
@@ -220,6 +243,7 @@ class RunManager:
         future = record.approval
         if future is None or future.done():
             return False
+        self._durable_approval_resolved(record, action, message, edited_tool_args)
         future.set_result((action, message, edited_tool_args))
         return True
 
@@ -229,6 +253,7 @@ class RunManager:
         if record is None or record.status in _TERMINAL:
             return False
         record.abort.abort(reason="runs_stop")
+        self._durable_stop(record)
         # Unblock a parked approval so the drive loop can observe the cancel.
         if record.approval is not None and not record.approval.done():
             record.approval.set_result((ResumeAction.CANCEL, None, None))
@@ -261,6 +286,7 @@ class RunManager:
             "data": {"run_id": record.run_id, **data},
         }
         record.events.append(payload)
+        self._durable_emit(record, event, payload)
         terminal = event.split(".", 1)[-1] in _TERMINAL or event == "run.completed"
         for sub in record.subscribers:
             sub.queue.put_nowait(payload)
@@ -306,6 +332,7 @@ class RunManager:
         record.status = REQUIRES_ACTION
         record.approval = asyncio.get_running_loop().create_future()
         self._emit(record, "run.requires_action", dict(record.interrupt))
+        self._durable_approval_requested(record, dict(record.interrupt))
         decision = await record.approval
         record.approval = None
         record.interrupt = None
@@ -341,6 +368,189 @@ class RunManager:
         for rid in terminal[: len(self._runs) - self._max_runs]:
             self._runs.pop(rid, None)
 
+    def _durable_start(self, record: RunRecord) -> None:
+        writer = self._durable_lifecycle_writer
+        if writer is None:
+            return
+        session_id = record.thread_id or f"{record.run_id}:session"
+        lease_id = f"{record.run_id}:server-process"
+        writer.upsert_session(
+            DurableSessionRecord(
+                session_id=session_id,
+                adapter_id="openai_server",
+                current_run_id=record.run_id,
+                lifecycle_state=DurableLifecycleStatus.QUEUED,
+                created_at=str(record.created),
+                updated_at=str(record.created),
+                durability_level=DurableDurabilityLevel.PROCESS_LOCAL,
+                search_metadata={"server_run": record.run_id},
+            )
+        )
+        writer.upsert_run(
+            DurableRunRecord(
+                run_id=record.run_id,
+                session_id=session_id,
+                status=DurableLifecycleStatus.QUEUED,
+                active_lease_id=lease_id,
+                durability_level=DurableDurabilityLevel.PROCESS_LOCAL,
+                redacted_metadata={"source": "server_run_manager"},
+            )
+        )
+        writer.upsert_lease(
+            BackgroundRunLease(
+                lease_id=lease_id,
+                run_id=record.run_id,
+                owner_process_id=str(os.getpid()),
+                owner_host_id="agent_driver.server",
+                status=DurableLeaseStatus.ACTIVE,
+                takeover_policy="manual",
+            )
+        )
+
+    def _durable_emit(
+        self, record: RunRecord, event_name: str, payload: dict[str, Any]
+    ) -> None:
+        writer = self._durable_lifecycle_writer
+        if writer is None:
+            return
+        seq = payload["seq"]
+        data = payload.get("data")
+        stream_event = RunStreamEvent(
+            stream_id=f"{record.run_id}:{seq}",
+            run_id=record.run_id,
+            attempt_id="server_attempt",
+            seq=seq,
+            event=event_name.replace(".", "_"),
+            source="server_run_record",
+            data=dict(data) if isinstance(data, dict) else {},
+        )
+        writer.append_event(stream_event)
+        run = writer.get_run(record.run_id)
+        if run is None:
+            return
+        status = _durable_status_for_server_event(event_name)
+        updates: dict[str, Any] = {
+            "status": status,
+            "latest_seq": seq,
+            "reconnect_cursor": f"{record.run_id}:{seq}",
+        }
+        if status == DurableLifecycleStatus.PAUSED and record.interrupt:
+            updates["paused_interrupt_id"] = str(record.interrupt.get("interrupt_id"))
+        if status in {
+            DurableLifecycleStatus.COMPLETED,
+            DurableLifecycleStatus.FAILED,
+            DurableLifecycleStatus.CANCELLED,
+        }:
+            updates["active_lease_id"] = None
+            updates["terminal_verdict"] = status.value
+            lease = writer.leases.get(f"{record.run_id}:server-process")
+            if lease is not None:
+                writer.upsert_lease(
+                    lease.model_copy(update={"status": DurableLeaseStatus.RELEASED})
+                )
+        writer.upsert_run(run.model_copy(update=updates))
+
+    def _durable_approval_requested(
+        self, record: RunRecord, interrupt: dict[str, Any]
+    ) -> None:
+        writer = self._durable_lifecycle_writer
+        if writer is None:
+            return
+        interrupt_id = str(
+            interrupt.get("interrupt_id") or f"{record.run_id}:interrupt"
+        )
+        writer.upsert_interrupt(
+            DurableInterruptRecord(
+                interrupt_id=interrupt_id,
+                run_id=record.run_id,
+                status=DurableInterruptStatus.PENDING,
+                reason=str(interrupt.get("reason") or "approval"),
+                allowed_actions=[
+                    str(action) for action in interrupt.get("allowed_actions", [])
+                ],
+                approval_payload_summary={
+                    "title": interrupt.get("title"),
+                    "description": interrupt.get("description"),
+                },
+                created_at=str(int(time.time())),
+            )
+        )
+        writer.upsert_approval(
+            DurableApprovalRecord(
+                approval_id=f"{interrupt_id}:approval",
+                interrupt_id=interrupt_id,
+                run_id=record.run_id,
+                status=DurableApprovalStatus.PENDING,
+                request_summary={
+                    "allowed_actions": interrupt.get("allowed_actions", [])
+                },
+                requested_at=str(int(time.time())),
+            )
+        )
+
+    def _durable_approval_resolved(
+        self,
+        record: RunRecord,
+        action: ResumeAction,
+        message: str | None,
+        edited_tool_args: dict[str, Any] | None,
+    ) -> None:
+        writer = self._durable_lifecycle_writer
+        if writer is None or record.interrupt is None:
+            return
+        interrupt_id = str(record.interrupt.get("interrupt_id"))
+        interrupt = writer.interrupts.get(interrupt_id)
+        if interrupt is not None:
+            writer.upsert_interrupt(
+                interrupt.model_copy(
+                    update={
+                        "status": DurableInterruptStatus.RESOLVED,
+                        "resolution": {"action": action.value, "message": message},
+                        "resolved_at": str(int(time.time())),
+                    }
+                )
+            )
+        approval = next(
+            (
+                item
+                for item in writer.approvals.values()
+                if item.interrupt_id == interrupt_id
+            ),
+            None,
+        )
+        if approval is not None:
+            writer.upsert_approval(
+                approval.model_copy(
+                    update={
+                        "status": _durable_approval_status(action),
+                        "response_action": action.value,
+                        "response_summary": {
+                            "message": message,
+                            "edited_tool_args": bool(edited_tool_args),
+                        },
+                        "resolved_at": str(int(time.time())),
+                    }
+                )
+            )
+
+    def _durable_stop(self, record: RunRecord) -> None:
+        writer = self._durable_lifecycle_writer
+        if writer is None:
+            return
+        abort_id = f"{record.run_id}:runs_stop"
+        run = writer.get_run(record.run_id)
+        if run is not None:
+            writer.upsert_run(run.model_copy(update={"abort_request_id": abort_id}))
+        writer.upsert_abort(
+            DurableAbortRequestRecord(
+                abort_request_id=abort_id,
+                run_id=record.run_id,
+                reason="runs_stop",
+                requested_at=str(int(time.time())),
+                requested_by="server",
+            )
+        )
+
 
 def _server_stream_events(record: RunRecord) -> list[RunStreamEvent]:
     events: list[RunStreamEvent] = []
@@ -362,6 +572,26 @@ def _server_stream_events(record: RunRecord) -> list[RunStreamEvent]:
             )
         )
     return events
+
+
+def _durable_status_for_server_event(event_name: str) -> DurableLifecycleStatus:
+    return {
+        "run.started": DurableLifecycleStatus.ACTIVE,
+        "run.requires_action": DurableLifecycleStatus.PAUSED,
+        "run.completed": DurableLifecycleStatus.COMPLETED,
+        "run.failed": DurableLifecycleStatus.FAILED,
+        "run.cancelled": DurableLifecycleStatus.CANCELLED,
+    }.get(event_name, DurableLifecycleStatus.ACTIVE)
+
+
+def _durable_approval_status(action: ResumeAction) -> DurableApprovalStatus:
+    return {
+        ResumeAction.APPROVE: DurableApprovalStatus.APPROVED,
+        ResumeAction.REJECT: DurableApprovalStatus.REJECTED,
+        ResumeAction.EDIT: DurableApprovalStatus.EDITED,
+        ResumeAction.CLARIFY: DurableApprovalStatus.CLARIFY,
+        ResumeAction.CANCEL: DurableApprovalStatus.CANCELLED,
+    }[action]
 
 
 __all__ = [

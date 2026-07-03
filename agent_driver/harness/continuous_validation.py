@@ -216,6 +216,46 @@ def seed_release_gate_policies() -> dict[str, ReleaseGatePolicy]:
                 )
             },
         ),
+        "durable_lifecycle_contract_change": ReleaseGatePolicy(
+            policy_id="durable_lifecycle_contract_change",
+            change_types=[
+                "durable_lifecycle",
+                "checkpoint_index",
+                "background_run",
+                "resume_plan",
+                "fork_plan",
+            ],
+            required_gate_ids=deterministic_required,
+            optional_gate_ids=sorted(_LIVE_GATE_IDS),
+            stale_allowed_gate_ids=sorted(_LIVE_GATE_IDS),
+            max_cost_usd=0,
+            timeout_seconds=120,
+            retry_budget=0,
+            redacted_metadata={
+                "rule": (
+                    "durable lifecycle contract changes require repository and "
+                    "plan tests; resume claims require checkpoint plus interrupt "
+                    "evidence; UI changes require Playwright; live restart claims "
+                    "require Phoenix"
+                )
+            },
+        ),
+        "durable_lifecycle_resume_claim": ReleaseGatePolicy(
+            policy_id="durable_lifecycle_resume_claim",
+            change_types=["resume_claim", "process_restart_resume"],
+            required_gate_ids=deterministic_required,
+            live_required_gate_ids=["phoenix_trace"],
+            optional_gate_ids=["openrouter_live_preflight", "playwright_ui"],
+            max_cost_usd=1.0,
+            timeout_seconds=300,
+            retry_budget=1,
+            redacted_metadata={
+                "rule": (
+                    "process restart or live resume claims require checkpoint, "
+                    "interrupt, side-effect evidence and Phoenix trace artifacts"
+                )
+            },
+        ),
     }
 
 

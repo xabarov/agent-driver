@@ -53,6 +53,14 @@ from agent_driver.harness.lifecycle_hooks import (
     seed_lifecycle_hook_compatibility_reports,
     seed_lifecycle_hook_registrations,
 )
+from agent_driver.harness.durable_lifecycle import (
+    DurableLifecycleRepository,
+    build_durable_lifecycle_compatibility_report,
+    render_durable_lifecycle_compatibility_markdown,
+    seed_durable_lifecycle_compatibility_reports,
+    seed_durable_lifecycle_repository,
+    write_durable_lifecycle_artifacts,
+)
 
 __all__ = [
     "apply_system_slots",
@@ -62,7 +70,9 @@ __all__ = [
     "build_capability_pack_resolution",
     "build_harness_adapter_capability",
     "build_harness_adapter_compatibility_report",
+    "build_durable_lifecycle_compatibility_report",
     "build_lifecycle_hook_compatibility_report",
+    "DurableLifecycleRepository",
     "profile_excluded_tools",
     "project_harness_adapter_artifacts",
     "project_harness_adapter_events",
@@ -71,6 +81,7 @@ __all__ = [
     "project_harness_support_bundle_refs",
     "project_lifecycle_hook_audit_events",
     "render_validation_markdown",
+    "render_durable_lifecycle_compatibility_markdown",
     "render_harness_adapter_compatibility_markdown",
     "resolve_capability_pack",
     "run_capability_pack_deterministic_gates",
@@ -83,11 +94,14 @@ __all__ = [
     "seed_harness_baselines",
     "seed_harness_adapter_compatibility_reports",
     "seed_host_adoption_states",
+    "seed_durable_lifecycle_compatibility_reports",
+    "seed_durable_lifecycle_repository",
     "seed_lifecycle_hook_audit_records",
     "seed_lifecycle_hook_compatibility_reports",
     "seed_lifecycle_hook_registrations",
     "seed_release_gate_policies",
     "seed_scenario_specs",
     "write_validation_audit_report",
+    "write_durable_lifecycle_artifacts",
     "write_harness_adapter_compatibility_artifacts",
 ]
