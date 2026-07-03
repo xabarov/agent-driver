@@ -36,6 +36,9 @@ from agent_driver.cli.commands.ops import resume_command as _resume_command_impl
 from agent_driver.cli.commands.provider_catalog import (
     provider_catalog_command as _provider_catalog_command_impl,
 )
+from agent_driver.cli.commands.skills_lifecycle import (
+    skills_lifecycle_command as _skills_lifecycle_command_impl,
+)
 from agent_driver.cli.commands.run_chat import chat_command as _chat_command_impl
 from agent_driver.cli.commands.run_chat import run_command as _run_command_impl
 from agent_driver.cli.commands.runtime_views import (
@@ -279,6 +282,10 @@ def _provider_catalog_command(args: argparse.Namespace) -> int:
     return _provider_catalog_command_impl(args)
 
 
+def _skills_lifecycle_command(args: argparse.Namespace) -> int:
+    return _skills_lifecycle_command_impl(args)
+
+
 async def _resume_command(args: argparse.Namespace) -> int:
     return await _resume_command_impl(
         args,
@@ -490,6 +497,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _provider_catalog_command(args)
     if args.command == "harness-adapter":
         return _harness_adapter_command(args)
+    if args.command == "skills-lifecycle":
+        return _skills_lifecycle_command(args)
     if args.command == "resume":
         try:
             return asyncio.run(_resume_command(args))

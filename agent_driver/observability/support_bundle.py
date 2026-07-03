@@ -20,6 +20,8 @@ from agent_driver.runtime.stream import (
     summarize_run_lifecycle,
     summarize_runtime_session_diagnostics,
 )
+from agent_driver.contracts.skills_lifecycle import SkillLifecycleCompatibilityReport
+from agent_driver.skills.lifecycle import build_skill_support_bundle_projection
 
 _SECRET_KEY_MARKERS = ("token", "secret", "password", "api_key", "auth")
 
@@ -141,6 +143,7 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
         thread_id=output.thread_id,
     )
     capability_pack_resolution = build_capability_pack_resolution(dict(output.metadata))
+    skill_lifecycle = _skill_lifecycle_projection(dict(output.metadata))
     return {
         "run": {
             "run_id": output.run_id,
@@ -153,8 +156,12 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
         "trace": trace_export.model_dump(mode="json"),
         "warnings": [item.model_dump(mode="json") for item in output.warnings],
         "tool_trace": [item.model_dump(mode="json") for item in output.tool_trace],
-        "subagent_groups": [item.model_dump(mode="json") for item in output.subagent_groups],
-        "subagent_runs": [item.model_dump(mode="json") for item in output.subagent_runs],
+        "subagent_groups": [
+            item.model_dump(mode="json") for item in output.subagent_groups
+        ],
+        "subagent_runs": [
+            item.model_dump(mode="json") for item in output.subagent_runs
+        ],
         "checkpoint": (
             output.checkpoint.model_dump(mode="json") if output.checkpoint else None
         ),
@@ -170,6 +177,7 @@ def build_runtime_support_bundle(output: AgentRunOutput) -> dict[str, Any]:
         "policy_evaluations": policy_evaluations,
         "run_supervisor_state": supervisor_state.model_dump(mode="json"),
         "capability_pack_resolution": capability_pack_resolution,
+        "skill_lifecycle": skill_lifecycle,
         "validation_gates": build_validation_gate_summary(dict(output.metadata)),
         "goal_state": runtime_decisions["goal_state"],
         **provenance,
@@ -200,14 +208,18 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
             redacted_events if isinstance(redacted_events, list) else []
         ),
         metadata=metadata if isinstance(metadata, dict) else {},
-        required_evidence=_required_evidence(metadata if isinstance(metadata, dict) else {}),
+        required_evidence=_required_evidence(
+            metadata if isinstance(metadata, dict) else {}
+        ),
     )
     policy_evaluations = build_observe_policy_summary(
         events=_persisted_events_for_summary(
             redacted_events if isinstance(redacted_events, list) else []
         ),
         run_id=str(persisted_replay.get("run_id") or "persisted_replay"),
-        required_evidence=_required_evidence(metadata if isinstance(metadata, dict) else {}),
+        required_evidence=_required_evidence(
+            metadata if isinstance(metadata, dict) else {}
+        ),
         metadata=metadata if isinstance(metadata, dict) else {},
     )
     supervisor_state = build_run_supervisor_state(
@@ -220,6 +232,9 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
         durability="persisted_replay",
     )
     capability_pack_resolution = build_capability_pack_resolution(
+        metadata if isinstance(metadata, dict) else {}
+    )
+    skill_lifecycle = _skill_lifecycle_projection(
         metadata if isinstance(metadata, dict) else {}
     )
     return {
@@ -237,7 +252,9 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
                 "run_id": persisted_replay.get("run_id"),
                 "durability": "persisted_replay",
                 "timeline_row_count": 0,
-                "last_seq": _last_persisted_seq(events if isinstance(events, list) else []),
+                "last_seq": _last_persisted_seq(
+                    events if isinstance(events, list) else []
+                ),
                 "reconnect_cursor": _persisted_reconnect_cursor(
                     persisted_replay.get("run_id"),
                     events if isinstance(events, list) else [],
@@ -259,6 +276,7 @@ def build_persisted_support_bundle(persisted_replay: dict[str, Any]) -> dict[str
         "policy_evaluations": policy_evaluations,
         "run_supervisor_state": supervisor_state.model_dump(mode="json"),
         "capability_pack_resolution": capability_pack_resolution,
+        "skill_lifecycle": skill_lifecycle,
         "validation_gates": build_validation_gate_summary(
             metadata if isinstance(metadata, dict) else {}
         ),
@@ -309,6 +327,16 @@ def _required_evidence(metadata: dict[str, Any]) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item).strip()]
+
+
+def _skill_lifecycle_projection(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    raw = metadata.get("skill_lifecycle_report") or metadata.get(
+        "skill_lifecycle_compatibility_report"
+    )
+    if not isinstance(raw, dict):
+        return None
+    report = SkillLifecycleCompatibilityReport.model_validate(raw)
+    return build_skill_support_bundle_projection(report)
 
 
 __all__ = ["build_persisted_support_bundle", "build_runtime_support_bundle"]

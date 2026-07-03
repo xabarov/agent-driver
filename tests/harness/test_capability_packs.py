@@ -57,6 +57,27 @@ def test_provider_catalog_scenarios_are_seeded() -> None:
     ]
 
 
+def test_skill_lifecycle_scenarios_are_seeded() -> None:
+    scenarios = seed_scenario_specs()
+
+    assert {
+        "skills_lifecycle.inventory_lock_diff.v1",
+        "skills_lifecycle.selection_evidence.v1",
+        "skills_lifecycle.invocation_provenance.v1",
+        "skills_lifecycle.excel_workbook_skills.v1",
+        "skills_lifecycle.chat_demo_research_skills.v1",
+    } <= set(scenarios)
+    assert scenarios["skills_lifecycle.selection_evidence.v1"].required_evidence == [
+        "skill_selection_evidence",
+        "skill_lifecycle_compatibility_report",
+        "redaction_validation",
+    ]
+    assert (
+        "playwright_ui"
+        in scenarios["skills_lifecycle.excel_workbook_skills.v1"].optional_live_gate_ids
+    )
+
+
 def test_capability_pack_rejects_secret_values() -> None:
     with pytest.raises(ValueError, match="must not contain secret values"):
         HarnessCapabilityPack(

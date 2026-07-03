@@ -67,6 +67,10 @@ from agent_driver.llm.provider_catalog import (
     seed_provider_plugin_registry,
     write_provider_catalog_artifacts,
 )
+from agent_driver.skills.lifecycle import (
+    seed_chat_demo_skill_lifecycle_report,
+    seed_excel_skill_lifecycle_report,
+)
 
 __all__ = [
     "apply_system_slots",
@@ -98,6 +102,8 @@ __all__ = [
     "seed_capability_packs",
     "seed_deep_research_chat_demo_pack",
     "seed_excel_workbook_chat_pack",
+    "seed_chat_demo_skill_lifecycle_report",
+    "seed_excel_skill_lifecycle_report",
     "seed_flake_records",
     "seed_harness_baselines",
     "seed_harness_adapter_compatibility_reports",

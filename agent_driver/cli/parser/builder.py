@@ -521,6 +521,71 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_store_options(harness_adapter_compat)
 
+    skills_lifecycle_parser = subparsers.add_parser(
+        "skills-lifecycle",
+        help="Build deterministic skills lifecycle/provenance artifacts.",
+    )
+    skills_lifecycle_sub = skills_lifecycle_parser.add_subparsers(
+        dest="skills_lifecycle_command", required=True
+    )
+    skills_lifecycle_audit = skills_lifecycle_sub.add_parser(
+        "audit",
+        help="Scan skills and write inventory/lock/diff/selection evidence.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--scenario",
+        default="skills_lifecycle.inventory_lock_diff.v1",
+        choices=(
+            "skills_lifecycle.inventory_lock_diff.v1",
+            "skills_lifecycle.selection_evidence.v1",
+            "skills_lifecycle.invocation_provenance.v1",
+            "skills_lifecycle.excel_workbook_skills.v1",
+            "skills_lifecycle.chat_demo_research_skills.v1",
+        ),
+        help="Skill lifecycle scenario id to label the deterministic report.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--skills-dir",
+        default=None,
+        help="Directory containing SKILL.md packages; defaults to curated skills.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--previous-lock",
+        default=None,
+        help="Optional previous skills_lock.json for reload diff comparison.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--product-family",
+        default=None,
+        help="Product family filter; defaults from scenario.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--host-profile",
+        default=None,
+        help="Host/profile id for generated lock/report.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--task-intent",
+        default=None,
+        help="Optional task intent for selection evidence.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--max-results",
+        type=int,
+        default=200,
+        help="Maximum number of SKILL.md manifests to inventory.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Keep provider/Phoenix/UI/benchmark gates as no-claim.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--output-dir",
+        default=".agent-driver/skills-lifecycle/deterministic",
+        help="Directory for skills lifecycle artifacts.",
+    )
+
     resume_parser = subparsers.add_parser(
         "resume", help="Resume pending interrupt decisions."
     )

@@ -13,6 +13,7 @@ from agent_driver.observability import (
     build_persisted_support_bundle,
     build_runtime_support_bundle,
 )
+from agent_driver.skills.lifecycle import seed_chat_demo_skill_lifecycle_report
 
 
 def test_runtime_support_bundle_redacts_sensitive_metadata_keys() -> None:
@@ -25,7 +26,11 @@ def test_runtime_support_bundle_redacts_sensitive_metadata_keys() -> None:
         events=[
             new_runtime_event(
                 event_type=RuntimeEventType.RUN_COMPLETED,
-                context={"run_id": "run_obs_bundle_1", "attempt_id": "attempt_1", "seq": 1},
+                context={
+                    "run_id": "run_obs_bundle_1",
+                    "attempt_id": "attempt_1",
+                    "seq": 1,
+                },
             )
         ],
         metadata={
@@ -38,7 +43,9 @@ def test_runtime_support_bundle_redacts_sensitive_metadata_keys() -> None:
     assert bundle["metadata"]["nested"]["token"] == "<redacted>"
     assert bundle["metadata"]["nested"]["safe"] == "ok"
     assert bundle["runtime_timeline"]["diagnostics"]["run_id"] == "run_obs_bundle_1"
-    assert bundle["runtime_timeline"]["diagnostics"]["terminal_event"] == "run_completed"
+    assert (
+        bundle["runtime_timeline"]["diagnostics"]["terminal_event"] == "run_completed"
+    )
     assert bundle["runtime_timeline"]["rows"][0]["category"] == "lifecycle"
     assert bundle["run_lifecycle"]["state"] == "completed"
     assert bundle["run_lifecycle"]["terminal_event"] == "run_completed"
@@ -244,6 +251,38 @@ def test_runtime_support_bundle_exposes_capability_pack_resolution() -> None:
     assert resolution["evidence_index"]["artifacts"][0]["artifact_type"] == (
         "skip_justification"
     )
+
+
+def test_runtime_support_bundle_exposes_skill_lifecycle_projection() -> None:
+    report = seed_chat_demo_skill_lifecycle_report()
+    output = AgentRunOutput(
+        run_id="run_obs_bundle_skills",
+        attempt_id="attempt_1",
+        status=RunStatus.COMPLETED,
+        terminal_reason=TerminalReason.FINAL_ANSWER,
+        events=[
+            new_runtime_event(
+                event_type=RuntimeEventType.RUN_COMPLETED,
+                context={
+                    "run_id": "run_obs_bundle_skills",
+                    "attempt_id": "attempt_1",
+                    "seq": 1,
+                },
+            )
+        ],
+        metadata={
+            "skill_lifecycle_report": report.model_dump(mode="json"),
+        },
+    )
+
+    bundle = build_runtime_support_bundle(output)
+
+    skills = bundle["skill_lifecycle"]
+    assert skills["report_id"] == report.report_id
+    assert skills["usage_summary"]["discovered"] == report.usage_summary.discovered
+    assert skills["redaction"]["contains_raw_skill_body"] is False
+    assert skills["selection_decisions"]
+    assert "# " not in str(skills)
 
 
 def test_persisted_support_bundle_redacts_event_payload_secrets() -> None:

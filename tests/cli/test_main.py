@@ -413,6 +413,79 @@ def test_cli_capability_pack_audit_writes_validation_reports(tmp_path, capsys) -
     assert "openrouter_live_preflight" in report
 
 
+def test_cli_skills_lifecycle_audit_writes_auditable_artifacts(
+    tmp_path, capsys
+) -> None:
+    skills_dir = tmp_path / "skills"
+    skill_dir = skills_dir / "research"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        """---
+id: skill.research
+name: research
+description: Research skill
+allowed_tools: [web_search]
+product_families: [chat_demo]
+---
+# Research
+body should not appear in artifacts
+""",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "skills-lifecycle"
+
+    code = main(
+        [
+            "skills-lifecycle",
+            "audit",
+            "--scenario",
+            "skills_lifecycle.chat_demo_research_skills.v1",
+            "--skills-dir",
+            str(skills_dir),
+            "--no-live",
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["mode"] == "deterministic"
+    assert payload["report"]["usage_summary"]["discovered"] == 1
+    assert payload["redaction"]["contains_raw_skill_body"] is False
+    assert (output_dir / "skills_inventory_snapshot.json").is_file()
+    assert (output_dir / "skills_lock.json").is_file()
+    assert (output_dir / "skills_reload_diff.json").is_file()
+    assert (output_dir / "skills_compatibility_report.json").is_file()
+    assert (output_dir / "skills_compatibility_report.md").is_file()
+    assert (output_dir / "evidence_index.json").is_file()
+    assert "body should not appear" not in (
+        output_dir / "skills_compatibility_report.json"
+    ).read_text(encoding="utf-8")
+
+    audit_dir = tmp_path / "skills-audit"
+    audit_code = main(
+        [
+            "capability-pack",
+            "audit",
+            "--evidence-index-dir",
+            str(output_dir),
+            "--no-live",
+            "--strict",
+            "--output-dir",
+            str(audit_dir),
+        ]
+    )
+    audit = json.loads(capsys.readouterr().out)
+    assert audit_code == 0
+    assert audit["strict_passed"] is True
+    assert (
+        "skills_lifecycle.chat_demo_research_skills.v1"
+        in audit["validation_run"]["scenario_ids"]
+    )
+    assert (audit_dir / "validation_report.md").is_file()
+
+
 def test_cli_capability_pack_audit_strict_fails_missing_required_gates(
     tmp_path, capsys
 ) -> None:

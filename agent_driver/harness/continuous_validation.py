@@ -288,6 +288,35 @@ def seed_release_gate_policies() -> dict[str, ReleaseGatePolicy]:
                 )
             },
         ),
+        "skills_lifecycle_contract_change": ReleaseGatePolicy(
+            policy_id="skills_lifecycle_contract_change",
+            change_types=[
+                "skills_lifecycle",
+                "skill_contract",
+                "skill_inventory",
+                "skill_selection",
+                "skill_provenance",
+            ],
+            required_gate_ids=[
+                "deterministic_tests",
+                "support_bundle_artifact",
+                "skills_lifecycle.inventory_lock_diff.v1",
+                "skills_lifecycle.selection_evidence.v1",
+            ],
+            optional_gate_ids=sorted(_LIVE_GATE_IDS),
+            stale_allowed_gate_ids=sorted(_LIVE_GATE_IDS),
+            max_cost_usd=0,
+            timeout_seconds=120,
+            retry_budget=0,
+            redacted_metadata={
+                "rule": (
+                    "skill contract changes require inventory, lock/diff, "
+                    "selection and redaction tests; behavior-changing prompt "
+                    "selection requires host adoption evidence; UI changes "
+                    "require Playwright; quality claims require benchmarks"
+                )
+            },
+        ),
     }
 
 
@@ -918,6 +947,11 @@ def _gate_id_for_artifact_type(artifact_type: str) -> str | None:
         "provider_compatibility_report": "provider_catalog.sanitizer_matrix.v1",
         "provider_catalog": "provider_catalog.plugin_registry.v1",
         "provider_sanitizer_matrix": "provider_catalog.sanitizer_matrix.v1",
+        "skill_inventory_snapshot": "deterministic_tests",
+        "skill_lockfile": "deterministic_tests",
+        "skill_reload_diff": "deterministic_tests",
+        "skill_selection_evidence": "deterministic_tests",
+        "skill_lifecycle_compatibility_report": "support_bundle_artifact",
     }.get(artifact_type)
 
 
@@ -942,6 +976,11 @@ def _known_artifact_type(artifact_type: str) -> str:
         "provider_compatibility_report",
         "provider_catalog",
         "provider_sanitizer_matrix",
+        "skill_inventory_snapshot",
+        "skill_lockfile",
+        "skill_reload_diff",
+        "skill_selection_evidence",
+        "skill_lifecycle_compatibility_report",
         "skip_justification",
         "validation_run_json",
         "validation_report_markdown",
