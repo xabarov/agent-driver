@@ -24,7 +24,11 @@ cases. Keep this runtime domain-neutral; domain-specific guards belong in the co
 
 ## Running tests (uv is NOT on PATH — `make test` won't work)
 
-- `.venv/bin/python -m pytest <path>` (the `.venv` python has project deps installed).
+- `.venv/bin/python -m pytest --import-mode=importlib <path>` (the `.venv` python has project
+  deps installed). **`--import-mode=importlib` is required for the full sweep:** two test files
+  share a basename (`tests/harness/test_lifecycle_hooks.py` and
+  `tests/runtime/test_lifecycle_hooks.py`) with no `__init__.py`, so the default `prepend`
+  import mode aborts collection with *import file mismatch*. Full green: **2524 passed**.
 - Async tests use **pytest-asyncio** in STRICT mode → need `@pytest.mark.asyncio`.
 - Default `addopts` excludes `live` and `slow`; no `pytest-timeout` → bound with shell `timeout`.
 
