@@ -473,6 +473,7 @@ async def run_chat_session(
     selected_manifests: list[ToolManifest] | None = None,
     ui_mode: str | None = None,
     workspace_cwd: str | Path | None = None,
+    capability_pack_metadata: dict[str, object] | None = None,
     animate: bool = False,
     input_reader: Callable[[str], str] | None = None,
     output: Callable[[str], None] | None = None,
@@ -664,6 +665,7 @@ async def run_chat_session(
                 "chat_mode": True,
                 "debug_tool_protocol": state.debug_tool_protocol,
             }
+            app_metadata.update(dict(capability_pack_metadata or {}))
             if state.workspace_cwd is not None:
                 app_metadata["workspace_cwd"] = str(state.workspace_cwd)
             if isinstance(state.planning_state, dict) and state.planning_state.get("todos"):

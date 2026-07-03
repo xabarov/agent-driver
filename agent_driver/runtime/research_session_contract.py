@@ -708,7 +708,35 @@ def deep_research_post_artifact_next_tool(context: RunContext) -> str | None:
             _tool_policy_allows(context, "web_fetch")
         ):
             return "web_fetch"
+        if contract.report_artifact_exists and contract.source_ledger_artifact_exists:
+            return None
+    if (
+        REPAIR_UNFINISHED_TODOS in readiness.reasons
+        and _tool_policy_allows(context, "todo_write")
+    ):
+        if _tool_result_count(context, "todo_write") <= 1:
+            return "todo_write"
+        final_contract = build_research_session_contract_from_context(
+            context,
+            enforce_final_source_links=False,
+            enforce_todos=False,
+            allow_final_deliverable_todos=True,
+        )
+        if final_contract.final_readiness.status == FINAL_READINESS_ALLOWED:
+            return None
+        return "todo_write"
     return None
+
+
+def _tool_result_count(context: RunContext, tool_name: str) -> int:
+    count = 0
+    for item in get_tool_loop_state(context).tool_results():
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if isinstance(call, dict) and call.get("tool_name") == tool_name:
+            count += 1
+    return count
 
 
 def _unfinished_todo_labels(

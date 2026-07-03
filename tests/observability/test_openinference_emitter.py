@@ -8,7 +8,6 @@ import pytest
 # OpenTelemetry is an optional observability extra; skip cleanly when absent.
 pytest.importorskip("opentelemetry.sdk.trace.export.in_memory_span_exporter")
 
-from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
@@ -47,6 +46,10 @@ def test_llm_span_has_kind_io_and_tokens(exporter):
             prompt_tokens=10,
             completion_tokens=3,
             total_tokens=13,
+            finish_reason="stop",
+            prompt_cost=0.001,
+            completion_cost=0.002,
+            total_cost=0.003,
         )
         oi.set_io(span, input="hi", output="hello")
         oi.record_status(span, ok=True)
@@ -54,6 +57,8 @@ def test_llm_span_has_kind_io_and_tokens(exporter):
     assert a["openinference.span.kind"] == "LLM"
     assert a["llm.model_name"] == "qwen/qwen3.5-35b-a3b"
     assert a["llm.token_count.total"] == 13
+    assert a["llm.finish_reason"] == "stop"
+    assert a["llm.cost.total"] == 0.003
     assert a["llm.input_messages.0.message.content"] == "hi"
     assert a["llm.output_messages.0.message.role"] == "assistant"
     assert a["input.value"] == "hi"
@@ -88,6 +93,68 @@ def test_agent_span_kind(exporter):
     assert a["openinference.span.kind"] == "AGENT"
     assert a["input.mime_type"] == "application/json"
     assert a["output.value"] == "done"
+
+
+def test_agent_subagent_llm_tool_hierarchy_for_phoenix(exporter):
+    with oi.oi_span("agent.run", kind=oi.SPAN_KIND_AGENT) as root:
+        oi.set_io(root, input="Summarize workbook risk", output="done")
+        with oi.oi_span("policy.required_source_evidence", kind=oi.SPAN_KIND_GUARDRAIL):
+            pass
+        with oi.oi_span("subagent.research", kind=oi.SPAN_KIND_AGENT):
+            with oi.oi_span("llm.plan", kind=oi.SPAN_KIND_LLM) as llm:
+                oi.set_llm(
+                    llm,
+                    model="deepseek/deepseek-v4-flash",
+                    provider="openrouter",
+                    input_messages=[{"role": "user", "content": "Find evidence"}],
+                    output_messages=[{"role": "assistant", "content": "Use workbook"}],
+                    prompt_tokens=5,
+                    completion_tokens=7,
+                    total_tokens=12,
+                    finish_reason="tool_calls",
+                )
+            with oi.oi_span("tool.workbook_preview", kind=oi.SPAN_KIND_TOOL) as tool:
+                oi.set_tool(
+                    tool,
+                    name="workbook_preview",
+                    arguments={"sheet": "Revenue", "range": "A1:D10"},
+                    result={"rows": 10, "redacted": True},
+                    call_id="call_workbook_preview",
+                )
+            with oi.oi_span("llm.final", kind=oi.SPAN_KIND_LLM) as final:
+                oi.set_llm(
+                    final,
+                    model="deepseek/deepseek-v4-flash",
+                    provider="openrouter",
+                    input_messages=[{"role": "tool", "content": "10 rows"}],
+                    output_messages=[{"role": "assistant", "content": "Done"}],
+                    prompt_tokens=3,
+                    completion_tokens=2,
+                    total_tokens=5,
+                    finish_reason="stop",
+                )
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    assert spans["agent.run"].parent is None
+    assert spans["policy.required_source_evidence"].parent.span_id == (
+        spans["agent.run"].context.span_id
+    )
+    assert spans["subagent.research"].parent.span_id == spans["agent.run"].context.span_id
+    assert spans["llm.plan"].parent.span_id == spans["subagent.research"].context.span_id
+    assert spans["tool.workbook_preview"].parent.span_id == (
+        spans["subagent.research"].context.span_id
+    )
+    assert spans["llm.final"].parent.span_id == spans["subagent.research"].context.span_id
+
+    assert spans["agent.run"].attributes["openinference.span.kind"] == "AGENT"
+    assert spans["policy.required_source_evidence"].attributes[
+        "openinference.span.kind"
+    ] == "GUARDRAIL"
+    assert spans["llm.plan"].attributes["llm.finish_reason"] == "tool_calls"
+    assert spans["llm.final"].attributes["llm.token_count.total"] == 5
+    assert spans["tool.workbook_preview"].attributes["tool.name"] == (
+        "workbook_preview"
+    )
 
 
 def test_no_op_when_tracing_off(monkeypatch):

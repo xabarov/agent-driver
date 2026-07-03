@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import os
 from pathlib import Path
 import re
 from typing import NamedTuple
@@ -15,6 +16,21 @@ from agent_driver.cli.sessions import SessionStore
 _CHAT_DEMO_ROOT = Path(__file__).resolve().parents[2]
 _ARTIFACT_DIRS = ("research", "tool-results")
 _PREVIEW_MAX_BYTES = 200_000
+_CHAT_DEMO_POLICY_PROFILE = {
+    "profile_id": "chat-demo-deep-research-observe",
+    "mode": "observe",
+    "enabled_policy_ids": [
+        "provider_request_shape_preflight",
+        "tool_loop_no_progress",
+        "required_source_evidence",
+        "artifact_provenance_required",
+        "budget_threshold",
+        "user_steering_interrupt",
+    ],
+    "required_evidence": ["source_evidence", "artifact_provenance"],
+    "rollout_tags": ["chat-demo", "deep-research", "observe"],
+}
+_POLICY_MODES = {"observe", "warn", "enforce", "fail_closed"}
 
 
 class WorkspaceArtifact(NamedTuple):
@@ -360,6 +376,7 @@ def build_chat_app_metadata(
     }
     if research_metadata:
         metadata.update(research_metadata)
+    metadata.setdefault("harness_policy_profile", _chat_demo_policy_profile())
     if isinstance(scenario_id, str) and scenario_id.strip():
         metadata["scenario_id"] = scenario_id.strip()
     return metadata
@@ -377,6 +394,7 @@ def merge_resume_app_metadata(
     merged["stream_poll_interval_ms"] = settings.stream_poll_interval_ms
     merged["llm_stream_idle_timeout_seconds"] = settings.llm_stream_idle_timeout_seconds
     merged.setdefault("chat_mode", True)
+    merged.setdefault("harness_policy_profile", _chat_demo_policy_profile())
     workspace = merged.get("workspace_cwd")
     if isinstance(workspace, str) and workspace.strip():
         return merged
@@ -384,3 +402,14 @@ def merge_resume_app_metadata(
     if session_id:
         merged["workspace_cwd"] = str(resolve_session_workspace(settings, session_id))
     return merged
+
+
+def _chat_demo_policy_profile() -> dict[str, object]:
+    profile = dict(_CHAT_DEMO_POLICY_PROFILE)
+    mode = os.environ.get("CHAT_DEMO_HARNESS_POLICY_MODE", "").strip().lower()
+    if mode not in _POLICY_MODES:
+        return profile
+    profile["mode"] = mode
+    profile["profile_id"] = f"chat-demo-deep-research-{mode}"
+    profile["rollout_tags"] = ["chat-demo", "deep-research", mode]
+    return profile

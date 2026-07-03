@@ -20,6 +20,8 @@ Core entrypoints:
 - `create_agent(...)` builds an `Agent` facade with stores, tool registry and
   governed execution wired.
 - `query(...)` is a one-shot helper for simple integrations.
+- `run_self_consistent(...)` runs the same input multiple times and returns the
+  plurality-vote consensus plus the vote distribution.
 - `Agent.query(...)` and `Agent.run_text(...)` accept plain text.
 - `Agent.run(...)` accepts a full `AgentRunInput` for advanced control.
 - `Agent.session(...)` returns a thread-scoped `Session`.
@@ -42,6 +44,9 @@ equivalent, and `config.<field>` reads work either way.
 | `harness_profiles` | per-model prompt slots / tool exclusion / description overrides | first-match over `match_models` globs (case-insensitive) |
 | `tool_concurrency_limit` | cap parallel tool execution | else `AGENT_DRIVER_TOOL_CONCURRENCY` / default 8 |
 | `subagent_model_routing` | `{agent_type: model}` for child runs | explicit `forced_model` overrides; routed model rides `forced_model` |
+| `default_max_steps` | config-level backstop when `AgentRunInput.max_steps` is unset | default `80`; use `None` only for intentionally unbounded loops |
+| `budget_grace_enabled` | grants one bounded no-tools final-answer window after soft step/tool budgets | cost ceilings still hard-stop |
+| `defer_primer` | surfaces relevant deferred tools before each LLM step | `keyword_relevance_primer()` is the generic default helper; `None` keeps pure `tool_search` behavior |
 
 Tool-arg truncation (a cheap pre-compaction pass) lives in `CompactionSettings`
 (`enable_tool_arg_truncation`, `tool_arg_truncation_max_chars`).
@@ -58,6 +63,41 @@ Output diagnostics:
 - `agent.summarize(output)` or `summarize_output(output)` returns
   `TraceSummary`.
 - `agent.support_bundle(output)` returns a redacted support-bundle recipe.
+- Provider support artifacts can include `ProviderRouteProfile` /
+  `ProviderPreflightResult` metadata so callers can inspect request-shape
+  downgrades without making a live provider request.
+
+## Capability Packs And Validation Gates
+
+Product hosts can opt into redaction-safe capability-pack metadata for
+continuous validation and release evidence. The built-in seed packs currently
+cover `excel_workbook_chat` and `deep_research_chat_demo`; selecting one is
+inert by default and only projects required evidence, scenario ids, gate status,
+and skipped-gate reasons into trace summaries and support bundles.
+
+```bash
+agent-driver capability-pack dry-run \
+  --pack-id deep_research_chat_demo \
+  --scenario-id chat_demo.deep_research.source_report.v1 \
+  --output-dir .agent-driver/capability-packs/deep-research
+
+agent-driver capability-pack run-deterministic \
+  --pack-id deep_research_chat_demo \
+  --scenario-id chat_demo.deep_research.source_report.v1 \
+  --output-dir .agent-driver/capability-packs/deep-research-run
+```
+
+`dry-run` never executes host commands. `run-deterministic` executes only
+deterministic commands after conservative command guards, redacts command
+output, writes `manifest.json`, `evidence_index.json`,
+`validation_gates.json`, and per-command output artifacts, and marks
+`support_bundle_artifact` passed when `--output-dir` persists the manifest.
+Optional live/provider/UI/benchmark gates stay skipped with explicit reasons
+until a host runs the corresponding policy-supervision gate.
+
+Host manifests should use relative commands plus `AGENT_DRIVER_REPO` and
+adapter-owned env vars such as `EXCEL_AI_BACKEND_DIR`; they should not embed
+absolute local checkout paths or secret values.
 
 See also:
 

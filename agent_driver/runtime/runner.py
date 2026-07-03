@@ -240,6 +240,10 @@ class SingleAgentRunner(
                             payload={"reason": terminal.reason.value},
                         )
                     )
+                    self._emit_observe_policy_decisions(
+                        context,
+                        trigger="terminal_limit",
+                    )
                     return self._build_output(context, terminal)
                 timeout = _remaining_deadline_seconds(context)
                 try:
@@ -262,6 +266,10 @@ class SingleAgentRunner(
                             event_type=RuntimeEventType.RUN_FAILED,
                             payload={"reason": terminal.reason.value},
                         )
+                    )
+                    self._emit_observe_policy_decisions(
+                        context,
+                        trigger="terminal_timeout",
                     )
                     return self._build_output(context, terminal)
                 context.step_name = result.next_step

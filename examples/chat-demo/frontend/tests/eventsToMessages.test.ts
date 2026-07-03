@@ -23,6 +23,19 @@ function ev(
   };
 }
 
+interface RuntimeTimelineRow {
+  seq: number;
+  category:
+    | "assistant"
+    | "tool"
+    | "source"
+    | "artifact"
+    | "lifecycle"
+    | "warning";
+  state: "started" | "delta" | "completed" | "failed";
+  item_id?: string;
+}
+
 describe("eventsToMessages", () => {
   it("builds assistant text from token deltas", () => {
     const messages = eventsToMessages([
@@ -176,6 +189,104 @@ describe("eventsToMessages", () => {
           title: "Fetched source",
         },
       ],
+    });
+  });
+
+  it("matches canonical runtime timeline rows for research tools and artifacts", () => {
+    const events = [
+      ev("run_started", 1),
+      ev("tool_call_completed", 2, {
+        tools: [
+          {
+            tool_name: "web_fetch",
+            tool_call_id: "tc1",
+            status: "completed",
+            sources: [
+              {
+                id: "web_fetch:tc1:1",
+                url: "https://example.com/source",
+                canonical_url: "https://example.com/source",
+                source_type: "web_fetch",
+                title: "Fetched source",
+              },
+            ],
+          },
+        ],
+      }),
+      ev("source_ledger_updated", 3, {
+        verified_reads: [
+          {
+            id: "web_fetch:tc1:1",
+            url: "https://example.com/source",
+            source_type: "web_fetch",
+            title: "Fetched source",
+          },
+        ],
+      }),
+      ev("artifact_updated", 4, {
+        path: "research/report.md",
+        size_bytes: 1024,
+      }),
+      ev("token_delta", 5, { delta_text: "Final answer." }),
+      ev("run_completed", 6, {
+        deep_research_artifacts: {
+          report_exists: true,
+          report_path: "research/report.md",
+          report_size_bytes: 1024,
+        },
+      }),
+    ];
+    const upstreamRows: RuntimeTimelineRow[] = [
+      { seq: 1, category: "lifecycle", state: "started", item_id: "run_started" },
+      { seq: 2, category: "tool", state: "completed", item_id: "tc1" },
+      {
+        seq: 3,
+        category: "source",
+        state: "completed",
+        item_id: "source_ledger_updated",
+      },
+      {
+        seq: 4,
+        category: "artifact",
+        state: "delta",
+        item_id: "research/report.md",
+      },
+      { seq: 5, category: "assistant", state: "delta", item_id: "token_delta" },
+      { seq: 6, category: "lifecycle", state: "completed", item_id: "run_completed" },
+    ];
+
+    const messages = eventsToMessages(events);
+    const tool = messages.find((message) => message.role === "tool");
+    const assistant = messages.find((message) => message.role === "assistant");
+
+    expect(upstreamRows.map((row) => `${row.seq}:${row.category}:${row.state}`)).toEqual([
+      "1:lifecycle:started",
+      "2:tool:completed",
+      "3:source:completed",
+      "4:artifact:delta",
+      "5:assistant:delta",
+      "6:lifecycle:completed",
+    ]);
+    expect(tool).toMatchObject({
+      role: "tool",
+      name: "web_fetch",
+      status: "done",
+      sources: [{ title: "Fetched source" }],
+    });
+    expect(assistant).toMatchObject({
+      role: "assistant",
+      content: "Final answer.",
+      sources: [{ title: "Fetched source" }],
+      deepResearch: {
+        artifact: {
+          reportPath: "research/report.md",
+          reportSizeBytes: 1024,
+        },
+      },
+    });
+    expect(upstreamRows.at(-1)).toMatchObject({
+      category: "lifecycle",
+      state: "completed",
     });
   });
 

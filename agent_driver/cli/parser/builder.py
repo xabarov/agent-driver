@@ -317,6 +317,275 @@ def build_parser() -> argparse.ArgumentParser:
         "--session-id", required=True, help="Session identifier."
     )
 
+    capability_pack_parser = subparsers.add_parser(
+        "capability-pack",
+        help="Inspect and dry-run harness capability packs.",
+    )
+    capability_pack_sub = capability_pack_parser.add_subparsers(
+        dest="capability_pack_command", required=True
+    )
+    capability_pack_dry_run = capability_pack_sub.add_parser(
+        "dry-run",
+        help="Resolve pack/scenario gates without executing commands.",
+    )
+    capability_pack_dry_run.add_argument(
+        "--pack-id",
+        required=True,
+        choices=("excel_workbook_chat", "deep_research_chat_demo"),
+        help="Capability pack id to resolve.",
+    )
+    capability_pack_dry_run.add_argument(
+        "--adapter-id",
+        choices=("excel_ai", "chat_demo"),
+        default=None,
+        help="Adapter manifest id; defaults from the selected pack family.",
+    )
+    capability_pack_dry_run.add_argument(
+        "--scenario-id",
+        action="append",
+        default=[],
+        help="Scenario id to include; defaults to all seed scenarios for adapter.",
+    )
+    capability_pack_dry_run.add_argument(
+        "--output-dir",
+        default=None,
+        help="Optional directory for dry-run manifest and evidence_index.json.",
+    )
+    capability_pack_run = capability_pack_sub.add_parser(
+        "run-deterministic",
+        help="Execute deterministic pack gates with guarded command capture.",
+    )
+    capability_pack_run.add_argument(
+        "--pack-id",
+        required=True,
+        choices=("excel_workbook_chat", "deep_research_chat_demo"),
+        help="Capability pack id to resolve.",
+    )
+    capability_pack_run.add_argument(
+        "--adapter-id",
+        choices=("excel_ai", "chat_demo"),
+        default=None,
+        help="Adapter manifest id; defaults from the selected pack family.",
+    )
+    capability_pack_run.add_argument(
+        "--scenario-id",
+        action="append",
+        default=[],
+        help="Scenario id to include; defaults to all seed scenarios for adapter.",
+    )
+    capability_pack_run.add_argument(
+        "--deterministic-command",
+        action="append",
+        default=[],
+        help=(
+            "Concrete deterministic command to execute instead of adapter "
+            "templates (repeatable)."
+        ),
+    )
+    capability_pack_run.add_argument(
+        "--cwd",
+        default=".",
+        help="Working directory for deterministic commands.",
+    )
+    capability_pack_run.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=60.0,
+        help="Timeout per deterministic command.",
+    )
+    capability_pack_run.add_argument(
+        "--output-dir",
+        default=None,
+        help="Optional directory for command outputs and evidence_index.json.",
+    )
+    capability_pack_audit = capability_pack_sub.add_parser(
+        "audit",
+        help="Audit persisted evidence indexes and write validation reports.",
+    )
+    capability_pack_audit.add_argument(
+        "--evidence-index-dir",
+        action="append",
+        required=True,
+        help=(
+            "Directory containing evidence_index.json/manifest.json, or a direct "
+            "path to evidence_index.json (repeatable)."
+        ),
+    )
+    capability_pack_audit.add_argument(
+        "--baseline-id",
+        action="append",
+        default=[],
+        help="Seed baseline id to compare against; defaults from pack ids.",
+    )
+    capability_pack_audit.add_argument(
+        "--quarantine-file",
+        default=None,
+        help="Optional FlakeRecord JSON list, or {'flakes': [...]}, to apply.",
+    )
+    capability_pack_audit.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Mark unexecuted live/provider/UI/benchmark gates as no-claim.",
+    )
+    capability_pack_audit.add_argument(
+        "--strict",
+        action="store_true",
+        help="Return exit code 1 when required deterministic evidence is invalid.",
+    )
+    capability_pack_audit.add_argument(
+        "--output-dir",
+        default=None,
+        help="Optional directory for validation_run.json and validation_report.md.",
+    )
+
+    provider_catalog_parser = subparsers.add_parser(
+        "provider-catalog",
+        help="Build deterministic provider plugin/catalog/routing evidence.",
+    )
+    provider_catalog_sub = provider_catalog_parser.add_subparsers(
+        dest="provider_catalog_command", required=True
+    )
+    provider_catalog_audit = provider_catalog_sub.add_parser(
+        "audit",
+        help="Write offline provider compatibility reports and sanitizer matrix.",
+    )
+    provider_catalog_audit.add_argument(
+        "--scenario",
+        default="provider_catalog.sanitizer_matrix.v1",
+        choices=(
+            "provider_catalog.plugin_registry.v1",
+            "provider_catalog.sanitizer_matrix.v1",
+            "provider_catalog.openrouter_preflight.v1",
+            "provider_catalog.excel_workbook_routes.v1",
+            "provider_catalog.chat_demo_research_routes.v1",
+        ),
+        help="Provider catalog scenario id to label the deterministic report.",
+    )
+    provider_catalog_audit.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Keep provider/Phoenix/benchmark gates as no-claim.",
+    )
+    provider_catalog_audit.add_argument(
+        "--live",
+        action="store_true",
+        help="Reserved for future opt-in live provider probes.",
+    )
+    provider_catalog_audit.add_argument(
+        "--output-dir",
+        default=".agent-driver/provider-catalog/deterministic",
+        help="Directory for provider compatibility artifacts.",
+    )
+
+    harness_adapter_parser = subparsers.add_parser(
+        "harness-adapter",
+        help="Build deterministic harness adapter compatibility reports.",
+    )
+    harness_adapter_sub = harness_adapter_parser.add_subparsers(
+        dest="harness_adapter_command", required=True
+    )
+    harness_adapter_compat = harness_adapter_sub.add_parser(
+        "compat",
+        help="Project offline evidence and optional run replay into adapter report.",
+    )
+    harness_adapter_compat.add_argument(
+        "--adapter",
+        required=True,
+        choices=("acp", "chat_demo", "excel_ai"),
+        help="Adapter/product compatibility target.",
+    )
+    harness_adapter_compat.add_argument(
+        "--evidence-index-dir",
+        required=True,
+        help="Directory containing evidence_index.json, or direct index path.",
+    )
+    harness_adapter_compat.add_argument(
+        "--run-id",
+        default=None,
+        help="Optional persisted run id to project into adapter events.",
+    )
+    harness_adapter_compat.add_argument(
+        "--session-id",
+        default=None,
+        help="Optional host session id to attach to adapter rows.",
+    )
+    harness_adapter_compat.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Do not claim live/provider/Phoenix/Playwright evidence.",
+    )
+    harness_adapter_compat.add_argument(
+        "--output-dir",
+        default=None,
+        help="Optional directory for adapter compatibility report artifacts.",
+    )
+    add_store_options(harness_adapter_compat)
+
+    skills_lifecycle_parser = subparsers.add_parser(
+        "skills-lifecycle",
+        help="Build deterministic skills lifecycle/provenance artifacts.",
+    )
+    skills_lifecycle_sub = skills_lifecycle_parser.add_subparsers(
+        dest="skills_lifecycle_command", required=True
+    )
+    skills_lifecycle_audit = skills_lifecycle_sub.add_parser(
+        "audit",
+        help="Scan skills and write inventory/lock/diff/selection evidence.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--scenario",
+        default="skills_lifecycle.inventory_lock_diff.v1",
+        choices=(
+            "skills_lifecycle.inventory_lock_diff.v1",
+            "skills_lifecycle.selection_evidence.v1",
+            "skills_lifecycle.invocation_provenance.v1",
+            "skills_lifecycle.excel_workbook_skills.v1",
+            "skills_lifecycle.chat_demo_research_skills.v1",
+        ),
+        help="Skill lifecycle scenario id to label the deterministic report.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--skills-dir",
+        default=None,
+        help="Directory containing SKILL.md packages; defaults to curated skills.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--previous-lock",
+        default=None,
+        help="Optional previous skills_lock.json for reload diff comparison.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--product-family",
+        default=None,
+        help="Product family filter; defaults from scenario.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--host-profile",
+        default=None,
+        help="Host/profile id for generated lock/report.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--task-intent",
+        default=None,
+        help="Optional task intent for selection evidence.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--max-results",
+        type=int,
+        default=200,
+        help="Maximum number of SKILL.md manifests to inventory.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Keep provider/Phoenix/UI/benchmark gates as no-claim.",
+    )
+    skills_lifecycle_audit.add_argument(
+        "--output-dir",
+        default=".agent-driver/skills-lifecycle/deterministic",
+        help="Directory for skills lifecycle artifacts.",
+    )
+
     resume_parser = subparsers.add_parser(
         "resume", help="Resume pending interrupt decisions."
     )

@@ -29,7 +29,13 @@ from agent_driver.observability.run_trace.provider import (
     provider_profile_summary as _provider_profile_summary,
 )
 from agent_driver.observability.run_trace.provider import (
+    provider_preflight_summary as _provider_preflight_summary,
+)
+from agent_driver.observability.run_trace.provider import (
     provider_rejected as _provider_rejected,
+)
+from agent_driver.observability.run_trace.provider import (
+    route_profile_summary as _route_profile_summary,
 )
 from agent_driver.observability.run_trace.research import (
     RESEARCH_TOOLS as _RESEARCH_TOOLS,
@@ -43,6 +49,24 @@ from agent_driver.observability.run_trace.research import (
 from agent_driver.observability.run_trace.research import (
     research_summary as _research_summary,
 )
+from agent_driver.observability.run_trace.runtime_decisions import (
+    runtime_decision_summary as _runtime_decision_summary,
+)
+from agent_driver.observability.provenance import (
+    build_provenance_summary as _build_provenance_summary,
+)
+from agent_driver.harness.capability_packs import (
+    build_capability_pack_resolution as _build_capability_pack_resolution,
+)
+from agent_driver.runtime.policy import (
+    build_observe_policy_summary as _build_observe_policy_summary,
+)
+from agent_driver.runtime.supervision import (
+    build_run_supervisor_state as _build_run_supervisor_state,
+)
+from agent_driver.runtime.validation import (
+    build_validation_gate_summary as _build_validation_gate_summary,
+)
 from agent_driver.observability.run_trace.tools import assistant_text as _assistant_text
 from agent_driver.observability.run_trace.tools import count_events as _count_events
 from agent_driver.observability.run_trace.tools import event_data as _event_data
@@ -53,8 +77,13 @@ from agent_driver.observability.run_trace.tools import tool_names as _tool_names
 from agent_driver.observability.run_trace.tools import (
     unknown_tool_summary as _unknown_tool_summary,
 )
+from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.runtime.single_agent.lifecycle.continuation import (
     analyze_continuation_intent,
+)
+from agent_driver.runtime.stream import (
+    summarize_run_lifecycle,
+    summarize_runtime_session_diagnostics,
 )
 
 from ._common import (
@@ -108,8 +137,39 @@ def summarize_run_trace(
     )
     llm_calls = _llm_call_summary(events)
     provider_profile = _provider_profile_summary(events)
+    route_profile = _route_profile_summary(events)
+    provider_preflight = _provider_preflight_summary(events)
+    runtime_timeline = _runtime_timeline_summary(events)
+    run_lifecycle = _run_lifecycle_summary(events)
     prompt_surface = _prompt_surface_summary(events)
     runtime_markers = _runtime_markers(events)
+    runtime_decisions = _runtime_decision_summary(
+        events,
+        run_id=run_id,
+        task_contract=task_contract,
+    )
+    provenance = _build_provenance_summary(
+        events=events,
+        metadata=_metadata_from_events(events),
+        required_evidence=_required_evidence(task_contract),
+    )
+    validation_gates = _build_validation_gate_summary(_metadata_from_events(events))
+    policy_evaluations = _build_observe_policy_summary(
+        events=events,
+        run_id=run_id,
+        task_contract=task_contract,
+        required_evidence=_required_evidence(task_contract),
+        metadata=_metadata_from_events(events),
+    )
+    supervisor_state = _build_run_supervisor_state(
+        events=events,
+        run_id=run_id,
+        policy_summary=policy_evaluations,
+        durability="trace_summary",
+    )
+    capability_pack_resolution = _build_capability_pack_resolution(
+        _metadata_from_events(events)
+    )
     subagents = _subagent_summary(
         events,
         tool_names=tool_names,
@@ -297,6 +357,7 @@ def summarize_run_trace(
         "deep_research_hard_claims_unsupported": research_efficiency[
             "hard_claims_unsupported"
         ],
+        **provenance["contract_verdicts"]["violations"],
     }
     notes = _notes(
         failures=failures,
@@ -310,6 +371,10 @@ def summarize_run_trace(
         "llm_calls": llm_calls["completed"],
         "llm": llm_calls,
         "provider_profile": provider_profile,
+        "route_profile": route_profile,
+        "provider_preflight": provider_preflight,
+        "runtime_timeline": runtime_timeline,
+        "run_lifecycle": run_lifecycle,
         "prompt_surface": prompt_surface,
         "tool_calls": len(tool_names),
         "tool_names": tool_names,
@@ -318,6 +383,19 @@ def summarize_run_trace(
         "research_efficiency": research_efficiency,
         "deep_research_artifact_handoff_complete": deep_research_artifact_handoff_complete,
         "runtime_markers": runtime_markers,
+        "runtime_decisions": runtime_decisions,
+        "policy_evaluations": policy_evaluations,
+        "run_supervisor_state": supervisor_state.model_dump(mode="json"),
+        "capability_pack_resolution": capability_pack_resolution,
+        "validation_gates": validation_gates,
+        "goal_state": runtime_decisions["goal_state"],
+        "context_provenance": provenance["context_provenance"],
+        "memory_fact_provenance": provenance["memory_fact_provenance"],
+        "skill_attachments": provenance["skill_attachments"],
+        "artifact_provenance": provenance["artifact_provenance"],
+        "source_evidence": provenance["source_evidence"],
+        "side_effect_transactions": provenance["side_effect_transactions"],
+        "provenance_contracts": provenance["contract_verdicts"],
         "research": {
             "required": requires_research,
             "tools_used": [name for name in tool_names if name in _RESEARCH_TOOLS],
@@ -399,6 +477,114 @@ def _control_semantic_route(kind: object, priority: object) -> str | None:
     else:
         route = kind
     return route
+
+
+def _runtime_timeline_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    stream_events = _stream_events_from_summary_events(events)
+    diagnostics = summarize_runtime_session_diagnostics(
+        stream_events,
+        durability="trace_summary",
+    )
+    return {"diagnostics": diagnostics.model_dump(mode="json")}
+
+
+def _metadata_from_events(events: list[dict[str, object]]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for event in events:
+        data = _event_data(event)
+        event_metadata = data.get("metadata")
+        if isinstance(event_metadata, dict):
+            metadata.update(event_metadata)
+        if event.get("event") == "run_started":
+            for key in (
+                "context_provenance",
+                "memory_fact_provenance",
+                "skill_attachments",
+                "artifact_provenance",
+                "source_evidence",
+                "side_effect_transactions",
+                "required_evidence",
+                "validation_gates",
+                "validation_gate_results",
+                "capability_pack",
+                "harness_capability_pack",
+                "capability_pack_id",
+                "harness_capability_pack_id",
+                "capability_adapter_id",
+                "capability_adapter_manifest",
+                "capability_scenario_ids",
+                "capability_scenarios",
+                "capability_pack_overrides",
+                "capability_pack_resolution",
+            ):
+                value = data.get(key)
+                if value is not None:
+                    metadata[key] = value
+    return metadata
+
+
+def _required_evidence(task_contract: dict[str, Any] | None) -> list[str]:
+    if not isinstance(task_contract, dict):
+        return []
+    value = task_contract.get("required_evidence")
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _run_lifecycle_summary(events: list[dict[str, object]]) -> dict[str, Any]:
+    stream_events = _stream_events_from_summary_events(events)
+    snapshot = summarize_run_lifecycle(
+        stream_events,
+        durability="trace_summary",
+        checkpoint_available=_checkpoint_available(events),
+    )
+    return snapshot.model_dump(mode="json")
+
+
+def _stream_events_from_summary_events(
+    events: list[dict[str, object]],
+) -> list[RunStreamEvent]:
+    stream_events: list[RunStreamEvent] = []
+    fallback_run_id = "run_unknown"
+    fallback_attempt_id = "attempt_unknown"
+    for index, event in enumerate(events, start=1):
+        event_name = event.get("event")
+        if not isinstance(event_name, str) or not event_name:
+            continue
+        data = event.get("data")
+        run_id = event.get("run_id")
+        attempt_id = event.get("attempt_id")
+        seq = event.get("seq")
+        stream_events.append(
+            RunStreamEvent(
+                schema_version="1.0",
+                stream_id=str(event.get("stream_id") or f"{run_id or fallback_run_id}:{seq or index}"),
+                run_id=run_id if isinstance(run_id, str) else fallback_run_id,
+                attempt_id=(
+                    attempt_id if isinstance(attempt_id, str) else fallback_attempt_id
+                ),
+                seq=seq if isinstance(seq, int) and seq > 0 else index,
+                event=event_name,
+                source="runtime_event",
+                data=dict(data) if isinstance(data, dict) else {},
+                runtime_event_id=(
+                    event.get("runtime_event_id")
+                    if isinstance(event.get("runtime_event_id"), str)
+                    else None
+                ),
+                created_at=(
+                    event.get("created_at")
+                    if isinstance(event.get("created_at"), str)
+                    else None
+                ),
+            )
+        )
+    return stream_events
+
+
+def _checkpoint_available(events: list[dict[str, object]]) -> bool:
+    return any(event.get("event") == "checkpoint_saved" for event in events)
 
 
 def _runtime_markers(events: list[dict[str, object]]) -> dict[str, list[str]]:

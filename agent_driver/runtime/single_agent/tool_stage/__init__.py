@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Protocol
 
 from agent_driver.contracts.enums import (
     AgentProfile,
     ChatRole,
+    GuardrailDecision,
     RuntimeEventType,
     ToolPolicyDecision,
 )
@@ -18,23 +18,13 @@ from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.observability.source_evidence import source_evidence_from_tool_result
 from agent_driver.prompts import force_final_answer_tool_message
 from agent_driver.runtime.artifact_events import artifact_event_from_tool_result
-from agent_driver.runtime.deep_research_gating import (
-    deep_research_medium_or_hard,
-    deep_research_planned_or_started_subagent_count,
-    deep_research_tool_available,
-    deep_research_tool_result_succeeded,
-    is_research_report_path,
-    is_research_source_ledger_path,
-    normalize_artifact_path,
-)
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.metadata_state import (
     get_research_runtime_state,
     get_tool_loop_state,
 )
+from agent_driver.runtime.policy import policy_profile_from_metadata
 from agent_driver.runtime.research_artifacts import (
-    deep_research_report_artifact_exists,
-    deep_research_source_ledger_artifact_exists,
     persist_deep_research_claims_matrix,
     persist_deep_research_source_ledger,
 )
@@ -47,7 +37,6 @@ from agent_driver.runtime.research_session_contract import (
     FINAL_READINESS_ALLOWED,
     build_research_session_contract_from_context,
     child_source_ledgers_from_context,
-    deep_research_post_artifact_next_tool,
 )
 from agent_driver.runtime.single_agent.context_management.todo_reminders import (
     append_todo_progress_hint_after_substantive_tool,
@@ -90,18 +79,17 @@ from agent_driver.runtime.single_agent.types import (
 from agent_driver.runtime.tools import ToolExecutionResult
 from agent_driver.tools.executor.planned import extract_planned_tool_calls
 
-_force_web_fetch_for_source_verified_research = (
-    force_web_fetch_for_source_verified_research
-)
-
 from agent_driver.runtime.single_agent.tool_stage.deep_research import (
-    _DEEP_RESEARCH_PRE_SUBAGENT_BLOCKED_TOOLS,
     _clamp_deep_research_initial_subagent_batch,
     _clamp_deep_research_parent_artifact_batch,
     _coerce_deep_research_artifact_repair_batch,
     _coerce_deep_research_parent_synthesis_write,
     _repair_deep_research_parent_file_write_args,
     _suppress_deep_research_terminal_tool_calls,
+)
+
+_force_web_fetch_for_source_verified_research = (
+    force_web_fetch_for_source_verified_research
 )
 
 
@@ -121,6 +109,24 @@ class ToolStageHost(Protocol):
         self, context: RunContext, result: ToolExecutionResult
     ) -> Any: ...
     def _emit(self, event: EventSpec) -> None: ...
+    def _emit_runtime_decision(
+        self,
+        context: RunContext,
+        *,
+        kind: str,
+        trigger: str,
+        action: str,
+        reason: str,
+        status: str = "applied",
+        goal_id: str | None = None,
+        policy_id: str | None = None,
+        budget: dict[str, object] | None = None,
+        affected_tools: list[str] | None = None,
+        required_evidence: list[str] | None = None,
+        observed_evidence: list[str] | None = None,
+        product_tags: list[str] | None = None,
+        redacted_metadata: dict[str, object] | None = None,
+    ) -> Any: ...
     def _save_checkpoint(
         self, context: RunContext, *, latest_output: Any, node_id: str
     ) -> Any: ...
@@ -291,6 +297,7 @@ async def _finalize_tool_stage_transition(
         increment_tool_loops_since_todo_write(context)
     if continue_with_llm and context.run_input.agent_profile != AgentProfile.CODE_AGENT:
         _maybe_force_final_answer(context)
+        _maybe_enforce_tool_loop_policy(host, context, result)
         force_web_fetch_for_source_verified_research(context)
     context.metadata.update(
         {
@@ -305,6 +312,128 @@ async def _finalize_tool_stage_transition(
     await host._maybe_execute_subagent_group(context)
     host._maybe_fail_after_step("tool_stage")
     return RuntimeStepResult(next_step="llm_call" if continue_with_llm else "finalize")
+
+
+def _maybe_enforce_tool_loop_policy(
+    host: ToolStageHost,
+    context: RunContext,
+    result: ToolExecutionResult,
+) -> None:
+    profile = policy_profile_from_metadata(context.run_input.app_metadata)
+    if profile is None or profile.mode not in {"enforce", "fail_closed"}:
+        return
+    enabled = set(profile.enabled_policy_ids)
+    if enabled and "tool_loop_no_progress" not in enabled:
+        return
+    repeat = _current_no_progress_repeat(context, result)
+    if repeat is None:
+        return
+    threshold = _tool_loop_policy_threshold(profile.budgets.get("tool_loop_no_progress"))
+    if repeat["repeat_count"] < threshold:
+        return
+    reason = "policy_tool_loop_no_progress_force_final"
+    get_tool_loop_state(context).force_final_answer(reason=reason)
+    host._emit_runtime_decision(
+        context,
+        kind="tool_guardrail",
+        trigger="tool_completed",
+        action="force_final",
+        reason=reason,
+        status="applied",
+        policy_id="tool_loop_no_progress",
+        budget={"repeat_threshold": threshold},
+        affected_tools=[str(repeat["tool_name"])],
+        redacted_metadata={
+            "policy_profile_id": profile.profile_id,
+            "policy_mode": profile.mode,
+            "selected_policy_action": "force_final",
+            "repeat_count": int(repeat["repeat_count"]),
+            "args_key": repeat["args_key"],
+        },
+    )
+
+
+def _tool_loop_policy_threshold(raw: object) -> int:
+    if not isinstance(raw, dict):
+        return 2
+    value = raw.get("repeat_threshold", raw.get("max_repeats"))
+    if isinstance(value, int) and value > 1:
+        return value
+    return 2
+
+
+def _current_no_progress_repeat(
+    context: RunContext,
+    result: ToolExecutionResult,
+) -> dict[str, object] | None:
+    current_keys = {
+        key
+        for envelope in result.envelopes
+        if (key := _tool_no_progress_key(envelope.call.tool_name, envelope.call.args, envelope.summary))
+        is not None
+    }
+    if not current_keys:
+        return None
+    counts: dict[tuple[str, str, str], int] = {}
+    for item in get_tool_loop_state(context).tool_results():
+        if not isinstance(item, dict):
+            continue
+        call = item.get("call")
+        if not isinstance(call, dict):
+            continue
+        tool_name = str(call.get("tool_name") or "")
+        args = call.get("args")
+        summary = item.get("summary")
+        key = _tool_no_progress_key(tool_name, args, summary)
+        if key is None:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    matches = [
+        (key, count)
+        for key, count in counts.items()
+        if key in current_keys and count > 1
+    ]
+    if not matches:
+        return None
+    (tool_name, args_key, summary_key), repeat_count = max(
+        matches,
+        key=lambda item: item[1],
+    )
+    return {
+        "tool_name": tool_name,
+        "args_key": args_key,
+        "summary_key": summary_key,
+        "repeat_count": repeat_count,
+    }
+
+
+_POLICY_READ_LIKE_TOOLS = {
+    "web_search",
+    "web_fetch",
+    "source_read",
+    "browser_read",
+    "read_file",
+    "file_read",
+    "grep_search",
+    "glob_search",
+    "list_dir",
+}
+
+
+def _tool_no_progress_key(
+    tool_name: str,
+    args: object,
+    summary: object,
+) -> tuple[str, str, str] | None:
+    if tool_name not in _POLICY_READ_LIKE_TOOLS:
+        return None
+    if not isinstance(summary, str) or not summary.strip():
+        return None
+    try:
+        args_key = json.dumps(args or {}, sort_keys=True, ensure_ascii=True, default=str)
+    except TypeError:
+        args_key = repr(args)
+    return (tool_name, args_key, summary.strip()[:240])
 
 
 async def _maybe_finalize_from_tool_evidence(
@@ -407,6 +536,9 @@ def _emit_tool_completed_if_needed(
                     else []
                 )
             ),
+            "risk": trace.risk.value,
+            "side_effect": trace.side_effect.value,
+            "approval_mode": trace.approval_mode.value,
         }
         if index < len(result.envelopes):
             envelope = result.envelopes[index]
@@ -445,6 +577,7 @@ def _emit_tool_completed_if_needed(
         event_type=RuntimeEventType.TOOL_CALL_COMPLETED,
         payload=payload,
     )
+    _emit_tool_policy_runtime_decisions(host, context, result)
     _emit_artifact_events_from_tool_result(host, context, result)
     tool_results_rows = get_tool_loop_state(context).tool_results()
     child_ledgers = child_source_ledgers_from_context(context)
@@ -524,6 +657,64 @@ def _emit_tool_completed_if_needed(
             event_type=RuntimeEventType.SOURCE_LEDGER_UPDATED,
             payload=source_ledger,
         )
+
+
+def _emit_tool_policy_runtime_decisions(
+    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
+) -> None:
+    for envelope in result.envelopes:
+        tool_name = envelope.call.tool_name
+        metadata: dict[str, object] = {
+            "tool_call_id": envelope.call.tool_call_id,
+            "policy_decision": envelope.decision.value,
+            "guardrail_decision": envelope.guardrail_decision.value,
+        }
+        if envelope.error is not None:
+            metadata["error_code"] = envelope.error.code
+        if envelope.decision == ToolPolicyDecision.DENY:
+            host._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="tool_denied",
+                action="block",
+                reason="tool_policy_denied",
+                policy_id="tool_policy",
+                affected_tools=[tool_name],
+                redacted_metadata=metadata,
+            )
+        elif envelope.decision == ToolPolicyDecision.INTERRUPT:
+            host._emit_runtime_decision(
+                context,
+                kind="approval",
+                trigger="tool_denied",
+                action="interrupt",
+                reason="tool_policy_interrupt",
+                policy_id="tool_policy",
+                affected_tools=[tool_name],
+                redacted_metadata=metadata,
+            )
+        if envelope.guardrail_decision == GuardrailDecision.BLOCK:
+            host._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="tool_denied",
+                action="block",
+                reason="tool_guardrail_blocked",
+                policy_id="tool_guardrail",
+                affected_tools=[tool_name],
+                redacted_metadata=metadata,
+            )
+        elif envelope.guardrail_decision == GuardrailDecision.SANITIZE:
+            host._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="tool_completed",
+                action="warn",
+                reason="tool_guardrail_sanitized",
+                policy_id="tool_guardrail",
+                affected_tools=[tool_name],
+                redacted_metadata=metadata,
+            )
 
 
 def _emit_artifact_events_from_tool_result(

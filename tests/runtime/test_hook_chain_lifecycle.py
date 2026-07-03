@@ -218,7 +218,10 @@ async def test_runner_dispatches_on_error_for_failed_run() -> None:
     agent = create_agent(
         provider=_AlwaysToolCallProvider(),
         tools=ToolSet.all(),
-        config=RunnerConfig(tool_registry=_echo_registry()),
+        config=RunnerConfig(
+            tool_registry=_echo_registry(),
+            budget_grace_enabled=False,
+        ),
         lifecycle_hooks=(hook,),
     )
     output = await agent.run(

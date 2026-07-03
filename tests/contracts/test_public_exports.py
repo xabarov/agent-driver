@@ -11,8 +11,33 @@ def test_contracts_public_exports_are_stable() -> None:
     required = {
         "AgentRunInput",
         "AgentRunOutput",
+        "CapabilityPackResolution",
+        "EvidenceArtifactIndex",
+        "EvidenceArtifactRef",
+        "HarnessAdapterManifest",
+        "HarnessCapabilityPack",
+        "HarnessPolicyProfile",
+        "HarnessReleaseGate",
+        "HarnessScenarioSpec",
+        "LifecycleHookCompatibilityReport",
+        "LifecycleHookEvent",
+        "LifecycleHookResult",
+        "LifecycleMiddlewareChain",
+        "SkillCapabilityFilter",
+        "SkillInventorySnapshot",
+        "SkillLifecycleCompatibilityReport",
+        "SkillLockFile",
+        "SkillReloadDiff",
+        "SkillSelectionDecision",
+        "SkillSelectionRequest",
+        "SkillUsageSummary",
+        "PolicyAction",
+        "PolicyEvaluation",
+        "PolicySignal",
+        "RunSupervisorState",
         "ToolManifest",
         "ToolTrace",
+        "ValidationGateResult",
         "RuntimeEvent",
         "RunStreamEvent",
         "InterruptRequest",
@@ -30,8 +55,10 @@ def test_runtime_public_exports_remain_runtime_focused() -> None:
         "InMemoryEventLog",
         "SqliteRuntimeStore",
         "RuntimeStoreFactoryConfig",
+        "LifecycleMiddlewareAuditExecutor",
         "create_runtime_store_bundle",
         "wrap_governed_executor",
+        "write_validation_artifacts",
     }
     forbidden = {"ToolRegistry", "GovernedToolExecutor", "SubagentGroupSpec"}
     exports = set(runtime.__all__)
@@ -55,5 +82,10 @@ def test_tools_public_exports_cover_governance_surface() -> None:
 
 def test_sdk_public_exports_cover_app_facing_facade() -> None:
     """SDK package should expose Agent facade and factory helper."""
-    required = {"Agent", "create_agent", "build_default_registry", "sdk_config_from_env"}
+    required = {
+        "Agent",
+        "create_agent",
+        "build_default_registry",
+        "sdk_config_from_env",
+    }
     assert required.issubset(set(sdk.__all__))

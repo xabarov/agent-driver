@@ -10,6 +10,11 @@ import pytest
 from starlette.testclient import TestClient
 
 from agent_driver.contracts.enums import ResumeAction
+from agent_driver.contracts.durable_lifecycle import (
+    DurableApprovalStatus,
+    DurableInterruptStatus,
+    DurableLifecycleStatus,
+)
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.tools import ToolCall
 from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse
@@ -17,7 +22,13 @@ from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime.tool_gate import ToolGateAsk, ToolGateContext
 from agent_driver.sdk import ToolSet, create_agent
 from agent_driver.server.app import create_app
-from agent_driver.server.runs import RunManager
+from agent_driver.server.runs import (
+    RunManager,
+    RunRecord,
+    harness_adapter_events_for_server_run,
+    server_harness_adapter_capability,
+)
+from agent_driver.harness import DurableLifecycleRepository
 
 
 def _body(content: str) -> dict[str, Any]:
@@ -50,6 +61,9 @@ def test_run_completes() -> None:
     done = _poll(client, run_id, until={"completed"})
     assert done["answer"] == "async answer"
     assert done["usage"]["total_tokens"] >= 1
+    assert done["lifecycle"]["state"] == "completed"
+    assert done["lifecycle"]["terminal_event"] == "run_completed"
+    assert done["lifecycle"]["reconnect_cursor"].startswith(f"{run_id}:")
 
 
 def test_run_events_stream() -> None:
@@ -122,11 +136,42 @@ async def test_run_requires_action_then_approve() -> None:
 
     await _wait_status(record, {"requires_action"})
     assert record.interrupt and record.interrupt["interrupt_id"]
+    paused_lifecycle = record.public()["lifecycle"]
+    assert paused_lifecycle["state"] == "awaiting_input"
+    assert paused_lifecycle["resume_available"] is True
 
     assert await manager.approve(record.run_id, ResumeAction.APPROVE)
 
     await _wait_status(record, {"completed"})
     assert "all done" in (record.answer or "")
+    assert record.public()["lifecycle"]["state"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_run_manager_optional_durable_lifecycle_writer_records_approval() -> None:
+    repository = DurableLifecycleRepository()
+    manager = RunManager(_gated_agent(), durable_lifecycle_writer=repository)
+    record = manager.start([ChatMessage(role="user", content="run echo")])
+
+    await _wait_status(record, {"requires_action"})
+    run = repository.get_run(record.run_id)
+    assert run is not None
+    assert run.status == DurableLifecycleStatus.PAUSED
+    assert run.durability_level.value == "process_local"
+    assert repository.attach_plan(record.run_id).verdict.value == "attach_live"
+    interrupt = next(iter(repository.interrupts.values()))
+    approval = next(iter(repository.approvals.values()))
+    assert interrupt.status == DurableInterruptStatus.PENDING
+    assert approval.status == DurableApprovalStatus.PENDING
+
+    assert await manager.approve(record.run_id, ResumeAction.APPROVE)
+    await _wait_status(record, {"completed"})
+
+    resolved_interrupt = repository.interrupts[interrupt.interrupt_id]
+    resolved_approval = repository.approvals[approval.approval_id]
+    assert resolved_interrupt.status == DurableInterruptStatus.RESOLVED
+    assert resolved_approval.status == DurableApprovalStatus.APPROVED
+    assert repository.get_run(record.run_id).status == DurableLifecycleStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -136,9 +181,27 @@ async def test_run_stop_while_paused() -> None:
 
     await _wait_status(record, {"requires_action"})
     assert manager.stop(record.run_id)
+    assert record.public()["lifecycle"]["state"] == "cancelling"
 
     await _wait_status(record, {"cancelled", "completed", "failed"})
     assert record.status == "cancelled"
+    assert record.public()["lifecycle"]["state"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_run_manager_optional_durable_lifecycle_writer_records_stop() -> None:
+    repository = DurableLifecycleRepository()
+    manager = RunManager(_gated_agent(), durable_lifecycle_writer=repository)
+    record = manager.start([ChatMessage(role="user", content="run echo")])
+
+    await _wait_status(record, {"requires_action"})
+    assert manager.stop(record.run_id)
+    await _wait_status(record, {"cancelled", "completed", "failed"})
+
+    run = repository.get_run(record.run_id)
+    assert run is not None
+    assert run.abort_request_id == f"{record.run_id}:runs_stop"
+    assert f"{record.run_id}:runs_stop" in repository.aborts
 
 
 def test_get_unknown_run_404() -> None:
@@ -167,3 +230,42 @@ def test_runs_auth_required() -> None:
         "/v1/runs", json=_body("hi"), headers={"Authorization": "Bearer sekret"}
     )
     assert ok.status_code == 202
+
+
+def test_server_shared_harness_adapter_projection_redacts_and_declares_capability() -> (
+    None
+):
+    record = RunRecord(
+        run_id="run_server",
+        created=123,
+        thread_id="session_server",
+    )
+    record.events = [
+        {
+            "event": "run.started",
+            "seq": 1,
+            "data": {"run_id": "run_server"},
+        },
+        {
+            "event": "run.requires_action",
+            "seq": 2,
+            "data": {
+                "run_id": "run_server",
+                "interrupt_id": "approval_server",
+                "tool_name": "bash",
+                "allowed_actions": ["approve", "reject"],
+                "api_key": "sk-should-not-leak",
+            },
+        },
+    ]
+
+    rows = harness_adapter_events_for_server_run(record)
+
+    assert [row.cursor for row in rows] == ["run_server:1", "run_server:2"]
+    assert rows[1].approval_request is not None
+    assert rows[1].approval_request.request_id == "approval_server"
+    assert rows[1].redacted_metadata["app_metadata"] == {}
+    capability = server_harness_adapter_capability()
+    assert capability.protocol == "openai_compatible_http"
+    assert capability.features["approvals"] == "supported"
+    assert capability.features["live_gates"] == "no_claim"

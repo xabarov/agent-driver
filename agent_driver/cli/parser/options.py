@@ -199,6 +199,24 @@ def add_capability_options(parser: argparse.ArgumentParser) -> None:
             "providers."
         ),
     )
+    parser.add_argument(
+        "--capability-pack-id",
+        choices=("excel_workbook_chat", "deep_research_chat_demo"),
+        default=None,
+        help="Harness capability pack id to attach as run metadata.",
+    )
+    parser.add_argument(
+        "--capability-adapter-id",
+        choices=("excel_ai", "chat_demo"),
+        default=None,
+        help="Harness capability adapter id to attach as run metadata.",
+    )
+    parser.add_argument(
+        "--capability-scenario-id",
+        action="append",
+        default=[],
+        help="Harness capability scenario id to attach as run metadata (repeatable).",
+    )
 
 
 __all__ = [

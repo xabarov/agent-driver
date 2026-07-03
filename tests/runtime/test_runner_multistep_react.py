@@ -9,6 +9,7 @@ import pytest
 
 from agent_driver.contracts import (
     AgentRunInput,
+    RuntimeEventType,
     ToolCall,
     ToolError,
     ToolPolicyDecision,
@@ -763,6 +764,45 @@ async def test_react_loop_forces_none_after_repeated_tool_args() -> None:
     assert output.answer == "final answer"
     assert len(provider.requests) == 3
     assert provider.requests[2].tool_choice == "none"
+
+
+@pytest.mark.asyncio
+async def test_enforce_policy_records_tool_loop_force_final_decision() -> None:
+    provider = _ThreeTurnProvider(repeated_args=True)
+    agent = create_agent(provider=provider, tools=ToolSet.only("web_search"))
+    output = await agent.run(
+        AgentRunInput(
+            input="multi step loop run",
+            run_id="run_policy_enforced_loop",
+            agent_id="agent",
+            graph_preset="single_react",
+            max_steps=12,
+            max_tool_calls=6,
+            app_metadata={
+                "harness_policy_profile": {
+                    "profile_id": "test-enforce",
+                    "mode": "enforce",
+                    "enabled_policy_ids": ["tool_loop_no_progress"],
+                    "budgets": {
+                        "tool_loop_no_progress": {"repeat_threshold": 2}
+                    },
+                }
+            },
+        )
+    )
+
+    decisions = [
+        event.payload
+        for event in output.events
+        if event.type == RuntimeEventType.RUNTIME_DECISION
+        and event.payload.get("policy_id") == "tool_loop_no_progress"
+    ]
+    assert output.answer == "final answer"
+    assert provider.requests[2].tool_choice == "none"
+    assert decisions
+    assert decisions[-1]["action"] == "force_final"
+    assert decisions[-1]["status"] == "applied"
+    assert decisions[-1]["redacted_metadata"]["repeat_count"] == 2
 
 
 @pytest.mark.asyncio

@@ -8,16 +8,17 @@ streaming, tools, sessions, HITL resume, and run replay.
 ```bash
 cd examples/chat-demo
 make install
-make dev-full      # backend :8010 + vite :5173 (recommended)
+make dev-full      # backend :8010 + vite :5174 (recommended)
 
 # Or two terminals:
 make dev           # backend on :8010 (not :8000 — often used by other services)
 make dev-frontend  # vite on :5173
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5174`.
 
 If port 8010 is busy: `make dev-full APP_PORT=8020`
+If port 5174 is busy: `make dev-full FRONTEND_PORT=5175`
 
 The Docker dev stack also starts Phoenix tracing by default:
 
@@ -157,7 +158,7 @@ Optional UI smoke checks against a running dev server:
 
 ```bash
 CHAT_DEMO_URL=http://localhost:5174 python3 examples/chat-demo/frontend/tests/e2e/chat_demo_smoke.py
-CHAT_DEMO_URL=http://localhost:5174 ./.uv-bootstrap/bin/python \
+CHAT_DEMO_URL=http://localhost:5174 ./.venv/bin/python \
   examples/chat-demo/frontend/tests/e2e/chat_concepts_smoke.py
 ```
 

@@ -371,11 +371,14 @@ def _deep_research_strategy_tool_choice(
     if deep_research_report_artifact_exists(context):
         next_tool = deep_research_post_artifact_next_tool(context)
         if next_tool is not None:
-            reason = (
-                "deep_research_parent_review_pending"
-                if deep_research_parent_review_pending(context)
-                else "deep_research_discovery_floor_topup"
-            )
+            if next_tool == "todo_write":
+                reason = "deep_research_todo_repair_pending"
+            else:
+                reason = (
+                    "deep_research_parent_review_pending"
+                    if deep_research_parent_review_pending(context)
+                    else "deep_research_discovery_floor_topup"
+                )
             return _deep_research_record_strategy_choice(
                 context,
                 tool_name=next_tool,

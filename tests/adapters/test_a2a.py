@@ -144,3 +144,42 @@ def test_a2a_mounted_on_openai_app() -> None:
         client.post("/a2a", json=_rpc("message/send", _message("hi"))).status_code
         == 200
     )
+
+
+def test_a2a_shared_harness_adapter_projection_declares_truthful_limits() -> None:
+    from agent_driver.adapters.a2a.server import (
+        a2a_harness_adapter_capability,
+        harness_adapter_events_for_a2a_stream,
+    )
+    from agent_driver.contracts import RuntimeEventType, new_runtime_event
+    from agent_driver.runtime.stream import project_runtime_events
+
+    rows = harness_adapter_events_for_a2a_stream(
+        project_runtime_events(
+            [
+                new_runtime_event(
+                    event_type=RuntimeEventType.RUN_STARTED,
+                    context={"run_id": "run_a2a", "attempt_id": "att_1", "seq": 1},
+                ),
+                new_runtime_event(
+                    event_type=RuntimeEventType.ARTIFACT_CREATED,
+                    context={"run_id": "run_a2a", "attempt_id": "att_1", "seq": 2},
+                    options={
+                        "payload": {
+                            "artifact_id": "a2a-answer",
+                            "artifact_type": "task_result",
+                            "path": "a2a/task-result.json",
+                        }
+                    },
+                ),
+            ]
+        ),
+        session_id="a2a_context",
+    )
+
+    assert [row.cursor for row in rows] == ["run_a2a:1", "run_a2a:2"]
+    assert rows[1].artifact_refs[0].artifact_type == "task_result"
+    capability = a2a_harness_adapter_capability()
+    assert capability.adapter_id == "a2a"
+    assert capability.features["approvals"] == "unsupported"
+    assert capability.features["artifacts"] == "supported"

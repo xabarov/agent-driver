@@ -7,9 +7,13 @@ from typing import Any, cast
 from agent_driver.observability import summarize_run_trace
 
 
-def _completed_tool(name: str) -> dict[str, object]:
+def _completed_tool(
+    name: str, *, args: dict[str, object] | None = None
+) -> dict[str, object]:
     tool: dict[str, object] = {"tool_name": name, "status": "completed"}
-    if name == "agent_tool":
+    if args is not None:
+        tool["args"] = args
+    elif name == "agent_tool":
         tool["args"] = {
             "description": "Verify delegated facts",
             "task": "Check delegated facts and return a concise grounded summary.",
@@ -65,6 +69,179 @@ def test_trace_summary_passes_research_with_web_tool() -> None:
     ]
     assert summary["llm"]["request_allowed_tools"] == [["web_search"]]
     assert summary["llm"]["request_tool_names"] == [["web_search"]]
+
+
+def test_trace_summary_exposes_route_profile_and_preflight() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="hello",
+        assistant_text="hello",
+        events=[
+            {
+                "event": "llm_call_completed",
+                "data": {
+                    "provider_profile": {"provider_id": "openrouter"},
+                    "route_profile": {
+                        "profile_id": "openrouter:openrouter:openai__gpt-5.5",
+                        "base_url_family": "openrouter",
+                        "supports_forced_tool_choice": False,
+                    },
+                    "provider_preflight": {
+                        "preflight": {"status": "degraded"},
+                        "request_shape": {
+                            "tool_choice_policy": (
+                                "forced_tool_choice_downgraded_to_auto"
+                            )
+                        },
+                    },
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    assert summary["route_profile"]["base_url_family"] == "openrouter"
+    assert summary["provider_preflight"]["preflight"]["status"] == "degraded"
+    assert summary["provider_preflight"]["request_shape"]["tool_choice_policy"] == (
+        "forced_tool_choice_downgraded_to_auto"
+    )
+    assert summary["policy_evaluations"]["would_fire_policy_ids"] == [
+        "provider_request_shape_preflight"
+    ]
+    assert summary["policy_evaluations"]["selected_actions"] == ["reshape_request"]
+    assert summary["run_supervisor_state"]["lifecycle_state"] == "completed"
+    assert summary["run_supervisor_state"]["heartbeat_status"] == "terminal"
+    timeline = summary["runtime_timeline"]["diagnostics"]
+    assert timeline["timeline_row_count"] == 2
+    assert timeline["terminal_event"] == "run_completed"
+    assert timeline["provider_route_profile_id"] == (
+        "openrouter:openrouter:openai__gpt-5.5"
+    )
+    assert summary["run_lifecycle"]["state"] == "completed"
+    assert summary["run_lifecycle"]["terminal_event"] == "run_completed"
+
+
+def test_trace_summary_exposes_validation_gate_artifacts() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="hello",
+        assistant_text="hello",
+        events=[
+            {
+                "event": "run_started",
+                "data": {
+                    "validation_gates": [
+                        {
+                            "gate_id": "support_bundle_artifact",
+                            "status": "passed",
+                            "evidence_path": "artifacts/support-bundle.json",
+                        }
+                    ]
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    gates = summary["validation_gates"]
+    assert gates["statuses"]["support_bundle_artifact"] == "passed"
+    assert gates["statuses"]["openrouter_live_preflight"] == "not_run"
+    assert gates["gates"][1]["evidence_path"] == "artifacts/support-bundle.json"
+
+
+def test_trace_summary_exposes_capability_pack_resolution_from_run_started() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="research",
+        assistant_text="done",
+        events=[
+            {
+                "event": "run_started",
+                "data": {
+                    "capability_pack_id": "excel_workbook_chat",
+                    "capability_adapter_id": "excel_ai",
+                    "capability_scenario_ids": [
+                        "excel.workbook_context.transaction.v1"
+                    ],
+                    "validation_gates": [
+                        {
+                            "gate_id": "deterministic_tests",
+                            "status": "passed",
+                            "evidence_path": "artifacts/capability-pack-tests.txt",
+                        }
+                    ],
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    resolution = summary["capability_pack_resolution"]
+    assert resolution["pack_id"] == "excel_workbook_chat"
+    assert resolution["adapter_id"] == "excel_ai"
+    assert resolution["required_evidence"][:3] == [
+        "context_provenance",
+        "artifact_provenance",
+        "side_effect_transactions",
+    ]
+    assert resolution["gate_statuses"]["deterministic_tests"] == "passed"
+    assert resolution["gate_statuses"]["phoenix_trace"] == "skipped"
+    assert resolution["redacted_metadata"]["no_runtime_behavior_change"] is True
+
+
+def test_trace_summary_exposes_runtime_timeline_diagnostics() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="hello",
+        assistant_text="hello",
+        events=[
+            {
+                "event": "run_started",
+                "run_id": "run_test",
+                "attempt_id": "attempt_1",
+                "seq": 1,
+                "data": {
+                    "harness_id": "chat-demo",
+                    "session_id": "session_1",
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "run_id": "run_test",
+                "attempt_id": "attempt_1",
+                "seq": 2,
+                "data": {"tool_name": "web_fetch"},
+            },
+            {
+                "event": "llm_request_rejected",
+                "run_id": "run_test",
+                "attempt_id": "attempt_1",
+                "seq": 3,
+                "data": {"reason": "retry"},
+            },
+            {
+                "event": "run_failed",
+                "run_id": "run_test",
+                "attempt_id": "attempt_1",
+                "seq": 4,
+                "data": {},
+            },
+        ],
+    )
+
+    diagnostics = summary["runtime_timeline"]["diagnostics"]
+    assert diagnostics["harness_id"] == "chat-demo"
+    assert diagnostics["session_id"] == "session_1"
+    assert diagnostics["last_seq"] == 4
+    assert diagnostics["terminal_state"] == "failed"
+    assert diagnostics["reconnect_cursor"] == "run_test:4"
+    assert diagnostics["tool_call_count"] == 1
+    assert diagnostics["warning_count"] == 1
+    assert diagnostics["retry_count"] == 1
+    lifecycle = summary["run_lifecycle"]
+    assert lifecycle["state"] == "failed"
+    assert lifecycle["last_seq"] == 4
+    assert lifecycle["reconnect_cursor"] == "run_test:4"
 
 
 def test_trace_summary_does_not_double_count_started_and_completed_tools() -> None:
@@ -283,6 +460,144 @@ def test_trace_summary_collects_runtime_markers() -> None:
     assert summary["llm"]["force_final_reasons"] == ["deliverable_request"]
     assert summary["llm"]["continuation_reasons"] == ["progress_only_final"]
     assert summary["runtime_markers"]["force_final_reasons"] == ["deliverable_request"]
+
+
+def test_trace_summary_collects_runtime_decisions_without_raw_payloads() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Напиши итог",
+        assistant_text="Итог.",
+        events=[
+            {
+                "event": "runtime_decision",
+                "data": {
+                    "decision_id": "dec_1",
+                    "run_id": "run_test",
+                    "attempt_id": "attempt_1",
+                    "seq": 2,
+                    "kind": "retry",
+                    "trigger": "finalize",
+                    "action": "retry",
+                    "reason": "node_contract_no_tool_use_reprompt",
+                    "status": "applied",
+                    "affected_tools": ["lookup_a"],
+                    "redacted_metadata": {"policy_decision": "deny"},
+                    "raw_prompt": "must not leak",
+                    "tool_args": {"secret": "must not leak"},
+                },
+            },
+            {
+                "event": "runtime_decision",
+                "data": {
+                    "decision_id": "dec_2",
+                    "run_id": "run_test",
+                    "attempt_id": "attempt_1",
+                    "seq": 3,
+                    "kind": "tool_guardrail",
+                    "trigger": "trace_violation",
+                    "action": "warn",
+                    "reason": "missing_required_evidence",
+                    "status": "failed",
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    decisions = summary["runtime_decisions"]
+    assert decisions["count"] == 2
+    assert decisions["counts_by_kind"] == {"retry": 1, "tool_guardrail": 1}
+    assert decisions["retry_counts"] == {"node_contract_no_tool_use_reprompt": 1}
+    assert decisions["unsatisfied_requirements"] == ["missing_required_evidence"]
+    assert decisions["decisions"][0]["decision_id"] == "dec_1"
+    assert "raw_prompt" not in decisions["decisions"][0]
+    assert "tool_args" not in decisions["decisions"][0]
+    assert summary["goal_state"]["status"] == "inactive"
+
+
+def test_trace_summary_adds_diagnostic_tool_loop_decisions() -> None:
+    summary = summarize_run_trace(
+        run_id="run_test",
+        user_prompt="Research this and cite sources",
+        assistant_text="Done.",
+        task_contract={
+            "required_tools": ["web_fetch"],
+            "required_evidence": ["source_evidence"],
+        },
+        events=[
+            _completed_tool(
+                "web_search",
+                args={"query": "same query"},
+            ),
+            _completed_tool(
+                "web_search",
+                args={"query": "same query"},
+            ),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "failed",
+                            "error_code": "http_500",
+                            "args": {"url": "https://example.invalid/a"},
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "failed",
+                            "error_code": "http_500",
+                            "args": {"url": "https://example.invalid/b"},
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "read_file",
+                            "status": "completed",
+                            "args": {"path": "report.md"},
+                            "result_summary": "unchanged content",
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "read_file",
+                            "status": "completed",
+                            "args": {"path": "report.md"},
+                            "result_summary": "unchanged content",
+                        }
+                    ],
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    reasons = {
+        decision["reason"]
+        for decision in summary["runtime_decisions"]["decisions"]
+    }
+    assert "repeated_identical_tool_args" in reasons
+    assert "repeated_failed_tool_call" in reasons
+    assert "idempotent_read_no_progress" in reasons
+    assert "missing_required_tool_evidence" in reasons
+    assert summary["runtime_decisions"]["counts_by_kind"]["tool_guardrail"] >= 4
 
 
 def test_trace_summary_collects_subagent_markers() -> None:

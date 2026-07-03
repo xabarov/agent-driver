@@ -40,6 +40,76 @@ def test_research_budget_stop_waits_until_budget_is_exhausted() -> None:
     assert reason is None
 
 
+def test_provider_preflight_artifact_payload_prefers_provider_and_trace() -> None:
+    live_probe = _load_live_probe_module()
+
+    payload = live_probe.provider_preflight_artifact_payload(
+        provider_status={
+            "name": "openrouter",
+            "model": "openai/gpt-5.5",
+            "base_url_family": "openrouter",
+            "status": {"healthy": True},
+            "route_profile": {
+                "profile_id": "openrouter:openrouter:openai__gpt-5.5"
+            },
+            "provider_preflight": {
+                "preflight": {"status": "ok"},
+                "request_shape": {"tool_choice_policy": "provider_default"},
+            },
+        },
+        trace_summary={
+            "run_id": "run_1",
+            "route_profile": {"profile_id": "trace_profile"},
+            "provider_preflight": {"preflight": {"status": "degraded"}},
+        },
+        health_status={"provider": {"configured": True}},
+    )
+
+    assert payload["provider"]["base_url_family"] == "openrouter"
+    assert payload["route_profile"]["profile_id"] == (
+        "openrouter:openrouter:openai__gpt-5.5"
+    )
+    assert payload["trace"]["route_profile"]["profile_id"] == "trace_profile"
+    assert payload["redaction"]["safe_by_default"] is True
+    assert payload["redaction"]["contains_raw_base_url"] is False
+
+
+def test_write_scenario_artifacts_writes_run_lifecycle(tmp_path) -> None:
+    live_probe = _load_live_probe_module()
+
+    class _Page:
+        class _Locator:
+            def inner_text(self, **_kwargs):
+                return "transcript"
+
+        def locator(self, *_args, **_kwargs):
+            return self._Locator()
+
+        def screenshot(self, **_kwargs):
+            return None
+
+    live_probe.ARTIFACT_DIR = tmp_path
+    scenario = live_probe.LiveScenario(name="lifecycle", prompt="hello")
+    artifact_dir = live_probe.write_scenario_artifacts(
+        page=_Page(),
+        scenario=scenario,
+        summary={
+            "run_id": "run_lifecycle",
+            "run_lifecycle": {
+                "run_id": "run_lifecycle",
+                "state": "completed",
+                "reconnect_cursor": "run_lifecycle:3",
+            },
+            "runtime_timeline": {"diagnostics": {"last_seq": 3}},
+        },
+        failures=[],
+    )
+
+    assert artifact_dir == tmp_path / "lifecycle"
+    assert (artifact_dir / "run-lifecycle.json").exists()
+    assert (artifact_dir / "runtime-timeline-diagnostics.json").exists()
+
+
 def test_research_budget_stop_detects_search_loop_before_diversity() -> None:
     live_probe = _load_live_probe_module()
     scenario = live_probe.LiveScenario(

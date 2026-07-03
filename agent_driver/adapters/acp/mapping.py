@@ -15,9 +15,17 @@ from acp import schema
 
 from agent_driver.contracts.enums import ResumeAction, RunStatus
 from agent_driver.contracts.enums.runtime import RuntimeEventType
+from agent_driver.contracts.harness_adapter import (
+    HarnessAdapterCapability,
+    HarnessAdapterEvent,
+)
 from agent_driver.contracts.interrupts import InterruptRequest
 from agent_driver.contracts.runtime import AgentRunOutput
 from agent_driver.contracts.stream import RunStreamEvent
+from agent_driver.harness import (
+    build_harness_adapter_capability,
+    project_harness_adapter_events,
+)
 
 # Our built-in tool names -> ACP ToolKind literals (read/edit/execute/...).
 _TOOL_KIND: dict[str, str] = {
@@ -75,6 +83,43 @@ def text_update_for(event: RunStreamEvent) -> Any | None:
         text = _delta_text(event.data)
         return acp.update_agent_thought_text(text) if text else None
     return None
+
+
+def harness_adapter_events_for_stream(
+    events: list[RunStreamEvent],
+    *,
+    session_id: str | None = None,
+    source: str = "replay",
+) -> list[HarnessAdapterEvent]:
+    """Project ACP-consumed stream events through the shared harness contract."""
+    return project_harness_adapter_events(
+        events,
+        session_id=session_id,
+        source=source,
+    )
+
+
+def acp_harness_adapter_capability() -> HarnessAdapterCapability:
+    """Return ACP's shared harness capability manifest."""
+    return build_harness_adapter_capability(
+        adapter_id="acp",
+        product_family="generic_protocol",
+        durability_level="process_local",
+        features={
+            "streaming": "supported",
+            "replay": "supported",
+            "cursor_reconnect": "supported",
+            "approvals": "supported",
+            "interrupts": "supported",
+            "artifacts": "no_claim",
+            "support_bundles": "no_claim",
+            "fork": "supported",
+            "background_logs": "unsupported",
+            "ui_projection": "no_claim",
+            "live_gates": "no_claim",
+        },
+        scenario_ids=["harness_adapter.acp.basic_stream.v1"],
+    )
 
 
 # Edit-family tools whose tool calls carry a file diff (old/new) for the editor.

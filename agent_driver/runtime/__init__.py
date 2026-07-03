@@ -14,6 +14,12 @@ from agent_driver.runtime.hook_chains import (
     HookChainExecutor,
     placeholders_for_event,
 )
+from agent_driver.runtime.lifecycle_middleware import (
+    LifecycleHookExecution,
+    LifecycleMiddlewareAuditExecutor,
+    requires_guardrails_after_transform,
+    result_from_existing_hook_output,
+)
 from agent_driver.runtime.planning_check import (
     PLANNING_TOOL_NAMES,
     data_tool_called,
@@ -73,6 +79,7 @@ from agent_driver.runtime.tools import (
     fake_noop_tool_executor,
     wrap_governed_executor,
 )
+from agent_driver.runtime.validation_artifacts import write_validation_artifacts
 
 __all__ = [
     "FakeSingleStepRunner",
@@ -94,10 +101,14 @@ __all__ = [
     "FallbackSpec",
     "GraderVerdict",
     "HookChainExecutor",
+    "LifecycleHookExecution",
+    "LifecycleMiddlewareAuditExecutor",
     "HookChainLifecycleHook",
     "RubricGradeInput",
     "RubricLifecycleHook",
     "placeholders_for_event",
+    "requires_guardrails_after_transform",
+    "result_from_existing_hook_output",
     "ExecutionProof",
     "has_real_execution_proof",
     "MissingCheckpointError",
@@ -120,6 +131,7 @@ __all__ = [
     "ToolGateResult",
     "fake_noop_tool_executor",
     "wrap_governed_executor",
+    "write_validation_artifacts",
     # planning-check helpers (see planning_check.py)
     "PLANNING_TOOL_NAMES",
     "data_tool_called",

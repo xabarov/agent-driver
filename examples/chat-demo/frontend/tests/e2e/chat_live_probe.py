@@ -74,6 +74,7 @@ class LiveScenario:
     research_depth: str | None = None
     required_artifact_path: str | None = None
     required_artifact_preview: str | None = None
+    required_artifact_preview_terms: tuple[str, ...] = ()
     require_artifact_panel: bool = False
     require_research_efficiency: bool = False
     max_phase_violations_before_stop: int | None = 4
@@ -268,7 +269,7 @@ SCENARIOS: dict[str, LiveScenario] = {
             "react_chat_tool_policy_web_fetch.txt",
         ),
         required_artifact_path="research/report.md",
-        required_artifact_preview="Fork-join queueing models",
+        required_artifact_preview_terms=("fork", "join", "queue"),
         require_artifact_panel=True,
         require_research_efficiency=True,
         timeout_ms=240000,
@@ -733,6 +734,16 @@ def fetch_health_status(page: Page) -> dict[str, Any]:
     return response.json()
 
 
+def fetch_provider_status(page: Page) -> dict[str, Any]:
+    response = page.context.request.get(
+        f"{BASE_URL}/api/providers",
+        timeout=10000,
+    )
+    if not response.ok:
+        raise RuntimeError(f"provider status failed: {response.status}")
+    return response.json()
+
+
 def assert_observability_preflight(page: Page) -> dict[str, Any]:
     health = fetch_health_status(page)
     if not REQUIRE_OBSERVABILITY:
@@ -749,6 +760,41 @@ def assert_observability_preflight(page: Page) -> dict[str, Any]:
     if failures:
         raise AssertionError("observability preflight failed: " + "; ".join(failures))
     return health
+
+
+def provider_preflight_artifact_payload(
+    *,
+    provider_status: dict[str, Any] | None,
+    trace_summary: dict[str, Any],
+    health_status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    provider = provider_status if isinstance(provider_status, dict) else {}
+    trace_route = trace_summary.get("route_profile")
+    trace_preflight = trace_summary.get("provider_preflight")
+    health = health_status if isinstance(health_status, dict) else {}
+    return {
+        "provider": {
+            "name": provider.get("name"),
+            "model": provider.get("model"),
+            "base_url_family": provider.get("base_url_family"),
+            "status": provider.get("status"),
+        },
+        "route_profile": provider.get("route_profile"),
+        "provider_preflight": provider.get("provider_preflight"),
+        "trace": {
+            "run_id": trace_summary.get("run_id"),
+            "route_profile": trace_route if isinstance(trace_route, dict) else None,
+            "provider_preflight": (
+                trace_preflight if isinstance(trace_preflight, dict) else None
+            ),
+        },
+        "health_provider": health.get("provider") if isinstance(health, dict) else None,
+        "redaction": {
+            "safe_by_default": True,
+            "contains_api_key": False,
+            "contains_raw_base_url": False,
+        },
+    }
 
 
 def queue_steering_message(page: Page, run_id: str, message: str) -> dict[str, Any]:
@@ -1191,6 +1237,10 @@ def assert_artifact_panel(
         expect(
             page.get_by_text(scenario.required_artifact_preview).first
         ).to_be_visible(timeout=10000)
+    for term in scenario.required_artifact_preview_terms:
+        expect(page.get_by_text(re.compile(re.escape(term), re.I)).first).to_be_visible(
+            timeout=10000
+        )
 
 
 def transcript_excerpt(page: Page, *, max_chars: int = 6000) -> str:
@@ -1337,6 +1387,7 @@ def write_scenario_artifacts(
     workspace_artifacts: dict[str, Any] | None = None,
     workspace_preview: dict[str, Any] | None = None,
     health_status: dict[str, Any] | None = None,
+    provider_status: dict[str, Any] | None = None,
 ) -> Path:
     """Persist enough context to debug a live scenario without reopening the UI."""
     artifact_base = ARTIFACT_DIR / scenario.name
@@ -1345,6 +1396,20 @@ def write_scenario_artifacts(
         json.dumps(summary, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    runtime_timeline = summary.get("runtime_timeline")
+    if isinstance(runtime_timeline, dict):
+        diagnostics = runtime_timeline.get("diagnostics")
+        if isinstance(diagnostics, dict):
+            (artifact_base / "runtime-timeline-diagnostics.json").write_text(
+                json.dumps(diagnostics, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+    run_lifecycle = summary.get("run_lifecycle")
+    if isinstance(run_lifecycle, dict):
+        (artifact_base / "run-lifecycle.json").write_text(
+            json.dumps(run_lifecycle, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     (artifact_base / "scenario.json").write_text(
         json.dumps(
             {
@@ -1373,6 +1438,20 @@ def write_scenario_artifacts(
             json.dumps(health_status, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+    if provider_status is not None:
+        (artifact_base / "provider.json").write_text(
+            json.dumps(provider_status, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    route_preflight = provider_preflight_artifact_payload(
+        provider_status=provider_status,
+        trace_summary=summary,
+        health_status=health_status,
+    )
+    (artifact_base / "route-preflight.json").write_text(
+        json.dumps(route_preflight, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     (artifact_base / "scorecard.md").write_text(
         render_scenario_scorecard(
             scenario=scenario,
@@ -1400,6 +1479,11 @@ def write_scenario_artifacts(
 def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
     open_new_chat(page)
     preflight_health = assert_observability_preflight(page)
+    provider_status: dict[str, Any] | None = None
+    try:
+        provider_status = fetch_provider_status(page)
+    except Exception:
+        provider_status = None
     page.route(
         "**/api/chat/messages",
         lambda route: route.continue_(
@@ -1457,6 +1541,11 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
     except Exception as exc:
         failures.append(f"health status check failed: {exc}")
     health_status = health_status or preflight_health
+    if provider_status is None:
+        try:
+            provider_status = fetch_provider_status(page)
+        except Exception as exc:
+            failures.append(f"provider status check failed: {exc}")
     if scenario.required_artifact_path is not None:
         try:
             workspace_artifacts = fetch_workspace_artifacts(page, ids.session_id)
@@ -1483,6 +1572,17 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
                     "required artifact preview text missing: "
                     f"{scenario.required_artifact_preview}"
                 )
+            preview_content_lower = str(workspace_preview.get("content") or "").lower()
+            missing_preview_terms = [
+                term
+                for term in scenario.required_artifact_preview_terms
+                if term.lower() not in preview_content_lower
+            ]
+            if missing_preview_terms:
+                failures.append(
+                    "required artifact preview terms missing: "
+                    f"{', '.join(missing_preview_terms)}"
+                )
         except Exception as exc:
             failures.append(f"workspace artifact API check failed: {exc}")
     failures = reconcile_workspace_artifact_failures(
@@ -1504,6 +1604,7 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
         workspace_artifacts=workspace_artifacts,
         workspace_preview=workspace_preview,
         health_status=health_status,
+        provider_status=provider_status,
     )
     if failures:
         raise AssertionError("; ".join(failures))

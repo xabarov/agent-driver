@@ -81,7 +81,7 @@ _BUILTIN: tuple[ProviderDescriptor, ...] = (
         transport=ProviderTransport.OPENAI_COMPATIBLE,
         default_base_url="https://openrouter.ai/api/v1",
         requires_api_key=True,
-        api_key_env=("AGENT_DRIVER_API_KEY", "OPENROUTER_API_KEY"),
+        api_key_env=("AGENT_DRIVER_API_KEY", "OPENROUTER_API_KEY", "LLM_API_KEY"),
     ),
     ProviderDescriptor(
         provider_id="openai",

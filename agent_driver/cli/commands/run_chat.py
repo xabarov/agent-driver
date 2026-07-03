@@ -81,6 +81,20 @@ def _resolve_workspace_arg(args: argparse.Namespace) -> str | None:
     return str(path)
 
 
+def _capability_pack_metadata_from_args(args: argparse.Namespace) -> dict[str, object]:
+    metadata: dict[str, object] = {}
+    pack_id = getattr(args, "capability_pack_id", None)
+    adapter_id = getattr(args, "capability_adapter_id", None)
+    scenario_ids = list(getattr(args, "capability_scenario_id", []) or [])
+    if pack_id:
+        metadata["capability_pack_id"] = str(pack_id)
+    if adapter_id:
+        metadata["capability_adapter_id"] = str(adapter_id)
+    if scenario_ids:
+        metadata["capability_scenario_ids"] = [str(item) for item in scenario_ids]
+    return metadata
+
+
 async def run_command(
     args: argparse.Namespace,
     *,
@@ -131,6 +145,7 @@ async def run_command(
         "stream_poll_interval_ms": args.stream_poll_interval_ms,
         "debug_tool_protocol": args.debug_tool_protocol,
     }
+    app_metadata.update(_capability_pack_metadata_from_args(args))
     try:
         workspace_cwd = _resolve_workspace_arg(args)
     except ValueError as exc:
@@ -228,6 +243,7 @@ async def chat_command(
         selected_manifests=selected_manifests,
         ui_mode=ui_mode,
         workspace_cwd=workspace_cwd,
+        capability_pack_metadata=_capability_pack_metadata_from_args(args),
         tool_gate=tool_gate,
     )
 

@@ -50,6 +50,13 @@ def test_openweight_provider_spec_targets_openrouter() -> None:
     assert spec.api_key == "k"
 
 
+def test_openweight_provider_spec_keeps_env_resolution_when_key_omitted() -> None:
+    spec = openweight_provider_spec("small")
+
+    assert spec.provider_id == "openrouter"
+    assert spec.api_key is None
+
+
 @pytest.mark.asyncio
 async def test_cost_ceiling_skips_remaining_runs() -> None:
     """With a $0 ceiling, every run is recorded as skipped_budget, none query."""

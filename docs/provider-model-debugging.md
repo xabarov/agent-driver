@@ -28,16 +28,51 @@ OpenRouter-compatible моделей важны:
 
 Перед live проверкой новой или проблемной OpenRouter модели:
 
-1. Открыть OpenRouter quickstart:
+1. Сначала собрать локальный deterministic route/preflight snapshot, без live
+   запроса:
+   - `ProviderRouteProfile` / `ProviderPreflightResult` для активного
+     provider/model route;
+   - `/api/providers` в chat-demo: `base_url_family`, `capability_profile`,
+     `route_profile`, `provider_preflight`;
+   - Excel AI structured route: `StructuredExtractor.provider_preflight_summary`;
+   - support bundle / trace summary: `route_profile` и `provider_preflight`.
+   Эти payloads должны быть redaction-safe: без API keys, auth headers и raw
+   base URLs.
+2. Открыть OpenRouter quickstart:
    <https://openrouter.ai/docs/quickstart>
-2. Проверить OpenRouter tool-calling docs:
+3. Проверить OpenRouter tool-calling docs:
    <https://openrouter.ai/docs/guides/features/tool-calling>
-3. Для reasoning-моделей проверить reasoning tokens / preservation:
+4. Для reasoning-моделей проверить reasoning tokens / preservation:
    <https://openrouter.ai/docs/guides/best-practices/reasoning-tokens>
-4. Проверить страницу модели в OpenRouter UI: tool support, structured output,
+5. Проверить страницу модели в OpenRouter UI: tool support, structured output,
    context/output limits, provider health/tool-call error rate.
-5. Если доступен Context7, запросить OpenRouter docs через MCP вместо ручного
+6. Если доступен Context7, запросить OpenRouter docs через MCP вместо ручного
    поиска. API keys не записывать в repo/docs/logs.
+
+### Route/Profile Preflight Fields
+
+The first no-spend check is the route/preflight shape, not a model answer. A
+healthy support artifact should expose:
+
+- `route_profile.profile_id`, `provider_id`, `provider_kind`,
+  `base_url_family`, `model_id`;
+- request-shape facts:
+  `supports_tool_calls`, `supports_forced_tool_choice`,
+  `supports_strict_json_schema`, `supports_reasoning`,
+  `supports_reasoning_details`, `thinking_extra_body_mode`,
+  `emits_provider_request_id`, `supports_streaming`, `max_token_field`,
+  `context_window`, `max_output_tokens`;
+- `provider_preflight.preflight.status` and
+  `provider_preflight.preflight.checked_capabilities`;
+- `provider_preflight.request_shape.tool_choice_policy`,
+  `response_format_policy`, `reasoning_policy`;
+- `provider_request_ids` only when the provider returns request/correlation
+  ids; never raw auth headers or provider payloads.
+
+For chat-demo live probes, keep
+`<artifact-dir>/<scenario>/route-preflight.json` next to
+`trace-summary.json`. For Excel AI support, preserve the same route/preflight
+shape from both the main agent provider and structured extraction path.
 
 ## Live Debug Loop
 
@@ -92,10 +127,12 @@ CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-gpt55 \
 
 2. Сохранить run id и артефакты:
    `/tmp/chat-demo-live*/<scenario>/trace-summary.json`,
-   `transcript-excerpt.txt`, `screenshot.png`.
+   `route-preflight.json`, `provider.json`, `transcript-excerpt.txt`,
+   `screenshot.png`.
 3. Проверить `/api/chat/runs/{run_id}/trace-summary`:
    terminal event, `provider_rejected`, tool order, `research.fetch_count`,
-   `final_readiness`, unfinished todos.
+   `final_readiness`, unfinished todos, `route_profile`,
+   `provider_preflight`.
 4. Проверить Phoenix `http://localhost:6006`, project
    `agent-driver-chat-demo`, и сравнить spans с persisted event log.
 5. Если provider вернул 400 после tool results, проверить wire protocol:
@@ -393,6 +430,7 @@ Kimi-specific behavior:
 For each model record:
 
 - date, model id, provider route if visible;
+- `route_profile_id`, `base_url_family`, request-shape downgrade notes;
 - pass/fail;
 - run id;
 - terminal event;

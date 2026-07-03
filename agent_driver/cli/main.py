@@ -18,6 +18,12 @@ from agent_driver.adapters import (
 )
 from agent_driver.cli.chat import run_chat_session
 from agent_driver.cli.commands.acp import acp_command as _acp_command_impl
+from agent_driver.cli.commands.capability_packs import (
+    capability_pack_command as _capability_pack_command_impl,
+)
+from agent_driver.cli.commands.harness_adapter import (
+    harness_adapter_command as _harness_adapter_command_impl,
+)
 from agent_driver.cli.commands.evals import (
     eval_compare_command as _eval_compare_command_impl,
 )
@@ -27,6 +33,12 @@ from agent_driver.cli.commands.evals import (
 from agent_driver.cli.commands.evals import eval_run_command as _eval_run_command_impl
 from agent_driver.cli.commands.ops import doctor_command as _doctor_command_impl
 from agent_driver.cli.commands.ops import resume_command as _resume_command_impl
+from agent_driver.cli.commands.provider_catalog import (
+    provider_catalog_command as _provider_catalog_command_impl,
+)
+from agent_driver.cli.commands.skills_lifecycle import (
+    skills_lifecycle_command as _skills_lifecycle_command_impl,
+)
 from agent_driver.cli.commands.run_chat import chat_command as _chat_command_impl
 from agent_driver.cli.commands.run_chat import run_command as _run_command_impl
 from agent_driver.cli.commands.runtime_views import (
@@ -254,6 +266,26 @@ def _sessions_command(args: argparse.Namespace) -> int:
     return _sessions_command_impl(args)
 
 
+def _capability_pack_command(args: argparse.Namespace) -> int:
+    return _capability_pack_command_impl(args)
+
+
+def _harness_adapter_command(args: argparse.Namespace) -> int:
+    return _harness_adapter_command_impl(
+        args,
+        store_config_from_args=_store_config_from_args,
+        create_runtime_store_bundle=create_runtime_store_bundle,
+    )
+
+
+def _provider_catalog_command(args: argparse.Namespace) -> int:
+    return _provider_catalog_command_impl(args)
+
+
+def _skills_lifecycle_command(args: argparse.Namespace) -> int:
+    return _skills_lifecycle_command_impl(args)
+
+
 async def _resume_command(args: argparse.Namespace) -> int:
     return await _resume_command_impl(
         args,
@@ -459,6 +491,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _export_command(args)
     if args.command == "sessions":
         return _sessions_command(args)
+    if args.command == "capability-pack":
+        return _capability_pack_command(args)
+    if args.command == "provider-catalog":
+        return _provider_catalog_command(args)
+    if args.command == "harness-adapter":
+        return _harness_adapter_command(args)
+    if args.command == "skills-lifecycle":
+        return _skills_lifecycle_command(args)
     if args.command == "resume":
         try:
             return asyncio.run(_resume_command(args))

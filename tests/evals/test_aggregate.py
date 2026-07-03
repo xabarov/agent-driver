@@ -51,6 +51,7 @@ def _traj(
     latency: float | None = None,
     tokens: int = 0,
     run_index: int = 0,
+    metadata: dict[str, object] | None = None,
 ) -> Trajectory:
     return Trajectory(
         item_id="i",
@@ -60,6 +61,7 @@ def _traj(
         cost_usd=cost,
         latency_ms=latency,
         usage={"total_tokens": tokens},
+        metadata=metadata or {},
     )
 
 
@@ -76,6 +78,41 @@ def test_aggregate_success_rate_and_metrics() -> None:
     assert agg.cost_usd.median == 0.02
     assert agg.latency_ms.median == 200.0
     assert agg.total_tokens.median == 2000.0
+
+
+def test_aggregate_policy_and_trace_violation_counts() -> None:
+    runs = [
+        _traj(
+            metadata={
+                "policy_evaluations": {
+                    "matched_count": 2,
+                    "would_fire_policy_ids": [
+                        "required_source_evidence",
+                        "tool_loop_no_progress",
+                    ],
+                },
+                "trace_violations": ["missing_source"],
+            }
+        ),
+        _traj(
+            metadata={
+                "policy_evaluations": {
+                    "evaluations": [
+                        {
+                            "policy_id": "artifact_provenance_required",
+                            "status": "matched",
+                        }
+                    ]
+                },
+                "failures": [{"reason": "final_without_report_artifact"}],
+            }
+        ),
+    ]
+
+    agg = aggregate_trajectories(runs)
+
+    assert agg.policy_decision_count.median == 1.5
+    assert agg.trace_violation_count.median == 1.0
 
 
 def test_aggregate_ignores_missing_cost_latency() -> None:

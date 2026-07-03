@@ -23,6 +23,34 @@ def provider_profile_summary(
     return None
 
 
+def route_profile_summary(
+    events: list[dict[str, object]],
+) -> dict[str, Any] | None:
+    """Return latest redacted provider route profile recorded by the LLM layer."""
+    for event in reversed(events):
+        if event.get("event") != "llm_call_completed":
+            continue
+        data = event_data(event)
+        profile = data.get("route_profile")
+        if isinstance(profile, dict):
+            return profile
+    return None
+
+
+def provider_preflight_summary(
+    events: list[dict[str, object]],
+) -> dict[str, Any] | None:
+    """Return latest deterministic provider preflight summary."""
+    for event in reversed(events):
+        if event.get("event") != "llm_call_completed":
+            continue
+        data = event_data(event)
+        preflight = data.get("provider_preflight")
+        if isinstance(preflight, dict):
+            return preflight
+    return None
+
+
 def llm_call_summary(events: list[dict[str, object]]) -> dict[str, Any]:
     tool_choices: list[Any] = []
     request_allowed_tools: list[Any] = []
@@ -144,6 +172,8 @@ def _usage_float(value: object) -> float:
 __all__ = [
     "llm_call_summary",
     "prompt_surface_summary",
+    "provider_preflight_summary",
     "provider_profile_summary",
     "provider_rejected",
+    "route_profile_summary",
 ]

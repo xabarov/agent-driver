@@ -21,6 +21,7 @@ from agent_driver.runtime.deep_research_gating import (
     deep_research_tool_available,
     deep_research_tool_result_succeeded,
     is_research_report_path,
+    is_research_source_ledger_path,
     normalize_artifact_path,
 )
 from agent_driver.runtime.metadata_state import (
@@ -565,7 +566,13 @@ def _deep_research_artifact_repair_tool_allowed(
     path = normalize_artifact_path(
         _dict_value(args, "path") or _dict_value(args, "file_path")
     )
-    return path == required_path
+    if path == required_path:
+        return True
+    if required_path == "research/sources.jsonl" and is_research_report_path(path):
+        return True
+    if required_path == "research/report.md" and is_research_source_ledger_path(path):
+        return True
+    return False
 
 
 def _deep_research_required_artifact_repair_path(context: RunContext) -> str | None:

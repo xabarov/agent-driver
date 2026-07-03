@@ -14,27 +14,34 @@ API и политики стабильности: [docs/embedding.md](docs/embed
 
 ## Что нового в текущей итерации
 
-- Разделение runtime storage и фабричные хелперы для `memory` / `sqlite` /
-  `postgres`
-- Выбор поверхности инструментов через `ToolSet` и встроенные packs
-- Governed pipeline выполнения инструментов с политиками и ограничением вывода
-- Базовые блоки для compaction контекста и извлечения session memory
-- Точки входа для evaluation и replay с детерминированными регрессионными
-  проверками
-- Примитивы профиля code-agent и контракты ограниченного выполнения
+- SDK-точки входа: `create_agent`, `query`, `Session`, `RunHandle`,
+  `RunStream`
+- Self-consistency запуск через `run_self_consistent`: несколько одинаковых
+  прогонов и plurality-vote по ответам
+- Typed provider errors, request ids, route profiles и deterministic preflight
+  summaries для provider/model диагностики
+- SDK trace summaries, support bundles, context-pressure diagnostics и
+  redaction-safe provider diagnostics
+- Выбор поверхности инструментов через `ToolSet`, built-in packs и `tool(...)`
+- Deferred-tool priming, soft-budget final-answer grace, governed tool
+  execution, context compaction и evals
 
 ## Ключевые возможности
 
+- **SDK facade**: one-shot queries, sessions, streaming helpers, resume helpers,
+  custom tools, self-consistency sampling, trace summaries и support bundles
 - **Durable runtime**: абстракции checkpoint + event log с in-memory, SQLite и
-  PostgreSQL backend
+  PostgreSQL backend, bounded step-loop defaults и budget grace
 - **Tool governance**: registry, manifests, risk/side-effect policy, guardrails
-  и детерминированная генерация tool docs
+  `success_field` failure mapping и детерминированная генерация tool docs
 - **Встроенные packs инструментов**: filesystem, shell, web, planning, tasking и
   MCP-адаптеры
 - **Human-in-the-loop примитивы**: структурированные вопросы и инструменты
   обновления planning/task состояния
 - **Observability и evals**: export трасс, replay-представления, сравнение по
   датасетам
+- **Provider diagnostics**: OpenAI-compatible route profiles, deterministic
+  preflight summaries, request-shape downgrade notes и single-provider retry
 
 ## Требования
 
@@ -59,27 +66,33 @@ pip install -e .[postgres]
 ## Быстрый старт
 
 ```python
+import asyncio
+
 from agent_driver.llm import FakeProvider
-from agent_driver.runtime import (
-    RunnerConfig,
-    SingleAgentRunner,
-    create_runtime_store_bundle,
-    preflight_runtime_store,
-    runtime_store_config_from_env,
-)
+from agent_driver.sdk import ToolSet, create_agent, summarize_output
 
-cfg = runtime_store_config_from_env()
-ready = preflight_runtime_store(cfg)
-if not ready.healthy:
-    raise RuntimeError(f"runtime store not ready: {ready.reason}")
 
-bundle = create_runtime_store_bundle(cfg)
-runner = SingleAgentRunner(
-    provider=FakeProvider(),
-    checkpoint_store=bundle.checkpoint_store,
-    event_log=bundle.event_log,
-    config=RunnerConfig(),
-)
+async def main() -> None:
+    agent = create_agent(
+        provider=FakeProvider(response_text="Hello from agent-driver."),
+        tools=ToolSet.only(),
+    )
+    output = await agent.query("Say hello", run_id="demo_run")
+    print(output.answer)
+    print(summarize_output(output).verdict)
+
+
+asyncio.run(main())
+```
+
+Sessions и streaming используют тот же facade:
+
+```python
+session = agent.session("user_123")
+stream = session.stream("Draft a concise status update")
+
+async for delta in stream.text_deltas():
+    print(delta, end="")
 ```
 
 ## Разработка
@@ -94,18 +107,48 @@ runner = SingleAgentRunner(
 Опциональные live-проверки:
 
 ```bash
-AGENT_DRIVER_RUN_LIVE_TESTS=1 .venv/bin/python -m pytest -m live tests
+cp .env.template .env
+set -a && . ./.env && set +a
+.venv/bin/python -m pytest -m live tests
+```
+
+Шаблон `.env.template` документирует live provider, timeout, runtime-store,
+Postgres, server auth и Python tool переменные. Для live provider checks нужны
+`AGENT_DRIVER_API_KEY`, `AGENT_DRIVER_BASE_URL`, `AGENT_DRIVER_MODEL` и
+`AGENT_DRIVER_RUN_LIVE_TESTS=1`; для Postgres checks дополнительно нужны
+`AGENT_DRIVER_RUN_POSTGRES_TESTS=1` и `AGENT_DRIVER_POSTGRES_DSN`.
+
+Частые make targets:
+
+```bash
+make test
+make format-check
+make lint
+make selftest-fake
 ```
 
 ## Карта документации
 
 - Встраивание (публичная поверхность API + стабильность): `docs/embedding.md`
+- Cookbook с offline runnable examples: `examples/cookbook/`
+- Расширение agent-driver: `docs/extending.md`
 - Главный индекс: `docs/README.md`
-- Обзор архитектуры и extraction-план:
-  `docs/agent-driver-analysis-2026-05-18.md`
+- SDK overview: `docs/sdk.md`
+- Sessions: `docs/sdk-sessions.md`
+- Tools: `docs/sdk-tools.md`
+- Streaming: `docs/sdk-streaming.md`
+- Errors: `docs/sdk-errors.md`
+- Runtime overview: `docs/runtime.md`
+- Planning and control: `docs/planning-and-control.md`
+- Provider/model debugging и route preflight:
+  `docs/provider-model-debugging.md`
+- Node contract: `docs/node-contract.md`
+- Chat demo: `docs/chat-demo.md`
+- Testing: `docs/testing.md`
 - Обзор встроенных инструментов: `docs/builtin-tools.md`
-- Roadmap реализации: `docs/roadmap.md`
-- Refactor и quality backlog: `docs/refactor/README.md`
+- Server surfaces: `docs/server.md`, `docs/mcp-http.md`, `docs/acp.md`,
+  `docs/a2a.md`
+- Roadmap: `docs/roadmap.md`
 
 ## Статус проекта
 

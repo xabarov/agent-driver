@@ -81,6 +81,8 @@ class RunAggregate(ContractModel):
     cost_usd: MetricSummary = Field(default_factory=MetricSummary)
     latency_ms: MetricSummary = Field(default_factory=MetricSummary)
     total_tokens: MetricSummary = Field(default_factory=MetricSummary)
+    policy_decision_count: MetricSummary = Field(default_factory=MetricSummary)
+    trace_violation_count: MetricSummary = Field(default_factory=MetricSummary)
 
 
 def aggregate_trajectories(
@@ -108,7 +110,44 @@ def aggregate_trajectories(
         total_tokens=MetricSummary.of(
             [t.usage.get("total_tokens", 0) for t in runs]
         ),
+        policy_decision_count=MetricSummary.of(
+            [_policy_decision_count(t.metadata) for t in runs]
+        ),
+        trace_violation_count=MetricSummary.of(
+            [_trace_violation_count(t.metadata) for t in runs]
+        ),
     )
+
+
+def _policy_decision_count(metadata: dict[str, object]) -> int:
+    policy = metadata.get("policy_evaluations")
+    if not isinstance(policy, dict):
+        return 0
+    matched_count = policy.get("matched_count")
+    if isinstance(matched_count, int) and matched_count >= 0:
+        return matched_count
+    ids = policy.get("would_fire_policy_ids") or policy.get("policy_ids")
+    if isinstance(ids, list):
+        return len([item for item in ids if isinstance(item, str) and item])
+    evaluations = policy.get("evaluations")
+    if not isinstance(evaluations, list):
+        return 0
+    return sum(
+        1
+        for row in evaluations
+        if isinstance(row, dict) and row.get("status") in {None, "matched"}
+    )
+
+
+def _trace_violation_count(metadata: dict[str, object]) -> int:
+    raw = (
+        metadata.get("trace_violations")
+        or metadata.get("violations")
+        or metadata.get("failures")
+    )
+    if not isinstance(raw, list):
+        return 0
+    return len(raw)
 
 
 __all__ = [

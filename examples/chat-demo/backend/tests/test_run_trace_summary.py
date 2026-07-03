@@ -85,6 +85,296 @@ def test_trace_summary_exposes_provider_profile() -> None:
     }
 
 
+def test_trace_summary_exposes_runtime_timeline_diagnostics_for_reconnect() -> None:
+    summary = summarize_run_trace(
+        run_id="run_chat_timeline",
+        user_prompt="Fetch a source and write a report artifact",
+        assistant_text="Done. See research/report.md",
+        events=[
+            {
+                "event": "run_started",
+                "run_id": "run_chat_timeline",
+                "attempt_id": "attempt_1",
+                "seq": 1,
+                "data": {"harness_id": "chat-demo", "session_id": "session_1"},
+            },
+            {
+                "event": "tool_call_completed",
+                "run_id": "run_chat_timeline",
+                "attempt_id": "attempt_1",
+                "seq": 2,
+                "data": {"tool_name": "web_fetch", "status": "completed"},
+            },
+            {
+                "event": "source_ledger_updated",
+                "run_id": "run_chat_timeline",
+                "attempt_id": "attempt_1",
+                "seq": 3,
+                "data": {"status": "verified"},
+            },
+            {
+                "event": "artifact_updated",
+                "run_id": "run_chat_timeline",
+                "attempt_id": "attempt_1",
+                "seq": 4,
+                "data": {"path": "research/report.md"},
+            },
+            {
+                "event": "run_completed",
+                "run_id": "run_chat_timeline",
+                "attempt_id": "attempt_1",
+                "seq": 5,
+                "data": {},
+            },
+        ],
+    )
+
+    diagnostics = summary["runtime_timeline"]["diagnostics"]
+    assert diagnostics["harness_id"] == "chat-demo"
+    assert diagnostics["session_id"] == "session_1"
+    assert diagnostics["last_seq"] == 5
+    assert diagnostics["terminal_event"] == "run_completed"
+    assert diagnostics["reconnect_cursor"] == "run_chat_timeline:5"
+    assert diagnostics["tool_call_count"] == 1
+    lifecycle = summary["run_lifecycle"]
+    assert lifecycle["state"] == "completed"
+    assert lifecycle["last_seq"] == 5
+    assert lifecycle["reconnect_cursor"] == "run_chat_timeline:5"
+
+
+def test_trace_summary_exposes_policy_supervisor_and_validation_gates() -> None:
+    summary = summarize_run_trace(
+        run_id="run_chat_policy",
+        user_prompt="Write a research report with sources",
+        assistant_text="Done.",
+        task_contract={"required_evidence": ["source_evidence"]},
+        events=[
+            {
+                "event": "run_started",
+                "run_id": "run_chat_policy",
+                "attempt_id": "attempt_1",
+                "seq": 1,
+                "data": {
+                    "harness_id": "chat-demo",
+                    "session_id": "session_1",
+                    "validation_gates": [
+                        {
+                            "gate_id": "support_bundle_artifact",
+                            "status": "passed",
+                            "evidence_path": "artifacts/chat-demo-support.json",
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "run_completed",
+                "run_id": "run_chat_policy",
+                "attempt_id": "attempt_1",
+                "seq": 2,
+                "data": {},
+            },
+        ],
+    )
+
+    assert summary["policy_evaluations"]["would_fire_policy_ids"] == [
+        "required_source_evidence"
+    ]
+    assert summary["run_supervisor_state"]["lifecycle_state"] == "completed"
+    assert summary["run_supervisor_state"]["heartbeat_status"] == "terminal"
+    assert summary["validation_gates"]["statuses"]["support_bundle_artifact"] == (
+        "passed"
+    )
+    assert summary["validation_gates"]["statuses"]["phoenix_trace"] == "not_run"
+
+
+def test_trace_summary_exposes_deep_research_provenance_contracts() -> None:
+    summary = summarize_run_trace(
+        run_id="run_chat_provenance",
+        user_prompt="Do deep research and write a cited report.",
+        assistant_text="Done. See research/report.md.",
+        task_contract={
+            "kind": "research",
+            "requires_research": True,
+            "artifact_required": True,
+            "required_evidence": [
+                "context_provenance",
+                "skill_attachments",
+                "artifact_provenance",
+                "source_evidence",
+            ],
+        },
+        events=[
+            {
+                "event": "run_started",
+                "run_id": "run_chat_provenance",
+                "attempt_id": "attempt_1",
+                "seq": 1,
+                "data": {
+                    "context_provenance": [
+                        {
+                            "context_id": "ctx_source_note_1",
+                            "kind": "source_note",
+                            "source_ref": "research/sources.jsonl#1",
+                            "status": "compacted",
+                        }
+                    ],
+                    "skill_attachments": [
+                        {
+                            "skill_id": "deep-research-report",
+                            "name": "deep-research-report",
+                            "source": "filesystem",
+                            "status": "attached",
+                            "activation_reason": "deep_research_profile",
+                        }
+                    ],
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "run_id": "run_chat_provenance",
+                "attempt_id": "attempt_1",
+                "seq": 2,
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "tool_call_id": "fetch_1",
+                            "status": "completed",
+                            "source_evidence": [
+                                {
+                                    "id": "web_fetch:fetch_1:1",
+                                    "canonical_url": "https://example.com/source",
+                                    "domain": "example.com",
+                                    "source_type": "web_fetch",
+                                }
+                            ],
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "artifact_updated",
+                "run_id": "run_chat_provenance",
+                "attempt_id": "attempt_1",
+                "seq": 3,
+                "data": {
+                    "path": "research/report.md",
+                    "kind": "report",
+                    "tool_name": "file_write",
+                    "tool_call_id": "write_report",
+                },
+            },
+            {
+                "event": "run_completed",
+                "run_id": "run_chat_provenance",
+                "attempt_id": "attempt_1",
+                "seq": 4,
+                "data": {},
+            },
+        ],
+    )
+
+    assert summary["context_provenance"]["compacted_count"] == 1
+    assert summary["skill_attachments"]["attachments"][0]["name"] == (
+        "deep-research-report"
+    )
+    assert summary["artifact_provenance"]["paths"] == ["research/report.md"]
+    assert summary["source_evidence"]["domains"] == ["example.com"]
+    assert summary["provenance_contracts"]["status"] == "pass"
+
+
+def test_trace_summary_exposes_runtime_decision_steering_evidence() -> None:
+    summary = summarize_run_trace(
+        run_id="run_chat_decision",
+        user_prompt="Keep researching, then summarize",
+        assistant_text="Done.",
+        events=[
+            {
+                "event": "runtime_decision",
+                "run_id": "run_chat_decision",
+                "attempt_id": "attempt_1",
+                "seq": 2,
+                "data": {
+                    "decision_id": "dec_chat_steer",
+                    "run_id": "run_chat_decision",
+                    "attempt_id": "attempt_1",
+                    "seq": 2,
+                    "kind": "steering",
+                    "trigger": "control_applied",
+                    "action": "continue",
+                    "reason": "control_applied_at_step_boundary",
+                    "status": "applied",
+                    "redacted_metadata": {
+                        "kind": "enqueue_user_message",
+                        "priority": "next",
+                    },
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    decisions = summary["runtime_decisions"]
+    assert decisions["count"] == 1
+    assert decisions["counts_by_kind"] == {"steering": 1}
+    assert decisions["last_decision"]["redacted_metadata"]["kind"] == (
+        "enqueue_user_message"
+    )
+
+
+def test_trace_summary_exposes_deep_research_no_progress_decision() -> None:
+    summary = summarize_run_trace(
+        run_id="run_chat_research_loop",
+        user_prompt="Do deep research and write a cited report",
+        assistant_text="Report draft without sources.",
+        task_contract={
+            "kind": "research",
+            "requires_research": True,
+            "required_tools": ["web_fetch"],
+            "required_evidence": ["source_evidence"],
+        },
+        events=[
+            _completed_tool("web_search", args={"query": "same topic"}),
+            _completed_tool("web_search", args={"query": "same topic"}),
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "failed",
+                            "error_code": "http_500",
+                            "args": {"url": "https://example.invalid/a"},
+                        }
+                    ]
+                },
+            },
+            {
+                "event": "tool_call_completed",
+                "data": {
+                    "tools": [
+                        {
+                            "tool_name": "web_fetch",
+                            "status": "failed",
+                            "error_code": "http_500",
+                            "args": {"url": "https://example.invalid/b"},
+                        }
+                    ]
+                },
+            },
+            {"event": "run_completed", "data": {}},
+        ],
+    )
+
+    reasons = {
+        decision["reason"]
+        for decision in summary["runtime_decisions"]["decisions"]
+    }
+    assert "repeated_identical_tool_args" in reasons
+    assert "repeated_failed_tool_call" in reasons
+    assert "missing_required_tool_evidence" in reasons
+
+
 def test_trace_summary_passes_research_with_web_tool() -> None:
     summary = summarize_run_trace(
         run_id="run_test",

@@ -115,6 +115,8 @@ def _coerce_json_string_args(args: dict[str, Any]) -> dict[str, Any]:
 def _normalize_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Normalize common provider argument synonyms before handler execution."""
     normalized = _coerce_json_string_args(dict(args))
+    if tool_name == "file_write" and isinstance(args.get("content"), str):
+        normalized["content"] = args["content"]
     if (
         tool_name in {"web_fetch", "source_read", "pdf_read", "browser_read"}
         and "url" not in normalized

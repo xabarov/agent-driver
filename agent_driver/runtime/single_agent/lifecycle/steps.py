@@ -6,6 +6,7 @@ from agent_driver.code_agent.profile import run_code_agent_stage
 from agent_driver.context import CompactionOrchestrator
 from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
 from agent_driver.llm.contracts import LlmResponse
+from agent_driver.observability.provenance import build_provenance_summary
 from agent_driver.runtime.control.dispatcher import drain_step_boundary_controls
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.lifecycle_hooks import dispatch_finalize, dispatch_run_start
@@ -13,6 +14,7 @@ from agent_driver.runtime.metadata_state import (
     get_loop_control_state,
     get_tool_loop_state,
 )
+from agent_driver.runtime.policy import policy_profile_from_metadata
 from agent_driver.runtime.research_artifacts import (
     ensure_deep_research_report_artifact_metadata,
 )
@@ -143,6 +145,16 @@ class SingleAgentStepMixin:
         unsatisfiable = nc.unsatisfiable_tool_names(run_input, registered)
         if unsatisfiable:
             context.metadata[nc.TOOL_POLICY_WARNINGS_KEY] = unsatisfiable
+            self._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="trace_violation",
+                action="warn",
+                reason="node_contract_unsatisfiable_tools",
+                status="failed",
+                affected_tools=list(unsatisfiable),
+                policy_id="node_contract",
+            )
             self._emit(
                 EventSpec(
                     run_id=context.run_id,
@@ -225,6 +237,19 @@ class SingleAgentStepMixin:
                     payload=payload,
                 )
             )
+            self._emit_runtime_decision(
+                context,
+                kind="steering",
+                trigger="control_applied",
+                action="continue",
+                reason="control_applied_at_step_boundary",
+                affected_tools=[],
+                redacted_metadata={
+                    "control_id": item.control_id,
+                    "kind": item.kind.value,
+                    "priority": item.priority.value,
+                },
+            )
         return await execute_llm_call_step(self, context)
 
     async def _execute_tool_stage(self, context: RunContext) -> RuntimeStepResult:
@@ -249,6 +274,14 @@ class SingleAgentStepMixin:
         force_final_reason = get_tool_loop_state(context).force_final_answer_reason()
         if isinstance(force_final_reason, str) and force_final_reason:
             completed_payload["force_final_reason"] = force_final_reason
+            self._emit_runtime_decision(
+                context,
+                kind="force_final",
+                trigger="finalize",
+                action="force_final",
+                reason=force_final_reason,
+                policy_id="tool_loop",
+            )
         continuation_reason = context.metadata.get("continuation_nudge_reason")
         if isinstance(continuation_reason, str) and continuation_reason:
             completed_payload["continuation_reason"] = continuation_reason
@@ -264,6 +297,14 @@ class SingleAgentStepMixin:
             completed_payload["planning_snapshot"] = snapshot
         continuation = _maybe_build_continuation_transition(context)
         if continuation is not None:
+            self._emit_runtime_decision(
+                context,
+                kind="force_final",
+                trigger="finalize",
+                action="continue",
+                reason=str(continuation_reason or "continuation_nudge"),
+                policy_id="continuation_detector",
+            )
             context.step_count += 1
             get_loop_control_state(context).set_step_transition(
                 next_step="llm_call",
@@ -295,6 +336,74 @@ class SingleAgentStepMixin:
         terminal_answer = self._sanitize_terminal_answer(context)
         if terminal_answer:
             completed_payload["answer"] = terminal_answer
+        evidence_block = _required_policy_evidence_block(
+            context,
+            events=[
+                {
+                    "event": event.type.value,
+                    "run_id": event.run_id,
+                    "attempt_id": event.attempt_id,
+                    "seq": event.seq,
+                    "data": event.payload,
+                    "created_at": event.created_at,
+                }
+                for event in self._deps.event_log.list_for_run(context.run_id)
+            ],
+        )
+        if evidence_block is not None:
+            required_evidence = evidence_block.get("required_evidence", [])
+            self._emit_runtime_decision(
+                context,
+                kind="evidence",
+                trigger="finalize",
+                action=str(evidence_block["action"]),
+                reason=str(evidence_block["reason"]),
+                status="applied",
+                policy_id=str(evidence_block["policy_id"]),
+                required_evidence=[
+                    item
+                    for item in required_evidence
+                    if isinstance(item, str)
+                ],
+                redacted_metadata=evidence_block,
+            )
+            self._emit(
+                EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType.RUN_FAILED,
+                    payload={
+                        "reason": TerminalReason.GUARDRAIL_BLOCKED.value,
+                        "policy_id": evidence_block["policy_id"],
+                    },
+                )
+            )
+            self._emit_observe_policy_decisions(
+                context,
+                trigger="finalize_required_evidence",
+            )
+            output = self._build_output(
+                context,
+                TerminalResult(
+                    status=RunStatus.FAILED,
+                    reason=TerminalReason.GUARDRAIL_BLOCKED,
+                ),
+            )
+            context.step_count += 1
+            get_loop_control_state(context).set_step_transition(
+                next_step="done",
+                tool_calls=context.tool_calls,
+            )
+            output.checkpoint = self._save_checkpoint(
+                context,
+                latest_output=output,
+                node_id="finalize",
+            )
+            self._maybe_fail_after_step("finalize")
+            get_loop_control_state(context).set_terminal_output(
+                output.model_dump(mode="json")
+            )
+            return RuntimeStepResult(next_step="done")
         revision = await dispatch_finalize(
             self._deps.lifecycle_hooks, context, answer=terminal_answer or ""
         )
@@ -327,6 +436,7 @@ class SingleAgentStepMixin:
                 payload=completed_payload,
             )
         )
+        self._emit_observe_policy_decisions(context, trigger="finalize")
         output = self._build_output(
             context,
             TerminalResult(
@@ -366,11 +476,28 @@ class SingleAgentStepMixin:
             return None
         if not nc.reprompt_budget_remaining(context):
             nc.stamp_no_tool_use_violation(context)
+            self._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="finalize",
+                action="warn",
+                reason="node_contract_no_tool_use_reprompt_budget_exhausted",
+                status="failed",
+                policy_id="node_contract",
+            )
             return None
         text = (
             context.llm_response.message.content
             if context.llm_response is not None
             else ""
+        )
+        self._emit_runtime_decision(
+            context,
+            kind="retry",
+            trigger="finalize",
+            action="retry",
+            reason="node_contract_no_tool_use_reprompt",
+            policy_id="node_contract",
         )
         return _build_continuation_transition(
             context,
@@ -390,11 +517,30 @@ class SingleAgentStepMixin:
             return None
         if not nc.reprompt_budget_remaining(context):
             nc.stamp_required_tools_violation(context)
+            self._emit_runtime_decision(
+                context,
+                kind="tool_guardrail",
+                trigger="finalize",
+                action="warn",
+                reason="node_contract_required_tools_reprompt_budget_exhausted",
+                status="failed",
+                affected_tools=list(context.run_input.node_contract.finalize_when_tools),
+                policy_id="node_contract",
+            )
             return None
         text = (
             context.llm_response.message.content
             if context.llm_response is not None
             else ""
+        )
+        self._emit_runtime_decision(
+            context,
+            kind="retry",
+            trigger="finalize",
+            action="retry",
+            reason="node_contract_required_tools_reprompt",
+            affected_tools=list(context.run_input.node_contract.finalize_when_tools),
+            policy_id="node_contract",
         )
         return _build_continuation_transition(
             context,
@@ -417,3 +563,142 @@ class SingleAgentStepMixin:
 
 
 __all__ = ["SingleAgentStepMixin"]
+
+
+def _required_policy_evidence_block(
+    context: RunContext,
+    *,
+    events: list[dict[str, object]],
+) -> dict[str, object] | None:
+    profile = policy_profile_from_metadata(context.run_input.app_metadata)
+    if profile is None or profile.mode not in {"enforce", "fail_closed"}:
+        return None
+    enabled = set(profile.enabled_policy_ids)
+    required = set(profile.required_evidence)
+    if not required:
+        return None
+    metadata = {**context.run_input.app_metadata, **context.metadata}
+    provenance = build_provenance_summary(
+        events=events,
+        metadata=metadata,
+        required_evidence=list(required),
+    )
+    verdicts = provenance.get("contract_verdicts", {})
+    violations = verdicts.get("violations") if isinstance(verdicts, dict) else {}
+    if not isinstance(violations, dict):
+        return None
+    if (
+        "source_evidence" in required
+        and _policy_enabled(enabled, "required_source_evidence")
+        and violations.get("missing_source_evidence") is True
+    ):
+        return _evidence_block(
+            profile_id=profile.profile_id,
+            mode=profile.mode,
+            policy_id="required_source_evidence",
+            action="mark_blocked",
+            reason="required_source_evidence_missing",
+            required_evidence=["source_evidence"],
+        )
+    if (
+        "workbook_context" in required
+        and _policy_enabled(enabled, "workbook_context_required")
+        and not _workbook_context_observed(metadata)
+    ):
+        return _evidence_block(
+            profile_id=profile.profile_id,
+            mode=profile.mode,
+            policy_id="workbook_context_required",
+            action="mark_blocked",
+            reason="required_workbook_context_missing",
+            required_evidence=["workbook_context"],
+        )
+    if (
+        "artifact_provenance" in required
+        and _policy_enabled(enabled, "artifact_provenance_required")
+        and violations.get("missing_artifact_provenance") is True
+    ):
+        return _evidence_block(
+            profile_id=profile.profile_id,
+            mode=profile.mode,
+            policy_id="artifact_provenance_required",
+            action="mark_blocked",
+            reason="required_artifact_provenance_missing",
+            required_evidence=["artifact_provenance"],
+        )
+    if (
+        _policy_enabled(enabled, "side_effect_transaction_required")
+        and _transaction_policy_enabled(profile.side_effect_rules, required)
+        and violations.get("unsafe_side_effect_without_transaction_projection") is True
+    ):
+        return _evidence_block(
+            profile_id=profile.profile_id,
+            mode=profile.mode,
+            policy_id="side_effect_transaction_required",
+            action="rollback",
+            reason="side_effect_transaction_missing",
+            required_evidence=["side_effect_transactions"],
+            redacted_metadata={
+                "rollback_available": False,
+                "rollback_projection": "missing",
+            },
+        )
+    return None
+
+
+def _policy_enabled(enabled: set[str], policy_id: str) -> bool:
+    return not enabled or policy_id in enabled
+
+
+def _transaction_policy_enabled(
+    side_effect_rules: dict[str, object],
+    required_evidence: set[str],
+) -> bool:
+    if "side_effect_transactions" in required_evidence:
+        return True
+    return side_effect_rules.get("require_transaction_projection") is True
+
+
+def _workbook_context_observed(metadata: dict[str, object]) -> bool:
+    workbook_context = metadata.get("workbook_context")
+    if isinstance(workbook_context, dict):
+        return True
+    if isinstance(workbook_context, list) and any(
+        isinstance(item, dict) for item in workbook_context
+    ):
+        return True
+    rows = metadata.get("context_provenance")
+    if isinstance(rows, dict):
+        rows = [rows]
+    if not isinstance(rows, list):
+        return False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        kind = row.get("kind") or row.get("type")
+        if kind in {"workbook", "workbook_context"}:
+            return True
+    return False
+
+
+def _evidence_block(
+    *,
+    profile_id: str,
+    mode: str,
+    policy_id: str,
+    action: str,
+    reason: str,
+    required_evidence: list[str],
+    redacted_metadata: dict[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "policy_id": policy_id,
+        "policy_profile_id": profile_id,
+        "policy_mode": mode,
+        "action": action,
+        "reason": reason,
+        "required_evidence": required_evidence,
+        "selected_policy_action": action,
+        "enforcement": policy_id,
+        **dict(redacted_metadata or {}),
+    }

@@ -53,14 +53,14 @@ def openweight_provider_spec(
     """Build an OpenRouter :class:`ProviderSpec` for an open-weight tier.
 
     ``api_key`` is the caller's OpenRouter key; when omitted, the descriptor's
-    env resolution (``OPENROUTER_API_KEY`` / ``AGENT_DRIVER_API_KEY``) applies
-    at build time.
+    env resolution (``AGENT_DRIVER_API_KEY`` / ``OPENROUTER_API_KEY`` /
+    ``LLM_API_KEY``) applies at build time.
     """
     preset = openweight_preset(tier)
     return ProviderSpec(
         provider_id="openrouter",
         model=preset.model,
-        api_key=api_key or "",
+        api_key=api_key,
         timeout_s=timeout_s,
     )
 
