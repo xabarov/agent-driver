@@ -74,3 +74,27 @@ def test_write_validation_artifacts_persists_extra_json_artifacts(tmp_path) -> N
     assert row["path"] == "phoenix_ui_review.json"
     payload = json.loads((tmp_path / "evidence" / "phoenix_ui_review.json").read_text())
     assert payload == {"passed": True}
+
+
+def test_write_validation_artifacts_persists_command_outputs(tmp_path) -> None:
+    manifest = write_validation_artifacts(
+        tmp_path / "evidence",
+        command_outputs=[
+            {
+                "command_id": "deterministic_1",
+                "command": "python -m pytest tests/example.py",
+                "status": "passed",
+                "stdout": "ok",
+                "stderr": "",
+            }
+        ],
+    )
+
+    assert manifest["artifact_count"] == 1
+    row = manifest["artifacts"][0]
+    assert row["artifact_type"] == "command_output"
+    assert row["path"] == "command_outputs/deterministic_1.json"
+    payload = json.loads(
+        (tmp_path / "evidence" / "command_outputs" / "deterministic_1.json").read_text()
+    )
+    assert payload["status"] == "passed"

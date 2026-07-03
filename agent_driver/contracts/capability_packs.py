@@ -137,6 +137,8 @@ class HarnessCapabilityPack(ContractModel):
     rollout_mode: str = "inert"
     compatibility: dict[str, Any] = Field(default_factory=dict)
     owners: list[str] = Field(default_factory=list)
+    ownership_notes: list[str] = Field(default_factory=list)
+    review_checklist: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
     @field_validator("status")

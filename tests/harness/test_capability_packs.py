@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import shlex
+import sys
+
 import pytest
 
 from agent_driver.contracts.capability_packs import HarnessCapabilityPack
@@ -9,6 +12,7 @@ from agent_driver.contracts.policy import ValidationGateResult
 from agent_driver.harness import (
     build_capability_pack_dry_run,
     resolve_capability_pack,
+    run_capability_pack_deterministic_gates,
     seed_adapter_manifests,
     seed_capability_packs,
     seed_scenario_specs,
@@ -25,6 +29,8 @@ def test_seed_capability_packs_validate_two_products() -> None:
         "artifact_provenance",
         "validation_gates",
     ]
+    assert packs["excel_workbook_chat"].ownership_notes
+    assert packs["deep_research_chat_demo"].review_checklist
     assert {
         gate.gate_id for gate in packs["excel_workbook_chat"].release_gates
     } >= {
@@ -110,6 +116,23 @@ def test_chat_demo_resolution_includes_adapter_commands_without_secrets() -> Non
     assert "source_evidence" in dumped["required_evidence"]
     assert any("trace-summary" in item for item in adapters["chat_demo"].trace_endpoints)
     assert all("API_KEY=" not in command for command in dumped["optional_live_commands"])
+    assert not any("<" in command and ">" in command for command in dumped["deterministic_commands"])
+
+
+def test_seed_adapter_manifests_use_concrete_non_secret_command_references() -> None:
+    for adapter in seed_adapter_manifests().values():
+        command_fields = (
+            adapter.deterministic_commands
+            + adapter.optional_live_commands
+            + adapter.benchmark_commands
+            + adapter.artifact_output_paths
+            + adapter.playwright_specs
+        )
+        assert all("API_KEY=" not in item for item in command_fields)
+        assert all("<" not in item and ">" not in item for item in command_fields)
+    for scenario in seed_scenario_specs().values():
+        assert all("API_KEY=" not in item for item in scenario.artifact_paths)
+        assert all("<" not in item and ">" not in item for item in scenario.artifact_paths)
 
 
 def test_capability_pack_dry_run_payload_is_execution_free() -> None:
@@ -134,3 +157,36 @@ def test_capability_pack_dry_run_rejects_wrong_adapter_scenario() -> None:
             adapter_id="chat_demo",
             scenario_ids=["excel.workbook_context.transaction.v1"],
         )
+
+
+def test_run_deterministic_gates_executes_concrete_command(tmp_path) -> None:
+    command = f"{shlex.quote(sys.executable)} -c \"print('capability ok')\""
+
+    payload = run_capability_pack_deterministic_gates(
+        pack_id="deep_research_chat_demo",
+        scenario_ids=["chat_demo.deep_research.source_report.v1"],
+        deterministic_commands=[command],
+        cwd=tmp_path,
+    )
+
+    assert payload["mode"] == "run_deterministic"
+    assert payload["executed_commands"][0]["status"] == "passed"
+    assert payload["executed_commands"][0]["stdout"].strip() == "capability ok"
+    assert payload["validation_gate_results"][0]["status"] == "passed"
+    resolution = payload["capability_pack_resolution"]
+    assert resolution["gate_statuses"]["deterministic_tests"] == "passed"
+
+
+def test_run_deterministic_gates_blocks_template_placeholders(tmp_path) -> None:
+    payload = run_capability_pack_deterministic_gates(
+        pack_id="excel_workbook_chat",
+        scenario_ids=["excel.workbook_context.transaction.v1"],
+        deterministic_commands=["python -m pytest backend/tests/<test>.py"],
+        cwd=tmp_path,
+    )
+
+    assert payload["executed_commands"][0]["status"] == "blocked"
+    assert payload["executed_commands"][0]["reason"] == (
+        "command_template_contains_placeholder"
+    )
+    assert payload["validation_gate_results"][0]["status"] == "blocked"

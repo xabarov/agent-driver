@@ -22,6 +22,9 @@ from agent_driver.harness.capability_packs import (
     seed_excel_workbook_chat_pack,
     seed_scenario_specs,
 )
+from agent_driver.harness.capability_runner import (
+    run_capability_pack_deterministic_gates,
+)
 
 __all__ = [
     "apply_system_slots",
@@ -30,6 +33,7 @@ __all__ = [
     "build_capability_pack_resolution",
     "profile_excluded_tools",
     "resolve_capability_pack",
+    "run_capability_pack_deterministic_gates",
     "select_harness_profile",
     "seed_adapter_manifests",
     "seed_capability_packs",

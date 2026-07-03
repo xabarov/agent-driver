@@ -22,6 +22,7 @@ def write_validation_artifacts(
     benchmark_markdown: str | None = None,
     phoenix_run_ids: list[str] | None = None,
     playwright_screenshots: list[str | Path] | None = None,
+    command_outputs: list[dict[str, Any]] | None = None,
     extra_json_artifacts: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Write supplied validation artifacts and return a manifest.
@@ -90,6 +91,17 @@ def write_validation_artifacts(
         )
     for screenshot in playwright_screenshots or []:
         artifacts.append(_copy_screenshot(root, Path(screenshot)))
+    for index, payload in enumerate(command_outputs or [], start=1):
+        command_id = payload.get("command_id") if isinstance(payload, dict) else None
+        name = _safe_artifact_name(str(command_id or f"command_{index}"))
+        artifacts.append(
+            _write_json(
+                root / "command_outputs" / f"{name}.json",
+                "command_output",
+                payload,
+                root=root,
+            )
+        )
     for name, payload in (extra_json_artifacts or {}).items():
         safe_name = _safe_artifact_name(name)
         artifacts.append(
@@ -118,6 +130,7 @@ def _write_json(
     root: Path,
 ) -> dict[str, Any]:
     safe_payload = ensure_json_serializable(payload, field_name=f"{artifact_type} artifact")
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(safe_payload, ensure_ascii=True, indent=2) + "\n",
         encoding="utf-8",
@@ -132,6 +145,7 @@ def _write_text(
     *,
     root: Path,
 ) -> dict[str, Any]:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload, encoding="utf-8")
     return _artifact_row(path, artifact_type, root=root)
 

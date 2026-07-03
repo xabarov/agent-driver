@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import importlib
+import shlex
+import sys
 from types import SimpleNamespace
 
 from agent_driver.cli.sessions import SessionStore
@@ -234,6 +236,60 @@ def test_cli_capability_pack_dry_run_rejects_mismatched_scenario(capsys) -> None
     assert "belongs to adapter" in output
 
 
+def test_cli_capability_pack_run_deterministic_writes_command_outputs(
+    tmp_path, capsys
+) -> None:
+    output_dir = tmp_path / "pack-run"
+    command = f"{shlex.quote(sys.executable)} -c \"print('cli capability ok')\""
+
+    code = main(
+        [
+            "capability-pack",
+            "run-deterministic",
+            "--pack-id",
+            "deep_research_chat_demo",
+            "--scenario-id",
+            "chat_demo.deep_research.source_report.v1",
+            "--deterministic-command",
+            command,
+            "--cwd",
+            str(tmp_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "run_deterministic"
+    assert payload["executed_commands"][0]["status"] == "passed"
+    assert payload["validation_gate_results"][0]["status"] == "passed"
+    assert (output_dir / "command_outputs" / "deterministic_1.json").is_file()
+    assert (output_dir / "evidence_index.json").is_file()
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert "command_output" in {row["artifact_type"] for row in manifest["artifacts"]}
+
+
+def test_cli_capability_pack_run_deterministic_blocks_template_command(capsys) -> None:
+    code = main(
+        [
+            "capability-pack",
+            "run-deterministic",
+            "--pack-id",
+            "excel_workbook_chat",
+            "--scenario-id",
+            "excel.workbook_context.transaction.v1",
+            "--deterministic-command",
+            "python -m pytest backend/tests/<test>.py",
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["executed_commands"][0]["status"] == "blocked"
+    assert payload["validation_gate_results"][0]["status"] == "blocked"
+
+
 def test_cli_chat_keyboard_interrupt_returns_130(monkeypatch, capsys) -> None:
     """Top-level chat command should hide traceback on KeyboardInterrupt."""
 
@@ -309,6 +365,63 @@ def test_chat_command_wires_memory_and_permission_flags(monkeypatch) -> None:
     assert type(captured["memory_provider"]).__name__ == "StoreBackedMemoryProvider"
     # A permission gate (callable ToolGate) reached the chat loop.
     assert callable(captured["tool_gate"])
+
+
+def test_chat_command_passes_capability_pack_metadata(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_store_bundle(_config):
+        return SimpleNamespace(checkpoint_store=object(), event_log=object())
+
+    async def _fake_provider_healthcheck():
+        return SimpleNamespace(
+            provider_name="fake", healthy=True, configured=True, latency_ms=1.0
+        )
+
+    fake_provider = SimpleNamespace(name="fake", healthcheck=_fake_provider_healthcheck)
+
+    def _fake_create_agent(**_kwargs):
+        class _Registry:
+            @staticmethod
+            def list_registered():
+                return []
+
+        fake_runner = SimpleNamespace(deps=SimpleNamespace(tool_registry=_Registry()))
+        return SimpleNamespace(runner=fake_runner)
+
+    async def _fake_run_chat_session(**kwargs):
+        captured["capability_pack_metadata"] = kwargs.get("capability_pack_metadata")
+        return 0
+
+    monkeypatch.setattr(cli_main, "create_runtime_store_bundle", _fake_store_bundle)
+    monkeypatch.setattr(cli_main, "build_cli_provider", lambda _cfg: fake_provider)
+    monkeypatch.setattr(
+        cli_main, "build_cli_toolset", lambda _cfg: SimpleNamespace(names=())
+    )
+    monkeypatch.setattr(cli_main, "create_agent", _fake_create_agent)
+    monkeypatch.setattr(cli_main, "run_chat_session", _fake_run_chat_session)
+
+    code = cli_main.main(
+        [
+            "chat",
+            "--provider",
+            "fake",
+            "--plain",
+            "--capability-pack-id",
+            "deep_research_chat_demo",
+            "--capability-adapter-id",
+            "chat_demo",
+            "--capability-scenario-id",
+            "chat_demo.deep_research.source_report.v1",
+        ]
+    )
+
+    assert code == 0
+    assert captured["capability_pack_metadata"] == {
+        "capability_pack_id": "deep_research_chat_demo",
+        "capability_adapter_id": "chat_demo",
+        "capability_scenario_ids": ["chat_demo.deep_research.source_report.v1"],
+    }
 
 
 def test_chat_command_enables_compaction_flags(monkeypatch) -> None:

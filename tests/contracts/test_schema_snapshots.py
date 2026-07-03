@@ -216,6 +216,8 @@ PUBLIC_CONTRACT_FIELD_SNAPSHOTS: dict[str, tuple[str, ...]] = {
         "rollout_mode",
         "compatibility",
         "owners",
+        "ownership_notes",
+        "review_checklist",
         "notes",
     ),
     "HarnessScenarioSpec": (

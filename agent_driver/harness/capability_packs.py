@@ -64,6 +64,16 @@ def seed_excel_workbook_chat_pack() -> HarnessCapabilityPack:
             "min_agent_driver": "0.1.0",
         },
         owners=["agent-driver-harness", "excel-ai-adapter"],
+        ownership_notes=[
+            "agent-driver-harness owns generic pack contracts and resolver behavior.",
+            "excel-ai-adapter owns workbook scenario commands, ports and product evidence paths.",
+            "Update this pack when Excel provider routes, workbook UI warnings, edit transaction semantics or benchmark gates change.",
+        ],
+        review_checklist=[
+            "Reject changes that store workbook ids, auth state or provider key values.",
+            "Reject scenarios that require live OpenRouter, Phoenix, Playwright or benchmark gates without an explicit blast-radius reason.",
+            "Keep workbook-specific expectations in the Excel pack or adapter manifest, not generic resolver code.",
+        ],
         notes=[
             "Pack metadata must not contain secrets; env var names stay adapter-owned.",
             "Initial selection only projects validation metadata and never mutates runtime behavior.",
@@ -116,6 +126,16 @@ def seed_deep_research_chat_demo_pack() -> HarnessCapabilityPack:
             "min_agent_driver": "0.1.0",
         },
         owners=["agent-driver-harness", "chat-demo-adapter"],
+        ownership_notes=[
+            "agent-driver-harness owns generic pack contracts and resolver behavior.",
+            "chat-demo-adapter owns deep-research probes, trace-summary endpoints and workspace artifact evidence paths.",
+            "Update this pack when research tool policy, source ledgers, report artifacts, steering or reconnect expectations change.",
+        ],
+        review_checklist=[
+            "Reject changes that store user session state or provider key values.",
+            "Reject scenarios that treat skipped live/provider/UI gates as passed evidence.",
+            "Keep research artifact/source expectations in the chat-demo pack or adapter manifest, not generic resolver code.",
+        ],
         notes=[
             "Live provider, Phoenix, Playwright and benchmark gates start skipped.",
             "Scenario evidence should reference source ledgers and report artifacts, not raw fetched pages.",
@@ -181,7 +201,7 @@ def seed_scenario_specs() -> dict[str, HarnessScenarioSpec]:
             artifact_paths=[
                 "research/report.md",
                 "research/sources.jsonl",
-                "/tmp/chat-demo-live-<tag>",
+                "/tmp/chat-demo-live-capability-pack-research-report",
             ],
         ),
     ]
@@ -212,17 +232,21 @@ def seed_adapter_manifests() -> dict[str, HarnessAdapterManifest]:
                 "EXCEL_PHOENIX_PROJECT",
             ],
             deterministic_commands=[
-                "backend/venv/bin/python -m pytest -p no:cacheprovider backend/tests/<test>.py -q",
-                "PYTHONPATH=/mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver:/mnt/share/gitlab_projects/excel_ai/backend venv/bin/python -m pytest -p no:cacheprovider backend/tests/<test>.py -q",
+                "PYTHONPATH=/mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver:/mnt/share/gitlab_projects/excel_ai/backend /mnt/share/gitlab_projects/excel_ai/backend/venv/bin/python -m pytest -p no:cacheprovider /mnt/share/gitlab_projects/excel_ai/backend/tests/test_provenance_adapter.py /mnt/share/gitlab_projects/excel_ai/backend/tests/test_chart_flat_args.py /mnt/share/gitlab_projects/excel_ai/backend/tests/test_edit_benchmark_metrics.py -q",
             ],
             optional_live_commands=[
-                "make phoenix-smoke",
-                "EXCEL_PHOENIX_ENABLED=true EXCEL_PHOENIX_PROJECT=excel-ai EXCEL_PHOENIX_ENDPOINT=http://localhost:6006 EXCEL_BENCHMARK_RUN_ID=<tag> backend/venv/bin/python -m tests.benchmark.runner",
+                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-openrouter-preflight",
+                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-excel-trace-smoke",
+                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-excel-trace-ui-review",
+                "EXCEL_PHOENIX_ENABLED=true EXCEL_PHOENIX_PROJECT=excel-ai EXCEL_PHOENIX_ENDPOINT=http://localhost:6006 EXCEL_BENCHMARK_RUN_ID=capability-pack-excel-workbook-chat /mnt/share/gitlab_projects/excel_ai/backend/venv/bin/python -m tests.benchmark.runner",
             ],
             trace_endpoints=["Phoenix project excel-ai"],
             support_bundle_endpoints=["product adapter support bundle"],
             benchmark_commands=["backend/venv/bin/python -m tests.benchmark.runner"],
-            playwright_specs=["frontend/e2e/<spec>.ts"],
+            playwright_specs=[
+                "frontend/e2e/chart-generation.spec.ts",
+                "frontend/e2e/qa-v1-edit-compute-apply.spec.ts",
+            ],
             artifact_output_paths=["docs/benchmarks/", "backend/benchmark_reports/"],
             known_non_goals=[
                 "Do not store workbook ids, session auth or provider keys in packs.",
@@ -244,20 +268,22 @@ def seed_adapter_manifests() -> dict[str, HarnessAdapterManifest]:
                 "PHOENIX_PROJECT_NAME",
             ],
             deterministic_commands=[
-                "PYTHONPATH=../../.. uv run python -m pytest -q",
-                ".venv/bin/python -m pytest -p no:cacheprovider tests/observability/test_run_trace_summary.py -q",
+                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/examples/chat-demo/backend && PYTHONPATH=../../.. uv run python -m pytest -q tests/test_run_trace_summary.py tests/test_workspace.py",
+                "/mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/.venv/bin/python -m pytest -p no:cacheprovider /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/tests/observability/test_run_trace_summary.py /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/tests/observability/test_support_bundle.py -q",
             ],
             optional_live_commands=[
-                "CHAT_DEMO_URL=http://localhost:5174 CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-<tag> .venv/bin/python examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario <scenario>",
-                "make policy-supervision-chat-demo-trace-ui-review",
+                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-openrouter-preflight",
+                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-chat-demo-trace-smoke",
+                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-chat-demo-trace-ui-review",
+                "CHAT_DEMO_URL=http://localhost:5174 CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-capability-pack-research-report /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/.venv/bin/python /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario research-report",
             ],
             trace_endpoints=["/api/chat/runs/{run_id}/trace-summary"],
             support_bundle_endpoints=["/api/chat/runs/{run_id}/trace-summary"],
             benchmark_commands=[
-                "CHAT_DEMO_URL=http://localhost:5174 .venv/bin/python examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario <scenario>",
+                "CHAT_DEMO_URL=http://localhost:5174 /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/.venv/bin/python /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario research-report",
             ],
             playwright_specs=["examples/chat-demo/frontend/tests/e2e/*.py"],
-            artifact_output_paths=["/tmp/chat-demo-live-<tag>"],
+            artifact_output_paths=["/tmp/chat-demo-live-capability-pack-research-report"],
             known_non_goals=[
                 "Do not store user session state or provider key values in packs.",
             ],
