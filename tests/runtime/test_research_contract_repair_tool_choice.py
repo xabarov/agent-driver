@@ -486,10 +486,10 @@ async def test_artifact_repair_gate_blocks_fetch_when_report_exists_without_ledg
     )
     assert isinstance(web_fetch, ToolGateDeny)
     assert "deep_research_artifact_repair_gate denied" in web_fetch.reason
-    wrong_file_write = await gate(
+    repairable_file_write = await gate(
         _gate_context("file_write", {"path": "research/report.md"})
     )
-    assert isinstance(wrong_file_write, ToolGateDeny)
+    assert isinstance(repairable_file_write, ToolGateAllow)
     assert (
         context.metadata["deep_research_artifact_repair_gate"]["required_path"]
         == "research/sources.jsonl"

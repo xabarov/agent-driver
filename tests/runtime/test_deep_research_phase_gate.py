@@ -37,10 +37,35 @@ async def test_deep_research_phase_gate_allows_expected_sequence() -> None:
         await gate(_ctx("web_fetch", {"url": "https://example.com/a"})),
         await gate(_ctx("web_fetch", {"url": "https://example.org/b"})),
         await gate(_ctx("file_write", {"path": "research/report.md"})),
+        await gate(_ctx("file_write", {"path": "research/sources.jsonl"})),
         await gate(_ctx("artifact_preview", {"path": "research/report.md"})),
     ]
 
     assert all(isinstance(result, ToolGateAllow) for result in results)
+
+
+@pytest.mark.asyncio
+async def test_deep_research_phase_gate_keeps_write_phase_until_source_ledger() -> None:
+    gate = create_deep_research_phase_gate(required_fetch_attempts=1)
+
+    assert isinstance(await gate(_ctx("todo_write")), ToolGateAllow)
+    assert isinstance(
+        await gate(_ctx("web_search", {"query": "fork join queue"})),
+        ToolGateAllow,
+    )
+    assert isinstance(
+        await gate(_ctx("web_fetch", {"url": "https://example.com/a"})),
+        ToolGateAllow,
+    )
+    assert isinstance(
+        await gate(_ctx("file_write", {"path": "research/report.md"})),
+        ToolGateAllow,
+    )
+
+    result = await gate(_ctx("file_write", {"path": "research/sources.jsonl"}))
+
+    assert isinstance(result, ToolGateAllow)
+    assert result.reason == "deep_research_phase=write"
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agent_driver.runtime.deep_research_gating import (
+    is_research_report_path,
+    is_research_source_ledger_path,
+)
 from agent_driver.runtime.tool_gate import (
     ToolGate,
     ToolGateAllow,
@@ -67,6 +71,7 @@ class DeepResearchPhaseGateState:
     search_seen: bool = False
     fetch_attempts: int = 0
     report_written: bool = False
+    source_ledger_written: bool = False
 
     def phase(self) -> str:
         if not self.plan_created and not self.search_seen:
@@ -75,7 +80,7 @@ class DeepResearchPhaseGateState:
             return "discover"
         if self.fetch_attempts < max(1, self.required_fetch_attempts):
             return "verify"
-        if not self.report_written:
+        if not self.report_written or not self.source_ledger_written:
             return "write"
         return "review"
 
@@ -88,8 +93,11 @@ class DeepResearchPhaseGateState:
             self.search_seen = True
         elif tool_name == "web_fetch":
             self.fetch_attempts += 1
-        elif tool_name == "file_write" and _targets_research_report(args):
-            self.report_written = True
+        elif tool_name in {"file_write", "file_edit", "file_patch"}:
+            if _targets_research_report(args):
+                self.report_written = True
+            elif _targets_research_source_ledger(args):
+                self.source_ledger_written = True
 
 
 def create_deep_research_phase_gate(
@@ -122,10 +130,14 @@ def _targets_research_report(args: dict[str, object]) -> bool:
     value = args.get("path")
     if not isinstance(value, str):
         return True
-    normalized = value.strip().replace("\\", "/").rstrip("/")
-    return normalized == "research/report.md" or normalized.endswith(
-        "/research/report.md"
-    )
+    return is_research_report_path(value)
+
+
+def _targets_research_source_ledger(args: dict[str, object]) -> bool:
+    value = args.get("path")
+    if not isinstance(value, str):
+        return False
+    return is_research_source_ledger_path(value)
 
 
 __all__ = [

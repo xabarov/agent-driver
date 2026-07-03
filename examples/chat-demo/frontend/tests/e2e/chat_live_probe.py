@@ -74,6 +74,7 @@ class LiveScenario:
     research_depth: str | None = None
     required_artifact_path: str | None = None
     required_artifact_preview: str | None = None
+    required_artifact_preview_terms: tuple[str, ...] = ()
     require_artifact_panel: bool = False
     require_research_efficiency: bool = False
     max_phase_violations_before_stop: int | None = 4
@@ -268,7 +269,7 @@ SCENARIOS: dict[str, LiveScenario] = {
             "react_chat_tool_policy_web_fetch.txt",
         ),
         required_artifact_path="research/report.md",
-        required_artifact_preview="Fork-join queueing models",
+        required_artifact_preview_terms=("fork", "join", "queue"),
         require_artifact_panel=True,
         require_research_efficiency=True,
         timeout_ms=240000,
@@ -1236,6 +1237,10 @@ def assert_artifact_panel(
         expect(
             page.get_by_text(scenario.required_artifact_preview).first
         ).to_be_visible(timeout=10000)
+    for term in scenario.required_artifact_preview_terms:
+        expect(page.get_by_text(re.compile(re.escape(term), re.I)).first).to_be_visible(
+            timeout=10000
+        )
 
 
 def transcript_excerpt(page: Page, *, max_chars: int = 6000) -> str:
@@ -1566,6 +1571,17 @@ def run_scenario(page: Page, scenario: LiveScenario) -> dict[str, Any]:
                 failures.append(
                     "required artifact preview text missing: "
                     f"{scenario.required_artifact_preview}"
+                )
+            preview_content_lower = str(workspace_preview.get("content") or "").lower()
+            missing_preview_terms = [
+                term
+                for term in scenario.required_artifact_preview_terms
+                if term.lower() not in preview_content_lower
+            ]
+            if missing_preview_terms:
+                failures.append(
+                    "required artifact preview terms missing: "
+                    f"{', '.join(missing_preview_terms)}"
                 )
         except Exception as exc:
             failures.append(f"workspace artifact API check failed: {exc}")

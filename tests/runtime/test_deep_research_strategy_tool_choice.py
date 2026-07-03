@@ -85,6 +85,29 @@ def _tool_result(tool_name: str, *, status: str | None = None) -> dict[str, obje
     return result
 
 
+def _web_fetch_result(url: str) -> dict[str, object]:
+    return {
+        "call": {
+            "tool_name": "web_fetch",
+            "tool_call_id": "call_web_fetch",
+            "args": {"url": url},
+        },
+        "status": "completed",
+        "content": "Fetched source content.",
+    }
+
+
+def _path_tool_result(tool_name: str, path: str) -> dict[str, object]:
+    return {
+        "call": {
+            "tool_name": tool_name,
+            "tool_call_id": f"call_{tool_name}",
+            "args": {"path": path},
+        },
+        "status": "completed",
+    }
+
+
 def test_medium_strategy_forces_agent_tool_after_initial_plan() -> None:
     context = _context(
         planning_state={
@@ -270,6 +293,150 @@ def test_deep_research_with_ledger_only_forces_report_write(
     ledger.write_text('{"url": "https://example.com"}\n', encoding="utf-8")
 
     assert _deep_research_request_allowed_tools(context) == ("file_write",)
+
+
+def test_deep_research_artifacts_ready_with_stale_todos_forces_todo_write(
+    tmp_path: Path,
+) -> None:
+    context = _context(
+        research_depth="source_verified_report",
+        research_mode="deep",
+        tool_results=[
+            _tool_result("web_search"),
+            _web_fetch_result("https://example.com/a"),
+            _web_fetch_result("https://example.org/b"),
+            _path_tool_result("read_file", "research/report.md"),
+            _path_tool_result("artifact_preview", "research/report.md"),
+            _path_tool_result("file_patch", "research/report.md"),
+        ],
+        planning_state={
+            "run_id": "run_test",
+            "todos": [
+                {
+                    "todo_id": "search",
+                    "content": "Search sources",
+                    "status": "completed",
+                },
+                {
+                    "todo_id": "final",
+                    "content": "Final handoff",
+                    "status": "in_progress",
+                },
+            ]
+        },
+    )
+    context.metadata["workspace_cwd"] = str(tmp_path)
+    report = tmp_path / "research" / "report.md"
+    ledger = tmp_path / "research" / "sources.jsonl"
+    report.parent.mkdir(parents=True)
+    report.write_text("ready report", encoding="utf-8")
+    ledger.write_text(
+        '{"url": "https://example.com/a"}\n{"url": "https://example.org/b"}\n',
+        encoding="utf-8",
+    )
+
+    allowed_tools = _deep_research_request_allowed_tools(context)
+    assert allowed_tools is not None
+    assert "todo_write" in allowed_tools
+    choice = _deep_research_strategy_tool_choice(context, None)
+    assert choice == {"type": "tool", "name": "todo_write"}
+    assert context.metadata["deep_research_strategy_tool_choice"] == {
+        "tool": "todo_write",
+        "path": "research/report.md",
+        "reason": "deep_research_todo_repair_pending",
+    }
+
+
+def test_deep_research_artifacts_ready_after_todo_repair_hands_off_to_final(
+    tmp_path: Path,
+) -> None:
+    context = _context(
+        research_depth="source_verified_report",
+        research_mode="deep",
+        tool_results=[
+            _tool_result("todo_write"),
+            _tool_result("web_search"),
+            _web_fetch_result("https://example.com/a"),
+            _web_fetch_result("https://example.org/b"),
+            _path_tool_result("read_file", "research/report.md"),
+            _path_tool_result("artifact_preview", "research/report.md"),
+            _path_tool_result("file_patch", "research/report.md"),
+            _tool_result("todo_write"),
+        ],
+        planning_state={
+            "run_id": "run_test",
+            "todos": [
+                {
+                    "todo_id": "final",
+                    "content": "Final handoff",
+                    "status": "in_progress",
+                },
+            ]
+        },
+    )
+    context.metadata["workspace_cwd"] = str(tmp_path)
+    report = tmp_path / "research" / "report.md"
+    ledger = tmp_path / "research" / "sources.jsonl"
+    report.parent.mkdir(parents=True)
+    report.write_text("ready report", encoding="utf-8")
+    ledger.write_text(
+        '{"url": "https://example.com/a"}\n{"url": "https://example.org/b"}\n',
+        encoding="utf-8",
+    )
+
+    choice = _deep_research_strategy_tool_choice(context, None)
+
+    assert choice == "none"
+    assert context.metadata["deep_research_strategy_tool_choice"] == {
+        "tool": "none",
+        "reason": "deep_research_artifacts_ready",
+    }
+
+
+def test_deep_research_artifacts_ready_after_fetch_cap_hands_off_to_final(
+    tmp_path: Path,
+) -> None:
+    fetches = [
+        _web_fetch_result(f"https://example.com/source-{idx}")
+        for idx in range(6)
+    ]
+    context = _context(
+        research_depth="source_verified_report",
+        research_mode="deep",
+        tool_results=[
+            _tool_result("todo_write"),
+            _tool_result("web_search"),
+            *fetches,
+            _path_tool_result("read_file", "research/report.md"),
+            _path_tool_result("artifact_preview", "research/report.md"),
+            _path_tool_result("file_patch", "research/report.md"),
+            _tool_result("todo_write"),
+        ],
+        planning_state={
+            "run_id": "run_test",
+            "todos": [
+                {
+                    "todo_id": "final",
+                    "content": "Final handoff",
+                    "status": "in_progress",
+                },
+            ]
+        },
+    )
+    context.metadata["workspace_cwd"] = str(tmp_path)
+    report = tmp_path / "research" / "report.md"
+    ledger = tmp_path / "research" / "sources.jsonl"
+    report.parent.mkdir(parents=True)
+    report.write_text("ready report", encoding="utf-8")
+    ledger.write_text('{"url": "https://example.com/source-1"}\n', encoding="utf-8")
+
+    choice = _deep_research_strategy_tool_choice(context, None)
+
+    assert choice == "none"
+    assert context.metadata["deep_research_strategy_tool_choice"] == {
+        "tool": "none",
+        "reason": "deep_research_artifacts_ready",
+    }
 
 
 def test_parent_synthesis_recovery_narrows_to_report_write() -> None:
