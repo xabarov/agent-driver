@@ -263,9 +263,23 @@ def test_cli_capability_pack_run_deterministic_writes_command_outputs(
     payload = json.loads(capsys.readouterr().out)
     assert payload["mode"] == "run_deterministic"
     assert payload["executed_commands"][0]["status"] == "passed"
-    assert payload["validation_gate_results"][0]["status"] == "passed"
+    gate_statuses = {
+        row["gate_id"]: row["status"] for row in payload["validation_gate_results"]
+    }
+    assert gate_statuses["deterministic_tests"] == "passed"
+    assert gate_statuses["support_bundle_artifact"] == "passed"
+    assert (
+        payload["capability_pack_resolution"]["gate_statuses"][
+            "support_bundle_artifact"
+        ]
+        == "passed"
+    )
     assert (output_dir / "command_outputs" / "deterministic_1.json").is_file()
     assert (output_dir / "evidence_index.json").is_file()
+    validation_gates = json.loads(
+        (output_dir / "validation_gates.json").read_text(encoding="utf-8")
+    )
+    assert validation_gates["statuses"]["support_bundle_artifact"] == "passed"
     manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
     assert "command_output" in {row["artifact_type"] for row in manifest["artifacts"]}
 
@@ -288,6 +302,95 @@ def test_cli_capability_pack_run_deterministic_blocks_template_command(capsys) -
     payload = json.loads(capsys.readouterr().out)
     assert payload["executed_commands"][0]["status"] == "blocked"
     assert payload["validation_gate_results"][0]["status"] == "blocked"
+
+
+def test_cli_capability_pack_audit_writes_validation_reports(tmp_path, capsys) -> None:
+    run_dir = tmp_path / "pack-run"
+    audit_dir = tmp_path / "pack-audit"
+    command = f"{shlex.quote(sys.executable)} -c \"print('audit cli ok')\""
+    assert (
+        main(
+            [
+                "capability-pack",
+                "run-deterministic",
+                "--pack-id",
+                "excel_workbook_chat",
+                "--scenario-id",
+                "excel.workbook_context.transaction.v1",
+                "--deterministic-command",
+                command,
+                "--cwd",
+                str(tmp_path),
+                "--output-dir",
+                str(run_dir),
+            ]
+        )
+        == 0
+    )
+    _ = capsys.readouterr()
+
+    code = main(
+        [
+            "capability-pack",
+            "audit",
+            "--evidence-index-dir",
+            str(run_dir),
+            "--no-live",
+            "--strict",
+            "--output-dir",
+            str(audit_dir),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["regression_summary"]["candidate_status"] == "no_claim"
+    assert payload["strict_passed"] is True
+    assert (audit_dir / "validation_run.json").is_file()
+    assert (audit_dir / "validation_report.md").is_file()
+    report = (audit_dir / "validation_report.md").read_text(encoding="utf-8")
+    assert "openrouter_live_preflight" in report
+
+
+def test_cli_capability_pack_audit_strict_fails_missing_required_gates(
+    tmp_path, capsys
+) -> None:
+    run_dir = tmp_path / "pack-dry-run"
+    assert (
+        main(
+            [
+                "capability-pack",
+                "dry-run",
+                "--pack-id",
+                "deep_research_chat_demo",
+                "--scenario-id",
+                "chat_demo.deep_research.source_report.v1",
+                "--output-dir",
+                str(run_dir),
+            ]
+        )
+        == 0
+    )
+    _ = capsys.readouterr()
+
+    code = main(
+        [
+            "capability-pack",
+            "audit",
+            "--evidence-index-dir",
+            str(run_dir),
+            "--no-live",
+            "--strict",
+        ]
+    )
+
+    assert code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["regression_summary"]["candidate_status"] == "failed"
+    assert payload["regression_summary"]["skipped_required_gates"] == [
+        "deterministic_tests",
+        "support_bundle_artifact",
+    ]
 
 
 def test_cli_chat_keyboard_interrupt_returns_130(monkeypatch, capsys) -> None:

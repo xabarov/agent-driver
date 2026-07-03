@@ -36,13 +36,16 @@ def run_capability_pack_deterministic_gates(
     adapter_id: str | None = None,
     scenario_ids: list[str] | None = None,
     deterministic_commands: list[str] | None = None,
+    support_bundle_artifact_path: str | None = None,
     cwd: str | Path | None = None,
     timeout_seconds: float = 60.0,
 ) -> dict[str, Any]:
     """Execute deterministic gate commands with conservative guardrails."""
     pack = _seed_pack(pack_id)
     adapter = _seed_adapter(adapter_id or _default_adapter_id(pack))
-    scenarios = _seed_scenarios(scenario_ids or _default_scenario_ids(adapter.adapter_id))
+    scenarios = _seed_scenarios(
+        scenario_ids or _default_scenario_ids(adapter.adapter_id)
+    )
     for scenario in scenarios:
         if scenario.product_adapter_id != adapter.adapter_id:
             raise ValueError(
@@ -61,11 +64,23 @@ def run_capability_pack_deterministic_gates(
         for index, command in enumerate(commands, start=1)
     ]
     gate_result = _aggregate_deterministic_gate(command_results)
+    gate_results = [gate_result]
+    if support_bundle_artifact_path:
+        gate_results.append(
+            ValidationGateResult(
+                gate_id="support_bundle_artifact",
+                status="passed",
+                evidence_path=support_bundle_artifact_path,
+                redacted_metadata={
+                    "artifact_kind": "validation_artifact_manifest",
+                },
+            )
+        )
     resolution = resolve_capability_pack(
         pack,
         adapter_manifest=adapter,
         scenario_specs=scenarios,
-        gate_results=[gate_result],
+        gate_results=gate_results,
     )
     evidence_index = (
         resolution.evidence_index.model_dump(mode="json")
@@ -79,7 +94,9 @@ def run_capability_pack_deterministic_gates(
             "optional_live_commands": resolution.optional_live_commands,
         },
         "capability_pack_resolution": resolution.model_dump(mode="json"),
-        "validation_gate_results": [gate_result.model_dump(mode="json")],
+        "validation_gate_results": [
+            gate_result.model_dump(mode="json") for gate_result in gate_results
+        ],
         "evidence_index": evidence_index,
         "redaction": {
             "safe_by_default": True,
@@ -152,7 +169,9 @@ def _blocked_reason(command: str) -> str | None:
 
 
 def _redact_text(value: str | bytes | None) -> str:
-    text = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+    text = (
+        value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+    )
     redacted = text or ""
     for pattern in _REDACTION_PATTERNS:
         redacted = pattern.sub(r"\1=<redacted>", redacted)

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from agent_driver.cli.chat import parse_chat_command, render_chat_stream, run_chat_session
+from agent_driver.cli.chat import (
+    parse_chat_command,
+    render_chat_stream,
+    run_chat_session,
+)
 from agent_driver.cli.sessions import SessionStore
 from agent_driver.cli.main import main
 from agent_driver.contracts import RunStreamEvent, ToolCall
@@ -73,7 +77,9 @@ class _LoopingChatProvider(FakeProvider):
                         tool_name="web_search",
                         args={
                             "query": "news",
-                            "mock_results": [{"title": "A", "url": "https://example.com"}],
+                            "mock_results": [
+                                {"title": "A", "url": "https://example.com"}
+                            ],
                         },
                     ).model_dump(mode="json")
                 ]
@@ -92,7 +98,9 @@ class _LoopingChatProvider(FakeProvider):
                         tool_name="web_search",
                         args={
                             "query": "news",
-                            "mock_results": [{"title": "A", "url": "https://example.com"}],
+                            "mock_results": [
+                                {"title": "A", "url": "https://example.com"}
+                            ],
                         },
                     ).model_dump(mode="json")
                 ]
@@ -111,7 +119,9 @@ class _ZeroResultFinalProvider(FakeProvider):
             yield LlmStreamEvent(
                 event="tool_calls",
                 finish_reason=LlmFinishReason.TOOL_CALLS,
-                usage=UsageSummary(model_provider="zero-final", model_name="loop-model"),
+                usage=UsageSummary(
+                    model_provider="zero-final", model_name="loop-model"
+                ),
                 metadata={
                     "planned_tool_calls": [
                         ToolCall(
@@ -165,7 +175,9 @@ async def test_chat_session_basic_turn_and_runs_listing() -> None:
         event_log=event_log,
     )
     io = _IoHarness(["hello", "/runs", "/exit"])
-    selected_manifests = [row.manifest for row in agent.runner.deps.tool_registry.list_registered()]
+    selected_manifests = [
+        row.manifest for row in agent.runner.deps.tool_registry.list_registered()
+    ]
     exit_code = await run_chat_session(
         agent=agent,
         event_log=event_log,
@@ -195,8 +207,21 @@ async def test_chat_session_replay_tail_and_clear_commands() -> None:
         checkpoint_store=InMemoryCheckpointStore(),
         event_log=event_log,
     )
-    io = _IoHarness(["hello", "/tools", "/tools verbose", "/replay", "/tail", "/clear", "/runs", "/exit"])
-    selected_manifests = [row.manifest for row in agent.runner.deps.tool_registry.list_registered()]
+    io = _IoHarness(
+        [
+            "hello",
+            "/tools",
+            "/tools verbose",
+            "/replay",
+            "/tail",
+            "/clear",
+            "/runs",
+            "/exit",
+        ]
+    )
+    selected_manifests = [
+        row.manifest for row in agent.runner.deps.tool_registry.list_registered()
+    ]
     exit_code = await run_chat_session(
         agent=agent,
         event_log=event_log,
@@ -434,7 +459,9 @@ async def test_chat_stream_tool_card_shows_web_preview_urls() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_session_looping_tool_calls_fail_by_budget_with_named_tools() -> None:
+async def test_chat_session_looping_tool_calls_stop_by_budget_with_named_tools() -> (
+    None
+):
     """Looping tool calls should stop by budget and render named tool events."""
     event_log = InMemoryEventLog()
     provider = _LoopingChatProvider()
@@ -445,7 +472,9 @@ async def test_chat_session_looping_tool_calls_fail_by_budget_with_named_tools()
         event_log=event_log,
     )
     io = _IoHarness(["новости китая", "/exit"])
-    selected_manifests = [row.manifest for row in agent.runner.deps.tool_registry.list_registered()]
+    selected_manifests = [
+        row.manifest for row in agent.runner.deps.tool_registry.list_registered()
+    ]
     exit_code = await run_chat_session(
         agent=agent,
         event_log=event_log,
@@ -463,8 +492,9 @@ async def test_chat_session_looping_tool_calls_fail_by_budget_with_named_tools()
     text = "".join(io.output)
     assert "tool> web_search(" in text
     assert "summary=" in text
-    assert "event> run run_failed reason=tool_policy_denied" in text
-    assert "hint> Check --max-tool-calls and tool policy." in text
+    assert "assistant> [no textual response]" in text
+    assert "tools_used=1 warnings=1" in text
+    assert "hint> Check --max-tool-calls and tool policy." not in text
 
 
 @pytest.mark.asyncio
@@ -478,7 +508,9 @@ async def test_chat_session_zero_results_get_honest_final_answer() -> None:
         event_log=event_log,
     )
     io = _IoHarness(["новости", "/exit"])
-    selected_manifests = [row.manifest for row in agent.runner.deps.tool_registry.list_registered()]
+    selected_manifests = [
+        row.manifest for row in agent.runner.deps.tool_registry.list_registered()
+    ]
     exit_code = await run_chat_session(
         agent=agent,
         event_log=event_log,
@@ -499,7 +531,9 @@ async def test_chat_session_zero_results_get_honest_final_answer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_session_supports_sessions_history_and_debug_commands(tmp_path) -> None:
+async def test_chat_session_supports_sessions_history_and_debug_commands(
+    tmp_path,
+) -> None:
     """Chat slash commands should expose session/history/debug and persist session state."""
     event_log = InMemoryEventLog()
     agent = create_agent(
@@ -523,7 +557,9 @@ async def test_chat_session_supports_sessions_history_and_debug_commands(tmp_pat
             "/exit",
         ]
     )
-    selected_manifests = [row.manifest for row in agent.runner.deps.tool_registry.list_registered()]
+    selected_manifests = [
+        row.manifest for row in agent.runner.deps.tool_registry.list_registered()
+    ]
     code = await run_chat_session(
         agent=agent,
         event_log=event_log,
@@ -564,7 +600,9 @@ async def test_chat_passes_transcript_as_messages() -> None:
         event_log=event_log,
     )
     io = _IoHarness(["hello", "again", "/exit"])
-    selected_manifests = [row.manifest for row in agent.runner.deps.tool_registry.list_registered()]
+    selected_manifests = [
+        row.manifest for row in agent.runner.deps.tool_registry.list_registered()
+    ]
     code = await run_chat_session(
         agent=agent,
         event_log=event_log,
@@ -589,7 +627,9 @@ async def test_chat_reset_clears_memory() -> None:
         event_log=event_log,
     )
     io = _IoHarness(["hello", "/reset", "/history", "/exit"])
-    selected_manifests = [row.manifest for row in agent.runner.deps.tool_registry.list_registered()]
+    selected_manifests = [
+        row.manifest for row in agent.runner.deps.tool_registry.list_registered()
+    ]
     code = await run_chat_session(
         agent=agent,
         event_log=event_log,

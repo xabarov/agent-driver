@@ -46,7 +46,16 @@ _VALID_POLICY_ACTIONS = frozenset(
 _VALID_EVALUATION_STATUSES = frozenset({"matched", "not_matched", "skipped"})
 _VALID_HEARTBEAT_STATUSES = frozenset({"unknown", "active", "stale", "terminal"})
 _VALID_VALIDATION_GATE_STATUSES = frozenset(
-    {"passed", "failed", "skipped", "blocked", "not_run"}
+    {
+        "passed",
+        "failed",
+        "skipped",
+        "blocked",
+        "not_run",
+        "stale",
+        "quarantined",
+        "no_claim",
+    }
 )
 
 

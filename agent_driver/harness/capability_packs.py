@@ -227,18 +227,21 @@ def seed_adapter_manifests() -> dict[str, HarnessAdapterManifest]:
                 "LLM_API_KEY",
                 "OPENROUTER_API_KEY",
                 "AGENT_DRIVER_API_KEY",
+                "AGENT_DRIVER_REPO",
+                "EXCEL_AI_BACKEND_DIR",
+                "EXCEL_AI_BACKEND_PYTHON",
                 "EXCEL_PHOENIX_ENABLED",
                 "EXCEL_PHOENIX_ENDPOINT",
                 "EXCEL_PHOENIX_PROJECT",
             ],
             deterministic_commands=[
-                "PYTHONPATH=/mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver:/mnt/share/gitlab_projects/excel_ai/backend /mnt/share/gitlab_projects/excel_ai/backend/venv/bin/python -m pytest -p no:cacheprovider /mnt/share/gitlab_projects/excel_ai/backend/tests/test_provenance_adapter.py /mnt/share/gitlab_projects/excel_ai/backend/tests/test_chart_flat_args.py /mnt/share/gitlab_projects/excel_ai/backend/tests/test_edit_benchmark_metrics.py -q",
+                'test -n "${EXCEL_AI_BACKEND_DIR:-}" && test -x "${EXCEL_AI_BACKEND_PYTHON:-${EXCEL_AI_BACKEND_DIR}/venv/bin/python}" && PYTHONPATH="${AGENT_DRIVER_REPO:-.}:${EXCEL_AI_BACKEND_DIR}" "${EXCEL_AI_BACKEND_PYTHON:-${EXCEL_AI_BACKEND_DIR}/venv/bin/python}" -m pytest -p no:cacheprovider "${EXCEL_AI_BACKEND_DIR}/tests/test_provenance_adapter.py" "${EXCEL_AI_BACKEND_DIR}/tests/test_chart_flat_args.py" "${EXCEL_AI_BACKEND_DIR}/tests/test_edit_benchmark_metrics.py" -q',
             ],
             optional_live_commands=[
-                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-openrouter-preflight",
-                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-excel-trace-smoke",
-                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-excel-trace-ui-review",
-                "EXCEL_PHOENIX_ENABLED=true EXCEL_PHOENIX_PROJECT=excel-ai EXCEL_PHOENIX_ENDPOINT=http://localhost:6006 EXCEL_BENCHMARK_RUN_ID=capability-pack-excel-workbook-chat /mnt/share/gitlab_projects/excel_ai/backend/venv/bin/python -m tests.benchmark.runner",
+                'cd "${AGENT_DRIVER_REPO:-.}" && make policy-supervision-openrouter-preflight',
+                'cd "${AGENT_DRIVER_REPO:-.}" && make policy-supervision-excel-trace-smoke',
+                'cd "${AGENT_DRIVER_REPO:-.}" && make policy-supervision-excel-trace-ui-review',
+                'test -n "${EXCEL_AI_BACKEND_DIR:-}" && cd "${EXCEL_AI_BACKEND_DIR}" && EXCEL_PHOENIX_ENABLED=true EXCEL_PHOENIX_PROJECT=excel-ai EXCEL_PHOENIX_ENDPOINT=http://localhost:6006 EXCEL_BENCHMARK_RUN_ID=capability-pack-excel-workbook-chat "${EXCEL_AI_BACKEND_PYTHON:-${EXCEL_AI_BACKEND_DIR}/venv/bin/python}" -m tests.benchmark.runner',
             ],
             trace_endpoints=["Phoenix project excel-ai"],
             support_bundle_endpoints=["product adapter support bundle"],
@@ -262,28 +265,31 @@ def seed_adapter_manifests() -> dict[str, HarnessAdapterManifest]:
                 "AGENT_DRIVER_API_KEY",
                 "OPENROUTER_API_KEY",
                 "LLM_API_KEY",
+                "AGENT_DRIVER_REPO",
                 "AGENT_DRIVER_BASE_URL",
                 "AGENT_DRIVER_MODEL",
                 "PHOENIX_COLLECTOR_ENDPOINT",
                 "PHOENIX_PROJECT_NAME",
             ],
             deterministic_commands=[
-                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/examples/chat-demo/backend && PYTHONPATH=../../.. uv run python -m pytest -q tests/test_run_trace_summary.py tests/test_workspace.py",
-                "/mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/.venv/bin/python -m pytest -p no:cacheprovider /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/tests/observability/test_run_trace_summary.py /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/tests/observability/test_support_bundle.py -q",
+                'cd "${AGENT_DRIVER_REPO:-.}/examples/chat-demo/backend" && PYTHONPATH=../../.. uv run python -m pytest -q tests/test_run_trace_summary.py tests/test_workspace.py',
+                'cd "${AGENT_DRIVER_REPO:-.}" && uv run python -m pytest -p no:cacheprovider tests/observability/test_run_trace_summary.py tests/observability/test_support_bundle.py -q',
             ],
             optional_live_commands=[
-                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-openrouter-preflight",
-                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-chat-demo-trace-smoke",
-                "cd /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver && make policy-supervision-chat-demo-trace-ui-review",
-                "CHAT_DEMO_URL=http://localhost:5174 CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-capability-pack-research-report /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/.venv/bin/python /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario research-report",
+                'cd "${AGENT_DRIVER_REPO:-.}" && make policy-supervision-openrouter-preflight',
+                'cd "${AGENT_DRIVER_REPO:-.}" && make policy-supervision-chat-demo-trace-smoke',
+                'cd "${AGENT_DRIVER_REPO:-.}" && make policy-supervision-chat-demo-trace-ui-review',
+                'cd "${AGENT_DRIVER_REPO:-.}" && CHAT_DEMO_URL=http://localhost:5174 CHAT_DEMO_LIVE_ARTIFACT_DIR=/tmp/chat-demo-live-capability-pack-research-report uv run python examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario research-report',
             ],
             trace_endpoints=["/api/chat/runs/{run_id}/trace-summary"],
             support_bundle_endpoints=["/api/chat/runs/{run_id}/trace-summary"],
             benchmark_commands=[
-                "CHAT_DEMO_URL=http://localhost:5174 /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/.venv/bin/python /mnt/share/gitlab_projects/agent-driver-gitlab/agent-driver/examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario research-report",
+                'cd "${AGENT_DRIVER_REPO:-.}" && CHAT_DEMO_URL=http://localhost:5174 uv run python examples/chat-demo/frontend/tests/e2e/chat_live_probe.py --scenario research-report',
             ],
             playwright_specs=["examples/chat-demo/frontend/tests/e2e/*.py"],
-            artifact_output_paths=["/tmp/chat-demo-live-capability-pack-research-report"],
+            artifact_output_paths=[
+                "/tmp/chat-demo-live-capability-pack-research-report"
+            ],
             known_non_goals=[
                 "Do not store user session state or provider key values in packs.",
             ],
@@ -337,10 +343,16 @@ def resolve_capability_pack(
         )
 
     for scenario in scenarios:
-        for gate_id in scenario.deterministic_gate_ids + scenario.optional_live_gate_ids:
+        for gate_id in (
+            scenario.deterministic_gate_ids + scenario.optional_live_gate_ids
+        ):
             if gate_id not in selected_gate_ids:
                 selected_gate_ids.append(gate_id)
-                status = "skipped" if gate_id in scenario.optional_live_gate_ids else "not_run"
+                status = (
+                    "skipped"
+                    if gate_id in scenario.optional_live_gate_ids
+                    else "not_run"
+                )
                 gate_statuses[gate_id] = status
                 if status == "skipped":
                     skipped_gate_reasons[gate_id] = _LIVE_SKIP_REASON
@@ -558,7 +570,9 @@ def _default_gate_status(gate: HarnessReleaseGate) -> str:
 
 
 def _pack_from_metadata(metadata: dict[str, Any]) -> HarnessCapabilityPack | None:
-    raw_pack = metadata.get("capability_pack") or metadata.get("harness_capability_pack")
+    raw_pack = metadata.get("capability_pack") or metadata.get(
+        "harness_capability_pack"
+    )
     if isinstance(raw_pack, dict):
         return HarnessCapabilityPack.model_validate(raw_pack)
     pack_id = metadata.get("capability_pack_id") or metadata.get(

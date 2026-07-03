@@ -31,9 +31,7 @@ def test_seed_capability_packs_validate_two_products() -> None:
     ]
     assert packs["excel_workbook_chat"].ownership_notes
     assert packs["deep_research_chat_demo"].review_checklist
-    assert {
-        gate.gate_id for gate in packs["excel_workbook_chat"].release_gates
-    } >= {
+    assert {gate.gate_id for gate in packs["excel_workbook_chat"].release_gates} >= {
         "deterministic_tests",
         "support_bundle_artifact",
         "openrouter_live_preflight",
@@ -114,9 +112,16 @@ def test_chat_demo_resolution_includes_adapter_commands_without_secrets() -> Non
     assert dumped["pack_id"] == "deep_research_chat_demo"
     assert dumped["scenario_ids"] == ["chat_demo.deep_research.source_report.v1"]
     assert "source_evidence" in dumped["required_evidence"]
-    assert any("trace-summary" in item for item in adapters["chat_demo"].trace_endpoints)
-    assert all("API_KEY=" not in command for command in dumped["optional_live_commands"])
-    assert not any("<" in command and ">" in command for command in dumped["deterministic_commands"])
+    assert any(
+        "trace-summary" in item for item in adapters["chat_demo"].trace_endpoints
+    )
+    assert all(
+        "API_KEY=" not in command for command in dumped["optional_live_commands"]
+    )
+    assert not any(
+        "<" in command and ">" in command
+        for command in dumped["deterministic_commands"]
+    )
 
 
 def test_seed_adapter_manifests_use_concrete_non_secret_command_references() -> None:
@@ -130,9 +135,12 @@ def test_seed_adapter_manifests_use_concrete_non_secret_command_references() -> 
         )
         assert all("API_KEY=" not in item for item in command_fields)
         assert all("<" not in item and ">" not in item for item in command_fields)
+        assert all("/mnt/share/" not in item for item in command_fields)
     for scenario in seed_scenario_specs().values():
         assert all("API_KEY=" not in item for item in scenario.artifact_paths)
-        assert all("<" not in item and ">" not in item for item in scenario.artifact_paths)
+        assert all(
+            "<" not in item and ">" not in item for item in scenario.artifact_paths
+        )
 
 
 def test_capability_pack_dry_run_payload_is_execution_free() -> None:

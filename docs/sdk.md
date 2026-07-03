@@ -67,6 +67,38 @@ Output diagnostics:
   `ProviderPreflightResult` metadata so callers can inspect request-shape
   downgrades without making a live provider request.
 
+## Capability Packs And Validation Gates
+
+Product hosts can opt into redaction-safe capability-pack metadata for
+continuous validation and release evidence. The built-in seed packs currently
+cover `excel_workbook_chat` and `deep_research_chat_demo`; selecting one is
+inert by default and only projects required evidence, scenario ids, gate status,
+and skipped-gate reasons into trace summaries and support bundles.
+
+```bash
+agent-driver capability-pack dry-run \
+  --pack-id deep_research_chat_demo \
+  --scenario-id chat_demo.deep_research.source_report.v1 \
+  --output-dir .agent-driver/capability-packs/deep-research
+
+agent-driver capability-pack run-deterministic \
+  --pack-id deep_research_chat_demo \
+  --scenario-id chat_demo.deep_research.source_report.v1 \
+  --output-dir .agent-driver/capability-packs/deep-research-run
+```
+
+`dry-run` never executes host commands. `run-deterministic` executes only
+deterministic commands after conservative command guards, redacts command
+output, writes `manifest.json`, `evidence_index.json`,
+`validation_gates.json`, and per-command output artifacts, and marks
+`support_bundle_artifact` passed when `--output-dir` persists the manifest.
+Optional live/provider/UI/benchmark gates stay skipped with explicit reasons
+until a host runs the corresponding policy-supervision gate.
+
+Host manifests should use relative commands plus `AGENT_DRIVER_REPO` and
+adapter-owned env vars such as `EXCEL_AI_BACKEND_DIR`; they should not embed
+absolute local checkout paths or secret values.
+
 See also:
 
 - [SDK sessions](sdk-sessions.md)

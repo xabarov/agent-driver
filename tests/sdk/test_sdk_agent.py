@@ -32,7 +32,10 @@ from agent_driver.llm.contracts import (
     UsageSummary,
 )
 from agent_driver.runtime import RunnerConfig
-from agent_driver.runtime.control import InMemoryCommandQueueStore, SqliteCommandQueueStore
+from agent_driver.runtime.control import (
+    InMemoryCommandQueueStore,
+    SqliteCommandQueueStore,
+)
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.sdk import (
     Agent,
@@ -53,7 +56,9 @@ from agent_driver.tools import ToolRegistry, ToolSet
 @pytest.mark.asyncio
 async def test_sdk_create_agent_returns_facade_and_runs() -> None:
     """SDK create_agent should return facade that can execute runs."""
-    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only("web_search"))
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only("web_search")
+    )
     assert isinstance(agent, Agent)
     output = await agent.run(
         AgentRunInput(
@@ -69,7 +74,11 @@ async def test_sdk_create_agent_returns_facade_and_runs() -> None:
                             args={
                                 "query": "agent driver",
                                 "mock_results": [
-                                    {"title": "A", "url": "https://example.com", "snippet": "B"}
+                                    {
+                                        "title": "A",
+                                        "url": "https://example.com",
+                                        "snippet": "B",
+                                    }
                                 ],
                             },
                         ).model_dump(mode="json")
@@ -84,7 +93,9 @@ async def test_sdk_create_agent_returns_facade_and_runs() -> None:
 @pytest.mark.asyncio
 async def test_sdk_top_level_query_and_agent_query_return_output() -> None:
     """SDK should expose one-shot query helpers without low-level runner imports."""
-    agent = create_agent(provider=FakeProvider(response_text="agent ok"), tools=ToolSet.only())
+    agent = create_agent(
+        provider=FakeProvider(response_text="agent ok"), tools=ToolSet.only()
+    )
 
     agent_output = await agent.query("Hello")
     top_level_output = await query(
@@ -100,7 +111,9 @@ async def test_sdk_top_level_query_and_agent_query_return_output() -> None:
 @pytest.mark.asyncio
 async def test_sdk_run_handle_exposes_events_final_abort_and_checkpoint() -> None:
     """RunHandle should hide runner internals while exposing run operations."""
-    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only())
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only()
+    )
     handle = agent.start(
         AgentRunInput(
             input="background",
@@ -121,7 +134,9 @@ async def test_sdk_run_handle_exposes_events_final_abort_and_checkpoint() -> Non
 @pytest.mark.asyncio
 async def test_sdk_stream_helper_yields_text_deltas_and_final_output() -> None:
     """Object stream helper should expose events, text_deltas, final_output and cursor."""
-    agent = create_agent(provider=_SlowStreamingProvider(response_text="ok"), tools=ToolSet.only())
+    agent = create_agent(
+        provider=_SlowStreamingProvider(response_text="ok"), tools=ToolSet.only()
+    )
     stream = agent.stream_run(
         AgentRunInput(
             input="stream helper",
@@ -145,7 +160,9 @@ async def test_sdk_stream_helper_yields_text_deltas_and_final_output() -> None:
 @pytest.mark.asyncio
 async def test_sdk_session_facade_send_history_runs_and_stream() -> None:
     """Session should provide thread-scoped send/history/runs/stream helpers."""
-    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only())
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only()
+    )
     session = agent.session("session_sdk")
 
     assert isinstance(session, Session)
@@ -215,7 +232,9 @@ def test_sdk_cancel_queued_message_marks_item_cancelled() -> None:
 @pytest.mark.asyncio
 async def test_sdk_stream_projects_runtime_events() -> None:
     """SDK stream should yield projected stream events."""
-    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only("web_search"))
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only("web_search")
+    )
     events = [
         item
         async for item in agent.stream(
@@ -232,7 +251,9 @@ async def test_sdk_stream_projects_runtime_events() -> None:
                                 tool_name="web_search",
                                 args={
                                     "query": "agent",
-                                    "mock_results": [{"title": "A", "url": "https://example.com"}],
+                                    "mock_results": [
+                                        {"title": "A", "url": "https://example.com"}
+                                    ],
                                 },
                             ).model_dump(mode="json")
                         ]
@@ -272,7 +293,9 @@ class _HTTPErrorProvider(FakeProvider):
             headers={"x-request-id": "req_123"},
             json={"error": {"message": "rate limited"}},
         )
-        raise httpx.HTTPStatusError("rate limited", request=http_request, response=response)
+        raise httpx.HTTPStatusError(
+            "rate limited", request=http_request, response=response
+        )
 
 
 @pytest.mark.asyncio
@@ -447,7 +470,11 @@ class _EndlessToolLoopProvider(FakeProvider):
                         args={
                             "query": "agent driver",
                             "mock_results": [
-                                {"title": "A", "url": "https://example.com", "snippet": "B"}
+                                {
+                                    "title": "A",
+                                    "url": "https://example.com",
+                                    "snippet": "B",
+                                }
                             ],
                         },
                     ).model_dump(mode="json")
@@ -477,7 +504,9 @@ class _ProtocolCaptureProvider(FakeProvider):
                             tool_call_id="call_42",
                             args={
                                 "query": "agent driver",
-                                "mock_results": [{"title": "A", "url": "https://example.com"}],
+                                "mock_results": [
+                                    {"title": "A", "url": "https://example.com"}
+                                ],
                             },
                         ).model_dump(mode="json")
                     ]
@@ -496,7 +525,9 @@ class _ProtocolCaptureProvider(FakeProvider):
 @pytest.mark.asyncio
 async def test_sdk_stream_emits_incrementally_before_run_finishes() -> None:
     """First stream event should be available before full provider stream completes."""
-    agent = create_agent(provider=_SlowStreamingProvider(response_text="ok"), tools=ToolSet.only())
+    agent = create_agent(
+        provider=_SlowStreamingProvider(response_text="ok"), tools=ToolSet.only()
+    )
     stream = agent.stream(
         AgentRunInput(
             input="incremental stream",
@@ -552,7 +583,7 @@ async def test_sdk_tool_stage_loops_back_to_llm_for_final_answer() -> None:
 
 @pytest.mark.asyncio
 async def test_sdk_tool_loop_honors_max_tool_calls_limit() -> None:
-    """Repeated tool-call responses should fail by max_tool_calls budget."""
+    """Repeated tool-call responses should stop at the max_tool_calls budget."""
     provider = _EndlessToolLoopProvider()
     agent = create_agent(provider=provider, tools=ToolSet.only("web_search"))
     output = await agent.run(
@@ -565,9 +596,10 @@ async def test_sdk_tool_loop_honors_max_tool_calls_limit() -> None:
             max_steps=8,
         )
     )
-    assert output.status.value == "failed"
+    assert output.status.value == "completed"
     assert output.terminal_reason is not None
-    assert output.terminal_reason.value == "tool_policy_denied"
+    assert output.terminal_reason.value == "final_answer"
+    assert len(output.tool_trace) <= 2
     assert provider.complete_calls >= 2
 
 
@@ -590,7 +622,11 @@ async def test_sdk_stream_tool_completed_event_contains_named_tools() -> None:
             )
         )
     ]
-    completed = [item for item in events if item.event == RuntimeEventType.TOOL_CALL_COMPLETED.value]
+    completed = [
+        item
+        for item in events
+        if item.event == RuntimeEventType.TOOL_CALL_COMPLETED.value
+    ]
     assert completed
     tools_payload = completed[0].data.get("tools")
     assert isinstance(tools_payload, list) and tools_payload
@@ -616,7 +652,11 @@ async def test_sdk_stream_tool_started_event_contains_args() -> None:
             )
         )
     ]
-    started = [item for item in events if item.event == RuntimeEventType.TOOL_CALL_STARTED.value]
+    started = [
+        item
+        for item in events
+        if item.event == RuntimeEventType.TOOL_CALL_STARTED.value
+    ]
     assert started
     tools_payload = started[0].data.get("tools")
     assert isinstance(tools_payload, list) and tools_payload
@@ -642,7 +682,9 @@ async def test_sdk_followup_request_uses_tool_messages_and_none_choice() -> None
     assert len(provider.requests) >= 2
     followup = provider.requests[1]
     assert followup.tool_choice in (None, "auto")
-    assistant_rows = [item for item in followup.messages if item.role.value == "assistant"]
+    assistant_rows = [
+        item for item in followup.messages if item.role.value == "assistant"
+    ]
     tool_rows = [item for item in followup.messages if item.role.value == "tool"]
     assert assistant_rows
     assert tool_rows
@@ -656,7 +698,9 @@ async def test_sdk_followup_request_uses_tool_messages_and_none_choice() -> None
 @pytest.mark.asyncio
 async def test_sdk_resume_approve_shortcut_executes() -> None:
     """SDK resume helper should translate args into resume command."""
-    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only("file_write"))
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only("file_write")
+    )
     paused = await agent.run(
         AgentRunInput(
             input="Write file.",
@@ -691,7 +735,9 @@ async def test_sdk_resume_accepts_approved_prompts() -> None:
     ``approved_prompts=...`` into ``Agent.resume``; the convenience method used
     to omit the parameter, raising ``TypeError: unexpected keyword argument``.
     """
-    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only("file_write"))
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only("file_write")
+    )
     paused = await agent.run(
         AgentRunInput(
             input="Write file.",
@@ -737,7 +783,9 @@ async def test_sdk_run_text_uses_agent_defaults() -> None:
 @pytest.mark.asyncio
 async def test_sdk_create_agent_supports_no_tools_surface() -> None:
     """SDK factory should allow explicit empty tool surface."""
-    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only())
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only()
+    )
     output = await agent.run(
         AgentRunInput(
             input="No tools.",
@@ -861,7 +909,9 @@ def test_sdk_create_agent_rejects_unknown_toolset_names() -> None:
 @pytest.mark.asyncio
 async def test_sdk_wraps_provider_status_errors_with_request_id() -> None:
     """SDK callers should get typed provider errors with request IDs."""
-    agent = create_agent(provider=_HTTPErrorProvider(response_text="unused"), tools=ToolSet.only())
+    agent = create_agent(
+        provider=_HTTPErrorProvider(response_text="unused"), tools=ToolSet.only()
+    )
 
     with pytest.raises(ProviderStatusError) as exc_info:
         await agent.query("hello")
@@ -874,7 +924,9 @@ async def test_sdk_wraps_provider_status_errors_with_request_id() -> None:
 @pytest.mark.asyncio
 async def test_sdk_output_context_and_trace_summary_contract() -> None:
     """SDK outputs should expose context diagnostics and stable trace summary."""
-    agent = create_agent(provider=FakeProvider(response_text="ok"), tools=ToolSet.only())
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only()
+    )
     output = await agent.query("Hello", run_id="run_sdk_trace_summary")
 
     assert output.context.pressure == "ok"

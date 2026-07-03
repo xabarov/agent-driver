@@ -398,6 +398,45 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional directory for command outputs and evidence_index.json.",
     )
+    capability_pack_audit = capability_pack_sub.add_parser(
+        "audit",
+        help="Audit persisted evidence indexes and write validation reports.",
+    )
+    capability_pack_audit.add_argument(
+        "--evidence-index-dir",
+        action="append",
+        required=True,
+        help=(
+            "Directory containing evidence_index.json/manifest.json, or a direct "
+            "path to evidence_index.json (repeatable)."
+        ),
+    )
+    capability_pack_audit.add_argument(
+        "--baseline-id",
+        action="append",
+        default=[],
+        help="Seed baseline id to compare against; defaults from pack ids.",
+    )
+    capability_pack_audit.add_argument(
+        "--quarantine-file",
+        default=None,
+        help="Optional FlakeRecord JSON list, or {'flakes': [...]}, to apply.",
+    )
+    capability_pack_audit.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Mark unexecuted live/provider/UI/benchmark gates as no-claim.",
+    )
+    capability_pack_audit.add_argument(
+        "--strict",
+        action="store_true",
+        help="Return exit code 1 when required deterministic evidence is invalid.",
+    )
+    capability_pack_audit.add_argument(
+        "--output-dir",
+        default=None,
+        help="Optional directory for validation_run.json and validation_report.md.",
+    )
 
     resume_parser = subparsers.add_parser(
         "resume", help="Resume pending interrupt decisions."

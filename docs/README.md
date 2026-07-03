@@ -7,7 +7,7 @@ current, and tied to code that exists in the repository.
 ## Start Here
 
 - [SDK](sdk.md) - product-facing `Agent`, `Session`, streaming, trace summary,
-  support bundle, self-consistency, and errors.
+  support bundle, self-consistency, capability-pack validation, and errors.
 - [Embedding](embedding.md) - supported public import surface and stability
   policy for applications that depend on this package.
 - [Runtime overview](runtime.md) - runner loop, stores, events, tool execution,
