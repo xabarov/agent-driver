@@ -39,6 +39,9 @@ from agent_driver.cli.commands.provider_catalog import (
 from agent_driver.cli.commands.skills_lifecycle import (
     skills_lifecycle_command as _skills_lifecycle_command_impl,
 )
+from agent_driver.cli.commands.mcp_governance import (
+    mcp_governance_command as _mcp_governance_command_impl,
+)
 from agent_driver.cli.commands.run_chat import chat_command as _chat_command_impl
 from agent_driver.cli.commands.run_chat import run_command as _run_command_impl
 from agent_driver.cli.commands.runtime_views import (
@@ -286,6 +289,10 @@ def _skills_lifecycle_command(args: argparse.Namespace) -> int:
     return _skills_lifecycle_command_impl(args)
 
 
+def _mcp_governance_command(args: argparse.Namespace) -> int:
+    return _mcp_governance_command_impl(args)
+
+
 async def _resume_command(args: argparse.Namespace) -> int:
     return await _resume_command_impl(
         args,
@@ -499,6 +506,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _harness_adapter_command(args)
     if args.command == "skills-lifecycle":
         return _skills_lifecycle_command(args)
+    if args.command == "mcp-governance":
+        return _mcp_governance_command(args)
     if args.command == "resume":
         try:
             return asyncio.run(_resume_command(args))

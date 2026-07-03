@@ -7,6 +7,31 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — MCP governance & evidence plane (epic 014)
+- A deterministic governance/provenance layer on top of the existing MCP transport
+  (`agent_driver/mcp_server`) and client-tool catalog (`agent_driver/tools/builtin/mcp.py`).
+  It answers *which* MCP servers/tools/resources were allowed, *why* a call was
+  approved/asked/blocked, and records redaction-safe provenance — never raw resource bodies
+  or credentials. No live MCP server is required; default tool-loop behavior is unchanged.
+- **Contracts** (`agent_driver.contracts.mcp_governance`, re-exported from `agent_driver.contracts`):
+  `McpServerDescriptor`, `McpRegistrySnapshot`, `McpToolResourceRef`, `McpApprovalPolicy`,
+  `McpApprovalDecision`, `McpCallProvenanceRow`, `McpGovernanceUsageSummary`,
+  `McpGovernanceCompatibilityReport`. All reject secret-shaped values (except env-var *names*)
+  and raw body/content keys; an `auth_mode` safe-key exemption records the mechanism without
+  leaking a credential.
+- **Logic** (`agent_driver.mcp_server.governance`): registry snapshots from the MCP catalog,
+  allowed-roots boundary checks, deterministic approval evaluation with explicit status
+  precedence (`out_of_roots` > `oversized` > `blocked` > `filtered` > policy default; no
+  matching policy → `no_claim`, never a silent allow), call-provenance rows for allowed calls,
+  support-bundle projection, two-product (Excel AI + chat-demo) seed compatibility reports,
+  evidence index, Markdown render, artifact writer and replay.
+- **CLI** `agent-driver mcp-governance audit` writes a capability-pack-compatible artifact set
+  (`mcp_registry_snapshot.json`, `mcp_approval_decisions.json`, `mcp_call_provenance.json`,
+  `mcp_governance_report.{json,md}`, `validation_gates.json`, `evidence_index.json`,
+  `manifest.json`) accepted by `agent-driver capability-pack audit --no-live --strict`; new
+  `mcp_*` artifact types registered in `contracts.capability_packs`. Live MCP / Phoenix /
+  Playwright / benchmark gates emit as `no_claim`. Tests: `tests/mcp_server/test_mcp_governance.py`.
+
 ### Added — single-provider backoff-retry (transient failover for one-provider setups)
 - `HealthAwareRouter` falls over to a sibling provider on a transient failure (timeout / 5xx /
   transport), but with a **single** configured provider there is nothing to rotate to, so the

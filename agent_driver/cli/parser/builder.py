@@ -586,6 +586,71 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for skills lifecycle artifacts.",
     )
 
+    mcp_governance_parser = subparsers.add_parser(
+        "mcp-governance",
+        help="Build deterministic MCP governance/provenance artifacts.",
+    )
+    mcp_governance_sub = mcp_governance_parser.add_subparsers(
+        dest="mcp_governance_command", required=True
+    )
+    mcp_governance_audit = mcp_governance_sub.add_parser(
+        "audit",
+        help="Scan MCP servers and write registry/approval/provenance evidence.",
+    )
+    mcp_governance_audit.add_argument(
+        "--scenario",
+        default="mcp_governance.registry_roots.v1",
+        choices=(
+            "mcp_governance.registry_roots.v1",
+            "mcp_governance.approval_policy.v1",
+            "mcp_governance.call_provenance.v1",
+            "mcp_governance.excel_connectors.v1",
+            "mcp_governance.chat_demo_research.v1",
+        ),
+        help="MCP governance scenario id to label the deterministic report.",
+    )
+    mcp_governance_audit.add_argument(
+        "--catalog",
+        default=None,
+        help="Optional MCP catalog JSON path; defaults to the builtin fixture.",
+    )
+    mcp_governance_audit.add_argument(
+        "--product-family",
+        default=None,
+        help="Product family (excel_ai/chat_demo/...); defaults from scenario.",
+    )
+    mcp_governance_audit.add_argument(
+        "--host-profile",
+        default=None,
+        help="Host/profile id for the generated report.",
+    )
+    mcp_governance_audit.add_argument(
+        "--servers",
+        default=None,
+        help="Comma-separated server ids to bound with --allowed-roots.",
+    )
+    mcp_governance_audit.add_argument(
+        "--allowed-roots",
+        default=None,
+        help="Comma-separated allowed resource roots (default: resource://).",
+    )
+    mcp_governance_audit.add_argument(
+        "--max-results",
+        type=int,
+        default=200,
+        help="Maximum number of tool/resource refs to inventory.",
+    )
+    mcp_governance_audit.add_argument(
+        "--no-live",
+        action="store_true",
+        help="Keep live MCP/provider/UI/benchmark gates as no-claim.",
+    )
+    mcp_governance_audit.add_argument(
+        "--output-dir",
+        default=".agent-driver/mcp-governance/deterministic",
+        help="Directory for MCP governance artifacts.",
+    )
+
     resume_parser = subparsers.add_parser(
         "resume", help="Resume pending interrupt decisions."
     )

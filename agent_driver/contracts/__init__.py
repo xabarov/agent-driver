@@ -211,6 +211,17 @@ from agent_driver.contracts.skills_lifecycle import (
     SkillSupportingFileRef,
     SkillUsageSummary,
 )
+from agent_driver.contracts.mcp_governance import (
+    McpApprovalDecision,
+    McpApprovalPolicy,
+    McpCallProvenanceRow,
+    McpGovernanceCompatibilityReport,
+    McpGovernanceStatus,
+    McpGovernanceUsageSummary,
+    McpRegistrySnapshot,
+    McpServerDescriptor,
+    McpToolResourceRef,
+)
 from agent_driver.contracts.node_contract import FinalizeNow, NodeContract
 from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 from agent_driver.contracts.stream import RunStreamEvent
@@ -340,6 +351,15 @@ __all__ = [
     "InterruptReason",
     "InterruptRequest",
     "ExecutorSerializationPolicy",
+    "McpApprovalDecision",
+    "McpApprovalPolicy",
+    "McpCallProvenanceRow",
+    "McpGovernanceCompatibilityReport",
+    "McpGovernanceStatus",
+    "McpGovernanceUsageSummary",
+    "McpRegistrySnapshot",
+    "McpServerDescriptor",
+    "McpToolResourceRef",
     "MemoryProjection",
     "MergeProvenance",
     "PromptRenderResult",
