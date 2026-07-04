@@ -2,8 +2,36 @@
 
 Дата создания: 2026-07-04.
 
-Статус: **proposed** (not implemented). Discovered from a host (MeetScript «Ask Meetings» chat_v2)
-over the `single_react` / `react_text` streaming path with deepseek-v4-flash on OpenRouter.
+Статус: **in progress** (2026-07-04). Phase C (finalize recovery) + bounded empty-answer retry
+implemented and tested; Phase A repro landed; A/B/D findings below reframe the fix. Discovered from a
+host (MeetScript «Ask Meetings» chat_v2) over the `single_react` / `react_text` streaming path with
+deepseek-v4-flash on OpenRouter.
+
+## Implementation status (2026-07-04)
+
+Key finding from the isolated repro (`tests/runtime/test_stop_answer_no_loop_repro.py`): a complete
+answer finalizes in **one call** on BOTH the non-streaming (`agent.run`) AND the clean-streaming
+(`stream=True`, scripted stream) paths. The 3-turn stub over-iteration does **not** reproduce from
+clean inputs → the trigger is a **provider-specific degenerate deepseek stream** (empty/partial/markup)
+that we cannot fabricate without capturing a real raw stream. **Therefore the robust, trigger-agnostic
+fix is at finalize (Phase C), not chasing the exact stream trigger.**
+
+Landed (commits on this branch):
+- **Phase C — finalize recovery** (`finalization/answer_recovery.py` + `_build_output` wiring): when a
+  tool-less run finalizes an empty turn or a short «already-answered» restatement, recover the longest
+  substantive assistant turn from the event log. Gated on 0 tool calls; no-op for well-behaved runs;
+  surfaces `metadata.answer_recovered[_reason]`. Unit-tested (`tests/runtime/test_answer_recovery.py`).
+- **Bounded empty-answer retry** (`tool_stage/_finalize_tool_stage_transition`): a pure-text run about
+  to finalize an EMPTY answer re-prompts once (`_MAX_EMPTY_ANSWER_RETRIES`, `empty_answer_retry_count`
+  in the metadata inventory) instead of surfacing a blank answer. Gated on 0 tool calls so tool-informed
+  finalizes are untouched. Repro test flipped xfail→passing. Full `tests/runtime` suite green.
+- Pre-existing prior art already in the runtime: **`budget_grace`** (`budget_grace_granted_at_step`,
+  `_budget_grace_call`) is the hermes «one grace call» pattern (Phase E largely already present).
+
+Remaining (honest): a dedicated **no-progress signal for tool-less repeats** (Phase B) and the
+**precise streaming-recovery trigger fix** (Phase D) are deferred — they need a captured real deepseek
+stream to reproduce deterministically; Phase C covers the user-visible symptom trigger-agnostically.
+**Phase F** (host drops its guard) waits on an agent-driver release + MeetScript dependency bump.
 
 Workstream: runtime loop robustness. Builds on the existing step backstop
 (`single_agent/types.py` `default_max_steps`), the `tool_loop_no_progress` policy
@@ -84,34 +112,38 @@ mis-parse the prose answer (returns 0), so the continuation is not the text-form
 ## Checklist (proposed)
 
 ### Phase A. Repro harness
-- [ ] Streaming `FakeProvider` (or scripted stream) that mimics deepseek-on-OpenRouter empty/partial
-      forced-final + re-answer, driving `stream_run` (not just `run`).
-- [ ] Deterministic test that reproduces the 3-turn stub over-iteration on the streaming path.
-- [ ] Promote `tests/runtime/test_stop_answer_no_loop_repro.py` (baseline + empty-STOP xfail) into the
-      suite; flip the empty-STOP xfail to pass once Phase C lands.
+- [x] Scripted-provider repro `tests/runtime/test_stop_answer_no_loop_repro.py` (baseline STOP,
+      empty-STOP, tool-calls-finish) on `agent.run`.
+- [x] **Finding:** the clean-streaming path (`stream=True`, scripted stream) ALSO finalizes a complete
+      answer in one call → the 3-turn stub is **not** reproducible from clean inputs; the trigger is a
+      provider-specific degenerate deepseek stream. Documented in "Implementation status".
+- [ ] Deferred: capture a real deepseek raw stream to reproduce the 3-turn stub deterministically (only
+      needed for Phase B/D; Phase C already covers the symptom).
 
 ### Phase B. No-progress signal for tool-less repeats
-- [ ] Add a `no_progress_tool_less_answer` signal (near-duplicate / degenerate «already-done» terminal
-      turn with 0 tool calls and no new evidence). Raw-free, generic markers + structural similarity.
-- [ ] Route it into the finalize decision in `tool_stage`/loop-control (finalize, not reprompt).
-- [ ] Emit a runtime decision (`observe|warn|enforce`) mirroring `tool_loop_no_progress` vocabulary.
+- [~] Partially covered by Phase C recovery + empty-retry (both gated on 0 tool calls). A dedicated
+      `no_progress_tool_less_answer` signal + `observe|warn|enforce` runtime decision is **deferred**
+      (needs the deterministic streaming repro from Phase A to route a finalize-not-reprompt safely).
 
 ### Phase C. Empty-response + best-answer finalize
-- [ ] Bounded retry for an empty terminal turn; on exhaustion finalize the best prior substantive turn.
-- [ ] Best-answer selection helper (longest substantive non-degenerate assistant turn) used at finalize.
-- [ ] Tests: empty→retry→answer; degenerate-last→recover-prior; genuine short answer unaffected.
+- [x] Bounded retry for an empty terminal turn (`tool_stage`, `_MAX_EMPTY_ANSWER_RETRIES`); on exhaustion
+      finalizes (with Phase C recovery preferring the best prior substantive turn).
+- [x] Best-answer selection helper (`finalization/answer_recovery.py`) used at finalize in `_build_output`.
+- [x] Tests: empty→retry→answer (`test_stop_answer_no_loop_repro`); degenerate-last→recover-prior and
+      genuine-short-unaffected (`test_answer_recovery`). Full `tests/runtime` green.
 
 ### Phase D. Streaming-recovery fix
-- [ ] Fix the streaming path so a complete answer is not re-entered by forced-final/text-form recovery.
-- [ ] Regression tests on the streaming repro from Phase A.
+- [ ] Deferred: needs the Phase A real-stream repro to fix the exact re-entry safely without regressing
+      the (currently-correct) clean-stream path. Phase C neutralises the user-visible symptom meanwhile.
 
 ### Phase E. Iteration budget + grace (adapt hermes)
-- [ ] Add a bounded iteration budget + one grace call distinct from `max_steps`; wire into loop control.
-- [ ] Config surface + defaults that preserve current behavior for well-behaved runs.
+- [x] **Already present** in the runtime: `budget_grace` (`budget_grace_granted_at_step`,
+      `_budget_grace_call`, `budget_grace_reason`) is the hermes «one grace call» pattern atop `max_steps`.
+- [ ] Optional: a dedicated no-progress-iteration budget (vs total steps) — folded into Phase B if pursued.
 
 ### Phase F. Host adoption
-- [ ] Provide the runtime guarantee so MeetScript can drop its app-side recovery guard
-      (`routes/chat.py` `_chat_v2_longest_substantive_assistant_message`) — validated on its chat bench.
+- [ ] Pending an agent-driver release + MeetScript dependency bump, then MeetScript drops its app-side
+      guard (`routes/chat.py` `_chat_v2_longest_substantive_assistant_message`) and re-benchmarks.
 
 ## Acceptance / evidence plan
 - Isolated deterministic tests for A–E (no live provider needed for the core guarantees).
