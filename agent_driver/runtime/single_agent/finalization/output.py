@@ -44,6 +44,9 @@ from agent_driver.runtime.research_artifacts import (
 from agent_driver.runtime.research_evidence import (
     research_source_ledger_from_tool_results,
 )
+from agent_driver.runtime.single_agent.finalization.answer_recovery import (
+    recover_degenerate_terminal_answer,
+)
 from agent_driver.runtime.single_agent.finalization.output_builders import (
     build_memory_audit,
     build_memory_projection_for_context,
@@ -307,6 +310,18 @@ class SingleAgentOutputMixin:
         terminal: TerminalResult,
     ) -> AgentRunOutput:
         answer = self._sanitize_terminal_answer(context)
+        run_events = self._deps.event_log.list_for_run(context.run_id)
+        # Epic 015 Phase C: recover a real answer discarded by a degenerate no-progress finalize
+        # (empty or a short «already-answered» restatement on a tool-less over-iteration). No-op for
+        # well-behaved runs; never overrides a tool-informed terminal answer (gated on 0 tool calls).
+        recovered_answer, recovered_reason = recover_degenerate_terminal_answer(
+            events=run_events,
+            terminal_answer=answer,
+            tool_call_count=context.tool_calls,
+        )
+        answer_recovered = recovered_answer is not None
+        if answer_recovered:
+            answer = recovered_answer
         usage = context.llm_response.usage if context.llm_response else None
         messages = [ChatMessage(role="assistant", content=answer)] if answer else []
         tool_trace = collect_tool_trace(context)
@@ -325,6 +340,18 @@ class SingleAgentOutputMixin:
             artifact_refs=artifact_refs,
             digest_refs=digest_refs,
         )
+        terminal_metadata = self._terminal_metadata(
+            context,
+            normalized_tool_results=normalized_tool_results,
+            artifact_refs=artifact_refs,
+            digest_refs=digest_refs,
+        )
+        if answer_recovered:
+            terminal_metadata = {
+                **terminal_metadata,
+                "answer_recovered": True,
+                "answer_recovered_reason": recovered_reason,
+            }
         return AgentRunOutput(
             run_id=context.run_id,
             attempt_id=context.attempt_id,
@@ -332,7 +359,7 @@ class SingleAgentOutputMixin:
             status=terminal.status,
             answer=answer,
             messages=messages,
-            events=self._deps.event_log.list_for_run(context.run_id),
+            events=run_events,
             tool_trace=tool_trace,
             usage=usage,
             interrupt=get_loop_control_state(context).interrupt_payload(),
@@ -340,12 +367,7 @@ class SingleAgentOutputMixin:
             context=self._context_diagnostics(context),
             memory_projection=projection,
             memory_audit=build_memory_audit(context),
-            metadata=self._terminal_metadata(
-                context,
-                normalized_tool_results=normalized_tool_results,
-                artifact_refs=artifact_refs,
-                digest_refs=digest_refs,
-            ),
+            metadata=terminal_metadata,
         )
 
     def _terminal_metadata(
