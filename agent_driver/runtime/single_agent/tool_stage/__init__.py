@@ -94,9 +94,10 @@ from agent_driver.runtime.single_agent.finalization.answer_recovery import (
 
 # Epic 015: bound the empty-answer re-prompt so a provider that keeps returning empty can't spin.
 _MAX_EMPTY_ANSWER_RETRIES = 1
-# A wrong-language / canned-refusal degenerate answer is stochastic (deepseek ~60%), so allow a couple
-# of bounded retries — each re-prompt has a fresh chance to answer correctly from the same context.
-_MAX_DEGENERATE_ANSWER_RETRIES = 2
+# A wrong-language / canned-refusal degenerate answer is stochastic (deepseek ~60% on some queries), so
+# allow a few bounded retries — each re-prompt is a fresh chance to answer correctly from the same
+# context (3 retries takes the residual ~0.6^4 ≈ 13%). Only the degenerate minority pays the latency.
+_MAX_DEGENERATE_ANSWER_RETRIES = 3
 
 _force_web_fetch_for_source_verified_research = (
     force_web_fetch_for_source_verified_research
