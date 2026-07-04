@@ -70,6 +70,20 @@ def test_degenerate_short_stub_recovers_longest_substantive_turn() -> None:
     assert reason == "degenerate_short_restatement"
 
 
+def test_borderline_short_terminal_dwarfed_by_prior_is_recovered() -> None:
+    """A ~200-char terminal (no stub markers) dwarfed by a ~5k prior turn is still degenerate."""
+    borderline = "x" * 210  # not empty, no stub markers, but tiny vs _LONGER
+    events = [
+        _evt("assistant_message_completed", _LONGER),
+        _evt("assistant_message_completed", borderline),
+    ]
+    answer, reason = recover_degenerate_terminal_answer(
+        events=events, terminal_answer=borderline, tool_call_count=0
+    )
+    assert answer == _LONGER
+    assert reason == "degenerate_short_restatement"
+
+
 def test_empty_terminal_recovers_prior_substantive() -> None:
     events = [
         _evt("assistant_message_completed", _LONG),

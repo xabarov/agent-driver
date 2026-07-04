@@ -22,10 +22,8 @@ from typing import Any
 
 # A turn long enough to be a real answer rather than a hedge/stub.
 SUBSTANTIVE_ANSWER_CHARS = 400
-# A terminal answer this short, with a much longer earlier substantive turn, reads as a degenerate
-# restatement of an answer the loop already produced.
-SHORT_TERMINAL_ANSWER_CHARS = 200
-# The earlier substantive turn must dwarf the short terminal to count as a discarded real answer.
+# The earlier substantive turn must dwarf the terminal by this factor to count as a discarded real
+# answer that a no-progress re-answer replaced.
 MIN_SUBSTANTIVE_RATIO = 4
 
 _ASSISTANT_COMPLETED_EVENTS = {
@@ -88,9 +86,10 @@ def recover_degenerate_terminal_answer(
         return None, None
     if not term:
         return best, "empty_terminal_answer"
-    if len(term) < SHORT_TERMINAL_ANSWER_CHARS and len(
-        best.strip()
-    ) >= MIN_SUBSTANTIVE_RATIO * max(1, len(term)):
+    # A pure-text run (0 tool calls) reaching a terminal answer that is dwarfed by an earlier
+    # substantive turn re-answered without progress — recover the real answer. Ratio-based rather than
+    # an absolute length so a borderline-short degenerate (e.g. ~200 chars vs a ~5k answer) is caught.
+    if len(best.strip()) >= MIN_SUBSTANTIVE_RATIO * max(1, len(term)):
         return best, "degenerate_short_restatement"
     return None, None
 
@@ -99,5 +98,5 @@ __all__ = [
     "assistant_turn_contents",
     "recover_degenerate_terminal_answer",
     "SUBSTANTIVE_ANSWER_CHARS",
-    "SHORT_TERMINAL_ANSWER_CHARS",
+    "MIN_SUBSTANTIVE_RATIO",
 ]
