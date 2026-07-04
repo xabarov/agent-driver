@@ -29,6 +29,22 @@ def test_extract_contents_from_dict_and_object_events() -> None:
     assert assistant_turn_contents(events) == ["one", "two", "three"]
 
 
+def test_extract_contents_from_runtime_event_objects_with_enum_type() -> None:
+    """Real RuntimeEvent stores the name in ``.type`` (an enum with ``.value``), not ``.event``."""
+    events = [
+        SimpleNamespace(
+            type=SimpleNamespace(value="assistant_message_completed"),
+            payload={"content": "hi"},
+        ),
+        SimpleNamespace(type=SimpleNamespace(value="tool_call_completed"), payload={}),
+        SimpleNamespace(
+            type=SimpleNamespace(value="assistant_message_completed"),
+            payload={"content": "bye"},
+        ),
+    ]
+    assert assistant_turn_contents(events) == ["hi", "bye"]
+
+
 def test_normal_single_answer_is_not_recovered() -> None:
     events = [_evt("assistant_message_completed", _LONG)]
     answer, reason = recover_degenerate_terminal_answer(

@@ -35,9 +35,13 @@ _ASSISTANT_COMPLETED_EVENTS = {
 
 
 def _event_name(event: Any) -> str:
+    # RuntimeEvent stores the name in ``.type`` (a RuntimeEventType enum); event-log dicts and adapter
+    # projections use ``event``/``type`` string keys. Normalise all of them, unwrapping enum ``.value``.
     if isinstance(event, dict):
-        return str(event.get("event") or event.get("type") or "").strip()
-    return str(getattr(event, "event", "") or "").strip()
+        name: Any = event.get("event") or event.get("type") or ""
+    else:
+        name = getattr(event, "type", None) or getattr(event, "event", "") or ""
+    return str(getattr(name, "value", name) or "").strip()
 
 
 def _event_payload(event: Any) -> dict:
