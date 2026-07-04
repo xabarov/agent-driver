@@ -2,19 +2,31 @@
 
 Дата создания: 2026-07-04.
 
-Статус: **in progress** (2026-07-04). Phase C (finalize recovery) + bounded empty-answer retry
-implemented and tested; Phase A repro landed; A/B/D findings below reframe the fix. Discovered from a
-host (MeetScript «Ask Meetings» chat_v2) over the `single_react` / `react_text` streaming path with
-deepseek-v4-flash on OpenRouter.
+Статус: **root cause fixed + validated** (2026-07-04). The over-iteration is eliminated at its source
+(Phase B/D), with Phase C finalize recovery + empty-retry as defense-in-depth; Phase E already present;
+Phase F runtime guarantee validated on the live host. Discovered from a host (MeetScript «Ask Meetings»
+chat_v2) over the `single_react` / `react_text` streaming path with deepseek-v4-flash on OpenRouter.
 
 ## Implementation status (2026-07-04)
 
-Key finding from the isolated repro (`tests/runtime/test_stop_answer_no_loop_repro.py`): a complete
-answer finalizes in **one call** on BOTH the non-streaming (`agent.run`) AND the clean-streaming
-(`stream=True`, scripted stream) paths. The 3-turn stub over-iteration does **not** reproduce from
-clean inputs → the trigger is a **provider-specific degenerate deepseek stream** (empty/partial/markup)
-that we cannot fabricate without capturing a real raw stream. **Therefore the robust, trigger-agnostic
-fix is at finalize (Phase C), not chasing the exact stream trigger.**
+**ROOT CAUSE (captured on the live host, then fixed).** Isolated repro first showed a complete answer
+finalizes in one call on BOTH non-streaming and clean-streaming paths — so the trigger was content-
+specific, not a generic path bug. Capturing the tool-stage decision on a live over-iteration showed
+**both** tool-stage transitions returned `continue=False` (envelopes=0, finish=stop) — the extra LLM
+call came **after** finalize, from the **continuation detector** (`lifecycle/continuation.py`
+`analyze_continuation_intent` → `_execute_finalize` → `next_step=llm_call`). It flagged
+`unclosed_code_block` whenever the answer had an **odd number of ``` fences** (`count("```") % 2`) and
+re-prompted — but models routinely emit an odd number of ``` as formatting in a **complete** answer
+(verified: a 6k-char RU summary ending in a finished sentence, `reason=unclosed_code_block`). The
+re-prompt produced a redundant re-answer that degenerated into a «задача уже выполнена» stub.
+
+**Fix (Phase B/D):** `unclosed_code_block` now fires only when the answer actually ends mid-code (the
+tail after the last unclosed fence isn't a finished sentence / substantial prose). **Validated live:**
+5/5 broad-query runs now finalize in **one LLM call** (was 1–3 over-iterations → stubs), answers
+5.6–7.9k chars, zero stubs. Over-iteration eliminated at its source.
+
+Defense-in-depth (kept): Phase C finalize recovery + bounded empty-answer retry still catch any residual
+degenerate/empty terminal from other providers.
 
 Landed (commits on this branch):
 - **Phase C — finalize recovery** (`finalization/answer_recovery.py` + `_build_output` wiring): when a
@@ -114,16 +126,16 @@ mis-parse the prose answer (returns 0), so the continuation is not the text-form
 ### Phase A. Repro harness
 - [x] Scripted-provider repro `tests/runtime/test_stop_answer_no_loop_repro.py` (baseline STOP,
       empty-STOP, tool-calls-finish) on `agent.run`.
-- [x] **Finding:** the clean-streaming path (`stream=True`, scripted stream) ALSO finalizes a complete
-      answer in one call → the 3-turn stub is **not** reproducible from clean inputs; the trigger is a
-      provider-specific degenerate deepseek stream. Documented in "Implementation status".
-- [ ] Deferred: capture a real deepseek raw stream to reproduce the 3-turn stub deterministically (only
-      needed for Phase B/D; Phase C already covers the symptom).
+- [x] **Root cause captured on the live host** (not a stream quirk): the extra LLM call comes from the
+      finalize-step **continuation detector**, not the tool-stage loop (both tool-stage transitions were
+      `continue=False`). `analyze_continuation_intent` was re-prompting complete answers with an odd
+      ``` fence count. `tests/runtime/test_continuation_intent.py` locks the behaviour.
 
 ### Phase B. No-progress signal for tool-less repeats
-- [~] Partially covered by Phase C recovery + empty-retry (both gated on 0 tool calls). A dedicated
-      `no_progress_tool_less_answer` signal + `observe|warn|enforce` runtime decision is **deferred**
-      (needs the deterministic streaming repro from Phase A to route a finalize-not-reprompt safely).
+- [x] **Addressed at the source:** the continuation detector no longer re-prompts a complete tool-less
+      answer (the mechanism that manufactured the no-progress re-answers). Live: over-iteration gone
+      (5/5 runs = 1 LLM call). A separate `observe|warn|enforce` runtime-decision surface is optional
+      follow-up; the degenerate loop no longer occurs.
 
 ### Phase C. Empty-response + best-answer finalize
 - [x] Bounded retry for an empty terminal turn (`tool_stage`, `_MAX_EMPTY_ANSWER_RETRIES`); on exhaustion
@@ -132,9 +144,11 @@ mis-parse the prose answer (returns 0), so the continuation is not the text-form
 - [x] Tests: empty→retry→answer (`test_stop_answer_no_loop_repro`); degenerate-last→recover-prior and
       genuine-short-unaffected (`test_answer_recovery`). Full `tests/runtime` green.
 
-### Phase D. Streaming-recovery fix
-- [ ] Deferred: needs the Phase A real-stream repro to fix the exact re-entry safely without regressing
-      the (currently-correct) clean-stream path. Phase C neutralises the user-visible symptom meanwhile.
+### Phase D. Re-entry fix (was "streaming-recovery")
+- [x] **Fixed the real re-entry:** it was the finalize-step continuation detector, not stream recovery.
+      `lifecycle/continuation.py` `unclosed_code_block` now requires the answer to actually end mid-code.
+      Regression: `tests/runtime/test_continuation_intent.py` + full `tests/runtime` green; live-validated
+      (over-iteration eliminated).
 
 ### Phase E. Iteration budget + grace (adapt hermes)
 - [x] **Already present** in the runtime: `budget_grace` (`budget_grace_granted_at_step`,
