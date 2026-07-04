@@ -18,6 +18,7 @@ over-iteration that produces the degenerate finalize is exercised separately (ep
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # A turn long enough to be a real answer rather than a hedge/stub.
@@ -25,6 +26,54 @@ SUBSTANTIVE_ANSWER_CHARS = 400
 # The earlier substantive turn must dwarf the terminal by this factor to count as a discarded real
 # answer that a no-progress re-answer replaced.
 MIN_SUBSTANTIVE_RATIO = 4
+
+# CJK / Kana / Hangul — used to detect a wrong-language degenerate answer.
+_CJK_RE = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]")
+# Canned «I'm just an AI / I haven't learned to answer» non-answers some models emit instead of using
+# the retrieved context (notably deepseek's Chinese fallback). Language-mixed, matched case-insensitively.
+_CANNED_REFUSAL_MARKERS = (
+    "作为一个人工智能",
+    "我还没学习",
+    "人工智能语言模型",
+    "as an ai language model",
+    "i haven't learned how to answer",
+    "i have not learned how to answer",
+    "i'm just an ai",
+    "i am just an ai",
+)
+
+
+def _cjk_ratio(text: str) -> float:
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return 0.0
+    return sum(1 for ch in letters if _CJK_RE.match(ch)) / len(letters)
+
+
+def is_degenerate_refusal(answer: str | None, input_text: str = "") -> bool:
+    """A canned or wrong-language non-answer that ignores the retrieved context.
+
+    Two shapes: (a) a known «I'm just an AI, I haven't learned to answer this» template, or (b) a short
+    answer dominated by a script (CJK/Kana/Hangul) that mismatches a non-CJK input — e.g. a Chinese
+    fallback to a Russian question. Both are degenerate outputs a bounded retry usually resolves, since
+    the model can answer correctly from the same context (verified: deepseek-v4-flash returns the canned
+    Chinese refusal ~60% and the correct answer ~40% for the same query). Empty answers are handled
+    separately; this returns False for them.
+    """
+    stripped = (answer or "").strip()
+    if not stripped:
+        return False
+    low = stripped.lower()
+    if any(marker in low for marker in _CANNED_REFUSAL_MARKERS):
+        return True
+    if (
+        len(stripped) < 400
+        and _cjk_ratio(stripped) >= 0.4
+        and _cjk_ratio(input_text) < 0.2
+    ):
+        return True
+    return False
+
 
 _ASSISTANT_COMPLETED_EVENTS = {
     "assistant_message_completed",
@@ -97,6 +146,7 @@ def recover_degenerate_terminal_answer(
 __all__ = [
     "assistant_turn_contents",
     "recover_degenerate_terminal_answer",
+    "is_degenerate_refusal",
     "SUBSTANTIVE_ANSWER_CHARS",
     "MIN_SUBSTANTIVE_RATIO",
 ]

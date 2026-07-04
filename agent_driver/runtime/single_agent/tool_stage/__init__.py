@@ -88,8 +88,15 @@ from agent_driver.runtime.single_agent.tool_stage.deep_research import (
     _suppress_deep_research_terminal_tool_calls,
 )
 
+from agent_driver.runtime.single_agent.finalization.answer_recovery import (
+    is_degenerate_refusal,
+)
+
 # Epic 015: bound the empty-answer re-prompt so a provider that keeps returning empty can't spin.
 _MAX_EMPTY_ANSWER_RETRIES = 1
+# A wrong-language / canned-refusal degenerate answer is stochastic (deepseek ~60%), so allow a couple
+# of bounded retries — each re-prompt has a fresh chance to answer correctly from the same context.
+_MAX_DEGENERATE_ANSWER_RETRIES = 2
 
 _force_web_fetch_for_source_verified_research = (
     force_web_fetch_for_source_verified_research
@@ -294,21 +301,30 @@ async def _finalize_tool_stage_transition(
         finalize_now = await _maybe_finalize_from_tool_evidence(host, context, result)
         if finalize_now:
             continue_with_llm = False
-    # Epic 015: one bounded retry when a pure-text run is about to finalize an EMPTY answer (e.g.
-    # deepseek streaming yields an empty STOP) — re-prompt once rather than surfacing a blank answer.
-    # Gated on `not continue_with_llm` AND zero tool calls, so tool-informed finalizes (whose answer is
-    # synthesised from tool evidence / early-finalize and whose llm text is legitimately empty) are
-    # untouched.
-    if (
-        not continue_with_llm
-        and context.tool_calls == 0
-        and context.llm_response is not None
-    ):
+    # Epic 015: bounded re-prompt when a run is about to finalize a DEGENERATE answer rather than a real
+    # one. Two cases: (a) an EMPTY answer on a pure-text run (deepseek streaming empty STOP) — gated on
+    # zero tool calls so a tool-evidence/early-finalize empty text is untouched; (b) a canned/wrong-
+    # language refusal («作为一个人工智能…» to a Russian question, or «as an AI language model I haven't
+    # learned…») — retried regardless of tool calls, since the model can answer correctly from the same
+    # context on another draw. Each bounded so a persistently-degenerate provider can't spin.
+    if not continue_with_llm and context.llm_response is not None:
         content_text = (context.llm_response.message.content or "").strip()
+        input_text = str(getattr(context.run_input, "input", "") or "")
         empty_retries = int(context.metadata.get("empty_answer_retry_count", 0))
-        if not content_text and empty_retries < _MAX_EMPTY_ANSWER_RETRIES:
+        if (
+            not content_text
+            and context.tool_calls == 0
+            and empty_retries < _MAX_EMPTY_ANSWER_RETRIES
+        ):
             context.metadata["empty_answer_retry_count"] = empty_retries + 1
             continue_with_llm = True
+        elif content_text and is_degenerate_refusal(content_text, input_text):
+            refusal_retries = int(
+                context.metadata.get("degenerate_answer_retry_count", 0)
+            )
+            if refusal_retries < _MAX_DEGENERATE_ANSWER_RETRIES:
+                context.metadata["degenerate_answer_retry_count"] = refusal_retries + 1
+                continue_with_llm = True
     loop_iterations = int(context.metadata.get("tool_loop_iterations", 0))
     if continue_with_llm:
         loop_iterations += 1

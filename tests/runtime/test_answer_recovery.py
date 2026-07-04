@@ -6,8 +6,49 @@ from types import SimpleNamespace
 
 from agent_driver.runtime.single_agent.finalization.answer_recovery import (
     assistant_turn_contents,
+    is_degenerate_refusal,
     recover_degenerate_terminal_answer,
 )
+
+_CJK_REFUSAL = (
+    "作为一个人工智能语言模型，我还没学习如何回答这个问题，您可以向我问一些其它的问题。"
+)
+
+
+def test_is_degenerate_refusal_canned_cjk_template() -> None:
+    assert (
+        is_degenerate_refusal(_CJK_REFUSAL, "какое НИИ фигурирует во встречах?") is True
+    )
+
+
+def test_is_degenerate_refusal_canned_english_template() -> None:
+    assert is_degenerate_refusal(
+        "As an AI language model, I haven't learned how to answer this.",
+        "which institute?",
+    )
+
+
+def test_is_degenerate_refusal_wrong_language_script_mismatch() -> None:
+    # Short CJK answer to a non-CJK question — script mismatch.
+    assert is_degenerate_refusal("这个问题我无法回答。", "какое НИИ?") is True
+
+
+def test_is_degenerate_refusal_ignores_real_answers_and_empty() -> None:
+    assert (
+        is_degenerate_refusal(
+            "Во встречах фигурирует ООО «НИИ Безопасность».", "какое НИИ?"
+        )
+        is False
+    )
+    assert is_degenerate_refusal("", "какое НИИ?") is False
+    # A legitimate CJK answer to a CJK question must NOT be flagged (no script mismatch).
+    assert (
+        is_degenerate_refusal(
+            "会议中提到的研究所是安全研究所。", "哪个研究所出现在会议中？"
+        )
+        is False
+    )
+
 
 _LONG = "A complete corpus summary. " + "detail; " * 80  # > 400 chars
 _LONGER = "A complete corpus summary. " + "detail; " * 120

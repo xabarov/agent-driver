@@ -83,6 +83,16 @@ async def test_empty_stop_is_retried_not_finalized_empty() -> None:
 
 
 @pytest.mark.asyncio
+async def test_canned_wrong_language_refusal_is_retried() -> None:
+    """A canned Chinese «I'm just an AI, haven't learned…» refusal to a Russian question is retried
+    (bounded) and reaches the real answer instead of surfacing the refusal (epic 015)."""
+    refusal = "作为一个人工智能语言模型，我还没学习如何回答这个问题。"
+    answer, calls = await _run(_ScriptProvider([_resp(refusal), _resp(_LONG_ANSWER)]))
+    assert answer == _LONG_ANSWER
+    assert calls == 2, f"expected one refusal retry then the answer, got {calls} calls"
+
+
+@pytest.mark.asyncio
 async def test_toolcalls_finish_without_parseable_call_does_not_infinite_loop() -> None:
     """finish_reason=TOOL_CALLS but no structured/text-form call: must not spin into a stub."""
     answer, calls = await _run(
