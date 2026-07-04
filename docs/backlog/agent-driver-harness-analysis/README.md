@@ -8,6 +8,7 @@ need to move together.
 
 - [Epic 008: Continuous Validation, Host Adoption, Release Gates](epics/008-continuous-validation-host-adoption-release-gates.md)
 - [Epic 012: Provider Plugin, Catalog and Model Routing](epics/012-provider-plugin-catalog-model-routing-plane.md)
+- [Epic 015: Degenerate-output and No-progress Finalize Plane](epics/015-degenerate-output-no-progress-finalize-plane.md) — **proposed** (host-discovered loop over-iteration → stub; isolated repro + reference prior art)
 - [Checklist 008](checklists/08-continuous-validation-host-adoption-release-gates.md)
 - [Cross-Cutting Observations](observations.md)
 
