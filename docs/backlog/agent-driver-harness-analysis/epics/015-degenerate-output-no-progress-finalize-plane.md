@@ -2,9 +2,9 @@
 
 Дата создания: 2026-07-04.
 
-Статус: **root cause fixed + validated** (2026-07-04). The over-iteration is eliminated at its source
-(Phase B/D), with Phase C finalize recovery + empty-retry as defense-in-depth; Phase E already present;
-Phase F runtime guarantee validated on the live host. Discovered from a host (MeetScript «Ask Meetings»
+Статус: **done** (2026-07-04). Root cause fixed at source (Phase B/D), Phase C finalize recovery +
+empty-retry as defense-in-depth, Phase E already present, Phase F host bumped + validated on a durable
+rebuilt image. Only optional cleanup (drop the now-redundant host guard) remains. Discovered from a host (MeetScript «Ask Meetings»
 chat_v2) over the `single_react` / `react_text` streaming path with deepseek-v4-flash on OpenRouter.
 
 ## Implementation status (2026-07-04)
@@ -161,9 +161,11 @@ mis-parse the prose answer (returns 0), so the continuation is not the text-form
       the runtime recovered the substantive answer itself — the host's app-side guard did **not** fire
       (`answer_recovered` False at the host level) and 0 stubs reached the user. The app guard is now
       redundant for these cases.
-- [ ] Pending a proper agent-driver release + MeetScript dependency bump (the validation used an
-      ephemeral hot-install), then MeetScript drops its app-side guard
-      (`routes/chat.py` `_chat_v2_longest_substantive_assistant_message`) and re-benchmarks.
+- [x] **MeetScript dependency bumped + durable image validated:** `requirements-agent-driver.txt`
+      pinned `5934558 → 24cd636`; the chat image rebuilt (installs the fix from github, not a hot-patch);
+      5/5 broad-query runs finalize in ONE LLM call, 0 stubs (meetscript `8302d51`).
+- [ ] Optional cleanup: drop the app-side guard (`_chat_v2_longest_substantive_assistant_message`) after
+      a chat benchmark — currently kept as harmless defense-in-depth.
 
 ## Acceptance / evidence plan
 - Isolated deterministic tests for A–E (no live provider needed for the core guarantees).
