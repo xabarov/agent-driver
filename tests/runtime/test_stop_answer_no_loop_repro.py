@@ -73,16 +73,13 @@ async def test_A_plain_stop_prose_finalizes_in_one_call() -> None:
     assert calls == 1, f"over-iteration: {calls} calls for a complete STOP answer"
 
 
-@pytest.mark.xfail(
-    reason="agent-driver finalizes an empty STOP response without retry (known gap)",
-    strict=True,
-)
 @pytest.mark.asyncio
-async def test_empty_stop_should_retry_not_finalize_empty() -> None:
-    """An empty STOP first response should be retried to reach the real answer, not finalized empty.
-    Matches the live `final_len=0` occurrences. Currently xfails: agent-driver returns ''."""
-    answer, _calls = await _run(_ScriptProvider([_resp(""), _resp(_LONG_ANSWER)]))
+async def test_empty_stop_is_retried_not_finalized_empty() -> None:
+    """An empty STOP first response is retried (bounded) to reach the real answer, not finalized empty.
+    Matches the live `final_len=0` occurrences. Fixed by epic 015 Phase C empty-answer retry."""
+    answer, calls = await _run(_ScriptProvider([_resp(""), _resp(_LONG_ANSWER)]))
     assert answer == _LONG_ANSWER
+    assert calls == 2, f"expected one empty retry then the answer, got {calls} calls"
 
 
 @pytest.mark.asyncio

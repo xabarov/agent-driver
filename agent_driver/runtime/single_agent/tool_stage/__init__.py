@@ -88,6 +88,9 @@ from agent_driver.runtime.single_agent.tool_stage.deep_research import (
     _suppress_deep_research_terminal_tool_calls,
 )
 
+# Epic 015: bound the empty-answer re-prompt so a provider that keeps returning empty can't spin.
+_MAX_EMPTY_ANSWER_RETRIES = 1
+
 _force_web_fetch_for_source_verified_research = (
     force_web_fetch_for_source_verified_research
 )
@@ -291,6 +294,21 @@ async def _finalize_tool_stage_transition(
         finalize_now = await _maybe_finalize_from_tool_evidence(host, context, result)
         if finalize_now:
             continue_with_llm = False
+    # Epic 015: one bounded retry when a pure-text run is about to finalize an EMPTY answer (e.g.
+    # deepseek streaming yields an empty STOP) — re-prompt once rather than surfacing a blank answer.
+    # Gated on `not continue_with_llm` AND zero tool calls, so tool-informed finalizes (whose answer is
+    # synthesised from tool evidence / early-finalize and whose llm text is legitimately empty) are
+    # untouched.
+    if (
+        not continue_with_llm
+        and context.tool_calls == 0
+        and context.llm_response is not None
+    ):
+        content_text = (context.llm_response.message.content or "").strip()
+        empty_retries = int(context.metadata.get("empty_answer_retry_count", 0))
+        if not content_text and empty_retries < _MAX_EMPTY_ANSWER_RETRIES:
+            context.metadata["empty_answer_retry_count"] = empty_retries + 1
+            continue_with_llm = True
     loop_iterations = int(context.metadata.get("tool_loop_iterations", 0))
     if continue_with_llm:
         loop_iterations += 1
@@ -328,7 +346,9 @@ def _maybe_enforce_tool_loop_policy(
     repeat = _current_no_progress_repeat(context, result)
     if repeat is None:
         return
-    threshold = _tool_loop_policy_threshold(profile.budgets.get("tool_loop_no_progress"))
+    threshold = _tool_loop_policy_threshold(
+        profile.budgets.get("tool_loop_no_progress")
+    )
     if repeat["repeat_count"] < threshold:
         return
     reason = "policy_tool_loop_no_progress_force_final"
@@ -369,7 +389,11 @@ def _current_no_progress_repeat(
     current_keys = {
         key
         for envelope in result.envelopes
-        if (key := _tool_no_progress_key(envelope.call.tool_name, envelope.call.args, envelope.summary))
+        if (
+            key := _tool_no_progress_key(
+                envelope.call.tool_name, envelope.call.args, envelope.summary
+            )
+        )
         is not None
     }
     if not current_keys:
@@ -430,7 +454,9 @@ def _tool_no_progress_key(
     if not isinstance(summary, str) or not summary.strip():
         return None
     try:
-        args_key = json.dumps(args or {}, sort_keys=True, ensure_ascii=True, default=str)
+        args_key = json.dumps(
+            args or {}, sort_keys=True, ensure_ascii=True, default=str
+        )
     except TypeError:
         args_key = repr(args)
     return (tool_name, args_key, summary.strip()[:240])
@@ -907,7 +933,9 @@ def _compact_tool_payload_for_protocol(
     return compact
 
 
-def _compact_generic_tool_payload_for_protocol(structured: dict[str, Any]) -> dict[str, Any]:
+def _compact_generic_tool_payload_for_protocol(
+    structured: dict[str, Any],
+) -> dict[str, Any]:
     """Keep compact summaries visible before bulky raw-output previews."""
     payload = dict(structured)
     summary = payload.get("summary")
@@ -923,7 +951,10 @@ def _compact_generic_tool_payload_for_protocol(structured: dict[str, Any]) -> di
     for key in ("output_preview", "output", "stdout", "stderr", "content"):
         value = payload.get(key)
         if isinstance(value, str) and len(value) > 1000:
-            payload[key] = value[:240].rstrip() + "\n... [raw output omitted from protocol payload; use summary/artifacts]"
+            payload[key] = (
+                value[:240].rstrip()
+                + "\n... [raw output omitted from protocol payload; use summary/artifacts]"
+            )
             payload[f"{key}_omitted_chars"] = len(value) - 240
     return payload
 

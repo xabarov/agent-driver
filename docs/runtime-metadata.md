@@ -40,7 +40,7 @@ not a public SDK contract.
 | --- | --- | --- | --- | --- |
 | `next_step`, `step_count`, `llm_step_count`, `max_steps`, `terminal_output` | single-agent loop, runner output | checkpoint/output | terminal diagnostics | `LoopControlState` |
 | `resume_action`, `resume_message`, `resume_target_step`, `pending_interrupt`, `interrupt_payload` | resume/interrupt flow, output builder | checkpoint/output | yes for resume/interrupt UI | `LoopControlState` plus interrupt contract |
-| `tool_results`, `tool_trace`, `tool_calls`, `tool_loop_iterations`, `max_tool_calls` | tool stage, output, research contract | output/checkpoint | yes, trace/debug | `ToolLoopState` |
+| `tool_results`, `tool_trace`, `tool_calls`, `tool_loop_iterations`, `max_tool_calls`, `empty_answer_retry_count` | tool stage, output, research contract | output/checkpoint | yes, trace/debug | `ToolLoopState` (`empty_answer_retry_count`: epic 015 bounded empty-answer re-prompt) |
 | `skill_invocations`, `invoked_skill_refs` | `skill_view` post-processing, output/compaction projection | output/checkpoint | yes for Skills UI and trace/debug | `ToolLoopState` plus `CompactionRuntimeState` projection |
 | `unknown_tool_counts`, `denied_tool_counts`, `last_denied_signature`, `approved_tool_call`, `disallowed_management_tool_hint_sent` | tool governance and repair loops | checkpoint mostly | diagnostics | `ToolLoopState` |
 | `effective_tool_names`, `tool_choice_override`, `force_final_answer`, `force_final_answer_reason`, `forced_tool_choice_retry`, `forced_tool_catalog` | llm/tool-call preparation and repair | checkpoint | diagnostics | `ToolLoopState` or `ProviderRuntimeState` |
