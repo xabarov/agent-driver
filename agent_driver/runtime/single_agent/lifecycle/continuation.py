@@ -54,6 +54,25 @@ class ContinuationIntent:
     reason: str | None = None
 
 
+def _ends_inside_open_code_block(stripped: str) -> bool:
+    """Whether an odd ``` fence count means the answer was truncated mid-code.
+
+    An odd number of fences means the last ``` opened a block, so the trailing text is nominally
+    "inside" it. But models also emit an odd number of ``` as formatting inside an otherwise complete
+    answer (common in RU LLM output). Treat the answer as finished — not truncated — when the tail after
+    the last fence ends like prose (sentence punctuation or a substantial multi-word tail), so a complete
+    answer is not re-prompted into a degenerate over-iteration.
+    """
+    tail = stripped.rsplit("```", 1)[-1].strip()
+    if not tail:
+        return True
+    if tail[-1] in '.!?…»")]':
+        return False
+    if len(tail) >= 40 and tail.count(" ") >= 6:
+        return False
+    return True
+
+
 def analyze_continuation_intent(text: str) -> ContinuationIntent:
     """Return whether final assistant text looks like unfinished progress."""
     stripped = text.strip()
@@ -61,7 +80,7 @@ def analyze_continuation_intent(text: str) -> ContinuationIntent:
         return ContinuationIntent(False)
     if _TEXT_FORM_TOOL_CALL_RE.search(stripped):
         return ContinuationIntent(True, "text_form_tool_call")
-    if stripped.count("```") % 2:
+    if stripped.count("```") % 2 and _ends_inside_open_code_block(stripped):
         return ContinuationIntent(True, "unclosed_code_block")
     if any(pattern.search(stripped) for pattern in _UNFINISHED_SUFFIXES):
         return ContinuationIntent(True, "unfinished_suffix")
