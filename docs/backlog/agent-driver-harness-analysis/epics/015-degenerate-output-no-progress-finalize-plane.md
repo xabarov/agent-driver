@@ -142,8 +142,14 @@ mis-parse the prose answer (returns 0), so the continuation is not the text-form
 - [ ] Optional: a dedicated no-progress-iteration budget (vs total steps) — folded into Phase B if pursued.
 
 ### Phase F. Host adoption
-- [ ] Pending an agent-driver release + MeetScript dependency bump, then MeetScript drops its app-side
-      guard (`routes/chat.py` `_chat_v2_longest_substantive_assistant_message`) and re-benchmarks.
+- [x] **Runtime guarantee validated end-to-end** against the live MeetScript stand (this agent-driver
+      hot-installed into the chat jobworker): over 3× broad-query runs (incl. an n_llm=3 over-iteration),
+      the runtime recovered the substantive answer itself — the host's app-side guard did **not** fire
+      (`answer_recovered` False at the host level) and 0 stubs reached the user. The app guard is now
+      redundant for these cases.
+- [ ] Pending a proper agent-driver release + MeetScript dependency bump (the validation used an
+      ephemeral hot-install), then MeetScript drops its app-side guard
+      (`routes/chat.py` `_chat_v2_longest_substantive_assistant_message`) and re-benchmarks.
 
 ## Acceptance / evidence plan
 - Isolated deterministic tests for A–E (no live provider needed for the core guarantees).
