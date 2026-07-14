@@ -51,6 +51,7 @@ class LlmRequestBuildContext:
     max_chars: int = 6000
     max_messages: int | None = 24
     max_observations: int | None = None
+    protect_recent_turns: int | None = None
     context_window_estimate: int = 12000
     warning_threshold: int = 7500
     compact_threshold: int = 9000
@@ -316,6 +317,7 @@ def build_single_agent_llm_request(
             max_chars=ctx.max_chars,
             max_messages=ctx.max_messages,
             max_observations=ctx.max_observations,
+            protect_recent_turns=ctx.protect_recent_turns,
         ),
         prompt_messages=prompt_messages,
         digest_ids=list(ctx.digest_ids),

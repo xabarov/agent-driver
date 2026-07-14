@@ -246,6 +246,7 @@ def build_trimmed_request(
             max_chars=host._config.trim_max_chars,
             max_messages=host._config.trim_max_messages,
             max_observations=host._config.trim_max_observations,
+            protect_recent_turns=host._config.trim_protect_recent_turns,
             context_window_estimate=host._config.context_window_estimate,
             warning_threshold=host._config.token_warning_threshold,
             compact_threshold=host._config.token_compact_threshold,

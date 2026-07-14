@@ -20,9 +20,27 @@ class ContextBudget(ContractModel):
     max_chars: int
     max_messages: int | None = None
     max_observations: int | None = None
+    protect_recent_turns: int | None = None
+    """Number of most-recent messages that must survive deterministic trimming
+    verbatim, regardless of the char budget. ``None`` (default) keeps the legacy
+    behaviour where the char-budget pass fills an oldest-first prefix and can
+    drop recent turns. When set to ``N`` > 0, the last ``N`` messages are always
+    retained so a follow-up can bind to an antecedent enumerated in a recent
+    turn — including the ASSISTANT's own prior answer (e.g. resolving "those 15"
+    against the list the assistant just produced), not only prior user turns.
+
+    This mirrors ``microcompact_preserve_recent`` for observations and the
+    ``protect_last_n`` tail-preservation used by mature harnesses (openclaude
+    keeps the conversation tail on compaction; hermes-agent protects the last N
+    turns and summarizes only the middle). Bounded and cheap: it protects a
+    fixed window, never the whole history. If the protected tail alone exceeds
+    ``max_chars`` it is still kept (bounded by ``N`` turns) and older messages
+    are dropped/digested first."""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("max_chars", "max_messages", "max_observations")
+    @field_validator(
+        "max_chars", "max_messages", "max_observations", "protect_recent_turns"
+    )
     @classmethod
     def validate_limits(cls, value: int | None) -> int | None:
         """Require non-negative limits."""

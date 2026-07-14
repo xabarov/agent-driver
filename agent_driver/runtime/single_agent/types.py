@@ -198,6 +198,10 @@ class RunnerConfig:
         return self.trimming.trim_max_observations
 
     @property
+    def trim_protect_recent_turns(self) -> int | None:
+        return self.trimming.trim_protect_recent_turns
+
+    @property
     def microcompact_preserve_recent(self) -> int:
         return self.trimming.microcompact_preserve_recent
 

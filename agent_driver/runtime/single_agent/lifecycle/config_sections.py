@@ -54,6 +54,7 @@ class TrimmingSettings:
     trim_max_chars: int = 6000
     trim_max_messages: int | None = 24
     trim_max_observations: int | None = 24
+    trim_protect_recent_turns: int | None = 4
     microcompact_preserve_recent: int = 6
     microcompact_max_preview_chars: int = 180
     context_window_estimate: int = 12000

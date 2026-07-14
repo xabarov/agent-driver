@@ -105,8 +105,32 @@ def _trim_messages_to_budget(
     max_chars: int,
     digest_pool: list[str],
     artifact_pool: list[str],
+    protect_from_index: int | None = None,
 ) -> tuple[list[dict[str, object]], list[TrimAuditRecord]]:
-    """Trim messages with digest/artifact fallback when budget overflows."""
+    """Trim messages with digest/artifact fallback when budget overflows.
+
+    ``protect_from_index`` marks the boundary of the protected recent-turn
+    window: messages at ``index >= protect_from_index`` are always kept
+    verbatim (never dropped/digested/stubbed/truncated) so a follow-up can bind
+    to an antecedent enumerated in a recent turn — user OR assistant. ``None``
+    (or a value at/after the message count) protects nothing and preserves the
+    legacy oldest-first prefix behaviour. The protected tail's chars are
+    reserved up front, so the budget available to older messages shrinks
+    accordingly; if the protected tail alone exceeds ``max_chars`` it is still
+    kept and every older message is dropped/digested first.
+    """
+    total = len(working_messages)
+    if protect_from_index is None:
+        protect_from_index = total
+    protect_from_index = max(0, min(protect_from_index, total))
+    protected_chars = sum(
+        len(str(working_messages[i].get("content", "")))
+        for i in range(protect_from_index, total)
+    )
+    # Budget the older (non-protected) messages must share, after reserving the
+    # protected tail. Floored at zero: a fully consumed budget simply drops all
+    # older messages while the protected tail is still kept verbatim.
+    head_budget = max(0, max_chars - protected_chars)
     kept: list[dict[str, object]] = []
     audit: list[TrimAuditRecord] = []
     running_chars = 0
@@ -131,8 +155,24 @@ def _trim_messages_to_budget(
 
     for index, message in enumerate(working_messages):
         content = str(message.get("content", ""))
+        if index >= protect_from_index:
+            # Protected recent-turn window: keep verbatim regardless of budget so
+            # the antecedent for a follow-up ("those 15", "of those", "from that
+            # list") survives — including the assistant's own prior enumeration.
+            kept.append(message)
+            running_chars += len(content)
+            audit.append(
+                TrimAuditRecord(
+                    record_id=f"trim_{index}",
+                    kind="message",
+                    action=TrimAction.KEPT,
+                    reason="protected_recent_turn",
+                    metadata={"length": len(content), "protected": True},
+                )
+            )
+            continue
         prospective = running_chars + len(content)
-        if prospective <= max_chars:
+        if prospective <= head_budget:
             kept.append(message)
             running_chars = prospective
             audit.append(
@@ -171,7 +211,7 @@ def _trim_messages_to_budget(
         if index == last_tool_index:
             stub = _tool_stub(message)
             stub_content = str(stub.get("content", ""))
-            while kept and running_chars + len(stub_content) > max_chars:
+            while kept and running_chars + len(stub_content) > head_budget:
                 removed = kept.pop(0)
                 removed_content = str(removed.get("content", ""))
                 running_chars = max(0, running_chars - len(removed_content))
@@ -201,12 +241,12 @@ def _trim_messages_to_budget(
             # valid. Dropping it can leave zero messages, which providers reject outright
             # ("Input required: specify prompt or messages"). Rebalance by dropping older kept
             # messages first so the current turn keeps a meaningful budget.
-            budget_left = max_chars - running_chars
+            budget_left = head_budget - running_chars
             while kept and budget_left < min(len(content), _MIN_LAST_MESSAGE_CHARS):
                 removed = kept.pop(0)
                 removed_content = str(removed.get("content", ""))
                 running_chars = max(0, running_chars - len(removed_content))
-                budget_left = max_chars - running_chars
+                budget_left = head_budget - running_chars
                 audit.append(
                     TrimAuditRecord(
                         record_id=f"trim_rebalance_last_{index}_{len(kept)}",
@@ -295,11 +335,16 @@ def trim_context(
         working_messages=working_messages,
         retained_observations=retained_observations,
     )
+    protect_recent_turns = budget.protect_recent_turns
+    protect_from_index: int | None = None
+    if protect_recent_turns is not None and protect_recent_turns > 0:
+        protect_from_index = max(0, len(working_messages) - protect_recent_turns)
     kept, message_audit = _trim_messages_to_budget(
         working_messages=working_messages,
         max_chars=budget.max_chars,
         digest_pool=digest_pool,
         artifact_pool=artifact_pool,
+        protect_from_index=protect_from_index,
     )
     audit.extend(message_audit)
     kept, max_message_audit = _enforce_max_messages(
@@ -329,6 +374,12 @@ def trim_context(
             "max_chars": budget.max_chars,
             "max_messages": budget.max_messages,
             "max_observations": budget.max_observations,
+            "protect_recent_turns": protect_recent_turns,
+            "protected_messages": (
+                len(working_messages) - protect_from_index
+                if protect_from_index is not None
+                else 0
+            ),
             "input_messages": len(working_messages),
             "kept_messages": len(kept),
             "input_observations": len(input_observations),
