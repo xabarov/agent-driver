@@ -92,3 +92,27 @@ When adding a new provider evidence artifact type, wire it through all artifact
 contracts together: `EvidenceArtifactRef`, `ValidationArtifactRef`,
 continuous-validation known artifact mapping, and gate-id mapping. Updating only
 one layer produces artifacts that write successfully but fail strict 008 audit.
+
+
+## Multi-Turn Anaphora to the Assistant's Own Prior Answer
+
+Date: 2026-07-15 (host: MeetScript Ask Meetings, chat_v2 on agent-driver)
+
+Observed engine-level gap: the harness resolves anaphora that points at earlier
+**user** turns (query condensation / standalone-question rewrite), but does NOT
+resolve a reference to a list the **assistant itself** enumerated in a previous
+turn. Repro: assistant answers "15 meetings are about AI: <enumerated list>";
+user follows up "how many of those 15 are about NLP?"; the assistant fails to
+bind "those 15" to its own prior answer, sees only the fresh retrieval (6 hits),
+and asks a clarifying question ("which list of 15 do you mean?") instead of
+filtering the already-established set.
+
+Root cause is in the context/condensation plane, not the domain tools or infra:
+the previous assistant message's enumerated entities are not carried into the
+model's resolvable context as an antecedent. The fix belongs in the harness
+(steering/condensation), so it benefits every host, not just MeetScript — this
+is a general engine bug and may land directly on `main`. Classify precisely from
+a Phoenix trace first (confirm what the model actually saw in context), then
+extend anaphora resolution to cover assistant-turn antecedents (not only prior
+user turns). Related host-side tracking: MeetScript epic backlog B17 (and the
+chat-quality cluster B15/B16/B17).
