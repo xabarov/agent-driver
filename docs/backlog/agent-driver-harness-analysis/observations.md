@@ -116,3 +116,9 @@ a Phoenix trace first (confirm what the model actually saw in context), then
 extend anaphora resolution to cover assistant-turn antecedents (not only prior
 user turns). Related host-side tracking: MeetScript epic backlog B17 (and the
 chat-quality cluster B15/B16/B17).
+
+**Reference-first (general over point-fix):** before implementing, study how the
+conversation-history/context class is handled in `reference/openclaude`
+(`src/history.ts`, `src/QueryEngine.ts`, `src/context/`) and `reference/hermes-agent`.
+Apply the most general antecedent-resolution mechanism the engine can host, so
+every consumer benefits — do not point-patch MeetScript.
