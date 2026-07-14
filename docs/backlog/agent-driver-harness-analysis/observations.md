@@ -96,6 +96,8 @@ one layer produces artifacts that write successfully but fail strict 008 audit.
 
 ## Multi-Turn Anaphora to the Assistant's Own Prior Answer
 
+> **STATUS 2026-07-15: ADDRESSED** in commit 7d6dc3df — `ContextBudget.protect_recent_turns` (default 4) keeps the recent tail (both roles) so assistant-enumerated antecedents survive trimming. 12 tests pass. Root cause was the deterministic trimmer keeping an oldest-first prefix, not a missing condensation step.
+
 Date: 2026-07-15 (host: MeetScript Ask Meetings, chat_v2 on agent-driver)
 
 Observed engine-level gap: the harness resolves anaphora that points at earlier
