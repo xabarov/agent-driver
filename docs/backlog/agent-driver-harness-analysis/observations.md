@@ -157,3 +157,22 @@ retries should surface a distinct terminal reason (not a silent empty answer),
 so hosts can message the user honestly. Reference-first: check how
 `reference/openclaude` / `reference/hermes-agent` normalize trailing tool
 history for models with this quirk before implementing.
+
+## Hidden 1-Tool-Call Budget When Hosts Omit max_tool_calls / max_steps
+
+Date: 2026-07-18 (host: MeetScript chat_v2, «Аргус» benchmark, decisions_log case)
+
+`_force_final_reason` (tool_stage) falls back to `context.metadata.get("max_tool_calls", 1)`
+/ `metadata.get("max_steps", 1)` when `AgentRunInput` leaves the budgets None — and nothing
+in the single-agent runtime ever writes those metadata keys. Net effect: a host that does
+not explicitly pass budgets gets an agent forced to finalize after its FIRST tool call.
+`RunnerConfig.default_max_steps` (backstop 80) is never consulted by `_force_final_reason`,
+so the documented backstop philosophy and the actual forced-final behavior disagree.
+Observed live: cross-meeting questions finalize with «мне нужно найти остальные отчёты…»
+or an empty forced final (model considers the task unfinished after one search).
+
+Candidate engine fix: make the fallback consult the runner-level default budgets
+(default_max_steps and a new default_max_tool_calls) instead of the hardcoded 1, keeping
+explicit per-run budgets winning. Behavior change for all hosts → decide deliberately,
+with tests over profiles that relied on single-shot tools. Host-side mitigation applied in
+MeetScript meanwhile (explicit max_tool_calls=6 / max_steps=12 via env).
