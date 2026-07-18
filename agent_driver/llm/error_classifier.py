@@ -38,6 +38,7 @@ class ProviderErrorReason(str, Enum):
     SERVER_ERROR = "server_error"
     TIMEOUT = "timeout"
     CONTEXT_OVERFLOW = "context_overflow"
+    EMPTY_RESPONSE = "empty_response"
     PAYLOAD_TOO_LARGE = "payload_too_large"
     MODEL_NOT_FOUND = "model_not_found"
     CONTENT_POLICY = "content_policy"
@@ -69,6 +70,11 @@ _REASON_ACTION: dict[ProviderErrorReason, RecoveryAction] = {
     ProviderErrorReason.SERVER_ERROR: RecoveryAction.ROTATE_PROVIDER,
     ProviderErrorReason.TIMEOUT: RecoveryAction.ROTATE_PROVIDER,
     ProviderErrorReason.CONTEXT_OVERFLOW: RecoveryAction.COMPRESS_CONTEXT,
+    # Empty completion is a transient model quirk (deepseek-class), NOT an oversized prompt:
+    # retry, never compress — advisory text about max_tokens in these errors used to match
+    # overflow markers and drive healthy sessions into a compress death-spiral (reference:
+    # hermes error_classifier, empty-before-overflow ordering).
+    ProviderErrorReason.EMPTY_RESPONSE: RecoveryAction.BACKOFF_RETRY,
     ProviderErrorReason.PAYLOAD_TOO_LARGE: RecoveryAction.FAIL_FAST,
     ProviderErrorReason.MODEL_NOT_FOUND: RecoveryAction.FAIL_FAST,
     ProviderErrorReason.CONTENT_POLICY: RecoveryAction.FAIL_FAST,
@@ -92,6 +98,18 @@ _UNHEALTHY_REASONS: frozenset[ProviderErrorReason] = frozenset(
     }
 )
 
+# Checked BEFORE overflow markers everywhere: providers describe empty completions with
+# advisory text that mentions max_tokens/length ("returned an empty response, consider
+# adjusting max_tokens"), which would otherwise classify as CONTEXT_OVERFLOW and trigger
+# pointless compression instead of a retry.
+_EMPTY_RESPONSE_MARKERS: tuple[str, ...] = (
+    "empty response",
+    "empty completion",
+    "returned no content",
+    "no content generated",
+    "empty message content",
+    "response was empty",
+)
 _OVERFLOW_MARKERS: tuple[str, ...] = (
     "context length",
     "context_length",
@@ -183,6 +201,7 @@ _EXACT_STATUS: dict[int, ProviderErrorReason] = {
 # Ordered marker → reason rules for a 400 (most specific first). The first
 # matching marker set wins; nothing matching falls through to a format error.
 _BAD_REQUEST_RULES: tuple[tuple[tuple[str, ...], ProviderErrorReason], ...] = (
+    (_EMPTY_RESPONSE_MARKERS, ProviderErrorReason.EMPTY_RESPONSE),
     (_OVERFLOW_MARKERS, ProviderErrorReason.CONTEXT_OVERFLOW),
     (_PAYLOAD_MARKERS, ProviderErrorReason.PAYLOAD_TOO_LARGE),
     (_CONTENT_POLICY_MARKERS, ProviderErrorReason.CONTENT_POLICY),
@@ -200,6 +219,8 @@ def _classify_ambiguous_status(  # pylint: disable=too-many-return-statements
             return ProviderErrorReason.CONTENT_POLICY
         return ProviderErrorReason.AUTH
     if status_code == 422:
+        if _contains(message, _EMPTY_RESPONSE_MARKERS):
+            return ProviderErrorReason.EMPTY_RESPONSE
         if _contains(message, _OVERFLOW_MARKERS):
             return ProviderErrorReason.CONTEXT_OVERFLOW
         return ProviderErrorReason.FORMAT_ERROR
@@ -268,7 +289,13 @@ def classify(exc: BaseException) -> ClassifiedError:
     if from_httpx is not None:
         return from_httpx
 
-    return _make(ProviderErrorReason.UNKNOWN, message=str(exc))
+    message = str(exc)
+    # Runtime-raised empty-completion failures (no HTTP cause) must classify as retryable
+    # EMPTY_RESPONSE, not UNKNOWN — the force-final ladder keys off this distinction.
+    if _contains(message, _EMPTY_RESPONSE_MARKERS):
+        return _make(ProviderErrorReason.EMPTY_RESPONSE, message=message)
+
+    return _make(ProviderErrorReason.UNKNOWN, message=message)
 
 
 def _classify_sdk_error(exc: BaseException) -> ClassifiedError | None:

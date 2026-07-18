@@ -120,6 +120,9 @@ class SingleAgentRunner(
             command_queue_store=self._config.command_queue_store,
             python_backend=python_backend,
             lifecycle_hooks=self._build_lifecycle_hooks(),
+            fallback_providers=tuple(
+                getattr(self._config, "fallback_providers", ()) or ()
+            ),
         )
 
     def _build_lifecycle_hooks(self) -> tuple:

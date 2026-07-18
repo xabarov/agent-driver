@@ -640,7 +640,8 @@ async def test_complete_request_folds_tool_history_when_no_tools_retry_stays_emp
         else:
             assert all(m.role != "tool" for m in request.messages)
             assert any(
-                m.role == "user" and m.content.startswith("[Tool result: find_meetings]")
+                m.role == "user"
+                and m.content.startswith("[Tool result: find_meetings]")
                 for m in request.messages
             )
             content = "folded final answer"
@@ -655,7 +656,9 @@ async def test_complete_request_folds_tool_history_when_no_tools_retry_stays_emp
     provider.stream = stream
     provider.complete = complete
     emitted = []
-    host = SimpleNamespace(_deps=SimpleNamespace(provider=provider), _emit=emitted.append)
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(provider=provider), _emit=emitted.append
+    )
     context = SimpleNamespace(
         run_input=SimpleNamespace(
             stream=True, app_metadata={}, tool_policy=SimpleNamespace(metadata={})
@@ -703,7 +706,9 @@ async def test_complete_request_signals_empty_after_all_retries() -> None:
     provider.stream = stream
     provider.complete = complete
     emitted = []
-    host = SimpleNamespace(_deps=SimpleNamespace(provider=provider), _emit=emitted.append)
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(provider=provider), _emit=emitted.append
+    )
     context = SimpleNamespace(
         run_input=SimpleNamespace(
             stream=True, app_metadata={}, tool_policy=SimpleNamespace(metadata={})
@@ -722,4 +727,172 @@ async def test_complete_request_signals_empty_after_all_retries() -> None:
         event.payload.get("signal_id") == "forced_final_empty_after_all_retries"
         and event.payload.get("severity") == "error"
         for event in emitted
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_request_finalizes_with_prior_substantive_turn_when_all_empty() -> (
+    None
+):
+    """Ladder step (hermes fallback_prior_turn_content): when every retry returns empty
+    but THIS run already produced a substantive assistant text, finalize with it."""
+    prior_text = "Вот собранные решения по проекту: " + "детали решения. " * 20
+    provider = SimpleNamespace(name="openrouter", complete_calls=0)
+
+    async def stream(request: LlmRequest):
+        yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.STOP)
+
+    async def complete(request: LlmRequest) -> LlmResponse:
+        provider.complete_calls += 1
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content=""),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="retry", model_name="test"),
+            provider="retry",
+            model="test",
+        )
+
+    provider.stream = stream
+    provider.complete = complete
+    emitted = []
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(provider=provider), _emit=emitted.append
+    )
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(
+            stream=True, app_metadata={}, tool_policy=SimpleNamespace(metadata={})
+        ),
+        metadata={"force_final_answer": True},
+        run_id="run_test",
+        attempt_id="attempt_test",
+    )
+    messages = _tool_cycle_messages()
+    messages.insert(1, ChatMessage(role="assistant", content=prior_text))
+    request = _forced_final_request().model_copy(update={"messages": messages})
+
+    response = await _complete_request(host, context, request)
+
+    assert response.message.content == prior_text.strip()
+    assert context.metadata["forced_final_prior_turn_recovered"] is True
+    assert any(
+        event.payload.get("signal_id") == "forced_final_recovered_prior_turn"
+        for event in emitted
+    )
+    assert not any(
+        event.payload.get("signal_id") == "forced_final_empty_after_all_retries"
+        for event in emitted
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_request_recovers_via_fallback_provider() -> None:
+    """Ladder step (hermes _fallback_chain): a sibling provider given the folded request
+    answers when the primary keeps returning empty forced finals."""
+    primary = SimpleNamespace(name="openrouter", complete_calls=0)
+
+    async def stream(request: LlmRequest):
+        yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.STOP)
+
+    async def empty_complete(request: LlmRequest) -> LlmResponse:
+        primary.complete_calls += 1
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content=""),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="retry", model_name="test"),
+            provider="retry",
+            model="test",
+        )
+
+    primary.stream = stream
+    primary.complete = empty_complete
+
+    fallback = SimpleNamespace(name="fallback-model", complete_calls=0)
+
+    async def fallback_complete(request: LlmRequest) -> LlmResponse:
+        fallback.complete_calls += 1
+        assert all(m.role != "tool" for m in request.messages)  # folded shape reused
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="fallback final answer"),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="fb", model_name="fb"),
+            provider="fb",
+            model="fb",
+        )
+
+    fallback.complete = fallback_complete
+    emitted = []
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(provider=primary, fallback_providers=(fallback,)),
+        _emit=emitted.append,
+    )
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(
+            stream=True, app_metadata={}, tool_policy=SimpleNamespace(metadata={})
+        ),
+        metadata={"force_final_answer": True},
+        run_id="run_test",
+        attempt_id="attempt_test",
+    )
+
+    response = await _complete_request(host, context, _forced_final_request())
+
+    assert response.message.content == "fallback final answer"
+    assert fallback.complete_calls == 1
+    assert context.metadata["forced_final_fallback_provider"] == "fallback-model"
+    assert context.metadata["empty_forced_final_retry"] == "fallback_provider"
+    assert any(
+        event.payload.get("signal_id")
+        == "provider_empty_forced_final_fallback_provider_retry"
+        for event in emitted
+    )
+    assert not any(
+        event.payload.get("signal_id") == "forced_final_empty_after_all_retries"
+        for event in emitted
+    )
+
+
+@pytest.mark.asyncio
+async def test_ladder_never_mutates_original_request_history() -> None:
+    """Provenance guard (epic 016 phase D): every ladder step retries on a COPY —
+    the original request's message history must stay free of retry scaffolding
+    (nudge/fold messages), so nothing can leak into durable history or checkpoints."""
+    provider = SimpleNamespace(name="openrouter", complete_calls=0)
+
+    async def stream(request: LlmRequest):
+        yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.STOP)
+
+    async def complete(request: LlmRequest) -> LlmResponse:
+        provider.complete_calls += 1
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content=""),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="retry", model_name="test"),
+            provider="retry",
+            model="test",
+        )
+
+    provider.stream = stream
+    provider.complete = complete
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(provider=provider), _emit=lambda event: None
+    )
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(
+            stream=True, app_metadata={}, tool_policy=SimpleNamespace(metadata={})
+        ),
+        metadata={"force_final_answer": True},
+        run_id="run_test",
+        attempt_id="attempt_test",
+    )
+    request = _forced_final_request()
+    before = [(m.role, m.content, dict(m.metadata or {})) for m in request.messages]
+
+    await _complete_request(host, context, request)
+
+    after = [(m.role, m.content, dict(m.metadata or {})) for m in request.messages]
+    assert after == before
+    assert not any(
+        (m.metadata or {}).get("runtime_retry")
+        or (m.metadata or {}).get("folded_tool_result")
+        for m in request.messages
     )

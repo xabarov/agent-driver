@@ -164,3 +164,43 @@ def test_generic_runtime_error_is_unknown_rotate() -> None:
     assert classified.action is RecoveryAction.ROTATE_PROVIDER
     assert classified.marks_unhealthy is True
     assert classified.is_fatal is False
+
+
+class TestEmptyResponseClassification:
+    """Empty-completion errors classify as retryable EMPTY_RESPONSE, never as overflow.
+
+    Provider advisory text for empty completions often mentions max_tokens/length
+    ("returned an empty response, consider adjusting max_tokens") — before the
+    empty-before-overflow ordering that misrouted healthy sessions into
+    compress-and-retry death spirals (reference: hermes error_classifier)."""
+
+    def test_advisory_with_max_tokens_mention_is_empty_not_overflow(self):
+        exc = _status_error(
+            400,
+            "The model returned an empty response despite retries; consider "
+            "adjusting max_tokens or reduce the length of the prompt.",
+        )
+        result = classify(exc)
+        assert result.reason is ProviderErrorReason.EMPTY_RESPONSE
+        assert result.action is RecoveryAction.BACKOFF_RETRY
+        assert result.retryable is True
+        assert result.is_fatal is False
+
+    def test_422_empty_before_overflow(self):
+        exc = _status_error(
+            422, "empty completion returned; maximum context reached hint"
+        )
+        result = classify(exc)
+        assert result.reason is ProviderErrorReason.EMPTY_RESPONSE
+
+    def test_overflow_without_empty_markers_still_compresses(self):
+        exc = _status_error(400, "prompt is too long: maximum context length exceeded")
+        result = classify(exc)
+        assert result.reason is ProviderErrorReason.CONTEXT_OVERFLOW
+        assert result.action is RecoveryAction.COMPRESS_CONTEXT
+
+    def test_runtime_raised_empty_completion_without_http_cause(self):
+        result = classify(RuntimeError("provider returned an empty response"))
+        assert result.reason is ProviderErrorReason.EMPTY_RESPONSE
+        assert result.retryable is True
+        assert result.marks_unhealthy is False

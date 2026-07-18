@@ -317,7 +317,9 @@ class _ForceFinalDsmlTextToolCallProvider(FakeProvider):
             return LlmResponse(
                 message=ChatMessage(role="assistant", content=""),
                 finish_reason=LlmFinishReason.TOOL_CALLS,
-                usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+                usage=UsageSummary(
+                    model_provider="deliverable", model_name="test-model"
+                ),
                 provider="deliverable",
                 model="test-model",
                 metadata={
@@ -345,8 +347,8 @@ class _ForceFinalDsmlTextToolCallProvider(FakeProvider):
                     role="assistant",
                     content=(
                         "<｜｜DSML｜｜tool_calls>\n"
-                        "<｜｜DSML｜｜invoke name=\"web_search\">\n"
-                        "<｜｜DSML｜｜parameter name=\"query\" string=\"true\">"
+                        '<｜｜DSML｜｜invoke name="web_search">\n'
+                        '<｜｜DSML｜｜parameter name="query" string="true">'
                         "repeat Fender"
                         "</｜｜DSML｜｜parameter>\n"
                         "</｜｜DSML｜｜invoke>\n"
@@ -354,7 +356,9 @@ class _ForceFinalDsmlTextToolCallProvider(FakeProvider):
                     ),
                 ),
                 finish_reason=LlmFinishReason.STOP,
-                usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+                usage=UsageSummary(
+                    model_provider="deliverable", model_name="test-model"
+                ),
                 provider="deliverable",
                 model="test-model",
                 metadata={},
@@ -382,7 +386,9 @@ class _ForceFinalNativeToolCallRetryProvider(FakeProvider):
             return LlmResponse(
                 message=ChatMessage(role="assistant", content=""),
                 finish_reason=LlmFinishReason.TOOL_CALLS,
-                usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+                usage=UsageSummary(
+                    model_provider="deliverable", model_name="test-model"
+                ),
                 provider="deliverable",
                 model="test-model",
                 metadata={
@@ -444,7 +450,9 @@ class _ForceFinalStreamingDsmlTextToolCallProvider(FakeProvider):
             yield LlmStreamEvent(
                 event="tool_calls",
                 finish_reason=LlmFinishReason.TOOL_CALLS,
-                usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
+                usage=UsageSummary(
+                    model_provider="deliverable", model_name="test-model"
+                ),
                 metadata={
                     "planned_tool_calls": [
                         ToolCall(
@@ -470,8 +478,8 @@ class _ForceFinalStreamingDsmlTextToolCallProvider(FakeProvider):
             event="delta",
             delta_text=(
                 "<｜｜DSML｜｜tool_calls>\n"
-                "<｜｜DSML｜｜invoke name=\"web_search\">\n"
-                "<｜｜DSML｜｜parameter name=\"query\" string=\"true\">"
+                '<｜｜DSML｜｜invoke name="web_search">\n'
+                '<｜｜DSML｜｜parameter name="query" string="true">'
                 "repeat Fender"
                 "</｜｜DSML｜｜parameter>\n"
                 "</｜｜DSML｜｜invoke>\n"
@@ -487,7 +495,9 @@ class _ForceFinalStreamingDsmlTextToolCallProvider(FakeProvider):
     async def complete(self, request: LlmRequest) -> LlmResponse:
         self.requests.append(request)
         return LlmResponse(
-            message=ChatMessage(role="assistant", content="Вот streaming итог без tools."),
+            message=ChatMessage(
+                role="assistant", content="Вот streaming итог без tools."
+            ),
             finish_reason=LlmFinishReason.STOP,
             usage=UsageSummary(model_provider="deliverable", model_name="test-model"),
             provider="deliverable",
@@ -783,9 +793,7 @@ async def test_enforce_policy_records_tool_loop_force_final_decision() -> None:
                     "profile_id": "test-enforce",
                     "mode": "enforce",
                     "enabled_policy_ids": ["tool_loop_no_progress"],
-                    "budgets": {
-                        "tool_loop_no_progress": {"repeat_threshold": 2}
-                    },
+                    "budgets": {"tool_loop_no_progress": {"repeat_threshold": 2}},
                 }
             },
         )
@@ -1161,3 +1169,85 @@ def test_denied_web_search_does_not_trigger_zero_result_force_final() -> None:
     _update_zero_result_policy(context, result)
     assert context.metadata["web_search_zero_streak"] == 0
     assert "force_final_answer" not in context.metadata
+
+
+class _EmptyFinalProvider(FakeProvider):
+    """Deepseek-quirk emulator (epic 016): one tool round, then every completion empty."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="unused")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=UsageSummary(model_provider="empty", model_name="test-model"),
+                provider="empty",
+                model="test-model",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="web_search",
+                            tool_call_id="call_1",
+                            args={
+                                "query": "decisions",
+                                "mock_results": [
+                                    {
+                                        "title": "Result",
+                                        "url": "https://example.com",
+                                        "snippet": "ok",
+                                    }
+                                ],
+                            },
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content=""),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="empty", model_name="test-model"),
+            provider="empty",
+            model="test-model",
+            metadata={},
+        )
+
+
+@pytest.mark.asyncio
+async def test_empty_final_ladder_e2e_completes_without_scaffolding_leak() -> None:
+    """E2E (epic 016 phase D): a run whose provider keeps returning empty finals after a
+    tool round completes without crashing, exercises the ladder, and never leaks retry
+    scaffolding (nudge/fold messages) into main-loop requests."""
+    provider = _EmptyFinalProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only("web_search"))
+    output = await agent.run(
+        AgentRunInput(
+            input="collect all decisions",
+            run_id="run_empty_final_ladder_e2e",
+            agent_id="agent",
+            graph_preset="single_react",
+            max_steps=8,
+            max_tool_calls=2,
+        )
+    )
+
+    assert (output.answer or "").strip() == ""  # ladder exhausted honestly, no crash
+    # The ladder actually ran: at least one retry request carries the retry nudge...
+    retry_requests = [
+        req
+        for req in provider.requests
+        if any((m.metadata or {}).get("runtime_retry") for m in req.messages)
+    ]
+    assert retry_requests
+    # ...and main-loop requests stay scaffolding-free (copies never leak back).
+    main_requests = [req for req in provider.requests if req not in retry_requests]
+    for req in main_requests:
+        assert not any(
+            (m.metadata or {}).get("runtime_retry")
+            or (m.metadata or {}).get("folded_tool_result")
+            or (m.metadata or {}).get("folded_tool_calls")
+            for m in req.messages
+        )

@@ -155,6 +155,9 @@ class RunnerConfig:
         self.default_max_tool_calls = kwargs.pop(
             "default_max_tool_calls", DEFAULT_MAX_TOOL_CALLS_BACKSTOP
         )
+        # Epic 016: providers tried (in order) by the forced-final ladder when the primary
+        # keeps returning empty finals. Hosts pass configured LlmProvider instances.
+        self.fallback_providers = tuple(kwargs.pop("fallback_providers", ()) or ())
         # When a soft budget (max_steps / max_tool_calls / cost) is exhausted,
         # grant one forced-final synthesis turn (tools disabled) so the run can
         # return a best-effort answer instead of a bare FAILED with an empty
@@ -460,6 +463,10 @@ class RunnerDeps:
     command_queue_store: CommandQueueStore | None = None
     python_backend: Any | None = None
     lifecycle_hooks: tuple[RunLifecycleHook, ...] = ()
+    # Optional providers tried (in order) by the forced-final recovery ladder when the
+    # primary provider keeps returning empty finals (deepseek-class quirk). Epic 016;
+    # reference: hermes _fallback_chain. Empty tuple = step skipped.
+    fallback_providers: tuple[LlmProvider, ...] = ()
 
 
 @dataclass(slots=True)

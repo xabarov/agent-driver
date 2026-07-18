@@ -1,6 +1,18 @@
 # Provider empty/degraded response: recovery ladder v2
 
-Дата создания: 2026-07-18. Статус: **proposed**.
+Дата создания: 2026-07-18. Статус: **done** (2026-07-18, вечер).
+
+> Реализация: фаза A — `ProviderErrorReason.EMPTY_RESPONSE` + `_EMPTY_RESPONSE_MARKERS`,
+> проверяемые РАНЬШЕ overflow во всех путях классификации (422/400/generic), retryable без
+> compress (4 теста). Фаза B — prior-turn substantive fallback в force-final (floor 200 chars,
+> сигнал `forced_final_recovered_prior_turn`, metadata-провенанс). Фаза C —
+> `RunnerConfig.fallback_providers` → `RunnerDeps` → ступень fallback-провайдера (folded
+> request, сигнал + `forced_final_fallback_provider`); метрика ступеней через
+> `empty_forced_final_retry`. Фаза D — провенанс-гарантия «ретраи только на копиях»
+> (тест неизменности исходной истории) + runner-уровневый e2e с эмулятором deepseek-пустот
+> (`_EmptyFinalProvider`): лестница проходит, скаффолдинг не течёт в main-loop запросы.
+> Итог лестницы: non-stream → no-tools → history-fold → fallback-provider → prior-turn →
+> честный сигнал. Полная регрессия runtime/llm/contracts зелёная.
 
 Источник: MeetScript «Аргус»-бенч — deepseek-v4-flash отдаёт пустой финальный completion после
 tool-цикла; текущие 3 стратегии (non-stream retry → no-tools retry → history-fold, 86a4424)

@@ -247,7 +247,12 @@ def request_with_folded_tool_history(
             changed = True
             calls = metadata.get("tool_calls")
             names = ", ".join(
-                str(((call.get("function") or {}) if isinstance(call, dict) else {}).get("name") or "tool")
+                str(
+                    (
+                        (call.get("function") or {}) if isinstance(call, dict) else {}
+                    ).get("name")
+                    or "tool"
+                )
                 for call in (calls if isinstance(calls, list) else [])
             )
             next_metadata = {k: v for k, v in metadata.items() if k != "tool_calls"}
@@ -255,7 +260,8 @@ def request_with_folded_tool_history(
             folded.append(
                 ChatMessage(
                     role=ChatRole.ASSISTANT,
-                    content=(message.content or "").strip() or f"(called tools: {names})",
+                    content=(message.content or "").strip()
+                    or f"(called tools: {names})",
                     metadata=next_metadata,
                 )
             )

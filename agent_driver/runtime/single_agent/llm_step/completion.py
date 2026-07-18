@@ -7,8 +7,9 @@ from typing import Any, Protocol
 
 import httpx
 
-from agent_driver.contracts.enums import RuntimeEventType
-from agent_driver.llm.contracts import LlmResponse
+from agent_driver.contracts.enums import ChatRole, RuntimeEventType
+from agent_driver.contracts.messages import ChatMessage
+from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.llm.error_classifier import ProviderErrorReason, classify
 from agent_driver.runtime.single_agent.llm_step.provider_requests import (
     is_forced_tool_choice_provider_error,
@@ -462,6 +463,67 @@ async def retry_forced_final_without_tools(
                 suppress_native_planned=True,
             )
         if not (retry_response.message.content or "").strip():
+            # Fallback-provider step (reference: hermes _fallback_chain): the empty-final
+            # quirk is model/provider-specific — a sibling provider given the SAME folded
+            # request often answers normally. Tried before prior-turn recovery because a
+            # fresh full answer beats an earlier partial one.
+            for fallback in getattr(host._deps, "fallback_providers", ()) or ():
+                fallback_name = str(getattr(fallback, "name", "") or "fallback")
+                emit_step_event(
+                    host,
+                    context,
+                    event_type=RuntimeEventType.WARNING,
+                    payload={
+                        "warning": (
+                            "Forced-final retries on the primary provider returned empty; "
+                            f"retrying once via fallback provider '{fallback_name}'."
+                        ),
+                        "signal_id": "provider_empty_forced_final_fallback_provider_retry",
+                        "severity": "warning",
+                        "fallback_provider": fallback_name,
+                    },
+                )
+                context.metadata["empty_forced_final_retry"] = "fallback_provider"
+                try:
+                    fallback_response = await fallback.complete(
+                        folded_request if folded_request is not request else request
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    # Ladder step must not turn a recoverable empty into a hard failure.
+                    continue
+                if (fallback_response.message.content or "").strip():
+                    context.metadata["forced_final_fallback_provider"] = fallback_name
+                    retry_response = fallback_response
+                    break
+        if not (retry_response.message.content or "").strip():
+            # Prior-turn substantive fallback (reference: hermes fallback_prior_turn_content):
+            # if THIS run already produced a substantive assistant text earlier in the loop,
+            # finalize with it rather than with nothing. Provenance-flagged so hosts can tell.
+            prior = _longest_prior_assistant_content(request)
+            if prior:
+                emit_step_event(
+                    host,
+                    context,
+                    event_type=RuntimeEventType.WARNING,
+                    payload={
+                        "warning": (
+                            "All forced-final retries returned empty; finalizing with the "
+                            "run's own earlier substantive assistant message."
+                        ),
+                        "signal_id": "forced_final_recovered_prior_turn",
+                        "severity": "warning",
+                        "chars": len(prior),
+                    },
+                )
+                context.metadata["forced_final_prior_turn_recovered"] = True
+                retry_response = LlmResponse(
+                    message=ChatMessage(role=ChatRole.ASSISTANT, content=prior),
+                    finish_reason=LlmFinishReason.UNKNOWN,
+                    provider=str(getattr(host._deps.provider, "name", "") or ""),
+                    model=str(getattr(request, "model", "") or ""),
+                    metadata={"forced_final_prior_turn_recovered": True},
+                )
+        if not (retry_response.message.content or "").strip():
             # All recovery strategies exhausted: surface a distinct signal so hosts can
             # message the user honestly instead of rendering a silent empty bubble.
             emit_step_event(
@@ -471,7 +533,8 @@ async def retry_forced_final_without_tools(
                 payload={
                     "warning": (
                         "Provider returned an empty final answer after all retry "
-                        "strategies (non-stream, no-tools, history-fold)."
+                        "strategies (non-stream, no-tools, history-fold, "
+                        "fallback-provider, prior-turn)."
                     ),
                     "signal_id": "forced_final_empty_after_all_retries",
                     "severity": "error",
@@ -480,6 +543,31 @@ async def retry_forced_final_without_tools(
             context.metadata["forced_final_empty_after_all_retries"] = True
     emit_non_stream_retry_assistant_message(host, context, retry_response)
     return retry_response
+
+
+# Floor for adopting a prior assistant message as the forced-final answer. Mirrors the
+# partial-final stream recovery floor (200 chars): shorter texts are usually loop
+# narration («ищу дальше…»), not an answer worth finalizing with.
+_PRIOR_TURN_MIN_CHARS = 200
+
+
+def _longest_prior_assistant_content(request: Any) -> str | None:
+    """Longest substantive assistant text already present in this run's history."""
+    messages = getattr(request, "messages", None) or []
+    best = ""
+    for message in messages:
+        role = getattr(message, "role", None)
+        if role != ChatRole.ASSISTANT:
+            continue
+        metadata = getattr(message, "metadata", None)
+        if isinstance(metadata, dict) and (
+            metadata.get("tool_calls") or metadata.get("folded_tool_calls")
+        ):
+            continue
+        content = (getattr(message, "content", "") or "").strip()
+        if len(content) > len(best):
+            best = content
+    return best if len(best) >= _PRIOR_TURN_MIN_CHARS else None
 
 
 def _mark_no_tool_text_form_suppression(
