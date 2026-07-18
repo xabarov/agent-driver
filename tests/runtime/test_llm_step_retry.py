@@ -623,10 +623,11 @@ def _forced_final_request() -> LlmRequest:
 
 
 @pytest.mark.asyncio
-async def test_complete_request_folds_tool_history_first_for_deepseek_profile() -> None:
-    """Epic 018 phase C: deepseek-profile models get the FOLDED view as the FIRST
-    forced-final retry (the native no-tools retry predictably returns empty there
-    and would only waste a provider call)."""
+async def test_canned_refusal_treated_as_empty_and_fold_recovers() -> None:
+    """Phase C revision (live 2026-07-19): folded-first regressed deepseek (canned
+    wrong-language refusal on the folded view), so order is native-first for ALL
+    profiles — and a canned refusal now counts as an unusable final, so the ladder
+    continues to the fold step instead of finalizing with the refusal."""
     provider = SimpleNamespace(name="openrouter", complete_calls=0)
 
     async def stream(request: LlmRequest):
@@ -636,14 +637,12 @@ async def test_complete_request_folds_tool_history_first_for_deepseek_profile() 
         provider.complete_calls += 1
         if provider.complete_calls == 1:
             content = ""  # non-stream retry of the empty stream
+        elif provider.complete_calls == 2:
+            # Native no-tools retry: canned Chinese refusal to a Russian query.
+            assert any(m.role == "tool" for m in request.messages)
+            content = "作为一个人工智能语言模型，我还没学习如何回答这个问题。"
         else:
-            # First forced-final retry must ALREADY be the folded shape.
-            assert all(m.role != "tool" for m in request.messages)
-            assert any(
-                m.role == "user"
-                and m.content.startswith("[Tool result: find_meetings]")
-                for m in request.messages
-            )
+            assert all(m.role != "tool" for m in request.messages)  # folded second
             content = "folded final answer"
         return LlmResponse(
             message=ChatMessage(role="assistant", content=content),
@@ -661,7 +660,10 @@ async def test_complete_request_folds_tool_history_first_for_deepseek_profile() 
     )
     context = SimpleNamespace(
         run_input=SimpleNamespace(
-            stream=True, app_metadata={}, tool_policy=SimpleNamespace(metadata={})
+            stream=True,
+            app_metadata={},
+            tool_policy=SimpleNamespace(metadata={}),
+            input="Собери ключевые решения по проекту",
         ),
         metadata={"force_final_answer": True},
         run_id="run_test",
@@ -671,17 +673,8 @@ async def test_complete_request_folds_tool_history_first_for_deepseek_profile() 
     response = await _complete_request(host, context, _forced_final_request())
 
     assert response.message.content == "folded final answer"
-    assert provider.complete_calls == 2  # fold went FIRST, no wasted native retry
+    assert provider.complete_calls == 3
     assert context.metadata["empty_forced_final_retry"] == "history_fold"
-    assert any(
-        event.payload.get("signal_id")
-        == "provider_empty_forced_final_history_fold_retry"
-        for event in emitted
-    )
-    assert not any(
-        event.payload.get("signal_id") == "provider_empty_forced_final_no_tools_retry"
-        for event in emitted
-    )
 
 
 @pytest.mark.asyncio
@@ -718,7 +711,10 @@ async def test_native_profile_keeps_no_tools_retry_first() -> None:
     )
     context = SimpleNamespace(
         run_input=SimpleNamespace(
-            stream=True, app_metadata={}, tool_policy=SimpleNamespace(metadata={})
+            stream=True,
+            app_metadata={},
+            tool_policy=SimpleNamespace(metadata={}),
+            input="answer now",
         ),
         metadata={"force_final_answer": True},
         run_id="run_test",

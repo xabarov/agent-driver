@@ -320,7 +320,7 @@ async def _retry_stream_failure_without_streaming(
     metadata = dict(fallback_response.metadata or {})
     metadata["provider_stream_non_stream_fallback"] = True
     metadata["provider_stream_fallback_diagnostics"] = diagnostics
-    if (fallback_response.message.content or "").strip():
+    if not _unusable(fallback_response.message.content):
         metadata["token_chunks_emitted"] = True
     fallback_response = fallback_response.model_copy(update={"metadata": metadata})
     return await retry_forced_final_without_tools(
@@ -428,9 +428,13 @@ async def retry_forced_final_without_tools(
     folded_request = request_with_folded_tool_history(
         request, provider_name=provider_name
     )
-    prefer_folded = (
-        preferred_history_view(model_hint) == "folded" and folded_request is not request
-    )
+    # Phase C revision (live counter-evidence 2026-07-19): folded-FIRST regressed deepseek —
+    # the folded view triggers its canned wrong-language refusal on ~2/3 of forced finals,
+    # while the native no-tools retry succeeds when the history is well-formed. Order stays
+    # native-first for every profile; the profile keeps the fold step ARMED (and the ladder
+    # now treats canned refusals as empty, so the fold still fires when native degenerates).
+    _ = preferred_history_view(model_hint)  # profile retained for observability/hosts
+    prefer_folded = False
 
     async def _try_no_tools() -> LlmResponse:
         emit_step_event(
@@ -474,6 +478,20 @@ async def retry_forced_final_without_tools(
         context.metadata["empty_forced_final_retry"] = "history_fold"
         return await host._deps.provider.complete(folded_request)
 
+    def _unusable(content: str | None) -> bool:
+        """Empty OR degenerate canned/wrong-language refusal (epic 015 detector): both mean
+        the strategy failed and the ladder should continue."""
+        from agent_driver.runtime.single_agent.finalization.answer_recovery import (  # pylint: disable=import-outside-toplevel
+            is_degenerate_refusal,
+        )
+
+        text = (content or "").strip()
+        if not text:
+            return True
+        return is_degenerate_refusal(
+            text, str(getattr(context.run_input, "input", "") or "")
+        )
+
     first, second = (
         (_try_fold, _try_no_tools) if prefer_folded else (_try_no_tools, _try_fold)
     )
@@ -487,7 +505,7 @@ async def retry_forced_final_without_tools(
         retry_response,
         suppress_native_planned=True,
     )
-    if not (retry_response.message.content or "").strip() and second is not None:
+    if _unusable(retry_response.message.content) and second is not None:
         alternate = await second()
         if alternate is not None:
             retry_response = _mark_no_tool_text_form_suppression(
@@ -496,7 +514,7 @@ async def retry_forced_final_without_tools(
                 alternate,
                 suppress_native_planned=True,
             )
-    if not (retry_response.message.content or "").strip():
+    if _unusable(retry_response.message.content):
         # Fallback-provider step (reference: hermes _fallback_chain): the empty-final
         # quirk is model/provider-specific — a sibling provider given the SAME folded
         # request often answers normally. Tried before prior-turn recovery because a
@@ -529,7 +547,7 @@ async def retry_forced_final_without_tools(
                 context.metadata["forced_final_fallback_provider"] = fallback_name
                 retry_response = fallback_response
                 break
-    if not (retry_response.message.content or "").strip():
+    if _unusable(retry_response.message.content):
         # Prior-turn substantive fallback (reference: hermes fallback_prior_turn_content):
         # if THIS run already produced a substantive assistant text earlier in the loop,
         # finalize with it rather than with nothing. Provenance-flagged so hosts can tell.
@@ -557,7 +575,7 @@ async def retry_forced_final_without_tools(
                 model=str(getattr(request, "model", "") or ""),
                 metadata={"forced_final_prior_turn_recovered": True},
             )
-    if not (retry_response.message.content or "").strip():
+    if _unusable(retry_response.message.content):
         # All recovery strategies exhausted: surface a distinct signal so hosts can
         # message the user honestly instead of rendering a silent empty bubble.
         emit_step_event(

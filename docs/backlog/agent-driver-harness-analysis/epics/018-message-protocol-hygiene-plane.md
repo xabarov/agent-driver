@@ -7,8 +7,12 @@
 > `_preserve_orphan_tool_results` в триммере: обрезка внутри tool-пары больше не теряет
 > улики — id-нёсущие сироты фолдятся в plain user-сообщения (id-less стабы легаси не
 > трогаются). Фаза C — `preferred_history_view` (deepseek → folded): forced-final сразу
-> использует folded view, не тратя предсказуемо пустой native-ретрай (лестница 016
-> переупорядочивается по профилю). Фаза D — closed_interrupted_tool_tail (незакрытый
+> использует folded view. **Ревизия 2026-07-19 по живому контрпримеру:** folded-FIRST
+> регрессировал deepseek (canned-отказ на folded-виде в ~2/3 forced-final при
+> работоспособном native) — порядок возвращён на native-first для всех профилей, а
+> canned/wrong-language отказ (детектор эпика 015) теперь считается unusable-финалом
+> на КАЖДОЙ ступени лестницы, так что fold всё равно срабатывает, когда native
+> деградирует. Live N=3 после ревизии: decisions_log 3/3. Фаза D — closed_interrupted_tool_tail (незакрытый
 > tool_calls-хвост → interrupted-стабы; отдельный close_tool_tail_before_user_injection
 > для steering), repair битых JSON-аргументов, фолд внутрицикловых И внецикловых сирот
 > в валидаторе (внецикловую дыру нашёл фаззер), детерминированный фаззинг 300 хвостов.
