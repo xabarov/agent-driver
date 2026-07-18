@@ -127,6 +127,11 @@ every consumer benefits — do not point-patch MeetScript.
 
 ## Persistent Empty Final Completion After a Tool Cycle (deepseek-v4-flash)
 
+> **STATUS 2026-07-18: ADDRESSED** in commit 86a4424 — third force-final strategy
+> `request_with_folded_tool_history` (tool exchanges folded into plain user/assistant
+> turns, evidence preserved) + terminal signal `forced_final_empty_after_all_retries`
+> (severity=error) so hosts can message the user honestly. 2 new tests.
+
 Date: 2026-07-18 (host: MeetScript Ask Meetings, chat_v2, synthetic «Аргус» benchmark)
 
 Observed: on some prompts that route through a tool call (find_meetings), the
