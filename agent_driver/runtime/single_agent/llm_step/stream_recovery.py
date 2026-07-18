@@ -232,10 +232,11 @@ def forced_final_no_tools_retry_reason(
         )
         if text_planned or text_errors:
             return "tool_call"
-    if response.finish_reason != LlmFinishReason.STOP:
-        return None
     content = (response.message.content or "").strip()
-    if content:
+    if content and response.finish_reason in (
+        LlmFinishReason.STOP,
+        LlmFinishReason.UNKNOWN,
+    ):
         # A canned/wrong-language refusal (epic 015 detector) is NOT an answer: without
         # this the forced-final ladder never engages (its entry gate saw non-empty
         # content) and the refusal was finalized verbatim — live 2026-07-19, deepseek
@@ -248,6 +249,8 @@ def forced_final_no_tools_retry_reason(
             content, str(getattr(context.run_input, "input", "") or "")
         ):
             return "empty" if not isinstance(planned, list) or not planned else None
+        return None
+    if response.finish_reason != LlmFinishReason.STOP:
         return None
     return "empty" if not isinstance(planned, list) or not planned else None
 

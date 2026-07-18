@@ -90,10 +90,25 @@ def provider_model_hint(provider: object) -> str | None:
     the protocol itself does not expose it, so this is a tolerant probe used only
     for context-window resolution.
     """
-    for attribute in ("model", "_model"):
-        value = getattr(provider, attribute, None)
-        if isinstance(value, str) and value.strip():
-            return value
+    candidates = [provider]
+    # Hosts commonly wrap providers (privacy gateways, tracing decorators); probe one
+    # level of wrapping via conventional attribute names.
+    for wrapper_attr in (
+        "provider",
+        "_provider",
+        "inner",
+        "_inner",
+        "wrapped",
+        "_wrapped",
+    ):
+        inner = getattr(provider, wrapper_attr, None)
+        if inner is not None and inner is not provider:
+            candidates.append(inner)
+    for candidate in candidates:
+        for attribute in ("model", "_model"):
+            value = getattr(candidate, attribute, None)
+            if isinstance(value, str) and value.strip():
+                return value
     return None
 
 
