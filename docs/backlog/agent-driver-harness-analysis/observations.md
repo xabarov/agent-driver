@@ -182,3 +182,17 @@ Candidate engine fix: make the fallback consult the runner-level default budgets
 explicit per-run budgets winning. Behavior change for all hosts → decide deliberately,
 with tests over profiles that relied on single-shot tools. Host-side mitigation applied in
 MeetScript meanwhile (explicit max_tool_calls=6 / max_steps=12 via env).
+
+## Cross-Meeting Enumeration Depth vs Tool Budget (retrieval-domain, host-visible)
+
+Date: 2026-07-19 (host: MeetScript, argus_decisions_log case, post-epic-018 stack)
+
+After the protocol-hygiene fixes (no pressure, no canned refusals, no empty finals),
+the residual flake on «собери все решения проекта» is CONTENT depth: the model
+sometimes answers from a subset of meetings and honestly notes «для части встреч
+материалы недоступны». Interplay: the forced-final fires near the tool budget while
+the model is still fetching per-meeting reports, and the primary retrieval context
+does not always carry every project meeting's report. Not a protocol bug — candidate
+directions: (a) host retrieval: guarantee per-project report coverage in primary
+context for enumeration-shaped queries; (b) engine: budget-aware planning hint
+(«N calls left») so the model prioritizes breadth before the forced final.
