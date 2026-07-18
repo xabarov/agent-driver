@@ -124,3 +124,31 @@ conversation-history/context class is handled in `reference/openclaude`
 (`src/history.ts`, `src/QueryEngine.ts`, `src/context/`) and `reference/hermes-agent`.
 Apply the most general antecedent-resolution mechanism the engine can host, so
 every consumer benefits — do not point-patch MeetScript.
+
+## Persistent Empty Final Completion After a Tool Cycle (deepseek-v4-flash)
+
+Date: 2026-07-18 (host: MeetScript Ask Meetings, chat_v2, synthetic «Аргус» benchmark)
+
+Observed: on some prompts that route through a tool call (find_meetings), the
+follow-up FINAL completion from deepseek-v4-flash returns empty content ("\n\n",
+finish_reason=stop). The engine's existing recovery already fires — warnings
+`provider_empty_forced_final_non_stream_retry` (retry w/o streaming) and
+`provider_forced_final_tool_call_no_tools_retry` (retry w/ tools disabled) — but
+both retries ALSO return empty, and the run terminates `completed` with
+`answer: ""`. The user sees an empty chat bubble. Flaky per prompt-shape: the
+same case sometimes yields a full answer (first benchmark run passed it).
+
+Same model-level quirk class as MeetScript speaker-rename `json_schema` empties
+(there the fix was switching to the tools-mode extractor). Model returns empty
+for certain trailing-history shapes; the retries keep the SAME message history,
+so they inherit whatever shape triggers the empty output.
+
+Candidate general fix (engine, benefits every host): a third force-final
+strategy that REWRITES the trailing history before retrying — fold the tool
+call/result pair into a plain user-visible digest message ("Результаты
+инструмента: …") and ask for the final answer with a clean tail. Also consider
+a terminal guard: a `completed` run whose final answer is empty after all
+retries should surface a distinct terminal reason (not a silent empty answer),
+so hosts can message the user honestly. Reference-first: check how
+`reference/openclaude` / `reference/hermes-agent` normalize trailing tool
+history for models with this quirk before implementing.
