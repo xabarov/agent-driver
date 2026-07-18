@@ -1,6 +1,18 @@
 # Message-protocol hygiene plane: единый нормализатор истории
 
-Дата создания: 2026-07-18. Статус: **proposed**.
+Дата создания: 2026-07-18. Статус: **done** (2026-07-19).
+
+> Реализация: фаза A — `context_management/history_normalizer.py` (fold_tool_history /
+> fold_tool_result_message переиспользуемы; провайдер-ретрай делегирует). Фаза B —
+> `_preserve_orphan_tool_results` в триммере: обрезка внутри tool-пары больше не теряет
+> улики — id-нёсущие сироты фолдятся в plain user-сообщения (id-less стабы легаси не
+> трогаются). Фаза C — `preferred_history_view` (deepseek → folded): forced-final сразу
+> использует folded view, не тратя предсказуемо пустой native-ретрай (лестница 016
+> переупорядочивается по профилю). Фаза D — closed_interrupted_tool_tail (незакрытый
+> tool_calls-хвост → interrupted-стабы; отдельный close_tool_tail_before_user_injection
+> для steering), repair битых JSON-аргументов, фолд внутрицикловых И внецикловых сирот
+> в валидаторе (внецикловую дыру нашёл фаззер), детерминированный фаззинг 300 хвостов.
+> Полная регрессия runtime/context/llm/contracts зелёная.
 
 Источник: history-fold (86a4424) решил частный случай — deepseek пустеет на tool-протокольном
 хвосте, свёртка в plain-сообщения спасает. Но фолдинг у нас живёт только как ПОСЛЕДНИЙ ретрай;

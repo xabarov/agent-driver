@@ -623,11 +623,10 @@ def _forced_final_request() -> LlmRequest:
 
 
 @pytest.mark.asyncio
-async def test_complete_request_folds_tool_history_when_no_tools_retry_stays_empty() -> (
-    None
-):
-    """deepseek-class quirk: empty forced finals persist while the tail keeps the tool
-    protocol shape — the third strategy folds tool history into plain turns and recovers."""
+async def test_complete_request_folds_tool_history_first_for_deepseek_profile() -> None:
+    """Epic 018 phase C: deepseek-profile models get the FOLDED view as the FIRST
+    forced-final retry (the native no-tools retry predictably returns empty there
+    and would only waste a provider call)."""
     provider = SimpleNamespace(name="openrouter", complete_calls=0)
 
     async def stream(request: LlmRequest):
@@ -635,9 +634,10 @@ async def test_complete_request_folds_tool_history_when_no_tools_retry_stays_emp
 
     async def complete(request: LlmRequest) -> LlmResponse:
         provider.complete_calls += 1
-        if provider.complete_calls < 3:
-            content = ""
+        if provider.complete_calls == 1:
+            content = ""  # non-stream retry of the empty stream
         else:
+            # First forced-final retry must ALREADY be the folded shape.
             assert all(m.role != "tool" for m in request.messages)
             assert any(
                 m.role == "user"
@@ -671,7 +671,7 @@ async def test_complete_request_folds_tool_history_when_no_tools_retry_stays_emp
     response = await _complete_request(host, context, _forced_final_request())
 
     assert response.message.content == "folded final answer"
-    assert provider.complete_calls == 3
+    assert provider.complete_calls == 2  # fold went FIRST, no wasted native retry
     assert context.metadata["empty_forced_final_retry"] == "history_fold"
     assert any(
         event.payload.get("signal_id")
@@ -679,7 +679,59 @@ async def test_complete_request_folds_tool_history_when_no_tools_retry_stays_emp
         for event in emitted
     )
     assert not any(
-        event.payload.get("signal_id") == "forced_final_empty_after_all_retries"
+        event.payload.get("signal_id") == "provider_empty_forced_final_no_tools_retry"
+        for event in emitted
+    )
+
+
+@pytest.mark.asyncio
+async def test_native_profile_keeps_no_tools_retry_first() -> None:
+    """Non-deepseek models keep the native no-tools retry first; the fold stays the
+    second strategy when native comes back empty."""
+    provider = SimpleNamespace(name="openrouter", complete_calls=0)
+
+    async def stream(request: LlmRequest):
+        yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.STOP)
+
+    async def complete(request: LlmRequest) -> LlmResponse:
+        provider.complete_calls += 1
+        if provider.complete_calls <= 2:
+            content = ""  # non-stream retry, then native no-tools retry — both empty
+            if provider.complete_calls == 2:
+                assert any(m.role == "tool" for m in request.messages)  # native shape
+        else:
+            assert all(m.role != "tool" for m in request.messages)  # folded second
+            content = "folded final answer"
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content=content),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="retry", model_name="test"),
+            provider="retry",
+            model="test",
+        )
+
+    provider.stream = stream
+    provider.complete = complete
+    emitted = []
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(provider=provider), _emit=emitted.append
+    )
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(
+            stream=True, app_metadata={}, tool_policy=SimpleNamespace(metadata={})
+        ),
+        metadata={"force_final_answer": True},
+        run_id="run_test",
+        attempt_id="attempt_test",
+    )
+    request = _forced_final_request().model_copy(update={"model": "openai/gpt-5.5"})
+
+    response = await _complete_request(host, context, request)
+
+    assert response.message.content == "folded final answer"
+    assert provider.complete_calls == 3
+    assert any(
+        event.payload.get("signal_id") == "provider_empty_forced_final_no_tools_retry"
         for event in emitted
     )
 

@@ -22,7 +22,7 @@ def test_validate_coalesces_adjacent_user_messages() -> None:
     assert "coalesced_adjacent_user_messages" in result.repairs
 
 
-def test_validate_drops_orphan_tool_message() -> None:
+def test_validate_folds_orphan_tool_message() -> None:
     result = validate_and_repair_protocol_messages(
         [
             ChatMessage(
@@ -46,10 +46,15 @@ def test_validate_drops_orphan_tool_message() -> None:
             ),
         ]
     )
-    assert len(result.messages) == 2
+    # Epic 018: the orphan result is FOLDED (evidence preserved), not dropped;
+    # the folded user message lands AFTER the run's stubs so strict ordering holds.
+    assert len(result.messages) == 3
     assert result.messages[1].tool_call_id == "call_1"
     assert result.messages[1].metadata["tool_trim_stub"] is True
-    assert "dropped_orphan_tool_message" in result.repairs
+    folded = result.messages[2]
+    assert str(folded.role) in ("ChatRole.USER", "user") or folded.role.value == "user"
+    assert folded.metadata["folded_tool_result"] is True
+    assert "folded_stray_tool_message" in result.repairs
 
 
 def test_validate_inserts_stub_for_missing_tool_result() -> None:
@@ -77,10 +82,13 @@ def test_validate_inserts_stub_for_missing_tool_result() -> None:
     ]
     assert result.messages[1].tool_call_id == "call_1"
     assert result.messages[1].name == "web_search"
-    assert result.messages[1].metadata["tool_trim_stub"] is True
-    assert "sourced evidence" in (result.messages[1].content or "")
+    # Epic 018: a TRAILING unanswered tool call is closed by the interrupted-tail
+    # closer (more precise semantics than the mid-history trim stub).
+    assert result.messages[1].metadata["interrupted_tool_stub"] is True
+    assert "closed_interrupted_tool_tail" in result.repairs
+    assert "interrupted" in (result.messages[1].content or "")
     assert "dropped due to context budget" not in (result.messages[1].content or "")
-    assert "inserted_missing_tool_result_stubs" in result.repairs
+    assert "closed_interrupted_tool_tail" in result.repairs
 
 
 def test_validate_truncates_oversized_tool_payloads() -> None:

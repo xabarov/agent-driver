@@ -8,6 +8,11 @@ from typing import Any
 from agent_driver.context.trimming.tool_stub import build_tool_trim_stub_content
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.runtime.single_agent.context_management.history_normalizer import (
+    close_interrupted_tool_sequence as _close_interrupted_tool_sequence,
+    fold_tool_result_message as _fold_stray_tool_message,
+    repair_tool_call_arguments as _repair_tool_call_arguments,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +38,16 @@ def validate_and_repair_protocol_messages(
     ]
     repairs: list[str] = []
     warnings: list[str] = []
+    # Epic 018 phase D: repair broken tool-call argument JSON before pairing (strict
+    # providers reject the whole request on replay of malformed arguments), and close
+    # an interrupted tool tail (resume/steering can leave an unanswered tool_calls
+    # assistant or a raw tool result at the end — hermes close_interrupted_tool_sequence).
+    working, args_repaired = _repair_tool_call_arguments(working)
+    if args_repaired:
+        repairs.append("repaired_tool_call_arguments")
+    working, tail_closed = _close_interrupted_tool_sequence(working)
+    if tail_closed:
+        repairs.append("closed_interrupted_tool_tail")
     normalized = _coalesce_adjacent_users(working, repairs)
     normalized = _drop_empty_assistants_without_tool_calls(normalized, repairs)
     normalized = _repair_tool_call_pairing(normalized, repairs, warnings)
@@ -98,6 +113,14 @@ def _repair_tool_call_pairing(
     while index < len(messages):
         message = messages[index]
         if message.role != ChatRole.ASSISTANT:
+            # Stray id-carrying tool result outside any tool cycle (fuzz-found, epic 018):
+            # strict providers reject it, and dropping would lose evidence — fold it into
+            # a plain user message instead (id-less tool stubs are legacy and stay as-is).
+            if message.role == ChatRole.TOOL and (message.tool_call_id or "").strip():
+                kept.append(_fold_stray_tool_message(message))
+                repairs.append("folded_stray_tool_message")
+                index += 1
+                continue
             kept.append(message)
             index += 1
             continue
@@ -115,6 +138,7 @@ def _repair_tool_call_pairing(
         kept.append(message)
         index += 1
         seen_ids: set[str] = set()
+        orphan_folds: list[ChatMessage] = []
         while index < len(messages) and messages[index].role == ChatRole.TOOL:
             tool_message = messages[index]
             call_id = str(tool_message.tool_call_id or "").strip()
@@ -122,7 +146,11 @@ def _repair_tool_call_pairing(
                 seen_ids.add(call_id)
                 kept.append(tool_message)
             else:
-                repairs.append("dropped_orphan_tool_message")
+                # Evidence-preserving (epic 018): fold the orphan instead of dropping —
+                # queued so the folded user message lands AFTER the run's stubs and does
+                # not break the strict assistant(tool_calls) → tool ordering.
+                orphan_folds.append(_fold_stray_tool_message(tool_message))
+                repairs.append("folded_stray_tool_message")
             index += 1
         missing = [call_id for call_id in expected_ids if call_id not in seen_ids]
         if missing:
@@ -141,6 +169,7 @@ def _repair_tool_call_pairing(
                     )
                 )
             repairs.append("inserted_missing_tool_result_stubs")
+        kept.extend(orphan_folds)
     return kept
 
 

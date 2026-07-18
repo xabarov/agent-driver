@@ -160,8 +160,7 @@ def test_trim_context_protects_assistant_antecedent_for_followup() -> None:
     recent turns (user AND assistant) verbatim so the antecedent survives.
     """
     enumerated = (
-        "15 meetings are about AI: M1 M2 M3 M4 M5 M6 M7 M8 "
-        "M9 M10 M11 M12 M13 M14 M15"
+        "15 meetings are about AI: M1 M2 M3 M4 M5 M6 M7 M8 M9 M10 M11 M12 M13 M14 M15"
     )
     messages = [
         {"role": "user", "content": "hi " * 400},  # stale, fills the budget
@@ -249,3 +248,82 @@ def test_trim_context_protection_never_drops_final_or_empties() -> None:
     assert trimmed.prompt_messages, "request must never end up empty"
     assert trimmed.prompt_messages[-1]["role"] == "user"
     assert str(trimmed.prompt_messages[-1]["content"]).startswith("q")
+
+
+def test_orphan_tool_results_folded_not_lost():
+    """Epic 018: when trimming cuts inside a tool pair (assistant tool_calls dropped,
+    result kept), the orphaned tool result must be FOLDED into a plain user message —
+    not left for the protocol validator to drop (silent evidence loss)."""
+    from agent_driver.context.trimming.deterministic import trim_context
+    from agent_driver.contracts.context import ContextBudget
+
+    long_assistant = {
+        "role": "assistant",
+        "content": "x" * 400,
+        "metadata": {
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                }
+            ]
+        },
+    }
+    tool_result = {
+        "role": "tool",
+        "name": "search",
+        "tool_call_id": "call_1",
+        "content": "evidence payload",
+        "metadata": {},
+    }
+    tail_user = {"role": "user", "content": "answer now", "metadata": {}}
+    # max_messages=2 head-slices the assistant away, keeping the raw tool result.
+    trimmed = trim_context(
+        budget=ContextBudget(max_chars=10_000, max_messages=2, max_observations=None),
+        prompt_messages=[long_assistant, tool_result, tail_user],
+    )
+
+    roles = [str(m.get("role")) for m in trimmed.prompt_messages]
+    assert "tool" not in roles  # id-carrying orphan converted, not left raw
+    folded = trimmed.prompt_messages[0]
+    assert folded["role"] == "user"
+    assert "evidence payload" in str(folded["content"])
+    assert "[Tool result: search]" in str(folded["content"])
+    assert any(record.reason == "orphan_tool_result_folded" for record in trimmed.audit)
+
+
+def test_paired_tool_results_untouched_by_integrity_pass():
+    from agent_driver.context.trimming.deterministic import trim_context
+    from agent_driver.contracts.context import ContextBudget
+
+    assistant = {
+        "role": "assistant",
+        "content": "",
+        "metadata": {
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": "{}"},
+                }
+            ]
+        },
+    }
+    tool_result = {
+        "role": "tool",
+        "name": "search",
+        "tool_call_id": "call_1",
+        "content": "paired payload",
+        "metadata": {},
+    }
+    trimmed = trim_context(
+        budget=ContextBudget(max_chars=10_000, max_messages=10, max_observations=None),
+        prompt_messages=[
+            assistant,
+            tool_result,
+            {"role": "user", "content": "go", "metadata": {}},
+        ],
+    )
+    roles = [str(m.get("role")) for m in trimmed.prompt_messages]
+    assert roles == ["assistant", "tool", "user"]

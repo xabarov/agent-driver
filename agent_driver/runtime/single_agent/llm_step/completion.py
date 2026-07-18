@@ -9,6 +9,10 @@ import httpx
 
 from agent_driver.contracts.enums import ChatRole, RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.llm.context_windows import (
+    preferred_history_view,
+    provider_model_hint,
+)
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.llm.error_classifier import ProviderErrorReason, classify
 from agent_driver.runtime.single_agent.llm_step.provider_requests import (
@@ -391,7 +395,15 @@ async def retry_forced_final_without_tools(
     request: Any,
     response: LlmResponse,
 ) -> LlmResponse:
-    """Retry a forced-final answer with tools disabled when provider leaked tools."""
+    """Recovery ladder for tool-shaped/empty forced finals (epics 016 + 018).
+
+    Strategy ORDER is model-profile aware (epic 018 phase C): models whose forced
+    finals are unreliable on the tool-protocol history shape (deepseek family) get
+    the FOLDED plain view first — the native no-tools retry predictably comes back
+    empty there and only wastes a provider call. Everyone else keeps native-first.
+    Ladder: profile-first shape → other shape → fallback providers → prior-turn →
+    honest terminal signal.
+    """
     retry_reason = forced_final_no_tools_retry_reason(context, request, response)
     if retry_reason is None:
         return response
@@ -409,138 +421,160 @@ async def retry_forced_final_without_tools(
             "with tools disabled for a clean final response."
         )
     )
-    emit_step_event(
-        host,
-        context,
-        event_type=RuntimeEventType.WARNING,
-        payload={
-            "warning": warning,
-            "signal_id": signal_id,
-            "severity": "warning",
-        },
-    )
-    context.metadata["forced_final_retry"] = f"{retry_reason}_no_tools"
-    if retry_reason == "empty":
-        context.metadata["empty_forced_final_retry"] = "no_tools"
     provider_name = str(getattr(host._deps.provider, "name", "") or "")
-    retry_response = await host._deps.provider.complete(
-        request_without_tools(request, provider_name=provider_name)
+    model_hint = provider_model_hint(host._deps.provider) or str(
+        getattr(request, "model", "") or ""
     )
+    folded_request = request_with_folded_tool_history(
+        request, provider_name=provider_name
+    )
+    prefer_folded = (
+        preferred_history_view(model_hint) == "folded" and folded_request is not request
+    )
+
+    async def _try_no_tools() -> LlmResponse:
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.WARNING,
+            payload={
+                "warning": warning,
+                "signal_id": signal_id,
+                "severity": "warning",
+            },
+        )
+        context.metadata["forced_final_retry"] = f"{retry_reason}_no_tools"
+        if retry_reason == "empty":
+            context.metadata["empty_forced_final_retry"] = "no_tools"
+        return await host._deps.provider.complete(
+            request_without_tools(request, provider_name=provider_name)
+        )
+
+    async def _try_fold() -> LlmResponse | None:
+        if folded_request is request:
+            return None
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.WARNING,
+            payload={
+                "warning": (
+                    "Retrying the forced final with the tool history folded into "
+                    "plain messages"
+                    + (
+                        " (model profile prefers the folded view)."
+                        if prefer_folded
+                        else " after an empty native retry."
+                    )
+                ),
+                "signal_id": "provider_empty_forced_final_history_fold_retry",
+                "severity": "warning",
+            },
+        )
+        context.metadata["empty_forced_final_retry"] = "history_fold"
+        return await host._deps.provider.complete(folded_request)
+
+    first, second = (
+        (_try_fold, _try_no_tools) if prefer_folded else (_try_no_tools, _try_fold)
+    )
+    retry_response = await first()
+    if retry_response is None:
+        retry_response = await second()
+        second = None  # type: ignore[assignment]
     retry_response = _mark_no_tool_text_form_suppression(
         context,
         request,
         retry_response,
         suppress_native_planned=True,
     )
-    if not (retry_response.message.content or "").strip():
-        # Last-resort recovery: some models (deepseek/openrouter) keep returning empty
-        # forced finals as long as the trailing history carries the tool-call protocol
-        # shape — the no-tools retry inherits it and fails the same way. Fold the tool
-        # exchange into plain user/assistant turns (evidence preserved) and retry once.
-        folded_request = request_with_folded_tool_history(
-            request, provider_name=provider_name
-        )
-        if folded_request is not request:
-            emit_step_event(
-                host,
-                context,
-                event_type=RuntimeEventType.WARNING,
-                payload={
-                    "warning": (
-                        "Forced-final retry still returned empty content; retrying "
-                        "once with the tool history folded into plain messages."
-                    ),
-                    "signal_id": "provider_empty_forced_final_history_fold_retry",
-                    "severity": "warning",
-                },
-            )
-            context.metadata["empty_forced_final_retry"] = "history_fold"
-            retry_response = await host._deps.provider.complete(folded_request)
+    if not (retry_response.message.content or "").strip() and second is not None:
+        alternate = await second()
+        if alternate is not None:
             retry_response = _mark_no_tool_text_form_suppression(
                 context,
                 request,
-                retry_response,
+                alternate,
                 suppress_native_planned=True,
             )
-        if not (retry_response.message.content or "").strip():
-            # Fallback-provider step (reference: hermes _fallback_chain): the empty-final
-            # quirk is model/provider-specific — a sibling provider given the SAME folded
-            # request often answers normally. Tried before prior-turn recovery because a
-            # fresh full answer beats an earlier partial one.
-            for fallback in getattr(host._deps, "fallback_providers", ()) or ():
-                fallback_name = str(getattr(fallback, "name", "") or "fallback")
-                emit_step_event(
-                    host,
-                    context,
-                    event_type=RuntimeEventType.WARNING,
-                    payload={
-                        "warning": (
-                            "Forced-final retries on the primary provider returned empty; "
-                            f"retrying once via fallback provider '{fallback_name}'."
-                        ),
-                        "signal_id": "provider_empty_forced_final_fallback_provider_retry",
-                        "severity": "warning",
-                        "fallback_provider": fallback_name,
-                    },
-                )
-                context.metadata["empty_forced_final_retry"] = "fallback_provider"
-                try:
-                    fallback_response = await fallback.complete(
-                        folded_request if folded_request is not request else request
-                    )
-                except Exception:  # pylint: disable=broad-except
-                    # Ladder step must not turn a recoverable empty into a hard failure.
-                    continue
-                if (fallback_response.message.content or "").strip():
-                    context.metadata["forced_final_fallback_provider"] = fallback_name
-                    retry_response = fallback_response
-                    break
-        if not (retry_response.message.content or "").strip():
-            # Prior-turn substantive fallback (reference: hermes fallback_prior_turn_content):
-            # if THIS run already produced a substantive assistant text earlier in the loop,
-            # finalize with it rather than with nothing. Provenance-flagged so hosts can tell.
-            prior = _longest_prior_assistant_content(request)
-            if prior:
-                emit_step_event(
-                    host,
-                    context,
-                    event_type=RuntimeEventType.WARNING,
-                    payload={
-                        "warning": (
-                            "All forced-final retries returned empty; finalizing with the "
-                            "run's own earlier substantive assistant message."
-                        ),
-                        "signal_id": "forced_final_recovered_prior_turn",
-                        "severity": "warning",
-                        "chars": len(prior),
-                    },
-                )
-                context.metadata["forced_final_prior_turn_recovered"] = True
-                retry_response = LlmResponse(
-                    message=ChatMessage(role=ChatRole.ASSISTANT, content=prior),
-                    finish_reason=LlmFinishReason.UNKNOWN,
-                    provider=str(getattr(host._deps.provider, "name", "") or ""),
-                    model=str(getattr(request, "model", "") or ""),
-                    metadata={"forced_final_prior_turn_recovered": True},
-                )
-        if not (retry_response.message.content or "").strip():
-            # All recovery strategies exhausted: surface a distinct signal so hosts can
-            # message the user honestly instead of rendering a silent empty bubble.
+    if not (retry_response.message.content or "").strip():
+        # Fallback-provider step (reference: hermes _fallback_chain): the empty-final
+        # quirk is model/provider-specific — a sibling provider given the SAME folded
+        # request often answers normally. Tried before prior-turn recovery because a
+        # fresh full answer beats an earlier partial one.
+        for fallback in getattr(host._deps, "fallback_providers", ()) or ():
+            fallback_name = str(getattr(fallback, "name", "") or "fallback")
             emit_step_event(
                 host,
                 context,
                 event_type=RuntimeEventType.WARNING,
                 payload={
                     "warning": (
-                        "Provider returned an empty final answer after all retry "
-                        "strategies (non-stream, no-tools, history-fold, "
-                        "fallback-provider, prior-turn)."
+                        "Forced-final retries on the primary provider returned empty; "
+                        f"retrying once via fallback provider '{fallback_name}'."
                     ),
-                    "signal_id": "forced_final_empty_after_all_retries",
-                    "severity": "error",
+                    "signal_id": "provider_empty_forced_final_fallback_provider_retry",
+                    "severity": "warning",
+                    "fallback_provider": fallback_name,
                 },
             )
-            context.metadata["forced_final_empty_after_all_retries"] = True
+            context.metadata["empty_forced_final_retry"] = "fallback_provider"
+            try:
+                fallback_response = await fallback.complete(
+                    folded_request if folded_request is not request else request
+                )
+            except Exception:  # pylint: disable=broad-except
+                # Ladder step must not turn a recoverable empty into a hard failure.
+                continue
+            if (fallback_response.message.content or "").strip():
+                context.metadata["forced_final_fallback_provider"] = fallback_name
+                retry_response = fallback_response
+                break
+    if not (retry_response.message.content or "").strip():
+        # Prior-turn substantive fallback (reference: hermes fallback_prior_turn_content):
+        # if THIS run already produced a substantive assistant text earlier in the loop,
+        # finalize with it rather than with nothing. Provenance-flagged so hosts can tell.
+        prior = _longest_prior_assistant_content(request)
+        if prior:
+            emit_step_event(
+                host,
+                context,
+                event_type=RuntimeEventType.WARNING,
+                payload={
+                    "warning": (
+                        "All forced-final retries returned empty; finalizing with the "
+                        "run's own earlier substantive assistant message."
+                    ),
+                    "signal_id": "forced_final_recovered_prior_turn",
+                    "severity": "warning",
+                    "chars": len(prior),
+                },
+            )
+            context.metadata["forced_final_prior_turn_recovered"] = True
+            retry_response = LlmResponse(
+                message=ChatMessage(role=ChatRole.ASSISTANT, content=prior),
+                finish_reason=LlmFinishReason.UNKNOWN,
+                provider=provider_name,
+                model=str(getattr(request, "model", "") or ""),
+                metadata={"forced_final_prior_turn_recovered": True},
+            )
+    if not (retry_response.message.content or "").strip():
+        # All recovery strategies exhausted: surface a distinct signal so hosts can
+        # message the user honestly instead of rendering a silent empty bubble.
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.WARNING,
+            payload={
+                "warning": (
+                    "Provider returned an empty final answer after all retry "
+                    "strategies (non-stream, no-tools, history-fold, "
+                    "fallback-provider, prior-turn)."
+                ),
+                "signal_id": "forced_final_empty_after_all_retries",
+                "severity": "error",
+            },
+        )
+        context.metadata["forced_final_empty_after_all_retries"] = True
     emit_non_stream_retry_assistant_message(host, context, retry_response)
     return retry_response
 

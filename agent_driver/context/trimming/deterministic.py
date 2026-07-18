@@ -256,7 +256,10 @@ def _trim_messages_to_budget(
                         metadata={"length": len(removed_content)},
                     )
                 )
-            keep_chars = max(_MIN_LAST_MESSAGE_CHARS if not kept else 0, min(len(content), budget_left))
+            keep_chars = max(
+                _MIN_LAST_MESSAGE_CHARS if not kept else 0,
+                min(len(content), budget_left),
+            )
             keep_chars = min(len(content), max(keep_chars, 1))
             truncated_message = dict(message)
             new_content = content[:keep_chars].rstrip()
@@ -285,6 +288,67 @@ def _trim_messages_to_budget(
             )
         )
     return kept, audit
+
+
+def _preserve_orphan_tool_results(
+    kept: list[dict[str, object]],
+) -> tuple[list[dict[str, object]], list[TrimAuditRecord]]:
+    """Fold tool results whose paired assistant call was trimmed away (epic 018).
+
+    Any trimming path (char budget, max_messages head-slice) can cut INSIDE a
+    tool_use/tool_result pair. The downstream protocol validator then DROPS the
+    orphaned tool result entirely — silent information loss: the evidence the tool
+    produced vanishes from the prompt. Instead, convert each orphan into a plain
+    user message carrying the payload verbatim (``[Tool result: name]``), which
+    every provider accepts and the validator keeps. Paired results are untouched.
+    (Reference: openclaude ``toolPairing``/``getToolPairSafeMessageRange``; the
+    fold vocabulary matches the runtime history normalizer.)
+    """
+    expected_ids: set[str] = set()
+    out: list[dict[str, object]] = []
+    audit: list[TrimAuditRecord] = []
+    for index, message in enumerate(kept):
+        role = str(message.get("role", "")).strip().lower()
+        if role == "assistant":
+            metadata = message.get("metadata")
+            calls = metadata.get("tool_calls") if isinstance(metadata, dict) else None
+            for call in calls if isinstance(calls, list) else []:
+                call_id = str(call.get("id") or "") if isinstance(call, dict) else ""
+                if call_id:
+                    expected_ids.add(call_id)
+            out.append(message)
+            continue
+        if role == "tool":
+            call_id = str(message.get("tool_call_id") or "")
+            # Только ЯВНО спаренные результаты (есть call_id), чья пара срезана: id-less
+            # tool-сообщения — легальные стабы триммера/легаси-путей, их не трогаем.
+            if call_id and call_id not in expected_ids:
+                name = str(message.get("name") or "tool")
+                out.append(
+                    {
+                        "role": "user",
+                        "content": f"[Tool result: {name}]\n{message.get('content', '')}",
+                        "metadata": {
+                            "folded_tool_result": True,
+                            "tool_call_id": call_id or None,
+                        },
+                    }
+                )
+                audit.append(
+                    TrimAuditRecord(
+                        record_id=f"trim_orphan_tool_{index}",
+                        kind="message",
+                        action=TrimAction.KEPT,
+                        reason="orphan_tool_result_folded",
+                        metadata={
+                            "tool_call_id": call_id or None,
+                            "content_length": len(str(message.get("content", ""))),
+                        },
+                    )
+                )
+                continue
+        out.append(message)
+    return out, audit
 
 
 def _enforce_max_messages(
@@ -352,6 +416,10 @@ def trim_context(
         max_messages=budget.max_messages,
     )
     audit.extend(max_message_audit)
+    # Pair-integrity pass (epic 018): every trimming path above can cut inside a
+    # tool_use/tool_result pair; orphaned results are folded, not lost.
+    kept, orphan_audit = _preserve_orphan_tool_results(kept)
+    audit.extend(orphan_audit)
 
     retained_digest_ids = [
         record.metadata["digest_id"]

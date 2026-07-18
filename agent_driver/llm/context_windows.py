@@ -99,6 +99,22 @@ def provider_model_hint(provider: object) -> str | None:
 
 __all__ = [
     "MIN_RESOLVED_CONTEXT_WINDOW",
+    "preferred_history_view",
     "provider_model_hint",
     "resolve_context_window",
 ]
+
+
+# Models whose forced-final completions are unreliable while the trailing history
+# carries the tool-call protocol shape (empty finals): for these the folded plain
+# user/assistant view is the PREFERRED first retry, not the last resort.
+# (Epic 018 phase C; observed live on deepseek-v4-flash via openrouter.)
+_FOLDED_VIEW_FAMILIES: tuple[str, ...] = ("deepseek",)
+
+
+def preferred_history_view(model: str | None) -> str:
+    """Return "folded" for models that need the plain view on forced finals, else "native"."""
+    lowered = str(model or "").strip().lower()
+    if lowered and any(family in lowered for family in _FOLDED_VIEW_FAMILIES):
+        return "folded"
+    return "native"

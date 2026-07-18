@@ -217,56 +217,17 @@ def request_with_folded_tool_history(
     Some models (observed: deepseek via openrouter) persistently return an EMPTY
     forced-final completion when the trailing history carries the tool-call protocol
     shape (assistant ``tool_calls`` + ``tool``-role results) — and the no-tools retry
-    inherits that shape, so it comes back empty too. This last-resort retry rewrites
-    the protocol shape while preserving the evidence: each tool result becomes a plain
-    USER message carrying the payload verbatim, and the assistant tool-call marker
-    keeps only its text. The model then sees an ordinary user/assistant dialog and can
-    produce the final answer from the same information.
+    inherits that shape, so it comes back empty too. The fold itself lives in the
+    reusable history normalizer (epic 018); this wrapper adds the retry nudge and the
+    no-tools/non-stream request shape.
     """
+    from agent_driver.runtime.single_agent.context_management.history_normalizer import (  # pylint: disable=import-outside-toplevel
+        fold_tool_history,
+    )
+
     if not isinstance(request, LlmRequest):
         return request
-    folded: list[ChatMessage] = []
-    changed = False
-    for message in request.messages:
-        if message.role == ChatRole.TOOL:
-            changed = True
-            tool_name = message.name or "tool"
-            folded.append(
-                ChatMessage(
-                    role=ChatRole.USER,
-                    content=f"[Tool result: {tool_name}]\n{message.content}",
-                    metadata={
-                        "folded_tool_result": True,
-                        "tool_call_id": message.tool_call_id,
-                    },
-                )
-            )
-            continue
-        metadata = message.metadata if isinstance(message.metadata, dict) else {}
-        if message.role == ChatRole.ASSISTANT and metadata.get("tool_calls"):
-            changed = True
-            calls = metadata.get("tool_calls")
-            names = ", ".join(
-                str(
-                    (
-                        (call.get("function") or {}) if isinstance(call, dict) else {}
-                    ).get("name")
-                    or "tool"
-                )
-                for call in (calls if isinstance(calls, list) else [])
-            )
-            next_metadata = {k: v for k, v in metadata.items() if k != "tool_calls"}
-            next_metadata["folded_tool_calls"] = True
-            folded.append(
-                ChatMessage(
-                    role=ChatRole.ASSISTANT,
-                    content=(message.content or "").strip()
-                    or f"(called tools: {names})",
-                    metadata=next_metadata,
-                )
-            )
-            continue
-        folded.append(message)
+    folded, changed = fold_tool_history(list(request.messages))
     if not changed:
         return request
     folded.append(
