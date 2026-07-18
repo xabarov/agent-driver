@@ -61,9 +61,7 @@ def _account_compaction_cost(
     )
 
 
-def _apply_tool_arg_truncation(
-    host: Any, *, context: RunContext, request: Any
-) -> None:
+def _apply_tool_arg_truncation(host: Any, *, context: RunContext, request: Any) -> None:
     """E5 pre-pass: clip oversized tool-call args in older messages in place.
 
     Cheap and LLM-free; runs whenever compaction is considered (token pressure)
@@ -97,6 +95,24 @@ class CompactionStageHost(Protocol):
 
     def _get_compaction_orchestrator(self) -> CompactionOrchestrator: ...
     def _emit(self, event: EventSpec) -> None: ...
+
+
+def _has_sendable_content(messages: list[ChatMessage]) -> bool:
+    """True when the compacted set carries at least one non-system message with content.
+
+    Providers reject prompts whose payload is empty or system-only («Input required»);
+    such a set must never replace a working prompt.
+    """
+
+    def _role_value(message: ChatMessage) -> str:
+        role = getattr(message, "role", "")
+        return str(getattr(role, "value", role))
+
+    return any(
+        _role_value(message) != "system"
+        and (getattr(message, "content", "") or "").strip()
+        for message in messages
+    )
 
 
 def _emit_compaction_started(
@@ -372,9 +388,44 @@ async def _apply_session_memory_compaction(
             if isinstance(item, dict) and item.get("artifact_id")
         ],
     )
-    request.messages = [
+    compacted_messages = [
         ChatMessage.model_validate(item) for item in compacted.prompt_messages
     ]
+    if not _has_sendable_content(compacted_messages):
+        # Empty-result guard (epic 017): session-memory compaction can produce an
+        # empty/system-only message set on large corpus-bound contexts; applying it gets
+        # the provider's «Input required» rejection — hosts responded by disabling
+        # compaction wholesale (MeetScript chat_v2). Keep the original prompt, count the
+        # attempt as failed (feeds the circuit breaker), emit a distinct signal.
+        failure = {
+            "kind": "empty_compaction_result",
+            "mode": "session_memory",
+            "message": "compaction produced no sendable messages; original prompt kept",
+        }
+        audit = orchestrator.complete_attempt(decision=decision, failures=[failure])
+        context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+        context.metadata[COMPACTION_FAILURES_KEY] = [failure]
+        _emit_compaction_outcome(
+            host,
+            context=context,
+            outcome="failed",
+            payload_extras={
+                "mode": "session_memory",
+                "compaction_id": compaction_id,
+                "failure_kind": failure["kind"],
+                "failure_message": failure["message"],
+                "signal_id": "compaction_empty_result_skipped",
+            },
+            orchestrator=orchestrator,
+        )
+        _maybe_emit_circuit_breaker_warning(
+            host,
+            context=context,
+            before_open=circuit_breaker_open_before,
+            orchestrator=orchestrator,
+        )
+        return True  # attempt fully handled (as a failure); prompt left intact
+    request.messages = compacted_messages
     result_payload = {
         "compaction_id": compaction_id,
         "mode": "session_memory",

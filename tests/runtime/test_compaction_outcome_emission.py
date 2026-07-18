@@ -270,3 +270,78 @@ def test_warning_projector_recognizes_compaction_circuit_breaker() -> None:
     data = projection["data"]
     assert data["consecutive_failures"] == 3
     assert data["failure_limit"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Empty-result guard (epic 017)
+
+
+class _GuardHost(_CaptureHost):
+    def __init__(self) -> None:
+        super().__init__()
+        from types import SimpleNamespace
+
+        self._config = SimpleNamespace(
+            session_memory_stale_after_turns=4,
+            post_compact_max_reinjected_artifact_refs=5,
+        )
+
+
+def test_session_memory_empty_result_keeps_prompt_and_counts_failure() -> None:
+    """Session-memory compaction yielding no sendable messages must NOT replace the
+    prompt (provider would reject with «Input required» — MeetScript chat_v2 root),
+    must count as a breaker failure, and must emit compaction_empty_result_skipped."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from agent_driver.contracts import SessionMemory
+    from agent_driver.runtime.single_agent.context_management.compaction_stage import (
+        _apply_session_memory_compaction,
+    )
+
+    host = _GuardHost()
+    context = _make_context()
+    orchestrator = CompactionOrchestrator()
+    decision = CompactionDecision(
+        eligible=True,
+        mode=CompactionMode.SESSION_MEMORY,
+        skip_reason=None,
+        metadata={},
+    )
+    # Empty summary + empty tail → compacted set is system-only → guard must fire.
+    memory = SessionMemory(
+        memory_id="mem_1",
+        session_id="s1",
+        summary="",
+        key_facts=[],
+        pending_tasks=[],
+        open_questions=[],
+        last_summarized_turn_index=0,
+    )
+    original_messages = []
+    request = SimpleNamespace(messages=original_messages)
+    orchestrator.start_attempt()
+    handled = asyncio.run(
+        _apply_session_memory_compaction(
+            host,
+            context=context,
+            request=request,
+            session_memory=memory,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id="cmp_guard",
+            circuit_breaker_open_before=False,
+        )
+    )
+
+    assert handled is True
+    assert request.messages is original_messages  # prompt untouched
+    assert orchestrator.state_snapshot()["consecutive_failures"] == 1
+    outcome_events = [
+        e for e in host.events if e.event_type == RuntimeEventType.MEMORY_COMPACTED
+    ]
+    assert outcome_events
+    payload = outcome_events[-1].payload
+    assert payload.get("outcome") == "failed"
+    assert payload.get("failure_kind") == "empty_compaction_result"
+    assert payload.get("signal_id") == "compaction_empty_result_skipped"

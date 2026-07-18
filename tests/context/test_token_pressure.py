@@ -93,7 +93,9 @@ def test_token_pressure_reports_blocking_at_emergency_ratio() -> None:
 def test_trimming_settings_for_context_window_scales_thresholds():
     """Hosts with large-context models must get proportional thresholds, not the 12k defaults
     (a retrieval-heavy prompt otherwise trips compact/blocking far below model capacity)."""
-    from agent_driver.runtime.single_agent.lifecycle.config_sections import TrimmingSettings
+    from agent_driver.runtime.single_agent.lifecycle.config_sections import (
+        TrimmingSettings,
+    )
 
     s = TrimmingSettings.for_context_window(100_000)
     assert s.context_window_estimate == 100_000
@@ -102,13 +104,50 @@ def test_trimming_settings_for_context_window_scales_thresholds():
     assert s.token_blocking_threshold == 92_000
     assert s.output_token_reserve == 3125  # max(1500, window // 32)
     # overrides pass through untouched
-    s2 = TrimmingSettings.for_context_window(64_000, output_token_reserve=2000, trim_max_chars=9000)
+    s2 = TrimmingSettings.for_context_window(
+        64_000, output_token_reserve=2000, trim_max_chars=9000
+    )
     assert s2.output_token_reserve == 2000
     assert s2.trim_max_chars == 9000
     # ratios match the class defaults' shape (12k → 4200/9000/11040)
     d = TrimmingSettings.for_context_window(12_000)
-    assert (d.token_warning_threshold, d.token_compact_threshold, d.token_blocking_threshold) == (
+    assert (
+        d.token_warning_threshold,
+        d.token_compact_threshold,
+        d.token_blocking_threshold,
+    ) == (
         4200,
         9000,
         11040,
     )
+
+
+def test_threshold_invariants_across_window_sizes():
+    """Phase C sanity (epic 017): for any window, thresholds must be strictly ordered and
+    blocking must leave at least the output reserve before the window edge."""
+    from agent_driver.runtime.single_agent.lifecycle.config_sections import (
+        TrimmingSettings,
+    )
+
+    for window in (
+        12_000,
+        32_000,
+        64_000,
+        100_000,
+        128_000,
+        200_000,
+        400_000,
+        1_000_000,
+    ):
+        s = TrimmingSettings.for_context_window(window)
+        assert (
+            s.token_warning_threshold
+            < s.token_compact_threshold
+            < s.token_blocking_threshold
+        )
+        assert s.token_blocking_threshold < s.context_window_estimate
+        # Blocking headroom covers the output reserve (long final answers fit).
+        assert s.context_window_estimate - s.token_blocking_threshold >= min(
+            s.output_token_reserve, int(window * 0.08)
+        )
+        assert s.output_token_reserve >= 1500

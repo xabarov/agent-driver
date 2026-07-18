@@ -47,6 +47,16 @@ class CapabilitySettings:
         )
 
 
+from agent_driver.llm.context_windows import (  # noqa: E402  (section-local import)
+    resolve_context_window as _resolve_context_window,
+)
+
+
+# Class default for the window estimate. A module constant (not type(self).attr):
+# slots-dataclass class attributes are member descriptors, not default values.
+DEFAULT_CONTEXT_WINDOW_ESTIMATE = 12000
+
+
 @dataclass(frozen=True, slots=True)
 class TrimmingSettings:
     """Context trimming and token pressure thresholds."""
@@ -57,11 +67,41 @@ class TrimmingSettings:
     trim_protect_recent_turns: int | None = 4
     microcompact_preserve_recent: int = 6
     microcompact_max_preview_chars: int = 180
-    context_window_estimate: int = 12000
+    context_window_estimate: int = DEFAULT_CONTEXT_WINDOW_ESTIMATE
     token_warning_threshold: int = 4200
     token_compact_threshold: int = 9000
     token_blocking_threshold: int = 11040
     output_token_reserve: int = 1500
+    # Provenance of the window estimate: "default" (class defaults — eligible for
+    # per-model auto-resolution), "explicit" (host set it — never overridden),
+    # "model_catalog" (auto-resolved via resolve_context_window).
+    context_window_source: str = "default"
+
+    def resolved_for_model(self, model: str | None) -> "TrimmingSettings":
+        """Auto-scale pressure thresholds to the model's real window (epic 017).
+
+        Only fires when the host left the window at the class default: an explicit
+        host-tuned window (via ``for_context_window`` or a direct non-default value)
+        always wins. Unknown models keep the defaults. Trim/microcompact fields are
+        preserved — only the pressure plane rescales.
+        """
+        if self.context_window_source != "default":
+            return self
+        if self.context_window_estimate != DEFAULT_CONTEXT_WINDOW_ESTIMATE:
+            return self  # host set a bespoke window without the classmethod
+        window = _resolve_context_window(model)
+        if window is None or window == self.context_window_estimate:
+            return self
+        return type(self).for_context_window(
+            window,
+            trim_max_chars=self.trim_max_chars,
+            trim_max_messages=self.trim_max_messages,
+            trim_max_observations=self.trim_max_observations,
+            trim_protect_recent_turns=self.trim_protect_recent_turns,
+            microcompact_preserve_recent=self.microcompact_preserve_recent,
+            microcompact_max_preview_chars=self.microcompact_max_preview_chars,
+            context_window_source="model_catalog",
+        )
 
     @classmethod
     def for_context_window(
@@ -86,6 +126,7 @@ class TrimmingSettings:
             if output_token_reserve is not None
             else max(1500, window // 32)
         )
+        overrides.setdefault("context_window_source", "explicit")
         return cls(
             context_window_estimate=window,
             token_warning_threshold=int(window * 0.35),

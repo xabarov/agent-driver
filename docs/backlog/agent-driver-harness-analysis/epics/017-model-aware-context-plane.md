@@ -1,6 +1,18 @@
 # Model-aware context plane: окно из каталога, буферные пороги, компакт-предохранители
 
-Дата создания: 2026-07-18. Статус: **proposed**.
+Дата создания: 2026-07-18. Статус: **done, фазы A-C** (2026-07-18, поздний вечер); фаза D
+(models.dev snapshot) — опциональная, не реализована.
+
+> Реализация: фаза A — `agent_driver/llm/context_windows.py` (resolve: точный каталог с
+> алиасами/вендор-префиксами → семейная таблица → None; floor 16k) +
+> `TrimmingSettings.resolved_for_model` (провенанс default/explicit/model_catalog; явный
+> host-тюнинг всегда побеждает) + автоприменение в request-build с observability-штампом
+> `context_window_resolved`. Фаза B — guard пустого результата session-memory компактизации
+> (`_has_sendable_content`: system-only/пустой набор НЕ заменяет промпт, счётчик брейкера,
+> сигнал `compaction_empty_result_skipped`) + cooldown/half-open у circuit-breaker'а
+> (`cooldown_attempts`, полуоткрытая проба, re-open с новым cooldown). Фаза C —
+> тест-инварианты порогов на окнах 12k..1M (порядок, headroom ≥ reserve). Регрессия
+> runtime/context/llm/contracts зелёная (кроме 2 предсуществующих phase6-фейлов).
 
 Источник: MeetScript-инцидент «12k-окно на 128k-модели» (пороги token-pressure наследовали
 дефолт → compact/blocking на ~10k → run_failed). Починено точечно

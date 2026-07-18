@@ -185,3 +185,86 @@ def test_partial_compaction_preserves_leading_system_policy() -> None:
         "old-7",
     ]
     assert out.metadata["protected_head_count"] == 1
+
+
+def _fail_attempt(orchestrator: CompactionOrchestrator) -> None:
+    decision = orchestrator.decide(
+        enable_compaction=True,
+        enable_session_memory_compaction=True,
+        enable_llm_compaction=True,
+        token_pressure_state="blocking",
+        session_memory=_session_memory(),
+    )
+    orchestrator.start_attempt()
+    orchestrator.complete_attempt(
+        decision=decision,
+        failures=[{"kind": "unit", "message": "boom"}],
+    )
+
+
+def test_circuit_breaker_cooldown_then_half_open_probe() -> None:
+    """Epic 017 (reference: openclaude autoCompact): open breaker skips attempts for
+    ``cooldown_attempts`` checks, then lets ONE half-open probe through; probe success
+    closes the breaker, probe failure re-opens it with a fresh cooldown."""
+    orchestrator = CompactionOrchestrator(failure_limit=2, cooldown_attempts=2)
+    _fail_attempt(orchestrator)
+    _fail_attempt(orchestrator)
+    assert orchestrator.state_snapshot()["circuit_breaker_open"] is True
+    assert orchestrator.state_snapshot()["cooldown_remaining"] == 2
+
+    def _decide():
+        return orchestrator.decide(
+            enable_compaction=True,
+            enable_session_memory_compaction=True,
+            enable_llm_compaction=True,
+            token_pressure_state="blocking",
+            session_memory=_session_memory(),
+        )
+
+    # Two cooldown ticks: breaker stays closed to attempts (eligible False).
+    assert _decide().eligible is False
+    assert _decide().eligible is False
+    # Cooldown elapsed → half-open probe allowed through.
+    probe = _decide()
+    assert probe.eligible is True
+    assert orchestrator.state_snapshot()["half_open_probe"] is True
+    # Probe SUCCESS closes the breaker fully.
+    orchestrator.start_attempt()
+    orchestrator.complete_attempt(
+        decision=probe,
+        result=CompactionResult(
+            compaction_id="cmp_ok",
+            mode=CompactionMode.SESSION_MEMORY,
+            success=True,
+        ),
+    )
+    snapshot = orchestrator.state_snapshot()
+    assert snapshot["circuit_breaker_open"] is False
+    assert snapshot["consecutive_failures"] == 0
+    assert snapshot["half_open_probe"] is False
+
+
+def test_circuit_breaker_failed_probe_reopens_with_fresh_cooldown() -> None:
+    orchestrator = CompactionOrchestrator(failure_limit=2, cooldown_attempts=1)
+    _fail_attempt(orchestrator)
+    _fail_attempt(orchestrator)
+
+    def _decide():
+        return orchestrator.decide(
+            enable_compaction=True,
+            enable_session_memory_compaction=True,
+            enable_llm_compaction=True,
+            token_pressure_state="blocking",
+            session_memory=_session_memory(),
+        )
+
+    assert _decide().eligible is False  # cooldown tick
+    probe = _decide()
+    assert probe.eligible is True  # half-open
+    orchestrator.start_attempt()
+    orchestrator.complete_attempt(
+        decision=probe, failures=[{"kind": "unit", "message": "still broken"}]
+    )
+    snapshot = orchestrator.state_snapshot()
+    assert snapshot["circuit_breaker_open"] is True
+    assert snapshot["cooldown_remaining"] == 1  # fresh cooldown armed

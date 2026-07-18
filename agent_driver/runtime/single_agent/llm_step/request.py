@@ -13,6 +13,7 @@ from agent_driver.context import (
 from agent_driver.contracts.context import PlanningStep
 from agent_driver.contracts.enums import ChatRole, RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.llm.context_windows import provider_model_hint
 from agent_driver.runtime.metadata_state import (
     get_compaction_runtime_state,
     get_planning_runtime_state,
@@ -144,9 +145,7 @@ def _surface_deferred_tools(
     rows = getattr(registry, "list_registered", None)
     if not callable(rows):
         return ()
-    deferred = tuple(
-        item.manifest for item in rows() if item.manifest.is_deferred()
-    )
+    deferred = tuple(item.manifest for item in rows() if item.manifest.is_deferred())
     if not deferred:
         return ()
     return surfaced_deferred_tool_names(
@@ -216,6 +215,20 @@ def build_trimmed_request(
                 content=force_final_answer_message(context),
             ),
         )
+    # Epic 017: pressure thresholds scale to the model's REAL window automatically when
+    # the host left the trimming defaults (explicit host tuning always wins). Without this,
+    # the 12k defaults strangled retrieval-heavy prompts on 128k models.
+    trimming = host._config.trimming.resolved_for_model(
+        provider_model_hint(host._deps.provider)
+    )
+    if trimming.context_window_source == "model_catalog":
+        context.metadata.setdefault(
+            "context_window_resolved",
+            {
+                "window": trimming.context_window_estimate,
+                "source": "model_catalog",
+            },
+        )
     return build_single_agent_llm_request(
         LlmRequestBuildContext(
             run_input=context.run_input,
@@ -243,15 +256,15 @@ def build_trimmed_request(
                 for item in artifact_refs
                 if isinstance(item, dict) and item.get("artifact_id")
             ),
-            max_chars=host._config.trim_max_chars,
-            max_messages=host._config.trim_max_messages,
-            max_observations=host._config.trim_max_observations,
-            protect_recent_turns=host._config.trim_protect_recent_turns,
-            context_window_estimate=host._config.context_window_estimate,
-            warning_threshold=host._config.token_warning_threshold,
-            compact_threshold=host._config.token_compact_threshold,
-            blocking_threshold=host._config.token_blocking_threshold,
-            output_token_reserve=host._config.output_token_reserve,
+            max_chars=trimming.trim_max_chars,
+            max_messages=trimming.trim_max_messages,
+            max_observations=trimming.trim_max_observations,
+            protect_recent_turns=trimming.trim_protect_recent_turns,
+            context_window_estimate=trimming.context_window_estimate,
+            warning_threshold=trimming.token_warning_threshold,
+            compact_threshold=trimming.token_compact_threshold,
+            blocking_threshold=trimming.token_blocking_threshold,
+            output_token_reserve=trimming.output_token_reserve,
             stream=is_stream_enabled(context.run_input),
             system_instruction=system_instruction,
             protocol_messages=protocol_messages,
@@ -278,7 +291,9 @@ def _deep_research_request_allowed_tools(
     active = _deep_research_context_active(context) or _deep_research_initial_todo_only(
         context
     )
-    if not active and not (isinstance(handoff, dict) and handoff.get("pending") is True):
+    if not active and not (
+        isinstance(handoff, dict) and handoff.get("pending") is True
+    ):
         return None
     if active:
         _record_deep_research_active_profile(context)
@@ -362,7 +377,9 @@ def _deep_research_strategy_tool_choice(
     active = _deep_research_context_active(context) or _deep_research_initial_todo_only(
         context
     )
-    if not active and not (isinstance(handoff, dict) and handoff.get("pending") is True):
+    if not active and not (
+        isinstance(handoff, dict) and handoff.get("pending") is True
+    ):
         return None
     if active:
         _record_deep_research_active_profile(context)
@@ -745,9 +762,8 @@ def _deep_research_parent_report_write_seen(context: RunContext) -> bool:
 
 
 def _report_artifact_confirmed_if_possible(context: RunContext) -> bool:
-    if (
-        "workspace_cwd" in context.metadata
-        or isinstance(context.metadata.get("deep_research_artifacts"), dict)
+    if "workspace_cwd" in context.metadata or isinstance(
+        context.metadata.get("deep_research_artifacts"), dict
     ):
         return deep_research_report_artifact_exists(context)
     return True

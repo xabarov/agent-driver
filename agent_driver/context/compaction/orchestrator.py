@@ -15,12 +15,24 @@ from agent_driver.contracts import (
 
 @dataclass(slots=True)
 class CompactionOrchestrator:
-    """Coordinates eligibility state, lock, and failure counters."""
+    """Coordinates eligibility state, lock, and failure counters.
+
+    Circuit breaker (epic 017; reference: openclaude ``autoCompact`` cooldown +
+    half-open): after ``failure_limit`` consecutive failures the breaker opens and
+    the next ``cooldown_attempts`` eligibility checks skip compaction entirely;
+    the attempt after the cooldown is a single half-open probe — success closes
+    the breaker, failure re-opens it with a fresh cooldown. Without the cooldown,
+    an open breaker either blocked compaction for the whole run or thrashed on
+    every step.
+    """
 
     failure_limit: int = 3
+    cooldown_attempts: int = 3
     _lock_active: bool = False
     _consecutive_failures: int = 0
     _last_compaction_id: int = 0
+    _cooldown_remaining: int = 0
+    _half_open_probe: bool = False
 
     def decide(
         self,
@@ -31,15 +43,30 @@ class CompactionOrchestrator:
         token_pressure_state: str,
         session_memory: SessionMemory | None,
     ) -> CompactionDecision:
-        """Return pure decision based on current runtime state."""
+        """Return decision based on current runtime state (cooldown-aware)."""
+        breaker_open = self._consecutive_failures >= self.failure_limit
+        if breaker_open and self._cooldown_remaining > 0:
+            # Still cooling down: skip this attempt and burn one cooldown tick.
+            self._cooldown_remaining -= 1
+        elif breaker_open:
+            # Cooldown elapsed: allow ONE half-open probe through.
+            breaker_open = False
+            self._half_open_probe = True
+        # decide_compaction re-derives the breaker from previous_failures >= limit, so a
+        # half-open probe must present a sub-limit failure count as well.
+        reported_failures = (
+            min(self._consecutive_failures, max(0, self.failure_limit - 1))
+            if self._half_open_probe
+            else self._consecutive_failures
+        )
         return decide_compaction(
             enable_compaction=enable_compaction,
             enable_session_memory_compaction=enable_session_memory_compaction,
             enable_llm_compaction=enable_llm_compaction,
             token_pressure_state=token_pressure_state,
             lock_active=self._lock_active,
-            circuit_breaker_open=self._consecutive_failures >= self.failure_limit,
-            previous_failures=self._consecutive_failures,
+            circuit_breaker_open=breaker_open,
+            previous_failures=reported_failures,
             failure_limit=self.failure_limit,
             session_memory=session_memory,
         )
@@ -66,8 +93,14 @@ class CompactionOrchestrator:
         )
         if has_failure:
             self._consecutive_failures += 1
+            if self._consecutive_failures >= self.failure_limit:
+                # Breaker (re)opens — arm a fresh cooldown; a failed half-open
+                # probe lands here too and re-opens with full cooldown.
+                self._cooldown_remaining = self.cooldown_attempts
         elif result is not None and result.success:
             self._consecutive_failures = 0
+            self._cooldown_remaining = 0
+        self._half_open_probe = False
         self._lock_active = False
         return CompactionAudit(
             decision=decision,
@@ -87,6 +120,8 @@ class CompactionOrchestrator:
             "consecutive_failures": self._consecutive_failures,
             "failure_limit": self.failure_limit,
             "circuit_breaker_open": self._consecutive_failures >= self.failure_limit,
+            "cooldown_remaining": self._cooldown_remaining,
+            "half_open_probe": self._half_open_probe,
         }
 
 
@@ -170,7 +205,10 @@ def build_session_memory_compaction(
         messages.append(planning_message)
     messages.extend(
         [
-            {"role": str(item.get("role", "user")), "content": str(item.get("content", ""))}
+            {
+                "role": str(item.get("role", "user")),
+                "content": str(item.get("content", "")),
+            }
             for item in bounded_tail
         ]
     )
