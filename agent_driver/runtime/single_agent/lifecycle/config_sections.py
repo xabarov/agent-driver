@@ -63,6 +63,38 @@ class TrimmingSettings:
     token_blocking_threshold: int = 11040
     output_token_reserve: int = 1500
 
+    @classmethod
+    def for_context_window(
+        cls,
+        context_window_estimate: int,
+        *,
+        output_token_reserve: int | None = None,
+        **overrides,
+    ) -> "TrimmingSettings":
+        """Build settings with pressure thresholds scaled to the model's real context window.
+
+        The class defaults describe a 12k window (warning 35%, compact 75%, blocking 92%);
+        hosts running large-context models (128k+) must not inherit those absolute numbers —
+        a retrieval-heavy prompt then trips compact/blocking far below the model's capacity
+        and the run degrades or fails. Ratios are kept, absolute thresholds derive from the
+        given window. ``output_token_reserve`` defaults to max(1500, window // 32) so long
+        answers are not squeezed on big windows. Any other field passes through ``overrides``.
+        """
+        window = max(1000, int(context_window_estimate))
+        reserve = (
+            int(output_token_reserve)
+            if output_token_reserve is not None
+            else max(1500, window // 32)
+        )
+        return cls(
+            context_window_estimate=window,
+            token_warning_threshold=int(window * 0.35),
+            token_compact_threshold=int(window * 0.75),
+            token_blocking_threshold=int(window * 0.92),
+            output_token_reserve=reserve,
+            **overrides,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class CompactionSettings:

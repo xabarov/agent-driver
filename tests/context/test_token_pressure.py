@@ -88,3 +88,27 @@ def test_token_pressure_reports_blocking_at_emergency_ratio() -> None:
     )
     assert pressure["state"] == "blocking"
     assert pressure["context_usage_ratio"] == 0.92
+
+
+def test_trimming_settings_for_context_window_scales_thresholds():
+    """Hosts with large-context models must get proportional thresholds, not the 12k defaults
+    (a retrieval-heavy prompt otherwise trips compact/blocking far below model capacity)."""
+    from agent_driver.runtime.single_agent.lifecycle.config_sections import TrimmingSettings
+
+    s = TrimmingSettings.for_context_window(100_000)
+    assert s.context_window_estimate == 100_000
+    assert s.token_warning_threshold == 35_000
+    assert s.token_compact_threshold == 75_000
+    assert s.token_blocking_threshold == 92_000
+    assert s.output_token_reserve == 3125  # max(1500, window // 32)
+    # overrides pass through untouched
+    s2 = TrimmingSettings.for_context_window(64_000, output_token_reserve=2000, trim_max_chars=9000)
+    assert s2.output_token_reserve == 2000
+    assert s2.trim_max_chars == 9000
+    # ratios match the class defaults' shape (12k → 4200/9000/11040)
+    d = TrimmingSettings.for_context_window(12_000)
+    assert (d.token_warning_threshold, d.token_compact_threshold, d.token_blocking_threshold) == (
+        4200,
+        9000,
+        11040,
+    )
