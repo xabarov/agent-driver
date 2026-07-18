@@ -59,6 +59,13 @@ _CAPABILITY_FIELDS = {item.name for item in fields(CapabilitySettings)}
 # runtimes cap at 50-90 iterations); this is a safety net, not a tight budget.
 DEFAULT_MAX_STEPS_BACKSTOP = 80
 
+# Same philosophy for tool calls: a safety net, not a tight budget. Before this
+# existed, hosts that omitted per-run budgets silently inherited a hardcoded
+# fallback of 1 in the force-final check — the agent was forced to finalize
+# after its FIRST tool call (observations.md 2026-07-18, MeetScript chat_v2:
+# cross-meeting questions finalized mid-task with empty/meta answers).
+DEFAULT_MAX_TOOL_CALLS_BACKSTOP = 32
+
 
 @dataclass(init=False)
 class RunnerConfig:
@@ -144,6 +151,9 @@ class RunnerConfig:
         self.include_planning_prompt = kwargs.pop("include_planning_prompt", False)
         self.default_max_steps = kwargs.pop(
             "default_max_steps", DEFAULT_MAX_STEPS_BACKSTOP
+        )
+        self.default_max_tool_calls = kwargs.pop(
+            "default_max_tool_calls", DEFAULT_MAX_TOOL_CALLS_BACKSTOP
         )
         # When a soft budget (max_steps / max_tool_calls / cost) is exhausted,
         # grant one forced-final synthesis turn (tools disabled) so the run can

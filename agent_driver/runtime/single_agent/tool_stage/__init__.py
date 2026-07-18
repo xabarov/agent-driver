@@ -70,6 +70,8 @@ from agent_driver.runtime.single_agent.tool_stage.subagents import (
     apply_subagent_control_tool_outputs,
 )
 from agent_driver.runtime.single_agent.types import (
+    DEFAULT_MAX_STEPS_BACKSTOP,
+    DEFAULT_MAX_TOOL_CALLS_BACKSTOP,
     EventSpec,
     RunContext,
     RunnerConfig,
@@ -1503,19 +1505,34 @@ def _should_force_final_answer(context: RunContext) -> bool:
     return _force_final_reason(context) is not None
 
 
+def _resolved_budget(raw: object, meta_value: object, backstop: int) -> int:
+    """Per-run budget wins; else the runner default stamped into metadata; else backstop.
+
+    The previous fallback was a hardcoded 1: hosts that omitted per-run budgets got an
+    agent forced to finalize after its FIRST tool call, while the documented
+    RunnerConfig backstops (default_max_steps=80) never reached this check
+    (observations.md 2026-07-18). ``None`` in metadata (unbounded opt-in) still uses
+    the backstop HERE — force-final is about eventually producing an answer; the loop
+    terminal honors unbounded separately in the journal.
+    """
+    if isinstance(raw, int):
+        return max(1, raw)
+    if isinstance(meta_value, int):
+        return max(1, meta_value)
+    return max(1, backstop)
+
+
 def _force_final_reason(context: RunContext) -> str | None:
     """Return why the next LLM call should produce a final answer, if needed."""
-    max_tool_calls_raw = context.run_input.max_tool_calls
-    max_steps_raw = context.run_input.max_steps
-    max_tool_calls = (
-        max(1, int(max_tool_calls_raw))
-        if isinstance(max_tool_calls_raw, int)
-        else max(1, int(context.metadata.get("max_tool_calls", 1)))
+    max_tool_calls = _resolved_budget(
+        context.run_input.max_tool_calls,
+        context.metadata.get("max_tool_calls"),
+        DEFAULT_MAX_TOOL_CALLS_BACKSTOP,
     )
-    max_steps = (
-        max(1, int(max_steps_raw))
-        if isinstance(max_steps_raw, int)
-        else max(1, int(context.metadata.get("max_steps", 1)))
+    max_steps = _resolved_budget(
+        context.run_input.max_steps,
+        context.metadata.get("max_steps"),
+        DEFAULT_MAX_STEPS_BACKSTOP,
     )
     near_tool_budget = context.tool_calls >= max(1, max_tool_calls - 1)
     near_step_budget = context.llm_step_count >= max(1, max_steps - 1)

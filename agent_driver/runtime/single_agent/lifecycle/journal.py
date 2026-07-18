@@ -317,7 +317,11 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
             return self._soft_budget_terminal(
                 context, TerminalReason.MAX_STEPS_EXCEEDED
             )
+        # Symmetric to max_steps: per-run wins, else the config-level backstop
+        # (default_max_tool_calls=None opts back into unbounded tool calls).
         max_tool_calls = context.run_input.max_tool_calls
+        if max_tool_calls is None:
+            max_tool_calls = self._config.default_max_tool_calls
         if max_tool_calls is not None and context.tool_calls > max_tool_calls:
             return self._soft_budget_terminal(
                 context, TerminalReason.TOOL_POLICY_DENIED

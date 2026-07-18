@@ -160,6 +160,12 @@ history for models with this quirk before implementing.
 
 ## Hidden 1-Tool-Call Budget When Hosts Omit max_tool_calls / max_steps
 
+> **STATUS 2026-07-18: ADDRESSED** — `_force_final_reason` resolves budgets as
+> per-run → runner default stamped into context metadata → documented backstops
+> (`DEFAULT_MAX_TOOL_CALLS_BACKSTOP=32` added alongside max-steps 80); journal
+> terminal check gains the symmetric `default_max_tool_calls` fallback. Full
+> runtime suite green (no test relied on the 1-call fallback), 4 new tests.
+
 Date: 2026-07-18 (host: MeetScript chat_v2, «Аргус» benchmark, decisions_log case)
 
 `_force_final_reason` (tool_stage) falls back to `context.metadata.get("max_tool_calls", 1)`

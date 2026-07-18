@@ -319,6 +319,11 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                     "step_count": 0,
                     "llm_step_count": 0,
                     "tool_calls": 0,
+                    # Runner-level default budgets, so downstream checks (force-final in the
+                    # tool stage) see the documented backstops instead of a hardcoded 1 when
+                    # the run omits per-run budgets. app_metadata below may still override.
+                    "max_steps": self._config.default_max_steps,
+                    "max_tool_calls": self._config.default_max_tool_calls,
                     **(
                         run_input.app_metadata
                         if isinstance(run_input.app_metadata, dict)
