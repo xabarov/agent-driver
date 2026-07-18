@@ -1,6 +1,21 @@
 # Loop guards plane: wall-clock, tool-failure и прочие независимые предохранители петли
 
-Дата создания: 2026-07-18. Статус: **proposed**.
+Дата создания: 2026-07-18. Статус: **done** (2026-07-19).
+
+> Реализация: фаза A — wall-clock guards в раннере: три независимых источника таймаута шага
+> (per-run deadline / config `default_hard_max_seconds`=1800 / `default_idle_timeout_seconds`=300
+> как кап на ОДИН степ — режет подвисший tool/провайдер даже при свободном бюджете), самый
+> жёсткий побеждает, вид гарда в terminal-payload (`wall_clock_guard`). Фаза B —
+> tool-failure guard: серия одинаковых ФЕЙЛОВ (tool+код ошибки), warn на 2-м
+> (`tool_failure_streak_warning`), форс-финал на 3-м (`tool_failure_streak` в
+> `_force_final_reason`); успех/смена сигнатуры сбрасывают серию. Фаза C — конфигурируемые
+> детские бюджеты (`SubagentSettings.default_child_max_steps/max_tool_calls`, штамп в
+> task.metadata, явные значения планировщика приоритетны) + структурированный маркер
+> `child_budget` (budget_exhausted/terminal_reason/лимиты) в результате ребёнка для родителя.
+> Фаза D — refund housekeeping-вызовов (planning_state_update/planning_progress/todo_write не
+> сжигают tool-бюджет: `refunded_tool_calls` вычитается в force-final и журнальном терминале);
+> preserved-answer-at-budget уже покрыт связкой budget-grace → forced-final ladder (016).
+> Полная регрессия runtime/context/llm/subagents/contracts зелёная.
 
 Источник: инцидент «скрытая 1» (бюджет-фолбэк, починен 5be13a2) показал, что бюджетная
 плоскость была неконсистентной; сверка с референсами — у них предохранители петли шире и

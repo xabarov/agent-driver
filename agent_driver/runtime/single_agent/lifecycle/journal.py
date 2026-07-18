@@ -322,7 +322,12 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
         max_tool_calls = context.run_input.max_tool_calls
         if max_tool_calls is None:
             max_tool_calls = self._config.default_max_tool_calls
-        if max_tool_calls is not None and context.tool_calls > max_tool_calls:
+        effective_tool_calls = max(
+            0,
+            context.tool_calls
+            - int(context.metadata.get("refunded_tool_calls", 0) or 0),
+        )
+        if max_tool_calls is not None and effective_tool_calls > max_tool_calls:
             return self._soft_budget_terminal(
                 context, TerminalReason.TOOL_POLICY_DENIED
             )

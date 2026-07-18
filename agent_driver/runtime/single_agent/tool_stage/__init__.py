@@ -282,6 +282,73 @@ def _try_code_agent_loop_transition(
     return RuntimeStepResult(next_step="llm_call")
 
 
+# Consecutive same-signature tool FAILURES before the loop is forced to finalize
+# (epic 019 phase B; reference: openclaude toolFailureLoopGuard, threshold 3 with a
+# warn-before-stop). Distinct from repeated-identical-CALL detection: here the calls
+# may vary, but the same tool keeps failing with the same error code.
+_TOOL_FAILURE_GUARD_THRESHOLD = 3
+
+
+def _update_tool_failure_guard(
+    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
+) -> None:
+    """Track consecutive same-signature tool failures; warn, then force final."""
+    if not result.envelopes:
+        return
+    state = context.metadata.get("tool_failure_guard")
+    state = dict(state) if isinstance(state, dict) else {}
+    signature = state.get("signature")
+    count = int(state.get("count", 0) or 0)
+    saw_failure = False
+    for envelope in result.envelopes:
+        if envelope.error is None:
+            continue
+        saw_failure = True
+        next_signature = f"{envelope.call.tool_name}:{envelope.error.code}"
+        if next_signature == signature:
+            count += 1
+        else:
+            signature, count = next_signature, 1
+    if not saw_failure:
+        # A fully successful round breaks the streak.
+        context.metadata["tool_failure_guard"] = {"signature": None, "count": 0}
+        return
+    context.metadata["tool_failure_guard"] = {"signature": signature, "count": count}
+    if count == _TOOL_FAILURE_GUARD_THRESHOLD - 1:
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.WARNING,
+            payload={
+                "warning": (
+                    f"Tool '{signature}' failed {count} times in a row; one more "
+                    "identical failure forces the final answer."
+                ),
+                "signal_id": "tool_failure_streak_warning",
+                "severity": "warning",
+                "signature": signature,
+                "count": count,
+                "threshold": _TOOL_FAILURE_GUARD_THRESHOLD,
+            },
+        )
+    elif count >= _TOOL_FAILURE_GUARD_THRESHOLD:
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.WARNING,
+            payload={
+                "warning": (
+                    f"Tool '{signature}' failed {count} times in a row; forcing the "
+                    "final answer from the evidence gathered so far."
+                ),
+                "signal_id": "tool_failure_streak_force_final",
+                "severity": "warning",
+                "signature": signature,
+                "count": count,
+            },
+        )
+
+
 async def _finalize_tool_stage_transition(
     host: ToolStageHost, context: RunContext, result: ToolExecutionResult
 ) -> RuntimeStepResult:
@@ -332,6 +399,7 @@ async def _finalize_tool_stage_transition(
     if continue_with_llm:
         loop_iterations += 1
         increment_tool_loops_since_todo_write(context)
+    _update_tool_failure_guard(host, context, result)
     if continue_with_llm and context.run_input.agent_profile != AgentProfile.CODE_AGENT:
         _maybe_force_final_answer(context)
         _maybe_enforce_tool_loop_policy(host, context, result)
@@ -1534,7 +1602,17 @@ def _force_final_reason(context: RunContext) -> str | None:
         context.metadata.get("max_steps"),
         DEFAULT_MAX_STEPS_BACKSTOP,
     )
-    near_tool_budget = context.tool_calls >= max(1, max_tool_calls - 1)
+    failure_guard = context.metadata.get("tool_failure_guard")
+    if (
+        isinstance(failure_guard, dict)
+        and int(failure_guard.get("count", 0) or 0) >= _TOOL_FAILURE_GUARD_THRESHOLD
+    ):
+        return "tool_failure_streak"
+    effective_tool_calls = max(
+        0,
+        context.tool_calls - int(context.metadata.get("refunded_tool_calls", 0) or 0),
+    )
+    near_tool_budget = effective_tool_calls >= max(1, max_tool_calls - 1)
     near_step_budget = context.llm_step_count >= max(1, max_steps - 1)
     loop_detected = _has_repeated_recent_tool_call(context)
     zero_streak = int(context.metadata.get("web_search_zero_streak", 0))

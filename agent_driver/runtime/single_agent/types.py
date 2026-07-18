@@ -155,6 +155,13 @@ class RunnerConfig:
         self.default_max_tool_calls = kwargs.pop(
             "default_max_tool_calls", DEFAULT_MAX_TOOL_CALLS_BACKSTOP
         )
+        # Epic 019 wall-clock safety nets (openclaude QueryGuard reference): hard cap on
+        # the whole run and an idle cap on a single step's await (wedged tool/provider).
+        # None opts out; per-run deadline_seconds is an explicit caller budget on top.
+        self.default_hard_max_seconds = kwargs.pop("default_hard_max_seconds", 1800.0)
+        self.default_idle_timeout_seconds = kwargs.pop(
+            "default_idle_timeout_seconds", 300.0
+        )
         # Epic 016: providers tried (in order) by the forced-final ladder when the primary
         # keeps returning empty finals. Hosts pass configured LlmProvider instances.
         self.fallback_providers = tuple(kwargs.pop("fallback_providers", ()) or ())

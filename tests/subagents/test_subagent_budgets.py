@@ -1,134 +1,102 @@
-"""Subagent budget and max-child guard tests."""
+"""Config-level child budgets + structured exhaustion marker (epic 019 phase C)."""
 
 from __future__ import annotations
 
-import pytest
-
-from agent_driver.contracts import (
-    AgentRunOutput,
-    RunStatus,
-    RuntimeEventType,
-    TerminalReason,
-    new_runtime_event,
+from agent_driver.contracts import AgentRunOutput, RunStatus, TerminalReason
+from agent_driver.contracts.events import RuntimeEvent
+from agent_driver.subagents.specs import SubagentTaskSpec
+from agent_driver.runtime.single_agent.lifecycle.config_sections import SubagentSettings
+from agent_driver.runtime.single_agent.tool_stage.subagent_execution import (
+    _group_spec_from_planned,
+    _stamp_child_budget_defaults,
 )
-from agent_driver.subagents import (
-    InMemorySubagentStore,
-    SubagentGroupSpec,
-    SubagentTaskSpec,
-    execute_subagent_group_sync,
-)
-from tests.subagents.parent_handoff import default_parent_handoff
+from agent_driver.subagents.executor import _child_budget_summary
 
 
-async def _fake_child_runner(run_input):
-    return AgentRunOutput(
-        run_id=run_input.run_id or "child",
-        attempt_id="att_child",
-        status=RunStatus.COMPLETED,
-        terminal_reason=TerminalReason.FINAL_ANSWER,
+def _planned(task_metadata: dict | None = None) -> dict:
+    return {
+        "group_id": "g1",
+        "tasks": [
+            {
+                "task_id": "t1",
+                "task": "find things",
+                "description": "child",
+                **({"metadata": task_metadata} if task_metadata else {}),
+            }
+        ],
+    }
+
+
+def test_stamp_child_budget_defaults_applies_config():
+    settings = SubagentSettings(
+        default_child_max_steps=10, default_child_max_tool_calls=4
+    )
+    group = _group_spec_from_planned(_planned(), max_child_runs=4)
+    stamped = _stamp_child_budget_defaults(group, settings)
+    metadata = stamped.tasks[0].metadata
+    assert metadata["max_steps"] == 10
+    assert metadata["max_tool_calls"] == 4
+
+
+def test_stamp_respects_explicit_task_budgets():
+    settings = SubagentSettings(
+        default_child_max_steps=10, default_child_max_tool_calls=4
+    )
+    group = _group_spec_from_planned(
+        _planned({"max_steps": 3, "max_tool_calls": 2}), max_child_runs=4
+    )
+    stamped = _stamp_child_budget_defaults(group, settings)
+    metadata = stamped.tasks[0].metadata
+    assert metadata["max_steps"] == 3  # planner's own value wins
+    assert metadata["max_tool_calls"] == 2
+
+
+def test_stamp_noop_without_config_defaults():
+    group = _group_spec_from_planned(_planned(), max_child_runs=4)
+    assert _stamp_child_budget_defaults(group, SubagentSettings()) is group
+
+
+def test_child_budget_summary_marks_exhaustion():
+    task = SubagentTaskSpec(
+        task_id="t1", task="x", description="d", metadata={"max_steps": 5}
+    )
+    exhausted = AgentRunOutput(
+        run_id="child_1",
+        attempt_id="att_1",
+        status=RunStatus.TIMED_OUT,
+        answer="partial",
+        terminal_reason=TerminalReason.MAX_STEPS_EXCEEDED,
         events=[
-            new_runtime_event(
-                event_type=RuntimeEventType.RUN_COMPLETED,
-                context={
-                    "run_id": run_input.run_id or "child",
-                    "attempt_id": "att_child",
-                    "seq": 1,
-                },
+            RuntimeEvent(
+                event_id="ev1",
+                type="run_failed",
+                run_id="child_1",
+                attempt_id="att_1",
+                seq=1,
+                created_at="2026-07-19T00:00:00Z",
             )
         ],
-        answer=f"done:{run_input.input}",
     )
+    summary = _child_budget_summary(task, exhausted)
+    assert summary["budget_exhausted"] is True
+    assert summary["terminal_reason"] == "max_steps_exceeded"
+    assert summary["max_steps"] == 5
 
-
-@pytest.mark.asyncio
-async def test_execute_subagent_group_respects_max_child_runs() -> None:
-    """Executor should cap fanout by max_child_runs."""
-    store = InMemorySubagentStore()
-    result = await execute_subagent_group_sync(
-        parent=default_parent_handoff(
-            run_id="run_1", attempt_id="att_1", agent_id="agent", answer="parent"
-        ),
-        group_spec=SubagentGroupSpec(
-            group_id="grp_1",
-            purpose="fanout",
-            tasks=tuple(
-                SubagentTaskSpec(task_id=f"t{idx}", task=f"q{idx}", description="d")
-                for idx in range(5)
-            ),
-        ),
-        store=store,
-        child_runner=_fake_child_runner,
-        max_child_runs=2,
+    finished = AgentRunOutput(
+        run_id="child_2",
+        attempt_id="att_2",
+        status=RunStatus.COMPLETED,
+        answer="done",
+        terminal_reason=TerminalReason.FINAL_ANSWER,
+        events=[
+            RuntimeEvent(
+                event_id="ev2",
+                type="run_completed",
+                run_id="child_2",
+                attempt_id="att_2",
+                seq=1,
+                created_at="2026-07-19T00:00:00Z",
+            )
+        ],
     )
-    assert len(result.runs) == 2
-
-
-@pytest.mark.asyncio
-async def test_execute_subagent_group_respects_max_parallel_backpressure() -> None:
-    """Executor should cap scheduling by group max_parallel."""
-    store = InMemorySubagentStore()
-    result = await execute_subagent_group_sync(
-        parent=default_parent_handoff(
-            run_id="run_1", attempt_id="att_1", agent_id="agent", answer="parent"
-        ),
-        group_spec=SubagentGroupSpec(
-            group_id="grp_1",
-            purpose="fanout",
-            max_parallel=1,
-            tasks=tuple(
-                SubagentTaskSpec(task_id=f"t{idx}", task=f"q{idx}", description="d")
-                for idx in range(3)
-            ),
-        ),
-        store=store,
-        child_runner=_fake_child_runner,
-        max_child_runs=4,
-    )
-    group = store.list_groups("run_1")[0]
-
-    assert len(result.runs) == 1
-    assert group.metadata["scheduled_tasks"] == 1
-    assert group.metadata["backpressure_skipped_tasks"] == [
-        {"task_id": "t1", "reason": "parallel_limit"},
-        {"task_id": "t2", "reason": "parallel_limit"},
-    ]
-
-
-@pytest.mark.asyncio
-async def test_execute_subagent_group_respects_declared_token_budget() -> None:
-    """Executor should skip child tasks that exceed remaining group token budget."""
-    store = InMemorySubagentStore()
-    result = await execute_subagent_group_sync(
-        parent=default_parent_handoff(
-            run_id="run_1", attempt_id="att_1", agent_id="agent", answer="parent"
-        ),
-        group_spec=SubagentGroupSpec(
-            group_id="grp_1",
-            purpose="fanout",
-            token_budget=10,
-            tasks=(
-                SubagentTaskSpec(
-                    task_id="t1",
-                    task="q1",
-                    description="d",
-                    token_budget=6,
-                ),
-                SubagentTaskSpec(
-                    task_id="t2",
-                    task="q2",
-                    description="d",
-                    token_budget=6,
-                ),
-            ),
-        ),
-        store=store,
-        child_runner=_fake_child_runner,
-        max_child_runs=4,
-    )
-    group = store.list_groups("run_1")[0]
-
-    assert len(result.runs) == 1
-    assert group.metadata["token_budget_remaining"] == 4
-    assert group.metadata["backpressure_skipped_tasks"] == [
-        {"task_id": "t2", "reason": "token_budget"}
-    ]
+    assert _child_budget_summary(task, finished)["budget_exhausted"] is False

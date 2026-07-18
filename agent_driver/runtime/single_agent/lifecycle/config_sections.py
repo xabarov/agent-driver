@@ -162,6 +162,11 @@ class SubagentSettings:
     enable_subagents: bool = True
     max_child_runs: int = 8
     default_child_deadline_seconds: float | None = 90.0
+    # Epic 019 phase C: config-level child step/tool budgets. None keeps the
+    # executor's built-in defaults (8 steps / 6 tool calls); a planned task's own
+    # metadata["max_steps"/"max_tool_calls"] always wins.
+    default_child_max_steps: int | None = None
+    default_child_max_tool_calls: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -248,7 +248,15 @@ class SingleAgentRunner(
                         trigger="terminal_limit",
                     )
                     return self._build_output(context, terminal)
-                timeout = _remaining_deadline_seconds(context)
+                timeout, guard_kind = _step_timeout_seconds(
+                    context,
+                    hard_max_seconds=getattr(
+                        self._config, "default_hard_max_seconds", None
+                    ),
+                    idle_timeout_seconds=getattr(
+                        self._config, "default_idle_timeout_seconds", None
+                    ),
+                )
                 try:
                     if timeout is None:
                         result = await self._execute_step(context)
@@ -262,12 +270,16 @@ class SingleAgentRunner(
                         status=RunStatus.TIMED_OUT,
                         reason=TerminalReason.DEADLINE_EXCEEDED,
                     )
+                    context.metadata["wall_clock_guard"] = guard_kind
                     self._emit(
                         EventSpec(
                             run_id=context.run_id,
                             attempt_id=context.attempt_id,
                             event_type=RuntimeEventType.RUN_FAILED,
-                            payload={"reason": terminal.reason.value},
+                            payload={
+                                "reason": terminal.reason.value,
+                                "wall_clock_guard": guard_kind,
+                            },
                         )
                     )
                     self._emit_observe_policy_decisions(
@@ -294,11 +306,39 @@ def _pick_workspace_cwd(context: _RunContext):
     return None
 
 
-def _remaining_deadline_seconds(context: _RunContext) -> float | None:
+def _step_timeout_seconds(
+    context: _RunContext,
+    *,
+    hard_max_seconds: float | None,
+    idle_timeout_seconds: float | None,
+) -> tuple[float | None, str]:
+    """Effective per-step timeout and which wall-clock guard produced it.
+
+    Three independent sources (epic 019; reference: openclaude QueryGuard idle
+    5m / hard-max 30m as separate loop fuses):
+
+    - per-run ``deadline_seconds`` (explicit caller budget — remaining time);
+    - config ``default_hard_max_seconds`` (run-level safety net — remaining time);
+    - config ``default_idle_timeout_seconds`` (bounds ONE step's await: a wedged
+      tool/provider that produces no step progress for this long is cut, even
+      when the run-level budgets still have plenty of time).
+
+    The tightest bound wins; the guard kind is surfaced in the terminal payload
+    so operators can tell an explicit deadline from a safety-net trip.
+    """
+    elapsed = monotonic() - context.started_at
+    candidates: list[tuple[float, str]] = []
     deadline = context.run_input.deadline_seconds
-    if deadline is None:
-        return None
-    return float(deadline) - (monotonic() - context.started_at)
+    if deadline is not None:
+        candidates.append((float(deadline) - elapsed, "run_deadline"))
+    if hard_max_seconds is not None:
+        candidates.append((float(hard_max_seconds) - elapsed, "hard_max"))
+    if idle_timeout_seconds is not None:
+        candidates.append((float(idle_timeout_seconds), "step_idle"))
+    if not candidates:
+        return None, ""
+    timeout, kind = min(candidates, key=lambda item: item[0])
+    return timeout, kind
 
 
 def _annotate_run_span_input(span: object, run_input: AgentRunInput) -> None:

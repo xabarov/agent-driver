@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import uuid4
@@ -78,6 +80,7 @@ async def maybe_execute_subagent_group(
     if not isinstance(planned, dict):
         return
     group_spec = _group_spec_from_planned(planned, max_child_runs=config.max_child_runs)
+    group_spec = _stamp_child_budget_defaults(group_spec, config)
     if group_spec is None:
         return
     group_spec = _apply_skill_preloads(context, group_spec)
@@ -145,9 +148,7 @@ async def maybe_execute_subagent_group(
         else RuntimeEventType.SUBAGENT_GROUP_JOINED
     )
     if group_event_type == RuntimeEventType.SUBAGENT_GROUP_JOINED:
-        handoff_payload = _record_deep_research_child_synthesis_handoff(
-            context, result
-        )
+        handoff_payload = _record_deep_research_child_synthesis_handoff(context, result)
         if handoff_payload is not None:
             emit_step_event(
                 host,
@@ -193,9 +194,7 @@ def _record_deep_research_child_synthesis_handoff(
     completed_children: list[dict[str, object]] = []
     for run in runs[:8]:
         metadata = getattr(run, "metadata", None)
-        run_summary = (
-            metadata.get("summary") if isinstance(metadata, dict) else None
-        )
+        run_summary = metadata.get("summary") if isinstance(metadata, dict) else None
         source_ledger = (
             metadata.get("child_source_ledger") if isinstance(metadata, dict) else None
         )
@@ -348,9 +347,31 @@ def _deep_research_mode(context: RunContext) -> bool:
         return True
     task_contract = metadata.get("task_contract")
     return (
-        isinstance(task_contract, dict)
-        and task_contract.get("research_mode") == "deep"
+        isinstance(task_contract, dict) and task_contract.get("research_mode") == "deep"
     )
+
+
+def _stamp_child_budget_defaults(group_spec, config):
+    """Apply SubagentSettings default child budgets to tasks that did not set their own.
+
+    The executor reads ``task.metadata["max_steps"/"max_tool_calls"]``; explicit values
+    from the planner always win (epic 019 phase C).
+    """
+    if group_spec is None:
+        return None
+    default_steps = getattr(config, "default_child_max_steps", None)
+    default_calls = getattr(config, "default_child_max_tool_calls", None)
+    if default_steps is None and default_calls is None:
+        return group_spec
+    stamped = []
+    for task in group_spec.tasks:
+        metadata = dict(task.metadata)
+        if default_steps is not None:
+            metadata.setdefault("max_steps", int(default_steps))
+        if default_calls is not None:
+            metadata.setdefault("max_tool_calls", int(default_calls))
+        stamped.append(dataclasses.replace(task, metadata=metadata))
+    return dataclasses.replace(group_spec, tasks=tuple(stamped))
 
 
 def _group_spec_from_planned(

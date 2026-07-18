@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from agent_driver.runtime.single_agent.tool_stage import _force_final_reason, _resolved_budget
+from agent_driver.runtime.single_agent.tool_stage import (
+    _force_final_reason,
+    _resolved_budget,
+)
 from agent_driver.runtime.single_agent.types import (
     DEFAULT_MAX_STEPS_BACKSTOP,
     DEFAULT_MAX_TOOL_CALLS_BACKSTOP,
@@ -51,3 +54,15 @@ def test_forced_final_honors_stamped_runner_defaults():
     assert _force_final_reason(context) == "near_tool_budget"
     context = _context(tool_calls=2, metadata={"max_tool_calls": 6, "max_steps": 12})
     assert _force_final_reason(context) is None
+
+
+def test_refunded_housekeeping_calls_do_not_burn_tool_budget():
+    """Epic 019 phase D (hermes refund reference): planning/todo bookkeeping calls are
+    refunded, so a plan-disciplined agent keeps the same effective search budget."""
+    context = _context(tool_calls=6, metadata={"max_tool_calls": 6, "max_steps": 12})
+    assert _force_final_reason(context) == "near_tool_budget"
+    context = _context(
+        tool_calls=6,
+        metadata={"max_tool_calls": 6, "max_steps": 12, "refunded_tool_calls": 3},
+    )
+    assert _force_final_reason(context) is None  # effective 3 of 6

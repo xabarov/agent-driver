@@ -47,6 +47,13 @@ from agent_driver.runtime.tools import ToolExecutionResult
 _MAX_RUBRIC_REVISIONS = 10
 
 
+# Tools whose calls are bookkeeping, not progress — refunded from the tool budget
+# (epic 019 phase D). Keep in sync with the builtin planning/todo registrations.
+_HOUSEKEEPING_TOOL_NAMES = frozenset(
+    {"planning_state_update", "planning_progress", "todo_write"}
+)
+
+
 class SingleAgentStepMixin:
     """Mixin: deterministic step transitions after journal/output/resume."""
 
@@ -115,6 +122,20 @@ class SingleAgentStepMixin:
     ) -> None:
         """Persist tool stage traces/results into context metadata."""
         context.tool_calls += len(result.traces)
+        # Epic 019 phase D (hermes iteration_budget.refund reference): housekeeping
+        # calls (planning/todo bookkeeping) make no external progress and must not
+        # burn the tool budget — a plan-disciplined agent would otherwise reach the
+        # forced final earlier than a plan-less one. Tracked as a refund counter so
+        # budget checks subtract it; the raw tool_calls count stays truthful.
+        refunded = sum(
+            1
+            for envelope in result.envelopes
+            if envelope.call.tool_name in _HOUSEKEEPING_TOOL_NAMES
+        )
+        if refunded:
+            context.metadata["refunded_tool_calls"] = (
+                int(context.metadata.get("refunded_tool_calls", 0) or 0) + refunded
+            )
         get_tool_loop_state(context).append_stage_outputs(
             traces=[trace.model_dump(mode="json") for trace in result.traces],
             results=[item.model_dump(mode="json") for item in result.envelopes],
@@ -323,7 +344,9 @@ class SingleAgentStepMixin:
             self._save_checkpoint(context, latest_output=None, node_id="finalize")
             self._maybe_fail_after_step("finalize")
             return node_contract_reprompt
-        node_contract_reprompt = self._maybe_node_contract_required_tools_reprompt(context)
+        node_contract_reprompt = self._maybe_node_contract_required_tools_reprompt(
+            context
+        )
         if node_contract_reprompt is not None:
             context.step_count += 1
             get_loop_control_state(context).set_step_transition(
@@ -361,9 +384,7 @@ class SingleAgentStepMixin:
                 status="applied",
                 policy_id=str(evidence_block["policy_id"]),
                 required_evidence=[
-                    item
-                    for item in required_evidence
-                    if isinstance(item, str)
+                    item for item in required_evidence if isinstance(item, str)
                 ],
                 redacted_metadata=evidence_block,
             )
@@ -524,7 +545,9 @@ class SingleAgentStepMixin:
                 action="warn",
                 reason="node_contract_required_tools_reprompt_budget_exhausted",
                 status="failed",
-                affected_tools=list(context.run_input.node_contract.finalize_when_tools),
+                affected_tools=list(
+                    context.run_input.node_contract.finalize_when_tools
+                ),
                 policy_id="node_contract",
             )
             return None

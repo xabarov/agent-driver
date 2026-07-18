@@ -199,6 +199,7 @@ async def _run_single_child_task(
             "terminal_reason": (
                 output.terminal_reason.value if output.terminal_reason else None
             ),
+            "child_budget": _child_budget_summary(task, output),
         },
     )
     store.upsert_run(completed, idempotency_key=task.idempotency_key)
@@ -269,7 +270,9 @@ def _strip_parent_research_contract(policy: dict[str, object]) -> dict[str, obje
     task_contract = metadata.get("task_contract")
     parent_profile = ""
     if isinstance(task_contract, dict):
-        parent_profile = str(task_contract.get("research_profile") or "").strip().lower()
+        parent_profile = (
+            str(task_contract.get("research_profile") or "").strip().lower()
+        )
         metadata["parent_task_contract"] = {
             "research_profile": task_contract.get("research_profile"),
             "research_mode": task_contract.get("research_mode"),
@@ -386,6 +389,28 @@ def _build_child_input(
             workspace=workspace,
         ),
     )
+
+
+# Terminal reasons that mean the child stopped on a BUDGET, not on its own answer
+# (epic 019 phase C; reference: openclaude per-agent step limits returning a
+# structured {reason: 'agent_step_limit', stepsUsed, maxSteps} marker).
+_BUDGET_TERMINAL_REASONS = frozenset(
+    {"max_steps_exceeded", "tool_policy_denied", "deadline_exceeded", "budget_exceeded"}
+)
+
+
+def _child_budget_summary(
+    task: SubagentTaskSpec, output: AgentRunOutput
+) -> dict[str, object]:
+    """Structured budget/exhaustion marker the parent can reason about."""
+    reason = output.terminal_reason.value if output.terminal_reason else None
+    return {
+        "budget_exhausted": reason in _BUDGET_TERMINAL_REASONS,
+        "terminal_reason": reason,
+        "max_steps": _child_max_steps(task),
+        "max_tool_calls": _child_max_tool_calls(task),
+        "deadline_seconds": _child_deadline_seconds(task),
+    }
 
 
 def _child_deadline_seconds(task: SubagentTaskSpec) -> float | None:
@@ -911,6 +936,7 @@ def _completed_child_run_from_output(
             "terminal_reason": (
                 output.terminal_reason.value if output.terminal_reason else None
             ),
+            "child_budget": _child_budget_summary(task, output),
         },
     )
 
