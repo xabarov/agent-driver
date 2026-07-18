@@ -320,7 +320,7 @@ async def _retry_stream_failure_without_streaming(
     metadata = dict(fallback_response.metadata or {})
     metadata["provider_stream_non_stream_fallback"] = True
     metadata["provider_stream_fallback_diagnostics"] = diagnostics
-    if not _unusable(fallback_response.message.content):
+    if (fallback_response.message.content or "").strip():
         metadata["token_chunks_emitted"] = True
     fallback_response = fallback_response.model_copy(update={"metadata": metadata})
     return await retry_forced_final_without_tools(
@@ -543,7 +543,7 @@ async def retry_forced_final_without_tools(
             except Exception:  # pylint: disable=broad-except
                 # Ladder step must not turn a recoverable empty into a hard failure.
                 continue
-            if (fallback_response.message.content or "").strip():
+            if not _unusable(fallback_response.message.content):
                 context.metadata["forced_final_fallback_provider"] = fallback_name
                 retry_response = fallback_response
                 break
