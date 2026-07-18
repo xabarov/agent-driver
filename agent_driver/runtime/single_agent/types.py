@@ -159,8 +159,11 @@ class RunnerConfig:
         # the whole run and an idle cap on a single step's await (wedged tool/provider).
         # None opts out; per-run deadline_seconds is an explicit caller budget on top.
         self.default_hard_max_seconds = kwargs.pop("default_hard_max_seconds", 1800.0)
+        # 600s, not openclaude's 300s: our idle cap bounds a WHOLE step, and one llm_step
+        # may legitimately chain several provider retries (~100s timeout each) through the
+        # forced-final recovery ladder before producing progress.
         self.default_idle_timeout_seconds = kwargs.pop(
-            "default_idle_timeout_seconds", 300.0
+            "default_idle_timeout_seconds", 600.0
         )
         # Epic 016: providers tried (in order) by the forced-final ladder when the primary
         # keeps returning empty finals. Hosts pass configured LlmProvider instances.
