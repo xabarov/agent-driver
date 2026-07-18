@@ -209,6 +209,92 @@ def should_disable_reasoning_for_no_tools_retry(
     return provider_l == "openrouter" and "deepseek" in model_l
 
 
+def request_with_folded_tool_history(
+    request: LlmRequest, *, provider_name: str | None = None
+) -> LlmRequest:
+    """Forced-final retry with tool exchanges folded into plain user/assistant turns.
+
+    Some models (observed: deepseek via openrouter) persistently return an EMPTY
+    forced-final completion when the trailing history carries the tool-call protocol
+    shape (assistant ``tool_calls`` + ``tool``-role results) — and the no-tools retry
+    inherits that shape, so it comes back empty too. This last-resort retry rewrites
+    the protocol shape while preserving the evidence: each tool result becomes a plain
+    USER message carrying the payload verbatim, and the assistant tool-call marker
+    keeps only its text. The model then sees an ordinary user/assistant dialog and can
+    produce the final answer from the same information.
+    """
+    if not isinstance(request, LlmRequest):
+        return request
+    folded: list[ChatMessage] = []
+    changed = False
+    for message in request.messages:
+        if message.role == ChatRole.TOOL:
+            changed = True
+            tool_name = message.name or "tool"
+            folded.append(
+                ChatMessage(
+                    role=ChatRole.USER,
+                    content=f"[Tool result: {tool_name}]\n{message.content}",
+                    metadata={
+                        "folded_tool_result": True,
+                        "tool_call_id": message.tool_call_id,
+                    },
+                )
+            )
+            continue
+        metadata = message.metadata if isinstance(message.metadata, dict) else {}
+        if message.role == ChatRole.ASSISTANT and metadata.get("tool_calls"):
+            changed = True
+            calls = metadata.get("tool_calls")
+            names = ", ".join(
+                str(((call.get("function") or {}) if isinstance(call, dict) else {}).get("name") or "tool")
+                for call in (calls if isinstance(calls, list) else [])
+            )
+            next_metadata = {k: v for k, v in metadata.items() if k != "tool_calls"}
+            next_metadata["folded_tool_calls"] = True
+            folded.append(
+                ChatMessage(
+                    role=ChatRole.ASSISTANT,
+                    content=(message.content or "").strip() or f"(called tools: {names})",
+                    metadata=next_metadata,
+                )
+            )
+            continue
+        folded.append(message)
+    if not changed:
+        return request
+    folded.append(
+        ChatMessage(
+            role=ChatRole.USER,
+            content=(
+                "Final answer retry: previous attempts returned empty content. The tool "
+                "results above are now plain messages. Produce the final answer NOW, in "
+                "the user's language, using only the evidence already present in this "
+                "conversation. Do not call tools and do not mention tool limitations."
+            ),
+            metadata={"runtime_retry": "empty_forced_final_history_fold"},
+        )
+    )
+    metadata = dict(request.metadata)
+    if should_disable_reasoning_for_no_tools_retry(
+        request=request,
+        provider_name=provider_name,
+    ):
+        provider_extra_body = dict(metadata.get("provider_extra_body") or {})
+        provider_extra_body["reasoning"] = {"enabled": False, "exclude": True}
+        metadata["provider_extra_body"] = provider_extra_body
+    return request.model_copy(
+        update={
+            "messages": folded,
+            "metadata": metadata,
+            "stream": False,
+            "tools": [],
+            "tool_choice": None,
+            "parallel_tool_calls": None,
+        }
+    )
+
+
 __all__ = [
     "forced_named_tool_choice",
     "is_forced_tool_choice_provider_error",
@@ -218,6 +304,7 @@ __all__ = [
     "provider_error_message",
     "request_tool_name",
     "request_tools_matching",
+    "request_with_folded_tool_history",
     "request_with_reduced_max_tokens",
     "request_without_forced_tool_choice",
     "request_without_tools",

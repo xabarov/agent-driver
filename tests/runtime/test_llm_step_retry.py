@@ -575,3 +575,151 @@ async def test_complete_request_retries_suppressed_text_form_forced_final_withou
     assert response.message.content == "final after suppressed tool form"
     assert provider.complete_calls == 2
     assert context.metadata["forced_final_retry"] == "tool_call_no_tools"
+
+
+def _tool_cycle_messages() -> list[ChatMessage]:
+    return [
+        ChatMessage(role="user", content="collect the decisions"),
+        ChatMessage(
+            role="assistant",
+            content="",
+            metadata={
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "find_meetings", "arguments": "{}"},
+                    }
+                ]
+            },
+        ),
+        ChatMessage(
+            role="tool",
+            name="find_meetings",
+            tool_call_id="call_1",
+            content='{"meetings": ["argus-01", "argus-02"]}',
+        ),
+        ChatMessage(role="user", content="answer now"),
+    ]
+
+
+def _forced_final_request() -> LlmRequest:
+    return LlmRequest(
+        messages=_tool_cycle_messages(),
+        stream=True,
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "find_meetings",
+                    "description": "Search meetings",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+        tool_choice="none",
+        model="deepseek/deepseek-v4-flash",
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_request_folds_tool_history_when_no_tools_retry_stays_empty() -> (
+    None
+):
+    """deepseek-class quirk: empty forced finals persist while the tail keeps the tool
+    protocol shape — the third strategy folds tool history into plain turns and recovers."""
+    provider = SimpleNamespace(name="openrouter", complete_calls=0)
+
+    async def stream(request: LlmRequest):
+        yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.STOP)
+
+    async def complete(request: LlmRequest) -> LlmResponse:
+        provider.complete_calls += 1
+        if provider.complete_calls < 3:
+            content = ""
+        else:
+            assert all(m.role != "tool" for m in request.messages)
+            assert any(
+                m.role == "user" and m.content.startswith("[Tool result: find_meetings]")
+                for m in request.messages
+            )
+            content = "folded final answer"
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content=content),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="retry", model_name="test"),
+            provider="retry",
+            model="test",
+        )
+
+    provider.stream = stream
+    provider.complete = complete
+    emitted = []
+    host = SimpleNamespace(_deps=SimpleNamespace(provider=provider), _emit=emitted.append)
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(
+            stream=True, app_metadata={}, tool_policy=SimpleNamespace(metadata={})
+        ),
+        metadata={"force_final_answer": True},
+        run_id="run_test",
+        attempt_id="attempt_test",
+    )
+
+    response = await _complete_request(host, context, _forced_final_request())
+
+    assert response.message.content == "folded final answer"
+    assert provider.complete_calls == 3
+    assert context.metadata["empty_forced_final_retry"] == "history_fold"
+    assert any(
+        event.payload.get("signal_id")
+        == "provider_empty_forced_final_history_fold_retry"
+        for event in emitted
+    )
+    assert not any(
+        event.payload.get("signal_id") == "forced_final_empty_after_all_retries"
+        for event in emitted
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_request_signals_empty_after_all_retries() -> None:
+    """When every strategy (non-stream, no-tools, history-fold) returns empty, the run
+    must surface a distinct signal so hosts can message the user honestly."""
+    provider = SimpleNamespace(name="openrouter", complete_calls=0)
+
+    async def stream(request: LlmRequest):
+        yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.STOP)
+
+    async def complete(request: LlmRequest) -> LlmResponse:
+        provider.complete_calls += 1
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content=""),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="retry", model_name="test"),
+            provider="retry",
+            model="test",
+        )
+
+    provider.stream = stream
+    provider.complete = complete
+    emitted = []
+    host = SimpleNamespace(_deps=SimpleNamespace(provider=provider), _emit=emitted.append)
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(
+            stream=True, app_metadata={}, tool_policy=SimpleNamespace(metadata={})
+        ),
+        metadata={"force_final_answer": True},
+        run_id="run_test",
+        attempt_id="attempt_test",
+    )
+
+    response = await _complete_request(host, context, _forced_final_request())
+
+    assert (response.message.content or "").strip() == ""
+    assert provider.complete_calls == 3
+    assert context.metadata["forced_final_empty_after_all_retries"] is True
+    assert any(
+        event.payload.get("signal_id") == "forced_final_empty_after_all_retries"
+        and event.payload.get("severity") == "error"
+        for event in emitted
+    )

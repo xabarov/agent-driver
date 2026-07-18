@@ -16,6 +16,7 @@ from agent_driver.runtime.single_agent.llm_step.provider_requests import (
     is_reduce_max_tokens_credit_error,
     request_with_reduced_max_tokens,
     request_without_forced_tool_choice,
+    request_with_folded_tool_history,
     request_without_tools,
     strip_reasoning_echo,
 )
@@ -430,6 +431,53 @@ async def retry_forced_final_without_tools(
         retry_response,
         suppress_native_planned=True,
     )
+    if not (retry_response.message.content or "").strip():
+        # Last-resort recovery: some models (deepseek/openrouter) keep returning empty
+        # forced finals as long as the trailing history carries the tool-call protocol
+        # shape — the no-tools retry inherits it and fails the same way. Fold the tool
+        # exchange into plain user/assistant turns (evidence preserved) and retry once.
+        folded_request = request_with_folded_tool_history(
+            request, provider_name=provider_name
+        )
+        if folded_request is not request:
+            emit_step_event(
+                host,
+                context,
+                event_type=RuntimeEventType.WARNING,
+                payload={
+                    "warning": (
+                        "Forced-final retry still returned empty content; retrying "
+                        "once with the tool history folded into plain messages."
+                    ),
+                    "signal_id": "provider_empty_forced_final_history_fold_retry",
+                    "severity": "warning",
+                },
+            )
+            context.metadata["empty_forced_final_retry"] = "history_fold"
+            retry_response = await host._deps.provider.complete(folded_request)
+            retry_response = _mark_no_tool_text_form_suppression(
+                context,
+                request,
+                retry_response,
+                suppress_native_planned=True,
+            )
+        if not (retry_response.message.content or "").strip():
+            # All recovery strategies exhausted: surface a distinct signal so hosts can
+            # message the user honestly instead of rendering a silent empty bubble.
+            emit_step_event(
+                host,
+                context,
+                event_type=RuntimeEventType.WARNING,
+                payload={
+                    "warning": (
+                        "Provider returned an empty final answer after all retry "
+                        "strategies (non-stream, no-tools, history-fold)."
+                    ),
+                    "signal_id": "forced_final_empty_after_all_retries",
+                    "severity": "error",
+                },
+            )
+            context.metadata["forced_final_empty_after_all_retries"] = True
     emit_non_stream_retry_assistant_message(host, context, retry_response)
     return retry_response
 
