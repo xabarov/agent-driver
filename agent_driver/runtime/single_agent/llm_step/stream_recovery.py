@@ -234,7 +234,20 @@ def forced_final_no_tools_retry_reason(
             return "tool_call"
     if response.finish_reason != LlmFinishReason.STOP:
         return None
-    if (response.message.content or "").strip():
+    content = (response.message.content or "").strip()
+    if content:
+        # A canned/wrong-language refusal (epic 015 detector) is NOT an answer: without
+        # this the forced-final ladder never engages (its entry gate saw non-empty
+        # content) and the refusal was finalized verbatim — live 2026-07-19, deepseek
+        # returned the canned Chinese refusal on ~2/3 of forced finals for one case.
+        from agent_driver.runtime.single_agent.finalization.answer_recovery import (  # pylint: disable=import-outside-toplevel
+            is_degenerate_refusal,
+        )
+
+        if is_degenerate_refusal(
+            content, str(getattr(context.run_input, "input", "") or "")
+        ):
+            return "empty" if not isinstance(planned, list) or not planned else None
         return None
     return "empty" if not isinstance(planned, list) or not planned else None
 
