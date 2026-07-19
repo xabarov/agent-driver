@@ -196,3 +196,13 @@ does not always carry every project meeting's report. Not a protocol bug — can
 directions: (a) host retrieval: guarantee per-project report coverage in primary
 context for enumeration-shaped queries; (b) engine: budget-aware planning hint
 («N calls left») so the model prioritizes breadth before the forced final.
+
+## 2026-07-19 — extraction эхо-slot из схемы промпта (эпик 021 фаза B, live)
+
+На живом прогоне MeetScript deepseek однажды вернул факт со slot =
+«short-stable-kebab-key-naming-the-subject» — эхо placeholder'а из JSON-схемы
+extraction-промпта (плюс дубликат текста уже извлечённого факта). Симптом
+класса «weak model echoes schema»: тот же корень, что и ранние эхо ReAct-промпта.
+Фикс в parse_extracted_facts: неправдоподобные слоты (>40 символов / содержат
+«kebab») отбрасываются (факт остаётся slot-less), дубликаты текста в одном
+ходе схлопываются. Кандидат на будущее: few-shot пример вместо placeholder-схемы.

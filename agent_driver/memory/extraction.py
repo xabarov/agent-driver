@@ -84,7 +84,15 @@ def parse_extracted_facts(content: str, *, max_facts: int) -> list[dict[str, str
         slot = item.get("slot")
         fact: dict[str, str] = {"text": text.strip()}
         if isinstance(slot, str) and slot.strip():
-            fact["slot"] = slot.strip().lower()
+            normalized_slot = slot.strip().lower()
+            # Live artifact: weak models occasionally echo the schema placeholder
+            # («short-stable-kebab-key-naming-the-subject») as the slot. Real slots
+            # are short keys; drop implausible ones so a bogus slot can't shadow
+            # (or escape) supersede for the actual subject.
+            if len(normalized_slot) <= 40 and "kebab" not in normalized_slot:
+                fact["slot"] = normalized_slot
+        if any(existing["text"] == fact["text"] for existing in facts):
+            continue
         facts.append(fact)
         if len(facts) >= max_facts:
             break

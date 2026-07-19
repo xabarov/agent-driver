@@ -131,3 +131,15 @@ def test_supersede_keeps_slotless_records() -> None:
         MemoryRecord(session_id="s", text="old", metadata={"slot": "k"}, seq=1),
     ]
     assert [r.text for r in supersede_by_slot(records)] == ["new", "raw turn"]
+
+
+def test_parse_drops_placeholder_slot_and_duplicate_texts() -> None:
+    content = json.dumps(
+        [
+            {"text": "A", "slot": "short-stable-kebab-key-naming-the-subject"},
+            {"text": "A", "slot": "real-key"},
+            {"text": "B", "slot": "x" * 41},
+        ]
+    )
+    facts = parse_extracted_facts(content, max_facts=5)
+    assert facts == [{"text": "A"}, {"text": "B"}]
