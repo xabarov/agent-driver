@@ -24,6 +24,26 @@ if TYPE_CHECKING:
     from agent_driver.runtime.single_agent.types import RunContext
 
 
+def _memory_overrides(context: "RunContext") -> dict:
+    """Return the host-supplied ``app_metadata["memory"]`` override mapping.
+
+    Hosts whose ``run_input.input`` is a composed prompt (RAG context, ledgers,
+    instructions) can pass the clean user utterance here so long-term memory
+    stores/queries the actual question instead of the full prompt envelope.
+    Supported keys: ``user_text`` (what to persist as the user side of the
+    turn), ``recall_query`` (what to match recall against).
+    """
+    overrides = (context.run_input.app_metadata or {}).get("memory")
+    return overrides if isinstance(overrides, dict) else {}
+
+
+def _override_text(overrides: dict, key: str) -> str | None:
+    value = overrides.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
 class MemoryLifecycleHook(BaseRunLifecycleHook):
     """Bridge a :class:`MemoryProvider` into run-start recall and finalize sync."""
 
@@ -50,7 +70,12 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
         memory_state = get_memory_runtime_state(context)
         if not session_id or memory_state.has_recalled():
             return
-        query_text = (context.run_input.input or "").strip() or None
+        overrides = _memory_overrides(context)
+        query_text = (
+            _override_text(overrides, "recall_query")
+            or (context.run_input.input or "").strip()
+            or None
+        )
         result = await self._provider.prefetch(
             RecallQuery(session_id=session_id, query=query_text)
         )
@@ -68,7 +93,11 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
             MemoryTurn(
                 session_id=session_id,
                 run_id=context.run_id,
-                user_text=(context.run_input.input or "").strip() or None,
+                user_text=(
+                    _override_text(_memory_overrides(context), "user_text")
+                    or (context.run_input.input or "").strip()
+                    or None
+                ),
                 assistant_text=answer or None,
             )
         )

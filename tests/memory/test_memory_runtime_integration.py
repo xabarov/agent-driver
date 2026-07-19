@@ -104,3 +104,33 @@ async def test_durable_recall_across_agent_instances(tmp_path) -> None:
     reader_store.close()
 
     assert any("Vault" in prompt for prompt in reader_provider.system_prompts)
+
+
+@pytest.mark.asyncio
+async def test_app_metadata_memory_overrides_store_clean_user_text() -> None:
+    """RAG hosts: ``app_metadata["memory"]`` overrides beat the composed prompt.
+
+    ``user_text`` is what gets persisted; ``recall_query`` is what recall
+    matches against — the giant prompt envelope must appear in neither.
+    """
+    provider = _CapturingProvider()
+    store = InMemoryMemoryStore()
+    memory = StoreBackedMemoryProvider(store)
+    agent = create_agent(
+        provider=provider, tools=ToolSet.only(), memory_provider=memory
+    )
+    session = agent.session("user-9")
+
+    composed = "SYSTEM CONTEXT: 40kb of retrieval...\nUser question: где дедлайн?"
+    await session.send(
+        composed,
+        run_id="r1",
+        app_metadata={
+            "memory": {"user_text": "где дедлайн?", "recall_query": "дедлайн"}
+        },
+    )
+
+    stored = store.list_for_session("user-9")
+    user_records = [r for r in stored if r.metadata.get("role") == "user"]
+    assert [r.text for r in user_records] == ["где дедлайн?"]
+    assert all("retrieval" not in r.text for r in stored)
