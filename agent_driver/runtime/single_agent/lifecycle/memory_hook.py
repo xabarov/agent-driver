@@ -79,9 +79,16 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
         result = await self._provider.prefetch(
             RecallQuery(session_id=session_id, query=query_text)
         )
-        block = render_recall_block(result)
+        # Recall budget: providers may expose `recall_max_chars` to bound how much
+        # recalled memory enters the system prompt (epic 021 phase C).
+        max_chars = getattr(self._provider, "recall_max_chars", None)
+        block = render_recall_block(
+            result, max_chars=int(max_chars) if max_chars else 2000
+        )
         if block:
             memory_state.set_recalled_block(block)
+        # Raw-free observability (epic 021 phase D): counts only, никакого текста.
+        context.metadata["memory_recall_count"] = len(result.records)
 
     async def on_finalize(self, context: "RunContext", *, answer: str) -> None:
         session_id = context.run_input.thread_id

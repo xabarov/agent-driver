@@ -1,5 +1,10 @@
 """Optional pluggable long-term, cross-session memory layer."""
 
+from agent_driver.memory.extraction import (
+    FactExtractingMemoryProvider,
+    parse_extracted_facts,
+    supersede_by_slot,
+)
 from agent_driver.memory.provider import (
     MemoryKind,
     MemoryProvider,
@@ -16,6 +21,7 @@ from agent_driver.memory.provider import (
 from agent_driver.memory.stores import InMemoryMemoryStore, SqliteMemoryStore
 
 __all__ = [
+    "FactExtractingMemoryProvider",
     "InMemoryMemoryStore",
     "MemoryKind",
     "MemoryProvider",
@@ -28,5 +34,7 @@ __all__ = [
     "StoreBackedMemoryProvider",
     "apply_recall",
     "match_query",
+    "parse_extracted_facts",
     "render_recall_block",
+    "supersede_by_slot",
 ]

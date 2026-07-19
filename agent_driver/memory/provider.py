@@ -208,11 +208,14 @@ class StoreBackedMemoryProvider(MemoryProvider):
         recall_limit: int = 5,
         remember_user: bool = True,
         remember_assistant: bool = True,
+        recall_max_chars: int = 2000,
     ) -> None:
         self._store = store
         self._recall_limit = recall_limit
         self._remember_user = remember_user
         self._remember_assistant = remember_assistant
+        # Read by MemoryLifecycleHook to bound the injected recall block.
+        self.recall_max_chars = recall_max_chars
 
     @property
     def store(self) -> MemoryStore:
