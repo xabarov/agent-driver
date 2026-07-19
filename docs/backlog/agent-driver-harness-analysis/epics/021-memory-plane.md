@@ -30,7 +30,11 @@
 
 A. **Host-store слайс (MeetScript)**: Mongo-стор + StoreBackedMemoryProvider, user-scoped
    `thread_id`; env-гейт; PII-дисциплина (recall уходит наружу через тот же барьер, что и весь
-   prompt); live-smoke кросс-сессионного recall. ← выполняется сейчас.
+   prompt); live-smoke кросс-сессионного recall. — **DONE 2026-07-19**: движок 0bd30ca добавил
+   `app_metadata["memory"]` overrides (user_text/recall_query) — RAG-хост хранит ЧИСТЫЙ вопрос,
+   не составной prompt; MeetScript 8b90bda (MongoChatMemoryStore, гейт CHAT_V2_MEMORY,
+   thread_id=user_{id}); live-смоук PASS (факт из сессии A вспомнен в новой сессии B),
+   в Mongo — чистые реплики.
 B. **Extraction-качество**: не сырые ходы, а ФАКТЫ — auxiliary-model выжимка «что стоит помнить»
    (durable prefs/facts vs episodic turns), kind=FACT/PREFERENCE; дедуп и supersede (новый факт
    вытесняет устаревший — как эволюция фактов в Аргус-бенче).
