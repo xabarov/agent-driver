@@ -68,3 +68,18 @@ class TestResolvedForModel:
         s = TrimmingSettings().resolved_for_model("nope")
         assert s.context_window_estimate == 12_000
         assert s.context_window_source == "default"
+
+
+def test_provider_model_hint_prefers_explicit_protocol():
+    class _WithHint:
+        _model = "attribute-model"
+
+        def model_hint(self):
+            return "protocol-model"
+
+    class _WrapperAroundHint:
+        def __init__(self):
+            self.provider = _WithHint()
+
+    assert provider_model_hint(_WithHint()) == "protocol-model"
+    assert provider_model_hint(_WrapperAroundHint()) == "protocol-model"

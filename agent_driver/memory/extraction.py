@@ -33,6 +33,7 @@ from agent_driver.memory.provider import (
     RecallQuery,
     RecallResult,
     apply_recall,
+    sync_raw_turn,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -200,27 +201,7 @@ class FactExtractingMemoryProvider(MemoryProvider):
 
     async def _sync_raw_turn(self, turn: MemoryTurn) -> None:
         """Raw-turn fallback mirroring :class:`StoreBackedMemoryProvider`."""
-        for role, text in (
-            ("user", turn.user_text),
-            ("assistant", turn.assistant_text),
-        ):
-            if not text or not text.strip():
-                continue
-            metadata: dict[str, Any] = {
-                "role": role,
-                "source": "raw_fallback",
-                **turn.metadata,
-            }
-            if turn.run_id is not None:
-                metadata.setdefault("run_id", turn.run_id)
-            self._store.append(
-                MemoryRecord(
-                    session_id=turn.session_id,
-                    text=text.strip(),
-                    kind=MemoryKind.TURN,
-                    metadata=metadata,
-                )
-            )
+        sync_raw_turn(self._store, turn, extra_metadata={"source": "raw_fallback"})
 
 
 __all__ = [

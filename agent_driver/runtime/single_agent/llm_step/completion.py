@@ -479,17 +479,13 @@ async def retry_forced_final_without_tools(
         return await host._deps.provider.complete(folded_request)
 
     def _unusable(content: str | None) -> bool:
-        """Empty OR degenerate canned/wrong-language refusal (epic 015 detector): both mean
-        the strategy failed and the ladder should continue."""
+        """Ladder-step failure predicate — the shared engine-wide definition."""
         from agent_driver.runtime.single_agent.finalization.answer_recovery import (  # pylint: disable=import-outside-toplevel
-            is_degenerate_refusal,
+            final_content_unusable,
         )
 
-        text = (content or "").strip()
-        if not text:
-            return True
-        return is_degenerate_refusal(
-            text, str(getattr(context.run_input, "input", "") or "")
+        return final_content_unusable(
+            content, str(getattr(context.run_input, "input", "") or "")
         )
 
     first, second = (

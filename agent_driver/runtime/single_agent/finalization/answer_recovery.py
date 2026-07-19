@@ -50,6 +50,20 @@ def _cjk_ratio(text: str) -> float:
     return sum(1 for ch in letters if _CJK_RE.match(ch)) / len(letters)
 
 
+def final_content_unusable(content: str | None, input_text: str = "") -> bool:
+    """THE single «did this final-answer strategy fail?» predicate (epic 023).
+
+    Empty content OR a degenerate canned/wrong-language refusal both mean the
+    forced-final strategy failed and the recovery ladder should continue. Every
+    ladder step and its entry gate must use this — a step that checks only
+    emptiness lets a canned refusal be finalized verbatim (live 2026-07-19).
+    """
+    text = (content or "").strip()
+    if not text:
+        return True
+    return is_degenerate_refusal(text, input_text)
+
+
 def is_degenerate_refusal(answer: str | None, input_text: str = "") -> bool:
     """A canned or wrong-language non-answer that ignores the retrieved context.
 
@@ -145,6 +159,7 @@ def recover_degenerate_terminal_answer(
 
 __all__ = [
     "assistant_turn_contents",
+    "final_content_unusable",
     "recover_degenerate_terminal_answer",
     "is_degenerate_refusal",
     "SUBSTANTIVE_ANSWER_CHARS",

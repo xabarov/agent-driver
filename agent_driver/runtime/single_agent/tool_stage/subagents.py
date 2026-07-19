@@ -103,8 +103,7 @@ def _deep_research_mode(context: RunContext) -> bool:
         return True
     task_contract = metadata.get("task_contract")
     return (
-        isinstance(task_contract, dict)
-        and task_contract.get("research_mode") == "deep"
+        isinstance(task_contract, dict) and task_contract.get("research_mode") == "deep"
     )
 
 

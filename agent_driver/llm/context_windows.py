@@ -105,6 +105,17 @@ def provider_model_hint(provider: object) -> str | None:
         if inner is not None and inner is not provider:
             candidates.append(inner)
     for candidate in candidates:
+        # Explicit opt-in protocol beats attribute probing: a provider/wrapper may
+        # expose `model_hint()` to state its effective model id directly (epic 023 —
+        # replaces relying on the conventional-attribute unwrap above).
+        hint = getattr(candidate, "model_hint", None)
+        if callable(hint):
+            try:
+                value = hint()
+            except Exception:  # noqa: BLE001 - tolerant probe only
+                value = None
+            if isinstance(value, str) and value.strip():
+                return value
         for attribute in ("model", "_model"):
             value = getattr(candidate, attribute, None)
             if isinstance(value, str) and value.strip():

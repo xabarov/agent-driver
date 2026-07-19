@@ -170,6 +170,43 @@ def render_recall_block(result: RecallResult, *, max_chars: int = 2000) -> str:
     return "\n".join(lines)
 
 
+def sync_raw_turn(
+    store: MemoryStore,
+    turn: MemoryTurn,
+    *,
+    remember_user: bool = True,
+    remember_assistant: bool = True,
+    extra_metadata: dict[str, Any] | None = None,
+) -> None:
+    """Persist the raw user/assistant texts of a turn as TURN records.
+
+    Shared by :class:`StoreBackedMemoryProvider` (its normal path) and the
+    extraction provider's fail-open fallback, so the raw-turn shape stays
+    identical between the two.
+    """
+    for role, text, enabled in (
+        ("user", turn.user_text, remember_user),
+        ("assistant", turn.assistant_text, remember_assistant),
+    ):
+        if not enabled or not text or not text.strip():
+            continue
+        metadata: dict[str, Any] = {
+            "role": role,
+            **(extra_metadata or {}),
+            **turn.metadata,
+        }
+        if turn.run_id is not None:
+            metadata.setdefault("run_id", turn.run_id)
+        store.append(
+            MemoryRecord(
+                session_id=turn.session_id,
+                text=text.strip(),
+                kind=MemoryKind.TURN,
+                metadata=metadata,
+            )
+        )
+
+
 class MemoryProvider(ABC):
     """Async policy layer deciding what to remember and what to recall."""
 
@@ -237,23 +274,12 @@ class StoreBackedMemoryProvider(MemoryProvider):
 
     async def sync_turn(self, turn: MemoryTurn) -> None:
         """Persist the user/assistant text of a finished turn."""
-        for role, text, enabled in (
-            ("user", turn.user_text, self._remember_user),
-            ("assistant", turn.assistant_text, self._remember_assistant),
-        ):
-            if not enabled or not text or not text.strip():
-                continue
-            metadata: dict[str, Any] = {"role": role, **turn.metadata}
-            if turn.run_id is not None:
-                metadata.setdefault("run_id", turn.run_id)
-            self._store.append(
-                MemoryRecord(
-                    session_id=turn.session_id,
-                    text=text.strip(),
-                    kind=MemoryKind.TURN,
-                    metadata=metadata,
-                )
-            )
+        sync_raw_turn(
+            self._store,
+            turn,
+            remember_user=self._remember_user,
+            remember_assistant=self._remember_assistant,
+        )
 
 
 __all__ = [

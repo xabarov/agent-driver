@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from agent_driver.code_agent.contracts import CodeAgentLimits
+from agent_driver.llm.context_windows import (
+    resolve_context_window as _resolve_context_window,
+)
 
 if TYPE_CHECKING:
     from agent_driver.contracts.profiles import HarnessProfile
@@ -45,11 +48,6 @@ class CapabilitySettings:
         object.__setattr__(
             self, "subagent_model_routing", dict(self.subagent_model_routing or {})
         )
-
-
-from agent_driver.llm.context_windows import (  # noqa: E402  (section-local import)
-    resolve_context_window as _resolve_context_window,
-)
 
 
 # Class default for the window estimate. A module constant (not type(self).attr):
