@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
@@ -198,6 +199,28 @@ async def complete_request(  # pylint: disable=too-many-branches
                     )
                     request = reduced
                     continue
+            if attempt < 2 and _is_transient_provider_status(exc):
+                delay = _transient_retry_delay(exc, attempt)
+                context.metadata["transient_provider_retries"] = attempt + 1
+                emit_step_event(
+                    host,
+                    context,
+                    event_type=RuntimeEventType.WARNING,
+                    payload={
+                        "warning": (
+                            "Provider returned a transient error "
+                            f"(HTTP {exc.response.status_code}); retrying "
+                            f"in {delay:g}s."
+                        ),
+                        "signal_id": "provider_transient_error_retry",
+                        "severity": "warning",
+                        "status_code": exc.response.status_code,
+                        "retry_attempt": attempt + 1,
+                        "retry_in_seconds": delay,
+                    },
+                )
+                await asyncio.sleep(delay)
+                continue
             raise
         except httpx.TimeoutException as exc:
             last_timeout = exc
@@ -236,6 +259,31 @@ async def complete_request(  # pylint: disable=too-many-branches
     if last_timeout is not None:
         raise last_timeout
     raise RuntimeError("unreachable")
+
+
+_TRANSIENT_PROVIDER_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def _is_transient_provider_status(exc: httpx.HTTPStatusError) -> bool:
+    """Whether this provider failure is worth a bounded blind retry.
+
+    Overload/rate-limit/gateway hiccups (the OpenRouter «LLM completion
+    failed» class seen live) usually clear within seconds; anything else is
+    treated as deterministic and surfaces immediately.
+    """
+    return exc.response.status_code in _TRANSIENT_PROVIDER_STATUSES
+
+
+def _transient_retry_delay(exc: httpx.HTTPStatusError, attempt: int) -> float:
+    """Backoff for a transient provider error, honoring a sane Retry-After."""
+    delay = 2.0 * (attempt + 1)
+    retry_after = exc.response.headers.get("retry-after")
+    if retry_after:
+        try:
+            delay = max(delay, float(retry_after))
+        except ValueError:
+            pass
+    return min(delay, 10.0)
 
 
 def _should_retry_stream_failure_without_streaming(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agent_driver.llm.providers_impl.fake import FakeProvider
@@ -77,3 +79,54 @@ async def test_aclose_isolates_failing_shutdown() -> None:
         memory_provider=_BoomProvider(),
     )
     await agent.aclose()  # must not raise
+
+
+class _DeferredSyncProvider(StoreBackedMemoryProvider):
+    """A provider whose sync must not block run completion (defer_sync)."""
+
+    defer_sync = True
+
+    def __init__(self) -> None:
+        super().__init__(InMemoryMemoryStore())
+        self.gate = asyncio.Event()
+        self.synced_answers: list[str | None] = []
+
+    async def sync_turn(self, turn) -> None:  # noqa: ANN001
+        await self.gate.wait()
+        self.synced_answers.append(turn.assistant_text)
+
+
+@pytest.mark.asyncio
+async def test_deferred_sync_is_off_the_run_completion_path() -> None:
+    """With ``defer_sync`` the run returns before the turn sync ran; aclose flushes."""
+    memory = _DeferredSyncProvider()
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        memory_provider=memory,
+    )
+    await agent.session("u1").send("hi", run_id="r1")
+    # The gate is still closed: had completion awaited sync_turn, send() above
+    # would have deadlocked; reaching this line IS the regression check.
+    assert memory.synced_answers == []
+
+    memory.gate.set()
+    await agent.aclose()  # shutdown flushes the pending background sync
+    assert memory.synced_answers == ["ok"]
+
+
+@pytest.mark.asyncio
+async def test_deferred_sync_lands_before_next_recall() -> None:
+    """Read-your-writes: the next run's recall waits for the pending sync."""
+    memory = _DeferredSyncProvider()
+    memory.gate.set()  # sync itself is instant; only the scheduling is deferred
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        memory_provider=memory,
+    )
+    session = agent.session("u2")
+    await session.send("first", run_id="r1")
+    await session.send("second", run_id="r2")
+    assert memory.synced_answers[0] == "ok"  # r1's turn landed before r2 ran
+    await agent.aclose()

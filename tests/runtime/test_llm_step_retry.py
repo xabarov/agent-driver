@@ -944,3 +944,103 @@ async def test_ladder_never_mutates_original_request_history() -> None:
         or (m.metadata or {}).get("folded_tool_result")
         for m in request.messages
     )
+
+
+@pytest.mark.asyncio
+async def test_complete_request_retries_transient_provider_status(monkeypatch) -> None:
+    """A 503/429-class provider hiccup is retried (bounded) instead of failing the run."""
+    import asyncio as _asyncio
+
+    sleeps: list[float] = []
+
+    async def _no_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(_asyncio, "sleep", _no_sleep)
+
+    provider = SimpleNamespace(name="retry-test", calls=0)
+
+    async def complete(request: LlmRequest) -> LlmResponse:
+        provider.calls += 1
+        if provider.calls == 1:
+            response = httpx.Response(
+                503,
+                text="upstream overloaded",
+                request=httpx.Request("POST", "https://openrouter.test/chat"),
+            )
+            raise httpx.HTTPStatusError(
+                "service unavailable", request=response.request, response=response
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="ok"),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="retry", model_name="test"),
+            provider="retry",
+            model="test",
+        )
+
+    provider.complete = complete
+    emitted = []
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(provider=provider),
+        _emit=emitted.append,
+    )
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(stream=False, app_metadata={}),
+        metadata={},
+        run_id="run_test",
+        attempt_id="attempt_test",
+    )
+    request = LlmRequest(messages=[ChatMessage(role="user", content="hi")])
+
+    response = await _complete_request(host, context, request)
+
+    assert response.message.content == "ok"
+    assert provider.calls == 2
+    assert context.metadata["transient_provider_retries"] == 1
+    warning = emitted[0]
+    assert warning.event_type.value == "warning"
+    assert warning.payload["signal_id"] == "provider_transient_error_retry"
+    assert warning.payload["status_code"] == 503
+    assert sleeps == [2.0]
+
+
+@pytest.mark.asyncio
+async def test_complete_request_gives_up_after_transient_retry_budget(monkeypatch) -> None:
+    """Three consecutive transient failures still surface as a provider error."""
+    import asyncio as _asyncio
+
+    async def _no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(_asyncio, "sleep", _no_sleep)
+
+    provider = SimpleNamespace(name="retry-test", calls=0)
+
+    async def complete(request: LlmRequest) -> LlmResponse:
+        provider.calls += 1
+        response = httpx.Response(
+            429,
+            text="rate limited",
+            request=httpx.Request("POST", "https://openrouter.test/chat"),
+        )
+        raise httpx.HTTPStatusError(
+            "too many requests", request=response.request, response=response
+        )
+
+    provider.complete = complete
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(provider=provider),
+        _emit=lambda event: None,
+    )
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(stream=False, app_metadata={}),
+        metadata={},
+        run_id="run_test",
+        attempt_id="attempt_test",
+    )
+    request = LlmRequest(messages=[ChatMessage(role="user", content="hi")])
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await _complete_request(host, context, request)
+    assert provider.calls == 3  # initial + two bounded retries

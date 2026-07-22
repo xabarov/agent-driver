@@ -9,7 +9,11 @@ from agent_driver.llm.contracts import LlmResponse
 from agent_driver.observability.provenance import build_provenance_summary
 from agent_driver.runtime.control.dispatcher import drain_step_boundary_controls
 from agent_driver.runtime.errors import RuntimeExecutionError
-from agent_driver.runtime.lifecycle_hooks import dispatch_finalize, dispatch_run_start
+from agent_driver.runtime.lifecycle_hooks import (
+    dispatch_finalize,
+    dispatch_run_completed,
+    dispatch_run_start,
+)
 from agent_driver.runtime.metadata_state import (
     get_loop_control_state,
     get_tool_loop_state,
@@ -425,8 +429,21 @@ class SingleAgentStepMixin:
                 output.model_dump(mode="json")
             )
             return RuntimeStepResult(next_step="done")
+        def _emit_hook_event(event_type: str, payload: dict) -> None:
+            self._emit(
+                EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType(event_type),
+                    payload=payload,
+                )
+            )
+
         revision = await dispatch_finalize(
-            self._deps.lifecycle_hooks, context, answer=terminal_answer or ""
+            self._deps.lifecycle_hooks,
+            context,
+            answer=terminal_answer or "",
+            emit=_emit_hook_event,
         )
         if revision is not None and (
             int(context.metadata.get("rubric_revision_count", 0))
@@ -449,6 +466,12 @@ class SingleAgentStepMixin:
             self._save_checkpoint(context, latest_output=None, node_id="finalize")
             self._maybe_fail_after_step("finalize")
             return revise
+        # Terminal side effects (memory persistence etc.): fires exactly once,
+        # with the answer the user actually received. Hooks must schedule, not
+        # block — this sits right before the terminal event is emitted.
+        await dispatch_run_completed(
+            self._deps.lifecycle_hooks, context, answer=terminal_answer or ""
+        )
         self._emit(
             EventSpec(
                 run_id=context.run_id,

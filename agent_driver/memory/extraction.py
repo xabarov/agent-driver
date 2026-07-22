@@ -121,6 +121,10 @@ def supersede_by_slot(records: list[MemoryRecord]) -> list[MemoryRecord]:
 class FactExtractingMemoryProvider(MemoryProvider):
     """LLM-distilled facts with append-only slot supersede at recall time."""
 
+    # sync_turn makes an LLM call; the runtime memory hook defers it off the
+    # run-completion critical path (flushed at shutdown / before next recall).
+    defer_sync = True
+
     def __init__(
         self,
         store: MemoryStore,

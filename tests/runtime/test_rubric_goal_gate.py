@@ -106,3 +106,82 @@ async def test_rubric_hook_bounded_by_max_iterations() -> None:
 
     assert output.status.value == "completed"  # accepts after the budget
     assert len(grade_calls) == 2  # graded exactly max_iterations times
+
+
+@pytest.mark.asyncio
+async def test_finalize_hook_visibility_events_emitted() -> None:
+    """A hook overriding on_finalize is bracketed by lifecycle_hook_* events."""
+
+    class _SlowGate(BaseRunLifecycleHook):
+        name = "slow_gate"
+
+        async def on_finalize(self, context, *, answer):  # noqa: ANN001
+            return None
+
+    agent = create_agent(
+        provider=FakeProvider(response_text="done"),
+        tools=ToolSet.only(),
+        lifecycle_hooks=(_SlowGate(),),
+    )
+    output = await agent.run(_run_input("r-vis"))
+    hook_events = [
+        (event.type.value, event.payload)
+        for event in output.events
+        if event.type.value in {"lifecycle_hook_started", "lifecycle_hook_completed"}
+    ]
+    started = [p for t, p in hook_events if t == "lifecycle_hook_started"]
+    completed = [p for t, p in hook_events if t == "lifecycle_hook_completed"]
+    assert [p["hook"] for p in started] == ["slow_gate"]
+    assert [p["hook"] for p in completed] == ["slow_gate"]
+    assert completed[0]["requested_revision"] is False
+    assert completed[0]["phase"] == "finalize"
+
+
+@pytest.mark.asyncio
+async def test_memory_persists_post_revision_answer() -> None:
+    """Memory stores the answer the user received, not the pre-revision draft."""
+    from agent_driver.memory import InMemoryMemoryStore, StoreBackedMemoryProvider
+
+    class _VaryingProvider(FakeProvider):
+        """First completion returns a draft, later ones the final answer."""
+
+        def __init__(self) -> None:
+            super().__init__(response_text="draft")
+            self.calls = 0
+
+        async def complete(self, request: LlmRequest) -> LlmResponse:
+            self.calls += 1
+            self._response_text = "draft" if self.calls == 1 else "final"
+            return await super().complete(request)
+
+    class _RecordingMemory(StoreBackedMemoryProvider):
+        defer_sync = True
+
+        def __init__(self) -> None:
+            super().__init__(InMemoryMemoryStore())
+            self.synced_answers: list[str | None] = []
+
+        async def sync_turn(self, turn) -> None:  # noqa: ANN001
+            self.synced_answers.append(turn.assistant_text)
+
+    class _ReviseFirstDraft(BaseRunLifecycleHook):
+        name = "revise_first_draft"
+
+        async def on_finalize(self, context, *, answer):  # noqa: ANN001
+            if answer == "draft":
+                return RevisionRequest(feedback="not good enough")
+            return None
+
+    memory = _RecordingMemory()
+    agent = create_agent(
+        provider=_VaryingProvider(),
+        tools=ToolSet.only(),
+        memory_provider=memory,
+        lifecycle_hooks=(_ReviseFirstDraft(),),
+    )
+    output = await agent.run(_run_input("r-rev"))
+    await agent.aclose()
+
+    assert output.status.value == "completed"
+    assert output.answer == "final"
+    assert memory.synced_answers == ["final"]

@@ -15,7 +15,8 @@ coupled to runtime state rather than to provider-neutral contracts.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -104,6 +105,16 @@ class RunLifecycleHook(Protocol):
         chain spawning a fallback). Not called for user-cancelled runs.
         """
 
+    async def on_run_completed(self, context: "RunContext", *, answer: str) -> None:
+        """Called once when a run completes successfully, with the final answer.
+
+        Unlike ``on_finalize`` this fires exactly once, after any goal-gate
+        revision loop has settled, so ``answer`` is the answer the user actually
+        received. Post-run side effects (long-term memory persistence, audit)
+        belong here; anything slow must be scheduled, not awaited — this hook
+        sits between the terminal event and the run output being returned.
+        """
+
 
 class BaseRunLifecycleHook:
     """Convenience base with no-op implementations; override what you need."""
@@ -144,6 +155,9 @@ class BaseRunLifecycleHook:
     ) -> None:
         """No-op error hook; override to react to a failed run."""
 
+    async def on_run_completed(self, context: "RunContext", *, answer: str) -> None:
+        """No-op run-completed hook; override for terminal side effects."""
+
 
 def _hook_name(hook: RunLifecycleHook) -> str:
     """Best-effort display name for diagnostics."""
@@ -165,25 +179,68 @@ async def dispatch_run_start(
 
 
 async def dispatch_finalize(
-    hooks: Iterable[RunLifecycleHook], context: "RunContext", *, answer: str
+    hooks: Iterable[RunLifecycleHook],
+    context: "RunContext",
+    *,
+    answer: str,
+    emit: "Callable[[str, dict[str, Any]], None] | None" = None,
 ) -> "RevisionRequest | None":
     """Invoke ``on_finalize`` for each hook; return the first revision request.
 
     A hook that raises is logged and skipped (treated as "no revision"), so a
     faulty goal-gate cannot wedge the run at finalize.
+
+    ``emit``, when provided, receives ``(event_type, payload)`` pairs bracketing
+    each hook that actually overrides ``on_finalize`` — this is what makes slow
+    finalize work (an LLM goal-gate grading the answer) visible to the host's
+    event stream instead of an unexplained gap before the terminal event.
     """
     revision: RevisionRequest | None = None
     for hook in hooks:
+        overrides_finalize = (
+            getattr(type(hook), "on_finalize", None)
+            is not BaseRunLifecycleHook.on_finalize
+        )
+        hook_emit = emit if (emit is not None and overrides_finalize) else None
+        if hook_emit is not None:
+            hook_emit(
+                "lifecycle_hook_started",
+                {"hook": _hook_name(hook), "phase": "finalize"},
+            )
+        started = time.monotonic()
         try:
             result = await hook.on_finalize(context, answer=answer)
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception(
                 "lifecycle on_finalize failed for hook %r", _hook_name(hook)
             )
-            continue
+            result = None
+        if hook_emit is not None:
+            hook_emit(
+                "lifecycle_hook_completed",
+                {
+                    "hook": _hook_name(hook),
+                    "phase": "finalize",
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                    "requested_revision": result is not None,
+                },
+            )
         if result is not None and revision is None:
             revision = result
     return revision
+
+
+async def dispatch_run_completed(
+    hooks: Iterable[RunLifecycleHook], context: "RunContext", *, answer: str
+) -> None:
+    """Invoke ``on_run_completed`` for each hook; isolate per-hook failures."""
+    for hook in hooks:
+        try:
+            await hook.on_run_completed(context, answer=answer)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception(
+                "lifecycle on_run_completed failed for hook %r", _hook_name(hook)
+            )
 
 
 async def dispatch_tool_evidence(
@@ -269,6 +326,7 @@ __all__ = [
     "dispatch_before_llm",
     "dispatch_error",
     "dispatch_finalize",
+    "dispatch_run_completed",
     "dispatch_run_start",
     "dispatch_tool_evidence",
 ]
