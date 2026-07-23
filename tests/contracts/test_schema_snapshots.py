@@ -65,6 +65,7 @@ PUBLIC_CONTRACT_FIELD_SNAPSHOTS: dict[str, tuple[str, ...]] = {
         "user_id",
         "tenant_id",
         "workspace_id",
+        "request_only_context",
         "app_metadata",
         "response_format",
         "tool_choice",

@@ -70,6 +70,16 @@ class AgentRunInput(ContractModel):
     user_id: str | None = None
     tenant_id: str | None = None
     workspace_id: str | None = None
+    request_only_context: list[ChatMessage] = Field(default_factory=list)
+    """Per-request model-visible context that never becomes durable dialogue.
+
+    Injected into every provider request of THIS run immediately before the
+    latest user turn, but excluded from the protocol transcript, checkpoint
+    message history and anything a host would persist as conversation. This is
+    the channel for RAG blocks, corpus overviews and ephemeral steering framing
+    — real dialogue history belongs in ``messages``, and mixing the two is how
+    anaphora breaks (epic 026; reference: openclaude ``requestOnlyMessages``,
+    hermes ``api_content``)."""
     app_metadata: dict[str, Any] = Field(default_factory=dict)
     response_format: dict[str, Any] | None = None
     """Provider-level structured output enforcement. Mirrors the

@@ -231,6 +231,25 @@ def effective_tool_names_from_registry(
     return tuple(names)
 
 
+def _inject_request_only_context(
+    prompt_messages: list[dict[str, Any]], run_input: Any
+) -> list[dict[str, Any]]:
+    """Insert ``run_input.request_only_context`` before the latest user turn.
+
+    Placement mirrors openclaude ``injectRequestOnlyMessages``: the ephemeral
+    framing reads immediately before the instruction it frames. With no user
+    turn present the context is appended.
+    """
+    extra = getattr(run_input, "request_only_context", None) or []
+    if not extra:
+        return prompt_messages
+    dumped = [message.model_dump(mode="json") for message in extra]
+    for index in range(len(prompt_messages) - 1, -1, -1):
+        if str(prompt_messages[index].get("role", "")) == "user":
+            return prompt_messages[:index] + dumped + prompt_messages[index:]
+    return prompt_messages + dumped
+
+
 def build_single_agent_llm_request(
     ctx: LlmRequestBuildContext,
 ) -> tuple[LlmRequest, dict[str, Any]]:
@@ -297,6 +316,12 @@ def build_single_agent_llm_request(
             ] + prompt_messages
     if prompt_messages and ctx.protocol_messages is None:
         prompt_messages[-1]["content"] = prompt
+    # Epic 026: per-request ephemeral context (RAG blocks, steering framing) is
+    # injected right before the latest user turn on EVERY provider request of
+    # the run, but never enters the protocol transcript (which is seeded from
+    # run_input.messages, not from the built request) — so it stays model-visible
+    # without ever becoming durable dialogue.
+    prompt_messages = _inject_request_only_context(prompt_messages, run_input)
     # Harness-profile system slots are applied before trimming so the budget
     # accounts for the prefix/suffix and they cannot be trimmed away.
     harness_profile = select_harness_profile(
