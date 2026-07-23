@@ -2,6 +2,20 @@
 
 Дата создания: 2026-07-23. Статус: **DONE (A-D)** 2026-07-23 (из фиче-скана референсов 2026-07-23; номер 031→036 при консолидации 2026-07-23 — коллизия двух раунд-2 сканов).
 
+## ⚠️ Live-находка (2026-07-23, из эпика 038) — ПРОВЕРИТЬ
+
+Форсированный tool-call `structured_completion` **не даёт tool-call вживую** через
+MeetScript privacy-провайдер + OpenRouter для `google/gemini-2.5-flash-lite`
+(`StructuredOutputError: no emit_result tool call in the response`). Найдено при первом
+живом использовании (эпик 038 — генерация подсказок; переведена на плоский completion).
+Следствие для этого эпика: **memory/extraction (фаза B) использует тот же канал** и на
+проде, вероятно, тихо падает в raw-fallback (его `except` глушит) — то есть контрактная
+экстракция может НЕ работать вживую на этом провайдере. Требует проверки: (а) поддерживает
+ли openai-compat адаптер + OpenRouter форсированный `tool_choice` для не-Anthropic моделей;
+(б) заполняется ли `planned_tool_calls` в метаданных ответа для gemini/deepseek. Кандидат в
+бэклог: либо чинить плумбинг tool_choice в провайдере, либо дать structured_completion
+плоский JSON-fallback (как поступил эпик 038 для best-effort).
+
 ## Итог (2026-07-23)
 
 - **A. Механизм.** `agent_driver/llm/structured.py`: `structured_completion(*, provider, messages, schema, ...)` — форсит `tool_choice` на динамический тул `emit_result` со схемой в параметрах; читает `planned_tool_calls` из метаданных ответа, валидирует required-ключи + типы (`_validate`), при mismatch/no-tool-call добавляет корректирующий ход и ретраит, при исчерпании — `StructuredOutputError` (НЕ salvage свободного текста). Экспорт в `agent_driver/llm/__init__.py`. Run-level seam: `AgentRunInput.structured_output: dict | None` — при заданной схеме терминальный answer парсится+валидируется в финализации (`finalization/output.py::_validate_structured_terminal`), результат в `AgentRunOutput.metadata["structured_output"]`, невалидный/пустой финал → `structured_output_error` (сигнал, не молчаливый `completed`). Инертно при `None`. 5+3 теста (`tests/llm/test_structured_output.py`).
