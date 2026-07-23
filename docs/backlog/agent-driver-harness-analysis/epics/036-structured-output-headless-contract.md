@@ -15,13 +15,23 @@ sonnet-4.6) показала: **падали ВСЕ модели, включая
 срабатывало (структурная дыра в приёмке эпика 036: примитив ни разу не тестировался против
 реального провайдера).
 
-**Фикс:** `_extract_emit_args` теперь читает `planned_tool_calls` с response ИЛИ message
-metadata, принимает ключ `tool_name` ИЛИ `name`. Регресс-тест `_RealShapeProvider` мокает
-реальную форму (top-level metadata + `tool_name`). Live-проверка после фикса: deepseek/
-gemini/kimi/sonnet — все дают валидный tool-call. Следствие: **memory/extraction (фаза B)
-теперь работает вживую** через tool-канал (раньше молча падала в raw-fallback). Урок для
-контракта: примитив, читающий форму провайдера, ОБЯЗАН иметь тест против реальной формы, а
-не только против самодельного мока.
+**Фикс 1 (394a713):** `_extract_emit_args` теперь читает `planned_tool_calls` с response ИЛИ
+message metadata, принимает ключ `tool_name` ИЛИ `name`. Регресс-тест `_RealShapeProvider`
+мокает реальную форму (top-level metadata + `tool_name`).
+
+**Фикс 2 (2b8d6f1) — портируемость на thinking-модели:** qwen3-235b-a22b (thinking) отвергал
+форсированный object `tool_choice` (400 «tool_choice does not support being set to required or
+object in thinking mode», Alibaba). Общий фикс: `structured_completion` шлёт
+`reasoning={"enabled": False}` (унифицированный OpenRouter-ключ; `LlmRequest.reasoning`
+passthrough + форвард в openai-compat payload только когда задано). Структурный emit —
+механический, ризонинг не нужен; на не-thinking моделях это no-op.
+
+**Live-проверка (multi-model, по наводке пользователя «проверь несколько моделей»):** ВСЕ 6 —
+deepseek-v4-flash / gemini-flash-lite / kimi-k2 / qwen3-235b (thinking) / qwen3-235b-2507 /
+sonnet-4.6 — дают валидный tool-call. **memory/extraction (фаза B) подтверждена вживую**:
+факты извлекаются со слотами (`user-name`, `preferred-format`), НЕ raw-fallback. Урок: примитив,
+читающий форму провайдера, ОБЯЗАН иметь тест против реальной формы, а не только самодельного
+мока (структурная дыра приёмки 036 — примитив ни разу не тестировался против живого провайдера).
 
 ## Итог (2026-07-23)
 
