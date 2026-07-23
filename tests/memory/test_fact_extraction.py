@@ -86,7 +86,9 @@ async def test_same_slot_fact_supersedes_older_one() -> None:
 
 @pytest.mark.asyncio
 async def test_unparseable_extraction_falls_back_to_raw_turn() -> None:
-    provider = _ScriptedProvider(["I could not produce JSON, sorry."])
+    # Epic 027: одна непарсибельная реплика теперь чинится bounded-ретраем;
+    # fallback на raw-turn — только после ДВУХ подряд (см. test_recall_hygiene).
+    provider = _ScriptedProvider(["I could not produce JSON, sorry.", "still not JSON, sorry"])
     store = InMemoryMemoryStore()
     memory = FactExtractingMemoryProvider(store, provider)
     await memory.sync_turn(_turn("важный вопрос", "важный ответ"))

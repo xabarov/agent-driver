@@ -139,6 +139,11 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
         memory_state = get_memory_runtime_state(context)
         if not session_id or memory_state.turn_synced():
             return
+        # Write-context gate (epic 027, hermes agent_context): background,
+        # benchmark or subagent runs opt out of polluting the user's memory
+        # with app_metadata["memory"]["sync"] = False (recall unaffected).
+        if _memory_overrides(context).get("sync") is False:
+            return
         memory_state.mark_turn_synced()
         turn = MemoryTurn(
             session_id=session_id,

@@ -149,3 +149,68 @@ async def test_shutdown_drain_is_bounded_and_reports_abandoned(caplog) -> None:
 
     assert any("abandoned" in r.message for r in caplog.records)
     task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_sync_gate_false_skips_persistence() -> None:
+    """app_metadata['memory']['sync']=False: ран не пишет в память (recall жив)."""
+    from agent_driver.contracts import AgentRunInput
+
+    memory = _CountingMemoryProvider()
+    synced: list = []
+
+    async def _spy_sync(turn):  # noqa: ANN001
+        synced.append(turn)
+
+    memory.sync_turn = _spy_sync  # type: ignore[method-assign]
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        memory_provider=memory,
+    )
+    await agent.run(
+        AgentRunInput(
+            input="benchmark probe",
+            run_id="r-nosync",
+            thread_id="user-bench",
+            agent_id="agent",
+            graph_preset="single_react",
+            app_metadata={"memory": {"sync": False}},
+        )
+    )
+    assert synced == []
+
+
+@pytest.mark.asyncio
+async def test_failed_run_never_syncs_memory() -> None:
+    """Прерванный/упавший ран не попадает в память (write-side hygiene)."""
+    from agent_driver.contracts import AgentRunInput
+    from agent_driver.llm.contracts import LlmRequest, LlmResponse
+
+    class _BoomProvider(FakeProvider):
+        async def complete(self, request: LlmRequest) -> LlmResponse:
+            raise RuntimeError("provider down")
+
+    memory = _CountingMemoryProvider()
+    synced: list = []
+
+    async def _spy_sync(turn):  # noqa: ANN001
+        synced.append(turn)
+
+    memory.sync_turn = _spy_sync  # type: ignore[method-assign]
+    agent = create_agent(
+        provider=_BoomProvider(response_text="x"),
+        tools=ToolSet.only(),
+        memory_provider=memory,
+    )
+    with pytest.raises(Exception):
+        await agent.run(
+            AgentRunInput(
+                input="q",
+                run_id="r-fail",
+                thread_id="user-1",
+                agent_id="agent",
+                graph_preset="single_react",
+            )
+        )
+    assert synced == []

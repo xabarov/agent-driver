@@ -33,6 +33,7 @@ from agent_driver.memory.provider import (
     RecallQuery,
     RecallResult,
     apply_recall,
+    sanitize_memory_text,
     sync_raw_turn,
 )
 
@@ -135,6 +136,8 @@ class FactExtractingMemoryProvider(MemoryProvider):
         max_facts_per_turn: int = 5,
         fallback_raw: bool = True,
         recall_max_chars: int = 2000,
+        recall_min_relevance: float = 0.0,
+        recall_half_life_seconds: float | None = None,
     ) -> None:
         self._store = store
         self._llm_provider = llm_provider
@@ -144,6 +147,9 @@ class FactExtractingMemoryProvider(MemoryProvider):
         self._fallback_raw = fallback_raw
         # Read by MemoryLifecycleHook to bound the injected recall block.
         self.recall_max_chars = recall_max_chars
+        # Epic 027: abstain threshold + temporal decay for recall ranking.
+        self._recall_min_relevance = recall_min_relevance
+        self._recall_half_life_seconds = recall_half_life_seconds
 
     @property
     def store(self) -> MemoryStore:
@@ -153,7 +159,13 @@ class FactExtractingMemoryProvider(MemoryProvider):
     async def prefetch(self, query: RecallQuery) -> RecallResult:
         """Newest matching records with older same-slot facts superseded."""
         candidates = supersede_by_slot(self._store.list_for_session(query.session_id))
-        records = apply_recall(candidates, query.query, query.limit)
+        records = apply_recall(
+            candidates,
+            query.query,
+            query.limit,
+            min_relevance=self._recall_min_relevance,
+            half_life_seconds=self._recall_half_life_seconds,
+        )
         return RecallResult(session_id=query.session_id, records=records)
 
     async def sync_turn(self, turn: MemoryTurn) -> None:
@@ -183,25 +195,56 @@ class FactExtractingMemoryProvider(MemoryProvider):
     async def _extract_facts(self, turn: MemoryTurn) -> list[dict[str, str]]:
         parts = []
         if turn.user_text:
-            parts.append(f"User: {turn.user_text[:_MAX_SOURCE_CHARS]}")
+            source = sanitize_memory_text(turn.user_text)
+            if source:
+                parts.append(f"User: {source[:_MAX_SOURCE_CHARS]}")
         if turn.assistant_text:
-            parts.append(f"Assistant: {turn.assistant_text[:_MAX_SOURCE_CHARS]}")
+            source = sanitize_memory_text(turn.assistant_text)
+            if source:
+                parts.append(f"Assistant: {source[:_MAX_SOURCE_CHARS]}")
         if not parts:
             return []
-        request = LlmRequest(
-            messages=[
-                ChatMessage(role=ChatRole.SYSTEM, content=_EXTRACTION_SYSTEM_PROMPT),
-                ChatMessage(role=ChatRole.USER, content="\n".join(parts)),
-            ],
-            model=self._model,
-            temperature=0.0,
-            max_tokens=512,
-            metadata={"purpose": "memory_fact_extraction"},
-        )
-        response = await self._llm_provider.complete(request)
-        return parse_extracted_facts(
-            response.message.content or "", max_facts=self._max_facts_per_turn
-        )
+        messages = [
+            ChatMessage(role=ChatRole.SYSTEM, content=_EXTRACTION_SYSTEM_PROMPT),
+            ChatMessage(role=ChatRole.USER, content="\n".join(parts)),
+        ]
+        last_error: ValueError | None = None
+        # Epic 027 phase C: deepseek-class extraction flake — the model answers
+        # with prose instead of a bare JSON array; one bounded retry with a
+        # reinforcing nudge fixes most of them, so supersede keeps working and
+        # stale facts don't survive via the raw fallback.
+        for attempt in range(2):
+            request = LlmRequest(
+                messages=messages,
+                model=self._model,
+                temperature=0.0,
+                max_tokens=512,
+                metadata={"purpose": "memory_fact_extraction"},
+            )
+            response = await self._llm_provider.complete(request)
+            content = response.message.content or ""
+            try:
+                return parse_extracted_facts(
+                    content, max_facts=self._max_facts_per_turn
+                )
+            except ValueError as exc:
+                last_error = exc
+                if attempt == 0:
+                    logger.info(
+                        "memory extraction output unparseable; retrying once"
+                    )
+                    messages = messages + [
+                        ChatMessage(role=ChatRole.ASSISTANT, content=content[:1000]),
+                        ChatMessage(
+                            role=ChatRole.USER,
+                            content=(
+                                "Previous reply was not a bare JSON array. "
+                                "Return ONLY the JSON array now — no prose, "
+                                "no code fences. Return [] if nothing durable."
+                            ),
+                        ),
+                    ]
+        raise last_error if last_error is not None else ValueError("extraction failed")
 
     async def _sync_raw_turn(self, turn: MemoryTurn) -> None:
         """Raw-turn fallback mirroring :class:`StoreBackedMemoryProvider`."""
