@@ -42,10 +42,20 @@ from agent_driver.tools.prompts import (
     rendered_tool_docs_hash,
 )
 from agent_driver.tools.registry import RegisteredTool, ToolRegistry
+from agent_driver.tools.tool_result_preview import (
+    empty_result_marker,
+    is_truncated,
+    persisted_output_envelope,
+    safe_preview,
+)
 from agent_driver.tools.toolset import ToolSet, builtin_pack_names
 
 __all__ = [
     "apply_planning_state_tool_update",
+    "empty_result_marker",
+    "is_truncated",
+    "persisted_output_envelope",
+    "safe_preview",
     "GovernedToolExecutor",
     "GuardrailPipeline",
     "GuardrailResult",
