@@ -113,6 +113,12 @@ def build_openai_completion_payload(
     # responsibility of ``extra_body`` below.
     if request.response_format is not None:
         payload["response_format"] = request.response_format
+    # Provider-neutral reasoning control (OpenRouter ``reasoning`` knob).
+    # Forwarded only when set; omitted otherwise so backends that reject an
+    # unknown ``reasoning`` key are unaffected. Lets a forced structured emit
+    # disable thinking, which Qwen3-thinking requires for object tool_choice.
+    if request.reasoning is not None:
+        payload["reasoning"] = request.reasoning
     # Vendor-specific extras (e.g. vLLM ``chat_template_kwargs``,
     # OpenRouter ``provider`` hints) — merged last so they win on
     # collision with the standard openai-compat keys.

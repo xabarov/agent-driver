@@ -117,16 +117,25 @@ async def structured_completion(
     description: str = "Emit the final result as structured data.",
     max_retries: int = 1,
     metadata: dict[str, Any] | None = None,
+    disable_reasoning: bool = True,
 ) -> dict[str, Any]:
     """Force a schema-valid structured emit via the tool-call channel.
 
     Returns the validated arguments dict. Raises :class:`StructuredOutputError`
     if the model never produces a schema-valid emit within ``max_retries + 1``
     attempts — the caller decides fallback (never a silently-salvaged parse).
+
+    ``disable_reasoning`` (default True) sends ``reasoning={"enabled": False}``:
+    a forced object ``tool_choice`` is a mechanical emit that needs no
+    chain-of-thought, AND thinking-mode models reject a forced object/``required``
+    tool_choice outright (Qwen3 via OpenRouter). Disabling reasoning is a no-op on
+    non-thinking models and on backends that ignore the ``reasoning`` key. Set
+    False for a backend that rejects an unknown ``reasoning`` param.
     """
     convo = list(messages)
     tool = _emit_tool(schema, description=description)
     last_error = "no tool call produced"
+    reasoning = {"enabled": False} if disable_reasoning else None
     for attempt in range(max_retries + 1):
         request = LlmRequest(
             messages=convo,
@@ -134,6 +143,7 @@ async def structured_completion(
             tools=[tool],
             tool_choice={"type": "function", "function": {"name": _EMIT_TOOL_NAME}},
             temperature=0.0,
+            reasoning=reasoning,
             metadata={"purpose": "structured_output", **(metadata or {})},
         )
         response = await provider.complete(request)

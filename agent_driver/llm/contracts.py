@@ -95,6 +95,17 @@ class LlmRequest(ContractModel):
     # providers should layer a library like ``instructor`` on top — this
     # field is the transport-layer plumbing for the strict path.
     response_format: dict[str, Any] | None = None
+    # Provider-neutral reasoning control, mirroring OpenRouter's unified
+    # ``reasoning`` body param ({"enabled": bool} / {"effort": ...} /
+    # {"exclude": bool}). Forwarded verbatim by the OpenAI-compatible payload
+    # builder only when set; omitted when ``None`` so non-OpenRouter backends
+    # (which reject an unknown ``reasoning`` key) are unaffected. The concrete
+    # driver: a forced object/``required`` ``tool_choice`` is REJECTED by
+    # thinking-mode models (Alibaba Qwen3: "tool_choice ... does not support
+    # being set to required or object in thinking mode"), and disabling
+    # reasoning (a no-op on non-thinking models — verified sonnet/deepseek/
+    # gemini/kimi still 200) makes the forced structured-emit path portable.
+    reasoning: dict[str, Any] | None = None
 
     @field_validator("max_tokens")
     @classmethod
@@ -178,7 +189,9 @@ class LlmRequest(ContractModel):
                     "response_format type=json_schema requires 'json_schema' "
                     "to be a dict"
                 )
-            if not isinstance(schema_envelope.get("name"), str) or not schema_envelope.get("name"):
+            if not isinstance(
+                schema_envelope.get("name"), str
+            ) or not schema_envelope.get("name"):
                 raise ValueError(
                     "response_format json_schema requires non-empty 'name'"
                 )
@@ -187,6 +200,20 @@ class LlmRequest(ContractModel):
                     "response_format json_schema requires 'schema' to be a dict"
                 )
         return normalized
+
+    @field_validator("reasoning")
+    @classmethod
+    def validate_reasoning(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Validate the provider-neutral reasoning-control envelope.
+
+        ``None`` (omit) or a JSON-serializable dict; shape is not gate-kept —
+        the backend returns its own error for unknown keys.
+        """
+        if value is None:
+            return value
+        if not isinstance(value, dict):
+            raise ValueError("reasoning must be a dict or null")
+        return ensure_json_serializable(value, field_name="reasoning")
 
 
 class LlmResponse(ContractModel):

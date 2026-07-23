@@ -207,3 +207,41 @@ async def test_structured_output_inert_when_unset() -> None:
     )
     md = out.metadata or {}
     assert "structured_output" not in md and "structured_output_error" not in md
+
+
+# --- reasoning disable for thinking-mode compat (Qwen3) ------------------------
+
+
+@pytest.mark.asyncio
+async def test_structured_disables_reasoning_by_default() -> None:
+    provider = _ScriptedProvider([[{"name": "emit_result", "args": {"title": "X"}}]])
+    await structured_completion(provider=provider, messages=_msgs(), schema=_SCHEMA)
+    # A forced object tool_choice is rejected by thinking-mode models unless
+    # reasoning is disabled — structured_completion sends the OpenRouter knob.
+    assert provider.requests[0].reasoning == {"enabled": False}
+
+
+@pytest.mark.asyncio
+async def test_structured_can_opt_out_of_reasoning_disable() -> None:
+    provider = _ScriptedProvider([[{"name": "emit_result", "args": {"title": "X"}}]])
+    await structured_completion(
+        provider=provider, messages=_msgs(), schema=_SCHEMA, disable_reasoning=False
+    )
+    assert provider.requests[0].reasoning is None
+
+
+def test_payload_builder_forwards_reasoning_only_when_set() -> None:
+    from agent_driver.llm.providers_impl.openai_compatible.payload import (
+        build_openai_completion_payload,
+    )
+
+    def _payload(req: LlmRequest) -> dict:
+        return build_openai_completion_payload(
+            req, model="m", max_tokens_default=None, extra_body={}, stream=False
+        )
+
+    msgs = [ChatMessage(role=ChatRole.USER, content="hi")]
+    with_reasoning = _payload(LlmRequest(messages=msgs, reasoning={"enabled": False}))
+    assert with_reasoning["reasoning"] == {"enabled": False}
+    without = _payload(LlmRequest(messages=msgs))
+    assert "reasoning" not in without
