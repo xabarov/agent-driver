@@ -11,8 +11,14 @@ from typing import Any
 from agent_driver.code_agent.executor import CodeActionExecutor
 from agent_driver.context.artifacts import ArtifactStore, ContextStore
 from agent_driver.context.sessions import SessionStore
+from agent_driver.contracts.artifacts import RedactionInfo
 from agent_driver.contracts.checkpoints import CheckpointRef
-from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
+from agent_driver.contracts.enums import (
+    EventSeverity,
+    RunStatus,
+    RuntimeEventType,
+    TerminalReason,
+)
 from agent_driver.contracts.interrupts import InterruptRequest
 from agent_driver.contracts.profiles import HarnessProfile
 from agent_driver.contracts.runtime import AgentRunInput
@@ -464,6 +470,13 @@ class EventSpec:
     attempt_id: str
     event_type: RuntimeEventType
     payload: dict[str, Any] | None = None
+    # Epic 037 phase B/C: optional correlation + redaction carriers. When
+    # ``trace_id`` is None the emit path defaults it to the deterministic
+    # ``run_id:attempt_id`` derivation, so every event correlates to its span
+    # without clock-skew. ``redaction`` records that a payload was sanitized.
+    trace_id: str | None = None
+    severity: EventSeverity | None = None
+    redaction: RedactionInfo | None = None
 
 
 @dataclass(frozen=True, slots=True)

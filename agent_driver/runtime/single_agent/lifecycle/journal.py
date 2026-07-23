@@ -10,8 +10,10 @@ from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalRe
 from agent_driver.contracts.events import (
     RuntimeEvent,
     RuntimeEventContext,
+    RuntimeEventOptions,
     new_runtime_event,
 )
+from agent_driver.contracts.observability import deterministic_trace_id
 from agent_driver.contracts.runtime import AgentRunOutput
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.metadata_state import (
@@ -31,7 +33,6 @@ from agent_driver.runtime.single_agent.types import (
     TerminalResult,
 )
 from agent_driver.runtime.state import RuntimeState
-
 
 # How many extra LLM steps the forced-final synthesis window may take after a
 # soft-budget grace is granted before the run is hard-terminated. One step is
@@ -56,6 +57,18 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
         return (max(event.seq for event in events) + 1) if events else 1
 
     def _emit(self, spec: EventSpec) -> RuntimeEvent:
+        # Epic 037 phase B: stamp the deterministic trace id on every event so it
+        # correlates to its span by construction (no clock-skew). A spec may
+        # override it; redaction/severity flow through when set (phase C).
+        options: RuntimeEventOptions = {
+            "payload": spec.payload or {},
+            "trace_id": spec.trace_id
+            or deterministic_trace_id(spec.run_id, spec.attempt_id),
+        }
+        if spec.severity is not None:
+            options["severity"] = spec.severity
+        if spec.redaction is not None:
+            options["redaction"] = spec.redaction
         event = new_runtime_event(
             event_type=spec.event_type,
             context=RuntimeEventContext(
@@ -63,7 +76,7 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
                 attempt_id=spec.attempt_id,
                 seq=self._next_seq(spec.run_id),
             ),
-            options={"payload": spec.payload or {}},
+            options=options,
         )
         self._deps.event_log.append(event)
         return event

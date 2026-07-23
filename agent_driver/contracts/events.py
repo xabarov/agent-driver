@@ -61,6 +61,10 @@ class RuntimeEventOptions(TypedDict, total=False):
     node_id: str | None
     trace_id: str | None
     severity: EventSeverity
+    # Epic 037 phase C: an honest redaction descriptor when the payload was
+    # bounded/secret-masked before emission. Previously RuntimeEvent.redaction
+    # existed but was unreachable through this constructor (dead field).
+    redaction: RedactionInfo | None
 
 
 def new_runtime_event(
@@ -83,4 +87,5 @@ def new_runtime_event(
         payload=opts.get("payload", {}),
         trace_id=opts.get("trace_id"),
         severity=opts.get("severity", EventSeverity.INFO),
+        redaction=opts.get("redaction"),
     )

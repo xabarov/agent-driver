@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from hashlib import sha1
 
+from agent_driver.contracts.observability import deterministic_trace_id
 from agent_driver.contracts.runtime import AgentRunOutput
 from agent_driver.observability.contracts import TraceExport, TraceSpan
 
 
 def _trace_id_for_output(output: AgentRunOutput) -> str:
-    """Build stable trace identifier for one run/attempt pair."""
-    seed = f"{output.run_id}:{output.attempt_id}"
-    return f"trace_{sha1(seed.encode('utf-8')).hexdigest()[:16]}"
+    """Build stable trace identifier for one run/attempt pair.
+
+    Delegates to the shared :func:`deterministic_trace_id` so the emit path and
+    this export derive the SAME id (epic 037 phase B — single correlation seed).
+    """
+    return deterministic_trace_id(output.run_id, output.attempt_id)
 
 
 def _span_id_for_event(trace_id: str, event_id: str) -> str:
@@ -58,7 +62,9 @@ def build_trace_export(output: AgentRunOutput) -> TraceExport:
             "warning_count": len(output.warnings),
             "subagent_group_count": len(output.subagent_groups),
             "subagent_run_count": len(output.subagent_runs),
-            "subagent_group_ids": [item.group_id for item in output.subagent_groups[:20]],
+            "subagent_group_ids": [
+                item.group_id for item in output.subagent_groups[:20]
+            ],
             "subagent_join_policies": [
                 item.join_policy.value for item in output.subagent_groups[:20]
             ],

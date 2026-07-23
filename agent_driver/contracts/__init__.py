@@ -17,6 +17,28 @@ from agent_driver.contracts.capability_packs import (
     HarnessScenarioSpec,
 )
 from agent_driver.contracts.checkpoints import CheckpointRef
+from agent_driver.contracts.context import (
+    ArtifactPreview,
+    CompactionAudit,
+    CompactionDecision,
+    CompactionResult,
+    ContextArtifactRef,
+    ContextBudget,
+    ObservationMemory,
+    ObservationProvenance,
+    PlanApprovalPayload,
+    PlanArtifact,
+    PlanningState,
+    PlanningStep,
+    SessionMemory,
+    SessionRef,
+    SessionTurn,
+    StoredArtifact,
+    TodoState,
+    TrimAuditRecord,
+    TrimmedContext,
+    TurnDigest,
+)
 from agent_driver.contracts.continuous_validation import (
     FlakeRecord,
     HarnessBaseline,
@@ -26,6 +48,14 @@ from agent_driver.contracts.continuous_validation import (
     ValidationArtifactRef,
     ValidationDashboardSummary,
     ValidationRunRecord,
+)
+from agent_driver.contracts.control import (
+    CommandQueueItem,
+    CommandQueueStatus,
+    ControlKind,
+    ControlPriority,
+    ControlRequest,
+    ControlResponse,
 )
 from agent_driver.contracts.durable_lifecycle import (
     AttachPlan,
@@ -48,45 +78,15 @@ from agent_driver.contracts.durable_lifecycle import (
     ForkPlan,
     ResumePlan,
 )
-from agent_driver.contracts.context import (
-    ArtifactPreview,
-    CompactionAudit,
-    CompactionDecision,
-    CompactionResult,
-    ContextArtifactRef,
-    ContextBudget,
-    ObservationMemory,
-    ObservationProvenance,
-    PlanApprovalPayload,
-    PlanArtifact,
-    PlanningState,
-    PlanningStep,
-    SessionRef,
-    SessionMemory,
-    SessionTurn,
-    StoredArtifact,
-    TodoState,
-    TrimAuditRecord,
-    TrimmedContext,
-    TurnDigest,
-)
-from agent_driver.contracts.control import (
-    CommandQueueItem,
-    CommandQueueStatus,
-    ControlKind,
-    ControlPriority,
-    ControlRequest,
-    ControlResponse,
-)
 from agent_driver.contracts.enums import (
     AgentProfile,
     ApprovalMode,
     ArtifactKind,
     ChatRole,
-    EventSeverity,
-    GuardrailDecision,
     CompactionMode,
     CompactionSkipReason,
+    EventSeverity,
+    GuardrailDecision,
     InterruptReason,
     ObservationSource,
     ObservationTrust,
@@ -115,6 +115,17 @@ from agent_driver.contracts.enums import (
     WarningSource,
 )
 from agent_driver.contracts.events import RuntimeEvent, new_runtime_event
+from agent_driver.contracts.harness_adapter import (
+    HarnessAdapterCapability,
+    HarnessAdapterCompatibilityReport,
+    HarnessAdapterControl,
+    HarnessAdapterEvent,
+    HarnessAdapterRun,
+    HarnessAdapterSession,
+    HarnessApprovalRequest,
+    HarnessArtifactRef,
+    HarnessSupportBundleRef,
+)
 from agent_driver.contracts.hook_chains import (
     HookAction,
     HookActionType,
@@ -123,6 +134,11 @@ from agent_driver.contracts.hook_chains import (
     HookRule,
     HookTrigger,
     HookTriggerEvent,
+)
+from agent_driver.contracts.interrupts import (
+    ApprovalPayload,
+    InterruptRequest,
+    ResumeCommand,
 )
 from agent_driver.contracts.lifecycle_hooks import (
     LifecycleHookAuditRecord,
@@ -137,28 +153,27 @@ from agent_driver.contracts.lifecycle_hooks import (
     LifecycleHookVerdict,
     LifecycleMiddlewareChain,
 )
-from agent_driver.contracts.harness_adapter import (
-    HarnessAdapterCapability,
-    HarnessAdapterCompatibilityReport,
-    HarnessAdapterControl,
-    HarnessAdapterEvent,
-    HarnessAdapterRun,
-    HarnessAdapterSession,
-    HarnessApprovalRequest,
-    HarnessArtifactRef,
-    HarnessSupportBundleRef,
-)
-from agent_driver.contracts.interrupts import (
-    ApprovalPayload,
-    InterruptRequest,
-    ResumeCommand,
+from agent_driver.contracts.mcp_governance import (
+    McpApprovalDecision,
+    McpApprovalPolicy,
+    McpCallProvenanceRow,
+    McpGovernanceCompatibilityReport,
+    McpGovernanceStatus,
+    McpGovernanceUsageSummary,
+    McpRegistrySnapshot,
+    McpServerDescriptor,
+    McpToolResourceRef,
 )
 from agent_driver.contracts.memory import MemoryProjection
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.contracts.profiles import (
-    HarnessProfile,
-    PromptRenderResult,
-    PromptTemplate,
+from agent_driver.contracts.node_contract import FinalizeNow, NodeContract
+from agent_driver.contracts.observability import (
+    MIDDLEWARE_SCHEMA_VERSION,
+    OBSERVER_SCHEMA_VERSION,
+    correlation_ids,
+    describe_observability_contract,
+    deterministic_trace_id,
+    hook_method_role,
 )
 from agent_driver.contracts.policy import (
     HarnessPolicyProfile,
@@ -167,6 +182,11 @@ from agent_driver.contracts.policy import (
     PolicySignal,
     RunSupervisorState,
     ValidationGateResult,
+)
+from agent_driver.contracts.profiles import (
+    HarnessProfile,
+    PromptRenderResult,
+    PromptTemplate,
 )
 from agent_driver.contracts.provider_catalog import (
     PROVIDER_CATALOG_STATUSES,
@@ -192,6 +212,7 @@ from agent_driver.contracts.runtime_decisions import (
     GoalState,
     RuntimeDecision,
 )
+from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 from agent_driver.contracts.skills_lifecycle import (
     SkillCapabilityFilter,
     SkillInventoryRecord,
@@ -211,19 +232,6 @@ from agent_driver.contracts.skills_lifecycle import (
     SkillSupportingFileRef,
     SkillUsageSummary,
 )
-from agent_driver.contracts.mcp_governance import (
-    McpApprovalDecision,
-    McpApprovalPolicy,
-    McpCallProvenanceRow,
-    McpGovernanceCompatibilityReport,
-    McpGovernanceStatus,
-    McpGovernanceUsageSummary,
-    McpRegistrySnapshot,
-    McpServerDescriptor,
-    McpToolResourceRef,
-)
-from agent_driver.contracts.node_contract import FinalizeNow, NodeContract
-from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.contracts.subagent_mailbox import (
     SubagentMailboxDirection,
@@ -394,6 +402,12 @@ __all__ = [
     "RuntimeDecision",
     "RuntimeEvent",
     "RuntimeEventType",
+    "OBSERVER_SCHEMA_VERSION",
+    "MIDDLEWARE_SCHEMA_VERSION",
+    "correlation_ids",
+    "deterministic_trace_id",
+    "hook_method_role",
+    "describe_observability_contract",
     "SensitivityLevel",
     "SerializationMode",
     "SideEffectClass",

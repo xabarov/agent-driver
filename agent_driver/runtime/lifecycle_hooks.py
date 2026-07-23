@@ -165,6 +165,27 @@ def _hook_name(hook: RunLifecycleHook) -> str:
     return getattr(hook, "name", None) or type(hook).__name__
 
 
+def has_hook(hooks: "Iterable[RunLifecycleHook]", method_name: str) -> bool:
+    """Whether any hook actually OVERRIDES ``method_name`` (epic 037 phase C).
+
+    The cheap-path gate (reference: hermes ``PluginManager.has_hook``): a caller
+    about to build an expensive observer payload — sanitized request/response,
+    tool-result projections — first checks ``has_hook(hooks, "after_llm_response")``
+    so the uninstrumented default path (no subscriber overrides the method) pays
+    nothing. Override detection compares against :class:`BaseRunLifecycleHook`'s
+    no-op, so a hook that merely subclasses the base without touching a method is
+    correctly treated as "not subscribed" to it. Unknown method names → ``False``.
+    """
+    base_impl = getattr(BaseRunLifecycleHook, method_name, None)
+    if base_impl is None:
+        return False
+    for hook in hooks:
+        impl = getattr(type(hook), method_name, None)
+        if impl is not None and impl is not base_impl:
+            return True
+    return False
+
+
 # Epic 024 phase C: non-finalize hook dispatches emit a single completed event
 # only when the hook was actually slow — visibility without journal noise.
 _SLOW_HOOK_EMIT_MS = 250

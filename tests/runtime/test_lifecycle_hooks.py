@@ -166,3 +166,27 @@ async def test_failing_hook_is_isolated_and_others_still_fire() -> None:
     assert output.status.value == "completed"  # the run survived the failing hook
     assert survivor.events == ["start:sess-iso", "finalize"]  # peer still fired
     assert survivor.answer == "done"
+
+
+# --- has_hook cheap-path gate (epic 037 phase C) ------------------------------
+
+
+def test_has_hook_detects_overrides_only() -> None:
+    from agent_driver.runtime.lifecycle_hooks import has_hook
+
+    class _OnlyCompleted(BaseRunLifecycleHook):
+        async def on_run_completed(
+            self, context, *, answer: str
+        ) -> None:  # noqa: ANN001
+            pass
+
+    hooks = [_OnlyCompleted()]
+    # Overridden method → subscribed.
+    assert has_hook(hooks, "on_run_completed") is True
+    # Method left as the base no-op → not subscribed (cheap path skips payload).
+    assert has_hook(hooks, "after_llm_response") is False
+    # A bare base instance overrides nothing.
+    assert has_hook([BaseRunLifecycleHook()], "on_run_completed") is False
+    # Empty subscriber set + unknown method → False.
+    assert has_hook([], "on_run_completed") is False
+    assert has_hook(hooks, "nonexistent_method") is False
