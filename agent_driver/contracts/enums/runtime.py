@@ -97,6 +97,9 @@ class RuntimeEventType(StrEnum):
     MEMORY_COMPACTED = "memory_compacted"
     RUNTIME_DECISION = "runtime_decision"
     NODE_CONTRACT_WARNING = "node_contract_warning"
+    # Epic 038 — 1-3 predicted follow-up questions emitted after a run's answer
+    # settles (post-answer product affordance; payload carries a string list).
+    SUGGESTED_QUESTIONS = "suggested_questions"
     WARNING = "warning"
     RUN_COMPLETED = "run_completed"
     RUN_FAILED = "run_failed"

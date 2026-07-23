@@ -63,8 +63,16 @@ from agent_driver.llm.structured import (
     StructuredOutputError,
     structured_completion,
 )
+from agent_driver.llm.suggestions import (
+    filter_suggestion,
+    generate_suggestions,
+    suppress_reason_for_usage,
+)
 
 __all__ = [
+    "filter_suggestion",
+    "generate_suggestions",
+    "suppress_reason_for_usage",
     "sanitize_request_messages",
     "strip_surrogates",
     "ClassifiedError",
