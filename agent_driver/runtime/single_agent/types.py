@@ -330,6 +330,14 @@ class RunnerConfig:
         return self.capabilities.auxiliary_model
 
     @property
+    def auxiliary_models(self) -> dict[str, str]:
+        return self.capabilities.auxiliary_models
+
+    def aux_model_for(self, task: str) -> str | None:
+        """Per-task aux-model resolution (epic 032 phase A)."""
+        return self.capabilities.aux_model_for(task)
+
+    @property
     def project_memory_sources(self) -> tuple[str, ...]:
         return self.capabilities.project_memory_sources
 

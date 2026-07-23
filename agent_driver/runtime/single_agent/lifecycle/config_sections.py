@@ -30,6 +30,11 @@ class CapabilitySettings:
     harness_profiles: tuple["HarnessProfile", ...] = ()
     auxiliary_provider: "LlmProvider | None" = None
     auxiliary_model: str | None = None
+    # Epic 032 phase A: per-task aux-model registry (grader / extraction / title / …).
+    # ``aux_model_for(task)`` resolves task → auxiliary_models[task] → auxiliary_model
+    # → None (provider default). Generalizes the 024 lesson «pick the aux model by
+    # measurement» from one env var to a typed seam every side-call shares.
+    auxiliary_models: dict[str, str] = field(default_factory=dict)
     project_memory_sources: tuple[str, ...] = ()
     project_memory_max_file_chars: int = 8000
     project_memory_max_total_chars: int = 24000
@@ -48,6 +53,14 @@ class CapabilitySettings:
         object.__setattr__(
             self, "subagent_model_routing", dict(self.subagent_model_routing or {})
         )
+        object.__setattr__(
+            self, "auxiliary_models", dict(self.auxiliary_models or {})
+        )
+
+    def aux_model_for(self, task: str) -> str | None:
+        """Resolve the model for an aux ``task`` (epic 032): task registry →
+        shared ``auxiliary_model`` → None (provider default)."""
+        return self.auxiliary_models.get(task) or self.auxiliary_model
 
 
 # Class default for the window estimate. A module constant (not type(self).attr):
