@@ -387,8 +387,21 @@ async def _maybe_finalize_from_tool_evidence(
             reason="finalize_when_tools_satisfied",
         )
         return True
+    def _emit_hook_event(event_type: str, payload: dict) -> None:
+        host._emit(
+            EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType(event_type),
+                payload=payload,
+            )
+        )
+
     directive = await dispatch_tool_evidence(
-        host._deps.lifecycle_hooks, context, result.envelopes
+        host._deps.lifecycle_hooks,
+        context,
+        result.envelopes,
+        emit=_emit_hook_event,
     )
     if directive is not None:
         nc.set_early_finalize(context, answer=directive.answer, reason=directive.reason)

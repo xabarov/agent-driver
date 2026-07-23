@@ -168,6 +168,12 @@ class RunnerConfig:
         # Epic 016: providers tried (in order) by the forced-final ladder when the primary
         # keeps returning empty finals. Hosts pass configured LlmProvider instances.
         self.fallback_providers = tuple(kwargs.pop("fallback_providers", ()) or ())
+        # Epic 024: per-hook budget (seconds) for finalize-stage lifecycle hooks
+        # (goal-gate graders etc.). On expiry the hook fails open — the answer is
+        # accepted and lifecycle_hook_timed_out is emitted. None disables. 15s fits
+        # a small-completion LLM grader plus one transient retry; unbudgeted finalize
+        # awaits are exactly how the measured 22-139s post-final tails happened.
+        self.finalize_hook_timeout = kwargs.pop("finalize_hook_timeout", 15.0)
         # When a soft budget (max_steps / max_tool_calls / cost) is exhausted,
         # grant one forced-final synthesis turn (tools disabled) so the run can
         # return a best-effort answer instead of a bare FAILED with an empty

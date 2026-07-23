@@ -51,6 +51,27 @@ from agent_driver.runtime.tools import ToolExecutionResult
 _MAX_RUBRIC_REVISIONS = 10
 
 
+def _hook_event_emitter(host, context: RunContext):
+    """Emitter closure turning lifecycle-hook dispatch events into run events.
+
+    Shared by run_start / finalize / run_completed dispatches (epic 024 phase C)
+    so slow or timed-out hooks are visible in the event journal instead of an
+    unexplained gap before the next runtime event.
+    """
+
+    def _emit_hook_event(event_type: str, payload: dict) -> None:
+        host._emit(  # pylint: disable=protected-access
+            EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType(event_type),
+                payload=payload,
+            )
+        )
+
+    return _emit_hook_event
+
+
 # Tools whose calls are bookkeeping, not progress — refunded from the tool budget
 # (epic 019 phase D). Keep in sync with the builtin planning/todo registrations.
 _HOUSEKEEPING_TOOL_NAMES = frozenset(
@@ -216,7 +237,11 @@ class SingleAgentStepMixin:
 
         apply_planning_state_seed_from_metadata(context)
         self._apply_node_contract_run_start(context)
-        await dispatch_run_start(self._deps.lifecycle_hooks, context)
+        await dispatch_run_start(
+            self._deps.lifecycle_hooks,
+            context,
+            emit=_hook_event_emitter(self, context),
+        )
         self._emit(
             EventSpec(
                 run_id=context.run_id,
@@ -429,21 +454,12 @@ class SingleAgentStepMixin:
                 output.model_dump(mode="json")
             )
             return RuntimeStepResult(next_step="done")
-        def _emit_hook_event(event_type: str, payload: dict) -> None:
-            self._emit(
-                EventSpec(
-                    run_id=context.run_id,
-                    attempt_id=context.attempt_id,
-                    event_type=RuntimeEventType(event_type),
-                    payload=payload,
-                )
-            )
-
         revision = await dispatch_finalize(
             self._deps.lifecycle_hooks,
             context,
             answer=terminal_answer or "",
-            emit=_emit_hook_event,
+            emit=_hook_event_emitter(self, context),
+            timeout=getattr(self._config, "finalize_hook_timeout", None),
         )
         if revision is not None and (
             int(context.metadata.get("rubric_revision_count", 0))
@@ -470,7 +486,10 @@ class SingleAgentStepMixin:
         # with the answer the user actually received. Hooks must schedule, not
         # block — this sits right before the terminal event is emitted.
         await dispatch_run_completed(
-            self._deps.lifecycle_hooks, context, answer=terminal_answer or ""
+            self._deps.lifecycle_hooks,
+            context,
+            answer=terminal_answer or "",
+            emit=_hook_event_emitter(self, context),
         )
         self._emit(
             EventSpec(

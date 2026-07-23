@@ -58,10 +58,25 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
 
     name = "long_term_memory"
 
-    def __init__(self, provider: MemoryProvider) -> None:
+    # Bounded shutdown drain (epic 024, hermes-style): flush pending background
+    # syncs for at most this long, then report what was abandoned instead of
+    # holding process exit hostage to a wedged provider.
+    _SHUTDOWN_DRAIN_TIMEOUT = 30.0
+
+    def __init__(
+        self,
+        provider: MemoryProvider,
+        *,
+        shutdown_drain_timeout: float | None = None,
+    ) -> None:
         self._provider = provider
         self._post_setup_done = False
         self._pending_syncs: set[asyncio.Task] = set()
+        self._shutdown_drain_timeout = (
+            shutdown_drain_timeout
+            if shutdown_drain_timeout is not None
+            else self._SHUTDOWN_DRAIN_TIMEOUT
+        )
 
     async def _ensure_post_setup(self) -> None:
         """Run the provider's one-time ``post_setup`` lazily and idempotently."""
@@ -71,10 +86,21 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
         await self._provider.post_setup()
 
     async def shutdown(self) -> None:
-        """Flush pending turn syncs, then close the backing provider."""
+        """Drain pending turn syncs (bounded), report abandons, close provider."""
         pending = tuple(self._pending_syncs)
         if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+            _done, not_done = await asyncio.wait(
+                pending, timeout=self._shutdown_drain_timeout
+            )
+            if not_done:
+                # Honest shutdown report instead of a silent hang or silent loss
+                # (hermes memory_manager reports abandoned_writes the same way).
+                logger.warning(
+                    "memory shutdown: %d background turn sync(s) abandoned "
+                    "after %.0fs drain",
+                    len(not_done),
+                    self._shutdown_drain_timeout,
+                )
         await self._provider.shutdown()
 
     async def on_run_start(self, context: "RunContext") -> None:

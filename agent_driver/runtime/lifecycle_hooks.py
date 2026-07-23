@@ -14,6 +14,7 @@ coupled to runtime state rather than to provider-neutral contracts.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable, Iterable
@@ -164,11 +165,39 @@ def _hook_name(hook: RunLifecycleHook) -> str:
     return getattr(hook, "name", None) or type(hook).__name__
 
 
+# Epic 024 phase C: non-finalize hook dispatches emit a single completed event
+# only when the hook was actually slow — visibility without journal noise.
+_SLOW_HOOK_EMIT_MS = 250
+
+
+def _emit_if_slow(
+    emit: "Callable[[str, dict[str, Any]], None] | None",
+    hook: RunLifecycleHook,
+    *,
+    phase: str,
+    started: float,
+) -> None:
+    """Emit ``lifecycle_hook_completed`` for a slow non-finalize hook."""
+    if emit is None:
+        return
+    duration_ms = int((time.monotonic() - started) * 1000)
+    if duration_ms < _SLOW_HOOK_EMIT_MS:
+        return
+    emit(
+        "lifecycle_hook_completed",
+        {"hook": _hook_name(hook), "phase": phase, "duration_ms": duration_ms},
+    )
+
+
 async def dispatch_run_start(
-    hooks: Iterable[RunLifecycleHook], context: "RunContext"
+    hooks: Iterable[RunLifecycleHook],
+    context: "RunContext",
+    *,
+    emit: "Callable[[str, dict[str, Any]], None] | None" = None,
 ) -> None:
     """Invoke ``on_run_start`` for each hook; isolate per-hook failures."""
     for hook in hooks:
+        started = time.monotonic()
         try:
             await hook.on_run_start(context)
         except Exception:  # pylint: disable=broad-exception-caught
@@ -176,6 +205,7 @@ async def dispatch_run_start(
             logger.exception(
                 "lifecycle on_run_start failed for hook %r", _hook_name(hook)
             )
+        _emit_if_slow(emit, hook, phase="run_start", started=started)
 
 
 async def dispatch_finalize(
@@ -184,6 +214,7 @@ async def dispatch_finalize(
     *,
     answer: str,
     emit: "Callable[[str, dict[str, Any]], None] | None" = None,
+    timeout: float | None = None,
 ) -> "RevisionRequest | None":
     """Invoke ``on_finalize`` for each hook; return the first revision request.
 
@@ -194,6 +225,12 @@ async def dispatch_finalize(
     each hook that actually overrides ``on_finalize`` — this is what makes slow
     finalize work (an LLM goal-gate grading the answer) visible to the host's
     event stream instead of an unexplained gap before the terminal event.
+
+    ``timeout`` (epic 024, per-hook seconds) bounds each ``on_finalize``: a hook
+    that exceeds it fails open — the answer is accepted, the hook's revision (if
+    any) is lost, and ``lifecycle_hook_timed_out`` is emitted. Finalize hooks may
+    legitimately block (a goal-gate can demand a revision), but never unboundedly:
+    the measured 22-139s post-final tails came exactly from unbudgeted awaits here.
     """
     revision: RevisionRequest | None = None
     for hook in hooks:
@@ -208,14 +245,36 @@ async def dispatch_finalize(
                 {"hook": _hook_name(hook), "phase": "finalize"},
             )
         started = time.monotonic()
+        timed_out = False
         try:
-            result = await hook.on_finalize(context, answer=answer)
+            call = hook.on_finalize(context, answer=answer)
+            result = await (
+                asyncio.wait_for(call, timeout) if timeout is not None else call
+            )
+        except asyncio.TimeoutError:
+            timed_out = True
+            result = None
+            logger.warning(
+                "lifecycle on_finalize timed out after %.1fs for hook %r; "
+                "failing open (answer accepted)",
+                timeout,
+                _hook_name(hook),
+            )
+            if hook_emit is not None:
+                hook_emit(
+                    "lifecycle_hook_timed_out",
+                    {
+                        "hook": _hook_name(hook),
+                        "phase": "finalize",
+                        "timeout_seconds": timeout,
+                    },
+                )
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception(
                 "lifecycle on_finalize failed for hook %r", _hook_name(hook)
             )
             result = None
-        if hook_emit is not None:
+        if hook_emit is not None and not timed_out:
             hook_emit(
                 "lifecycle_hook_completed",
                 {
@@ -231,22 +290,34 @@ async def dispatch_finalize(
 
 
 async def dispatch_run_completed(
-    hooks: Iterable[RunLifecycleHook], context: "RunContext", *, answer: str
+    hooks: Iterable[RunLifecycleHook],
+    context: "RunContext",
+    *,
+    answer: str,
+    emit: "Callable[[str, dict[str, Any]], None] | None" = None,
 ) -> None:
-    """Invoke ``on_run_completed`` for each hook; isolate per-hook failures."""
+    """Invoke ``on_run_completed`` for each hook; isolate per-hook failures.
+
+    Hooks here must schedule slow work, not await it (terminal-phase contract,
+    docs/terminal-phase-contract.md) — a slow hook shows up via ``emit``.
+    """
     for hook in hooks:
+        started = time.monotonic()
         try:
             await hook.on_run_completed(context, answer=answer)
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception(
                 "lifecycle on_run_completed failed for hook %r", _hook_name(hook)
             )
+        _emit_if_slow(emit, hook, phase="run_completed", started=started)
 
 
 async def dispatch_tool_evidence(
     hooks: Iterable[RunLifecycleHook],
     context: "RunContext",
     envelopes: "list[ToolResultEnvelope]",
+    *,
+    emit: "Callable[[str, dict[str, Any]], None] | None" = None,
 ) -> "FinalizeNow | None":
     """Invoke ``on_tool_evidence`` for each hook; return the first finalize directive.
 
@@ -255,13 +326,16 @@ async def dispatch_tool_evidence(
     """
     directive: "FinalizeNow | None" = None
     for hook in hooks:
+        started = time.monotonic()
         try:
             result = await hook.on_tool_evidence(context, envelopes)
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception(
                 "lifecycle on_tool_evidence failed for hook %r", _hook_name(hook)
             )
+            _emit_if_slow(emit, hook, phase="tool_evidence", started=started)
             continue
+        _emit_if_slow(emit, hook, phase="tool_evidence", started=started)
         if result is not None and directive is None:
             directive = result
     return directive

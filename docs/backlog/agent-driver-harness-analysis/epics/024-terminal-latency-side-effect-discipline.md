@@ -1,6 +1,6 @@
 # Дисциплина терминальной фазы: что имеет право блокировать завершение рана
 
-Дата создания: 2026-07-23 (из живого инцидента MeetScript «Сохраняю прогресс»). Статус: **proposed**.
+Дата создания: 2026-07-23 (из живого инцидента MeetScript «Сохраняю прогресс»). Статус: **фазы A-D DONE 2026-07-23; фаза E (живая приёмка) — см. низ файла**.
 
 Мотивация из живых данных: 2026-07-22 замерены хвосты **21.6 / 33.7 / 138.8s** между готовым
 финальным текстом и `run_completed` — синхронная LLM-экстракция памяти + невидимый goal-gate
@@ -67,3 +67,25 @@ E. Приёмка: замер хвоста на MeetScript-классе прог
 
 Сама ревизионная петля (022) и лестница пустых финалов (016) — здесь только их место
 на критическом пути и бюджеты.
+
+## Реализация 2026-07-23 (фазы A-D)
+
+- **A** Контракт: `docs/terminal-phase-contract.md` (3 класса пост-финальной работы,
+  правила для авторов хуков, инвентарь) + ast-тест-замок
+  `tests/runtime/test_terminal_phase_contract.py` (новый on_finalize/on_run_completed
+  без записи в контракт = красный тест; обратный тест ловит «призраков» в инвентаре).
+- **B** Бюджет: `RunnerConfig.finalize_hook_timeout` (дефолт 15s, None = off),
+  `dispatch_finalize(..., timeout=)` — per-hook `asyncio.wait_for`, fail-open (ответ
+  принят, ревизия таймаутнувшего хука отброшена), эмитится `lifecycle_hook_timed_out`
+  {hook, phase, timeout_seconds}; completed-скобка при таймауте не эмитится.
+- **C** Симметрия: `dispatch_run_start`/`dispatch_tool_evidence`/`dispatch_run_completed`
+  получили emit; порог `_SLOW_HOOK_EMIT_MS=250` — одиночное completed-событие только
+  для реально медленных хуков (finalize сохраняет полную скобку started/completed).
+  Общий эмиттер `_hook_event_emitter` в steps.py + врезка в tool_stage.
+- **D** Бюджет грейдера: § в terminal-phase-contract.md + аддендум в 022 (модель
+  дешёвая, ≤300 токенов, temp 0, streaming off; движковый таймаут покрывает runaway;
+  коалесинг = max_iterations 1; hermes-стойка «без второго хода» — как эскалация).
+- Бонус hermes-паттерн: bounded drain шатдауна памяти (30s, конфигурируемо) с честным
+  отчётом `abandoned` вместо вечного ожидания клина провайдера.
+- Тесты: timeout-fail-open + slow-run-start-emit (test_rubric_goal_gate), bounded-drain
+  (test_memory_lifecycle_wiring), ast-инвентарь ×2.

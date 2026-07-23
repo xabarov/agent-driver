@@ -185,3 +185,72 @@ async def test_memory_persists_post_revision_answer() -> None:
     assert output.status.value == "completed"
     assert output.answer == "final"
     assert memory.synced_answers == ["final"]
+
+
+@pytest.mark.asyncio
+async def test_finalize_hook_timeout_fails_open() -> None:
+    """A wedged finalize hook is cut at finalize_hook_timeout; answer accepted."""
+    import asyncio
+
+    from agent_driver.runtime.single_agent.types import RunnerConfig
+
+    class _WedgedGate(BaseRunLifecycleHook):
+        name = "wedged_gate"
+
+        async def on_finalize(self, context, *, answer):  # noqa: ANN001
+            await asyncio.sleep(30)
+            return RevisionRequest(feedback="should never arrive")
+
+    agent = create_agent(
+        provider=FakeProvider(response_text="done"),
+        tools=ToolSet.only(),
+        lifecycle_hooks=(_WedgedGate(),),
+        config=RunnerConfig(finalize_hook_timeout=0.05),
+    )
+    output = await agent.run(_run_input("r-timeout"))
+
+    assert output.status.value == "completed"  # fail-open: answer accepted
+    assert output.answer == "done"
+    timed_out = [
+        e.payload for e in output.events if e.type.value == "lifecycle_hook_timed_out"
+    ]
+    assert [p["hook"] for p in timed_out] == ["wedged_gate"]
+    assert timed_out[0]["timeout_seconds"] == 0.05
+    # No revision loop happened: the timed-out hook's revision was discarded.
+    completed = [
+        e for e in output.events if e.type.value == "lifecycle_hook_completed"
+    ]
+    assert completed == []  # timed-out hook does not emit a completed bracket
+
+
+@pytest.mark.asyncio
+async def test_slow_run_start_hook_emits_completed_event() -> None:
+    """Non-finalize hooks surface in the journal only when actually slow."""
+    import asyncio
+
+    class _SlowStart(BaseRunLifecycleHook):
+        name = "slow_start"
+
+        async def on_run_start(self, context):  # noqa: ANN001
+            await asyncio.sleep(0.3)
+
+    class _FastStart(BaseRunLifecycleHook):
+        name = "fast_start"
+
+        async def on_run_start(self, context):  # noqa: ANN001
+            return None
+
+    agent = create_agent(
+        provider=FakeProvider(response_text="done"),
+        tools=ToolSet.only(),
+        lifecycle_hooks=(_SlowStart(), _FastStart()),
+    )
+    output = await agent.run(_run_input("r-slowstart"))
+    run_start_events = [
+        e.payload
+        for e in output.events
+        if e.type.value == "lifecycle_hook_completed"
+        and e.payload.get("phase") == "run_start"
+    ]
+    assert [p["hook"] for p in run_start_events] == ["slow_start"]
+    assert run_start_events[0]["duration_ms"] >= 250

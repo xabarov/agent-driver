@@ -130,3 +130,22 @@ async def test_deferred_sync_lands_before_next_recall() -> None:
     await session.send("second", run_id="r2")
     assert memory.synced_answers[0] == "ok"  # r1's turn landed before r2 ran
     await agent.aclose()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_drain_is_bounded_and_reports_abandoned(caplog) -> None:
+    """A wedged background sync cannot hold shutdown hostage; abandons are reported."""
+    from agent_driver.runtime.single_agent.lifecycle.memory_hook import (
+        MemoryLifecycleHook,
+    )
+
+    memory = _DeferredSyncProvider()  # gate stays closed → sync wedges forever
+    hook = MemoryLifecycleHook(memory, shutdown_drain_timeout=0.05)
+    task = asyncio.create_task(memory.sync_turn(object()))
+    hook._pending_syncs.add(task)  # noqa: SLF001 - simulating a scheduled sync
+
+    with caplog.at_level("WARNING"):
+        await asyncio.wait_for(hook.shutdown(), timeout=2.0)  # must not hang
+
+    assert any("abandoned" in r.message for r in caplog.records)
+    task.cancel()
