@@ -38,7 +38,7 @@ from typing import Any
 
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.llm.structured import StructuredOutputError, structured_completion
+from agent_driver.llm.contracts import LlmRequest
 
 logger = logging.getLogger(__name__)
 
@@ -54,20 +54,13 @@ _MIN_WORDS = 2
 _MAX_WORDS = 16
 _MAX_CHARS = 120
 
-SUGGESTIONS_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "questions": {
-            "type": "array",
-            "items": {"type": "string"},
-        }
-    },
-    "required": ["questions"],
-}
-
 # Adapted from openclaude SUGGESTION_PROMPT: predict what the USER would type next,
 # not what they "should" ask. The test — "would they think 'I was just about to
-# ask that'?" — is what keeps chips clickable instead of preachy.
+# ask that'?" — is what keeps chips clickable instead of preachy. Output is plain
+# text (one question per line) — the reference itself generates a plain-text
+# suggestion and filters it, NOT a structured/tool channel; a forced tool call is
+# both unfaithful and unreliable for the small aux models this feature runs on
+# (live: gemini-flash-lite via OpenRouter returns no tool call at all).
 SUGGESTION_SYSTEM_PROMPT = (
     "Ты предлагаешь 1-3 коротких follow-up вопроса, которые пользователь "
     "СЛЕДУЮЩИМ задал бы ассистенту по встречам — не то, что ему «стоило бы» "
@@ -80,8 +73,9 @@ SUGGESTION_SYSTEM_PROMPT = (
     "- Только вопросы, которые реально можно ответить по материалам встреч.\n"
     "- НИКОГДА: оценки («спасибо», «выглядит хорошо»), голос ассистента "
     "(«Давайте я…», «Вот…», «Могу…»), мета («нет вопросов», «не могу"
-    " предложить»), выдуманные темы, форматирование, несколько предложений.\n"
-    "- Если очевидного следующего вопроса нет — верни пустой список."
+    " предложить»), выдуманные темы, форматирование, несколько предложений.\n\n"
+    "ФОРМАТ: только сами вопросы, ПО ОДНОМУ НА СТРОКУ, без нумерации и маркеров. "
+    "Если очевидного следующего вопроса нет — верни пустую строку."
 )
 
 # --- reject filter (openclaude shouldFilterSuggestion, adapted) ----------------
@@ -241,43 +235,50 @@ async def generate_suggestions(
         parts.append(f"Доступные встречи (обзор):\n{corpus_overview.strip()}")
     parts.append(
         f"Предложи 1-{max_suggestions} следующих вопроса пользователя "
-        "по правилам системного промпта."
+        "по правилам системного промпта — по одному на строку."
     )
-    messages = [
-        ChatMessage(role=ChatRole.SYSTEM, content=SUGGESTION_SYSTEM_PROMPT),
-        ChatMessage(role=ChatRole.USER, content="\n\n".join(parts)),
-    ]
+    request = LlmRequest(
+        model=model or None,
+        messages=[
+            ChatMessage(role=ChatRole.SYSTEM, content=SUGGESTION_SYSTEM_PROMPT),
+            ChatMessage(role=ChatRole.USER, content="\n\n".join(parts)),
+        ],
+        temperature=0.3,
+        max_tokens=200,
+        metadata=dict(metadata) if metadata else {"purpose": "suggested_questions"},
+    )
 
     try:
-        result = await structured_completion(
-            provider=provider,
-            messages=messages,
-            schema=SUGGESTIONS_SCHEMA,
-            model=model,
-            description="Emit 1-3 predicted follow-up questions the user would ask next.",
-            metadata=dict(metadata) if metadata else {"purpose": "suggested_questions"},
-        )
-    except StructuredOutputError as exc:
-        logger.debug("suggested questions generation failed: %s", exc)
-        return []
+        response = await provider.complete(request)
+        content = response.message.content or ""
     except Exception:  # noqa: BLE001 — decorative feature must never break the answer
         logger.warning("suggested questions generation errored", exc_info=True)
         return []
 
-    raw = result.get("questions")
-    if not isinstance(raw, list):
-        return []
     kept = [
         cleaned
-        for item in raw
-        if isinstance(item, str) and (cleaned := filter_suggestion(item)) is not None
+        for line in _split_lines(content)
+        if (cleaned := filter_suggestion(line)) is not None
     ]
     return _dedup(kept)[:max_suggestions]
 
 
+# Strip common list decorations a model adds despite «по одному на строку»:
+# leading bullets/numbering/quotes, one question per line.
+_LINE_DECORATION_RE = re.compile(r"^\s*(?:[-*•–—]\s*|\d+[.)]\s*|[\"'«»]\s*)+")
+
+
+def _split_lines(content: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in (content or "").splitlines():
+        cleaned = _LINE_DECORATION_RE.sub("", raw_line).strip().strip("\"'«»").strip()
+        if cleaned:
+            lines.append(cleaned)
+    return lines
+
+
 __all__ = [
     "MAX_PARENT_UNCACHED_TOKENS",
-    "SUGGESTIONS_SCHEMA",
     "SUGGESTION_SYSTEM_PROMPT",
     "filter_suggestion",
     "generate_suggestions",

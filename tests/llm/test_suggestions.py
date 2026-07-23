@@ -74,34 +74,23 @@ def test_cost_gate_allows_cheap_turn_and_none() -> None:
 # --- generation ----------------------------------------------------------------
 
 
-class _EmitProvider(FakeProvider):
-    """Emits a scripted ``emit_result`` tool call with a questions payload."""
+def _lines_provider(*lines: str) -> FakeProvider:
+    """A provider whose completion text is the given questions, one per line.
 
-    def __init__(self, questions: list[str]) -> None:
-        super().__init__(response_text="")
-        self._questions = questions
-
-    async def complete(self, request: LlmRequest) -> LlmResponse:
-        response = await super().complete(request)
-        meta = dict(response.message.metadata or {})
-        meta["planned_tool_calls"] = [
-            {"name": "emit_result", "args": {"questions": self._questions}}
-        ]
-        return response.model_copy(
-            update={"message": response.message.model_copy(update={"metadata": meta})}
-        )
+    Mirrors the live path (reference-faithful): the model returns plain text and
+    the generator splits + filters lines — no tool channel.
+    """
+    return FakeProvider(response_text="\n".join(lines))
 
 
 @pytest.mark.asyncio
 async def test_generate_filters_dedups_and_caps() -> None:
-    provider = _EmitProvider(
-        [
-            "Какой срок оплаты по сделке?",
-            "Какой срок оплаты по сделке",  # dup (punctuation-insensitive)
-            "спасибо",  # filtered (evaluative)
-            "Кто владелец решения по деплою?",
-            "Какая сумма сделки указана в отчёте?",  # 4th valid → capped out
-        ]
+    provider = _lines_provider(
+        "- Какой срок оплаты по сделке?",  # bullet decoration is stripped
+        "«Какой срок оплаты по сделке»",  # dup (punctuation/quote-insensitive)
+        "спасибо",  # filtered (evaluative)
+        "2) Кто владелец решения по деплою?",  # numbering stripped
+        "Какая сумма сделки указана в отчёте?",  # 4th valid → capped out
     )
     out = await generate_suggestions(
         provider=provider,
@@ -118,7 +107,7 @@ async def test_generate_filters_dedups_and_caps() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_empty_when_question_or_answer_blank() -> None:
-    provider = _EmitProvider(["Какой срок оплаты?"])
+    provider = _lines_provider("Какой срок оплаты?")
     assert await generate_suggestions(provider=provider, question="", answer="x") == []
     assert (
         await generate_suggestions(provider=provider, question="x", answer="  ") == []
@@ -127,7 +116,7 @@ async def test_generate_empty_when_question_or_answer_blank() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_suppressed_by_cost_gate() -> None:
-    provider = _EmitProvider(["Какой срок оплаты по сделке?"])
+    provider = _lines_provider("Какой срок оплаты по сделке?")
     out = await generate_suggestions(
         provider=provider,
         question="Что решили?",
@@ -153,7 +142,7 @@ async def test_generate_never_raises_on_generation_error() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_all_filtered_returns_empty_not_junk() -> None:
-    provider = _EmitProvider(["спасибо", "Вот вопрос", "nothing to suggest"])
+    provider = _lines_provider("спасибо", "Вот вопрос", "nothing to suggest")
     out = await generate_suggestions(
         provider=provider, question="Что решили?", answer="Купили офис."
     )
