@@ -51,6 +51,13 @@ class ProviderRouteProfile:
     max_token_field: str
     context_window: int | None = None
     max_output_tokens: int | None = None
+    # Epic 028 phase B: empirical prompt-cache behaviour of this route.
+    # "explicit" — honors cache_control markers (anthropic-family via OpenRouter,
+    # probe 2026-07-23: sonnet-4.6 read 18047/18065 on 2nd call);
+    # "implicit" — caches without markers (gemini-2.5-flash-lite: 94% cached);
+    # "none-observed" — reports fields but 0 cached on identical calls
+    # (deepseek-v4-flash via OpenRouter); "unknown" — not probed.
+    cache_reliability: str = "unknown"
     notes: tuple[str, ...] = field(default_factory=tuple)
 
     def to_metadata(self) -> dict[str, Any]:
@@ -72,6 +79,7 @@ class ProviderRouteProfile:
             "max_token_field": self.max_token_field,
             "context_window": self.context_window,
             "max_output_tokens": self.max_output_tokens,
+            "cache_reliability": self.cache_reliability,
         }
         if self.notes:
             data["notes"] = list(self.notes)
