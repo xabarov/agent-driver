@@ -1,6 +1,6 @@
 # Cost-плоскость: роллапы, aux-task учёт, видимость пользователю
 
-Дата создания: 2026-07-23 (исследование референсов, раунд 2). Статус: **B DONE 2026-07-23; A частично; C/D отложены с причинами (хост-only, движок не трогали)**.
+Дата создания: 2026-07-23 (исследование референсов, раунд 2). Статус: **DONE 2026-07-23 (A-E)**.
 
 Мотивация: per-run «чек» у нас есть («Сведения о запуске»: токены/скорость/cost_usd), но
 (1) `CostLedger` движка (прайс-таблица, cache_hit_rate, format_cost_summary) хостом не
@@ -87,18 +87,36 @@ Cache-телеметрия как таковая (028 фаза A — здесь 
   примитив учёта (sink) есть; полный движковый `RunnerConfig.auxiliary_models` registry —
   НЕ сделан (рефакторинговая ценность выше пользовательской при двух aux-задачах).
 
-## Отложено с точными причинами
+## Отложено с точными причинами → ДОДЕЛАНО 2026-07-23
 
-- **D (LLM-титулы)** — АРХИТЕКТУРНОЕ препятствие, не лень: `ChatV2Request` НЕ несёт
-  conversation_id (титулы живут в API-owned `chat_conversations`, персистит фронт через
-  отдельный роут `/chat/conversations/{id}/messages`; jobworker-ран разговора не знает).
-  Плюс PII-граница: генерация из Q+A обязана идти через privacy-провайдера jobworker'а
-  (иначе сырой PII наружу). Значит чистая версия = сквозная (схема+фронт+персист через
-  privacy-провайдер+set-if-empty-auto), а наивная API-версия PII-unsafe. Текущий
-  `first_question[:80]` (mongo_worker.py:1189) функционален. Безопасный путь для следующего
-  захода: протянуть conversation_id в ChatV2Request → титул aux-вызовом через
-  privacy-провайдера в jobworker → restore → set-if-empty с auto-меткой (не перетирать
-  правку пользователя) → openclaude 5-tier parse-ladder.
-- **C (Mongo-роллапы + admin-панель + credit-бэнды)** — продуктовая поверхность (квоты =
-  решение владельца), крупная; данные для неё теперь есть (aux в чеке) — брать, когда
-  появится продуктовый запрос на квоты/админ-видимость стоимости.
+Изначально A/C/D были отложены; по требованию «выполнить ВСЕ работы» доведены до конца.
+
+- **A DONE (движок 3631fca)**: `CapabilitySettings.auxiliary_models: dict[task,model]` +
+  `aux_model_for(task)` (task-реестр → общий auxiliary_model → None); делегирующие
+  свойства на RunnerConfig. Обобщает урок 024 с одной env-ручки до типизированного шва.
+  2 движковых теста.
+- **D DONE (LLM-титулы, PII-safe)**: `title_generator.py` — 3-7 слов через
+  `privacy_aware_chat_completion` (тот же барьер, что ответ; под external_anonymized
+  сырой PII не уходит), openclaude 5-tier parse-ladder + санитайзер; aux-модель по
+  CHAT_V2_TITLE_MODEL → CHAT_V2_AUX_MODEL → gemini-flash-lite (seam фазы A). Эндпоинт
+  `POST /chat/conversations/{id}/title` читает Q+A серверно, `upgrade_title_if_auto`
+  (атомарный set-if-auto, ручную правку НЕ трогает — `title_auto`-метка). Фронт зовёт
+  после первого обмена. Живьём: «чем закончилась встреча Аргус…» → **«Итоги встречи
+  Аргус: модель, ФСТЭК, монтаж, бюджет»**; ручная правка не перетёрта (reason
+  manual_title). Гейт CHAT_V2_LLM_TITLES. 7 тестов parse-ladder.
+- **C DONE (роллапы)**: `chat_usage` коллекция; `record_chat_usage` (best-effort при
+  терминале рана, raw-free: счётчики/стоимость/модель) + `aggregate_chat_usage`
+  (per-day + per-user через $group). Эндпоинт `GET /chat_v2/usage/rollup?days=N`
+  (админ — все, юзер — свои) + credit-бэнд 50/75/90% от CHAT_V2_USAGE_TOKEN_CAP
+  (0=off, hermes-паттерн высшего бэнда). Живьём: роллап пишется (runs=1,
+  total=24310, aux=1975, cost=$0.000956), эндпоинт агрегирует per-day+per-user.
+- **E приёмка**: чек main+aux (фаза B); титул живьём осмыслен + идемпотентен +
+  не перетирает ручной; роллап сходится с чеками. Тесты хоста 91, движок aux-seam +
+  contracts, jest 267.
+
+### Урок процесса
+`get_meeting_service` локальным import внутри функции сделал имя локальным для всей
+функции → «cannot access local variable» на РАНЬШЕЙ ссылке; терминальный блок был в
+`run_chat_v2_agent_driver` (user_id), а не `_run_chat_v2_agent` (app_metadata) —
+перепутал переменную; кастомный хост-Logger не принимает exc_info (память [[chat-goal-gate]]).
+Все три — быстро пойманы диагностикой jobworker-лога.
