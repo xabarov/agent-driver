@@ -1,6 +1,6 @@
 # Экономика промпт-кэша: включить, стабилизировать префикс, мерить
 
-Дата создания: 2026-07-23 (исследование референсов, раунд 2). Статус: **proposed**.
+Дата создания: 2026-07-23 (исследование референсов, раунд 2). Статус: **DONE 2026-07-23 (A-F)**.
 
 Мотивация: инвентаризация показала парадокс — **движок уже умеет почти всё, хост не включает
 ничего**. В движке: 3-tier Anthropic `cache_control` (tools→system→transcript,
@@ -79,3 +79,35 @@ frozen/mustReapply-дисциплина обязана уважать кэш и�
 - **Честность метрик**: openclaude `CacheMetricsReliability` supported/advisory/unsupported —
   UI показывает «N/A», а не лживые «0%», когда провайдер не отдаёт cache-поля (наш
   OpenRouter-путь местами именно такой).
+
+## Реализация и приёмка 2026-07-23 (agent-driver 16f2dd4+266401f, хост, пин 0.1.0+g266401f3)
+
+- **A** Телеметрия сквозная: `extract_cache_token_fields` — 3 диалекта
+  (prompt_tokens_details.cached_tokens / cache_read+creation_input_tokens /
+  prompt_cache_hit_tokens) → UsageSummary.cache_read/creation_tokens → хостовый
+  usage-payload (cache_read_tokens, cached_percent) → «Сведения о запуске»
+  («кэш N%» / честное «кэш N/A», когда провайдер молчит). Live: cached-поля
+  видны в run_completed каждого хода.
+- **B** Проба (docs/reliability/scripts/openrouter_cache_probe.py, живой прогон):
+  **sonnet-4.6 — explicit, 18047/18065 (99.9%) прочитано 2-м вызовом с нашей
+  маркер-схемой; gemini-2.5-flash-lite — implicit, 94% cached без маркеров;
+  deepseek-v4-flash — none-observed (поля отдаёт, cached=0 на идентичных вызовах;
+  латентности 122-138s в тот же прогон)**. Поле `cache_reliability` добавлено в
+  ProviderRouteProfile (+to_metadata).
+- **C** system_and_3 в openai-compat payload за request.enable_prompt_cache:
+  носители — не role:tool (hang-квирк), не пустые pure-tool_calls (потеря
+  брейкпоинта), маркер на последнем text-парте. 7 тестов.
+- **D** Хост: CHAT_V2_PROMPT_CACHE (dev on / prod off) → RunnerConfig.enable_prompt_cache;
+  префикс стабилен (026 conversation-first).
+- **E** Форензика: prompt_cache_state fingerprint (model+system+tools) + WARNING
+  `prompt_cache_broken` при >5% И >2000-токенном падении на неизменном префиксе;
+  в реестре status-protocol.
+- **F** Приёмка: 3-ходовая живая сессия — раны с маркерами на deepseek живы,
+  телеметрия честная (cached 0.0%). Регрессионный сабсет 7/8; единственный минус
+  (no_data_marketing) **A/B-эксонерация: падает и с ВЫКЛЮЧЕННЫМИ маркерами** —
+  ортогональный дрейф (ответ grounded, чек строг), кандидат в чат-бэклог.
+  **Целевая метрика «cached ≥50% со 2-го хода» на текущей главной модели
+  недостижима не по вине плоскости: deepseek через OpenRouter не кэширует
+  (проба B). Машинерия доказана на sonnet (99.9%) и gemini (94%); выигрыш
+  включается сменой/маршрутизацией модели — smart-routing (020 horizon №3) и
+  cost-план (032) получают готовое основание.**
