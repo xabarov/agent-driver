@@ -77,13 +77,32 @@ def _validate(args: dict[str, Any], schema: dict[str, Any]) -> list[str]:
 
 
 def _extract_emit_args(response: Any) -> dict[str, Any] | None:
-    message = getattr(response, "message", None)
-    metadata = getattr(message, "metadata", None) or {}
-    planned = metadata.get("planned_tool_calls")
+    """Read the ``emit_result`` call from a normalized response.
+
+    The OpenAI-compatible provider puts parsed tool calls on the RESPONSE
+    metadata (``response.metadata["planned_tool_calls"]``) with each call keyed
+    by ``tool_name`` — NOT on ``message.metadata`` and NOT keyed ``name``. Both
+    locations and both key spellings are accepted so this works against the real
+    provider (top-level ``metadata`` / ``tool_name``) and any adapter that mirrors
+    it onto the message. Reading only ``message.metadata['...']['name']`` — as the
+    first cut did — silently never matched live (only FakeProvider-shaped tests),
+    so structured_completion always raised on real providers.
+    """
+    planned: Any = None
+    for owner in (response, getattr(response, "message", None)):
+        metadata = getattr(owner, "metadata", None)
+        if isinstance(metadata, dict):
+            candidate = metadata.get("planned_tool_calls")
+            if isinstance(candidate, list) and candidate:
+                planned = candidate
+                break
     if not isinstance(planned, list):
         return None
     for call in planned:
-        if isinstance(call, dict) and str(call.get("name") or "") == _EMIT_TOOL_NAME:
+        if not isinstance(call, dict):
+            continue
+        name = str(call.get("tool_name") or call.get("name") or "")
+        if name == _EMIT_TOOL_NAME:
             args = call.get("args")
             return args if isinstance(args, dict) else {}
     return None

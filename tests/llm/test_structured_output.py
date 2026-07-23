@@ -41,6 +41,39 @@ def _msgs() -> list[ChatMessage]:
     return [ChatMessage(role=ChatRole.USER, content="дай результат")]
 
 
+class _RealShapeProvider(FakeProvider):
+    """Mirrors the REAL OpenAI-compatible provider shape (regression guard).
+
+    ``normalize_openai_completion_payload`` puts parsed tool calls on the
+    RESPONSE metadata (``response.metadata['planned_tool_calls']``), each keyed
+    by ``tool_name`` (not ``message.metadata`` / ``name``). The first cut of
+    ``_extract_emit_args`` read only ``message.metadata['...']['name']`` → it
+    matched FakeProvider-shaped tests but NEVER a live provider (sonnet/deepseek/
+    gemini all returned valid tool calls that structured_completion ignored).
+    """
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        response = await super().complete(request)
+        resp_meta = dict(response.metadata or {})
+        resp_meta["planned_tool_calls"] = [
+            {
+                "tool_name": "emit_result",
+                "args": {"title": "Живой", "count": 7},
+                "tool_call_id": "toolu_abc",
+                "metadata": {"provider_tool_call_index": 0},
+            }
+        ]
+        return response.model_copy(update={"metadata": resp_meta})
+
+
+@pytest.mark.asyncio
+async def test_reads_real_provider_response_metadata_shape() -> None:
+    result = await structured_completion(
+        provider=_RealShapeProvider(response_text=""), messages=_msgs(), schema=_SCHEMA
+    )
+    assert result == {"title": "Живой", "count": 7}
+
+
 @pytest.mark.asyncio
 async def test_valid_emit_first_try() -> None:
     provider = _ScriptedProvider(

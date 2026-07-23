@@ -2,19 +2,26 @@
 
 Дата создания: 2026-07-23. Статус: **DONE (A-D)** 2026-07-23 (из фиче-скана референсов 2026-07-23; номер 031→036 при консолидации 2026-07-23 — коллизия двух раунд-2 сканов).
 
-## ⚠️ Live-находка (2026-07-23, из эпика 038) — ПРОВЕРИТЬ
+## 🐛→✅ Live-баг НАЙДЕН и ИСПРАВЛЕН (2026-07-23, из эпика 038)
 
-Форсированный tool-call `structured_completion` **не даёт tool-call вживую** через
-MeetScript privacy-провайдер + OpenRouter для `google/gemini-2.5-flash-lite`
-(`StructuredOutputError: no emit_result tool call in the response`). Найдено при первом
-живом использовании (эпик 038 — генерация подсказок; переведена на плоский completion).
-Следствие для этого эпика: **memory/extraction (фаза B) использует тот же канал** и на
-проде, вероятно, тихо падает в raw-fallback (его `except` глушит) — то есть контрактная
-экстракция может НЕ работать вживую на этом провайдере. Требует проверки: (а) поддерживает
-ли openai-compat адаптер + OpenRouter форсированный `tool_choice` для не-Anthropic моделей;
-(б) заполняется ли `planned_tool_calls` в метаданных ответа для gemini/deepseek. Кандидат в
-бэклог: либо чинить плумбинг tool_choice в провайдере, либо дать structured_completion
-плоский JSON-fallback (как поступил эпик 038 для best-effort).
+Симптом: `structured_completion` бросал `StructuredOutputError: no emit_result tool call`
+вживую. Диагностика multi-model пробой (deepseek-v4-flash / gemini-flash-lite / kimi-k2 /
+sonnet-4.6) показала: **падали ВСЕ модели, включая Anthropic sonnet** — значит не модель-
+специфично, а **баг плумбинга**. Сырой OpenRouter возвращает корректный tool-call
+(`finish_reason: tool_calls`), провайдер парсит его в **`response.metadata["planned_tool_calls"]`**
+(top-level, каждый вызов keyed `tool_name`). Но `_extract_emit_args` читал
+`response.message.metadata` (пусто) и ключ `name` — оба мимо реальной формы. Тесты на
+`FakeProvider` клали в `message.metadata`/`name` — потому зелёные, а вживую НИ РАЗУ не
+срабатывало (структурная дыра в приёмке эпика 036: примитив ни разу не тестировался против
+реального провайдера).
+
+**Фикс:** `_extract_emit_args` теперь читает `planned_tool_calls` с response ИЛИ message
+metadata, принимает ключ `tool_name` ИЛИ `name`. Регресс-тест `_RealShapeProvider` мокает
+реальную форму (top-level metadata + `tool_name`). Live-проверка после фикса: deepseek/
+gemini/kimi/sonnet — все дают валидный tool-call. Следствие: **memory/extraction (фаза B)
+теперь работает вживую** через tool-канал (раньше молча падала в raw-fallback). Урок для
+контракта: примитив, читающий форму провайдера, ОБЯЗАН иметь тест против реальной формы, а
+не только против самодельного мока.
 
 ## Итог (2026-07-23)
 
