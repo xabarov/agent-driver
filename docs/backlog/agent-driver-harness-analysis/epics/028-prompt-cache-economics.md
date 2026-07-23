@@ -57,3 +57,25 @@ F. Приёмка: замер cache-hit-rate на 10-ходовой живой �
 
 Cost-роллапы и insights — эпик 032; paging больших тул-результатов — 029 (но его
 frozen/mustReapply-дисциплина обязана уважать кэш из этого эпика).
+
+## Дополнение 2026-07-23 (раунд 2b: hermes 8fc278207 + openclaude 01a01fb)
+
+- **Провайдеро-осознанная расстановка брейкпоинтов** — hermes `agent/prompt_caching.py`
+  `_can_carry_marker`/`_apply_cache_marker`: на envelope-раскладке (OpenRouter!) top-level
+  `cache_control` на сообщении с пустым контентом (assistant pure-tool_calls, пустой
+  `role:tool`) молча ТЕРЯЕТ один из 4 брейкпоинтов, а на `role:tool` OpenRouter
+  **зависает**. Предикат пропускает такие носители и метит последний content-part
+  list-контента. Прямо наш стек — портировать при включении кэша (~120 LOC чистых функций).
+- **Классификатор слома кэша** — openclaude `promptCacheBreakDetection.ts`: пре-колл
+  хэши фрагментов префикса (system/tools/betas, отдельно cacheControlHash), пост-колл
+  триггер только при падении cache_read >5% И >2000 токенов; вердикты
+  expected_local_change / ttl_expiry / provider_instability / unknown_mutation;
+  per-tool хэши называют, ЧЬЯ схема поехала. Минимальная версия для нас: хэш префикса
+  за ход + warning при неожиданном дрейфе.
+- **Дисциплина side-вызовов**: openclaude promptSuggestion.ts:308 — «не переопределяй НИ
+  ОДИН параметр» (замерен 45x спайк cache-write, hit-rate 92.7%→61% от одного различия);
+  тулы запрещать callback'ом, не обрезкой массива; `skipCacheWrite` для fire-and-forget.
+  Субстрат — эпик 034.
+- **Честность метрик**: openclaude `CacheMetricsReliability` supported/advisory/unsupported —
+  UI показывает «N/A», а не лживые «0%», когда провайдер не отдаёт cache-поля (наш
+  OpenRouter-путь местами именно такой).
