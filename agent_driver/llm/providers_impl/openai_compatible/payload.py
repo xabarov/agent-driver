@@ -122,7 +122,83 @@ def build_openai_completion_payload(
     if isinstance(request_extra_body, dict):
         for key, value in request_extra_body.items():
             payload[key] = value
+    if request.enable_prompt_cache:
+        apply_prompt_cache_markers(messages_payload)
     return payload
 
 
-__all__ = ["build_openai_completion_payload", "normalize_tool_choice_for_openai"]
+# Epic 028, hermes system_and_3: Anthropic-family models behind OpenRouter honor
+# explicit cache_control breakpoints (max 4); OpenAI/DeepSeek families cache
+# implicitly and are documented to ignore the field. Placement quirks that cost
+# real money if ignored (hermes prompt_caching.py, live-verified on OpenRouter):
+# - a marker on an EMPTY-content message (assistant pure-tool_calls, empty tool
+#   result) is silently ignored -> one of the four breakpoints wasted;
+# - a top-level marker on ``role:tool`` can HANG the request -> tool rows are
+#   never carriers at all;
+# - list-content carries the marker on its LAST content part, not top-level.
+_CACHE_MARKER = {"type": "ephemeral"}
+_MAX_MESSAGE_MARKERS = 3
+
+
+def _can_carry_cache_marker(row: dict[str, Any]) -> bool:
+    """Whether this payload row is a safe, non-wasteful cache_control carrier."""
+    if str(row.get("role", "")) in {"tool", "system"}:
+        return False
+    content = row.get("content")
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return any(
+            isinstance(part, dict)
+            and part.get("type") == "text"
+            and str(part.get("text") or "").strip()
+            for part in content
+        )
+    return False
+
+
+def _mark_row(row: dict[str, Any]) -> None:
+    content = row.get("content")
+    if isinstance(content, str):
+        row["content"] = [
+            {"type": "text", "text": content, "cache_control": dict(_CACHE_MARKER)}
+        ]
+        return
+    if isinstance(content, list):
+        for part in reversed(content):
+            if isinstance(part, dict) and part.get("type") == "text":
+                part["cache_control"] = dict(_CACHE_MARKER)
+                return
+
+
+def apply_prompt_cache_markers(messages_payload: list[dict[str, Any]]) -> None:
+    """Place system + last-3 cache breakpoints (hermes ``system_and_3``)."""
+    for row in messages_payload:
+        if (
+            str(row.get("role", "")) == "system"
+            and isinstance(row.get("content"), str)
+            and str(row.get("content") or "").strip()
+        ):
+            row["content"] = [
+                {
+                    "type": "text",
+                    "text": row["content"],
+                    "cache_control": dict(_CACHE_MARKER),
+                }
+            ]
+            break
+    marked = 0
+    for row in reversed(messages_payload):
+        if marked >= _MAX_MESSAGE_MARKERS:
+            break
+        if not _can_carry_cache_marker(row):
+            continue
+        _mark_row(row)
+        marked += 1
+
+
+__all__ = [
+    "apply_prompt_cache_markers",
+    "build_openai_completion_payload",
+    "normalize_tool_choice_for_openai",
+]

@@ -62,14 +62,50 @@ def extract_usage(
     cost_usd = parse_cost_usd_from_usage(usage)
     if cost_usd is None:
         cost_usd = estimate_cost_usd(total_tokens, cost_per_1k_tokens)
+    cache_read, cache_creation = extract_cache_token_fields(usage)
     return UsageSummary(
         input_tokens=max(0, prompt_tokens),
         output_tokens=max(0, completion_tokens),
         total_tokens=total_tokens,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_creation,
         cost_usd_estimate=cost_usd,
         model_provider=provider,
         model_name=model,
     )
+
+
+def extract_cache_token_fields(
+    usage: dict[str, Any],
+) -> tuple[int | None, int | None]:
+    """Normalize the three provider dialects of prompt-cache usage (epic 028).
+
+    ``None`` means «провайдер не отдал поле» — hosts must render N/A, never a
+    fabricated 0% (openclaude CacheMetricsReliability honesty rule). Dialects:
+
+    - OpenAI / OpenRouter passthrough: ``prompt_tokens_details.cached_tokens``;
+    - Anthropic: ``cache_read_input_tokens`` / ``cache_creation_input_tokens``;
+    - DeepSeek: ``prompt_cache_hit_tokens`` (miss-поле не маппим — это не
+      cache-write, а просто некэшированный инпут).
+    """
+
+    def _int_or_none(value: Any) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return max(0, int(value))
+
+    prompt_details = (
+        usage.get("prompt_tokens_details")
+        if isinstance(usage.get("prompt_tokens_details"), dict)
+        else {}
+    )
+    cache_read = _int_or_none(prompt_details.get("cached_tokens"))
+    if cache_read is None:
+        cache_read = _int_or_none(usage.get("cache_read_input_tokens"))
+    if cache_read is None:
+        cache_read = _int_or_none(usage.get("prompt_cache_hit_tokens"))
+    cache_creation = _int_or_none(usage.get("cache_creation_input_tokens"))
+    return cache_read, cache_creation
 
 
 def extract_usage_metadata(payload: dict[str, Any]) -> dict[str, Any]:

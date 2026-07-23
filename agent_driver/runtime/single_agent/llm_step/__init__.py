@@ -356,6 +356,13 @@ async def execute_llm_call_step(
             # Fold this call's tokens/cost into the run ledger so the budget
             # gate (_terminal_from_limits) can fail fast when exceeded.
             get_cost_runtime_state(context).accumulate(_usage)
+            # Epic 028 phase E: cache-break forensics (no-op when the provider
+            # reports no cache fields — honesty over fabricated verdicts).
+            from agent_driver.runtime.single_agent.llm_step.cache_forensics import (  # noqa: PLC0415
+                check_prompt_cache_break,
+            )
+
+            check_prompt_cache_break(host, context, request, _usage)
         if context.llm_response is not None:
             await dispatch_after_llm(
                 host._deps.lifecycle_hooks, context, context.llm_response
