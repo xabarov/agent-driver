@@ -172,7 +172,19 @@ async def execute_tool_stage_step(
     _coerce_deep_research_artifact_repair_batch(context)
     _clamp_deep_research_parent_artifact_batch(context)
     _emit_tool_started_if_needed(host, context)
-    result = await host._tool_result_with_approved_override(context)
+    # Epic 025: liveness heartbeat over the whole tool stage — a wedged tool
+    # without TOOL_PROGRESS opt-in is otherwise a silent stage.
+    from agent_driver.runtime.single_agent.lifecycle.events import (  # noqa: PLC0415
+        stage_wait_heartbeat,
+    )
+
+    async with stage_wait_heartbeat(
+        host,
+        context,
+        stage="tool_stage",
+        interval=getattr(getattr(host, "_config", None), "stage_heartbeat_seconds", None),
+    ):
+        result = await host._tool_result_with_approved_override(context)
     host._store_tool_stage_outputs(context, result)
     _post_process_tool_result(host, context, result)
     emit_plan_lifecycle_events(host, context, result)

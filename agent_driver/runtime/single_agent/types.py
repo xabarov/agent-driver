@@ -174,6 +174,11 @@ class RunnerConfig:
         # a small-completion LLM grader plus one transient retry; unbudgeted finalize
         # awaits are exactly how the measured 22-139s post-final tails happened.
         self.finalize_hook_timeout = kwargs.pop("finalize_hook_timeout", 15.0)
+        # Epic 025: liveness heartbeat for long awaited stages (provider completion,
+        # tool stage). Emits an info WARNING signal_id=stage_wait_heartbeat with
+        # elapsed_ms every N seconds while the stage is still running, so a host
+        # status label never freezes on a stale caption. None/0 disables.
+        self.stage_heartbeat_seconds = kwargs.pop("stage_heartbeat_seconds", 10.0)
         # When a soft budget (max_steps / max_tool_calls / cost) is exhausted,
         # grant one forced-final synthesis turn (tools disabled) so the run can
         # return a best-effort answer instead of a bare FAILED with an empty

@@ -308,14 +308,26 @@ async def execute_llm_call_step(
                 input_messages=_in_msgs,
             )
             set_io(_llm_span, input=_in_msgs)
-            context.llm_response = await _complete_request(
+            # Epic 025: liveness heartbeat while the provider call is in flight —
+            # a long queue/TTFT wait is otherwise a silent stage under a frozen label.
+            from agent_driver.runtime.single_agent.lifecycle.events import (  # noqa: PLC0415
+                stage_wait_heartbeat,
+            )
+
+            async with stage_wait_heartbeat(
                 host,
                 context,
-                request,
-                recover_context_overflow=_overflow_recovery(
-                    host, context, request, clarification
-                ),
-            )
+                stage="llm_completion",
+                interval=getattr(host._config, "stage_heartbeat_seconds", None),
+            ):
+                context.llm_response = await _complete_request(
+                    host,
+                    context,
+                    request,
+                    recover_context_overflow=_overflow_recovery(
+                        host, context, request, clarification
+                    ),
+                )
             _resp = context.llm_response
             _usage = getattr(_resp, "usage", None)
             _out_msg = getattr(_resp, "message", None)

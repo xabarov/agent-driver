@@ -232,6 +232,16 @@ async def dispatch_finalize(
     legitimately block (a goal-gate can demand a revision), but never unboundedly:
     the measured 22-139s post-final tails came exactly from unbudgeted awaits here.
     """
+    # Local import: observability stays optional and no-op when tracing is off
+    # (same pattern as the llm-step span). Epic 025 phase D: each overriding
+    # finalize hook gets its own span so a slow grader is a colored span on the
+    # trace, not an unexplained gap before the terminal event.
+    from agent_driver.observability.openinference import (  # noqa: PLC0415
+        SPAN_KIND_CHAIN,
+        oi_span,
+        record_status,
+    )
+
     revision: RevisionRequest | None = None
     for hook in hooks:
         overrides_finalize = (
@@ -246,6 +256,12 @@ async def dispatch_finalize(
             )
         started = time.monotonic()
         timed_out = False
+        span_cm = (
+            oi_span(f"lifecycle_hook {_hook_name(hook)}", kind=SPAN_KIND_CHAIN)
+            if overrides_finalize
+            else None
+        )
+        span = span_cm.__enter__() if span_cm is not None else None
         try:
             call = hook.on_finalize(context, answer=answer)
             result = await (
@@ -274,6 +290,10 @@ async def dispatch_finalize(
                 "lifecycle on_finalize failed for hook %r", _hook_name(hook)
             )
             result = None
+        finally:
+            if span_cm is not None:
+                record_status(span, ok=not timed_out)
+                span_cm.__exit__(None, None, None)
         if hook_emit is not None and not timed_out:
             hook_emit(
                 "lifecycle_hook_completed",
