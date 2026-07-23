@@ -11,7 +11,12 @@ def build_full_compaction_prompt(*, history_excerpt: str, user_request: str) -> 
         "<persisted_summary>{json}</persisted_summary>\n\n"
         "Persisted summary JSON must include keys:\n"
         "request_intent, key_concepts, files_code, errors_fixes, problems, "
-        "user_messages, pending_tasks, current_work, next_step.\n\n"
+        "user_messages, pending_tasks, current_work, next_step.\n"
+        # Epic 039 / hermes language-preservation: a summary that silently
+        # switches to English breaks a RU conversation on resume.
+        "Write all summary VALUES in the same language the user was using in "
+        "the conversation - do not translate them to English. Quote the "
+        "user's request_intent and user_messages verbatim.\n\n"
         "History excerpt:\n"
         f"{history_excerpt}\n\n"
         "Current user request:\n"

@@ -53,6 +53,8 @@ _EXTRACTION_SYSTEM_PROMPT = (
     '"slot": "<short-stable-kebab-key-naming-the-subject>"}. '
     "Use the SAME slot when a fact updates or replaces an earlier fact about "
     "the same subject (e.g. team-codeword, preferred-answer-format). "
+    # Epic 039: facts recalled later must read naturally in the user's language.
+    "Write each fact text in the language of the conversation (do not translate). "
     "Return [] when nothing is worth keeping."
 )
 
