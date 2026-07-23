@@ -70,6 +70,15 @@ class AgentRunInput(ContractModel):
     user_id: str | None = None
     tenant_id: str | None = None
     workspace_id: str | None = None
+    structured_output: dict[str, Any] | None = None
+    """Run-level structured-output schema (epic 036). When set, the run's terminal
+    answer is validated against this JSON schema and the parsed object is stored in
+    ``AgentRunOutput.metadata["structured_output"]``; an answer that isn't a
+    schema-valid object surfaces ``structured_output_error`` in terminal metadata
+    (empty/invalid structured final is a signal, not a silently-``completed`` run).
+    The reliable production path for aux callers is
+    :func:`agent_driver.llm.structured.structured_completion` (forced tool call);
+    this field is the run-final validation seam. ``None`` leaves runs unchanged."""
     request_only_context: list[ChatMessage] = Field(default_factory=list)
     """Per-request model-visible context that never becomes durable dialogue.
 

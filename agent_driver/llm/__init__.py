@@ -15,16 +15,6 @@ from agent_driver.llm.error_classifier import (
     RecoveryAction,
     classify,
 )
-from agent_driver.llm.provider_descriptors import (
-    ProviderDescriptor,
-    ProviderResolutionError,
-    ProviderSpec,
-    ProviderTransport,
-    get_provider_descriptor,
-    list_provider_ids,
-    register_provider_descriptor,
-    resolve_provider,
-)
 from agent_driver.llm.provider_catalog import (
     ProviderPluginRegistry,
     bridge_provider_descriptor,
@@ -41,6 +31,16 @@ from agent_driver.llm.provider_catalog import (
     seed_provider_routing_plans,
     seed_provider_sanitizer_fixtures,
     write_provider_catalog_artifacts,
+)
+from agent_driver.llm.provider_descriptors import (
+    ProviderDescriptor,
+    ProviderResolutionError,
+    ProviderSpec,
+    ProviderTransport,
+    get_provider_descriptor,
+    list_provider_ids,
+    register_provider_descriptor,
+    resolve_provider,
 )
 from agent_driver.llm.provider_route_profiles import (
     ProviderPreflightResult,
@@ -59,6 +59,10 @@ from agent_driver.llm.providers_impl import (
 )
 from agent_driver.llm.router import HealthAwareRouter
 from agent_driver.llm.sanitize import sanitize_request_messages, strip_surrogates
+from agent_driver.llm.structured import (
+    StructuredOutputError,
+    structured_completion,
+)
 
 __all__ = [
     "sanitize_request_messages",
@@ -105,6 +109,8 @@ __all__ = [
     "LlmRequest",
     "LlmResponse",
     "LlmStreamEvent",
+    "StructuredOutputError",
+    "structured_completion",
     "OllamaProvider",
     "OpenAICompatibleProvider",
     "ProviderStatus",

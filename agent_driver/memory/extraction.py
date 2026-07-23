@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.llm.contracts import LlmRequest
+from agent_driver.llm.structured import structured_completion
 from agent_driver.memory.provider import (
     MemoryKind,
     MemoryProvider,
@@ -59,6 +59,54 @@ _EXTRACTION_SYSTEM_PROMPT = (
 )
 
 _MAX_SOURCE_CHARS = 4000
+
+# Epic 036: schema for the forced-tool extraction channel. A single ``facts``
+# array of {text, slot}; the reliable tool-call path replaces free-JSON parsing.
+_EXTRACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "facts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "slot": {"type": "string"},
+                },
+                "required": ["text"],
+            },
+        }
+    },
+    "required": ["facts"],
+}
+
+
+def _facts_from_structured(payload: dict, *, max_facts: int) -> list[dict[str, str]]:
+    """Normalize the tool-emitted ``{facts: [...]}`` into ``[{text, slot?}]``.
+
+    Applies the same slot-hygiene and dedup as the legacy free-JSON parser so
+    supersede behaviour is identical (schema placeholder rejected, dup texts
+    dropped, per-turn cap enforced).
+    """
+    facts: list[dict[str, str]] = []
+    for item in payload.get("facts") or []:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        fact: dict[str, str] = {"text": text.strip()}
+        slot = item.get("slot")
+        if isinstance(slot, str) and slot.strip():
+            normalized_slot = slot.strip().lower()
+            if len(normalized_slot) <= 40 and "kebab" not in normalized_slot:
+                fact["slot"] = normalized_slot
+        if any(existing["text"] == fact["text"] for existing in facts):
+            continue
+        facts.append(fact)
+        if len(facts) >= max_facts:
+            break
+    return facts
 
 
 def parse_extracted_facts(content: str, *, max_facts: int) -> list[dict[str, str]]:
@@ -210,43 +258,20 @@ class FactExtractingMemoryProvider(MemoryProvider):
             ChatMessage(role=ChatRole.SYSTEM, content=_EXTRACTION_SYSTEM_PROMPT),
             ChatMessage(role=ChatRole.USER, content="\n".join(parts)),
         ]
-        last_error: ValueError | None = None
-        # Epic 027 phase C: deepseek-class extraction flake — the model answers
-        # with prose instead of a bare JSON array; one bounded retry with a
-        # reinforcing nudge fixes most of them, so supersede keeps working and
-        # stale facts don't survive via the raw fallback.
-        for attempt in range(2):
-            request = LlmRequest(
-                messages=messages,
-                model=self._model,
-                temperature=0.0,
-                max_tokens=512,
-                metadata={"purpose": "memory_fact_extraction"},
-            )
-            response = await self._llm_provider.complete(request)
-            content = response.message.content or ""
-            try:
-                return parse_extracted_facts(
-                    content, max_facts=self._max_facts_per_turn
-                )
-            except ValueError as exc:
-                last_error = exc
-                if attempt == 0:
-                    logger.info(
-                        "memory extraction output unparseable; retrying once"
-                    )
-                    messages = messages + [
-                        ChatMessage(role=ChatRole.ASSISTANT, content=content[:1000]),
-                        ChatMessage(
-                            role=ChatRole.USER,
-                            content=(
-                                "Previous reply was not a bare JSON array. "
-                                "Return ONLY the JSON array now — no prose, "
-                                "no code fences. Return [] if nothing durable."
-                            ),
-                        ),
-                    ]
-        raise last_error if last_error is not None else ValueError("extraction failed")
+        # Epic 036: distilled facts come back over the forced tool-call channel,
+        # not free JSON — the dd9a5ee «prose instead of a JSON array» flake is
+        # impossible by construction (the arguments are validated at the tool
+        # layer, and an invalid emit is a tool error the model self-repairs).
+        raw = await structured_completion(
+            provider=self._llm_provider,
+            messages=messages,
+            schema=_EXTRACTION_SCHEMA,
+            model=self._model,
+            description="Emit durable long-term facts extracted from the turn.",
+            max_retries=1,
+            metadata={"purpose": "memory_fact_extraction"},
+        )
+        return _facts_from_structured(raw, max_facts=self._max_facts_per_turn)
 
     async def _sync_raw_turn(self, turn: MemoryTurn) -> None:
         """Raw-turn fallback mirroring :class:`StoreBackedMemoryProvider`."""

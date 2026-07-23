@@ -60,6 +60,7 @@ def test_capability_settings_field_snapshot() -> None:
         "harness_profiles",
         "auxiliary_provider",
         "auxiliary_model",
+        "auxiliary_models",
         "project_memory_sources",
         "project_memory_max_file_chars",
         "project_memory_max_total_chars",

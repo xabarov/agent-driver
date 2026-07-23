@@ -352,6 +352,16 @@ class SingleAgentOutputMixin:
                 "answer_recovered": True,
                 "answer_recovered_reason": recovered_reason,
             }
+        # Epic 036: run-level structured-output validation. Inert unless the caller
+        # set a schema. A schema-valid JSON answer is stored as a typed terminal
+        # artifact; anything else surfaces an error key (empty/invalid structured
+        # final is a signal, never a silently-``completed`` run with junk).
+        schema = getattr(context.run_input, "structured_output", None)
+        if isinstance(schema, dict) and schema:
+            terminal_metadata = {
+                **terminal_metadata,
+                **_validate_structured_terminal(answer, schema),
+            }
         return AgentRunOutput(
             run_id=context.run_id,
             attempt_id=context.attempt_id,
@@ -512,6 +522,39 @@ class SingleAgentOutputMixin:
             recommendation=recommendation,
             token_pressure=token_pressure,
         )
+
+
+def _validate_structured_terminal(answer: str, schema: dict) -> dict:
+    """Validate a terminal answer as a schema-conformant JSON object (epic 036).
+
+    Returns terminal-metadata keys: ``structured_output`` (the parsed object) on
+    success, else ``structured_output_error`` describing why. Reuses the primitive's
+    lightweight validator so run-final and aux-call validation agree.
+    """
+    import json
+
+    from agent_driver.llm.structured import _validate
+
+    text = (answer or "").strip()
+    if not text:
+        return {"structured_output_error": "empty terminal answer"}
+    # Tolerate a fenced/embedded object the same way parse-ladders do.
+    candidate = text
+    if not candidate.startswith("{"):
+        import re
+
+        match = re.search(r"\{.*\}", candidate, flags=re.DOTALL)
+        candidate = match.group(0) if match else candidate
+    try:
+        parsed = json.loads(candidate)
+    except (json.JSONDecodeError, TypeError):
+        return {"structured_output_error": "terminal answer is not JSON"}
+    if not isinstance(parsed, dict):
+        return {"structured_output_error": "terminal answer is not a JSON object"}
+    violations = _validate(parsed, schema)
+    if violations:
+        return {"structured_output_error": "; ".join(violations)}
+    return {"structured_output": parsed}
 
 
 __all__ = ["SingleAgentOutputMixin"]

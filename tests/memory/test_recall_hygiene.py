@@ -38,7 +38,9 @@ def test_abstain_gate_drops_unrelated_memories() -> None:
 
 
 def test_relevance_scoring_and_threshold() -> None:
-    assert score_relevance("Бюджет Аргус 14,5 млн", "бюджет проекта аргус") == pytest.approx(2 / 3)
+    assert score_relevance(
+        "Бюджет Аргус 14,5 млн", "бюджет проекта аргус"
+    ) == pytest.approx(2 / 3)
     assert score_relevance("что-то другое", "бюджет проекта аргус") == 0.0
     assert score_relevance("anything", "по до") is None  # no meaningful terms
 
@@ -58,9 +60,7 @@ def test_temporal_decay_prefers_fresh_fact() -> None:
         meta={"created_at": (now - timedelta(days=1)).isoformat()},
     )
     # Newest-first store order intentionally inverted to prove decay reorders.
-    out = apply_recall(
-        [old, fresh], "бюджет аргус", 2, half_life_seconds=30 * 86400
-    )
+    out = apply_recall([old, fresh], "бюджет аргус", 2, half_life_seconds=30 * 86400)
     assert out[0].text == "Бюджет Аргус 14,5 млн"
 
 
@@ -84,9 +84,7 @@ def test_sanitize_memory_text_strips_recall_block() -> None:
 def test_render_frame_states_reference_and_trust_newest() -> None:
     from agent_driver.memory.provider import RecallResult
 
-    block = render_recall_block(
-        RecallResult(session_id="s", records=[_rec("факт")])
-    )
+    block = render_recall_block(RecallResult(session_id="s", records=[_rec("факт")]))
     assert "NOT part of this conversation" in block
     assert "trust the newest" in block
 
@@ -101,8 +99,24 @@ class _ScriptedProvider(FakeProvider):
 
     async def complete(self, request: LlmRequest) -> LlmResponse:
         self.calls += 1
-        self._response_text = self._replies.pop(0) if self._replies else "[]"
-        return await super().complete(request)
+        text = self._replies.pop(0) if self._replies else "[]"
+        response = await super().complete(request)
+        # Epic 036: extraction reads the forced tool-call channel. A JSON-array
+        # reply becomes an ``emit_result`` call; prose emits no tool call.
+        import json
+
+        meta = dict(response.message.metadata or {})
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                meta["planned_tool_calls"] = [
+                    {"name": "emit_result", "args": {"facts": parsed}}
+                ]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return response.model_copy(
+            update={"message": response.message.model_copy(update={"metadata": meta})}
+        )
 
 
 @pytest.mark.asyncio
@@ -117,7 +131,9 @@ async def test_extraction_retries_once_on_prose_then_parses() -> None:
     store = InMemoryMemoryStore()
     memory = FactExtractingMemoryProvider(store, provider)
     await memory.sync_turn(
-        MemoryTurn(session_id="s", user_text="запомни: сводки таблицей", assistant_text="ок")
+        MemoryTurn(
+            session_id="s", user_text="запомни: сводки таблицей", assistant_text="ок"
+        )
     )
     assert provider.calls == 2
     records = store.list_for_session("s")

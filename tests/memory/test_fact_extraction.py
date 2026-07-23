@@ -31,8 +31,20 @@ class _ScriptedProvider(FakeProvider):
         self.requests.append(request)
         text = self._responses.pop(0) if self._responses else "[]"
         response = await super().complete(request)
+        # Epic 036: extraction now uses the forced tool-call channel. Translate a
+        # queued JSON-array reply into an ``emit_result`` tool call ({facts:[...]});
+        # an unparseable prose reply emits NO tool call (simulates the flake).
+        meta = dict(response.message.metadata or {})
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                meta["planned_tool_calls"] = [
+                    {"name": "emit_result", "args": {"facts": parsed}}
+                ]
+        except (json.JSONDecodeError, TypeError):
+            pass  # prose → no tool call
         return response.model_copy(
-            update={"message": response.message.model_copy(update={"content": text})}
+            update={"message": response.message.model_copy(update={"metadata": meta})}
         )
 
 
@@ -88,7 +100,9 @@ async def test_same_slot_fact_supersedes_older_one() -> None:
 async def test_unparseable_extraction_falls_back_to_raw_turn() -> None:
     # Epic 027: одна непарсибельная реплика теперь чинится bounded-ретраем;
     # fallback на raw-turn — только после ДВУХ подряд (см. test_recall_hygiene).
-    provider = _ScriptedProvider(["I could not produce JSON, sorry.", "still not JSON, sorry"])
+    provider = _ScriptedProvider(
+        ["I could not produce JSON, sorry.", "still not JSON, sorry"]
+    )
     store = InMemoryMemoryStore()
     memory = FactExtractingMemoryProvider(store, provider)
     await memory.sync_turn(_turn("важный вопрос", "важный ответ"))

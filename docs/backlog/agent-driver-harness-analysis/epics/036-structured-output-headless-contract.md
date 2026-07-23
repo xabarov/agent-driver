@@ -1,6 +1,13 @@
 # Structured-output контракт для headless-хостов: схема-валидированный финал через тул
 
-Дата создания: 2026-07-23. Статус: **proposed** (из фиче-скана референсов 2026-07-23; номер 031→036 при консолидации 2026-07-23 — коллизия двух раунд-2 сканов).
+Дата создания: 2026-07-23. Статус: **DONE (A-D)** 2026-07-23 (из фиче-скана референсов 2026-07-23; номер 031→036 при консолидации 2026-07-23 — коллизия двух раунд-2 сканов).
+
+## Итог (2026-07-23)
+
+- **A. Механизм.** `agent_driver/llm/structured.py`: `structured_completion(*, provider, messages, schema, ...)` — форсит `tool_choice` на динамический тул `emit_result` со схемой в параметрах; читает `planned_tool_calls` из метаданных ответа, валидирует required-ключи + типы (`_validate`), при mismatch/no-tool-call добавляет корректирующий ход и ретраит, при исчерпании — `StructuredOutputError` (НЕ salvage свободного текста). Экспорт в `agent_driver/llm/__init__.py`. Run-level seam: `AgentRunInput.structured_output: dict | None` — при заданной схеме терминальный answer парсится+валидируется в финализации (`finalization/output.py::_validate_structured_terminal`), результат в `AgentRunOutput.metadata["structured_output"]`, невалидный/пустой финал → `structured_output_error` (сигнал, не молчаливый `completed`). Инертно при `None`. 5+3 теста (`tests/llm/test_structured_output.py`).
+- **B. Перевод потребителей.** Extraction фактов памяти (`agent_driver/memory/extraction.py`) переведён с bounded-ретраев свободного JSON (027C) на `structured_completion` со `_EXTRACTION_SCHEMA`; slot-гигиена/dedup/cap сохранены в `_facts_from_structured`. Тесты памяти обновлены на tool-канал, проходят.
+- **C. Терминальная дисциплина.** Пустой/непарсибельный structured-финал даёт `structured_output_error` в терминальных метаданных — терминальный сигнал, не `completed`-с-мусором (тест `test_run_level_structured_output_valid_and_invalid`).
+- **D. Приёмка.** dd9a5ee-класс закрыт **по построению**: тест `test_never_calls_tool_raises_not_silent` доказывает, что отсутствие tool-call поднимает ошибку, а не salvage-ит прозу. Полный движковый свод: затронутые сюиты (llm/memory/contracts/runtime) зелёные; 3 pre-existing фейла (cli budget, phase6 planning ×2) подтверждены на чистом дереве эпика 032 — не регрессии 036.
 
 Мотивация: во всех местах, где движок или хост ждут от модели МАШИННЫЙ результат, мы
 парсим свободный текст с bounded-ретраями (extraction фактов памяти — deepseek-флейк
