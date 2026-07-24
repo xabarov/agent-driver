@@ -32,6 +32,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Per-session consolidation locks (epic 031), process-global so two overlapping
+# runs of the same user in the one jobworker never rewrite the store at once.
+# asyncio.Lock binds to the loop lazily on first await, so a module dict is safe
+# for the single-loop worker; a stale lock from a dead test loop is simply unused.
+_CONSOLIDATION_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _consolidation_lock(session_id: str) -> asyncio.Lock:
+    lock = _CONSOLIDATION_LOCKS.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _CONSOLIDATION_LOCKS[session_id] = lock
+    return lock
+
 
 def _memory_overrides(context: "RunContext") -> dict:
     """Return the host-supplied ``app_metadata["memory"]`` override mapping.
@@ -68,6 +82,7 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
         provider: MemoryProvider,
         *,
         shutdown_drain_timeout: float | None = None,
+        consolidation_every_n_turns: int = 0,
     ) -> None:
         self._provider = provider
         self._post_setup_done = False
@@ -77,6 +92,8 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
             if shutdown_drain_timeout is not None
             else self._SHUTDOWN_DRAIN_TIMEOUT
         )
+        # Epic 031: 0 disables background consolidation entirely.
+        self._consolidation_every_n_turns = max(0, int(consolidation_every_n_turns))
 
     async def _ensure_post_setup(self) -> None:
         """Run the provider's one-time ``post_setup`` lazily and idempotently."""
@@ -162,7 +179,10 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
             return
         # Deferred: sync_turn makes an LLM call (fact extraction) and must not
         # delay the run's completion. shutdown()/next recall await stragglers.
-        task = asyncio.create_task(self._provider.sync_turn(turn))
+        # Consolidation (epic 031) is chained AFTER the sync in the same task so
+        # it never races the append it depends on, and is drained by the same
+        # bounded shutdown path.
+        task = asyncio.create_task(self._sync_then_maybe_consolidate(turn, context))
         self._pending_syncs.add(task)
 
         def _reap(done: asyncio.Task) -> None:
@@ -173,6 +193,62 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
                 )
 
         task.add_done_callback(_reap)
+
+    async def _sync_then_maybe_consolidate(
+        self, turn: MemoryTurn, context: "RunContext"
+    ) -> None:
+        """Persist the turn, then fire a consolidation pass if the cadence lands."""
+        await self._provider.sync_turn(turn)
+        await self._maybe_consolidate(context, turn.session_id)
+
+    def _turn_ordinal(self, context: "RunContext") -> int:
+        """Durable turn number for this session, supplied by the host.
+
+        The engine is stateless across turns (a fresh runner per chat turn), so
+        the cadence counter cannot live on the hook — the host, which owns the
+        durable conversation, passes it via ``app_metadata["memory"]``.
+        """
+        raw = _memory_overrides(context).get("turn_ordinal")
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return 0
+
+    async def _maybe_consolidate(self, context: "RunContext", session_id: str) -> None:
+        """Fire a consolidation pass when the cadence gate lands (epic 031).
+
+        Gated cheaply first (interval off / not a cadence turn / provider has no
+        consolidate) before taking the per-session lock. If a consolidation is
+        already in flight for this session, skip rather than queue — the next
+        cadence turn will pick up any residue.
+        """
+        every_n = self._consolidation_every_n_turns
+        if every_n <= 0:
+            return
+        ordinal = self._turn_ordinal(context)
+        if ordinal <= 0 or ordinal % every_n != 0:
+            return
+        if not hasattr(self._provider, "consolidate"):
+            return
+        lock = _consolidation_lock(session_id)
+        if lock.locked():
+            return
+        async with lock:
+            try:
+                result = await self._provider.consolidate(session_id)
+            except Exception:  # noqa: BLE001 - consolidation must never crash a run
+                logger.warning("memory consolidation failed", exc_info=True)
+                return
+        if result is None:
+            return
+        # Raw-free observability (counts only): the host reads this off the run's
+        # metadata to surface a governance notice — never in the chat stream.
+        context.metadata["memory_consolidation"] = {
+            "applied": bool(result.applied),
+            "reason": result.reason,
+            "before": result.before_count,
+            "after": result.after_count,
+        }
 
 
 __all__ = ["MemoryLifecycleHook"]

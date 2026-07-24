@@ -73,6 +73,7 @@ not a public SDK contract.
 | `redirect_count_step` | hard-redirect anti-storm counter per LLM step (эпик 030 B) | transient | diagnostics | run metadata |
 | `recalled_memory`, `memory_synced` | long-term memory prefetch (run start) / one-time sync guard (finalize) | checkpoint | diagnostics | memory provider hooks (`MemoryProvider`) |
 | `memory_recall_count` | raw-free count of long-term memory records recalled at run start (epic 021 observability) | checkpoint | diagnostics | memory provider hooks (`MemoryProvider`) |
+| `memory_consolidation` | raw-free outcome of a background consolidation pass (`applied`, `reason`, `before`/`after` counts) when the cadence gate lands (epic 031) | checkpoint | diagnostics / governance notice | memory provider hooks (`MemoryProvider.consolidate`) |
 | `project_memory_block` | E2 layered project-memory (AGENTS.md/CLAUDE.md) block, loaded + E3-scanned once per run and injected into the system prompt | checkpoint | diagnostics | project-memory loader (prompt build) |
 | `cost_ledger` | per-run token/USD cost ledger accumulated per LLM call; drives `cost_budget_usd` fail-fast | checkpoint | cost diagnostics | `CostRuntimeState` |
 | `rubric_revision_count`, `rubric_iterations`, `rubric_evaluations` | goal-gate (rubric) revision loop counter + per-iteration grader verdicts | checkpoint | diagnostics | `RubricRuntimeState` + finalize revision continuation |

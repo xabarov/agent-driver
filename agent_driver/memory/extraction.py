@@ -24,7 +24,9 @@ from typing import TYPE_CHECKING, Any
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.structured import structured_completion
+from agent_driver.memory.consolidation import consolidate_session
 from agent_driver.memory.provider import (
+    ConsolidationResult,
     MemoryKind,
     MemoryProvider,
     MemoryRecord,
@@ -34,6 +36,7 @@ from agent_driver.memory.provider import (
     RecallResult,
     apply_recall,
     sanitize_memory_text,
+    supersede_by_slot,
     sync_raw_turn,
 )
 
@@ -48,6 +51,14 @@ _EXTRACTION_SYSTEM_PROMPT = (
     "stable user preferences, identities, standing decisions, recurring "
     "interests, explicit 'remember this' requests. Do NOT extract one-off "
     "questions, retrieved document content, or anything episodic.\n"
+    # Epic 031 C: a user correcting the assistant is a FIRST-CLASS durable signal
+    # (hermes: «Frustration is a first-class skill signal»). Distil it into a
+    # standing preference so the next session starts already knowing.
+    "If the user CORRECTS the assistant — its format, tone, verbosity, a term, or "
+    "a fact ('короче', 'слишком длинно', 'не пиши так', 'просто дай ответ', 'не "
+    "'X' а 'Y'', 'запомни, что…') — extract that correction as a durable fact with "
+    "a stable slot naming what it governs (e.g. answer-format, preferred-term-"
+    "<subject>). These outrank ordinary preferences.\n"
     "Answer with a JSON array (no prose, no code fences). Each element: "
     '{"text": "<the fact, one sentence, in the language of the conversation>", '
     '"slot": "<short-stable-kebab-key-naming-the-subject>"}. '
@@ -151,24 +162,6 @@ def parse_extracted_facts(content: str, *, max_facts: int) -> list[dict[str, str
     return facts
 
 
-def supersede_by_slot(records: list[MemoryRecord]) -> list[MemoryRecord]:
-    """Keep only the newest record per ``slot`` (input is newest-first).
-
-    Records without a slot (raw turns, legacy entries) pass through untouched —
-    supersede only applies where a stable subject key exists.
-    """
-    seen_slots: set[str] = set()
-    kept: list[MemoryRecord] = []
-    for record in records:
-        slot = record.metadata.get("slot")
-        if isinstance(slot, str) and slot:
-            if slot in seen_slots:
-                continue
-            seen_slots.add(slot)
-        kept.append(record)
-    return kept
-
-
 class FactExtractingMemoryProvider(MemoryProvider):
     """LLM-distilled facts with append-only slot supersede at recall time."""
 
@@ -188,6 +181,7 @@ class FactExtractingMemoryProvider(MemoryProvider):
         recall_max_chars: int = 2000,
         recall_min_relevance: float = 0.0,
         recall_half_life_seconds: float | None = None,
+        consolidation_max_records: int = 200,
     ) -> None:
         self._store = store
         self._llm_provider = llm_provider
@@ -200,6 +194,8 @@ class FactExtractingMemoryProvider(MemoryProvider):
         # Epic 027: abstain threshold + temporal decay for recall ranking.
         self._recall_min_relevance = recall_min_relevance
         self._recall_half_life_seconds = recall_half_life_seconds
+        # Epic 031: backstop cap for the consolidation rewrite.
+        self._consolidation_max_records = consolidation_max_records
 
     @property
     def store(self) -> MemoryStore:
@@ -272,6 +268,23 @@ class FactExtractingMemoryProvider(MemoryProvider):
             metadata={"purpose": "memory_fact_extraction"},
         )
         return _facts_from_structured(raw, max_facts=self._max_facts_per_turn)
+
+    async def consolidate(
+        self, session_id: str, *, cost_ledger: Any = None
+    ) -> "ConsolidationResult | None":
+        """Fold the session's fact store into a compacter, consistent set.
+
+        Delegates to :func:`consolidate_session` — a single cache-safe aux call
+        over this session's records, conservative on failure (store untouched).
+        """
+        return await consolidate_session(
+            store=self._store,
+            llm_provider=self._llm_provider,
+            session_id=session_id,
+            model=self._model,
+            max_records=self._consolidation_max_records,
+            cost_ledger=cost_ledger,
+        )
 
     async def _sync_raw_turn(self, turn: MemoryTurn) -> None:
         """Raw-turn fallback mirroring :class:`StoreBackedMemoryProvider`."""

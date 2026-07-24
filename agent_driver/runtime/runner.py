@@ -139,7 +139,20 @@ class SingleAgentRunner(
                 MemoryLifecycleHook,
             )
 
-            hooks.insert(0, MemoryLifecycleHook(memory_provider))
+            hooks.insert(
+                0,
+                MemoryLifecycleHook(
+                    memory_provider,
+                    consolidation_every_n_turns=int(
+                        getattr(
+                            self._config,
+                            "memory_consolidation_every_n_turns",
+                            0,
+                        )
+                        or 0
+                    ),
+                ),
+            )
         # Built-in node-contract hook: inert unless AgentRunInput.node_contract is
         # active, so always-on registration is byte-for-byte safe for other runs.
         from agent_driver.runtime.single_agent.node_contract import (

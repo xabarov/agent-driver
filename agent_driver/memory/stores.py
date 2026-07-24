@@ -40,6 +40,25 @@ class InMemoryMemoryStore:
         with self._lock:
             self._by_session.pop(session_id, None)
 
+    def replace_session(
+        self, session_id: str, records: list[MemoryRecord]
+    ) -> list[MemoryRecord]:
+        """Atomically swap a session's records (epic 031 consolidation seam).
+
+        ``records`` are given newest-first; they are stored oldest-first with
+        fresh monotonic seqs so ``list_for_session`` keeps returning newest-first.
+        """
+        with self._lock:
+            stored: list[MemoryRecord] = []
+            new_list: list[MemoryRecord] = []
+            for record in reversed(records):
+                self._seq += 1
+                copy = record.model_copy(update={"seq": self._seq})
+                new_list.append(copy)
+                stored.append(copy)
+            self._by_session[session_id] = new_list
+            return list(reversed(stored))
+
 
 class SqliteMemoryStore(SqliteStoreBase):
     """Durable SQLite-backed memory store keyed by session."""
@@ -86,6 +105,30 @@ class SqliteMemoryStore(SqliteStoreBase):
     def clear(self, session_id: str) -> None:
         """Drop all records for a session."""
         self._execute("DELETE FROM memories WHERE session_id = ?", (session_id,))
+
+    def replace_session(
+        self, session_id: str, records: list[MemoryRecord]
+    ) -> list[MemoryRecord]:
+        """Atomically swap a session's records (epic 031 consolidation seam).
+
+        Deletes the session's rows and re-inserts ``records`` oldest-first so the
+        DB assigns fresh ascending seqs; returns them newest-first.
+        """
+        self._execute("DELETE FROM memories WHERE session_id = ?", (session_id,))
+        stored: list[MemoryRecord] = []
+        for record in reversed(records):
+            cursor = self._execute(
+                "INSERT INTO memories (session_id, kind, text, metadata) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    session_id,
+                    record.kind.value,
+                    record.text,
+                    json.dumps(record.metadata),
+                ),
+            )
+            stored.append(record.model_copy(update={"seq": int(cursor.lastrowid or 0)}))
+        return list(reversed(stored))
 
     @staticmethod
     def _row_to_record(row: tuple) -> MemoryRecord:

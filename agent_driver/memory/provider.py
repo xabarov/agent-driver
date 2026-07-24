@@ -99,6 +99,27 @@ class RecallResult(ContractModel):
     records: list[MemoryRecord] = Field(default_factory=list)
 
 
+class ConsolidationResult(ContractModel):
+    """Raw-free outcome of one memory-consolidation pass (epic 031).
+
+    Counts only — never fact text — so it can surface in a governance UI and an
+    observability event without leaking user content. ``applied`` is True only
+    when the store was actually rewritten; ``reason`` explains a skip (nothing to
+    do, store cannot rewrite, safety guard tripped, aux-call failed).
+    """
+
+    session_id: str
+    before_count: int = 0
+    after_count: int = 0
+    merged: int = 0
+    dropped: int = 0
+    reslotted: int = 0
+    dates_absolutized: int = 0
+    applied: bool = False
+    reason: str | None = None
+    raw_free: bool = True
+
+
 class MemoryStore(Protocol):
     """Durable backend for memory records (persistence only, no policy)."""
 
@@ -114,6 +135,19 @@ class MemoryStore(Protocol):
 
     def clear(self, session_id: str) -> None:
         """Drop all records for a session."""
+        raise NotImplementedError
+
+    def replace_session(
+        self, session_id: str, records: list[MemoryRecord]
+    ) -> list[MemoryRecord]:
+        """Atomically replace a session's records (epic 031, consolidation seam).
+
+        Optional capability: consolidation checks for it via ``hasattr`` and is
+        inert on a store that does not implement it (append-only degradation).
+        ``records`` are given newest-first; the store re-assigns ``seq`` and
+        returns them persisted. Rewriting, not appending, is what lets a
+        consolidation pass actually shrink a session instead of growing it.
+        """
         raise NotImplementedError
 
 
@@ -294,6 +328,25 @@ def render_recall_block(result: RecallResult, *, max_chars: int = 2000) -> str:
     return "\n".join(lines)
 
 
+def supersede_by_slot(records: list[MemoryRecord]) -> list[MemoryRecord]:
+    """Keep only the newest record per ``slot`` (input is newest-first).
+
+    Records without a slot (raw turns, legacy entries) pass through untouched —
+    supersede only applies where a stable subject key exists. Lives here (not in
+    extraction) so the consolidation pass can reuse it without a circular import.
+    """
+    seen_slots: set[str] = set()
+    kept: list[MemoryRecord] = []
+    for record in records:
+        slot = record.metadata.get("slot")
+        if isinstance(slot, str) and slot:
+            if slot in seen_slots:
+                continue
+            seen_slots.add(slot)
+        kept.append(record)
+    return kept
+
+
 def sync_raw_turn(
     store: MemoryStore,
     turn: MemoryTurn,
@@ -350,6 +403,19 @@ class MemoryProvider(ABC):
     async def sync_turn(self, turn: MemoryTurn) -> None:
         """Persist whatever is worth keeping from a finished turn."""
         raise NotImplementedError
+
+    async def consolidate(
+        self, session_id: str, *, cost_ledger: Any = None
+    ) -> "ConsolidationResult | None":
+        """Optionally fold a session's store into a compacter, consistent set.
+
+        Epic 031: merge cross-slot duplicates, drop contradicted facts, convert
+        relative dates to absolute, re-slot raw-fallback records. Returns ``None``
+        when the provider does not support consolidation (the default) — the
+        lifecycle hook treats that as "nothing to schedule". ``cost_ledger``, when
+        given, receives the aux call's usage tagged ``memory_consolidation``.
+        """
+        return None
 
     async def shutdown(self) -> None:
         """Optional hook to flush/close resources on teardown."""
@@ -421,6 +487,7 @@ class StoreBackedMemoryProvider(MemoryProvider):
 
 
 __all__ = [
+    "ConsolidationResult",
     "MemoryKind",
     "MemoryProvider",
     "MemoryRecord",
@@ -434,4 +501,6 @@ __all__ = [
     "render_recall_block",
     "sanitize_memory_text",
     "score_relevance",
+    "supersede_by_slot",
+    "sync_raw_turn",
 ]

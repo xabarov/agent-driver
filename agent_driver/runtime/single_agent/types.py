@@ -108,6 +108,7 @@ class RunnerConfig:
     tool_registry: ToolRegistry | None
     command_queue_store: CommandQueueStore | None
     memory_provider: MemoryProvider | None
+    memory_consolidation_every_n_turns: int
     capabilities: CapabilitySettings
     lifecycle_hooks: tuple[RunLifecycleHook, ...]
     trimming: TrimmingSettings
@@ -207,6 +208,13 @@ class RunnerConfig:
         self.tool_registry = kwargs.pop("tool_registry", None)
         self.command_queue_store = kwargs.pop("command_queue_store", None)
         self.memory_provider = kwargs.pop("memory_provider", None)
+        # Epic 031: cadence for background memory consolidation (0 = off). The
+        # host supplies the durable turn ordinal via app_metadata["memory"]
+        # ["turn_ordinal"]; the memory hook fires consolidation when it lands on
+        # a multiple of this interval.
+        self.memory_consolidation_every_n_turns = int(
+            kwargs.pop("memory_consolidation_every_n_turns", 0) or 0
+        )
         self.capabilities = capabilities
         self.lifecycle_hooks = tuple(kwargs.pop("lifecycle_hooks", ()) or ())
         self.trimming = trimming
