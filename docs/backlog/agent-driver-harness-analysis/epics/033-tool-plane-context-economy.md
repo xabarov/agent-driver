@@ -1,6 +1,49 @@
 # Экономия контекста инструментальной плоскости: deferred-каталог + spill крупных выводов
 
-Дата создания: 2026-07-23. Статус: **proposed** (из фиче-скана референсов 2026-07-23; номер 028→033 при консолидации 2026-07-23 — коллизия двух раунд-2 сканов).
+Дата создания: 2026-07-23. Статус: **DONE (A-D)** 2026-07-24.
+
+## Итог (2026-07-24)
+
+Инвентаризация показала: бóльшая часть эпика УЖЕ была заскаффолжена — Phase 12 H21
+(`ToolManifest.should_defer/always_load/is_deferred`, омиссия из схемы, `defer_primer`,
+builtin `tool_search`), H18 (per-result spill в ArtifactStore по `max_result_size_chars`),
+029-A (pure-примитивы `safe_preview/persisted_output_envelope/empty_result_marker`,
+экспортированы но не потреблялись). Доделаны недостающие куски:
+
+- **A. Адаптивный порог deferral** (`tools/defer_policy.py`, hermes `should_activate`):
+  `should_defer` стал КАНДИДАТОМ — defer срабатывает только когда схемы кандидатов
+  пересекают `tool_defer_threshold_pct` окна (дефолт 10%, фолбэк-обрыв 20K при неизвестном
+  окне), иначе force-surface инлайн (дешевле, чем round-trip через `tool_search`).
+  `CapabilitySettings.tool_defer_mode` (auto/on/off) + `_threshold_pct`; врезка в
+  `build.py::adaptive_defer_surface`; raw-free `tool_defer_audit` в request-метадате.
+  Инертно, когда ни один тул не `should_defer` (случай MeetScript, 7-10 тулов).
+- **B. Per-turn агрегатный бюджет** (`tools/executor/turn_budget.py`, hermes tier 3):
+  после тул-вызовов хода, если сумма summary превышает `per_turn_output_budget_chars`,
+  крупнейшие обрезаются через 029 `safe_preview` до бюджета — работает БЕЗ ArtifactStore
+  (lossy+маркер), обычный хост-кейс. Плюс унификация `spill.py` preview на `safe_preview`
+  (был сырой `[:limit]`, мог резать codepoint на RU/JSON). Дефолт off.
+- **C. Наблюдаемость**: `tool_output_budget` роллап (`spilled_count`, `chars_saved`) в
+  `context.metadata` + реестр `runtime-metadata.md`; defer-аудит в request-метадате
+  (Phoenix-видим).
+- **D. Хост**: гейт `CHAT_V2_TOOL_OUTPUT_BUDGET_CHARS` (dev 48000 ≈ 12k токенов / prod off)
+  → `per_turn_output_budget_chars` через `run_builder`. Порог ЩЕДРЫЙ намеренно — обычный
+  single-retrieval не режется (grounding цел), ловится только патологический агрегат.
+  Приёмка (in-container): wiring `RunnerConfig.capabilities.per_turn_output_budget_chars=
+  48000`; замер — ход 55400 симв → 27462 (сэкономлено ~6984 токена, tier-3 активировался);
+  нормальный ход 6000 симв не тронут; **живой чат-ход завершился штатно (ответ 4040 симв),
+  `tool_output_budget` в диагностике ОТСУТСТВУЕТ** → щедрый порог не режет норму, регресса нет.
+
+## Урок
+
+Перед реализацией «нового» эпика — инвентаризовать движок: 4 из 6 механизмов уже
+существовали (H21/H18/029). Реальная новизна — адаптивный порог (A) + tier-3 (B) +
+унификация preview. Для MeetScript (малый набор тулов, single-turn) A инертен, B —
+generous backstop; главный налог `search_meeting_sources` уже ограничен движковым
+триммингом (017) + хостовым пейджингом (029), поэтому агрессивный клип НЕ вводился
+(риск grounding). Честный результат: движок получил общие возможности, хост — безопасный
+backstop-гейт.
+
+Дата создания: 2026-07-23 (статус исходный: proposed; номер 028→033 при консолидации — коллизия двух раунд-2 сканов).
 
 Мотивация: два ортогональных источника токен-налога инструментальной плоскости, которые
 context-budget (эпик 017) не решает — он режет ИСТОРИЮ, а не стоимость каталога тулов и
