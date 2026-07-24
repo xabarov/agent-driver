@@ -16,13 +16,14 @@ from agent_driver.llm.context_windows import (
 )
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.llm.error_classifier import ProviderErrorReason, classify
+from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.llm_step.provider_requests import (
     is_forced_tool_choice_provider_error,
     is_invalid_encrypted_reasoning_error,
     is_reduce_max_tokens_credit_error,
+    request_with_folded_tool_history,
     request_with_reduced_max_tokens,
     request_without_forced_tool_choice,
-    request_with_folded_tool_history,
     request_without_tools,
     strip_reasoning_echo,
 )
@@ -31,7 +32,6 @@ from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     forced_final_no_tools_retry_reason,
     should_retry_empty_forced_final_non_stream,
 )
-from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.llm_step.streaming import (
     LlmStreamIdleTimeout,
     complete_streaming_request,
@@ -50,6 +50,44 @@ class LlmCompletionHost(Protocol):
     _deps: RunnerDeps
 
     def _emit(self, event: EventSpec) -> None: ...
+
+
+class RedirectRequested(Exception):
+    """Epic 030 B: the host requested a hard redirect during the in-flight LLM
+    call. Carries the correction text; the caller re-asks with it as a real user
+    turn. Raised only when a ``redirect_probe`` is configured (opt-in)."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        super().__init__("redirect requested")
+
+
+async def _await_with_redirect(host: Any, coro: Awaitable[Any]) -> Any:
+    """Await ``coro`` (a provider call) while polling the redirect probe.
+
+    Inert when no probe is configured — just awaits. Otherwise races the call
+    against the probe; a non-empty probe result aborts ONLY this request (cancels
+    the task) and raises :class:`RedirectRequested`. Never touches tools/children.
+    """
+    probe = getattr(getattr(host, "_config", None), "redirect_probe", None)
+    if probe is None:
+        return await coro
+    task = asyncio.ensure_future(coro)
+    while True:
+        done, _ = await asyncio.wait({task}, timeout=0.1)
+        if task in done:
+            return task.result()
+        try:
+            text = probe()
+        except Exception:  # noqa: BLE001 - a bad probe must not kill the call
+            text = None
+        if text:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+            raise RedirectRequested(str(text))
 
 
 async def complete_request(  # pylint: disable=too-many-branches
@@ -72,7 +110,9 @@ async def complete_request(  # pylint: disable=too-many-branches
     for attempt in range(3):
         try:
             if not is_stream_enabled(context.run_input):
-                response = await host._deps.provider.complete(request)
+                response = await _await_with_redirect(
+                    host, host._deps.provider.complete(request)
+                )
                 response = _mark_no_tool_text_form_suppression(
                     context, request, response
                 )
@@ -82,7 +122,9 @@ async def complete_request(  # pylint: disable=too-many-branches
                     request=request,
                     response=response,
                 )
-            response = await complete_streaming_request(host, context, request)
+            response = await _await_with_redirect(
+                host, complete_streaming_request(host, context, request)
+            )
             response = _mark_no_tool_text_form_suppression(context, request, response)
             if should_retry_empty_forced_final_non_stream(context, response):
                 context.metadata["empty_forced_final_retry"] = "non_streaming"

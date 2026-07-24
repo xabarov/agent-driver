@@ -32,6 +32,10 @@ class ControlKind(StrEnum):
     STOP_SUBAGENT = "stop_subagent"
     CONTINUE_SUBAGENT = "continue_subagent"
     GET_CONTEXT_USAGE = "get_context_usage"
+    # Epic 030 B: hard correction — abort the in-flight LLM request (not tools/
+    # children), keep completed messages, add the text as a real user turn and
+    # re-request. Degrades to ENQUEUE at a step boundary / during the tool phase.
+    REDIRECT_USER_MESSAGE = "redirect_user_message"
 
 
 class ControlPriority(StrEnum):

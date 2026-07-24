@@ -87,6 +87,11 @@ class RunnerConfig:
 
     graph_id: str
     cancellation_probe: Callable[[], bool] | None
+    # Epic 030 B: opt-in hard-redirect probe. Polled DURING the in-flight LLM
+    # await; returns the correction text when the host has a pending redirect for
+    # this run (else None), which aborts just that request and re-asks with the
+    # correction as a real user turn. ``None`` (default) leaves the loop unchanged.
+    redirect_probe: Callable[[], str | None] | None
     fail_after_step: str | None
     tool_executor: ToolExecutor | None
     session_store: SessionStore | None
@@ -148,6 +153,7 @@ class RunnerConfig:
         )
         self.graph_id = kwargs.pop("graph_id", "single_agent_runtime")
         self.cancellation_probe = kwargs.pop("cancellation_probe", None)
+        self.redirect_probe = kwargs.pop("redirect_probe", None)
         self.fail_after_step = kwargs.pop("fail_after_step", None)
         self.tool_executor = kwargs.pop("tool_executor", None)
         self.session_store = kwargs.pop("session_store", None)

@@ -61,6 +61,17 @@ from agent_driver.runtime.single_agent.types import (
 from agent_driver.subagents import summarize_child_runs_for_parent
 
 
+def _control_matches_run(item: Any, context: RunContext) -> bool:
+    """Whether a queued control targets this run (run/thread/agent id match)."""
+    if item.run_id is not None and item.run_id == context.run_id:
+        return True
+    if item.thread_id is not None and item.thread_id == context.run_input.thread_id:
+        return True
+    if item.agent_id is not None and item.agent_id == context.run_input.agent_id:
+        return True
+    return False
+
+
 def _deep_research_terminal_handoff_ready(context: RunContext) -> bool:
     task_contract = context.run_input.tool_policy.metadata.get("task_contract")
     deep_contract = isinstance(task_contract, dict) and (
@@ -424,6 +435,13 @@ class SingleAgentOutputMixin:
                 context
             ).raw_assistant_content(),
         }
+        # Epic 030 C: leftover-steer protocol — steering messages that arrived
+        # after the last drain (still QUEUED at finalization) are handed back to
+        # the host so it delivers them on the NEXT turn instead of dangling in the
+        # queue. Raw-free: kind + a short text preview only.
+        leftover = self._leftover_controls(context)
+        if leftover:
+            metadata["leftover_controls"] = leftover
         if context.llm_response is not None:
             output_audio = context.llm_response.message.metadata.get("output_audio")
             if isinstance(output_audio, dict):
@@ -443,6 +461,38 @@ class SingleAgentOutputMixin:
         if node_contract_summary is not None:
             metadata["node_contract"] = node_contract_summary
         return metadata
+
+    def _leftover_controls(self, context: RunContext) -> list[dict[str, Any]]:
+        """Raw-free summary of steering messages still QUEUED at finalization.
+
+        Epic 030 C: NEXT/LATER items that arrived after the last drain would
+        otherwise dangle in the store until the next run. Surfaced here so the
+        host re-delivers them on the next turn. ENQUEUE/REDIRECT kinds only (the
+        message-carrying ones); a short preview, never the full text.
+        """
+        store = getattr(self._deps, "command_queue_store", None)
+        if store is None:
+            return []
+        try:
+            pending = store.list_pending()
+        except Exception:  # noqa: BLE001 - store read must never break finalize
+            return []
+        out: list[dict[str, Any]] = []
+        for item in pending:
+            if not _control_matches_run(item, context):
+                continue
+            kind = str(getattr(item.kind, "value", item.kind))
+            if kind not in ("enqueue_user_message", "redirect_user_message"):
+                continue
+            text = item.payload.get("message") or item.payload.get("text") or ""
+            out.append(
+                {
+                    "queue_id": item.queue_id,
+                    "kind": kind,
+                    "text_preview": str(text)[:120],
+                }
+            )
+        return out
 
     def _approval_payload_from_context(
         self, context: RunContext

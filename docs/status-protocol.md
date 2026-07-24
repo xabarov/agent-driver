@@ -54,6 +54,10 @@ retry is indistinguishable from a hang»), hermes `_emit_wait_notice` + gateway-
 | `compaction_empty_result_skipped` | transient | компакт вернул пусто, пропущен | не для статус-строки |
 | `tool_failure_streak_warning` | transient | 2 фейла инструмента подряд | «Инструмент сбоит — пробую ещё раз» |
 | `tool_failure_streak_force_final` | durable | 3 фейла — принудительный финал | ответ по имеющимся данным |
+| `control_kind_unsupported` | transient | стиринг-команда `control_kind` не поддержана на этом run-пути (эпик 030); помечена FAILED, не молчаливый drop | «Команда не поддержана» (диагностика очереди) |
+| `control_payload_invalid` | transient | у стиринг-команды невалидный payload (эпик 030); помечена FAILED | «Команда отклонена (некорректные данные)» |
+| `context_usage_report` | transient (severity=info) | ответ на GET_CONTEXT_USAGE: текущее token-давление в журнал (эпик 030) | не для статус-строки; диагностика контекста |
+| `steering_redirect_applied` | transient (severity=info) | жёсткий redirect прерван текущий LLM-вызов, поправка добавлена настоящим user-ходом, перезапрос (эпик 030 B) | «Учитываю вашу поправку…» |
 
 ## Политика ретрай-чаттера (фаза C)
 

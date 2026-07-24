@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from agent_driver.code_agent.profile import run_code_agent_stage
 from agent_driver.context import CompactionOrchestrator
-from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
+from agent_driver.contracts.enums import (
+    EventSeverity,
+    RunStatus,
+    RuntimeEventType,
+    TerminalReason,
+)
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.observability.provenance import build_provenance_summary
 from agent_driver.runtime.control.dispatcher import drain_step_boundary_controls
@@ -260,9 +265,29 @@ class SingleAgentStepMixin:
         return RuntimeStepResult(next_step="llm_call")
 
     async def _execute_llm_call(self, context: RunContext) -> RuntimeStepResult:
+        def _emit_control_warning(payload: dict) -> None:
+            # Epic 030 A: control_kind_unsupported / invalid-payload → WARNING
+            # (or an info context_usage_report) instead of a silent drop.
+            severity = payload.get("severity", "warning")
+            self._emit(
+                EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType.WARNING,
+                    payload=payload,
+                    severity=(
+                        EventSeverity.INFO
+                        if severity == "info"
+                        else EventSeverity.WARNING
+                    ),
+                )
+            )
+
         applied_controls = drain_step_boundary_controls(
             context=context,
             store=self._deps.command_queue_store,
+            abort_handle=context.abort_handle,
+            emit=_emit_control_warning,
         )
         for item in applied_controls:
             payload = {

@@ -32,40 +32,63 @@ from agent_driver.runtime.single_agent.context_management.compaction_stage impor
     CompactionStageHost,
     apply_compaction_if_eligible,
 )
+from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
+from agent_driver.runtime.single_agent.llm_step.completion import (
+    RedirectRequested as _RedirectRequested,
+)
 from agent_driver.runtime.single_agent.llm_step.completion import (
     complete_request as _complete_request,
+)
+from agent_driver.runtime.single_agent.llm_step.completion import (
     retry_forced_final_without_tools as _retry_forced_final_without_tools,
 )
 from agent_driver.runtime.single_agent.llm_step.context_pressure import (
     emit_token_pressure_warning as _emit_token_pressure_warning,
-    request_with_context_pressure_nudge as _request_with_context_pressure_nudge,
 )
-from agent_driver.runtime.single_agent.llm_step.provider_requests import (
-    narrow_request_tools_to_forced_choice as _narrow_request_tools_to_forced_choice,
-    provider_error_message as _provider_error_message,
-    request_tool_name as _request_tool_name,
+from agent_driver.runtime.single_agent.llm_step.context_pressure import (
+    request_with_context_pressure_nudge as _request_with_context_pressure_nudge,
 )
 from agent_driver.runtime.single_agent.llm_step.prompt import (
     effective_code_agent_imports as _effective_code_agent_imports,
+)
+from agent_driver.runtime.single_agent.llm_step.prompt import (
     react_system_instruction as _react_system_instruction,
+)
+from agent_driver.runtime.single_agent.llm_step.prompt import (
     runtime_attachment_messages,
+)
+from agent_driver.runtime.single_agent.llm_step.provider_requests import (
+    narrow_request_tools_to_forced_choice as _narrow_request_tools_to_forced_choice,
+)
+from agent_driver.runtime.single_agent.llm_step.provider_requests import (
+    provider_error_message as _provider_error_message,
+)
+from agent_driver.runtime.single_agent.llm_step.provider_requests import (
+    request_tool_name as _request_tool_name,
 )
 from agent_driver.runtime.single_agent.llm_step.request import (
     build_trimmed_request as _build_trimmed_request,
+)
+from agent_driver.runtime.single_agent.llm_step.request import (
     emit_protocol_debug as _emit_protocol_debug,
+)
+from agent_driver.runtime.single_agent.llm_step.request import (
     microcompact_context_observations as _microcompact_context_observations,
 )
 from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     emit_partial_assistant_tombstone as _emit_partial_assistant_tombstone,
+)
+from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     force_final_answer_message as _force_final_answer_message,
+)
+from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     recover_force_final_stream_response as _recover_force_final_stream_response,
 )
-from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
-from agent_driver.runtime.single_agent.planning.state import build_planning_snapshot
 from agent_driver.runtime.single_agent.llm_step.streaming import (
     LlmStreamIdleTimeout,
     emit_token_delta_events,
 )
+from agent_driver.runtime.single_agent.planning.state import build_planning_snapshot
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
     RunContext,
@@ -231,6 +254,64 @@ def _overflow_recovery(
     return _recover
 
 
+def _apply_redirect_correction(
+    host: "LlmStepHost",
+    context: RunContext,
+    observations: Any,
+    clarification: Any,
+    text: str,
+) -> Any:
+    """Fold a hard-redirect correction into the run + rebuild the request (030 B).
+
+    Records a plain assistant checkpoint (role alternation stays valid — no signed
+    reasoning is replayed) then the correction as a REAL user turn, frames it as a
+    priority instruction via ``request_only_context`` (epic 026), and rebuilds the
+    trimmed request. Emits a raw-free ``steering_redirect_applied`` signal.
+    """
+    from agent_driver.contracts.enums import ChatRole
+    from agent_driver.contracts.messages import ChatMessage
+
+    correction = (text or "").strip()
+    run_input = context.run_input
+    messages = list(run_input.messages)
+    messages.append(
+        ChatMessage(
+            role=ChatRole.ASSISTANT,
+            content="[Предыдущий ответ прерван поправкой пользователя.]",
+        )
+    )
+    messages.append(ChatMessage(role=ChatRole.USER, content=correction))
+    frame = ChatMessage(
+        role=ChatRole.USER,
+        content=(
+            "[Пользователь поправил ход. Учти поправку как приоритетную "
+            "инструкцию для этого ответа.]"
+        ),
+    )
+    context.run_input = run_input.model_copy(
+        update={
+            "input": correction,
+            "messages": messages,
+            "request_only_context": [*run_input.request_only_context, frame],
+        }
+    )
+    count = int(context.metadata.get("redirect_count_step", 0) or 0) + 1
+    context.metadata["redirect_count_step"] = count
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.WARNING,
+        payload={
+            "signal_id": "steering_redirect_applied",
+            "severity": "info",
+            "redirect_count_step": count,
+            "raw_free": True,
+        },
+    )
+    rebuilt, _ = _build_trimmed_request(host, context, observations, clarification)
+    return _narrow_request_tools_to_forced_choice(rebuilt)
+
+
 async def execute_llm_call_step(
     host: LlmStepHost, context: RunContext
 ) -> RuntimeStepResult:
@@ -285,11 +366,11 @@ async def execute_llm_call_step(
         # the model, prompt/completion token counts (→ cost), the input/output
         # messages, and (on provider error) a red status. No-op when tracing off.
         from agent_driver.observability.openinference import (  # noqa: PLC0415
+            SPAN_KIND_LLM,
             oi_span,
             record_status,
             set_io,
             set_llm,
-            SPAN_KIND_LLM,
         )
 
         _span_name = (
@@ -320,14 +401,29 @@ async def execute_llm_call_step(
                 stage="llm_completion",
                 interval=getattr(host._config, "stage_heartbeat_seconds", None),
             ):
-                context.llm_response = await _complete_request(
-                    host,
-                    context,
-                    request,
-                    recover_context_overflow=_overflow_recovery(
-                        host, context, request, clarification
-                    ),
-                )
+                # Epic 030 B: a hard redirect aborts THIS request mid-flight; apply
+                # the correction as a real user turn and re-ask. Bounded to 2
+                # redirects/step (anti-storm) — beyond that the correction is left
+                # queued for the next step.
+                for _redirect_attempt in range(3):
+                    try:
+                        context.llm_response = await _complete_request(
+                            host,
+                            context,
+                            request,
+                            recover_context_overflow=_overflow_recovery(
+                                host, context, request, clarification
+                            ),
+                        )
+                        break
+                    except _RedirectRequested as _redirect:
+                        # Abort applied; fold the correction into a real user turn
+                        # and rebuild the request (host clears the probe after one
+                        # read, so the re-ask completes normally).
+                        request = _apply_redirect_correction(
+                            host, context, observations, clarification, _redirect.text
+                        )
+
             _resp = context.llm_response
             _usage = getattr(_resp, "usage", None)
             _out_msg = getattr(_resp, "message", None)
