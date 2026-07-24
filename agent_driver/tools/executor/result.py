@@ -34,6 +34,10 @@ class GovernedExecutionResult:
     # execution. The runtime projector converts each entry into a
     # ``RuntimeEventType.TOOL_PROGRESS`` event in order.
     progress_events: list[ProgressEntry] = field(default_factory=list)
+    # Epic 033 B tier 3 — raw-free audit of the per-turn output-budget pass
+    # ({activated, spilled_count, chars_saved}); None when the budget is off or
+    # the aggregate was already under budget.
+    turn_output_budget_audit: dict | None = None
 
     def append(
         self,

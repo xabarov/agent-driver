@@ -20,6 +20,8 @@ class ToolExecutionResult:
     traces: list[ToolTrace] = field(default_factory=list)
     envelopes: list[ToolResultEnvelope] = field(default_factory=list)
     interrupt: InterruptRequest | None = None
+    # Epic 033 B tier 3 — raw-free per-turn output-budget audit (or None).
+    turn_output_budget_audit: dict | None = None
 
 
 # Executors accept an optional ``tool_gate`` kwarg added in A0.2. Older
@@ -71,13 +73,14 @@ def wrap_governed_executor(executor: GovernedExecutorLike) -> ToolExecutor:
         *,
         tool_gate: ToolGate | None = None,
     ) -> ToolExecutionResult:
-        governed = await executor.execute(
-            run_input, llm_response, tool_gate=tool_gate
-        )
+        governed = await executor.execute(run_input, llm_response, tool_gate=tool_gate)
         return ToolExecutionResult(
             traces=governed.traces,
             envelopes=governed.envelopes,
             interrupt=governed.interrupt,
+            turn_output_budget_audit=getattr(
+                governed, "turn_output_budget_audit", None
+            ),
         )
 
     return _run

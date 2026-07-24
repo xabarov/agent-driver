@@ -40,6 +40,16 @@ class CapabilitySettings:
     project_memory_max_total_chars: int = 24000
     tool_concurrency_limit: int | None = None
     subagent_model_routing: dict[str, str] = field(default_factory=dict)
+    # Epic 033 A: adaptive tool-deferral threshold. "auto" defers ``should_defer``
+    # candidates only when their schemas cross ``tool_defer_threshold_pct`` of the
+    # model window (hermes should_activate); "on" always defers (historical); "off"
+    # never defers. Inert when no tool is marked ``should_defer``.
+    tool_defer_mode: str = "auto"
+    tool_defer_threshold_pct: float = 10.0
+    # Epic 033 B (tier 3): aggregate per-turn tool-output budget in chars. When a
+    # turn's combined tool summaries exceed it, the largest are trimmed (safe_preview
+    # + omission marker) until under budget. None/0 = off (historical behaviour).
+    per_turn_output_budget_chars: int | None = None
 
     def __post_init__(self) -> None:
         # Preserve the normalization the flat RunnerConfig assignments used to do
@@ -53,9 +63,7 @@ class CapabilitySettings:
         object.__setattr__(
             self, "subagent_model_routing", dict(self.subagent_model_routing or {})
         )
-        object.__setattr__(
-            self, "auxiliary_models", dict(self.auxiliary_models or {})
-        )
+        object.__setattr__(self, "auxiliary_models", dict(self.auxiliary_models or {}))
 
     def aux_model_for(self, task: str) -> str | None:
         """Resolve the model for an aux ``task`` (epic 032): task registry →

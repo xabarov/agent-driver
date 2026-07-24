@@ -279,6 +279,8 @@ def build_trimmed_request(
             surface_deferred_tools=_surface_deferred_tools(
                 host, context, protocol_messages
             ),
+            tool_defer_mode=host._config.capabilities.tool_defer_mode,
+            tool_defer_threshold_pct=host._config.capabilities.tool_defer_threshold_pct,
         )
     )
 

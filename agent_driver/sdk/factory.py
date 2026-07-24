@@ -88,6 +88,8 @@ def create_agent(
         GovernedToolExecutor(
             registry=filtered_registry,
             concurrency_limit=config_copy.tool_concurrency_limit,
+            artifact_store=config_copy.artifact_store,
+            per_turn_output_budget_chars=config_copy.capabilities.per_turn_output_budget_chars,
         )
     )
     runner = SingleAgentRunner(

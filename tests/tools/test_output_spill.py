@@ -146,7 +146,10 @@ def test_spill_returns_replacement_with_preview_and_ref():
     assert replacement["persisted"] is True
     assert replacement["truncated"] is False
     assert "preview" in replacement
-    assert len(replacement["preview"]) <= PREVIEW_MAX_CHARS + 1  # +1 for ellipsis char
+    # Epic 033: preview now uses the codepoint-safe safe_preview primitive, whose
+    # content is bounded by PREVIEW_MAX_CHARS plus a descriptive «…опущено N…» marker.
+    assert len(replacement["preview"]) <= PREVIEW_MAX_CHARS + 120
+    assert "опущено" in replacement["preview"]
     assert replacement["persisted_artifact"]["artifact_id"] == ref.artifact_id
     assert ref.kind.value == "tool_result"
     # Full payload retrievable via store.get().

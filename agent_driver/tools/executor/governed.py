@@ -175,8 +175,11 @@ class GovernedToolExecutor:
         concurrency_limit: int | None = None,
         tool_hooks: "list[ToolHook] | tuple[ToolHook, ...] | None" = None,
         artifact_store: Any = None,
+        per_turn_output_budget_chars: int | None = None,
     ) -> None:
         self._registry = registry
+        # Epic 033 B (tier 3): aggregate per-turn tool-output budget. None/0 = off.
+        self._per_turn_output_budget_chars = per_turn_output_budget_chars
         self._guardrails = guardrails or GuardrailPipeline()
         self._concurrency_limit = (
             concurrency_limit
@@ -249,7 +252,21 @@ class GovernedToolExecutor:
             current_tool_calls=current_tool_calls,
             tool_gate=tool_gate,
         )
+        self._apply_turn_output_budget(result)
         return result
+
+    def _apply_turn_output_budget(self, result: GovernedExecutionResult) -> None:
+        """Epic 033 B tier 3: trim the turn's aggregate tool output if over budget."""
+        if not self._per_turn_output_budget_chars:
+            return
+        from agent_driver.tools.executor.turn_budget import enforce_turn_output_budget
+
+        trimmed, audit = enforce_turn_output_budget(
+            result.envelopes, budget_chars=self._per_turn_output_budget_chars
+        )
+        if audit.get("activated"):
+            result.envelopes[:] = trimmed
+            result.turn_output_budget_audit = audit
 
     def _lookup_manifest(self, tool_name: str):
         registered = self._registry.get(tool_name)

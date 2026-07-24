@@ -91,12 +91,13 @@ def should_spill_payload(
 def _build_preview_text(
     encoded: str, *, limit: int = PREVIEW_MAX_CHARS
 ) -> ArtifactPreview:
-    """Trim ``encoded`` to ``limit`` chars + add ellipsis marker.
+    """Trim ``encoded`` to ``limit`` chars using the epic-029 safe primitive.
 
-    Preview is text-only (no semantic parsing): the model sees the
-    first ~2 KB of the JSON dump and a footnote telling it the
-    full payload is in an artifact. The model can choose to fetch
-    via ``read_artifact`` if it actually needs the rest.
+    Preview is text-only (no semantic parsing): the model sees the first ~2 KB of
+    the JSON dump and a footnote telling it the full payload is in an artifact.
+    Epic 033: the cut goes through ``safe_preview`` (codepoint-safe, cuts on a line
+    boundary + explicit «…опущено N символов…» marker) instead of a raw ``[:limit]``
+    slice that could split a multi-byte character mid-codepoint on RU/JSON text.
     """
     if len(encoded) <= limit:
         return ArtifactPreview(
@@ -104,8 +105,10 @@ def _build_preview_text(
             truncated=False,
             original_size_bytes=len(encoded),
         )
+    from agent_driver.tools.tool_result_preview import safe_preview
+
     return ArtifactPreview(
-        text=encoded[:limit] + "…",
+        text=safe_preview(encoded, max_chars=limit),
         truncated=True,
         original_size_bytes=len(encoded),
     )

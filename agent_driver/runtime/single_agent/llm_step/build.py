@@ -69,6 +69,11 @@ class LlmRequestBuildContext:
     # surfaced into the schema list even though ``should_defer`` is set, without
     # depending on the model calling ``tool_search``. Empty = no priming.
     surface_deferred_tools: tuple[str, ...] = ()
+    # Epic 033 A: adaptive deferral threshold. "auto" defers ``should_defer``
+    # candidates only when they cross ``tool_defer_threshold_pct`` of the window;
+    # "on" always defers (historical); "off" never defers.
+    tool_defer_mode: str = "on"
+    tool_defer_threshold_pct: float = 10.0
 
 
 def _normalize_trimmed_messages(
@@ -204,6 +209,74 @@ def _request_tools_from_registry(
             continue
         schemas.append(_tool_schema_from_manifest(manifest))
     return schemas
+
+
+def adaptive_defer_surface(
+    registry: Any | None,
+    *,
+    allowed: tuple[str, ...] | None,
+    denied: tuple[str, ...] | None,
+    already_surfaced: tuple[str, ...],
+    context_window: int | None,
+    mode: str,
+    threshold_pct: float,
+) -> tuple[tuple[str, ...], dict[str, Any]]:
+    """Epic 033 A: decide which deferred candidates to force-surface this step.
+
+    ``should_defer`` marks a *candidate*; this applies the hermes ``should_activate``
+    threshold. When the candidate schemas stay under the window fraction, their names
+    are returned to be surfaced (deferral is a no-op — cheaper inline than a
+    ``tool_search`` round-trip); at/above the threshold nothing extra is surfaced and
+    they defer as before. Returns ``(names_to_surface, audit)``; audit is raw-free
+    counts for observability.
+    """
+    from agent_driver.tools.defer_policy import (
+        estimate_schema_tokens,
+        should_activate_deferral,
+    )
+
+    audit: dict[str, Any] = {"activated": False, "candidate_count": 0}
+    if mode == "off":
+        return (), audit
+    names = effective_tool_names_from_registry(registry, allowed=allowed, denied=denied)
+    if not names:
+        return (), audit
+    allowed_names = set(names)
+    explicit = set(allowed) if allowed is not None else set()
+    surfaced = set(already_surfaced)
+    rows = getattr(registry, "list_registered", None)
+    if not callable(rows):
+        return (), audit
+    candidates = [
+        item.manifest
+        for item in rows()
+        if item.manifest.name in allowed_names
+        and item.manifest.is_deferred()
+        and item.manifest.name not in explicit
+        and item.manifest.name not in surfaced
+    ]
+    if not candidates:
+        return (), audit
+    candidate_schemas = [_tool_schema_from_manifest(m) for m in candidates]
+    candidate_tokens = estimate_schema_tokens(candidate_schemas)
+    activate = should_activate_deferral(
+        candidate_tokens, context_window, mode=mode, threshold_pct=threshold_pct
+    )
+    audit = {
+        "activated": bool(activate),
+        "candidate_count": len(candidates),
+        "candidate_tokens": candidate_tokens,
+        "context_window": context_window,
+        "threshold_pct": threshold_pct,
+        "mode": mode,
+    }
+    if activate:
+        # Defer: surface nothing extra; candidates are omitted + the est. tokens
+        # they'd have cost inline are the savings.
+        audit["deferred_tokens_saved"] = candidate_tokens
+        return (), audit
+    # Below threshold: force-surface every candidate (deferral no-op this step).
+    return tuple(m.name for m in candidates), audit
 
 
 def effective_tool_names_from_registry(
@@ -393,14 +466,28 @@ def build_single_agent_llm_request(
     request_denied = profile_excluded_tools(
         harness_profile, tuple(policy_denied) if policy_denied else None
     )
+    # Epic 033 A: adaptive threshold decides whether ``should_defer`` candidates
+    # actually defer this step. Below the window fraction they are force-surfaced
+    # (cheaper inline than a tool_search round-trip); at/above it they defer.
+    adaptive_surface, defer_audit = adaptive_defer_surface(
+        ctx.registry,
+        allowed=request_allowed,
+        denied=request_denied,
+        already_surfaced=ctx.surface_deferred_tools,
+        context_window=ctx.context_window_estimate,
+        mode=ctx.tool_defer_mode,
+        threshold_pct=ctx.tool_defer_threshold_pct,
+    )
     request_tools = _request_tools_from_registry(
         ctx.registry,
         allowed=request_allowed,
         denied=request_denied,
-        surface_deferred=ctx.surface_deferred_tools,
+        surface_deferred=ctx.surface_deferred_tools + adaptive_surface,
     )
     if harness_profile is not None:
         request_tools = apply_tool_overrides(request_tools, harness_profile)
+    if defer_audit.get("candidate_count"):
+        request_metadata = {**request_metadata, "tool_defer_audit": defer_audit}
     request = LlmRequest(
         # E8: strip lone surrogates / NUL so the request can encode to UTF-8.
         messages=sanitize_request_messages(

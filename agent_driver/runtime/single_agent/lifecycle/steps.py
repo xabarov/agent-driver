@@ -166,6 +166,18 @@ class SingleAgentStepMixin:
             context.metadata["refunded_tool_calls"] = (
                 int(context.metadata.get("refunded_tool_calls", 0) or 0) + refunded
             )
+        # Epic 033 C: accumulate the per-turn output-budget savings (raw-free) so
+        # the run receipt/diagnostics show how much tool-output tax tier 3 removed.
+        audit = getattr(result, "turn_output_budget_audit", None)
+        if isinstance(audit, dict) and audit.get("activated"):
+            prior = context.metadata.get("tool_output_budget")
+            prior = prior if isinstance(prior, dict) else {}
+            context.metadata["tool_output_budget"] = {
+                "spilled_count": int(prior.get("spilled_count", 0))
+                + int(audit.get("spilled_count", 0)),
+                "chars_saved": int(prior.get("chars_saved", 0))
+                + int(audit.get("chars_saved", 0)),
+            }
         get_tool_loop_state(context).append_stage_outputs(
             traces=[trace.model_dump(mode="json") for trace in result.traces],
             results=[item.model_dump(mode="json") for item in result.envelopes],
