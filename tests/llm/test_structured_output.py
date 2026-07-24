@@ -213,21 +213,60 @@ async def test_structured_output_inert_when_unset() -> None:
 
 
 @pytest.mark.asyncio
-async def test_structured_disables_reasoning_by_default() -> None:
+async def test_plain_call_first_never_disables_reasoning_when_it_succeeds() -> None:
+    """Reasoning-mandatory models (kimi-k2-thinking) must NOT get reasoning off.
+
+    The plain forced call succeeds → reasoning stays untouched (None). Sending
+    ``reasoning={enabled:false}`` to a reasoning-mandatory model is a hard 400.
+    """
     provider = _ScriptedProvider([[{"name": "emit_result", "args": {"title": "X"}}]])
-    await structured_completion(provider=provider, messages=_msgs(), schema=_SCHEMA)
-    # A forced object tool_choice is rejected by thinking-mode models unless
-    # reasoning is disabled — structured_completion sends the OpenRouter knob.
-    assert provider.requests[0].reasoning == {"enabled": False}
+    result = await structured_completion(
+        provider=provider, messages=_msgs(), schema=_SCHEMA
+    )
+    assert result == {"title": "X"}
+    assert len(provider.requests) == 1
+    assert provider.requests[0].reasoning is None
+
+
+class _ThinkingRejectProvider(FakeProvider):
+    """Qwen3-thinking: the plain forced tool_choice 400s; only reasoning-off works."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        if request.reasoning is None:
+            raise RuntimeError("tool_choice does not support ... in thinking mode")
+        response = await super().complete(request)
+        meta = dict(response.message.metadata or {})
+        meta["planned_tool_calls"] = [{"name": "emit_result", "args": {"title": "OK"}}]
+        return response.model_copy(
+            update={"message": response.message.model_copy(update={"metadata": meta})}
+        )
 
 
 @pytest.mark.asyncio
-async def test_structured_can_opt_out_of_reasoning_disable() -> None:
-    provider = _ScriptedProvider([[{"name": "emit_result", "args": {"title": "X"}}]])
-    await structured_completion(
-        provider=provider, messages=_msgs(), schema=_SCHEMA, disable_reasoning=False
+async def test_reasoning_disabled_as_fallback_on_plain_failure() -> None:
+    provider = _ThinkingRejectProvider()
+    result = await structured_completion(
+        provider=provider, messages=_msgs(), schema=_SCHEMA
     )
-    assert provider.requests[0].reasoning is None
+    assert result == {"title": "OK"}
+    # Plain first (None) → raised → retried with reasoning disabled.
+    assert [r.reasoning for r in provider.requests] == [None, {"enabled": False}]
+
+
+@pytest.mark.asyncio
+async def test_opt_out_reraises_plain_failure_without_reasoning_fallback() -> None:
+    provider = _ThinkingRejectProvider()
+    with pytest.raises(RuntimeError):
+        await structured_completion(
+            provider=provider, messages=_msgs(), schema=_SCHEMA, disable_reasoning=False
+        )
+    # No reasoning fallback attempted.
+    assert all(r.reasoning is None for r in provider.requests)
 
 
 def test_payload_builder_forwards_reasoning_only_when_set() -> None:

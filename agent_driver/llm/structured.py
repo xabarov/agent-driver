@@ -125,18 +125,25 @@ async def structured_completion(
     if the model never produces a schema-valid emit within ``max_retries + 1``
     attempts — the caller decides fallback (never a silently-salvaged parse).
 
-    ``disable_reasoning`` (default True) sends ``reasoning={"enabled": False}``:
-    a forced object ``tool_choice`` is a mechanical emit that needs no
-    chain-of-thought, AND thinking-mode models reject a forced object/``required``
-    tool_choice outright (Qwen3 via OpenRouter). Disabling reasoning is a no-op on
-    non-thinking models and on backends that ignore the ``reasoning`` key. Set
-    False for a backend that rejects an unknown ``reasoning`` param.
+    Reasoning handling is ADAPTIVE, not unconditional. Two opposite thinking-mode
+    quirks exist across providers (both caught live via OpenRouter):
+      * Qwen3-thinking REJECTS a forced object/``required`` tool_choice ("does not
+        support being set to required or object in thinking mode") — it needs
+        reasoning disabled.
+      * Kimi-k2-thinking MANDATES reasoning ("Reasoning is mandatory ... cannot be
+        disabled") — sending ``reasoning={"enabled": False}`` is a hard 400.
+    So the plain forced call is tried FIRST (works for normal + reasoning-mandatory
+    models); only if it RAISES and ``disable_reasoning`` is set do we retry that call
+    once with reasoning disabled (the Qwen3 path). This never disables reasoning for a
+    model whose plain call already succeeds. Set ``disable_reasoning=False`` to
+    suppress even the fallback (a backend that rejects an unknown ``reasoning`` key).
     """
     convo = list(messages)
     tool = _emit_tool(schema, description=description)
     last_error = "no tool call produced"
-    reasoning = {"enabled": False} if disable_reasoning else None
-    for attempt in range(max_retries + 1):
+    reasoning_override: dict[str, Any] | None = None
+
+    async def _complete(reasoning: dict[str, Any] | None) -> Any:
         request = LlmRequest(
             messages=convo,
             model=model,
@@ -146,7 +153,20 @@ async def structured_completion(
             reasoning=reasoning,
             metadata={"purpose": "structured_output", **(metadata or {})},
         )
-        response = await provider.complete(request)
+        return await provider.complete(request)
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = await _complete(reasoning_override)
+        except Exception:  # noqa: BLE001
+            # Plain call failed. If reasoning-disable is allowed and not yet applied,
+            # this may be the Qwen3-thinking forced-tool_choice conflict — retry once
+            # with reasoning disabled and keep it for subsequent corrective turns.
+            if disable_reasoning and reasoning_override is None:
+                reasoning_override = {"enabled": False}
+                response = await _complete(reasoning_override)
+            else:
+                raise
         args = _extract_emit_args(response)
         if args is not None:
             violations = _validate(args, schema)
