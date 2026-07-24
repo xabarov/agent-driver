@@ -1,7 +1,53 @@
 # Многослойная компакция: tiered-сжатие tool-истории, time-based клиринг, span-collapse
 
-Дата создания: 2026-07-23. Статус: **proposed** (из фиче-скана референсов 2026-07-23; номер 030→035 при консолидации 2026-07-23 — коллизия двух раунд-2 сканов).
+Дата создания: 2026-07-23. Статус: **DONE (A-E)** 2026-07-24.
 Зависимость: эпик 034 (форк-агент — исполнитель span-collapse).
+
+## Итог (2026-07-24)
+
+Инвентаризация (урок 033) показала ~90% заскаффолжено: 5 слоёв (E5 tool-arg-trunc,
+microcompaction, session-memory, llm_full, partial) + оркестратор с брейкером +
+9-секционный summary-шаблон + RU-язык + protect_recent_turns + aux/fork доступны.
+Закрыты реальные gap'ы:
+
+- **A. Tiered tool-history компрессия** (`context/compaction/tool_history.py`, openclaude
+  `compressToolHistory`): старый tool_result-bulk сжимается по тирам (recent full →
+  mid truncate с length-маркером → old stub), идемпотентно, structure-preserving, для
+  stateless/no-cache провайдеров. Подключено LLM-free pre-pass'ом за
+  `CompactionSettings.enable_tool_history_compression` (default off); аудит
+  `tool_history_compression` в metadata+инвентаре.
+- **B. Idle clear-keep** (`tool_clear.py`, openclaude `microCompact`): binary-clear
+  старого tool-контента по `keep_recent` с маркером `[Old tool result content cleared]`
+  + idle-gap триггер-хелпер. Чистые функции, идемпотентно.
+- **C. Span-collapse ПРИМИТИВЫ** (`span_collapse.py`, openclaude `contextCollapse`):
+  protect first-turn framing + `PROTECTED_TAIL_RATIO` working-set, turn-start границы
+  (пары не рвутся), `COLLAPSE_TARGET_RATIO` sizing, risk=0.5·age+0.5·size, placeholder
+  `<collapsed id>`. Чистые/тестируемые; **live форк-исполнение отложено с причиной**
+  (самый дорогой слой + инертен для хоста + разделяет empty-message-set риск-семейство,
+  из-за которого chat_v2 отключил компакцию).
+- **D. Re-inject инвариант**: `apply_post_compact_cleanup` — ЕДИНАЯ точка, держащая ВСЁ
+  steering-состояние живым после компакции; добавлены goal-gate rubric-снапшот +
+  bounded recalled-memory блок (переживали лишь ИНЦИДЕНТНО) к существующим planning-
+  state + artifact-refs. В инвентаре.
+
+aux-wiring для llm_full НАМЕРЕННО не сделан: компакция шлёт self-contained промпт (нет
+parent-префикса → `AuxCachePrefix` неприменим), а стадия уже учитывает cost.
+
+**Хост D/E**: chat_v2 держит компакцию OFF (load-bearing — баг пустого message-set на
+корпус-контексте). Реальный host-win — **history-компакция** (гейт
+`CHAT_V2_HISTORY_COMPACTION`, dev on/prod off): дропаемые старые ходы длинной сессии
+сворачиваются в компактный ведущий маркер (свёрнутые user-вопросы), чтобы антецеденты
+анафоры («а почему от второго отказались?») переживали границу окна. Детерминированно,
+без LLM → «Input required»-класс невозможен (текст диалога, не корпус-контекст).
+Приёмка: 22 движковых теста + 23 host-теста (fold-маркер on/off); модули live в образе;
+**живой чат-ход штатный (1203 симв)** — регресса от гейта нет.
+
+## Урок
+
+Как и 033 — инвентаризовать движок ПЕРЕД реализацией. Для MeetScript слои A/B/C инертны
+(chat_v2 компакция OFF; короткая история single-turn). Реальный host-рычаг — не движковые
+слои, а host-side свёртка дропаемых ходов диалога. Span-collapse live-форк отложен как
+самый дорогой + рискованный слой (029/032-прецедент частичной сдачи с причинами).
 
 Мотивация: наш context-план (017) — детерминированный trimming с protect_recent_turns.
 Референсы показывают более зрелую архитектуру: НЕСКОЛЬКО взаимодополняющих слоёв компакции,
