@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
 from agent_driver.context.compaction.eligibility import decide_compaction
 from agent_driver.contracts import (
     CompactionAudit,

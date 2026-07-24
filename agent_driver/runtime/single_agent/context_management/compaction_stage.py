@@ -86,6 +86,34 @@ def _apply_tool_arg_truncation(host: Any, *, context: RunContext, request: Any) 
     }
 
 
+def _apply_tool_history_compression(
+    host: Any, *, context: RunContext, request: Any
+) -> None:
+    """Epic 035 A pre-pass: shrink OLD tool-result bulk by tier, LLM-free.
+
+    Mirrors E5's cheap in-place shrink but targets tool_result CONTENT (not call
+    args): for stateless/no-cache providers, older tool results are truncated then
+    stubbed by tier so the rewritten prefix stays bounded. Idempotent; records the
+    savings under ``tool_history_compression``.
+    """
+    from agent_driver.context.compaction.tool_history import (  # pylint: disable=import-outside-toplevel
+        compress_tool_history,
+    )
+
+    window = int(getattr(host._config, "context_window_estimate", 0) or 0)
+    messages, audit = compress_tool_history(
+        list(request.messages), effective_window=window
+    )
+    if not audit.get("activated"):
+        return
+    request.messages = messages
+    context.metadata["tool_history_compression"] = {
+        "chars_saved": audit.get("chars_saved", 0),
+        "truncated": audit.get("truncated", 0),
+        "stubbed": audit.get("stubbed", 0),
+    }
+
+
 class CompactionStageHost(Protocol):
     """Host surface required for compaction stage helpers."""
 
@@ -224,6 +252,8 @@ async def apply_compaction_if_eligible(
     """Run compaction orchestration before final provider completion."""
     if host._config.enable_tool_arg_truncation:
         _apply_tool_arg_truncation(host, context=context, request=request)
+    if getattr(host._config, "enable_tool_history_compression", False):
+        _apply_tool_history_compression(host, context=context, request=request)
     orchestrator = host._get_compaction_orchestrator()
     session_memory = load_session_memory(
         artifact_store=host._deps.artifact_store,

@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 from time import monotonic
 
-from agent_driver.context.compaction.retry import ptl_retry_drop_oldest_groups
-from agent_driver.context.compaction.sanitizers import sanitize_compaction_text
 from agent_driver.context.compaction.prompts import (
     build_full_compaction_prompt,
     strip_private_draft,
 )
+from agent_driver.context.compaction.retry import ptl_retry_drop_oldest_groups
+from agent_driver.context.compaction.sanitizers import sanitize_compaction_text
 from agent_driver.contracts import CompactionMode, CompactionResult
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmRequest

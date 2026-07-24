@@ -172,6 +172,10 @@ class CompactionSettings:
     post_compact_max_reinjected_artifact_refs: int = 5
     enable_tool_arg_truncation: bool = False
     tool_arg_truncation_max_chars: int = 2000
+    # Epic 035 A: tiered compression of OLD tool-result bulk (stub/truncate by tier)
+    # for stateless/no-cache providers. LLM-free, idempotent, structure-preserving.
+    # Default off — enable on a fallback to a no-prompt-cache backend.
+    enable_tool_history_compression: bool = False
 
 
 @dataclass(frozen=True, slots=True)
