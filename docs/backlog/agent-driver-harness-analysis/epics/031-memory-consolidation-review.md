@@ -1,6 +1,52 @@
 # Фоновая консолидация памяти и self-improvement review
 
-Дата создания: 2026-07-23 (исследование референсов, раунд 2). Статус: **proposed**.
+Дата создания: 2026-07-23 (исследование референсов, раунд 2). Статус: **DONE (A-E)** 2026-07-24.
+
+## Итог (2026-07-24)
+
+Наша память ≠ референсы (Mongo/SQLite стор фактов, не файловая память и не форк агента),
+поэтому изоляционный чек-лист hermes выполняется **по построению**: консолидатор — один
+`aux`-вызов (034-субстрат), а НЕ форк рана → журнал/кэш родителя не тронуты, cost мержится
+тегом `memory_consolidation`. 4 фазы openclaude (Orient→Gather→Consolidate→Prune) свёрнуты в
+один structured-emit над фактами сессии.
+
+- **A. Seam (движок)**: `MemoryProvider.consolidate(session_id, *, cost_ledger)` (опц., дефолт
+  `None`) + `MemoryStore.replace_session()` (opt-in, `hasattr`-gate → инертно на append-only
+  сторе). Триггер из `MemoryLifecycleHook` по **host-supplied** `app_metadata["memory"]
+  ["turn_ordinal"]` (движок stateless между ходами — счётчик не может жить на хуке), chained
+  ПОСЛЕ deferred-sync в одной фоновой задаче (не гонит append↔replace), дренаж тем же bounded
+  shutdown; per-session `asyncio.Lock`. `RunnerConfig.memory_consolidation_every_n_turns` (0=off).
+- **B. Консолидатор** (`memory/consolidation.py`): детерминированный pre-pass (supersede_by_slot
+  + exact-dedup) — если сократил, персистится ДЁШЕВО без LLM (`reason="deterministic"`); иначе
+  при открытом гейте — aux `structured_completion` (036-канал) сливает cross-slot дубли, роняет
+  опровергнутое (higher-id = newer), абсолютизирует относительные даты (RU/EN-маркеры), re-slot
+  raw_fallback. Консервативно: guards never wipe / never grow, rollback на aux-сбой (с падением
+  на детерминированный floor), value-aware cap. Cheap-first гейт (`_MIN_RECORDS_FOR_PASS=4` или
+  relative-date маркер).
+- **C. Сигнал поправок**: extraction-промпт (021) дополнен классом «пользователь поправил
+  ассистента (формат/термин/факт, фрустрация)» → durable-факт высокого приоритета (hermes
+  «frustration is a first-class signal»).
+- **D. Хост**: гейт `CHAT_V2_MEMORY_CONSOLIDATION` + `_EVERY_N` (dev on/prod off);
+  `MongoChatMemoryStore.replace_session` с **archive-снапшотом** (hermes «archive restorable»)
+  + governance-meta + **cross-process Mongo-лок** (mirror `claim_upload_attempt`, claim_id+stale-TTL);
+  `turn_ordinal` в app_metadata; `GET /chat_v2/memory.consolidation`; нотис «Последняя уборка
+  памяти: <дата> (N→M)» в MemoryDialog (governance-UI, НЕ в чате). Плюс **placeholder-скраб**:
+  консолидированный факт с остаточным PII-плейсхолдером (`@@…@@`) откатывается к чистому
+  архивному оригиналу по слоту, иначе выбрасывается — память никогда не показывает оператору
+  сырой плейсхолдер (аномалия на приёмке = блокер, Принцип №2). Скраб чинит и предсуществующую
+  «отравленную» память.
+- **E. Приёмка**: 13 движковых тестов (fixture: merge/drop-contradiction/relative-date/empty-guard/
+  would-grow-guard/aux-fail/store-without-replace/cadence×5) + 3 host-теста (гейт-каданс/turn_ordinal/
+  scrub-planner); **live через реальный build-путь** (реальный Mongo+LLM+privacy-барьер): 6→4,
+  контрадикция убрана, cross-slot merge, archive-снапшот, governance-meta, ноль плейсхолдеров;
+  **операторский GET/DELETE** на реальной сессии `user_1` вернул непустой `consolidation` нотис.
+
+## Найдено на приёмке (follow-up)
+
+Structured-emit через privacy-барьер иногда не восстанавливает PII-плейсхолдер в tool-call
+args → он оседает в памяти (нашлись и предсуществующие «отравленные» raw_fallback-записи, не от
+031). Скраб 031 закрывает это на стороне памяти; общий фикс восстановления tool-call args в
+`restore_strings` — кандидат в отдельный эпик privacy-провайдера.
 
 Мотивация: наша память (021/027) — per-turn экстракция фактов + supersede + гигиена
 recall. Чего нет: **периодической уборки стора** (дубли между слотами, осиротевшие
