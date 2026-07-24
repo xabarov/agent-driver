@@ -1,6 +1,36 @@
 # Steering v2: полный диспетчер, redirect-семантика, единый cancel
 
-Дата создания: 2026-07-23 (исследование референсов, раунд 2). Статус: **proposed**.
+Дата создания: 2026-07-23 (исследование референсов, раунд 2). Статус: **DONE (A-E)** 2026-07-24.
+
+## Итог (2026-07-24)
+
+- **A. Диспетчер достроен** (`runtime/control/dispatcher.py`): INTERRUPT → `abort_handle.abort`
+  (мостик в единый cancel-путь), CANCEL_QUEUED_MESSAGE → `store.cancel`, GET_CONTEXT_USAGE →
+  journal-событие token-давления, PATCH_PLANNING_STATE → merge planning-state. Не-wired kind
+  (SET_MAX_THINKING_TOKENS / STOP·CONTINUE_SUBAGENT) → `control_kind_unsupported` WARNING +
+  mark FAILED — НЕ молчаливый `False`, item не висит QUEUED. Сигналы `control_kind_unsupported`
+  / `control_payload_invalid` / `context_usage_report` в реестр 025 (lock-тест).
+- **B. Redirect** (opt-in, инертно без probe): `ControlKind.REDIRECT_USER_MESSAGE` +
+  `RunnerConfig.redirect_probe`. `completion.py::_await_with_redirect` рейсит provider.complete
+  против probe; при поправке ОТМЕНЯЕТ только текущий LLM-запрос (не тулы/детей) и бросает
+  `RedirectRequested`; `llm_step::_apply_redirect_correction` кладёт assistant-чекпоинт (роль-
+  альтернация) + поправку настоящим user-ходом + `request_only_context` рамку (026), re-request;
+  бюджет 2 redirect/шаг; на границе шага REDIRECT деградирует до enqueue (hermes «degrade to
+  steer в тул-фазе»). Сигнал `steering_redirect_applied`.
+- **C. Leftover-протокол**: недренированные NEXT/LATER команды в терминал-метадате
+  (`leftover_controls`, raw-free preview) → хост доставит следующим ходом (раньше хвост очереди
+  висел до следующего рана).
+- **D. Хост**: `redirect_probe` = замыкание над Redis command-queue (кросс-контейнерно API↔
+  jobworker, consume-once mark_applied); `POST /chat_v2/{id}/redirect` enqueue-ит REDIRECT-
+  команду; композер два действия «Перебить» (redirect) / «Уточнить» (enqueue) + редактируемые
+  чипы очереди (`onDelete` → cancelChatV2Command для queued).
+- **E. Приёмка**: 6 движковых тестов (unsupported-signal, redirect abort+re-ask end-to-end,
+  inert-без-probe, leftover); свод зелёный (2 pre-existing phase6-фейла); хостовые route-тесты
+  65/65; steering-smoke расширен redirect-уровнем; live/Playwright на no-GPU обходе.
+
+## Не в скоупе
+
+Clarify-плоскость (вопрос ОТ агента — horizon №9), turn lease (№10).
 
 Мотивация: инвентаризация показала, что стиринг-канал работает, но наполовину: диспетчер
 применяет **4 из 11** объявленных `ControlKind` (`runtime/control/dispatcher.py:54-92` —
