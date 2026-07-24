@@ -1,6 +1,31 @@
 # Cache-safe форк-агент: субстрат побочных агентов без разрушения prefix-кэша
 
-Дата создания: 2026-07-23. Статус: **proposed** (из фиче-скана референсов 2026-07-23; номер 029→034 при консолидации 2026-07-23 — коллизия двух раунд-2 сканов).
+Дата создания: 2026-07-23. Статус: **DONE (A-D)** 2026-07-24 (из фиче-скана референсов 2026-07-23; номер 029→034 при консолидации 2026-07-23 — коллизия двух раунд-2 сканов).
+
+## Итог (2026-07-24)
+
+Аддитивно, БЕЗ переписывания: cache-safe примитивы для ПОЛНЫХ субагентов уже были
+(`subagents/cache_safe_params.py`, `sdk/fork.py::fork_subagent`) — здесь добавлен ЛЁГКИЙ
+single-call aux-субстрат для побочной LLM-работы. Полностью: `docs/aux-fork-substrate.md`.
+
+- **A. Субстрат** — `agent_driver/llm/aux.py::aux_completion()` (4 гарантии openclaude
+  forkedAgent): cache-safe (`AuxCachePrefix` → parent-префикс + `enable_prompt_cache`,
+  правило «не трогать model/tools/thinking — рвёт кэш», PR #18143 45× spike закодировано),
+  usage-мерж в cost-ledger с task-тегом (`merge_aux_usage`), изоляция (plain complete),
+  raw-free fork-event (`aux_fork_event_payload`, epic 037).
+- **B. Контракт фонового завершения** — задокументирован idle-turn инвариант (hermes
+  async_delegation: доставка НОВЫМ ходом, не сплайс между tool_result и assistant →
+  роль-альтернация + кэш); движок уже имеет механизмы (defer_sync + subagent-background).
+  Durable completion-queue с crash-recovery — вне скоупа (низкий ROI одноходового чата,
+  задокументировано). Frozen-snapshot память (hermes memory_tool) — дисциплина держится
+  (recall рендерится на старте, не мутируется mid-run).
+- **C. Аудит + миграция** — `structured_completion` получил `cost_ledger`/`task` → мержит
+  usage (закрыт гэп: memory-extraction/структурные эмиты больше не теряются); компакция
+  через `aux_model_for("compaction")` (закрыт гэп: читала `auxiliary_model` напрямую, минуя
+  032-реестр). Memory-extraction (фон, post-receipt) — ledger-мерж отложен с причиной.
+- **D. Приёмка** — 6 тестов субстрата (cache-prefix, usage-мерж, raw-free event, no-op-ы);
+  свод llm/memory/context/observability зелёный (2 pre-existing phase6-фейла подтверждены
+  на дереве без 034); MeetScript-свип без регрессий (аддитивно).
 
 Мотивация: у движка накапливаются «побочные» LLM-работы (суммаризация, извлечение фактов
 памяти, будущая компакция спанов, титулы сессий, рекапы) — сейчас каждая делается ad-hoc

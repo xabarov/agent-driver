@@ -118,6 +118,8 @@ async def structured_completion(
     max_retries: int = 1,
     metadata: dict[str, Any] | None = None,
     disable_reasoning: bool = True,
+    cost_ledger: Any = None,
+    task: str = "structured_output",
 ) -> dict[str, Any]:
     """Force a schema-valid structured emit via the tool-call channel.
 
@@ -137,7 +139,13 @@ async def structured_completion(
     once with reasoning disabled (the Qwen3 path). This never disables reasoning for a
     model whose plain call already succeeds. Set ``disable_reasoning=False`` to
     suppress even the fallback (a backend that rejects an unknown ``reasoning`` key).
+
+    ``cost_ledger`` (epic 034): when given, every attempt's usage is merged into the
+    ledger tagged by ``task``, so this side-call's tokens land in the run's receipt
+    (previously structured emits — including memory extraction — were lost).
     """
+    from agent_driver.llm.aux import merge_aux_usage
+
     convo = list(messages)
     tool = _emit_tool(schema, description=description)
     last_error = "no tool call produced"
@@ -153,7 +161,9 @@ async def structured_completion(
             reasoning=reasoning,
             metadata={"purpose": "structured_output", **(metadata or {})},
         )
-        return await provider.complete(request)
+        response = await provider.complete(request)
+        merge_aux_usage(cost_ledger, response, task=task)
+        return response
 
     for attempt in range(max_retries + 1):
         try:

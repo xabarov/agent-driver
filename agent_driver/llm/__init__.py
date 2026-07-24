@@ -1,5 +1,11 @@
 """LLM gateway package exports."""
 
+from agent_driver.llm.aux import (
+    AuxCachePrefix,
+    aux_completion,
+    aux_fork_event_payload,
+    merge_aux_usage,
+)
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmProviderKind,
@@ -70,6 +76,10 @@ from agent_driver.llm.suggestions import (
 )
 
 __all__ = [
+    "AuxCachePrefix",
+    "aux_completion",
+    "aux_fork_event_payload",
+    "merge_aux_usage",
     "filter_suggestion",
     "generate_suggestions",
     "suppress_reason_for_usage",

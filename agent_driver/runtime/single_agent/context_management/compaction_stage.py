@@ -501,7 +501,13 @@ async def _apply_llm_full_compaction(
     # provider and model resolve independently so either can be overridden.
     aux_provider = host._config.auxiliary_provider
     compaction_provider = aux_provider or host._deps.provider
-    compaction_model = host._config.auxiliary_model or host._config.compaction_model
+    # Epic 034: resolve the compaction model through the per-task aux registry
+    # (aux_model_for("compaction") → auxiliary_model → compaction_model) so the
+    # side task shares the one aux-backend seam instead of reading auxiliary_model
+    # directly (which bypassed the 032 registry).
+    compaction_model = (
+        host._config.aux_model_for("compaction") or host._config.compaction_model
+    )
     compaction_result, summary = await run_full_llm_compaction(
         provider=compaction_provider,
         model=compaction_model,
