@@ -51,6 +51,7 @@ retry is indistinguishable from a hang»), hermes `_emit_wait_notice` + gateway-
 | `forced_final_recovered_prior_turn` | durable | финал взят из предыдущего содержательного хода | пометить ответ как восстановленный |
 | `forced_final_empty_after_all_retries` | durable | вся лестница исчерпана, финал пуст | честная ошибка + «Повторить» |
 | `poisoned_prefix_suspect` | transient | лестница исчерпана, а в истории остался assistant-ход с inline-CoT (эпик 043 D) — подозрение на отравленный префикс; санируем и ретраим один раз | не для статус-строки; диагностика |
+| `empty_tool_calls_contract_violation` | transient | провайдер сказал finish_reason=tool_calls, но прислал пустой массив (эпик 042 B); переспрашиваем вызов, а не финализируем нарратив; bounded ≤3 | «Уточняю вызов инструмента…» (диагностика) |
 | `compaction_circuit_breaker_open` | durable | компактизация отключена брейкером (cooldown) | не для статус-строки; диагностика |
 | `compaction_empty_result_skipped` | transient | компакт вернул пусто, пропущен | не для статус-строки |
 | `tool_failure_streak_warning` | transient | 2 фейла инструмента подряд | «Инструмент сбоит — пробую ещё раз» |

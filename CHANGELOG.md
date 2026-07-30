@@ -7,6 +7,28 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — tool-call wire integrity (epic 042)
+Three independent wire bugs, each silently losing or corrupting a tool call. The plane
+rule: never synthesize tool-call completeness. **12 new tests; full sweep 2810 passed.**
+- **(A) tool_call_id collision dedup** (`tools/executor/planned.dedupe_tool_call_ids`, applied
+  at the single ingest point `extract_planned_tool_calls`). Some providers reuse the same
+  `tool_call_id` across a batch; tool-result rows are keyed by id, so the second call's result
+  silently vanished from every replay. The nth occurrence of an id is renamed to `<id>_d<n>`
+  deterministically (prompt-cache-stable). Reference: hermes `474c84ed8`.
+- **(B) empty tool_calls contract violation → bounded re-prompt** (`tool_stage`). A provider
+  that signals `finish_reason=tool_calls` but ships an empty array (observed: opus-4.8 /
+  sonnet-4.5 on GitHub Copilot) made the loop finalize its narration — an unattended job
+  "succeeded" at tool_turns=0. Now re-prompted for the call, bounded to 3 consecutive
+  (`empty_tool_calls_reprompt_count`, reset on a successful tool round), signal
+  `empty_tool_calls_contract_violation`. Gated so it never overrides a substantive answer
+  (`final_content_unusable`) and never fires when the runtime itself suppressed a shipped call
+  (`suppressed_planned_tool_calls`, forced-final/budget winddown). Reference: hermes `63954d508`.
+- **(C) no repair-execute on non-terminal truncation** (`extract_planned_tool_calls`). A tool
+  call whose args were repaired from truncated JSON is only trustworthy when the provider
+  actually finished the turn; a stream ending with no terminal reason (`finish_reason=UNKNOWN`)
+  is a transport cut, so a repaired call is dropped rather than executing half a command.
+  Reference: openclaude `2fe1e1b`.
+
 ### Added — liveness plane: idle-bounded side/aux LLM calls (epic 041)
 Side/aux LLM calls (compaction, structured extraction, suggestions, graders) called
 `provider.complete` directly with NO timeout — a wedged provider blocked the whole run

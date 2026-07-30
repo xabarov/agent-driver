@@ -85,6 +85,7 @@ from agent_driver.runtime.single_agent.tool_stage.deep_research import (
 )
 
 from agent_driver.runtime.single_agent.finalization.answer_recovery import (
+    final_content_unusable,
     is_degenerate_refusal,
 )
 
@@ -116,6 +117,11 @@ _MAX_EMPTY_ANSWER_RETRIES = 1
 # allow a few bounded retries — each re-prompt is a fresh chance to answer correctly from the same
 # context (3 retries takes the residual ~0.6^4 ≈ 13%). Only the degenerate minority pays the latency.
 _MAX_DEGENERATE_ANSWER_RETRIES = 3
+# Epic 042 B: a provider that signals finish_reason=tool_calls but ships an EMPTY
+# tool_calls array (observed: opus-4.8 / sonnet-4.5 on GitHub Copilot) must be
+# re-prompted for the call, not finalized on its narration — otherwise an
+# unattended job "succeeds" at tool_turns=0. Bounded so a broken provider can't spin.
+_MAX_EMPTY_TOOL_CALLS_REPROMPTS = 3
 
 _force_web_fetch_for_source_verified_research = (
     force_web_fetch_for_source_verified_research
@@ -356,6 +362,52 @@ async def _finalize_tool_stage_transition(
             if refusal_retries < _MAX_DEGENERATE_ANSWER_RETRIES:
                 context.metadata["degenerate_answer_retry_count"] = refusal_retries + 1
                 continue_with_llm = True
+    # Epic 042 B: empty tool_calls contract violation. The provider said it wanted a
+    # tool (finish_reason=tool_calls) but shipped no call — no envelopes ran and no
+    # call parsed. Re-prompt for the call instead of finalizing the NARRATION; a
+    # successful tool round resets the counter (below). Gated on the content NOT being
+    # a usable answer: a model that answered substantively despite a spurious
+    # tool_calls finish reason is finalized as-is (preserves the 015 baseline).
+    if (
+        not continue_with_llm
+        and context.llm_response is not None
+        and context.llm_response.finish_reason == LlmFinishReason.TOOL_CALLS
+        and not result.envelopes
+        and not extract_planned_tool_calls(context.llm_response)
+        # Not a provider contract violation if the runtime itself suppressed a call
+        # the provider DID ship (forced-final / budget winding down) — that path moves
+        # the calls to ``suppressed_planned_tool_calls``. Only a genuinely empty
+        # provider array (no suppression marker) is the (b) violation.
+        and not context.llm_response.metadata.get("suppressed_planned_tool_calls")
+        and final_content_unusable(
+            (context.llm_response.message.content or "").strip(),
+            str(getattr(context.run_input, "input", "") or ""),
+        )
+    ):
+        empty_tc_reprompts = int(
+            context.metadata.get("empty_tool_calls_reprompt_count", 0)
+        )
+        if empty_tc_reprompts < _MAX_EMPTY_TOOL_CALLS_REPROMPTS:
+            context.metadata["empty_tool_calls_reprompt_count"] = empty_tc_reprompts + 1
+            continue_with_llm = True
+            emit_step_event(
+                host,
+                context,
+                event_type=RuntimeEventType.WARNING,
+                payload={
+                    "warning": (
+                        "Provider signalled a tool call (finish_reason=tool_calls) "
+                        "but shipped an empty tool_calls array; re-prompting for the "
+                        "call instead of finalizing the narration."
+                    ),
+                    "signal_id": "empty_tool_calls_contract_violation",
+                    "severity": "warning",
+                    "reprompt_count": empty_tc_reprompts + 1,
+                },
+            )
+    elif result.envelopes:
+        # A real tool round happened — the model can make progress again.
+        context.metadata.pop("empty_tool_calls_reprompt_count", None)
     loop_iterations = int(context.metadata.get("tool_loop_iterations", 0))
     if continue_with_llm:
         loop_iterations += 1
