@@ -551,13 +551,28 @@ async def _apply_llm_full_compaction(
         model=compaction_model,
         history_excerpt=sanitized_excerpt,
         user_request=context.run_input.input or "",
+        idle_timeout_seconds=host._config.aux_idle_timeout_seconds,
     )
     _account_compaction_cost(context, compaction_result, provider=compaction_provider)
     if compaction_result is None or not compaction_result.success:
+        # Epic 041 C: a liveness idle-timeout is a distinct, honest failure kind so
+        # hosts can tell "summary provider stalled" from a content/parse failure.
+        result_meta = (
+            compaction_result.metadata if compaction_result is not None else {}
+        ) or {}
+        idle_timed_out = result_meta.get("failure_kind") == "aux_idle_timeout"
         failure = {
-            "kind": "llm_compaction_failed",
+            "kind": (
+                "llm_compaction_aux_idle_timeout"
+                if idle_timed_out
+                else "llm_compaction_failed"
+            ),
             "mode": "llm_full",
-            "message": "provider compaction returned unsuccessful result",
+            "message": (
+                "compaction summary provider stalled (idle timeout)"
+                if idle_timed_out
+                else "provider compaction returned unsuccessful result"
+            ),
         }
         audit = orchestrator.complete_attempt(
             decision=decision,

@@ -50,6 +50,12 @@ class CapabilitySettings:
     # turn's combined tool summaries exceed it, the largest are trimmed (safe_preview
     # + omission marker) until under budget. None/0 = off (historical behaviour).
     per_turn_output_budget_chars: int | None = None
+    # Epic 041 B: liveness (idle) timeout in seconds for side/aux LLM calls
+    # (compaction, extraction, suggestions, graders). None = off (historical: side
+    # calls run under no timeout). When set, a side call streams and the idle timer
+    # resets per chunk — a slow-but-healthy model survives; only a stalled stream
+    # trips AuxIdleTimeout. A liveness protection, not a wall-clock budget.
+    aux_idle_timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
         # Preserve the normalization the flat RunnerConfig assignments used to do

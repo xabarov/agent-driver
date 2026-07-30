@@ -49,12 +49,12 @@ benchmark-fitting, обязательна классификация tool/prompt
 | Suggested next questions (038) | хост-опция | opt-in | opt-in | scan | — | — |
 | Answer shaping / injection hygiene (039) | промпт-блоки хоста | хост | opt-in | scan | A/B diverse-бенч | оба |
 | Transcript-poisoning hygiene (043) | встроено (CoT-strip, empty-repair, scaffolding-теги, poisoned-prefix quarantine) | on | core | scan (hermes cf0c42fa0 — инцидент-класс) | — | hermes |
+| Liveness: idle-bounded side/aux calls (041) | `aux_idle_timeout_seconds` | None (off) | opt-in | scan (конвергенция обоих референсов) | — | оба |
 
 ## Proposed (horizon-scan 040, 2026-07-29)
 
 | Кандидат | Эпик | Суть | Референс-сигнал |
 |---|---|---|---|
-| Liveness/progress plane | 041 (в 040) | heartbeat тулов; aux-вызовы стримом с idle-таймаутом; stall сабагентов по progress-token | **конвергенция обоих референсов**; wall-clock watchdog у hermes отреверчен |
 | Tool-call wire integrity | 042 (в 040) | не синтезировать завершённость: обрыв стрима с in-flight тулом → fail; пустой `tool_calls` → bounded re-prompt; коллизии id → ресуффикс | openclaude `2fe1e1b`, hermes `63954d508`/`474c84ed8` |
 | Context-engine seam | 044 (в 040) | `select_context()` per-turn без мутации истории + `on_turn_complete()` + context breakdown | hermes `context_engine.py`; продуктовая примерка на RAG-хостах |
 | Event-driven wait (park-on-event вместо поллинга) | 045 (в 040, добавлен 2026-07-30) | `wait_for_event`: подписка → checkpoint → wake с payload; liveness-бэкстоп из 041; delivery-claim из №14; дёшево тестится осью `event_wait` на DS Flash | durable_lifecycle/checkpoints готовы; hermes `async_delegation` как чертёж доставки |

@@ -14,6 +14,7 @@ from agent_driver.context.compaction.sanitizers import sanitize_compaction_text
 from agent_driver.contracts import CompactionMode, CompactionResult
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmRequest
+from agent_driver.llm.liveness import AuxIdleTimeout, bounded_side_completion
 from agent_driver.llm.providers import LlmProvider
 
 REQUIRED_SUMMARY_KEYS = {
@@ -53,8 +54,16 @@ async def run_full_llm_compaction(
     model: str,
     history_excerpt: str,
     user_request: str,
+    idle_timeout_seconds: float | None = None,
 ) -> tuple[CompactionResult, dict[str, object]]:
-    """Run full no-tool compaction with structured validation."""
+    """Run full no-tool compaction with structured validation.
+
+    Epic 041 C: with ``idle_timeout_seconds`` set the compaction call runs under a
+    liveness (idle) timeout — a wedged summary provider fails as a bounded
+    ``success=False`` result (the circuit breaker bounds retries) instead of hanging
+    the whole run. A slow-but-healthy summary model is never killed (idle resets per
+    streamed chunk).
+    """
     sanitized_history = sanitize_compaction_text(history_excerpt)
     groups = [item for item in sanitized_history.splitlines() if item.strip()]
     kept_groups, dropped_groups = ptl_retry_drop_oldest_groups(
@@ -67,13 +76,33 @@ async def run_full_llm_compaction(
         user_request=user_request,
     )
     started = monotonic()
-    response = await provider.complete(
-        LlmRequest(
-            model=model,
-            messages=[ChatMessage(role="user", content=prompt)],
-            metadata={"compaction_mode": "llm_full", "no_tools": True},
+    try:
+        response = await bounded_side_completion(
+            provider,
+            LlmRequest(
+                model=model,
+                messages=[ChatMessage(role="user", content=prompt)],
+                metadata={"compaction_mode": "llm_full", "no_tools": True},
+            ),
+            idle_timeout_seconds=idle_timeout_seconds,
         )
-    )
+    except AuxIdleTimeout as exc:
+        latency_ms = int((monotonic() - started) * 1000)
+        return (
+            CompactionResult(
+                compaction_id="cmp_llm_full_idle_timeout",
+                mode=CompactionMode.LLM_FULL,
+                success=False,
+                model=model,
+                latency_ms=latency_ms,
+                metadata={
+                    "failure": str(exc),
+                    "failure_kind": "aux_idle_timeout",
+                    "ptl_dropped_groups": len(dropped_groups),
+                },
+            ),
+            {},
+        )
     cleaned, draft = strip_private_draft(response.message.content)
     try:
         summary = _extract_persisted_summary_json(cleaned)

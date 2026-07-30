@@ -374,6 +374,10 @@ class RunnerConfig:
         return self.capabilities.tool_concurrency_limit
 
     @property
+    def aux_idle_timeout_seconds(self) -> float | None:
+        return self.capabilities.aux_idle_timeout_seconds
+
+    @property
     def subagent_model_routing(self) -> dict[str, str]:
         return self.capabilities.subagent_model_routing
 

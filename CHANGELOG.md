@@ -7,6 +7,31 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — liveness plane: idle-bounded side/aux LLM calls (epic 041)
+Side/aux LLM calls (compaction, structured extraction, suggestions, graders) called
+`provider.complete` directly with NO timeout — a wedged provider blocked the whole run
+forever (the main loop has always been protected by `LlmStreamIdleTimeout` + the epic-025
+`stage_wait_heartbeat`, side calls were not). Closes that gap with a **liveness** (idle),
+not wall-clock, timeout — the reference lesson (hermes reverted a wall-clock watchdog
+because a 30s total deadline killed slow-but-healthy summary models). Opt-in; default
+preserves today's unbounded behaviour. **12 new tests; full sweep 2802 passed.**
+- **`agent_driver.llm.liveness.bounded_side_completion`** + `AuxIdleTimeout`. With an idle
+  timeout set, the side call streams and re-aggregates the text, resetting the idle timer
+  on every chunk — a model that keeps producing tokens is never killed no matter how long
+  it runs; only a genuinely silent stream trips `AuxIdleTimeout`. A generous total ceiling
+  (`max(600s, 4× idle)`) bounds a degenerate trickle. Side calls are text-only, so
+  re-aggregation is a plain concatenation. `idle_timeout_seconds=None` is a pure passthrough
+  to `provider.complete` (zero overhead). A provider without a usable `stream` falls back to
+  `complete` under the total ceiling.
+- **Config**: `CapabilitySettings.aux_idle_timeout_seconds: float | None = None` (threads
+  through `RunnerConfig(aux_idle_timeout_seconds=…)`; delegating property on `RunnerConfig`).
+- **Wired** into `aux_completion` (`llm.aux`) and the LLM-full compaction path
+  (`run_full_llm_compaction` / `compaction_stage`): a stalled compaction summary provider now
+  returns a graceful `success=False` result (circuit breaker bounds retries) with failure
+  kind `llm_compaction_aux_idle_timeout`, instead of hanging the run.
+- **Deferred (documented in the epic)**: subagent stall detection via progress-token
+  (hermes `99a381f31`) — a larger parent↔child progress-plumbing effort, adjacent to 034/045.
+
 ### Added — transcript-poisoning hygiene (epic 043)
 Four hygiene invariants that close the transcript-poisoning class: an assistant turn
 exposing its own chain-of-thought reads as a prefill/reasoning-injection to provider
