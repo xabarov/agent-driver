@@ -493,7 +493,10 @@ async def test_chat_session_looping_tool_calls_stop_by_budget_with_named_tools()
     assert "tool> web_search(" in text
     assert "summary=" in text
     assert "assistant> [no textual response]" in text
-    assert "tools_used=1 warnings=1" in text
+    # A looping provider stopped by the tool-call budget now surfaces the honest
+    # loop-guard / budget warning signals added by the loop-guards + force-final
+    # planes (epics 015/019), so the count is 3, not the historical 1.
+    assert "tools_used=1 warnings=3" in text
     assert "hint> Check --max-tool-calls and tool policy." not in text
 
 

@@ -325,6 +325,12 @@ class SingleAgentOutputMixin:
         terminal: TerminalResult,
     ) -> AgentRunOutput:
         answer = self._sanitize_terminal_answer(context)
+        # Planning events must be emitted BEFORE the run-event snapshot below —
+        # otherwise they land in the event log but fall outside ``run_events`` and
+        # never reach ``output.events`` (regressed when epic 015 moved this snapshot
+        # up to feed degenerate-answer recovery; the paused-output path already
+        # emits before its snapshot).
+        self._emit_planning_events(context)
         run_events = self._deps.event_log.list_for_run(context.run_id)
         # Epic 015 Phase C: recover a real answer discarded by a degenerate no-progress finalize
         # (empty or a short «already-answered» restatement on a tool-less over-iteration). No-op for
@@ -347,7 +353,6 @@ class SingleAgentOutputMixin:
         digest_refs = self._persist_session_artifacts(
             context=context, answer=answer, artifact_refs=artifact_refs
         )
-        self._emit_planning_events(context)
         projection = build_memory_projection_for_context(
             context,
             answer=answer,
