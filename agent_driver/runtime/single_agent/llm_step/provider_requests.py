@@ -10,6 +10,11 @@ import httpx
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import LlmRequest
+from agent_driver.contracts.scaffolding import scaffolding_metadata
+from agent_driver.llm.message_hygiene import (  # re-export for llm_step imports
+    quarantine_inline_reasoning,
+    repair_empty_non_final_messages,
+)
 
 
 def provider_error_message(response: httpx.Response) -> str:
@@ -177,7 +182,10 @@ def request_without_tools(
                 "tool limitations; include source links when the task used web "
                 "sources."
             ),
-            metadata={"runtime_retry": "empty_forced_final_no_tools"},
+            metadata=scaffolding_metadata(
+                "empty_forced_final_no_tools",
+                base={"runtime_retry": "empty_forced_final_no_tools"},
+            ),
         ),
     ]
     metadata = dict(request.metadata)
@@ -239,7 +247,10 @@ def request_with_folded_tool_history(
                 "the user's language, using only the evidence already present in this "
                 "conversation. Do not call tools and do not mention tool limitations."
             ),
-            metadata={"runtime_retry": "empty_forced_final_history_fold"},
+            metadata=scaffolding_metadata(
+                "empty_forced_final_history_fold",
+                base={"runtime_retry": "empty_forced_final_history_fold"},
+            ),
         )
     )
     metadata = dict(request.metadata)

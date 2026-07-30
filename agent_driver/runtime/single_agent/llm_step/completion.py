@@ -21,6 +21,8 @@ from agent_driver.runtime.single_agent.llm_step.provider_requests import (
     is_forced_tool_choice_provider_error,
     is_invalid_encrypted_reasoning_error,
     is_reduce_max_tokens_credit_error,
+    quarantine_inline_reasoning,
+    repair_empty_non_final_messages,
     request_with_folded_tool_history,
     request_with_reduced_max_tokens,
     request_without_forced_tool_choice,
@@ -108,6 +110,11 @@ async def complete_request(  # pylint: disable=too-many-branches
     last_timeout: httpx.TimeoutException | None = None
     overflow_recovered = False
     for attempt in range(3):
+        # Single pre-send owner (epic 043 B): pad empty non-final turns so a
+        # degenerate/interrupted turn can't make a strict provider reject the
+        # whole request. Covers the initial send and every retry rebuild below
+        # (each reassigns ``request`` then ``continue``s back through here).
+        request = repair_empty_non_final_messages(request)
         try:
             if not is_stream_enabled(context.run_input):
                 response = await _await_with_redirect(
@@ -661,6 +668,44 @@ async def retry_forced_final_without_tools(
                 model=str(getattr(request, "model", "") or ""),
                 metadata={"forced_final_prior_turn_recovered": True},
             )
+    if _unusable(retry_response.message.content) and not context.metadata.get(
+        "poisoned_prefix_quarantine_attempted"
+    ):
+        # Poisoned-prefix quarantine (epic 043 D): a persistent empty streak whose
+        # history still carries an assistant turn exposing its own chain-of-thought
+        # is the transcript-poisoning signature — a provider classifier reads the
+        # replayed CoT as a prefill injection and blanks every call. Sanitize the
+        # suspect turn(s) and retry ONCE (bounded, mirrors strip_reasoning_echo).
+        quarantined, suspect_count = quarantine_inline_reasoning(request)
+        if suspect_count:
+            context.metadata["poisoned_prefix_quarantine_attempted"] = True
+            context.metadata["poisoned_prefix_suspect_turns"] = suspect_count
+            emit_step_event(
+                host,
+                context,
+                event_type=RuntimeEventType.WARNING,
+                payload={
+                    "warning": (
+                        "Empty-final ladder exhausted with inline reasoning present "
+                        f"in {suspect_count} assistant turn(s) — suspected poisoned "
+                        "prefix; sanitizing and retrying once."
+                    ),
+                    "signal_id": "poisoned_prefix_suspect",
+                    "severity": "warning",
+                    "suspect_turns": suspect_count,
+                },
+            )
+            quarantine_response = _mark_no_tool_text_form_suppression(
+                context,
+                request,
+                await host._deps.provider.complete(
+                    request_without_tools(quarantined, provider_name=provider_name)
+                ),
+                suppress_native_planned=True,
+            )
+            if not _unusable(quarantine_response.message.content):
+                context.metadata["poisoned_prefix_quarantine_recovered"] = True
+                retry_response = quarantine_response
     if _unusable(retry_response.message.content):
         # All recovery strategies exhausted: surface a distinct signal so hosts can
         # message the user honestly instead of rendering a silent empty bubble.
@@ -672,7 +717,7 @@ async def retry_forced_final_without_tools(
                 "warning": (
                     "Provider returned an empty final answer after all retry "
                     "strategies (non-stream, no-tools, history-fold, "
-                    "fallback-provider, prior-turn)."
+                    "fallback-provider, prior-turn, poisoned-prefix quarantine)."
                 ),
                 "signal_id": "forced_final_empty_after_all_retries",
                 "severity": "error",

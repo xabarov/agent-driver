@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from agent_driver.contracts.scaffolding import is_scaffolding
+
 
 @dataclass(frozen=True, slots=True)
 class PartialCompactionOutput:
@@ -81,6 +83,11 @@ def _summarize_slice(messages: list[dict[str, str]]) -> dict[str, str]:
         content = str(item.get("content", "")).strip()
         if not content:
             continue
+        # Epic 043 C: a runtime scaffolding turn is not human intent — label it as
+        # ``runtime`` so the summary (and any LLM reading it) never folds a nudge
+        # or recovery hint into the user's request.
+        if is_scaffolding(item):
+            role = "runtime"
         rows.append(f"- {role}: {content[:160]}")
         if len(rows) >= 10:
             break

@@ -13,7 +13,9 @@ from agent_driver.contracts.enums import (
     ToolPolicyDecision,
 )
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.scaffolding import scaffolding_metadata
 from agent_driver.llm.contracts import LlmFinishReason
+from agent_driver.llm.reasoning_hygiene import strip_leading_think_block
 from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.observability.source_evidence import source_evidence_from_tool_result
 from agent_driver.prompts import force_final_answer_tool_message
@@ -746,10 +748,17 @@ def _update_tool_protocol_messages(
         and reasoning
     ):
         assistant_metadata["reasoning"] = reasoning
+    # Epic 043 A: inline CoT (`<think>…`) must never enter replayable history —
+    # an assistant turn exposing its own reasoning can poison every later call.
+    content, think_stripped = strip_leading_think_block(
+        strip_text_form_tool_calls(response.message.content or "")
+    )
+    if think_stripped:
+        assistant_metadata["inline_reasoning_stripped_chars"] = think_stripped
     messages.append(
         ChatMessage(
             role=ChatRole.ASSISTANT,
-            content=strip_text_form_tool_calls(response.message.content or ""),
+            content=content,
             metadata=assistant_metadata,
         )
     )
@@ -815,6 +824,7 @@ def _update_tool_protocol_messages(
             ChatMessage(
                 role=ChatRole.USER,
                 content=force_final_answer_tool_message(),
+                metadata=scaffolding_metadata("force_final_answer"),
             )
         )
     _normalize_protocol_messages(messages)
@@ -1006,7 +1016,13 @@ def _append_tool_call_parse_error_feedback(
         "previous response that were dropped (not executed). Fix and retry:\n"
         + "\n".join(lines)
     )
-    messages.append(ChatMessage(role=ChatRole.USER, content=body))
+    messages.append(
+        ChatMessage(
+            role=ChatRole.USER,
+            content=body,
+            metadata=scaffolding_metadata("tool_parse_error_feedback"),
+        )
+    )
     seen_keys_list = list(seen_keys)
     context.metadata["parse_error_feedback_sent_keys"] = seen_keys_list
 
@@ -1056,6 +1072,7 @@ def _append_disallowed_management_tool_recovery_hint(
                 "allowlist. Do not call it again and do not say you lack tools. "
                 f"Call one of the allowed executable tools now: {allowed_text}."
             ),
+            metadata=scaffolding_metadata("disallowed_management_tool_hint"),
         )
     )
 
@@ -1099,6 +1116,7 @@ def _append_python_policy_recovery_hint(
                     "numpy, scipy, pandas, or sklearn. "
                     f"{remediation_text}. For gamma/statistics use math and statistics."
                 ),
+                metadata=scaffolding_metadata("python_import_blocked_hint"),
             )
         )
         context.metadata["python_policy_hint_sent"] = True
@@ -1166,6 +1184,7 @@ def _append_denial_recovery_message(
                     "then call file_write for research/sources.jsonl if source "
                     "ledger facts are available."
                 ),
+                metadata=scaffolding_metadata("deep_research_parent_synthesis_hint"),
             )
         )
         context.metadata["deep_research_parent_synthesis_recovery"] = {
@@ -1205,6 +1224,7 @@ def _append_denial_recovery_message(
                     "web_search, web_fetch, skill_view, or write tools until at "
                     f"least one child result has joined.{repeat_clause}"
                 ),
+                metadata=scaffolding_metadata("deep_research_initial_subagent_hint"),
             )
         )
         context.metadata["deep_research_initial_subagent_recovery"] = {
@@ -1234,6 +1254,7 @@ def _append_denial_recovery_message(
                     "Stop calling this tool and answer with what you have, "
                     "or ask one clarification."
                 ),
+                metadata=scaffolding_metadata("denial_recovery"),
             )
         )
         context.metadata["last_denied_signature"] = denied_signature
@@ -1283,6 +1304,7 @@ def _append_unknown_tool_recovery_message(
                     "Use only the registered tools already listed in the tool error, "
                     "or answer with a clear partial result."
                 ),
+                metadata=scaffolding_metadata("unknown_tool_recovery"),
             )
         )
         return
@@ -1295,6 +1317,7 @@ def _append_unknown_tool_recovery_message(
                 "names. Use the registered tool names shown in the previous tool "
                 "error and retry only if a real tool is needed."
             ),
+            metadata=scaffolding_metadata("unknown_tool_correction"),
         )
     )
 

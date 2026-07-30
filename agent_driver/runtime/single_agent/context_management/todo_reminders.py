@@ -5,6 +5,7 @@ from __future__ import annotations
 from agent_driver.contracts.context import PlanningState
 from agent_driver.contracts.enums import ChatRole, PlanningTodoStatus
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.scaffolding import scaffolding_metadata
 from agent_driver.runtime.metadata_state import get_planning_runtime_state
 from agent_driver.runtime.single_agent.types import RunContext
 from agent_driver.runtime.tools import ToolExecutionResult
@@ -103,7 +104,7 @@ def maybe_append_todo_reminder_to_protocol(
         ChatMessage(
             role=ChatRole.USER,
             content=format_todo_list_reminder(state),
-            metadata={"kind": "todo_reminder"},
+            metadata=scaffolding_metadata("todo_reminder", base={"kind": "todo_reminder"}),
         ),
     )
 
@@ -145,7 +146,9 @@ def append_todo_progress_hint_after_substantive_tool(
                 "in_progress. The plan checklist is in the UI — do not repeat "
                 "the checklist in chat."
             ),
-            metadata={"kind": "todo_progress_hint"},
+            metadata=scaffolding_metadata(
+                "todo_progress_hint", base={"kind": "todo_progress_hint"}
+            ),
         )
     )
     planning_state.increment_todo_hint_count(todo_id)

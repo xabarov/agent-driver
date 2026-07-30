@@ -7,6 +7,46 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — transcript-poisoning hygiene (epic 043)
+Four hygiene invariants that close the transcript-poisoning class: an assistant turn
+exposing its own chain-of-thought reads as a prefill/reasoning-injection to provider
+classifiers and can permanently blank a session (reference incident: hermes `cf0c42fa0`,
+four bricked sessions in a week). No behavioural change on clean runs; all knobs default
+to today's behaviour. **28 new tests; full sweep 2788 passed** (3 unrelated pre-existing
+failures: `test_chat` budget-loop + 2 `phase6_metadata`, all fail identically on baseline).
+- **A — inline CoT never persists.** New `agent_driver.llm.reasoning_hygiene.strip_leading_think_block`
+  strips a leading `<think>…</think>` block (reasoning models served without a reasoning
+  parser emit CoT inline in `content`). Applied at the two sites where assistant text enters
+  replayable history: the tool-protocol assistant checkpoint
+  (`runtime/single_agent/tool_stage`) and the terminal answer
+  (`finalization/output._sanitize_terminal_answer`). The separate streamed-reasoning channel
+  and the redirect checkpoint were already CoT-free (audited). Records
+  `inline_reasoning_stripped_chars` when it fires.
+- **B — single pre-send owner for empty non-final turns.** New
+  `agent_driver.llm.message_hygiene.repair_empty_non_final_messages` pads an empty non-final
+  user/assistant turn (strict providers reject "messages must have non-empty content"; an
+  interrupted turn leaves exactly that shape). Copy-on-write, idempotent, never touches the
+  final turn or a designed-empty carrier (tool_calls / reasoning echo / tool rows). Wired as
+  one chokepoint at the top of the `complete_request` retry loop (covers the initial send and
+  every retry rebuild) **and** in the aux/side path (`llm.aux.aux_completion`), so graders and
+  compaction summaries share the invariant. Lives in the `llm` layer to avoid a layering
+  inversion; re-exported from `llm_step.provider_requests`.
+- **C — scaffolding tag for synthetic messages.** New `agent_driver.contracts.scaffolding`
+  (`SCAFFOLDING_METADATA_KEY`, `scaffolding_metadata`, `is_scaffolding`, `scaffolding_kind`):
+  one tag honored by persistence, compaction and display simultaneously. Runtime-injected
+  USER-role turns (parse-error feedback, denial/unknown-tool recovery, disallowed-management
+  and python-import hints, deep-research gate nudges, forced-final retries, todo re-injections,
+  redirect interrupt checkpoint) now carry it; the genuine redirect *correction* stays untagged.
+  Partial compaction relabels a tagged row as `runtime` (never folds it into user intent);
+  LLM-full compaction drops tagged rows from the excerpt. Reference: hermes `923704c7c`.
+- **D — poisoned-prefix quarantine in the empty-final ladder (epic 016).** New
+  `message_hygiene.quarantine_inline_reasoning`: when the empty-final ladder is exhausted and
+  the history still carries an assistant turn with inline CoT, the ladder emits a
+  `poisoned_prefix_suspect` signal, sanitizes the suspect turn(s) and retries **once** (bounded,
+  mirrors the `strip_reasoning_echo` retry) before the honest give-up signal. Metadata:
+  `poisoned_prefix_quarantine_attempted` / `poisoned_prefix_suspect_turns` /
+  `poisoned_prefix_quarantine_recovered`.
+
 ### Added — MCP governance & evidence plane (epic 014)
 - A deterministic governance/provenance layer on top of the existing MCP transport
   (`agent_driver/mcp_server`) and client-tool catalog (`agent_driver/tools/builtin/mcp.py`).

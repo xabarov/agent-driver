@@ -22,6 +22,7 @@ from agent_driver.context import (
 from agent_driver.contracts import CompactionDecision
 from agent_driver.contracts.enums import RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.scaffolding import is_scaffolding
 from agent_driver.runtime.metadata_state import get_cost_runtime_state
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
@@ -516,7 +517,14 @@ async def _apply_llm_full_compaction(
     compaction_id: str,
     circuit_breaker_open_before: bool,
 ) -> bool:
-    raw_groups = [str(message.content) for message in request.messages[-8:]]
+    # Epic 043 C: drop runtime scaffolding turns (nudges, recovery hints) from the
+    # compaction excerpt — they are ephemeral and role is flattened away here, so
+    # the summary model would otherwise be free to read a nudge as user intent.
+    raw_groups = [
+        str(message.content)
+        for message in request.messages[-8:]
+        if not is_scaffolding(message)
+    ]
     kept_groups = list(raw_groups)
     dropped_groups: list[str] = []
     if host._config.enable_ptl_retry:

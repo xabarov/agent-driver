@@ -32,6 +32,7 @@ from typing import Any
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.usage import UsageSummary
 from agent_driver.llm.contracts import LlmRequest, LlmResponse
+from agent_driver.llm.message_hygiene import repair_empty_non_final_messages
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +144,10 @@ async def aux_completion(
         enable_prompt_cache=enable_cache,
         metadata={"purpose": "aux_completion", "aux_task": task, **(metadata or {})},
     )
+    # Epic 043 B: the aux/side path shares the empty-non-final-turn invariant with
+    # the main loop — a padded prefix must never be the reason a grader/summary
+    # call is rejected wholesale.
+    request = repair_empty_non_final_messages(request)
     response = await provider.complete(request)
     merge_aux_usage(cost_ledger, response, task=task)
     return response

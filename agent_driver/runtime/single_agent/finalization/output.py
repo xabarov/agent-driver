@@ -26,6 +26,7 @@ from agent_driver.contracts.enums import RunStatus
 from agent_driver.contracts.interrupts import ApprovalPayload, InterruptRequest
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunOutput, ContextDiagnostics
+from agent_driver.llm.reasoning_hygiene import strip_leading_think_block
 from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.observability.source_evidence import (
     merge_source_evidence,
@@ -263,6 +264,9 @@ class SingleAgentOutputMixin:
         if not raw.strip():
             return self._deep_research_artifact_handoff_answer(context, raw) or None
         cleaned = strip_text_form_tool_calls(raw)
+        # Epic 043 A: a leading <think> block is CoT, not answer — it must not
+        # reach the terminal answer surface (nor any host that persists it).
+        cleaned, _think_stripped = strip_leading_think_block(cleaned)
         if cleaned != raw:
             get_streaming_runtime_state(context).set_raw_assistant_content(raw)
         answer = self._deep_research_artifact_handoff_answer(context, cleaned)

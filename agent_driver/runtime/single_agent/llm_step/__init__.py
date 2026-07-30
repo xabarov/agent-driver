@@ -270,6 +270,7 @@ def _apply_redirect_correction(
     """
     from agent_driver.contracts.enums import ChatRole
     from agent_driver.contracts.messages import ChatMessage
+    from agent_driver.contracts.scaffolding import scaffolding_metadata
 
     correction = (text or "").strip()
     run_input = context.run_input
@@ -278,8 +279,10 @@ def _apply_redirect_correction(
         ChatMessage(
             role=ChatRole.ASSISTANT,
             content="[Предыдущий ответ прерван поправкой пользователя.]",
+            metadata=scaffolding_metadata("redirect_interrupt_checkpoint"),
         )
     )
+    # The correction itself is a GENUINE user turn (epic 030) — never tagged.
     messages.append(ChatMessage(role=ChatRole.USER, content=correction))
     frame = ChatMessage(
         role=ChatRole.USER,
