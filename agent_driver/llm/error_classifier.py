@@ -14,6 +14,7 @@ policy, oversized prompt) as a transient provider outage worth failing over.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from enum import Enum
 
@@ -110,6 +111,28 @@ _EMPTY_RESPONSE_MARKERS: tuple[str, ...] = (
     "empty message content",
     "response was empty",
 )
+# Malformed-transcript 400s (a degenerate/empty non-final turn, a bad message shape).
+# Checked BEFORE overflow: the fix is to repair the body, not to compress — compression
+# is destructive and non-converging on a body error (reference: hermes 207a6c969, the
+# "attractive nuisance" lesson — overflow's recovery must never run on a body error).
+_INVALID_MESSAGE_BODY_MARKERS: tuple[str, ...] = (
+    "must have non-empty content",
+    "messages must have non-empty",
+    "text content blocks must be non-empty",
+    "content field is required",
+    "at least one message is required",
+    "invalid_request_body",
+)
+# Throttle wording that some gateways return on a 400 rather than a 429. Checked BEFORE
+# overflow so "throttling" is not mistaken for overflow's "too many tokens" and does not
+# compress a healthy session (reference: hermes 53bfe40a3).
+_RATE_LIMIT_MARKERS: tuple[str, ...] = (
+    "throttling",
+    "throttled",
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+)
 _OVERFLOW_MARKERS: tuple[str, ...] = (
     "context length",
     "context_length",
@@ -119,6 +142,7 @@ _OVERFLOW_MARKERS: tuple[str, ...] = (
     "reduce the length",
     "maximum number of tokens",
     "prompt is too long",
+    "maximum allowed input length",
 )
 _CONTENT_POLICY_MARKERS: tuple[str, ...] = (
     "content policy",
@@ -202,6 +226,10 @@ _EXACT_STATUS: dict[int, ProviderErrorReason] = {
 # matching marker set wins; nothing matching falls through to a format error.
 _BAD_REQUEST_RULES: tuple[tuple[tuple[str, ...], ProviderErrorReason], ...] = (
     (_EMPTY_RESPONSE_MARKERS, ProviderErrorReason.EMPTY_RESPONSE),
+    # Body/throttle rules precede overflow: overflow's recovery (compress) is
+    # destructive, so anything that is NOT genuinely an overflow must win first.
+    (_INVALID_MESSAGE_BODY_MARKERS, ProviderErrorReason.FORMAT_ERROR),
+    (_RATE_LIMIT_MARKERS, ProviderErrorReason.RATE_LIMIT),
     (_OVERFLOW_MARKERS, ProviderErrorReason.CONTEXT_OVERFLOW),
     (_PAYLOAD_MARKERS, ProviderErrorReason.PAYLOAD_TOO_LARGE),
     (_CONTENT_POLICY_MARKERS, ProviderErrorReason.CONTENT_POLICY),
@@ -221,6 +249,10 @@ def _classify_ambiguous_status(  # pylint: disable=too-many-return-statements
     if status_code == 422:
         if _contains(message, _EMPTY_RESPONSE_MARKERS):
             return ProviderErrorReason.EMPTY_RESPONSE
+        if _contains(message, _INVALID_MESSAGE_BODY_MARKERS):
+            return ProviderErrorReason.FORMAT_ERROR
+        if _contains(message, _RATE_LIMIT_MARKERS):
+            return ProviderErrorReason.RATE_LIMIT
         if _contains(message, _OVERFLOW_MARKERS):
             return ProviderErrorReason.CONTEXT_OVERFLOW
         return ProviderErrorReason.FORMAT_ERROR
@@ -319,11 +351,41 @@ def _classify_sdk_error(exc: BaseException) -> ClassifiedError | None:
     )
 
 
+def _extract_envelope_message(raw: str) -> str:
+    """Surface the human text from a litellm/Bedrock error envelope for matching.
+
+    Some proxies wrap the real reason in ``{"errorMessage": ..., "errorCode": ...,
+    "errorArgs": {"reason": ...}}``; matching markers against the raw JSON alone scores
+    a descriptive rejection as a generic error. Append the envelope's human fields to the
+    raw text so the marker rules see the actual reason (reference: hermes body extractors).
+    """
+    stripped = raw.strip()
+    if not stripped.startswith("{"):
+        return raw
+    try:
+        payload = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return raw
+    if not isinstance(payload, dict):
+        return raw
+    parts: list[str] = [raw]
+    for key in ("errorMessage", "message", "errorCode", "code"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            parts.append(value)
+    args = payload.get("errorArgs")
+    if isinstance(args, dict):
+        reason = args.get("reason")
+        if isinstance(reason, str) and reason:
+            parts.append(reason)
+    return " ".join(parts)
+
+
 def _classify_httpx(cause: httpx.HTTPError | None) -> ClassifiedError | None:
     """Classify a raw ``httpx`` error found on the exception cause chain."""
     if isinstance(cause, httpx.HTTPStatusError):
         response = cause.response
-        message = response.text or ""
+        message = _extract_envelope_message(response.text or "")
         provider = str(cause.request.url.host or "") or None if cause.request else None
         return _make(
             _classify_status(response.status_code, message),

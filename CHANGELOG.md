@@ -7,6 +7,33 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Changed — phase-updates to existing epics (horizon-scan 040)
+Four small, self-contained hardenings surfaced by the reference scan. **13 new tests;
+full sweep 2851 passed.**
+- **016+ (error classifier)**: a malformed-body 400 (`text content blocks must be
+  non-empty`, `invalid_request_body`, …) now classifies as `FORMAT_ERROR`, not
+  `CONTEXT_OVERFLOW` — so it never triggers destructive compression (overflow is an
+  "attractive nuisance"; its recovery must not run on a body error). `throttling`/`rate
+  limit` on a 400/422 classifies as `RATE_LIMIT` (backoff), ahead of overflow's "too many
+  tokens". A litellm/Bedrock error envelope (`{errorMessage, errorCode, errorArgs.reason}`)
+  is unwrapped so the real reason is matched, not the JSON wrapper. References: hermes
+  `207a6c969` / `53bfe40a3`.
+- **019+ (tool-failure streak guard)**: a parallel fan-out of N calls failing with the same
+  signature in one turn now advances the streak by **1, not N** — the threshold measures
+  "turns that failed to adapt", and the model hasn't seen this turn's results yet. Reference:
+  openclaude `9d5b77d`.
+- **033+ (blind-call schema probe)**: a deferred tool (omitted from the prompt schema,
+  rediscovered via `tool_search`) invoked without a schema-`required` argument returns its
+  schema instead of dispatching blind — cheap models looped ~30 invalid calls until the
+  budget died. Key-absence only, fails open. Reference: hermes `8fbe2e388`.
+- **037+ (observer fault containment)**: locked with an invariant test — a lifecycle observer
+  that raises in `after_llm_response` / `on_run_completed` never alters the run outcome nor
+  propagates out of the dispatch loop (behaviour already isolated; reference: openclaude
+  `c23b6e1`).
+- Deliberately N/A to our architecture (documented in scan 040): 028 prune-hysteresis (no
+  proactive per-iteration prune loop), 035 `[SKILL_PRUNED]` marker (skills are tool-results,
+  covered by 035 tool-history compression). 018 conformance-vectors deferred (test infra).
+
 ### Added — event-driven wait: park-on-event instead of polling (epic 045)
 A run told to "wait until the background build finishes" had to poll a status tool in a
 loop — burning steps (the 019 per-turn caps punish it) and re-reading the whole context

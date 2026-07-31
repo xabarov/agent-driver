@@ -208,6 +208,8 @@ async def execute_allowed_path(
             ),
         )
         return False
+    if _deferred_blind_call_missing_required(spec):
+        return False
     try:
         # Phase 11 H16 — wire a per-call progress reporter that records
         # each ``report_tool_progress`` invocation into the executor
@@ -423,6 +425,58 @@ def _append_clarification_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) -
         )
     )
     spec.result.append(envelope=envelope, trace=trace, interrupt=interrupt)
+    return True
+
+
+def _missing_required_args(manifest: Any, args: Any) -> list[str]:
+    """Return the schema-``required`` keys absent from ``args`` (key-absence only)."""
+    schema = getattr(manifest, "args_schema", None)
+    if not isinstance(schema, dict):
+        return []
+    required = schema.get("required")
+    if not isinstance(required, list):
+        return []
+    provided = args if isinstance(args, dict) else {}
+    return [key for key in required if isinstance(key, str) and key not in provided]
+
+
+def _deferred_blind_call_missing_required(spec: AllowedSpec) -> bool:
+    """Blind-call schema probe for a deferred tool (epic 033+).
+
+    A deferred tool is omitted from the prompt schema list and rediscovered via
+    ``tool_search``; a model that then calls it WITHOUT seeing the schema often ships
+    no required args, and cheap models loop ~30 identical invalid calls until the
+    budget dies. When a deferred tool is invoked missing a schema-``required`` key,
+    return the schema instead of dispatching blind, so the next turn can retry with
+    proper args. Key-absence only, no type checking; fails open on any error.
+    """
+    try:
+        if spec.registered is None or not spec.manifest.is_deferred():
+            return False
+        missing = _missing_required_args(spec.manifest, spec.call.args)
+        if not missing:
+            return False
+    except Exception:  # pylint: disable=broad-exception-caught - probe must fail open
+        return False
+    schema = getattr(spec.manifest, "args_schema", None)
+    try:
+        schema_text = json.dumps(schema, ensure_ascii=True, default=str)[:2000]
+    except (TypeError, ValueError):
+        schema_text = str(schema)[:2000]
+    append_blocked_call(
+        result=spec.result,
+        spec=BlockSpec(
+            index=spec.index,
+            call=spec.call,
+            manifest=spec.manifest,
+            code="deferred_tool_schema_probe",
+            reason=(
+                f"'{spec.call.tool_name}' was called without required argument(s) "
+                f"{missing}. It was not executed. Its argument schema is: {schema_text}. "
+                "Retry the call with the required arguments."
+            ),
+        ),
+    )
     return True
 
 

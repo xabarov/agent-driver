@@ -61,20 +61,25 @@ def _update_tool_failure_guard(
     state = dict(state) if isinstance(state, dict) else {}
     signature = state.get("signature")
     count = int(state.get("count", 0) or 0)
-    saw_failure = False
+    # Epic 019 phase B fix (reference: openclaude 9d5b77d): count once per TURN, not
+    # per failure event. A parallel fan-out of N calls failing with the same signature
+    # in one turn must advance the streak by 1 — the threshold measures "turns that
+    # failed to adapt", and the model hasn't seen any of this turn's results yet.
+    turn_signatures: list[str] = []
     for envelope in result.envelopes:
         if envelope.error is None:
             continue
-        saw_failure = True
         next_signature = f"{envelope.call.tool_name}:{envelope.error.code}"
-        if next_signature == signature:
-            count += 1
-        else:
-            signature, count = next_signature, 1
-    if not saw_failure:
+        if next_signature not in turn_signatures:
+            turn_signatures.append(next_signature)
+    if not turn_signatures:
         # A fully successful round breaks the streak.
         context.metadata["tool_failure_guard"] = {"signature": None, "count": 0}
         return
+    if signature in turn_signatures:
+        count += 1  # the prior failing signature persisted this turn — one increment
+    else:
+        signature, count = turn_signatures[-1], 1
     context.metadata["tool_failure_guard"] = {"signature": signature, "count": count}
     if count == _TOOL_FAILURE_GUARD_THRESHOLD - 1:
         emit_step_event(
