@@ -7,6 +7,33 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — event-driven wait: park-on-event instead of polling (epic 045)
+A run told to "wait until the background build finishes" had to poll a status tool in a
+loop — burning steps (the 019 per-turn caps punish it) and re-reading the whole context
+every poll. New `wait_for_event` primitive parks the run on an external event via the
+existing interrupt/resume machinery: the loop is checkpointed and released, then resumes
+when the host delivers the event. Domain-neutral — the engine provides the subscription +
+pause/resume + bounded-deadline liveness; the actual event sources (process exit, webhook,
+file, queue) and delivery live in the host. **17 new tests; full sweep 2838 passed.**
+- **Contracts** (`agent_driver.contracts.wait_for_event`, re-exported from
+  `agent_driver.contracts`): `WaitForEventRequest` (`event_key`, `deadline_seconds`,
+  `poll_fallback_seconds`, `description`), `WaitForEventResolution`, `WaitForEventStatus`,
+  `wait_for_event_resolution_from_resume`, `clamp_wait_deadline`. New
+  `InterruptReason.WAIT_FOR_EVENT`.
+- **Liveness (tie-in to 041)**: a subscription is ALWAYS bounded — `deadline_seconds` is
+  clamped into `[1, 86400]` with a 3600 default, so a parked wait can never hang forever. A
+  wait that never fires degrades to a `timed_out` resolution (host sets the timeout marker
+  in the resume state-patch).
+- **Primitive**: a `wait_for_event` builtin tool (its description tells the model to prefer
+  it over a poll loop for any wait longer than a few seconds) whose call the executor
+  converts to a `WAIT_FOR_EVENT` interrupt (`allowed_actions` CLARIFY/CANCEL). The run pauses
+  with the subscription in the paused output; the host subscribes to the real source and
+  resumes via `CLARIFY` (deliver payload) or `CANCEL`. Reuses the whole pause/resume/
+  checkpoint plane — a parked run doesn't mutate the prompt prefix (friendly to 028).
+- **Not in scope (documented)**: real event sources + crash-safe delivery-claim across
+  restart (blueprint hermes `async_delegation`, deferred #14) — the next slice; the bounded
+  deadline gives correctness without it today.
+
 ### Added — context-engine seam (epic 044)
 Give RAG-heavy hosts a first-class way to see and target what fills the context window,
 plus safety for per-turn context selection. The `select_context` mechanism already exists

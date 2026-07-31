@@ -52,6 +52,7 @@ benchmark-fitting, обязательна классификация tool/prompt
 | Liveness: idle-bounded side/aux calls (041) | `aux_idle_timeout_seconds` | None (off) | opt-in | scan (конвергенция обоих референсов) | — | оба |
 | Tool-call wire integrity (042) | встроено (id-дедуп, empty-tool-calls re-prompt, truncation-gate) | on | core | scan | — | оба |
 | Context-engine seam (044) | встроено (context_breakdown + fail-open select-context); `before_llm_request`/`on_run_completed` — механика | on | core | scan | — | hermes |
+| Event-driven wait / park-on-event (045) | builtin-тул `wait_for_event` (opt-in вызовом модели); подписка всегда bounded | opt-in | scan (запрос пользователя) | `event_wait` (предложена, не реализована) | hermes async_delegation (чертёж) |
 
 ## Proposed (horizon-scan 040, 2026-07-29)
 

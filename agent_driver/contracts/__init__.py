@@ -140,6 +140,12 @@ from agent_driver.contracts.interrupts import (
     InterruptRequest,
     ResumeCommand,
 )
+from agent_driver.contracts.wait_for_event import (
+    WaitForEventRequest,
+    WaitForEventResolution,
+    WaitForEventStatus,
+    wait_for_event_resolution_from_resume,
+)
 from agent_driver.contracts.lifecycle_hooks import (
     LifecycleHookAuditRecord,
     LifecycleHookAuditStatus,
@@ -358,6 +364,10 @@ __all__ = [
     "LifecycleMiddlewareChain",
     "InterruptReason",
     "InterruptRequest",
+    "WaitForEventRequest",
+    "WaitForEventResolution",
+    "WaitForEventStatus",
+    "wait_for_event_resolution_from_resume",
     "ExecutorSerializationPolicy",
     "McpApprovalDecision",
     "McpApprovalPolicy",

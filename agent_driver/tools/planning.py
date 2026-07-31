@@ -119,6 +119,7 @@ def register_planning_tool(registry: ToolRegistry) -> None:
         )
     _register_todo_write_tool(registry)
     _register_ask_user_question_tool(registry)
+    _register_wait_for_event_tool(registry)
     _register_enter_plan_mode_tool(registry)
     _register_exit_plan_mode_v2_tool(registry)
 
@@ -222,6 +223,24 @@ async def _ask_user_question_tool(args: dict[str, Any]) -> dict[str, Any]:
         "questions": normalized_questions,
         "allow_multiple": allow_multiple,
         "interrupt_reason": InterruptReason.CLARIFICATION_REQUIRED.value,
+    }
+
+
+async def _wait_for_event_tool(args: dict[str, Any]) -> dict[str, Any]:
+    """Prepare a park-on-event subscription (epic 045). Executor raises the interrupt."""
+    from agent_driver.contracts.wait_for_event import WaitForEventRequest
+
+    subscription = WaitForEventRequest(
+        event_key=str(args.get("event_key") or ""),
+        deadline_seconds=args.get("deadline_seconds")
+        or WaitForEventRequest.model_fields["deadline_seconds"].default,
+        poll_fallback_seconds=args.get("poll_fallback_seconds"),
+        description=str(args.get("description") or ""),
+    )
+    return {
+        "summary": f"waiting for event '{subscription.event_key}'",
+        "wait_for_event": subscription.model_dump(mode="json"),
+        "interrupt_reason": InterruptReason.WAIT_FOR_EVENT.value,
     }
 
 
@@ -446,6 +465,40 @@ def _register_ask_user_question_tool(registry: ToolRegistry) -> None:
             output_type="json",
         ),
         _ask_user_question_tool,
+    )
+
+
+def _register_wait_for_event_tool(registry: ToolRegistry) -> None:
+    if registry.get("wait_for_event") is not None:
+        return
+    registry.register(
+        ToolManifest(
+            name="wait_for_event",
+            description=(
+                "Park the run waiting for an external event (a background process "
+                "to finish, a webhook, a file to appear) instead of polling for it. "
+                "Prefer this over a poll loop for any wait longer than a few seconds: "
+                "the run is checkpointed and released, then resumes when the event "
+                "fires. Give a stable 'event_key' and an optional 'deadline_seconds' "
+                "(the wait is always bounded)."
+            ),
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.NONE,
+            approval_mode=ApprovalMode.NEVER,
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "event_key": {"type": "string"},
+                    "deadline_seconds": {"type": "integer"},
+                    "poll_fallback_seconds": {"type": "integer"},
+                    "description": {"type": "string"},
+                },
+                "required": ["event_key"],
+                "additionalProperties": False,
+            },
+            output_type="json",
+        ),
+        _wait_for_event_tool,
     )
 
 

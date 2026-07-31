@@ -42,6 +42,10 @@ class InterruptReason(StrEnum):
     TOOL_ARGS_REVIEW = "tool_args_review"
     STATE_REVIEW = "state_review"
     MANUAL_PAUSE = "manual_pause"
+    # Epic 045: the run is parked waiting for an external event (process exit,
+    # webhook, file, queue) instead of polling. Resolved by the host delivering a
+    # ResumeCommand once the event fires (CLARIFY) or cancelling (CANCEL).
+    WAIT_FOR_EVENT = "wait_for_event"
 
 
 class ResumeAction(StrEnum):

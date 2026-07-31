@@ -247,6 +247,8 @@ async def execute_allowed_path(
             raw = _planning_update_payload(raw if isinstance(raw, dict) else {})
         if spec.call.tool_name == "ask_user_question":
             return _append_clarification_interrupt(spec=spec, raw=raw)
+        if spec.call.tool_name == "wait_for_event":
+            return _append_wait_for_event_interrupt(spec=spec, raw=raw)
         if is_exit_plan_mode_tool(spec.call.tool_name) and not spec.call.metadata.get(
             "approved_interrupt_id"
         ):
@@ -418,6 +420,59 @@ def _append_clarification_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) -
             manifest=spec.manifest,
             summary="clarification requested",
             error_code="clarification_required",
+        )
+    )
+    spec.result.append(envelope=envelope, trace=trace, interrupt=interrupt)
+    return True
+
+
+def _append_wait_for_event_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) -> bool:
+    """Park the run on an external event (epic 045 B); mirrors clarification-interrupt."""
+    from agent_driver.contracts.wait_for_event import WaitForEventRequest
+
+    subscription_raw = raw.get("wait_for_event") if isinstance(raw, dict) else None
+    if not isinstance(subscription_raw, dict):
+        raise ValueError("wait_for_event requires a subscription payload")
+    subscription = WaitForEventRequest.model_validate(subscription_raw)
+    run_id, attempt_id = _interrupt_identifiers(spec)
+    interrupt = InterruptRequest(
+        interrupt_id=f"int_{spec.call.tool_call_id or spec.index}",
+        run_id=run_id,
+        attempt_id=attempt_id,
+        checkpoint_id="checkpoint_pending",
+        reason=InterruptReason.WAIT_FOR_EVENT,
+        title=f"Waiting for event '{subscription.event_key}'",
+        description=subscription.description or f"Parked on '{subscription.event_key}'",
+        proposed_action={
+            "tool_name": spec.call.tool_name,
+            "tool_call_id": spec.call.tool_call_id,
+            "wait_for_event": subscription.model_dump(mode="json"),
+        },
+        # The host delivers the event via CLARIFY (payload) or CANCEL; the wait is
+        # bounded by the subscription deadline (epic 045 liveness), never infinite.
+        allowed_actions=[ResumeAction.CLARIFY, ResumeAction.CANCEL],
+        editable_fields=["message"],
+        metadata={
+            **dict(spec.run_metadata),
+            "wait_for_event_key": subscription.event_key,
+            "wait_for_event_deadline_seconds": subscription.deadline_seconds,
+        },
+    )
+    envelope = ToolResultEnvelope(
+        call=spec.call,
+        decision=ToolPolicyDecision.INTERRUPT,
+        summary=str(raw.get("summary") or "waiting for event"),
+        structured_output=raw if isinstance(raw, dict) else {},
+        interrupt=interrupt.model_dump(mode="json"),
+        metadata=dict(spec.run_metadata),
+    )
+    trace = build_tool_trace(
+        trace_spec_denied(
+            index=spec.index,
+            call=spec.call,
+            manifest=spec.manifest,
+            summary="waiting for event",
+            error_code="wait_for_event",
         )
     )
     spec.result.append(envelope=envelope, trace=trace, interrupt=interrupt)
