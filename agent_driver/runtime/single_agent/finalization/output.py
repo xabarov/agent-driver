@@ -9,6 +9,7 @@ from agent_driver.context import (
     planning_step_event,
     split_preview_and_artifact,
 )
+from agent_driver.context.breakdown import estimate_context_breakdown
 from agent_driver.context.compaction import (
     extract_session_memory,
     load_session_memory,
@@ -60,6 +61,25 @@ from agent_driver.runtime.single_agent.types import (
     TerminalResult,
 )
 from agent_driver.subagents import summarize_child_runs_for_parent
+
+
+def _safe_context_breakdown(context: RunContext) -> dict[str, Any]:
+    """Per-category breakdown of the run's message state; fail-open to {} (epic 044 C).
+
+    Prefers the assembled ``protocol_messages`` (system + conversation + tool rows as
+    the request actually saw them); falls back to the run-input messages, then to a
+    synthesized user turn from ``input`` so a tool-less run still reports its prompt.
+    """
+    try:
+        protocol = context.metadata.get("protocol_messages")
+        if isinstance(protocol, list) and protocol:
+            return estimate_context_breakdown(protocol)
+        messages = list(context.run_input.messages or ())
+        if not messages and context.run_input.input:
+            messages = [{"role": "user", "content": context.run_input.input}]
+        return estimate_context_breakdown(messages)
+    except Exception:  # pylint: disable=broad-exception-caught - observability only
+        return {}
 
 
 def _control_matches_run(item: Any, context: RunContext) -> bool:
@@ -443,6 +463,10 @@ class SingleAgentOutputMixin:
             "raw_assistant_content": get_streaming_runtime_state(
                 context
             ).raw_assistant_content(),
+            # Epic 044 C: per-category context composition (the /context view), using
+            # the same chars//4 heuristic as the compaction trigger so the host's
+            # number and the trigger agree. Fail-open — never break finalize.
+            "context_breakdown": _safe_context_breakdown(context),
         }
         # Epic 030 C: leftover-steer protocol — steering messages that arrived
         # after the last drain (still QUEUED at finalization) are handed back to

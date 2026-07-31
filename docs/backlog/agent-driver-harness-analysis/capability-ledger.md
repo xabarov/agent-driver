@@ -51,12 +51,12 @@ benchmark-fitting, обязательна классификация tool/prompt
 | Transcript-poisoning hygiene (043) | встроено (CoT-strip, empty-repair, scaffolding-теги, poisoned-prefix quarantine) | on | core | scan (hermes cf0c42fa0 — инцидент-класс) | — | hermes |
 | Liveness: idle-bounded side/aux calls (041) | `aux_idle_timeout_seconds` | None (off) | opt-in | scan (конвергенция обоих референсов) | — | оба |
 | Tool-call wire integrity (042) | встроено (id-дедуп, empty-tool-calls re-prompt, truncation-gate) | on | core | scan | — | оба |
+| Context-engine seam (044) | встроено (context_breakdown + fail-open select-context); `before_llm_request`/`on_run_completed` — механика | on | core | scan | — | hermes |
 
 ## Proposed (horizon-scan 040, 2026-07-29)
 
-| Кандидат | Эпик | Суть | Референс-сигнал |
-|---|---|---|---|
-| Context-engine seam | 044 (в 040) | `select_context()` per-turn без мутации истории + `on_turn_complete()` + context breakdown | hermes `context_engine.py`; продуктовая примерка на RAG-хостах |
+Все кандидаты этого скана оформлены и закрыты (041/042/043/044); 045 остаётся в очереди
+ниже. Новые кандидаты появятся в следующем horizon-scan.
 | Event-driven wait (park-on-event вместо поллинга) | 045 (в 040, добавлен 2026-07-30) | `wait_for_event`: подписка → checkpoint → wake с payload; liveness-бэкстоп из 041; delivery-claim из №14; дёшево тестится осью `event_wait` на DS Flash | durable_lifecycle/checkpoints готовы; hermes `async_delegation` как чертёж доставки |
 
 Обновления существующих эпиков из 040 (фазы, не эпики): 016 (классификатор: invalid-body

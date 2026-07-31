@@ -7,6 +7,31 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — context-engine seam (epic 044)
+Give RAG-heavy hosts a first-class way to see and target what fills the context window,
+plus safety for per-turn context selection. The `select_context` mechanism already exists
+(`RunLifecycleHook.before_llm_request` returns a replacement request without mutating
+persisted history) and `on_turn_complete` is covered by `after_llm_response`/
+`on_run_completed`; 044 adds the two genuinely-missing pieces. **11 new tests; full sweep
+2821 passed.**
+- **(A) `agent_driver.context.breakdown.estimate_context_breakdown`** — per-category
+  `chars // 4` composition of the next request (`system_prompt / tool_definitions /
+  tool_results / scaffolding / conversation`). The authoritative total (`total_chars // 4`)
+  equals what the compaction trigger sees, so a host's `/context` number and the trigger
+  never disagree (hermes `context_breakdown` invariant). Accepts `ChatMessage` objects or
+  serialized dicts. Reference: hermes `context_breakdown.py`.
+- **(B) fail-open hardening of `dispatch_before_llm`** — a select-context hook that filters
+  everything out (the hermes `all([]) is True` trap) returned a request with no usable turn,
+  blanking the prompt. A degenerate replacement (not request-shaped, or no non-system message
+  survived) is now logged and dropped; the chain falls open to the prior request. The
+  existing raise-isolation is unchanged.
+- **(C) `context_breakdown` in the run's terminal metadata** — the `/context` equivalent,
+  computed fail-open from the assembled `protocol_messages` (or the run input). A host reads
+  the same categories/number the trigger uses.
+- **Not in scope (documented)**: a separate `ContextEngine` ABC (our seam is already
+  `RunLifecycleHook` — a parallel protocol would duplicate it); the retrieval-plugin product
+  fit lives in the host (MeetScript / excel-ai).
+
 ### Added — tool-call wire integrity (epic 042)
 Three independent wire bugs, each silently losing or corrupting a tool call. The plane
 rule: never synthesize tool-call completeness. **12 new tests; full sweep 2810 passed.**

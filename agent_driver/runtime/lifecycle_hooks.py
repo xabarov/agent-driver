@@ -398,6 +398,26 @@ async def dispatch_error(
             logger.exception("lifecycle on_error failed for hook %r", _hook_name(hook))
 
 
+def _is_degenerate_request(request: Any) -> bool:
+    """Whether a select-context replacement would blank the prompt (epic 044 B).
+
+    A context-selection hook that filters everything out returns a request with no
+    usable turn — the hermes ``all([]) is True`` trap. Reject a replacement that is
+    not shaped like a request or whose non-system messages are all gone, so the
+    chain falls open to the prior request instead of dispatching an empty prompt.
+    """
+    messages = getattr(request, "messages", None)
+    if messages is None:
+        return True
+    for message in messages:
+        role = getattr(message, "role", None)
+        role_value = str(getattr(role, "value", role) or "")
+        content = getattr(message, "content", None)
+        if role_value != "system" and str(content or "").strip():
+            return False
+    return True
+
+
 async def dispatch_before_llm(
     hooks: Iterable[RunLifecycleHook], context: "RunContext", request: Any
 ) -> Any:
@@ -405,7 +425,9 @@ async def dispatch_before_llm(
 
     A hook that raises is logged and skipped, leaving the request as produced by
     the prior hooks — a faulty transform degrades to a no-op rather than failing
-    the LLM call.
+    the LLM call. A hook that returns a degenerate replacement (no non-system
+    message survived) is likewise rejected and the prior request is kept: a
+    select-context that filters everything out must fall open, not blank the prompt.
     """
     for hook in hooks:
         try:
@@ -415,8 +437,16 @@ async def dispatch_before_llm(
                 "lifecycle before_llm_request failed for hook %r", _hook_name(hook)
             )
             continue
-        if replacement is not None:
-            request = replacement
+        if replacement is None:
+            continue
+        if _is_degenerate_request(replacement):
+            logger.warning(
+                "lifecycle before_llm_request for hook %r returned a degenerate "
+                "request (no non-system message); keeping the prior request",
+                _hook_name(hook),
+            )
+            continue
+        request = replacement
     return request
 
 
