@@ -54,11 +54,22 @@ benchmark-fitting, обязательна классификация tool/prompt
 | Context-engine seam (044) | встроено (context_breakdown + fail-open select-context); `before_llm_request`/`on_run_completed` — механика | on | core | scan | — | hermes |
 | Event-driven wait / park-on-event (045) | builtin-тул `wait_for_event` (opt-in вызовом модели); подписка всегда bounded | opt-in | scan (запрос пользователя) | `event_wait` (предложена, не реализована) | hermes async_delegation (чертёж) |
 
-## Proposed (horizon-scan 040, 2026-07-29)
+## Proposed
 
-Все кандидаты этого скана оформлены и закрыты (041/042/043/044); 045 остаётся в очереди
-ниже. Новые кандидаты появятся в следующем horizon-scan.
-| Event-driven wait (park-on-event вместо поллинга) | 045 (в 040, добавлен 2026-07-30) | `wait_for_event`: подписка → checkpoint → wake с payload; liveness-бэкстоп из 041; delivery-claim из №14; дёшево тестится осью `event_wait` на DS Flash | durable_lifecycle/checkpoints готовы; hermes `async_delegation` как чертёж доставки |
+Скан 040 полностью закрыт (эпики 041-045 + фазы 016/019/033/037; 028/035 N/A, 018 отложен).
+
+**Скан 046 (2026-07-30, дельта слабая — hermes +449 ~90% шум, openclaude +7):**
+
+| Кандидат | Эпик | Суть | Референс-сигнал |
+|---|---|---|---|
+| SQLite durability hardening | 046 #1 (proposed) | централизовать opener: WAL + busy_timeout + write-lock patience + WAL-fallback детекция; у нас 3 несцентрализованных connect, patience нигде | hermes `8da8a7887`/`f50d80e8e` — прод-инцидент (10.8GB, 9 процессов) |
+| Amortized per-turn micro-compaction | 047 (proposed) | пост-ходовое сворачивание старейшего хода в накопительное summary; НО ломает кэш-префикс каждый ход → default-off, A/B occupancy-vs-cache | hermes `186cad02f` (~14 коммитов) |
+| Fail-loud name collisions + provenance | 046 #3 (proposed) | коллизия имён помечает ОБА входа, не тихий precedence; provenance-заголовок | hermes `78598d091` |
+
+Watching: credential-pool generation-guard (openclaude, если добавим cooldown-pooling),
+isolation soft-fallback degradation-contract (openclaude, worktree-adjacent), live-steer
+running delegate (hermes, продуктовое), MCP shutdown-drain (hermes, низкая генеральность).
+Детали — `epics/046-horizon-scan-2026-07-30.md`.
 
 Обновления существующих эпиков из 040 (фазы, не эпики): 016 (классификатор: invalid-body
 до overflow, throttling, Bedrock-конверт; backend_identity 3 оси failure-scope),
