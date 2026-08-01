@@ -53,6 +53,7 @@ benchmark-fitting, обязательна классификация tool/prompt
 | Tool-call wire integrity (042) | встроено (id-дедуп, empty-tool-calls re-prompt, truncation-gate) | on | core | scan | — | оба |
 | Context-engine seam (044) | встроено (context_breakdown + fail-open select-context); `before_llm_request`/`on_run_completed` — механика | on | core | scan | — | hermes |
 | Event-driven wait / park-on-event (045) | builtin-тул `wait_for_event` (opt-in вызовом модели); подписка всегда bounded | opt-in | scan (запрос пользователя) | `event_wait` (предложена, не реализована) | hermes async_delegation (чертёж) |
+| SQLite durability (046 #1) | `open_sqlite_connection` (единый opener) | on | core | scan (прод-инцидент hermes) | — | hermes |
 
 ## Proposed
 
@@ -62,7 +63,7 @@ benchmark-fitting, обязательна классификация tool/prompt
 
 | Кандидат | Эпик | Суть | Референс-сигнал |
 |---|---|---|---|
-| SQLite durability hardening | 046 #1 (proposed) | централизовать opener: WAL + busy_timeout + write-lock patience + WAL-fallback детекция; у нас 3 несцентрализованных connect, patience нигде | hermes `8da8a7887`/`f50d80e8e` — прод-инцидент (10.8GB, 9 процессов) |
+| SQLite durability hardening | 046 #1 ✅ DONE | `open_sqlite_connection`: WAL + busy_timeout(30s) + WAL-fallback детекция; 3 сайта проведены | hermes `8da8a7887`/`f50d80e8e` — прод-инцидент (10.8GB, 9 процессов) |
 | Amortized per-turn micro-compaction | 047 (proposed) | пост-ходовое сворачивание старейшего хода в накопительное summary; НО ломает кэш-префикс каждый ход → default-off, A/B occupancy-vs-cache | hermes `186cad02f` (~14 коммитов) |
 | Fail-loud name collisions + provenance | 046 #3 (proposed) | коллизия имён помечает ОБА входа, не тихий precedence; provenance-заголовок | hermes `78598d091` |
 

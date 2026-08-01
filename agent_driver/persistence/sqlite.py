@@ -16,9 +16,66 @@ build on it without creating an import cycle.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 from threading import RLock
+
+logger = logging.getLogger(__name__)
+
+# Write-lock patience: how long a writer waits for a sibling holding the DB before
+# giving up. A storage-contention timeout must NOT abort an otherwise-healthy turn —
+# a sibling can legitimately hold the DB for multi-second stretches (VACUUM after an
+# auto-prune, a WAL truncate-checkpoint on close, a mixed-version process during a
+# rolling deploy). SQLite's native busy_timeout is time-based (better than counting
+# attempts). Reference: hermes 8da8a7887 (production: 10.8GB db, 9 concurrent procs).
+DEFAULT_SQLITE_BUSY_TIMEOUT_SECONDS = 30.0
+
+
+class WalUnsupportedError(RuntimeError):
+    """Raised when WAL was required but the filesystem silently refused it."""
+
+
+def open_sqlite_connection(
+    path: str | Path,
+    *,
+    check_same_thread: bool = True,
+    busy_timeout_seconds: float = DEFAULT_SQLITE_BUSY_TIMEOUT_SECONDS,
+    journal_mode: str = "WAL",
+    require_wal: bool = False,
+    row_factory: object | None = None,
+) -> sqlite3.Connection:
+    """Open a SQLite connection with durability defaults (single canonical opener).
+
+    Every store opens here so the same hardening applies everywhere:
+    - ``busy_timeout`` gives writers time-based patience under contention instead of
+      failing fast and aborting a healthy turn;
+    - ``journal_mode=WAL`` is verified against the value SQLite actually returns — on
+      NFS/SMB/overlay filesystems ``PRAGMA journal_mode=WAL`` silently returns ``delete``
+      (reader-blocks-writer), and degraded concurrency must never be silent. ``require_wal``
+      turns that into a typed :class:`WalUnsupportedError` instead of a warning.
+
+    Stdlib-only (no ``agent_driver`` imports) so any package can build on it.
+    """
+    conn = sqlite3.connect(str(path), check_same_thread=check_same_thread)
+    if row_factory is not None:
+        conn.row_factory = row_factory  # type: ignore[assignment]
+    if busy_timeout_seconds and busy_timeout_seconds > 0:
+        conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_seconds * 1000)};")
+    if journal_mode and str(path) != ":memory:":
+        row = conn.execute(f"PRAGMA journal_mode={journal_mode};").fetchone()
+        effective = str(row[0]).lower() if row else ""
+        if journal_mode.lower() == "wal" and effective != "wal":
+            message = (
+                f"SQLite journal_mode=WAL requested for {path} but the filesystem "
+                f"returned {effective!r}; running with degraded concurrency "
+                "(reader blocks writer)."
+            )
+            if require_wal:
+                conn.close()
+                raise WalUnsupportedError(message)
+            logger.warning(message)
+    return conn
 
 
 class SqliteStoreBase:
@@ -26,10 +83,8 @@ class SqliteStoreBase:
 
     def __init__(self, *, path: str) -> None:
         self._path = Path(path)
-        self._conn = sqlite3.connect(self._path, check_same_thread=False)
+        self._conn = open_sqlite_connection(self._path, check_same_thread=False)
         self._lock = RLock()
-        if str(self._path) != ":memory:":
-            self._conn.execute("PRAGMA journal_mode=WAL;")
         self._init_schema()
 
     def _init_schema(self) -> None:

@@ -7,6 +7,23 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — SQLite durability hardening (horizon-scan 046 #1)
+A storage-contention timeout must never abort an otherwise-healthy turn, and degraded
+concurrency must never be silent (reference: hermes production incident — 10.8GB db, 9
+concurrent processes). Our SQLite stores were unhardened: three `sqlite3.connect` sites
+that weren't centralized, `journal_mode=WAL` set in only one, and no write-lock patience
+anywhere. **6 new tests; full sweep 2857 passed.**
+- **`agent_driver.persistence.open_sqlite_connection`** — the single canonical opener
+  (stdlib-only). Sets `busy_timeout` (default 30s) so a writer waits out a sibling holding
+  the DB (VACUUM after auto-prune, WAL truncate-checkpoint on close, mixed-version process
+  during a rolling deploy) instead of failing fast; applies `journal_mode=WAL` and **verifies
+  the value SQLite actually returns** — on NFS/SMB/overlay filesystems `PRAGMA journal_mode=WAL`
+  silently returns `delete` (reader-blocks-writer), which now logs a warning, or raises the
+  typed `WalUnsupportedError` when `require_wal=True`.
+- **All three connect sites routed through it**: `SqliteStoreBase` (sessions / artifacts /
+  context / plan-artifact / record stores) and the two subagent stores (`subagents/store.py`,
+  `subagents/mailbox.py`) — the latter two previously opened with no WAL and no busy_timeout.
+
 ### Changed — phase-updates to existing epics (horizon-scan 040)
 Four small, self-contained hardenings surfaced by the reference scan. **13 new tests;
 full sweep 2851 passed.**

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from agent_driver.contracts.control import utc_now_iso
+from agent_driver.persistence import open_sqlite_connection
 from agent_driver.contracts.subagent_mailbox import (
     SubagentMailboxItem,
     SubagentMailboxStatus,
@@ -149,9 +150,9 @@ class SqliteSubagentMailboxStore:
         self._ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        # Epic 046 #1: shared opener adds WAL + busy_timeout (write-lock patience) so a
+        # sibling process holding the DB doesn't abort a healthy write.
+        return open_sqlite_connection(self._path, row_factory=sqlite3.Row)
 
     def _ensure_schema(self) -> None:
         with self._connect() as conn:
