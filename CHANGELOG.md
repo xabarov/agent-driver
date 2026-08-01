@@ -7,6 +7,19 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Changed — refactor: decompose the tool_stage god-module (behaviour-neutral)
+`runtime/single_agent/tool_stage/__init__.py` was a 1477-line package init doing real work
+(24 top-level defs). Two cohesive, leaf function groups were extracted into sibling modules
+and re-imported into `__init__`, so every existing import — including the private `_foo`
+helpers that tests import directly — keeps working unchanged. Pure structural change; the
+full sweep stays at 2873 passed. `__init__` is now 948 lines (−36%).
+- `tool_stage/recovery.py` — the synthetic recovery/repair-hint appenders
+  (`_append_tool_call_parse_error_feedback`, `_append_denial_recovery_message`,
+  `_append_unknown_tool_recovery_message`, and the disallowed-management / python-policy hints).
+- `tool_stage/protocol_messages.py` — the TOOL-message protocol compaction/normalization
+  helpers (`_compact_tool_payload_for_protocol`, `_compact_generic_tool_payload_for_protocol`,
+  `_normalize_protocol_messages`, `_is_drop_candidate_assistant_message`, `_load_protocol_messages`).
+
 ### Added — SDK developer-experience quick-wins
 Cheap, additive DX improvements from a broad SDK/docs audit — no public method removed
 (back-compat preserved). **9 new tests; full sweep 2873 passed.**
