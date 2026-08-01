@@ -16,7 +16,7 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.tools import ToolCall
 from agent_driver.gateway import AgentGateway
 from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse
-from agent_driver.llm.providers_impl.fake import FakeProvider
+from agent_driver.llm import FakeProvider
 from agent_driver.permissions import (
     PermissionMode,
     PermissionPolicy,

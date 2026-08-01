@@ -324,15 +324,23 @@ class Agent:  # pylint: disable=too-many-public-methods
         *,
         abort_handle: RunAbortHandle | None = None,
         tool_gate: ToolGate | None = None,
+        stream_poll_interval_ms: int | None = None,
     ) -> RunStream:
-        """Start a run and return the object-oriented stream helper."""
+        """Start a run and return the object-oriented stream helper.
+
+        ``stream_poll_interval_ms`` sets how often the stream polls for new events;
+        it supersedes the legacy ``app_metadata["stream_poll_interval_ms"]`` key
+        (still honored for back-compat) and defaults to 20ms.
+        """
         effective_input = (
             run_input
             if run_input.stream
             else run_input.model_copy(update={"stream": True})
         )
         poll_interval_ms = int(
-            effective_input.app_metadata.get("stream_poll_interval_ms", 20)
+            stream_poll_interval_ms
+            if stream_poll_interval_ms is not None
+            else effective_input.app_metadata.get("stream_poll_interval_ms", 20)
         )
         return RunStream(
             self.start(
@@ -342,6 +350,32 @@ class Agent:  # pylint: disable=too-many-public-methods
             ),
             poll_interval_seconds=poll_interval_ms / 1000.0,
         )
+
+    def add_tool(self, fn: object = None, /, **manifest_overrides: object) -> object:
+        """Register a custom tool on this agent — no separate ``ToolSet`` select needed.
+
+        Collapses the register-and-also-select ceremony (the top custom-tool foot-gun):
+        the tool is added to the agent's live registry and becomes callable on the next
+        turn. Pass an async function (its argument schema is inferred from the signature)
+        or a definition from :func:`agent_driver.sdk.tool`. Also usable as a decorator —
+        ``@agent.add_tool(name="lookup")``. Returns the registered ``ToolManifest`` (or the
+        decorator when called bare).
+        """
+        from agent_driver.tools import (  # noqa: PLC0415
+            CustomToolDefinition,
+            register_custom_function,
+        )
+
+        registry = self._runner.deps.tool_registry
+        if isinstance(fn, CustomToolDefinition):
+            registry.register(fn.manifest, fn.handler)
+            return fn.manifest
+        if fn is None:
+            def _decorator(func: object) -> object:
+                return register_custom_function(registry, func, **manifest_overrides)
+
+            return _decorator
+        return register_custom_function(registry, fn, **manifest_overrides)
 
     def session(self, session_id: str | None = None):
         """Create a thread-scoped Session facade."""

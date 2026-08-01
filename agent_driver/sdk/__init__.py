@@ -38,7 +38,13 @@ from agent_driver.sdk.self_consistency import (
     run_self_consistent,
 )
 from agent_driver.sdk.trace import TraceSummary, summarize_output, support_bundle
-from agent_driver.tools import ToolSet
+from agent_driver.tools import (
+    CustomToolDefinition,
+    ToolRegistry,
+    ToolSet,
+    register_custom_function,
+    tool,
+)
 
 __all__ = [
     "Agent",
@@ -65,6 +71,10 @@ __all__ = [
     "SubagentToolPolicy",
     "TraceSummary",
     "ToolSet",
+    "ToolRegistry",
+    "CustomToolDefinition",
+    "register_custom_function",
+    "tool",
     "ValueToAction",
     "build_default_registry",
     "create_agent",

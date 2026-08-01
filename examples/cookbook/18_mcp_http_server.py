@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from starlette.testclient import TestClient
 
-from agent_driver.llm.providers_impl.fake import FakeProvider
+from agent_driver.llm import FakeProvider
 from agent_driver.mcp_server.http import SESSION_HEADER, create_mcp_app
 from agent_driver.sdk import ToolSet, create_agent
 

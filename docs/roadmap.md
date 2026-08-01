@@ -29,7 +29,7 @@ The large cross-harness, platform-adapter, deep-research and refactor plans that
 drove the last cycles are now shipped and archived (see
 [June 2026 archive](archive/2026-06/README.md) and
 [May 2026 archive](archive/2026-05/README.md)); the
-[Unified work plan](unified-work-plan-2026-05-31.md) keeps the slim record of
+[Unified work plan](archive/unified-work-plan-2026-05-31.md) keeps the slim record of
 what is left. The genuinely-open threads are narrow:
 
 1. Deep Research hard-profile hardening.
@@ -80,10 +80,10 @@ what is left. The genuinely-open threads are narrow:
 
 Active plans / status:
 
-- [Unified work plan](unified-work-plan-2026-05-31.md) — slim record of remaining
+- [Unified work plan](archive/unified-work-plan-2026-05-31.md) — slim record of remaining
   work after the shipped cycles.
-- [Efficient Deep Research workspace architecture](efficient-deep-research-workspace-architecture-2026-05-31.md)
-- [Research quality summary](research-quality-improvement-plan-2026-05-31.md)
+- [Efficient Deep Research workspace architecture](archive/efficient-deep-research-workspace-architecture-2026-05-31.md)
+- [Research quality summary](archive/research-quality-improvement-plan-2026-05-31.md)
 - [Provider and model debugging](provider-model-debugging.md)
 - [Runtime metadata inventory](runtime-metadata.md)
 

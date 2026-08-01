@@ -18,7 +18,7 @@ import json
 
 from starlette.testclient import TestClient
 
-from agent_driver.llm.providers_impl.fake import FakeProvider
+from agent_driver.llm import FakeProvider
 from agent_driver.sdk import ToolSet, create_agent
 from agent_driver.server import create_app
 

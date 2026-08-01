@@ -28,15 +28,15 @@ current, and tied to code that exists in the repository.
 
 - [Roadmap](roadmap.md) - short current direction, the few genuinely-open
   threads, verification loop, and quality bar. Start here.
-- [Unified work plan](unified-work-plan-2026-05-31.md) - slim record of the work
+- [Unified work plan](archive/unified-work-plan-2026-05-31.md) - slim record of the work
   left after the shipped cycles (Deep Research hard-profile hardening, live eval
   cost discipline, deferred-by-choice adapters).
-- [Efficient Deep Research workspace architecture](efficient-deep-research-workspace-architecture-2026-05-31.md) -
+- [Efficient Deep Research workspace architecture](archive/efficient-deep-research-workspace-architecture-2026-05-31.md) -
   design for research artifacts, scoped file tools, source storage and the
   long-answer rewrite-loop fix.
 - [Provider and model debugging](provider-model-debugging.md) - OpenRouter,
   Phoenix, reasoning/tool-call failures, and live model matrix practice.
-- [Research quality summary](research-quality-improvement-plan-2026-05-31.md) -
+- [Research quality summary](archive/research-quality-improvement-plan-2026-05-31.md) -
   completed research baseline, evidence decisions, and acceptance run IDs.
 - [Runtime metadata inventory](runtime-metadata.md) - current
   `RunContext.metadata` owner map for runtime state refactoring.
@@ -49,11 +49,11 @@ hardening) are closed - see the archive READMEs under Decision Records.
 
 ## Decision Records
 
-- [Deep Research and Skills analysis](deep-research-and-skills-analysis-2026-05-31.md) -
+- [Deep Research and Skills analysis](archive/deep-research-and-skills-analysis-2026-05-31.md) -
   compact reference for the shared Skills and source-ledger contracts.
-- [SDK quality analysis](sdk-quality-deep-analysis-2026-05-31.md) - reference
+- [SDK quality analysis](archive/sdk-quality-deep-analysis-2026-05-31.md) - reference
   record for SDK productization decisions now reflected in SDK docs.
-- [Agent Driver refactoring record](agent-driver-refactoring-plan-2026-05-31.md) -
+- [Agent Driver refactoring record](archive/agent-driver-refactoring-plan-2026-05-31.md) -
   compact structural decision record for closed refactor phases and remaining
   storage/eval infrastructure work.
 - [Archived June 2026 plans](archive/2026-06/README.md) - cross-harness backlog,

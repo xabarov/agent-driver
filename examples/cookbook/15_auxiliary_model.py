@@ -15,7 +15,7 @@ import asyncio
 
 from agent_driver.contracts import AgentRunInput
 from agent_driver.llm.contracts import LlmRequest, LlmResponse
-from agent_driver.llm.providers_impl.fake import FakeProvider
+from agent_driver.llm import FakeProvider
 from agent_driver.runtime import RunnerConfig
 from agent_driver.sdk import ToolSet, create_agent
 

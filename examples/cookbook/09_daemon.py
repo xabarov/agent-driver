@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 from agent_driver.scheduler import InMemoryJobStore, ScheduledJob, Scheduler
 from agent_driver.sdk import ToolSet, create_agent
-from agent_driver.llm.providers_impl.fake import FakeProvider
+from agent_driver.llm import FakeProvider
 
 
 async def main() -> None:

@@ -23,14 +23,36 @@ Common selectors:
 
 ## Custom Function Tool
 
+The shortest path — `agent.add_tool(...)` — registers the tool on an existing
+agent and makes it callable on the next turn. No separate registry construction,
+and no `ToolSet.only(...)` that must be kept in sync (registering but forgetting to
+select was the classic foot-gun):
+
 ```python
-from agent_driver.sdk import ToolSet, create_agent
-from agent_driver.runtime import RunnerConfig
-from agent_driver.tools import ToolRegistry, tool
+from agent_driver.sdk import create_agent, ToolSet
+
+agent = create_agent(provider=provider, tools=ToolSet.only())
 
 async def lookup_city(city: str, limit: int = 3) -> dict:
     """Lookup city facts."""
     return {"city": city, "limit": limit}
+
+agent.add_tool(lookup_city)          # callable immediately
+# or as a decorator: @agent.add_tool(name="lookup_city")
+```
+
+`add_tool` accepts an async function (its name, description and JSON schema are
+inferred from the signature) or a `tool(...)` definition, and returns the registered
+`ToolManifest`.
+
+### Building a registry explicitly
+
+When you need a registry up front (e.g. to share across agents or pre-validate a
+`ToolSet`), the primitives are re-exported from `agent_driver.sdk`:
+
+```python
+from agent_driver.sdk import ToolSet, create_agent, tool, ToolRegistry
+from agent_driver.runtime import RunnerConfig
 
 definition = tool(lookup_city)
 registry = ToolRegistry()

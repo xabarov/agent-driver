@@ -7,6 +7,24 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — SDK developer-experience quick-wins
+Cheap, additive DX improvements from a broad SDK/docs audit — no public method removed
+(back-compat preserved). **9 new tests; full sweep 2873 passed.**
+- **`Agent.add_tool(fn)`** — register a custom tool on a live agent; it is callable on the
+  next turn with no separate `ToolSet.only(...)` to keep in sync (registering-but-forgetting-
+  to-select was the classic foot-gun). Accepts an async function (arg schema inferred from the
+  signature) or a `tool(...)` definition, and works as a decorator `@agent.add_tool(name=...)`.
+  Registers into the agent's live `deps.tool_registry`, which the request builder reads.
+- **`agent_driver.sdk` now re-exports the custom-tool primitives** `tool`, `ToolRegistry`,
+  `register_custom_function`, `CustomToolDefinition` — building a registry no longer forces an
+  import from `agent_driver.tools` alongside the SDK facade.
+- **`Agent.stream_run(..., stream_poll_interval_ms=...)`** — a typed parameter replacing the
+  undocumented `app_metadata["stream_poll_interval_ms"]` magic key (still honored for
+  back-compat; the typed arg wins when both are set).
+- **Docs hygiene**: moved six dated 2026-05-31 plan/analysis docs to `docs/archive/` (links
+  updated); normalized cookbook `FakeProvider` imports to the blessed `agent_driver.llm` path;
+  `docs/sdk-tools.md` now leads with the `add_tool` one-liner.
+
 ### Fixed — structure-preserving truncation of JSON tool results
 A TOOL protocol message's content is `json.dumps` of a tool's `structured_output`. Two
 context passes shortened it with a raw `content[:N]` slice, cutting the JSON
