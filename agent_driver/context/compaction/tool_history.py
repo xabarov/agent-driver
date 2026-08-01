@@ -26,6 +26,7 @@ from typing import Any
 
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.context.tool_content_shrink import shrink_json_tool_content
 
 MID_MAX_CHARS = 2000
 _CHARS_PER_TOKEN = 4.0
@@ -117,9 +118,19 @@ def compress_tool_history(
                 continue  # already terminal
             if len(content) <= MID_MAX_CHARS or _TRUNCATION_MARKER_RE.search(content):
                 continue  # already ≤ cap or already truncated
-            new_content = content[:MID_MAX_CHARS].rstrip() + _truncation_marker(
-                original - MID_MAX_CHARS
-            )
+            # Structure-preserving: a serialized-JSON tool result is shrunk by
+            # truncating its long string leaves (still-valid JSON), never a raw
+            # content[:N] slice that would cut the JSON mid-structure. Non-JSON prose
+            # keeps the plain slice + marker.
+            json_shrunk = shrink_json_tool_content(content)
+            if json_shrunk is not None:
+                if json_shrunk == content:
+                    continue  # valid JSON, nothing over the leaf budget
+                new_content = json_shrunk
+            else:
+                new_content = content[:MID_MAX_CHARS].rstrip() + _truncation_marker(
+                    original - MID_MAX_CHARS
+                )
             chars_saved += len(content) - len(new_content)
             result[msg_index] = msg.model_copy(update={"content": new_content})
             truncated += 1

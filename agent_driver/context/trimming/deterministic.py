@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_driver.context.tool_content_shrink import shrink_json_tool_content
 from agent_driver.context.trimming.tool_stub import build_tool_trim_stub_content
 from agent_driver.contracts.context import (
     ContextBudget,
@@ -262,9 +263,17 @@ def _trim_messages_to_budget(
             )
             keep_chars = min(len(content), max(keep_chars, 1))
             truncated_message = dict(message)
-            new_content = content[:keep_chars].rstrip()
-            if len(new_content) < len(content):
-                new_content = f"{new_content}{_TRUNCATION_MARKER}"
+            # Structure-preserving: never raw-slice a serialized-JSON tool result (it
+            # would cut the JSON mid-structure). Shrink its long string leaves instead
+            # (still-valid JSON); a JSON message that can't shrink stays full rather
+            # than broken. Non-JSON prose keeps the plain slice + marker.
+            json_shrunk = shrink_json_tool_content(content)
+            if json_shrunk is not None:
+                new_content = json_shrunk
+            else:
+                new_content = content[:keep_chars].rstrip()
+                if len(new_content) < len(content):
+                    new_content = f"{new_content}{_TRUNCATION_MARKER}"
             truncated_message["content"] = new_content
             kept.append(truncated_message)
             running_chars += len(new_content)

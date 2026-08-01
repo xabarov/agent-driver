@@ -19,6 +19,28 @@ def _user(text: str) -> ChatMessage:
     return ChatMessage(role=ChatRole.USER, content=text)
 
 
+def test_json_tool_result_in_mid_tier_stays_valid_json() -> None:
+    import json
+
+    # A JSON-returning tool result aged into the mid tier must NOT be cut mid-JSON.
+    big = json.dumps(
+        {"status": "ok", "rows": [{"id": i, "blob": "Z" * 400} for i in range(20)]},
+        ensure_ascii=True,
+    )
+    msgs = [_user("q")]
+    for i in range(8):
+        msgs.append(_tool(big, f"c{i}"))
+    out, audit = compress_tool_history(msgs, effective_window=12_000)
+    tool_msgs = [m for m in out if m.role == ChatRole.TOOL]
+    # The mid-tier (truncated) results must still parse as JSON — structure intact.
+    mid = tool_msgs[-3]  # a truncated (not stubbed) mid-tier result
+    assert len(mid.content) < len(big)
+    parsed = json.loads(mid.content)  # would raise if cut mid-structure
+    assert parsed["status"] == "ok"
+    assert len(parsed["rows"]) == 20  # shape preserved (all rows kept, blobs shrunk)
+    assert audit["truncated"] == 3
+
+
 def test_tiers_scale_with_window() -> None:
     assert get_tiers(12_000).recent == 2
     assert get_tiers(200_000).recent == 8

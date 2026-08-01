@@ -7,6 +7,27 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed — structure-preserving truncation of JSON tool results
+A TOOL protocol message's content is `json.dumps` of a tool's `structured_output`. Two
+context passes shortened it with a raw `content[:N]` slice, cutting the JSON
+mid-structure — so any consumer that reads tool-result content as strict JSON (an
+external / host parser, or a provider validating the replayed transcript) received
+malformed data. (The executor layer was already safe — it spills the full payload and
+only shortens a preview; the break was downstream in compaction/trimming.) Reference:
+hermes `_truncate_tool_call_args_json`, whose byte-slice predecessor drew non-retryable
+provider 400s and looped the session re-sending broken history. **7 new tests; full
+sweep 2864 passed.**
+- **`agent_driver.context.tool_content_shrink.shrink_json_tool_content`** — parses a
+  serialized-JSON tool result and truncates only its long **string leaves** in-tree
+  (inline `…[+N chars]` marker), re-serializing to still-valid JSON; the object/array
+  shape and all keys survive by construction. Returns the input unchanged when nothing
+  exceeds the leaf budget (idempotent), or `None` when the content is not a JSON
+  object/array (caller falls back to its own plain-text slice — safe for prose).
+- Wired into both raw-slice sites: `context/compaction/tool_history.py`
+  (`compress_tool_history` mid-tier, epic 035 A) and `context/trimming/deterministic.py`
+  (last-message budget truncation). A JSON tool message is never char-sliced; non-JSON
+  prose keeps the existing marker slice.
+
 ### Added — SQLite durability hardening (horizon-scan 046 #1)
 A storage-contention timeout must never abort an otherwise-healthy turn, and degraded
 concurrency must never be silent (reference: hermes production incident — 10.8GB db, 9

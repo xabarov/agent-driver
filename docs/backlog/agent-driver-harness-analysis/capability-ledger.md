@@ -54,6 +54,7 @@ benchmark-fitting, обязательна классификация tool/prompt
 | Context-engine seam (044) | встроено (context_breakdown + fail-open select-context); `before_llm_request`/`on_run_completed` — механика | on | core | scan | — | hermes |
 | Event-driven wait / park-on-event (045) | builtin-тул `wait_for_event` (opt-in вызовом модели); подписка всегда bounded | opt-in | scan (запрос пользователя) | `event_wait` (предложена, не реализована) | hermes async_delegation (чертёж) |
 | SQLite durability (046 #1) | `open_sqlite_connection` (единый opener) | on | core | scan (прод-инцидент hermes) | — | hermes |
+| JSON structure-preserving truncation | `shrink_json_tool_content` (2 сайта компакции) | on | core | broad audit (баг-опыт пользователя) | — | hermes `_truncate_tool_call_args_json` |
 
 ## Proposed
 
