@@ -28,7 +28,7 @@
 |---|---|---|---|
 | R0 | 056a | **DONE** | контракт восстановлен до SHA `d4ed6c…`; статусы вынесены сюда |
 | R1 | 057 | pending | — |
-| R2 | 058 | **IN PROGRESS** | 4 PG-стора + generic schema + facade + 17 real-PG тестов (validated на postgres:15) + обязательный CI-job — **DONE**; остаётся integration-wiring PG-сторов в resume/runner-путь + end-to-end stale-revision conflict |
+| R2 | 058 | **DONE** | 4 PG-стора + generic schema + facade + обязательный CI-job + **20 real-PG тестов** (validated на postgres:15): 17 store-unit (two-client race, replay, conflict, монотонный abort-CAS, restart, parity) + 3 resume-integration end-to-end (duplicate→conflict, два конкурентных resume→один side-effect, stale-checkpoint→conflict без consume) |
 | R3 | 059 | pending | — |
 | R4 | 060 | pending | — |
 | R5 | 061 | pending (blocked by 057–060) | релиз 0.3.0 |

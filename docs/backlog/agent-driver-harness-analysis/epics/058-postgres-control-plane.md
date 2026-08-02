@@ -1,7 +1,10 @@
 # R2 — Full Postgres-backed control plane (Approval / Abort / PlanArtifact / CommandQueue)
 
-Статус: **pending (критический путь)**. Доводит эпик 051 (U3), расширяет durability 052/053.
-Контекст: `../REMEDIATION_PLAN.md` §058.
+Статус: **DONE** (validated на postgres:15-alpine, 20 real-PG тестов). Доводит эпик 051 (U3),
+расширяет durability 052/053. Контекст: `../REMEDIATION_PLAN.md` §058.
+Реализация: `agent_driver/runtime/control/postgres.py`; тесты
+`tests/runtime/test_postgres_control_plane.py` (17) + `tests/runtime/test_postgres_resume_integration.py`
+(3); CI `.github/workflows/tests.yml` (job `postgres-suite`); коммиты `db4d1e7` + integration.
 
 ## Scope (подтверждён владельцем)
 

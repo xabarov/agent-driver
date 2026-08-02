@@ -24,7 +24,11 @@ CI job (`.github/workflows/tests.yml`) runs the real-Postgres acceptance matrix 
 `postgres:15-alpine` with `AD_REQUIRE_POSTGRES=1`; the `postgres` pytest marker is excluded from the
 default sweep, and a missing DSN / dependency / zero collected tests **fails** the job rather than skipping
 green. Tests: `tests/runtime/test_postgres_control_plane.py` (17 — two-client race single-winner,
-crash-safe replay, conflict, monotonic abort CAS, restart readback, cross-backend parity).
+crash-safe replay, conflict, monotonic abort CAS, restart readback, cross-backend parity) +
+`tests/runtime/test_postgres_resume_integration.py` (3 — the Postgres approval store wired into the real
+runner resume path: a duplicate resume conflicts before the tool runs twice, two concurrent resumes
+produce exactly one side-effect, and a stale `expected_checkpoint_id` conflicts before anything is
+consumed). 20 real-Postgres tests green against `postgres:15-alpine`.
 
 ### Added — bounded cancellation deadline on the tool cancellation token (epic 052 / U4)
 `ToolCancellation.deadline_seconds` — previously always `None` — is now populated from the run's
