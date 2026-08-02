@@ -15,7 +15,11 @@ from agent_driver.contracts.enums import (
 from agent_driver.contracts.interrupts import ResumeCommand
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.llm.contracts import LlmResponse
-from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
+from agent_driver.runtime.errors import (
+    MissingCheckpointError,
+    ResumeConflictError,
+    RuntimeExecutionError,
+)
 from agent_driver.runtime.single_agent.lifecycle.pending import (
     apply_resume_to_call,
     pending_interrupt_from_metadata,
@@ -113,6 +117,31 @@ def _plan_lifecycle_payload(
     }
 
 
+def _approval_already_consumed(
+    metadata: dict[str, object], resume: ResumeCommand
+) -> bool:
+    """True if this resume targets an interrupt a prior resume already consumed.
+
+    Matches on the interrupt id, or on the host ``idempotency_key`` when the
+    resume carries one — so a duplicate approval (HTTP-style retry) is
+    recognisable even if the caller does not re-send the same interrupt id.
+    """
+    records = metadata.get("consumed_approvals")
+    if not isinstance(records, list):
+        return False
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if record.get("interrupt_id") == resume.interrupt_id:
+            return True
+        if (
+            resume.idempotency_key is not None
+            and record.get("idempotency_key") == resume.idempotency_key
+        ):
+            return True
+    return False
+
+
 class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
     """Mixin: load checkpoint on resume and apply HITL resume actions."""
 
@@ -123,11 +152,13 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
     ) -> CheckpointRecord | None:
         if run_input.resume is None:
             return None
-        resume_token = run_input.resume.interrupt_id
+        resume = run_input.resume
+        resume_token = resume.interrupt_id
         checkpoint_row = cast(
             CheckpointRecord | None,
             self._deps.checkpoint_store.load(resume_token),
         )
+        latest: CheckpointRecord | None = None
         if checkpoint_row is None and run_input.run_id:
             latest = cast(
                 CheckpointRecord | None,
@@ -141,6 +172,17 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                 ):
                     checkpoint_row = latest
         if checkpoint_row is None:
+            # Idempotent replay: the interrupt this resume targets was already
+            # consumed by a prior resume (its pending state is gone). Surface a
+            # stable, explicit conflict instead of the generic missing-checkpoint
+            # error so the host treats a duplicate approval as a no-op rather
+            # than re-executing the tool.
+            if latest is not None and _approval_already_consumed(
+                latest.state.metadata, resume
+            ):
+                raise ResumeConflictError(
+                    f"interrupt '{resume_token}' was already consumed"
+                )
             raise MissingCheckpointError(
                 f"Checkpoint '{run_input.resume.interrupt_id}' not found"
             )
@@ -211,10 +253,33 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             raise MissingCheckpointError(
                 "resume interrupt_id does not match pending interrupt"
             )
+        # U3 optimistic-concurrency guard: if the host approved against a
+        # specific checkpoint, refuse to apply when the pending interrupt has
+        # since moved to a different checkpoint (stale approval).
+        if (
+            resume.expected_checkpoint_id is not None
+            and resume.expected_checkpoint_id != checkpoint_row.ref.checkpoint_id
+        ):
+            raise ResumeConflictError(
+                f"resume expected checkpoint '{resume.expected_checkpoint_id}' "
+                f"but pending interrupt is at '{checkpoint_row.ref.checkpoint_id}'"
+            )
         if resume.action not in pending.interrupt.allowed_actions:
             raise RuntimeExecutionError(
                 f"resume action '{resume.action.value}' is not allowed"
             )
+        # Record the consume so a later duplicate resume (idempotency-key or
+        # same interrupt id) is recognised as already-consumed rather than
+        # re-driving the run. Persisted with the next checkpoint via context
+        # metadata.
+        consumed = list(context.metadata.get("consumed_approvals") or [])
+        consumed.append(
+            {
+                "interrupt_id": pending.interrupt.interrupt_id,
+                "idempotency_key": resume.idempotency_key,
+            }
+        )
+        context.metadata["consumed_approvals"] = consumed
         self._emit(
             EventSpec(
                 run_id=context.run_id,

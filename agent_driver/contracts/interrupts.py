@@ -137,6 +137,19 @@ class ResumeCommand(ContractModel):
     state_patch: dict[str, Any] | None = None
     approved_by: str | None = None
     created_at: str | None = None
+    # U3 durable-approval fields (both optional → backward compatible).
+    #
+    # ``idempotency_key``: a host-supplied key identifying this logical approval
+    # attempt. A duplicate resume carrying the same key against an
+    # already-consumed interrupt is reported as a stable conflict rather than
+    # re-driving the run — the basis for exactly-once approval consumption.
+    #
+    # ``expected_checkpoint_id``: optimistic-concurrency guard. When set, the
+    # resume only applies if the pending interrupt is still at this checkpoint;
+    # otherwise the runtime raises a stable ``ResumeConflictError`` (stale)
+    # instead of silently approving against a run that has moved on.
+    idempotency_key: str | None = None
+    expected_checkpoint_id: str | None = None
     # Phase 11 H13 — categories the operator approves alongside the
     # specific call. These are scoped to the current run (runtime
     # stores them in run metadata so subsequent policy evaluation can

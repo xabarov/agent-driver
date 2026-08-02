@@ -7,6 +7,24 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — expected-checkpoint + idempotent approval consumption (epic 051 / U3, contract slice)
+`ResumeCommand` gains two optional, backward-compatible fields for durable approval:
+`idempotency_key` (a host-supplied key identifying one logical approval attempt) and
+`expected_checkpoint_id` (an optimistic-concurrency guard). The resume path now raises a new
+`ResumeConflictError` (subclass of `RuntimeExecutionError`, so existing base-type catchers keep
+working) in two cases: **(1)** the approval names an `expected_checkpoint_id` that no longer matches
+the pending interrupt's checkpoint (a *stale* approval against a run that moved on), and **(2)** the
+targeted interrupt was already consumed by a prior resume — matched by interrupt id *or* by
+`idempotency_key`, so an HTTP-style duplicate is recognised even if it does not re-send the same
+interrupt id. Consumed interrupts are recorded in a durable `consumed_approvals` checkpoint-metadata
+list, so a duplicate approval is reported as an idempotent no-op instead of re-executing the tool.
+Additive and behaviour-neutral when the new fields are unset; full sweep 2893 passed (+4, proving one
+tool side-effect under duplicate/stale approvals). Remaining U3 (epic 051 phases B/C/D): true
+concurrent compare-and-swap and a Postgres durable approval store, binding the interrupt to a real
+checkpoint id (it still carries the `checkpoint_pending` sentinel), prior-result replay, a
+crash-after-consume effect ledger, and the two-client/restart adversarial matrix against a real
+durable store.
+
 ### Added — tool-gate call identity + decision provenance (epic 050 / U2, phases A/B/D)
 The dynamic `ToolGate` seam now carries **stable call identity** and an optional **host
 provenance** channel, for embedders (e.g. PentestLens) that bind an external policy decision to a

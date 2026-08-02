@@ -1,7 +1,24 @@
 # U3 — Atomic approval and resume
 
-Дата создания: 2026-08-02. Статус: **PROPOSED** (крупнейшая дыра Goal'а). Родитель:
-[[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — контракт-срез (A-часть) DONE 2026-08-02;
+B/C/D открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]] (крупнейшая дыра Goal'а).
+Происхождение: upstream Goal (host-adoption).
+
+> **Реализация контракт-среза** (свип 2893, +4): `ResumeCommand` получил `idempotency_key` +
+> `expected_checkpoint_id` (оба optional → обратно-совместимо). Новый `ResumeConflictError`
+> (`<: RuntimeExecutionError`) на: **(1)** stale — `expected_checkpoint_id` ≠ checkpoint pending-
+> interrupt'а (optimistic concurrency); **(2)** уже-консьюмнутый interrupt (матч по interrupt_id
+> ИЛИ `idempotency_key` → HTTP-дубль опознаётся даже с другим interrupt_id). Консьюм пишется в
+> durable `consumed_approvals` (checkpoint-metadata) → дубль-approval = идемпотентный no-op, тул НЕ
+> переисполняется. Тесты: `tests/runtime/test_resume_atomic_approval.py` (доказывают один side-effect
+> при duplicate/stale). Guard'ы обновлены (schema-snapshot, runtime-metadata inventory).
+>
+> **Осталось B/C/D:** истинный **concurrent CAS** и **Postgres durable approval-store** (сейчас
+> дедуп — TOCTOU-после-коммита + optimistic expected-checkpoint, НЕ защищает pre-commit гонку двух
+> клиентов); **привязка interrupt↔реальный checkpoint_id** (сейчас sentinel `checkpoint_pending` →
+> host берёт id из стора); **prior-result replay** (сейчас конфликт явный, но прежний результат не
+> возвращается); **crash-after-consume effect-ledger** (exactly-once); монотонный checkpoint-revision
+> вместо статичного `state_version="v1"`; two-client/restart-матрица против реального durable-store.
 
 Определить durable generic approval-record/command-протокол, привязанный к session/run+interrupt/
 call-identity, expected-checkpoint-id/revision, host-supplied idempotency-key, decision-kind +

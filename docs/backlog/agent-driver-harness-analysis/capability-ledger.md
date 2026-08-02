@@ -76,7 +76,7 @@ benchmark-fitting, обязательна классификация tool/prompt
 |---|---|---|---|
 | U1 | 049 embedding-facade | store/hook/stream-протоколы не на facade+не в embedding.md; `RunnerConfig` в internal; нет точного export-снапшота и runtime `__version__` | средне |
 | U2 | 050 gate-identity+provenance | **A/B/D DONE** (identity в контекст + `GateProvenance` под reserved `_ad_` + `ensure_bounded_json_metadata` fail-closed + ask-path→interrupt; свип 2889); осталось C/E (сквозные проекции, унификация `interrupt_id`, retry/timeout/abort-матрица) | крупно |
-| U3 | 051 atomic-approval | consume не атомарен (нет CAS/idempotency/expected-checkpoint; `save()` всегда новый id → upsert не контендит); durable approval-репо in-memory и не подключён; crash → переисполнение тула | **крупнейшее** |
+| U3 | 051 atomic-approval | **контракт-срез DONE** (`ResumeCommand.idempotency_key`+`expected_checkpoint_id`; `ResumeConflictError` на stale/уже-консьюмнут; `consumed_approvals`-ledger → дубль=no-op, один side-effect; свип 2893); осталось B/C/D (concurrent CAS+Postgres store, interrupt↔real-checkpoint, prior-result replay, crash-effect-ledger, монотонный revision, two-client/restart-матрица) | **крупнейшее** |
 | U4 | 052 durable-stop | abort process-local, чек только на границах шагов; `observed` не выставляется; в handler нет cancel-token; terminal не различает cancelled/completed/failed/late | крупно |
 | U5 | 053 plan-integrity | `content_hash` не сравнивается → ревизия не детектируется; модель задаёт id/hash; `PlanArtifactStore` не подключён | средне |
 | U6 | 054 gateway-truthfulness | `_parked` process-local без durable-бэкенда; прямой путь durable → Option 2 (документировать non-durable) предпочтителен | мелко |
