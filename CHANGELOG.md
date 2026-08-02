@@ -46,6 +46,16 @@ binding, U6/U7) are additive: new optional contract fields default to `None`/abs
 keys (`_ad_gate_provenance`, `consumed_approvals`, `approved_plan.policy_binding`) are additive, and
 existing checkpoints/events remain readable. No public symbol was removed or renamed.
 
+### Added — U4 result fencing enforce: drop superseded stragglers (epic 052 / U4, on F1)
+Building on the F1 attempt-epoch foundation, the tool-stage fold now **stamps** each result envelope
+with the run's current `attempt_epoch` (attribution: a persisted/traced result records which attempt
+produced it) and **fences** any straggler carrying an *older* epoch — a result from a superseded
+attempt (e.g. across a second resume) is dropped instead of folded back in, and a new
+`RuntimeEventType.RESULT_FENCED` event is emitted. Fresh runs (epoch 0) neither stamp nor fence, so
+behaviour is unchanged; the drop only triggers for a result stamped under an earlier attempt than the
+run's current one. Full sweep 2955 passed (+3). This closes the U4 late-result fencing gap; the
+remaining U4 item is observing an abort *during* an in-flight LLM await.
+
 ### Added — F1: attempt-epoch result-fencing foundation (epic 052 / U4)
 Foundation for late-result fencing: a monotonic per-run `RunContext.attempt_epoch` (0 for a fresh
 run, bumped on each resume that re-drives the run, persisted via checkpoint metadata) is now exposed

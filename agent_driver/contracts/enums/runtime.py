@@ -66,6 +66,10 @@ class RuntimeEventType(StrEnum):
     # TOOL_CALL_STARTED → 0..N TOOL_PROGRESS → TOOL_CALL_COMPLETED.
     TOOL_PROGRESS = "tool_progress"
     TOOL_CALL_COMPLETED = "tool_call_completed"
+    # U4 fencing — a tool result carrying an execution-attempt epoch older than
+    # the run's current epoch (a straggler from a superseded attempt) was dropped
+    # rather than folded back in. See runtime.single_agent.fencing.
+    RESULT_FENCED = "result_fenced"
     SKILL_INVOKED = "skill_invoked"
     RESEARCH_PROGRESS = "research_progress"
     SOURCE_LEDGER_UPDATED = "source_ledger_updated"

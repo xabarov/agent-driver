@@ -39,6 +39,11 @@ from agent_driver.runtime.single_agent.research.gating import (
     _maybe_build_continuation_transition,
     _tool_gate_for_context,
 )
+from agent_driver.runtime.single_agent.fencing import (
+    attempt_epoch_of,
+    is_stale_attempt,
+    stamp_attempt_epoch,
+)
 from agent_driver.runtime.single_agent.tool_stage import execute_tool_stage_step
 from agent_driver.tools.context import tool_attempt_epoch_scope
 from agent_driver.runtime.single_agent.tool_stage.subagent_execution import (
@@ -162,10 +167,50 @@ class SingleAgentStepMixin:
                 context.run_input, context.llm_response, **gate_kwargs
         )
 
+    def _fence_and_stamp_envelopes(
+        self, context: RunContext, envelopes: list
+    ) -> list:
+        """F1/U4 enforce — stamp each result with the run's attempt epoch and drop
+        any straggler stamped with an older (superseded) epoch.
+
+        Freshly produced results are unstamped → stamped with the current epoch
+        (attribution). A result already carrying an OLDER epoch is a straggler
+        from a superseded attempt (e.g. across a second resume): it is dropped and
+        a ``RESULT_FENCED`` event is emitted. Fresh runs (epoch 0) neither stamp
+        nor fence, so behaviour is unchanged.
+        """
+        current = context.attempt_epoch
+        kept: list = []
+        for env in envelopes:
+            existing = attempt_epoch_of(env.metadata)
+            if is_stale_attempt(existing, current):
+                self._emit(
+                    EventSpec(
+                        run_id=context.run_id,
+                        attempt_id=context.attempt_id,
+                        event_type=RuntimeEventType.RESULT_FENCED,
+                        payload={
+                            "tool_name": env.call.tool_name,
+                            "result_epoch": existing,
+                            "current_epoch": current,
+                        },
+                    )
+                )
+                continue
+            if current > 0 and existing is None:
+                env = env.model_copy(
+                    update={"metadata": stamp_attempt_epoch(env.metadata, current)}
+                )
+            kept.append(env)
+        return kept
+
     def _store_tool_stage_outputs(
         self, context: RunContext, result: ToolExecutionResult
     ) -> None:
         """Persist tool stage traces/results into context metadata."""
+        result.envelopes[:] = self._fence_and_stamp_envelopes(
+            context, list(result.envelopes)
+        )
         context.tool_calls += len(result.traces)
         # Epic 019 phase D (hermes iteration_budget.refund reference): housekeeping
         # calls (planning/todo bookkeeping) make no external progress and must not

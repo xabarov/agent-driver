@@ -11,8 +11,14 @@
 > ТОЛЬКО при epoch>0 → fresh байт-идентичен; `attempt_epoch_of`; `is_stale_attempt`);
 > `TerminalReason.LATE_RESULT_IGNORED`. Observe-only, behaviour-neutral. Тесты:
 > `tests/runtime/test_attempt_epoch_fencing.py` (helpers + resume-bump + handler-consult + fresh=0).
-> **Осталось (enforce-надстройка):** штамповать epoch в result-envelope на fold-сайте; при
-> `is_stale_attempt` — drop + `RESULT_FENCED`-событие; терминал `LATE_RESULT_IGNORED` для late-случая.
+>
+> **ENFORCE-НАДСТРОЙКА DONE 2026-08-02 (свип 2955, +3):** `steps.py::_fence_and_stamp_envelopes` на
+> fold-сайте (`_store_tool_stage_outputs`) штампует каждый result-envelope текущим epoch (атрибуция) и
+> **отбрасывает** straggler с устаревшим epoch (`is_stale_attempt`) → `RuntimeEventType.RESULT_FENCED`-
+> событие. Fresh (epoch 0) — не штампует и не фенсит (behaviour-neutral). Drop срабатывает только для
+> результата, штампованного под более ранней попыткой (напр. второй resume). Тест
+> `tests/runtime/test_result_fencing_enforce.py`. **U4 late-result fencing ЗАКРЫТ.** Остаток U4 —
+> только mid-in-flight-LLM-await abort.
 
 ## Зачем
 
