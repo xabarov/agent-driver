@@ -1,8 +1,16 @@
 # F2 — Durable result/output store foundation
 
-Дата: 2026-08-02. Статус: **design-note (кода нет)**. Разблокирует: **U3 prior-result full-replay**
-(эпик 051); достраивает `ApprovalConsumptionStore`. Связано: [[051-atomic-approval-resume]],
-upstream-requirements.md.
+Дата: 2026-08-02. Статус: **РЕАЛИЗОВАН 2026-08-02 (свип 2957, +2)**. Разблокировал: **U3
+prior-result replay** (эпик 051). Связано: [[051-atomic-approval-resume]], upstream-requirements.md.
+
+> **Реализовано:** `ApprovalConsumptionStore` получил колонку/поле `result_payload` (SQLite мигрирует
+> in-place через `ALTER TABLE`), `record_result(..., result_payload=)`, `ConsumeOutcome.
+> prior_result_payload`; `RunnerConfig.replay_prior_result` (default False). `runner._record_approval_result`
+> пишет полный `output.model_dump_json()` на каждом консьюмнутом терминале; `runner._maybe_replay_prior_result`
+> в начале `run()` — при дубле возвращает прежний `AgentRunOutput` verbatim ДО re-drive. Выбран
+> **полный dump** (не компактная проекция) для точного replay. Без флага — прежняя
+> `ResumeConflictError` (backward-compat). Тесты: `tests/runtime/test_prior_result_replay.py`
+> (replay verbatim + один side-effect; без флага conflict). **U3 prior-result replay ЗАКРЫТ.**
 
 ## Зачем
 

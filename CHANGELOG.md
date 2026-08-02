@@ -46,6 +46,18 @@ binding, U6/U7) are additive: new optional contract fields default to `None`/abs
 keys (`_ad_gate_provenance`, `consumed_approvals`, `approved_plan.policy_binding`) are additive, and
 existing checkpoints/events remain readable. No public symbol was removed or renamed.
 
+### Added — F2: prior-result replay for duplicate approvals (epic 051 / U3)
+The atomic approval-consumption ledger now durably records the winning consume's **terminal output**
+(full `AgentRunOutput` JSON), and a new `RunnerConfig(replay_prior_result=True)` makes a duplicate
+approve of an already-consumed interrupt **replay that output verbatim** instead of raising a conflict
+— completing the U3 DoD "a concurrent duplicate returns the prior recorded result and never
+re-executes the tool". `ApprovalConsumptionStore` gained a `result_payload` column/field (SQLite
+migrates in place), `record_result(..., result_payload=...)`, and `ConsumeOutcome.prior_result_payload`;
+the runner records the output at each consumed terminal and short-circuits a duplicate to the stored
+output before re-driving. Off by default (`replay_prior_result=False` → duplicate still raises the
+stable `ResumeConflictError`), so fully backward-compatible. Full sweep 2957 passed (+2). This is the
+F2 foundation from the backlog design-notes.
+
 ### Added — U4 result fencing enforce: drop superseded stragglers (epic 052 / U4, on F1)
 Building on the F1 attempt-epoch foundation, the tool-stage fold now **stamps** each result envelope
 with the run's current `attempt_epoch` (attribution: a persisted/traced result records which attempt

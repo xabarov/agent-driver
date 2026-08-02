@@ -113,6 +113,7 @@ class RunnerConfig:
     approval_store: ApprovalConsumptionStore | None
     abort_store: AbortLifecycleStore | None
     plan_artifact_store: PlanArtifactStore | None
+    replay_prior_result: bool
     memory_provider: MemoryProvider | None
     memory_consolidation_every_n_turns: int
     capabilities: CapabilitySettings
@@ -216,6 +217,10 @@ class RunnerConfig:
         self.approval_store = kwargs.pop("approval_store", None)
         self.abort_store = kwargs.pop("abort_store", None)
         self.plan_artifact_store = kwargs.pop("plan_artifact_store", None)
+        # F2 — when True, a duplicate approve of an already-consumed interrupt
+        # replays the prior recorded terminal output verbatim instead of raising
+        # a conflict (requires an approval_store). Default False = prior behaviour.
+        self.replay_prior_result = bool(kwargs.pop("replay_prior_result", False))
         self.memory_provider = kwargs.pop("memory_provider", None)
         # Epic 031: cadence for background memory consolidation (0 = off). The
         # host supplies the durable turn ordinal via app_metadata["memory"]

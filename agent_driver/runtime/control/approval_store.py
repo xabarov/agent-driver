@@ -57,6 +57,9 @@ class ConsumeOutcome:
     status: ConsumeStatus
     prior_decision: str | None = None
     prior_result_ref: str | None = None
+    # U3 F2 — the recorded terminal output (JSON) of the winning consume, so a
+    # duplicate can replay the prior result verbatim instead of re-driving.
+    prior_result_payload: str | None = None
     detail: str | None = None
 
     @property
@@ -74,9 +77,14 @@ class ApprovalConsumptionStore(Protocol):
         ...
 
     def record_result(
-        self, *, run_id: str, interrupt_id: str, result_ref: str
+        self,
+        *,
+        run_id: str,
+        interrupt_id: str,
+        result_ref: str | None = None,
+        result_payload: str | None = None,
     ) -> None:
-        """Attach the terminal result identity to a consumed approval."""
+        """Attach the terminal result identity and/or output JSON to a consume."""
         ...
 
     def get(
@@ -119,23 +127,33 @@ class InMemoryApprovalConsumptionStore:
                     ConsumeStatus.DUPLICATE,
                     prior_decision=existing["decision"],
                     prior_result_ref=existing["result_ref"],
+                    prior_result_payload=existing.get("result_payload"),
                 )
             pk = (request.run_id, request.interrupt_id)
             self._rows[pk] = {
                 "decision": request.decision,
                 "result_ref": None,
+                "result_payload": None,
             }
             if request.idempotency_key is not None:
                 self._by_key[(request.run_id, request.idempotency_key)] = pk
             return ConsumeOutcome(ConsumeStatus.CONSUMED)
 
     def record_result(
-        self, *, run_id: str, interrupt_id: str, result_ref: str
+        self,
+        *,
+        run_id: str,
+        interrupt_id: str,
+        result_ref: str | None = None,
+        result_payload: str | None = None,
     ) -> None:
         with self._lock:
             row = self._rows.get((run_id, interrupt_id))
             if row is not None:
-                row["result_ref"] = result_ref
+                if result_ref is not None:
+                    row["result_ref"] = result_ref
+                if result_payload is not None:
+                    row["result_payload"] = result_payload
 
     def get(
         self, *, run_id: str, interrupt_id: str
@@ -148,6 +166,7 @@ class InMemoryApprovalConsumptionStore:
                 ConsumeStatus.DUPLICATE,
                 prior_decision=row["decision"],
                 prior_result_ref=row["result_ref"],
+                prior_result_payload=row.get("result_payload"),
             )
 
 
@@ -171,6 +190,7 @@ class SqliteApprovalConsumptionStore:
                     idempotency_key TEXT,
                     decision TEXT NOT NULL,
                     result_ref TEXT,
+                    result_payload TEXT,
                     PRIMARY KEY (run_id, interrupt_id)
                 )
                 """
@@ -184,6 +204,17 @@ class SqliteApprovalConsumptionStore:
                 WHERE idempotency_key IS NOT NULL
                 """
             )
+            # F2 migration — add result_payload to a table created before it.
+            cols = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(approval_consumptions)"
+                ).fetchall()
+            }
+            if "result_payload" not in cols:
+                conn.execute(
+                    "ALTER TABLE approval_consumptions ADD COLUMN result_payload TEXT"
+                )
 
     def try_consume(self, request: ApprovalConsumeRequest) -> ConsumeOutcome:
         with self._connect() as conn:
@@ -206,7 +237,7 @@ class SqliteApprovalConsumptionStore:
             # the idempotency-key index. Read it back to classify.
             row = conn.execute(
                 """
-                SELECT decision, result_ref FROM approval_consumptions
+                SELECT decision, result_ref, result_payload FROM approval_consumptions
                 WHERE run_id = ? AND interrupt_id = ?
                 """,
                 (request.run_id, request.interrupt_id),
@@ -214,7 +245,7 @@ class SqliteApprovalConsumptionStore:
             if row is None and request.idempotency_key is not None:
                 row = conn.execute(
                     """
-                    SELECT decision, result_ref FROM approval_consumptions
+                    SELECT decision, result_ref, result_payload FROM approval_consumptions
                     WHERE run_id = ? AND idempotency_key = ?
                     """,
                     (request.run_id, request.idempotency_key),
@@ -233,19 +264,30 @@ class SqliteApprovalConsumptionStore:
                 ConsumeStatus.DUPLICATE,
                 prior_decision=row["decision"],
                 prior_result_ref=row["result_ref"],
+                prior_result_payload=row["result_payload"],
             )
 
     def record_result(
-        self, *, run_id: str, interrupt_id: str, result_ref: str
+        self,
+        *,
+        run_id: str,
+        interrupt_id: str,
+        result_ref: str | None = None,
+        result_payload: str | None = None,
     ) -> None:
         with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE approval_consumptions SET result_ref = ?
-                WHERE run_id = ? AND interrupt_id = ?
-                """,
-                (result_ref, run_id, interrupt_id),
-            )
+            if result_ref is not None:
+                conn.execute(
+                    "UPDATE approval_consumptions SET result_ref = ? "
+                    "WHERE run_id = ? AND interrupt_id = ?",
+                    (result_ref, run_id, interrupt_id),
+                )
+            if result_payload is not None:
+                conn.execute(
+                    "UPDATE approval_consumptions SET result_payload = ? "
+                    "WHERE run_id = ? AND interrupt_id = ?",
+                    (result_payload, run_id, interrupt_id),
+                )
 
     def get(
         self, *, run_id: str, interrupt_id: str
@@ -253,7 +295,7 @@ class SqliteApprovalConsumptionStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT decision, result_ref FROM approval_consumptions
+                SELECT decision, result_ref, result_payload FROM approval_consumptions
                 WHERE run_id = ? AND interrupt_id = ?
                 """,
                 (run_id, interrupt_id),
@@ -264,6 +306,7 @@ class SqliteApprovalConsumptionStore:
             ConsumeStatus.DUPLICATE,
             prior_decision=row["decision"],
             prior_result_ref=row["result_ref"],
+            prior_result_payload=row["result_payload"],
         )
 
 

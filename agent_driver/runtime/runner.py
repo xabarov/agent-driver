@@ -199,6 +199,9 @@ class SingleAgentRunner(
         (operator interrupt). See
         :mod:`agent_driver.runtime.tool_gate` for the contract.
         """
+        replayed = self._maybe_replay_prior_result(run_input)
+        if replayed is not None:
+            return replayed
         context = self._init_context(
             run_input, abort_handle=abort_handle, tool_gate=tool_gate
         )
@@ -208,10 +211,65 @@ class SingleAgentRunner(
             try:
                 output = await self._drive_steps(context)
                 self._finalize_abort_lifecycle(context, output)
+                self._record_approval_result(run_input, output)
                 await self._dispatch_run_error(context, output)
                 return output
             finally:
                 _annotate_run_span_output(run_span, output)
+
+    def _maybe_replay_prior_result(
+        self, run_input: AgentRunInput
+    ) -> AgentRunOutput | None:
+        """F2 — return the prior recorded terminal output for a duplicate approve.
+
+        No-op unless ``replay_prior_result`` is enabled, an approval store is
+        configured, this is a resume, and the targeted interrupt was already
+        consumed with a recorded output. Lets a duplicate approval (HTTP-style
+        retry) return the exact prior result instead of re-driving or conflicting.
+        """
+        store = getattr(self._deps, "approval_store", None)
+        if (
+            store is None
+            or not getattr(self._config, "replay_prior_result", False)
+            or run_input.resume is None
+            or not run_input.run_id
+        ):
+            return None
+        try:
+            outcome = store.get(
+                run_id=run_input.run_id,
+                interrupt_id=run_input.resume.interrupt_id,
+            )
+        except Exception:  # pragma: no cover - a ledger read must not break a run
+            return None
+        if outcome is None or not outcome.prior_result_payload:
+            return None
+        try:
+            return AgentRunOutput.model_validate_json(outcome.prior_result_payload)
+        except Exception:  # pragma: no cover - corrupt payload → fall through
+            logger.warning("prior result replay payload invalid", exc_info=True)
+            return None
+
+    def _record_approval_result(
+        self, run_input: AgentRunInput, output: AgentRunOutput
+    ) -> None:
+        """F2 — persist the terminal output of a consumed approval for replay."""
+        store = getattr(self._deps, "approval_store", None)
+        if (
+            store is None
+            or run_input.resume is None
+            or not run_input.run_id
+            or output.status == RunStatus.PAUSED
+        ):
+            return
+        try:
+            store.record_result(
+                run_id=run_input.run_id,
+                interrupt_id=run_input.resume.interrupt_id,
+                result_payload=output.model_dump_json(),
+            )
+        except Exception:  # pragma: no cover - a ledger write must not break a run
+            logger.warning("approval result record failed", exc_info=True)
 
     def _finalize_abort_lifecycle(
         self, context: _RunContext, output: AgentRunOutput
