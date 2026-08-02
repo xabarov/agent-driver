@@ -12,6 +12,7 @@ from agent_driver.contracts.enums import (
     RuntimeEventType,
     TerminalReason,
 )
+from agent_driver.context.planning.artifacts import plan_content_hash
 from agent_driver.contracts.interrupts import ResumeCommand
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.llm.contracts import LlmResponse
@@ -59,6 +60,7 @@ def _mark_force_planning_approved(
     context: RunContext,
     *,
     pending: PendingInterruptState,
+    resume: ResumeCommand | None = None,
 ) -> None:
     """Store approved plan markers in run metadata and tool policy metadata."""
     payload = _plan_approval_payload(pending)
@@ -67,16 +69,50 @@ def _mark_force_planning_approved(
     plan_id = str(
         payload.get("plan_id") or pending.interrupt.metadata.get("plan_id") or ""
     ).strip()
-    content_hash = str(
-        payload.get("content_hash")
-        or pending.interrupt.metadata.get("content_hash")
-        or ""
-    ).strip()
-    approved_plan = {
+    # U5 — the approved plan's content hash must be HARNESS-authored, not trusted
+    # from the model/tool-supplied ``content_hash``, and must reflect the content
+    # actually approved. On EDIT the operator's edited plan overrides the pending
+    # content; recompute the hash from whichever content was truly approved so a
+    # host can detect a material revision (``detect_plan_revision``) before it
+    # authorises execution.
+    approved_content = str(payload.get("content") or "").strip()
+    if (
+        resume is not None
+        and resume.action == ResumeAction.EDIT
+        and resume.edited_tool_args
+    ):
+        edited_content = str(
+            resume.edited_tool_args.get("content")
+            or resume.edited_tool_args.get("plan")
+            or ""
+        ).strip()
+        if edited_content:
+            approved_content = edited_content
+    if approved_content:
+        content_hash = plan_content_hash(approved_content)
+    else:
+        content_hash = str(
+            payload.get("content_hash")
+            or pending.interrupt.metadata.get("content_hash")
+            or ""
+        ).strip()
+    approved_plan: dict[str, object] = {
         "plan_id": plan_id,
         "content_hash": content_hash,
         "path": payload.get("path"),
     }
+    # U5 — optional host binding: attribution + an opaque policy-snapshot the host
+    # associates with THIS approved plan version. Sourced from the resume command
+    # (host-authored), so model/tool output cannot forge it; survives into
+    # force_planning metadata / the checkpoint below.
+    if resume is not None:
+        if resume.approved_by:
+            approved_plan["approved_by"] = resume.approved_by
+        binding = (
+            resume.metadata.get("plan_policy_binding") if resume.metadata else None
+        )
+        if binding is not None:
+            approved_plan["policy_binding"] = binding
     context.metadata["approved_plan"] = approved_plan
     current_policy = context.run_input.tool_policy
     policy_metadata = dict(current_policy.metadata)
@@ -315,7 +351,7 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             return
 
         if resume.action in {ResumeAction.APPROVE, ResumeAction.EDIT}:
-            _mark_force_planning_approved(context, pending=pending)
+            _mark_force_planning_approved(context, pending=pending, resume=resume)
             plan_payload = _plan_lifecycle_payload(pending, resume=resume)
             if plan_payload is not None:
                 self._emit(

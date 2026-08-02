@@ -22,6 +22,19 @@ def plan_content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def detect_plan_revision(approved_content_hash: str, candidate_content: str) -> bool:
+    """True when ``candidate_content`` is a material revision of the approved plan.
+
+    U5 — the primitive a host needs to enforce re-approval on a changed plan:
+    compares the SHA-256 of the candidate against the approved hash. An empty
+    approved hash means "no approved plan to compare against" and is treated as a
+    revision (fail-safe: the host should require a fresh approval).
+    """
+    if not approved_content_hash:
+        return True
+    return plan_content_hash(candidate_content) != approved_content_hash
+
+
 class PlanArtifactStore(Protocol):
     """Persistence contract for force-planning artifacts."""
 
@@ -222,6 +235,7 @@ __all__ = [
     "approve_plan_artifact",
     "create_plan_artifact",
     "mark_plan_awaiting_approval",
+    "detect_plan_revision",
     "plan_content_hash",
     "reject_plan_artifact",
     "update_plan_artifact_content",

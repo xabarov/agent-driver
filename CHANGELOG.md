@@ -7,6 +7,20 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — plan-integrity: authoritative hash, EDIT re-hash, host policy-binding (epic 053 / U5)
+The approved plan's content hash is now **harness-authored** rather than trusted from the model/tool
+`content_hash` field: `_mark_force_planning_approved` recomputes `plan_content_hash(...)` from the
+content actually approved, and on an EDIT resume it re-hashes from the operator's **edited** content
+(fixing a stale-hash bug where an edited plan kept the original hash). A host can therefore detect a
+material plan revision before authorising execution via the new public
+`agent_driver.context.planning.detect_plan_revision(approved_hash, candidate_content)`. An optional
+opaque host policy-binding (`ResumeCommand.metadata["plan_policy_binding"]`) and `approved_by` now
+survive into the approved-plan record (`force_planning.approved_plan`) and the checkpoint — sourced
+from the resume command, so model/tool output cannot forge them. Additive and behaviour-neutral;
+full sweep 2901 passed (+4). Remaining U5 (epic 053): wire the enforcing gate
+(`_force_planning_has_approved_plan`) to compare the hash (today presence-only), connect the durable
+`PlanArtifactStore` (still unwired), and carry the binding through the trace projection.
+
 ### Added — cooperative host cancellation hook into running tool handlers (epic 052 / U4, hook slice)
 A running tool handler could not observe the run's process-local `RunAbortHandle`, so a host had
 no way to cancel its own in-flight work (a socket, a browser, a long query) when a run was stopped.

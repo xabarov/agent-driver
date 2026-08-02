@@ -1,7 +1,22 @@
 # U5 — Plan integrity extension point
 
-Дата создания: 2026-08-02. Статус: **PROPOSED**. Родитель:
-[[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — ядро A/B/C DONE 2026-08-02; enforcement/store
+открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal.
+
+> **Реализация ядра** (свип 2901, +4): **B** approved-plan content_hash теперь **harness-авторский** —
+> `_mark_force_planning_approved` пересчитывает `plan_content_hash(...)` из фактически одобренного
+> content (не доверяет model/tool-supplied `content_hash`), а на EDIT — из **edited**-content
+> оператора (фикс stale-hash-бага). **A** публичный
+> `agent_driver.context.planning.detect_plan_revision(approved_hash, candidate)` — примитив
+> детекции материальной ревизии (fail-safe: пустой approved-hash → ревизия). **C** opaque host
+> policy-binding (`ResumeCommand.metadata["plan_policy_binding"]`) + `approved_by` переживают в
+> `force_planning.approved_plan` и checkpoint; источник — resume-команда (host), модель/тул не
+> подделают. Тесты: `tests/runtime/test_plan_integrity.py`.
+>
+> **Осталось:** подключить enforcement — `_force_planning_has_approved_plan`
+> (`tools/policy/evaluator.py`) сравнивает hash, а не только presence (нужен comparison-сайт до
+> исполнения); подключить durable `PlanArtifactStore` (всё ещё unwired, гейтящий путь — untyped
+> `approved_plan`-dict); провести binding через trace-проекцию.
 
 Сохранить существующую plan-id/content-hash-семантику и выставить supported hook / opaque-metadata-
 binding, позволяющий хосту связать одобренную версию плана со своим policy-snapshot/envelope.
