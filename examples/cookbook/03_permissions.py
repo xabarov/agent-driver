@@ -17,7 +17,7 @@ from agent_driver.permissions import (
     build_permission_gate,
     classify_command,
 )
-from agent_driver.runtime.tool_gate import ToolGateContext, ToolGateDeny
+from agent_driver.runtime import ToolGateContext, ToolGateDeny
 
 
 async def main() -> None:

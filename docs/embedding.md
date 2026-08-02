@@ -44,6 +44,9 @@ See [SDK](sdk.md) for the full `Agent` surface and [capabilities](sdk.md#capabil
 | `agent_driver.security` | `scan_context_text` (ingestion injection scanner) |
 
 Runnable examples for most of these live in [`examples/cookbook/`](../examples/cookbook/README.md).
+For a full durable-embedding assembly — host stores + a custom governed tool + a lifecycle hook + an
+approval gate + pause/approve/resume + a durable abort, using only these supported facades — see
+[`examples/cookbook/19_embedded_e2e.py`](../examples/cookbook/19_embedded_e2e.py).
 
 ## Stability policy
 

@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — embedding e2e example + cookbook off internal paths (epic 049 / U1, phase D)
+New `examples/cookbook/19_embedded_e2e.py` assembles a full durable embedding from the supported
+facades only (`agent_driver.sdk`/`.runtime`/`.llm`/`.contracts`): a fake provider, host-owned
+checkpoint + event stores, a custom governed tool (`agent.add_tool`), a lifecycle hook, an approval
+tool-gate, and a run abort handle — exercising the whole pause → approve → resume path plus a durable
+abort, with no `runtime.single_agent.*`/underscore import. It is covered by the cookbook smoke test.
+The two cookbook examples that reached past the facade into `agent_driver.runtime.tool_gate` now import
+`ToolGate*` from the `agent_driver.runtime` facade root. Full sweep 2965 passed (+1). This is U1 phase
+D; the remaining U1 item is a single aggregate `agent_driver.embedding` namespace (optional).
+
 ### Added — embedding facade completed for durable-host primitives (epic 049 / U1)
 The `agent_driver.runtime` facade now re-exports the categories an embedder previously had to reach
 into runtime submodules for: the **host-store protocols** (`CheckpointStore`, `RuntimeEventLog`,

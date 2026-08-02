@@ -1,7 +1,16 @@
 # U1 — Supported embedding facade
 
-Дата создания: 2026-08-02. Статус: **IN PROGRESS — Phase A + B(в U7) + C DONE 2026-08-02; D/E открыты**.
-Родитель: [[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — Phase A + B(в U7) + C + D DONE 2026-08-02;
+осталось только единый `embedding`-namespace (опц.)**. Родитель:
+[[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+
+> **Phase D DONE** (свип 2965): `examples/cookbook/19_embedded_e2e.py` — полный durable-embedding
+> только на supported-facade (sdk/runtime/llm/contracts): fake-provider + host checkpoint/event-stores
+> + custom governed tool (`agent.add_tool`) + lifecycle-hook + approval-gate + pause→approve→resume +
+> durable abort; покрыт cookbook-smoke-тестом. Два cookbook-примера (03/16) переведены с
+> `runtime.tool_gate` на facade-корень `agent_driver.runtime`. embedding.md ссылается на e2e.
+> **Осталось (E, опц.):** единый `agent_driver.embedding`-namespace (сейчас всё на per-concern facade,
+> что уже supported — namespace лишь косметика).
 
 > **Phase C DONE** (свип 2948): exact export-снапшот `sdk`/`runtime`/`tools` `__all__`
 > (`tests/contracts/test_export_snapshot.py`, drift падает громко) + deprecation-policy в

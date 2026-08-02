@@ -26,7 +26,7 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.tools import ToolCall
 from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse
 from agent_driver.llm import FakeProvider
-from agent_driver.runtime.tool_gate import ToolGateAsk, ToolGateContext
+from agent_driver.runtime import ToolGateAsk, ToolGateContext
 from agent_driver.sdk import ToolSet, create_agent
 
 
