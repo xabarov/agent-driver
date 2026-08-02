@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import httpx
 import pytest
 from starlette.testclient import TestClient
 
@@ -34,34 +35,37 @@ def _body(content: str) -> dict[str, Any]:
     return {"model": "agent-driver", "messages": [{"role": "user", "content": content}]}
 
 
-def _run_to_completion(client: TestClient, run_id: str) -> dict:
-    """Drive a run to its terminal state via the event stream, then return it.
+async def _drive_run(client: httpx.AsyncClient, run_id: str) -> dict:
+    """Poll a run to a terminal state in a live event loop.
 
-    The Starlette TestClient advances the event loop only *during* a request, so
-    a poll-with-sleep loop starves the fire-and-forget background run task on some
-    Python versions (3.11) — the run stays ``running`` forever. Consuming the SSE
-    events stream keeps the loop live until the run terminates (the endpoint ends
-    the stream on a terminal event), which is deterministic across versions.
+    Uses an ``httpx.AsyncClient`` over ``ASGITransport`` (not the sync Starlette
+    ``TestClient``): the app runs in the SAME event loop as the test, so the
+    fire-and-forget background run task created by ``POST /v1/runs`` is scheduled
+    naturally and ``await asyncio.sleep`` yields to it. The sync TestClient
+    advances the loop only during a request and starves that task on some Python
+    versions (3.11), leaving the run stuck in ``running``.
     """
-    with client.stream("GET", f"/v1/runs/{run_id}/events") as resp:
-        assert resp.status_code == 200
-        for _ in resp.iter_text():
-            pass
-    return client.get(f"/v1/runs/{run_id}").json()
+    for _ in range(1000):
+        data = (await client.get(f"/v1/runs/{run_id}")).json()
+        if data["status"] in {"completed", "failed", "cancelled"}:
+            return data
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"run {run_id} did not terminate: last={data['status']}")
 
 
-def test_run_completes() -> None:
+@pytest.mark.asyncio
+async def test_run_completes() -> None:
     agent = create_agent(
         provider=FakeProvider(response_text="async answer"), tools=ToolSet.only()
     )
-    client = TestClient(create_app(agent))
+    transport = httpx.ASGITransport(app=create_app(agent))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        start = await client.post("/v1/runs", json=_body("hi"))
+        assert start.status_code == 202
+        run_id = start.json()["id"]
+        assert start.json()["status"] in ("queued", "running")
 
-    start = client.post("/v1/runs", json=_body("hi"))
-    assert start.status_code == 202
-    run_id = start.json()["id"]
-    assert start.json()["status"] in ("queued", "running")
-
-    done = _run_to_completion(client, run_id)
+        done = await _drive_run(client, run_id)
     assert done["status"] == "completed"
     assert done["answer"] == "async answer"
     assert done["usage"]["total_tokens"] >= 1
@@ -214,15 +218,19 @@ def test_get_unknown_run_404() -> None:
     assert client.get("/v1/runs/run_nope").status_code == 404
 
 
-def test_approval_conflict_when_not_paused() -> None:
+@pytest.mark.asyncio
+async def test_approval_conflict_when_not_paused() -> None:
     agent = create_agent(
         provider=FakeProvider(response_text="done"), tools=ToolSet.only()
     )
-    client = TestClient(create_app(agent))
-    run_id = client.post("/v1/runs", json=_body("hi")).json()["id"]
-    _run_to_completion(client, run_id)
-    # Not awaiting approval -> 409.
-    resp = client.post(f"/v1/runs/{run_id}/approval", json={"action": "approve"})
+    transport = httpx.ASGITransport(app=create_app(agent))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        run_id = (await client.post("/v1/runs", json=_body("hi"))).json()["id"]
+        await _drive_run(client, run_id)
+        # Not awaiting approval -> 409.
+        resp = await client.post(
+            f"/v1/runs/{run_id}/approval", json={"action": "approve"}
+        )
     assert resp.status_code == 409
 
 
