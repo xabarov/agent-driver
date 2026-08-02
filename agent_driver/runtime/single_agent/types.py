@@ -27,6 +27,7 @@ from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.memory.provider import MemoryProvider
 from agent_driver.runtime.abort import RunAbortHandle
+from agent_driver.context.planning.artifacts import PlanArtifactStore
 from agent_driver.runtime.control.abort_store import AbortLifecycleStore
 from agent_driver.runtime.control.approval_store import ApprovalConsumptionStore
 from agent_driver.runtime.control.protocols import CommandQueueStore
@@ -111,6 +112,7 @@ class RunnerConfig:
     command_queue_store: CommandQueueStore | None
     approval_store: ApprovalConsumptionStore | None
     abort_store: AbortLifecycleStore | None
+    plan_artifact_store: PlanArtifactStore | None
     memory_provider: MemoryProvider | None
     memory_consolidation_every_n_turns: int
     capabilities: CapabilitySettings
@@ -213,6 +215,7 @@ class RunnerConfig:
         self.command_queue_store = kwargs.pop("command_queue_store", None)
         self.approval_store = kwargs.pop("approval_store", None)
         self.abort_store = kwargs.pop("abort_store", None)
+        self.plan_artifact_store = kwargs.pop("plan_artifact_store", None)
         self.memory_provider = kwargs.pop("memory_provider", None)
         # Epic 031: cadence for background memory consolidation (0 = off). The
         # host supplies the durable turn ordinal via app_metadata["memory"]
@@ -534,6 +537,10 @@ class RunnerDeps:
     # U4 A/D — optional durable abort lifecycle ledger (requested → observed →
     # cancelled | completed_before_cancel), queryable after restart. None = off.
     abort_store: AbortLifecycleStore | None = None
+    # U5 — optional durable store of approved/rejected plan artifacts, written on
+    # plan-approval resume so a host has a durable, hash-bound plan record. Off
+    # when None (default).
+    plan_artifact_store: PlanArtifactStore | None = None
     python_backend: Any | None = None
     lifecycle_hooks: tuple[RunLifecycleHook, ...] = ()
     # Optional providers tried (in order) by the forced-final recovery ladder when the

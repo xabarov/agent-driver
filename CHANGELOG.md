@@ -46,6 +46,20 @@ binding, U6/U7) are additive: new optional contract fields default to `None`/abs
 keys (`_ad_gate_provenance`, `consumed_approvals`, `approved_plan.policy_binding`) are additive, and
 existing checkpoints/events remain readable. No public symbol was removed or renamed.
 
+### Added — durable PlanArtifact on plan approval + CANCELLATION_FAILED terminal (U5/U4)
+- U5 (epic 053): a plan-approval resume now writes a durable, hash-bound `PlanArtifact` (APPROVED on
+  approve/edit, REJECTED on reject) when an optional `RunnerConfig(plan_artifact_store=...)` is
+  configured — the previously-unwired `PlanArtifactStore` is now connected via the same optional-dep
+  pattern as the approval/abort stores. Off (default) → no change.
+- U4 (epic 052): new `TerminalReason.CANCELLATION_FAILED`. When a stop is requested but a handler
+  ignores cooperative cancellation and the step blows the wall-clock guard, the terminal is now the
+  truthful `CANCELLATION_FAILED` (an enforced stop) instead of a plain `DEADLINE_EXCEEDED`; the abort
+  lifecycle ledger records it as observed→cancelled. A plain timeout with no abort in play stays
+  `DEADLINE_EXCEEDED`.
+
+Both additive/behaviour-neutral; full sweep 2948 passed. Remaining U4: a fencing/epoch token against
+late handler results (+ `LATE_RESULT_IGNORED`) and mid-in-flight-LLM-await abort.
+
 ### Added — plan-integrity enforcement: gate on the plan hash, not just presence (epic 053 / U5)
 The force-planning gate (`_force_planning_has_approved_plan`) previously counted any approval with a
 `plan_id` as sufficient — it never compared the plan's content. A new

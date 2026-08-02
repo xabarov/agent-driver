@@ -22,6 +22,10 @@ class TerminalReason(StrEnum):
 
     FINAL_ANSWER = "final_answer"
     CANCELLED_BY_USER = "cancelled_by_user"
+    # U4 — the run was aborted but a handler ignored cooperative cancellation, so
+    # the runner had to enforce the stop via the wall-clock guard. Distinct from
+    # DEADLINE_EXCEEDED (a plain timeout with no abort in play).
+    CANCELLATION_FAILED = "cancellation_failed"
     DEADLINE_EXCEEDED = "deadline_exceeded"
     MAX_STEPS_EXCEEDED = "max_steps_exceeded"
     BUDGET_EXCEEDED = "budget_exceeded"

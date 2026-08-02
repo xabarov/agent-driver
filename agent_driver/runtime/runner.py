@@ -120,6 +120,7 @@ class SingleAgentRunner(
             command_queue_store=self._config.command_queue_store,
             approval_store=getattr(self._config, "approval_store", None),
             abort_store=getattr(self._config, "abort_store", None),
+            plan_artifact_store=getattr(self._config, "plan_artifact_store", None),
             python_backend=python_backend,
             lifecycle_hooks=self._build_lifecycle_hooks(),
             fallback_providers=tuple(
@@ -231,7 +232,10 @@ class SingleAgentRunner(
         aborted = handle is not None and getattr(handle, "is_aborted", False)
         reason = getattr(handle, "reason", None) if handle is not None else None
         try:
-            if output.terminal_reason == TerminalReason.CANCELLED_BY_USER:
+            if output.terminal_reason in (
+                TerminalReason.CANCELLED_BY_USER,
+                TerminalReason.CANCELLATION_FAILED,
+            ):
                 store.mark_observed(context.run_id, reason=reason)
                 store.resolve(context.run_id, cancelled=True)
             elif aborted or store.get(context.run_id) is not None:
@@ -311,9 +315,22 @@ class SingleAgentRunner(
                             timeout=max(0.001, timeout),
                         )
                 except TimeoutError:
+                    # U4 — if a stop was requested but the step blew the
+                    # wall-clock guard, a handler ignored cooperative
+                    # cancellation: surface CANCELLATION_FAILED (an enforced
+                    # stop) instead of a plain DEADLINE_EXCEEDED, so the terminal
+                    # is truthful about why the run ended.
+                    handle = context.abort_handle
+                    aborted = handle is not None and getattr(
+                        handle, "is_aborted", False
+                    )
                     terminal = TerminalResult(
-                        status=RunStatus.TIMED_OUT,
-                        reason=TerminalReason.DEADLINE_EXCEEDED,
+                        status=RunStatus.CANCELLED
+                        if aborted
+                        else RunStatus.TIMED_OUT,
+                        reason=TerminalReason.CANCELLATION_FAILED
+                        if aborted
+                        else TerminalReason.DEADLINE_EXCEEDED,
                     )
                     context.metadata["wall_clock_guard"] = guard_kind
                     self._emit(

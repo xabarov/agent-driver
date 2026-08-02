@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, cast
 from uuid import uuid4
 
@@ -12,7 +13,13 @@ from agent_driver.contracts.enums import (
     RuntimeEventType,
     TerminalReason,
 )
-from agent_driver.context.planning.artifacts import plan_content_hash
+from agent_driver.context.planning.artifacts import (
+    approve_plan_artifact,
+    create_plan_artifact,
+    mark_plan_awaiting_approval,
+    plan_content_hash,
+    reject_plan_artifact,
+)
 from agent_driver.contracts.interrupts import ResumeCommand
 from agent_driver.runtime.control.approval_store import (
     ApprovalConsumeRequest,
@@ -40,6 +47,7 @@ from agent_driver.runtime.single_agent.types import (
 from agent_driver.runtime.storage import CheckpointRecord
 
 if TYPE_CHECKING:
+    from agent_driver.context.planning.artifacts import PlanArtifactStore
     from agent_driver.runtime.abort import RunAbortHandle
     from agent_driver.runtime.tool_gate import ToolGate
 
@@ -180,6 +188,63 @@ def _approval_already_consumed(
         ):
             return True
     return False
+
+
+_logger = logging.getLogger(__name__)
+
+
+def _persist_plan_artifact(
+    store: "PlanArtifactStore",
+    *,
+    context: RunContext,
+    pending: PendingInterruptState,
+    resume: ResumeCommand,
+    approved: bool,
+) -> None:
+    """U5 — write a durable approved/rejected PlanArtifact for a plan interrupt.
+
+    The artifact's content hash is harness-computed from the content actually
+    approved (the operator's edited plan on EDIT), so the durable record is
+    hash-bound. A store write must never fail a resume — errors are swallowed.
+    """
+    payload = _plan_approval_payload(pending)
+    if payload is None:
+        return
+    plan_id = str(
+        payload.get("plan_id") or pending.interrupt.metadata.get("plan_id") or ""
+    ).strip()
+    if not plan_id:
+        return
+    content = str(payload.get("content") or "").strip()
+    if resume.action == ResumeAction.EDIT and resume.edited_tool_args:
+        edited = str(
+            resume.edited_tool_args.get("content")
+            or resume.edited_tool_args.get("plan")
+            or ""
+        ).strip()
+        if edited:
+            content = edited
+    try:
+        artifact = create_plan_artifact(
+            plan_id=plan_id,
+            run_id=context.run_id,
+            agent_id=str(getattr(context.run_input, "agent_id", "") or "agent"),
+            content=content,
+            thread_id=getattr(context.run_input, "thread_id", None),
+            path=(
+                str(payload.get("path")) if payload.get("path") is not None else None
+            ),
+        )
+        artifact = mark_plan_awaiting_approval(artifact)
+        if approved:
+            artifact = approve_plan_artifact(artifact, approved_by=resume.approved_by)
+        else:
+            artifact = reject_plan_artifact(
+                artifact, rejected_by=resume.approved_by, reason=resume.message
+            )
+        store.put(artifact)
+    except Exception:  # pragma: no cover - a durable write must not break a resume
+        _logger.warning("plan artifact store write failed", exc_info=True)
 
 
 class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
@@ -341,6 +406,22 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             }
         )
         context.metadata["consumed_approvals"] = consumed
+        # U5 — when a durable plan-artifact store is configured, record the
+        # approved/rejected plan (hash-bound) for a plan-approval interrupt.
+        plan_store = getattr(self._deps, "plan_artifact_store", None)
+        if (
+            plan_store is not None
+            and pending.interrupt.reason == InterruptReason.PLAN_APPROVAL_REQUIRED
+            and resume.action
+            in {ResumeAction.APPROVE, ResumeAction.EDIT, ResumeAction.REJECT}
+        ):
+            _persist_plan_artifact(
+                plan_store,
+                context=context,
+                pending=pending,
+                resume=resume,
+                approved=(resume.action != ResumeAction.REJECT),
+            )
         self._emit(
             EventSpec(
                 run_id=context.run_id,
