@@ -146,7 +146,11 @@ async def test_bash_allows_python_inline_command() -> None:
     register_shell_tools(registry)
     tool = registry.get("bash")
     assert tool is not None
-    out = await tool.handler({"command": ".venv/bin/python -c \"print(1)\""})
+    # ``python3`` (on PATH locally and on CI runners), not a hardcoded
+    # ``.venv/bin/python`` — the old path returned exit 127 on a non-venv install
+    # (e.g. CI). An absolute interpreter path is blocked by the readonly policy,
+    # so a bare ``python3`` is the portable choice.
+    out = await tool.handler({"command": 'python3 -c "print(1)"'})
     assert out["exit_code"] == 0
     assert out["risk_category"] == "readonly"
     assert "1" in out["stdout"]

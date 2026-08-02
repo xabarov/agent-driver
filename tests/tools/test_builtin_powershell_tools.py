@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import shutil
+
 import pytest
 
 from agent_driver.tools.builtin.powershell import register_powershell_tools
 from agent_driver.tools.registry import ToolRegistry
 
 
+@pytest.mark.skipif(
+    shutil.which("pwsh") is not None,
+    reason="pwsh is installed (e.g. GitHub ubuntu runners); this exercises the "
+    "pwsh-unavailable path",
+)
 @pytest.mark.asyncio
 async def test_powershell_tool_reports_unavailable_without_pwsh() -> None:
     """powershell_tool should fail with explicit unavailable message when pwsh missing."""

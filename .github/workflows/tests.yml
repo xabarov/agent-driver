@@ -99,10 +99,14 @@ jobs:
         run: python -m pip install -e ".[dev,server,acp,postgres]"
       - name: Guard — real postgres tests must exist (fail, not skip)
         run: |
-          count=$(python -m pytest -m postgres --collect-only -q 2>/dev/null | grep -c '::' || true)
-          echo "collected postgres tests: $count"
-          if [ "$count" -eq 0 ]; then
-            echo "::error::AD_REQUIRE_POSTGRES=1 but no 'postgres'-marked tests collected"
+          # pytest exits 5 when the marker selects zero tests, 0 when >=1 is
+          # collected, other non-zero on a collection error — all of which must
+          # fail this mandatory job rather than skip green. The `if` avoids the
+          # step's errexit aborting before we can report.
+          if python -m pytest -m postgres --collect-only -q; then
+            echo "postgres tests collected"
+          else
+            echo "::error::AD_REQUIRE_POSTGRES=1 but 'postgres' collection returned exit $? (5=no tests)"
             exit 1
           fi
       - name: Run real-Postgres control-plane matrix
