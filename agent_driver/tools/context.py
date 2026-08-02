@@ -99,6 +99,8 @@ _tool_cancellation: ContextVar["ToolCancellation | None"] = ContextVar(
     "tool_cancellation", default=None
 )
 
+_tool_attempt_epoch: ContextVar[int] = ContextVar("tool_attempt_epoch", default=0)
+
 
 def get_workspace_cwd() -> Path:
     """Return run-scoped workspace cwd, fallback to process cwd."""
@@ -191,6 +193,26 @@ def tool_cancellation_scope(
         yield
     finally:
         _tool_cancellation.reset(reset)
+
+
+def current_tool_attempt_epoch() -> int:
+    """Return the execution-attempt epoch of the running run (F1 / U4).
+
+    0 for a fresh run; bumped on each resume that re-drives the run. A handler
+    may consult it to tag externally-visible side effects with the attempt they
+    belong to, so a straggler from a superseded attempt is recognisable.
+    """
+    return _tool_attempt_epoch.get()
+
+
+@contextmanager
+def tool_attempt_epoch_scope(epoch: int) -> Iterator[None]:
+    """Temporarily expose the run's execution-attempt epoch to handlers."""
+    reset = _tool_attempt_epoch.set(int(epoch))
+    try:
+        yield
+    finally:
+        _tool_attempt_epoch.reset(reset)
 
 
 def set_workspace_cwd(path: Path | None) -> Token[Path | None]:

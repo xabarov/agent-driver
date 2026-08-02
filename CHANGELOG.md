@@ -46,6 +46,19 @@ binding, U6/U7) are additive: new optional contract fields default to `None`/abs
 keys (`_ad_gate_provenance`, `consumed_approvals`, `approved_plan.policy_binding`) are additive, and
 existing checkpoints/events remain readable. No public symbol was removed or renamed.
 
+### Added — F1: attempt-epoch result-fencing foundation (epic 052 / U4)
+Foundation for late-result fencing: a monotonic per-run `RunContext.attempt_epoch` (0 for a fresh
+run, bumped on each resume that re-drives the run, persisted via checkpoint metadata) is now exposed
+to tool handlers for the duration of the tool stage via `current_tool_attempt_epoch()` (same
+context-var idiom as the cancellation hook). New `agent_driver.runtime.single_agent.fencing` provides
+the pure guard primitives — `stamp_attempt_epoch` (stamps the reserved `_ad_attempt_epoch` key only
+when epoch > 0, so fresh runs are byte-identical), `attempt_epoch_of`, and `is_stale_attempt` — plus
+the `TerminalReason.LATE_RESULT_IGNORED` vocabulary. This is the attribution layer the U4 fencing step
+builds on to drop a straggler result from a superseded attempt; it is observe-only and
+behaviour-neutral on its own (fresh runs stay epoch 0). Full sweep 2952 passed (+4). Remaining U4:
+the enforce step (stamp result envelopes + drop stale + `RESULT_FENCED` event) and mid-in-flight-LLM
+abort.
+
 ### Added — durable PlanArtifact on plan approval + CANCELLATION_FAILED terminal (U5/U4)
 - U5 (epic 053): a plan-approval resume now writes a durable, hash-bound `PlanArtifact` (APPROVED on
   approve/edit, REJECTED on reject) when an optional `RunnerConfig(plan_artifact_store=...)` is

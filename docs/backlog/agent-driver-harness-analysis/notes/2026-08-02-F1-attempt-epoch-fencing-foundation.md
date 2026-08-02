@@ -1,8 +1,18 @@
 # F1 — Attempt-epoch / result fencing foundation
 
-Дата: 2026-08-02. Статус: **design-note (кода нет)**. Разблокирует: **U4 fencing +
-`LATE_RESULT_IGNORED`** (эпик 052), помогает U4 mid-LLM-await abort. Связано:
+Дата: 2026-08-02. Статус: **ФУНДАМЕНТ РЕАЛИЗОВАН 2026-08-02 (свип 2952); enforce-надстройка
+открыта**. Разблокирует: **U4 fencing + `LATE_RESULT_IGNORED`** (эпик 052). Связано:
 [[052-durable-stop-host-cancellation]], upstream-requirements.md.
+
+> **Реализовано:** `RunContext.attempt_epoch` (metadata-backed, 0 на fresh, +1 на каждый resume в
+> `_init_context`); contextvar-scope `tool_attempt_epoch_scope`/`current_tool_attempt_epoch()`
+> (`tools/context.py`), выставляется в `steps.py` вокруг tool-stage; модуль
+> `runtime/single_agent/fencing.py` (`stamp_attempt_epoch` — штампует reserved `_ad_attempt_epoch`
+> ТОЛЬКО при epoch>0 → fresh байт-идентичен; `attempt_epoch_of`; `is_stale_attempt`);
+> `TerminalReason.LATE_RESULT_IGNORED`. Observe-only, behaviour-neutral. Тесты:
+> `tests/runtime/test_attempt_epoch_fencing.py` (helpers + resume-bump + handler-consult + fresh=0).
+> **Осталось (enforce-надстройка):** штамповать epoch в result-envelope на fold-сайте; при
+> `is_stale_attempt` — drop + `RESULT_FENCED`-событие; терминал `LATE_RESULT_IGNORED` для late-случая.
 
 ## Зачем
 

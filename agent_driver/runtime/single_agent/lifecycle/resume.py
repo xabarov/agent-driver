@@ -541,6 +541,11 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                 tool_gate=tool_gate,
             )
         metadata = dict(checkpoint_row.state.metadata)
+        # F1 / U4 — a resume re-drives the run: bump the execution-attempt epoch
+        # so tool results from the superseded attempt are distinguishable from
+        # this one's. Only when a resume command is actually applied.
+        if run_input.resume is not None:
+            metadata["attempt_epoch"] = int(metadata.get("attempt_epoch") or 0) + 1
         context = RunContext(
             run_input=run_input.model_copy(
                 update={"run_id": checkpoint_row.ref.run_id}

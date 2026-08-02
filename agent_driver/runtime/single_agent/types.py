@@ -488,6 +488,23 @@ class RunContext:
     def llm_step_count(self, value: int) -> None:
         get_loop_control_state(self).llm_step_count = value
 
+    @property
+    def attempt_epoch(self) -> int:
+        """Monotonic execution-attempt epoch (F1 / U4).
+
+        0 for a fresh run; bumped on each resume that re-drives the run. Tool
+        results produced under an attempt are stamped with it so a straggler
+        result from a superseded attempt can be fenced (attribution foundation
+        for U4 late-result fencing). Metadata-backed so it persists through the
+        checkpoint like the other run counters.
+        """
+        value = self.metadata.get("attempt_epoch")
+        return int(value) if isinstance(value, int) else 0
+
+    @attempt_epoch.setter
+    def attempt_epoch(self, value: int) -> None:
+        self.metadata["attempt_epoch"] = int(value)
+
 
 @dataclass(frozen=True, slots=True)
 class EventSpec:

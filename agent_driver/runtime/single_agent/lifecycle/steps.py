@@ -40,6 +40,7 @@ from agent_driver.runtime.single_agent.research.gating import (
     _tool_gate_for_context,
 )
 from agent_driver.runtime.single_agent.tool_stage import execute_tool_stage_step
+from agent_driver.tools.context import tool_attempt_epoch_scope
 from agent_driver.runtime.single_agent.tool_stage.subagent_execution import (
     maybe_execute_subagent_group,
 )
@@ -141,20 +142,24 @@ class SingleAgentStepMixin:
         # old-executor-signature-compatibility reason as ``tool_gate``.
         if context.abort_handle is not None:
             gate_kwargs["abort_handle"] = context.abort_handle
-        if isinstance(approved_call, dict):
-            request = context.llm_response.model_copy(
-                update={
-                    "metadata": {
-                        **context.llm_response.metadata,
-                        "planned_tool_calls": [approved_call],
+        # F1 / U4 — expose the run's execution-attempt epoch to handlers for the
+        # duration of the tool stage (attribution foundation for late-result
+        # fencing). A fresh run is epoch 0 → no observable change.
+        with tool_attempt_epoch_scope(context.attempt_epoch):
+            if isinstance(approved_call, dict):
+                request = context.llm_response.model_copy(
+                    update={
+                        "metadata": {
+                            **context.llm_response.metadata,
+                            "planned_tool_calls": [approved_call],
+                        }
                     }
-                }
-            )
+                )
+                return await self._deps.tool_executor(
+                    context.run_input, request, **gate_kwargs
+                )
             return await self._deps.tool_executor(
-                context.run_input, request, **gate_kwargs
-            )
-        return await self._deps.tool_executor(
-            context.run_input, context.llm_response, **gate_kwargs
+                context.run_input, context.llm_response, **gate_kwargs
         )
 
     def _store_tool_stage_outputs(

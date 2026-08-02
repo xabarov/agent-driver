@@ -32,6 +32,10 @@ class TerminalReason(StrEnum):
     TOOL_POLICY_DENIED = "tool_policy_denied"
     GUARDRAIL_BLOCKED = "guardrail_blocked"
     APPROVAL_REJECTED = "approval_rejected"
+    # U4 — a result from a superseded execution attempt arrived after a terminal
+    # and was fenced out (see runtime.single_agent.fencing). Foundation
+    # vocabulary; the enforce step attributes it.
+    LATE_RESULT_IGNORED = "late_result_ignored"
     RUNTIME_ERROR = "runtime_error"
     MODEL_ERROR = "model_error"
     PROVIDER_PROTOCOL = "provider_protocol"
