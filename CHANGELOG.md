@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-03
+
+Remediation release answering the PentestLens `UPSTREAM_REMEDIATION_REQUEST` (R0–R6). Re-cut from a single
+clean source SHA that contains **all** the work claimed complete — including the U1 `agent_driver.embedding`
+namespace and the U4 bounded-cancellation-deadline wiring that landed *after* the `0.2.0` wheel was built —
+plus new durable Postgres control stores (R2), full ToolGate provenance projection (R1), plan-binding trace
+projection (R3), and the completed U4 Stop matrix (R4). The approved input contract was restored to its
+authoritative SHA (R0) and statuses reconciled (R6). `0.2.0` identity/wheel is **not** reused. Every change
+is additive and persisted-state compatible.
+
 ### Added — U4 Stop matrix completion + release-artifact verification (epic 060 / R4)
 Fills the last uncovered cells of the U4 abort/cancellation matrix and documents the full cell→test
 mapping (epic 060): a pre-aborted planning run now has a test proving it terminates `CANCELLED` without

@@ -1,7 +1,8 @@
 # R5 — Единый согласованный релиз 0.3.0 + reproducible wheel + handoff
 
-Статус: **pending** (blocked by 057–060 + 056a). Заменяет U7/эпик 055 в части релиза.
-Контекст: `../REMEDIATION_PLAN.md` §061.
+Статус: **DONE**. Заменяет U7/эпик 055 в части релиза. Контекст: `../REMEDIATION_PLAN.md` §061.
+Wheel `agent_driver-0.3.0-py3-none-any.whl` SHA-256 `13a6a7096f2da333d03863a2a3ece2d0a425b9c6e96ec7c0f2fa193abce465db`
+(reproducible, `SOURCE_DATE_EPOCH=1754179200`). Handoff: `../handoff-0.3.0-pentestlens-remediation.md`.
 
 ## Решение по версии (подтверждено)
 

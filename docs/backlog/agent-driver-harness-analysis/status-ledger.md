@@ -20,7 +20,9 @@
 | U6 | Gateway truthfulness | 054 | **DONE** | process-local/non-durable + fail-fast (Option 2) — принято аудитом как допустимое |
 | U7 | Version/release/handoff | 055 | **SUPERSEDED** | `0.2.0` не переиспользуется; корректный релиз — 0.3.0/R5/эпик 061 |
 
-**Зонтичный эпик 048:** `IN PROGRESS (remediation phase)`. `complete` — только после acceptance R0–R6.
+**Зонтичный эпик 048:** ✅ **COMPLETE** — все acceptance R0–R6 выполнены; релиз 0.3.0 несёт весь required-код
+в одном SHA, wheel воспроизводим, handoff с проверяемыми receipts. Клиент проверяет по неизменённому
+`upstream-requirements.md` (SHA `d4ed6c…`).
 
 ## Remediation (R0–R6) — статус
 
@@ -31,8 +33,8 @@
 | R2 | 058 | **DONE** | 4 PG-стора + generic schema + facade + обязательный CI-job + **20 real-PG тестов** (validated на postgres:15): 17 store-unit (two-client race, replay, conflict, монотонный abort-CAS, restart, parity) + 3 resume-integration end-to-end (duplicate→conflict, два конкурентных resume→один side-effect, stale-checkpoint→conflict без consume) |
 | R3 | 059 | **DONE** | `policy_binding`+`approved_by` в `PLAN_APPROVED/REJECTED` trace-событии (из authoritative approved_plan) + real checkpoint readback + unforgeable + EDIT re-hash bugfix; 4 теста `test_plan_binding_trace.py` |
 | R4 | 060 | **DONE** | код в ветке (d43720d+7bf1c6d — ancestor) → в release-SHA; матрица-маппинг (cell→test) в эпике 060 + добор `test_u4_stop_matrix.py` (abort-before-planning, fenced-late-result-не-воскрешает) |
-| R5 | 061 | pending (blocked by 057–060) | релиз 0.3.0 |
-| R6 | 056b | pending (last) | финальная сверка статусов ↔ факт |
+| R5 | 061 | **DONE** | 0.3.0 bump (pyproject/`__version__`/METADATA/changelog согласованы); reproducible wheel `13a6a709…465db` (2 изолированные сборки идентичны); handoff `handoff-0.3.0-pentestlens-remediation.md` с receipts (full-suite 2982 + real-PG 20 на PG15.18) |
+| R6 | 056b | **DONE** | эпики 048–055 + U-таблица выше сведены с фактом; 048 → complete |
 
 ## Не-Goal (отдельно от remediation-релиза)
 
