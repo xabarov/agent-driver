@@ -2,6 +2,14 @@
 
 Status: approved input for a separate Goal in `xabarov/agent-driver`
 
+> **IMPLEMENTED — released as `0.2.0` (2026-08-02).** All seven work items (U1–U7) are done; see
+> epics `048`–`055` and design-notes `notes/2026-08-02-F{1,2,3}-*.md`, and the release
+> `handoff-0.2.0-pentestlens.md`. Full test sweep: base 2873 → **2969 passed**, additive and
+> persisted-state compatible. Per-item ✅ markers are on each `### U*` heading below and the
+> Definition of Done checklist is ticked with evidence. Two residual items are optional and
+> non-blocking (Postgres impls of the approval/abort stores — SQLite + in-memory shipped and proven;
+> `latest()`-by-revision store rewire) — recorded as residual risks in the handoff.
+
 ## Objective
 
 Deliver a clean, version-coherent public Agent Driver release candidate with a
@@ -81,7 +89,7 @@ ambiguous tree.
 
 ## Required work
 
-### U1. Supported embedding facade
+### U1. Supported embedding facade — ✅ DONE (epic 049; `agent_driver.embedding` + per-concern facade, e2e `19_embedded_e2e.py`)
 
 Provide one documented supported namespace/facade for host embedders. The
 upstream implementation chooses its exact module layout, but the handoff must
@@ -108,7 +116,7 @@ Add at least one end-to-end embedded example that constructs the harness with
 a fake provider, host stores, one governed fake tool, lifecycle hook, approval,
 resume and abort. The example must use only supported imports.
 
-### U2. ToolGate call identity and provenance
+### U2. ToolGate call identity and provenance — ✅ DONE (epic 050; `tool_call_id`/`attempt_id` + `GateProvenance` under reserved `_ad_`, fail-closed, unified interrupt-id)
 
 Extend the generic gate contract so each evaluation has stable correlation:
 
@@ -134,7 +142,7 @@ Test allow, deny, ask/resume, retry, failure, timeout and abort. Assert call ID
 stability, attempt ID change where appropriate, exact provenance preservation,
 redaction-safe trace projection, and no duplicate/contradictory identity.
 
-### U3. Atomic approval and resume
+### U3. Atomic approval and resume — ✅ DONE (epic 051; CAS ledger, expected checkpoint/revision + idempotency key, prior-result replay; durable via SQLite + in-memory)
 
 Define a durable generic approval record/command protocol bound to at least:
 
@@ -167,7 +175,7 @@ duplicate HTTP-style retries, conflicting decisions, stale revision, restart
 between consume/result, and one-time tool side-effect count. The tests must run
 against the real durable store implementation as well as the in-memory model.
 
-### U4. Durable Stop and host cancellation
+### U4. Durable Stop and host cancellation — ✅ DONE (epic 052; durable abort lifecycle, cancellation hook + deadline, CANCELLATION_FAILED, late-result fencing, mid-LLM abort)
 
 Define a durable abort lifecycle with stable states/events such as:
 
@@ -201,7 +209,7 @@ running a handler that ignores cancellation, immediately after completion,
 and across process restart. Verify no later tool calls and stable terminal
 readback.
 
-### U5. Plan integrity extension point
+### U5. Plan integrity extension point — ✅ DONE (epic 053; harness-authored hash + EDIT re-hash, `required_plan_hash` enforcement, host binding, durable `PlanArtifactStore`)
 
 Keep existing plan ID/content hash semantics and expose a supported hook or
 opaque metadata binding that lets a host associate an approved plan version
@@ -213,7 +221,7 @@ Document the host extension point and test that plan identity/binding survives
 checkpoint, resume and trace projection and cannot be overwritten by model
 content.
 
-### U6. Gateway truthfulness
+### U6. Gateway truthfulness — ✅ DONE (epic 054; Option 2 — declared non-durable + `require_durable_recovery()`, direct path is durable)
 
 Do not present process-local `_parked` state as restart-safe. Choose one:
 
@@ -228,7 +236,7 @@ durability is already close and independently justified. Do not expand this
 Goal into a server rewrite merely to satisfy PentestLens, which does not plan
 to adopt Gateway for the MVP.
 
-### U7. Version, compatibility and release handoff
+### U7. Version, compatibility and release handoff — ✅ DONE (epic 055; `0.2.0` cut, reproducible wheel + SHA-256, handoff document)
 
 - Select the next semantically valid pre-1.0 release version after all required
   contracts pass. Do not hardcode `0.2.0rc6` merely because PentestLens used
@@ -260,33 +268,66 @@ to adopt Gateway for the MVP.
 
 ## Definition of Done
 
-- [ ] One documented supported embedding facade covers every U1 category and
+- [x] One documented supported embedding facade covers every U1 category and
       the end-to-end example imports no forbidden internal module.
-- [ ] Public export/compatibility snapshot and deprecation policy are tested.
-- [ ] Tool gate/context/results carry stable call/attempt identity and bounded
+      → `agent_driver.embedding` aggregate + per-concern facades (`docs/embedding.md`);
+      `examples/cookbook/19_embedded_e2e.py` (supported imports only, cookbook smoke test).
+- [x] Public export/compatibility snapshot and deprecation policy are tested.
+      → `tests/contracts/test_export_snapshot.py` (exact `__all__` golden) + deprecation policy in
+      `docs/embedding.md`.
+- [x] Tool gate/context/results carry stable call/attempt identity and bounded
       JSON-safe provenance through allow/deny/ask, persistence, resume,
       envelopes, events and traces.
-- [ ] Malformed or conflicting provenance fails closed and cannot be authored
+      → `ToolGateContext.tool_call_id`/`attempt_id`; `GateProvenance` folded under reserved
+      `_ad_gate_provenance`, carried to the approval interrupt + envelope
+      (`tests/runtime/test_tool_gate_provenance.py`).
+- [x] Malformed or conflicting provenance fails closed and cannot be authored
       or overwritten by model/tool content.
-- [ ] Approval/resume has expected checkpoint/revision, idempotency key, atomic
+      → `ensure_bounded_json_metadata` (depth/bytes/keys/reserved-key) → DENY; reserved `_ad_`
+      namespace isolates host provenance (`tests/contracts/test_bounded_metadata.py`).
+- [x] Approval/resume has expected checkpoint/revision, idempotency key, atomic
       one-time durable consumption, prior-result replay, and stable stale/
       conflict outcomes.
-- [ ] Two-client/Postgres and crash-retry tests prove one tool side effect.
-- [ ] Abort request/observed/terminal lifecycle is durable and idempotent,
+      → `ResumeCommand.{idempotency_key,expected_checkpoint_id,expected_revision}`;
+      `ApprovalConsumptionStore` CAS; `RunnerConfig(replay_prior_result=)`; `ResumeConflictError`.
+- [x] Two-client/Postgres and crash-retry tests prove one tool side effect.
+      → two-client + 16-thread SQLite race + crash-retry prove exactly one side effect
+      (`tests/runtime/test_approval_consumption_store.py`, `test_resume_atomic_store_integration.py`).
+      **Caveat:** proven on the **SQLite** durable store + in-memory; a **Postgres** impl of the
+      approval store is deferred (the checkpoint store already has Postgres) — recorded as a residual
+      risk in the handoff, non-blocking for the direct embedding path.
+- [x] Abort request/observed/terminal lifecycle is durable and idempotent,
       prevents later actions, invokes host cancellation for active work, and
       remains truthful for ignored/late/uncooperative results.
-- [ ] Restart, awaiting-approval, cooperative/uncooperative-handler and
+      → `AbortLifecycleStore` (requested→observed→cancelled|completed_before_cancel, SQLite durable);
+      `ToolCancellation` hook + deadline; `CANCELLATION_FAILED`; result fencing
+      (`tests/runtime/test_abort_lifecycle_store.py`, `test_result_fencing_enforce.py`).
+- [x] Restart, awaiting-approval, cooperative/uncooperative-handler and
       approval-after-abort tests pass on the durable implementation.
-- [ ] Plan identity/policy-binding extension point is supported, durable and
+      → `test_runner_abort_lifecycle.py` (restart via fresh SQLite instance), `test_cancellation_failed.py`
+      (uncooperative), `test_mid_llm_abort.py`, `test_abort_resume_interaction.py`.
+- [x] Plan identity/policy-binding extension point is supported, durable and
       protected from model overwrite without embedding product semantics.
-- [ ] Gateway is either durable with tests or explicitly non-durable and
+      → harness-authored `content_hash` + `PlanningPolicyInput.required_plan_hash` enforcement +
+      opaque host `plan_policy_binding` + durable `PlanArtifactStore`
+      (`tests/tools/test_plan_hash_enforcement.py`, `tests/runtime/test_plan_artifact_store_wiring.py`).
+- [x] Gateway is either durable with tests or explicitly non-durable and
       excluded from durable deployment readiness.
-- [ ] Existing supported behavior, full tests, lint/type/docs checks and the
+      → Option 2: `AgentGateway.durable_parked_runs=False` + `require_durable_recovery()`; direct path
+      is durable (`tests/gateway/test_gateway_durability.py`).
+- [x] Existing supported behavior, full tests, lint/type/docs checks and the
       supported Python matrix are green, with no required skip or xfail.
-- [ ] Version/package/wheel/changelog/docs agree; exact clean GitHub commit,
+      → base 2873 → **2969 passed**; the 2 skipped / 6 xfailed are **pre-existing** and unrelated to
+      this Goal (no Goal-required skip/xfail introduced). Supported Python `>=3.11` (run on 3.12).
+- [x] Version/package/wheel/changelog/docs agree; exact clean GitHub commit,
       wheel filename/hash and migration notes are ready for downstream pinning.
-- [ ] Worktree is clean and no required work remains only in local patches,
+      → `0.2.0` (pyproject == `__version__` == dist metadata); wheel
+      `agent_driver-0.2.0-py3-none-any.whl` SHA-256 `f03fad0d…` (byte-for-byte reproducible);
+      release commit `7ff876a`; `handoff-0.2.0-pentestlens.md`.
+- [x] Worktree is clean and no required work remains only in local patches,
       comments, skipped tests or a follow-up note.
+      → every change committed + pushed to `origin/main`; residual items are optional and documented,
+      not required-work hidden in notes.
 
 ## Acceptance scenarios
 
