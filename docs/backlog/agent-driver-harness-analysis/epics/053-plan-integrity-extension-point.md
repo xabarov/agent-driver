@@ -1,8 +1,14 @@
 # U5 — Plan integrity extension point
 
-Дата создания: 2026-08-02. Статус: **IN PROGRESS — ядро A/B/C + enforcement DONE 2026-08-02;
-PlanArtifactStore-wiring + trace открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]].
-Происхождение: upstream Goal.
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — ядро A/B/C + enforcement + PlanArtifactStore-wiring
+DONE 2026-08-02; только trace-binding открыт (мелко)**. Родитель:
+[[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal.
+
+> **PlanArtifactStore wired** (свип 2948): plan-approval resume пишет durable hash-bound `PlanArtifact`
+> (APPROVED на approve/edit, REJECTED на reject) при `RunnerConfig(plan_artifact_store=...)` — через
+> `_persist_plan_artifact` в `resume.py`, тем же optional-dep паттерном. Off (default) → без изменений.
+> Тест `tests/runtime/test_plan_artifact_store_wiring.py`. **Осталось:** провести binding через
+> trace-проекцию (мелко).
 
 > **Реализация enforcement** (свип 2939, +6): `PlanningPolicyInput.required_plan_hash` — когда задан,
 > `_force_planning_has_approved_plan` засчитывает approval только если `approved_plan.content_hash ==

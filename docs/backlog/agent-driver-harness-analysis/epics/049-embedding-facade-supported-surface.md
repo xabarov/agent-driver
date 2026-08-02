@@ -1,8 +1,12 @@
 # U1 — Supported embedding facade
 
-Дата создания: 2026-08-02. Статус: **IN PROGRESS — facade-довод (Phase A) + `__version__` (B, в U7)
-DONE 2026-08-02; C/D/E открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]].
-Происхождение: upstream Goal (host-adoption).
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — Phase A + B(в U7) + C DONE 2026-08-02; D/E открыты**.
+Родитель: [[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+
+> **Phase C DONE** (свип 2948): exact export-снапшот `sdk`/`runtime`/`tools` `__all__`
+> (`tests/contracts/test_export_snapshot.py`, drift падает громко) + deprecation-policy в
+> `docs/embedding.md`. **Осталось D/E:** переписать `examples/cookbook/*` с internal-путей + один
+> e2e-embedded-пример; единый `agent_driver.embedding`-namespace (опц.).
 
 > **Реализация Phase A** (свип 2907): `agent_driver.runtime` facade теперь ре-экспортирует
 > категории, за которыми embedder раньше лез в подмодули: store-протоколы (`CheckpointStore`,

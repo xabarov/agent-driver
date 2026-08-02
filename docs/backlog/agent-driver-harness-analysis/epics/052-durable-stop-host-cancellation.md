@@ -1,8 +1,14 @@
 # U4 — Durable Stop + host cancellation
 
-Дата создания: 2026-08-02. Статус: **IN PROGRESS — C (hook) + A/D-ядро + B(границы) DONE 2026-08-02;
-mid-LLM-await + fencing открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]].
-Происхождение: upstream Goal (host-adoption).
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — C(hook) + A/D + B(границы) + `CANCELLATION_FAILED`
+DONE 2026-08-02; fencing + mid-LLM-await открыты**. Родитель:
+[[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+
+> **`CANCELLATION_FAILED` DONE** (свип 2948): timeout-под-abort (uncooperative handler, застрявший шаг)
+> → `TerminalReason.CANCELLATION_FAILED` (enforced-stop) вместо `DEADLINE_EXCEEDED`; abort-ledger
+> пишет observed→cancelled. Plain timeout без abort остаётся `DEADLINE_EXCEEDED`. Тест
+> `tests/runtime/test_cancellation_failed.py`. **Осталось:** fencing/epoch-token + `LATE_RESULT_IGNORED`
+> (новая инфра); mid-in-flight-LLM-await abort (риск CancelledError→RUNTIME_ERROR мис-маппинга).
 
 > **Реализация A/D-ядра** (свип 2933, +14): `agent_driver.runtime.control.AbortLifecycleStore`
 > (in-memory + SQLite, ре-экспорт из facade) — реальный durable lifecycle
