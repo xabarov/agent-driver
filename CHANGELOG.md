@@ -7,6 +7,15 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — single `agent_driver.embedding` aggregate namespace (epic 049 / U1, phase E)
+One import root re-exporting the embedding-essential names from the per-concern facades
+(`sdk`/`runtime`/`llm`/`contracts`/`tools`) — so a host can `from agent_driver.embedding import
+create_agent, RunnerConfig, SqliteRuntimeStore, ToolGateAsk, RunAbortHandle` instead of tracking which
+facade owns each name. Every name is an **identity** re-export of the same object on its owning facade
+(a test asserts this, so the aggregate can never drift), and it adds no new API — the per-concern
+facades remain the full surface. Documented as the first row of the `docs/embedding.md` table. This
+closes the last U1 item; U1 (supported embedding facade) is now complete.
+
 ## [0.2.0] - 2026-08-02
 
 Release candidate for the PentestLens embedding Goal (epics 048–055 / U1–U7): a supported embedding
