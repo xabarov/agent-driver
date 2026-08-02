@@ -1,5 +1,12 @@
 """Runtime steering control-plane primitives."""
 
+from agent_driver.runtime.control.abort_store import (
+    AbortLifecycleState,
+    AbortLifecycleStore,
+    AbortRecord,
+    InMemoryAbortLifecycleStore,
+    SqliteAbortLifecycleStore,
+)
 from agent_driver.runtime.control.approval_store import (
     ApprovalConsumeRequest,
     ApprovalConsumptionStore,
@@ -13,6 +20,11 @@ from agent_driver.runtime.control.protocols import CommandQueueStore
 from agent_driver.runtime.control.sqlite import SqliteCommandQueueStore
 
 __all__ = [
+    "AbortLifecycleState",
+    "AbortLifecycleStore",
+    "AbortRecord",
+    "InMemoryAbortLifecycleStore",
+    "SqliteAbortLifecycleStore",
     "ApprovalConsumeRequest",
     "ApprovalConsumptionStore",
     "ConsumeOutcome",

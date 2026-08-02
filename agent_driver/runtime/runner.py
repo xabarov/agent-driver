@@ -119,6 +119,7 @@ class SingleAgentRunner(
             ),
             command_queue_store=self._config.command_queue_store,
             approval_store=getattr(self._config, "approval_store", None),
+            abort_store=getattr(self._config, "abort_store", None),
             python_backend=python_backend,
             lifecycle_hooks=self._build_lifecycle_hooks(),
             fallback_providers=tuple(
@@ -205,10 +206,40 @@ class SingleAgentRunner(
             _annotate_run_span_input(run_span, run_input)
             try:
                 output = await self._drive_steps(context)
+                self._finalize_abort_lifecycle(context, output)
                 await self._dispatch_run_error(context, output)
                 return output
             finally:
                 _annotate_run_span_output(run_span, output)
+
+    def _finalize_abort_lifecycle(
+        self, context: _RunContext, output: AgentRunOutput
+    ) -> None:
+        """U4 A/D — record the truthful durable abort outcome for this run.
+
+        On a terminal output, when an abort-lifecycle store is configured:
+        a user-cancelled run is marked observed → cancelled; a run that finished
+        while a stop was pending (durable request or a late handle abort) is
+        resolved completed_before_cancel. No-op without a store, on a paused
+        run, or when no abort was ever in play. A ledger write must never fail a
+        run, so errors are swallowed.
+        """
+        store = getattr(self._deps, "abort_store", None)
+        if store is None or output.status == RunStatus.PAUSED:
+            return
+        handle = context.abort_handle
+        aborted = handle is not None and getattr(handle, "is_aborted", False)
+        reason = getattr(handle, "reason", None) if handle is not None else None
+        try:
+            if output.terminal_reason == TerminalReason.CANCELLED_BY_USER:
+                store.mark_observed(context.run_id, reason=reason)
+                store.resolve(context.run_id, cancelled=True)
+            elif aborted or store.get(context.run_id) is not None:
+                if store.get(context.run_id) is None:
+                    store.request_abort(context.run_id, reason=reason)
+                store.resolve(context.run_id, cancelled=False)
+        except Exception:  # pragma: no cover - telemetry must never break a run
+            logger.warning("abort lifecycle store update failed", exc_info=True)
 
     async def _dispatch_run_error(
         self, context: _RunContext, output: AgentRunOutput

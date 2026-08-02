@@ -27,6 +27,7 @@ from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.memory.provider import MemoryProvider
 from agent_driver.runtime.abort import RunAbortHandle
+from agent_driver.runtime.control.abort_store import AbortLifecycleStore
 from agent_driver.runtime.control.approval_store import ApprovalConsumptionStore
 from agent_driver.runtime.control.protocols import CommandQueueStore
 from agent_driver.runtime.lifecycle_hooks import RunLifecycleHook
@@ -109,6 +110,7 @@ class RunnerConfig:
     tool_registry: ToolRegistry | None
     command_queue_store: CommandQueueStore | None
     approval_store: ApprovalConsumptionStore | None
+    abort_store: AbortLifecycleStore | None
     memory_provider: MemoryProvider | None
     memory_consolidation_every_n_turns: int
     capabilities: CapabilitySettings
@@ -210,6 +212,7 @@ class RunnerConfig:
         self.tool_registry = kwargs.pop("tool_registry", None)
         self.command_queue_store = kwargs.pop("command_queue_store", None)
         self.approval_store = kwargs.pop("approval_store", None)
+        self.abort_store = kwargs.pop("abort_store", None)
         self.memory_provider = kwargs.pop("memory_provider", None)
         # Epic 031: cadence for background memory consolidation (0 = off). The
         # host supplies the durable turn ordinal via app_metadata["memory"]
@@ -528,6 +531,9 @@ class RunnerDeps:
     # atomic + exactly-once across concurrent clients / restarts. When None
     # (default), the resume path keeps its TOCTOU + expected-checkpoint guard.
     approval_store: ApprovalConsumptionStore | None = None
+    # U4 A/D — optional durable abort lifecycle ledger (requested → observed →
+    # cancelled | completed_before_cancel), queryable after restart. None = off.
+    abort_store: AbortLifecycleStore | None = None
     python_backend: Any | None = None
     lifecycle_hooks: tuple[RunLifecycleHook, ...] = ()
     # Optional providers tried (in order) by the forced-final recovery ladder when the

@@ -1,8 +1,25 @@
 # U4 — Durable Stop + host cancellation
 
-Дата создания: 2026-08-02. Статус: **IN PROGRESS — cancellation-hook-срез (часть C) DONE
-2026-08-02; A/B/D открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]].
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — C (hook) + A/D-ядро + B(границы) DONE 2026-08-02;
+mid-LLM-await + fencing открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]].
 Происхождение: upstream Goal (host-adoption).
+
+> **Реализация A/D-ядра** (свип 2933, +14): `agent_driver.runtime.control.AbortLifecycleStore`
+> (in-memory + SQLite, ре-экспорт из facade) — реальный durable lifecycle
+> `requested→observed→cancelled|completed_before_cancel`, restart-queryable. `request_abort`
+> (actor/reason, cross-process), `mark_observed` **выставляет `observed=True`** (transition, которого
+> старая запись никогда не делала), `resolve` — правдивый терминал. Проводка: опц.
+> `RunnerConfig(abort_store=...)`, `runner._finalize_abort_lifecycle` после каждого терминального
+> рана (cancelled-by-user → observed+cancelled; завершился при pending-stop → completed_before_cancel;
+> чистый ран → нет записи). Тесты: `test_abort_lifecycle_store.py` (state-machine+durability),
+> `test_runner_abort_lifecycle.py` (проводка+restart). **B**: step-boundary-чек уже перед каждым
+> plan/LLM/tool-шагом + tool-stage скипает не-начатый вызов при наблюдённом abort (`run_aborted`-блок
+> из hook-среза C) = «no new work once observed» на границах.
+>
+> **Осталось:** наблюдение abort *в mid-in-flight-LLM-await* (responsiveness; нужен аккуратный
+> terminal-mapping, чтобы cancel не стал RUNTIME_ERROR); **fencing/epoch-token** против поздних
+> handler-результатов; отдельные terminal-reason'ы cancellation-failed / late-result-ignored;
+> deadline на cancellation-токене (сейчас `deadline_seconds=None`).
 
 > **Реализация hook-среза** (свип 2897, +4): governed-executor опционально принимает
 > `abort_handle` (протянут из step-loop как `tool_gate`, только когда задан → старые сигнатуры

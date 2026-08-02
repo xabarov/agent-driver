@@ -60,6 +60,26 @@ full sweep 2901 passed (+4). Remaining U5 (epic 053): wire the enforcing gate
 (`_force_planning_has_approved_plan`) to compare the hash (today presence-only), connect the durable
 `PlanArtifactStore` (still unwired), and carry the binding through the trace projection.
 
+### Added — durable abort lifecycle ledger (epic 052 / U4, phases A/D)
+`RunAbortHandle` is process-local — its flag vanishes on restart, and the durable
+`DurableAbortRequestRecord.observed` field was never actually set — so after a crash a host could not
+tell whether a stop was *observed and cancelled the run* or the *run completed before the stop
+landed*. New `agent_driver.runtime.control.AbortLifecycleStore` (in-memory + SQLite, re-exported from
+the `agent_driver.runtime` facade) makes that lifecycle real and restart-queryable: `requested →
+observed → cancelled | completed_before_cancel`. `request_abort` records an actor/reason-correlated
+durable stop request (issuable from another process); `mark_observed` sets `observed=True` (the
+transition the old record never made); `resolve` records the truthful terminal outcome. Wired as an
+optional `RunnerConfig(abort_store=...)` dep: the runner finalises the record after each terminal run
+— a user-cancelled run becomes observed→cancelled, a run that finished while a stop was pending
+becomes completed_before_cancel, and a clean run leaves no record. Additive/behaviour-neutral (no
+store → unchanged); full sweep 2933 passed (+14). On B (abort checked before every transition): the
+step-boundary check already runs before each plan/LLM/tool step, and the tool stage skips a
+not-yet-started call once an abort is observed (the U4 hook slice's `run_aborted` block) — the
+remaining item is observing an abort *during* an in-flight LLM await (a responsiveness improvement
+that needs care to keep the terminal reason truthful, deferred). Remaining U4 D: a fencing/epoch
+token so a late handler result cannot reopen a run, and distinct terminal reasons for
+cancellation-failed / late-result-ignored.
+
 ### Added — cooperative host cancellation hook into running tool handlers (epic 052 / U4, hook slice)
 A running tool handler could not observe the run's process-local `RunAbortHandle`, so a host had
 no way to cancel its own in-flight work (a socket, a browser, a long query) when a run was stopped.
