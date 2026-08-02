@@ -7,6 +7,25 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — full Postgres-backed durable control plane (epic 058 / R2)
+Production-durable Postgres implementations of all four generic control-plane stores —
+`PostgresApprovalConsumptionStore`, `PostgresAbortLifecycleStore`, `PostgresPlanArtifactStore`,
+`PostgresCommandQueueStore` — plus a shared `PostgresControlStoreConfig`, all re-exported from the
+supported `agent_driver.runtime` facade (and in the export snapshot). They live in one **generic** schema
+(default `agent_driver_control`) with their own idempotent DDL; nothing shares a transaction with product
+tables and nothing carries product semantics. Exactly-once approval consumption is an `INSERT … ON
+CONFLICT DO NOTHING` compare-and-swap (untargeted, so it covers the primary key and the partial
+idempotency-key unique index, mirroring SQLite's `INSERT OR IGNORE`); the abort lifecycle advances through
+a monotonic `ON CONFLICT … DO UPDATE` CAS that never moves a terminal row backwards. Closes R2 of the
+remediation Goal — SQLite/in-memory proved the algorithm; this proves the transactional/unique/CAS
+semantics of the real backend a multi-worker product coordinates through. psycopg (v3) is imported lazily
+(`agent-driver[postgres]`), so nothing changes for hosts that do not use Postgres. A new **mandatory**
+CI job (`.github/workflows/tests.yml`) runs the real-Postgres acceptance matrix against a pinned
+`postgres:15-alpine` with `AD_REQUIRE_POSTGRES=1`; the `postgres` pytest marker is excluded from the
+default sweep, and a missing DSN / dependency / zero collected tests **fails** the job rather than skipping
+green. Tests: `tests/runtime/test_postgres_control_plane.py` (17 — two-client race single-winner,
+crash-safe replay, conflict, monotonic abort CAS, restart readback, cross-backend parity).
+
 ### Added — bounded cancellation deadline on the tool cancellation token (epic 052 / U4)
 `ToolCancellation.deadline_seconds` — previously always `None` — is now populated from the run's
 `deadline_seconds`, so a cooperative handler consulting `current_tool_cancellation()` sees the outer

@@ -1,0 +1,60 @@
+name: tests
+
+on:
+  push:
+    branches: [main, "remediation-*"]
+  pull_request:
+
+jobs:
+  # Fast default sweep — excludes live/slow/postgres markers (see pyproject addopts).
+  default-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Run default suite
+        run: python -m pytest
+
+  # Mandatory real-Postgres control-plane matrix (R2 / epic 058). This job must
+  # FAIL — never skip green — if the DSN, the psycopg dependency, or the tests
+  # themselves are missing.
+  postgres-suite:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: ad
+          POSTGRES_PASSWORD: ad
+          POSTGRES_DB: ad_control
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ad -d ad_control"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AD_REQUIRE_POSTGRES: "1"
+      AD_POSTGRES_TEST_DSN: "postgresql://ad:ad@localhost:5432/ad_control"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (with postgres extra)
+        run: python -m pip install -e ".[dev,postgres]"
+      - name: Guard — real postgres tests must exist (fail, not skip)
+        run: |
+          count=$(python -m pytest -m postgres --collect-only -q 2>/dev/null | grep -c '::' || true)
+          echo "collected postgres tests: $count"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::AD_REQUIRE_POSTGRES=1 but no 'postgres'-marked tests collected"
+            exit 1
+          fi
+      - name: Run real-Postgres control-plane matrix
+        run: python -m pytest -m postgres -v

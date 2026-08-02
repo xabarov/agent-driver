@@ -71,10 +71,11 @@ pythonpath = ["."]
 # (tests/harness/test_lifecycle_hooks.py and tests/runtime/test_lifecycle_hooks.py)
 # with no __init__.py, so the legacy "prepend" mode aborts collection with an
 # "import file mismatch". importlib mode collects them cleanly — no per-invocation flag.
-addopts = "-q -m 'not live and not slow' --import-mode=importlib"
+addopts = "-q -m 'not live and not slow and not postgres' --import-mode=importlib"
 markers = [
   "live: optional network/provider checks disabled by default",
   "slow: subprocess- or scientific-stack-bound tests; excluded from default sweep",
+  "postgres: real-Postgres control-plane tests; run only in the mandatory postgres CI job (marker excluded from the default sweep). Fails (not skips) without a DSN when AD_REQUIRE_POSTGRES=1.",
 ]
 
 [tool.setuptools]
