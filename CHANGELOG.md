@@ -7,6 +7,26 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Changed — test: `--import-mode=importlib` is now the pytest default
+Two test files share a basename (`tests/harness/test_lifecycle_hooks.py` and
+`tests/runtime/test_lifecycle_hooks.py`) with no `__init__.py`, so plain `pytest` / `make
+test` aborted collection under the legacy prepend mode with *import file mismatch* — every
+contributor had to pass the flag by hand. Set it in `pyproject.toml` `addopts`; plain
+`pytest` now collects the whole suite cleanly.
+
+### Changed — refactor: decompose the skills/lifecycle god-module (behaviour-neutral)
+`skills/lifecycle.py` was 1484 lines (46 top-level defs). The evidence/reporting layer was
+extracted; the shared product-family helpers were lifted into a small base module so the
+split is a DAG (no back-import). Pure structural change; full sweep 2873 passed. `lifecycle.py`
+is now 1191 lines (−20%).
+- `skills/lifecycle_common.py` — the two shared product-family mappings
+  (`_primary_skill_scenario`, `_pack_id_for_product`), imported by both `lifecycle` and the
+  new evidence module (base layer, no back-dependency).
+- `skills/lifecycle_evidence.py` — evidence index + markdown render + artifact write + replay
+  (`build_skill_lifecycle_evidence_index`, `render_skill_lifecycle_markdown`,
+  `write_skill_lifecycle_artifacts`, `replay_skill_lifecycle_from_artifacts`) plus their private
+  helpers. Re-exported from `lifecycle` for existing callers/tests.
+
 ### Changed — refactor: decompose the tool_stage god-module (behaviour-neutral)
 `runtime/single_agent/tool_stage/__init__.py` was a 1477-line package init doing real work
 (24 top-level defs). Two cohesive, leaf function groups were extracted into sibling modules
