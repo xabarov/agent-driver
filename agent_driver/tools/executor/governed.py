@@ -32,10 +32,12 @@ from agent_driver.runtime.tool_gate import (
     ToolGate,
     ToolGateAllow,
     ToolGateAsk,
+    RESERVED_GATE_DECISION_KEY,
     ToolGateContext,
     ToolGateDeny,
     ToolGateResult,
     build_gate_provenance_metadata,
+    extract_reserved_metadata,
 )
 from agent_driver.tools.executor.allowed import execute_allowed_path
 from agent_driver.tools.executor.blocks import (
@@ -455,30 +457,33 @@ class GovernedToolExecutor:
                     }
                 )
 
-        def _with_provenance(update: dict[str, Any]) -> dict[str, Any]:
-            if provenance_meta:
-                update = {
-                    **update,
-                    "metadata": {**policy.metadata, **provenance_meta},
-                }
-            return update
+        def _with_reserved(update: dict[str, Any], *, mark: str) -> dict[str, Any]:
+            # Always stamp the gate-decision marker (so a terminal/trace
+            # projection can tell a gate decision from a static one — R1), plus
+            # any validated host provenance. Both live under the reserved ``_ad_``
+            # namespace so model/tool metadata can neither forge nor overwrite them.
+            reserved = {RESERVED_GATE_DECISION_KEY: mark, **provenance_meta}
+            return {**update, "metadata": {**policy.metadata, **reserved}}
 
         if isinstance(result, ToolGateAllow):
+            # A transparent allow with no provenance is identical to no gate —
+            # leave the outcome untouched (no marker, no projection noise).
             if not provenance_meta:
                 return policy
-            return policy.model_copy(update=_with_provenance({}))
+            return policy.model_copy(update=_with_reserved({}, mark="allow"))
         if isinstance(result, ToolGateDeny):
             return policy.model_copy(
-                update=_with_provenance(
+                update=_with_reserved(
                     {
                         "decision": ToolPolicyDecision.DENY,
                         "reason": f"tool_gate denied: {result.reason}",
-                    }
+                    },
+                    mark="deny",
                 )
             )
         if isinstance(result, ToolGateAsk):
             return policy.model_copy(
-                update=_with_provenance(
+                update=_with_reserved(
                     {
                         "decision": ToolPolicyDecision.INTERRUPT,
                         "reason": result.message,
@@ -487,7 +492,8 @@ class GovernedToolExecutor:
                         # interrupt (ToolGateAsk.title is documented to override the
                         # default "Approval required for '<tool>'" heading).
                         "interrupt_title": result.title,
-                    }
+                    },
+                    mark="ask",
                 )
             )
         logger.warning(
@@ -924,6 +930,9 @@ class GovernedToolExecutor:
                     structured_output=_management_tool_denial_remediation(
                         run_input, call.tool_name
                     ),
+                    # R1 — carry gate provenance/decision onto the denied envelope
+                    # (empty for a static policy DENY, present for a gate DENY).
+                    reserved_metadata=extract_reserved_metadata(policy.metadata),
                 ),
             )
             return False
@@ -997,4 +1006,15 @@ class GovernedToolExecutor:
                 envelope = result.envelopes[slot]
                 transformed = await self._apply_post_hooks(envelope)
                 result.envelopes[slot] = transformed
+        # R1 — preserve reserved (``_ad_``) gate provenance/decision on the
+        # allow-path envelopes (e.g. a ToolGateAllow that attached provenance).
+        # Merged LAST, after post-hooks, so neither a hook nor tool output can
+        # overwrite host-authored provenance.
+        gate_reserved = extract_reserved_metadata(policy.metadata)
+        if gate_reserved and len(result.envelopes) > envelopes_before:
+            for slot in range(envelopes_before, len(result.envelopes)):
+                envelope = result.envelopes[slot]
+                result.envelopes[slot] = envelope.model_copy(
+                    update={"metadata": {**(envelope.metadata or {}), **gate_reserved}}
+                )
         return outcome

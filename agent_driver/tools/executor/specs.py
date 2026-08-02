@@ -48,6 +48,11 @@ class BlockSpec:
     # ``_force_planning_remediation`` so the model + runtime see a typed,
     # machine-readable repair hint on ``ToolResultEnvelope.structured_output``.
     structured_output: dict[str, Any] | None = None
+    # R1 — reserved (``_ad_``) gate provenance/decision to preserve on the denied
+    # envelope so it reaches the terminal/trace projection. Empty for a static
+    # policy denial; carries the gate decision marker + host provenance for a
+    # gate-produced DENY.
+    reserved_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

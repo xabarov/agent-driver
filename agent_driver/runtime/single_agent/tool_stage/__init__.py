@@ -21,6 +21,10 @@ from agent_driver.observability.source_evidence import source_evidence_from_tool
 from agent_driver.prompts import force_final_answer_tool_message
 from agent_driver.runtime.artifact_events import artifact_event_from_tool_result
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.tool_gate import (
+    RESERVED_GATE_DECISION_KEY,
+    extract_reserved_metadata,
+)
 from agent_driver.runtime.metadata_state import (
     get_tool_loop_state,
 )
@@ -694,25 +698,39 @@ def _emit_tool_policy_runtime_decisions(
         }
         if envelope.error is not None:
             metadata["error_code"] = envelope.error.code
+        # R1 — fold reserved (``_ad_``) gate provenance/decision carried on the
+        # envelope into the trace-safe RuntimeDecision projection, and let a gate
+        # decision be told apart from a static policy decision. Reserved keys are
+        # host-authored + bounded; model/tool metadata cannot forge them.
+        reserved = extract_reserved_metadata(envelope.metadata)
+        if reserved:
+            metadata = {**metadata, **reserved}
+        gate_decision = reserved.get(RESERVED_GATE_DECISION_KEY)
         if envelope.decision == ToolPolicyDecision.DENY:
+            gated = gate_decision == "deny"
+            # ``kind``/``action`` are taxonomy-validated; the gate-vs-static
+            # distinction rides on the free-form ``policy_id``/``trigger``/
+            # ``reason`` so a host can attribute the denial without inspecting
+            # reason strings.
             host._emit_runtime_decision(
                 context,
                 kind="tool_guardrail",
-                trigger="tool_denied",
+                trigger="tool_gate_denied" if gated else "tool_denied",
                 action="block",
-                reason="tool_policy_denied",
-                policy_id="tool_policy",
+                reason="tool_gate_denied" if gated else "tool_policy_denied",
+                policy_id="tool_gate" if gated else "tool_policy",
                 affected_tools=[tool_name],
                 redacted_metadata=metadata,
             )
         elif envelope.decision == ToolPolicyDecision.INTERRUPT:
+            gated = gate_decision == "ask"
             host._emit_runtime_decision(
                 context,
                 kind="approval",
-                trigger="tool_denied",
+                trigger="tool_gate_ask" if gated else "tool_denied",
                 action="interrupt",
-                reason="tool_policy_interrupt",
-                policy_id="tool_policy",
+                reason="tool_gate_ask" if gated else "tool_policy_interrupt",
+                policy_id="tool_gate" if gated else "tool_policy",
                 affected_tools=[tool_name],
                 redacted_metadata=metadata,
             )

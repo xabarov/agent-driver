@@ -60,9 +60,13 @@ def append_blocked_call(
     spec: BlockSpec,
 ) -> None:
     """Append a denied envelope/trace pair for policy or guardrail blocks."""
-    metadata = {"policy_reason": spec.reason}
+    metadata: dict[str, object] = {"policy_reason": spec.reason}
     if spec.stage is not None:
         metadata = {"guardrail_stage": spec.stage}
+    # R1 — preserve reserved (``_ad_``) gate provenance/decision on the denied
+    # envelope (merged LAST so host/model metadata cannot overwrite it).
+    if spec.reserved_metadata:
+        metadata = {**metadata, **spec.reserved_metadata}
     result.append(
         envelope=ToolResultEnvelope(
             call=spec.call,

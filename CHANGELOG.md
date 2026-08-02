@@ -7,6 +7,21 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — ToolGate provenance reaches the terminal / trace projection (epic 057 / R1)
+Gate decision provenance now flows all the way to the trace-safe `runtime_decision` projection a host
+reads, not just the tool policy outcome and the ask interrupt. The runtime stamps a reserved
+`_ad_gate_decision` marker (`"allow" | "deny" | "ask"`) alongside the existing `_ad_gate_provenance`
+whenever a **gate** produced the decision; both ride the executed `ToolResultEnvelope.metadata` for
+allow/deny/ask (previously only the ask interrupt carried them), and the tool-stage projection folds them
+into `RuntimeDecision.redacted_metadata`. A gate denial is now told apart from a static policy denial in
+that projection — `policy_id="tool_gate"` / `trigger="tool_gate_denied"` vs `"tool_policy"` /
+`"tool_denied"` — without pattern-matching reason strings, and call identity (`tool_call_id`) is stable
+from the gate context through to the terminal decision. Reserved keys stay under the `_ad_` namespace so
+model/tool metadata can neither forge nor overwrite host provenance; malformed provenance still fails
+closed (DENY) end-to-end. Closes R1 of the remediation Goal. New export: `RESERVED_GATE_DECISION_KEY`.
+Tests: `tests/runtime/test_provenance_lifecycle.py` (7 — envelope provenance for allow/deny/ask, terminal
+projection with gate≠static distinction, redaction-safe metadata, stable identity, forged-key fail-closed).
+
 ### Added — full Postgres-backed durable control plane (epic 058 / R2)
 Production-durable Postgres implementations of all four generic control-plane stores —
 `PostgresApprovalConsumptionStore`, `PostgresAbortLifecycleStore`, `PostgresPlanArtifactStore`,

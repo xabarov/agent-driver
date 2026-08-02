@@ -81,6 +81,13 @@ from agent_driver.contracts.validation import (
 # overwrite it — host metadata carrying an ``_ad_`` key is rejected upstream.
 RESERVED_GATE_PROVENANCE_KEY = f"{RESERVED_METADATA_PREFIX}gate_provenance"
 
+# Reserved key stamped by the runtime whenever a tool *gate* produced the
+# decision (allow/deny/ask), independent of whether the host attached
+# provenance. Lets a terminal/trace projection tell a gate decision apart from a
+# static policy decision (R1) without pattern-matching reason strings. Model- or
+# tool-authored metadata can neither forge nor overwrite it (reserved ``_ad_``).
+RESERVED_GATE_DECISION_KEY = f"{RESERVED_METADATA_PREFIX}gate_decision"
+
 
 @dataclass(frozen=True, slots=True)
 class GateProvenance:
@@ -270,6 +277,7 @@ the exception message as reason — fail-closed by design.
 
 __all__ = [
     "RESERVED_GATE_PROVENANCE_KEY",
+    "RESERVED_GATE_DECISION_KEY",
     "GateProvenance",
     "ToolGate",
     "ToolGateAllow",

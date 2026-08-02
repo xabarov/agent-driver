@@ -13,7 +13,7 @@
 | U | Тема | Эпик | Статус | Примечание |
 |---|---|---|---|---|
 | U1 | Supported embedding facade | 049 | **DONE** | но `agent_driver.embedding` (post-cut `7bf1c6d`) НЕ в wheel `0.2.0` → войдёт в 0.3.0 (R5) |
-| U2 | ToolGate identity + provenance | 050 | **IN PROGRESS** | interrupt/envelope есть; terminal+trace+adversarial-matrix — R1/эпик 057 |
+| U2 | ToolGate identity + provenance | 050 | **DONE** | interrupt/envelope + terminal/trace-проекция + adversarial-matrix закрыты R1/эпиком 057 |
 | U3 | Atomic approval + resume | 051 | **IN PROGRESS** | SQLite/in-mem CAS есть; **Postgres durable — R2/эпик 058** |
 | U4 | Durable Stop + cancellation | 052 | **IN PROGRESS** | код есть, но deadline (post-cut `d43720d`) НЕ в wheel `0.2.0`; полнота матрицы — R4/эпик 060 |
 | U5 | Plan integrity extension point | 053 | **IN PROGRESS** | hash+enforcement+PlanArtifact есть; **trace projection — R3/эпик 059** |
@@ -27,7 +27,7 @@
 | R | Эпик | Статус | Что сделано |
 |---|---|---|---|
 | R0 | 056a | **DONE** | контракт восстановлен до SHA `d4ed6c…`; статусы вынесены сюда |
-| R1 | 057 | pending | — |
+| R1 | 057 | **DONE** | `_ad_gate_decision`-маркер + provenance на envelope (allow/deny/ask) + terminal `runtime_decision`-проекция (gate≠static через `policy_id`/`trigger`) + redaction-safe `redacted_metadata` + stable identity + fail-closed; 7 тестов `test_provenance_lifecycle.py` |
 | R2 | 058 | **DONE** | 4 PG-стора + generic schema + facade + обязательный CI-job + **20 real-PG тестов** (validated на postgres:15): 17 store-unit (two-client race, replay, conflict, монотонный abort-CAS, restart, parity) + 3 resume-integration end-to-end (duplicate→conflict, два конкурентных resume→один side-effect, stale-checkpoint→conflict без consume) |
 | R3 | 059 | pending | — |
 | R4 | 060 | pending | — |

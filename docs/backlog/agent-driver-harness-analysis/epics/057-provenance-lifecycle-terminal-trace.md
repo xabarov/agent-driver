@@ -1,6 +1,10 @@
 # R1 — ToolGate provenance: full lifecycle (terminal + trace + adversarial matrix)
 
-Статус: **pending**. Доводит эпик 050 (U2 `IN PROGRESS`). Контекст: `../REMEDIATION_PLAN.md` §057.
+Статус: **DONE**. Закрыл эпик 050 (U2). Контекст: `../REMEDIATION_PLAN.md` §057.
+Реализация: reserved-маркер `RESERVED_GATE_DECISION_KEY` в `runtime/tool_gate.py`; штамп в
+`tools/executor/governed.py` (`_apply_tool_gate`); провод в DENY/ALLOW envelope
+(`blocks.py`/`specs.py` + allow-fold); terminal-проекция в `runtime/single_agent/tool_stage/__init__.py`
+(`_emit_tool_policy_runtime_decisions`). Тест `tests/runtime/test_provenance_lifecycle.py` (7).
 
 ## Что уже есть (не переделываем)
 
