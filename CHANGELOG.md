@@ -14,6 +14,16 @@ test` aborted collection under the legacy prepend mode with *import file mismatc
 contributor had to pass the flag by hand. Set it in `pyproject.toml` `addopts`; plain
 `pytest` now collects the whole suite cleanly.
 
+### Changed — refactor: decompose the subagents/executor god-module (behaviour-neutral)
+`subagents/executor.py` was 1090 lines. An AST call-graph scan (including async defs) showed
+the 24 synchronous child-run helpers form a clean leaf layer — they build a child
+`AgentRunInput` and turn a child `AgentRunOutput` into a `SubagentRun`, without calling the
+async execution spine or referencing the `SubagentExecutionResult` class. They were extracted
+into `subagents/child_helpers.py` together with the 7 child-run tuning constants and the
+`ChildRunner` type alias, and re-imported into `executor` (a test imports `_child_budget_summary`
+directly, so re-export matters). No sibling module imports `executor`, so the split is a clean
+DAG. Pure structural change; full sweep 2873 passed. `executor.py` is now 689 lines (−37%).
+
 ### Changed — refactor: decompose the durable_lifecycle god-module (behaviour-neutral)
 `harness/durable_lifecycle.py` was 1204 lines. An AST call-graph scan showed the seed
 fixtures are tightly coupled to the `DurableLifecycleRepository` class (they construct it),
