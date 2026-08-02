@@ -68,6 +68,23 @@ benchmark-fitting, обязательна классификация tool/prompt
 | Amortized per-turn micro-compaction | 047 (proposed) | пост-ходовое сворачивание старейшего хода в накопительное summary; НО ломает кэш-префикс каждый ход → default-off, A/B occupancy-vs-cache | hermes `186cad02f` (~14 коммитов) |
 | Fail-loud name collisions + provenance | 046 #3 (proposed) | коллизия имён помечает ОБА входа, не тихий precedence; provenance-заголовок | hermes `78598d091` |
 
+**Upstream Goal — PentestLens embedding-readiness (2026-08-02, эпики 048–055):** downstream-продукт
+встраивает движок; требования в `upstream-requirements.md`. Зонтик
+`epics/048-pentestlens-embedding-readiness-goal.md` + 7 под-эпиков (по 5 code-инспекциям базы `ed6a2a3`):
+
+| U | Под-эпик | Суть gap'а | Оценка |
+|---|---|---|---|
+| U1 | 049 embedding-facade | store/hook/stream-протоколы не на facade+не в embedding.md; `RunnerConfig` в internal; нет точного export-снапшота и runtime `__version__` | средне |
+| U2 | 050 gate-identity+provenance | `ToolGateContext` без `tool_call_id`/`attempt_id`; нет provenance-канала; `interrupt_id` выведен непоследовательно; валидация только `json.dumps` | крупно |
+| U3 | 051 atomic-approval | consume не атомарен (нет CAS/idempotency/expected-checkpoint; `save()` всегда новый id → upsert не контендит); durable approval-репо in-memory и не подключён; crash → переисполнение тула | **крупнейшее** |
+| U4 | 052 durable-stop | abort process-local, чек только на границах шагов; `observed` не выставляется; в handler нет cancel-token; terminal не различает cancelled/completed/failed/late | крупно |
+| U5 | 053 plan-integrity | `content_hash` не сравнивается → ревизия не детектируется; модель задаёт id/hash; `PlanArtifactStore` не подключён | средне |
+| U6 | 054 gateway-truthfulness | `_parked` process-local без durable-бэкенда; прямой путь durable → Option 2 (документировать non-durable) предпочтителен | мелко |
+| U7 | 055 version-release | нет runtime `__version__`; выбрать pre-1.0; детерминированная wheel+SHA-256; migration-notes | мелко |
+
+Порядок: U2→U3→U4 вместе (общий durable-store+identity), U5 цепляется, U1 финализируется последним,
+U6/U7 — рано и независимо.
+
 Watching: credential-pool generation-guard (openclaude, если добавим cooldown-pooling),
 isolation soft-fallback degradation-contract (openclaude, worktree-adjacent), live-steer
 running delegate (hermes, продуктовое), MCP shutdown-drain (hermes, низкая генеральность).
