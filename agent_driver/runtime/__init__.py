@@ -66,6 +66,7 @@ from agent_driver.runtime.storage.factory import (
     runtime_store_config_from_env,
 )
 from agent_driver.runtime.tool_gate import (
+    GateProvenance,
     ToolGate,
     ToolGateAllow,
     ToolGateAsk,
@@ -123,6 +124,7 @@ __all__ = [
     "summarize_execution_proof",
     "ToolExecutor",
     "ToolExecutionResult",
+    "GateProvenance",
     "ToolGate",
     "ToolGateAllow",
     "ToolGateAsk",

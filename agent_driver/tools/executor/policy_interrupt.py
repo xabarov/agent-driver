@@ -7,6 +7,7 @@ import json
 from agent_driver.contracts.enums import InterruptReason, ResumeAction
 from agent_driver.contracts.interrupts import InterruptRequest
 from agent_driver.contracts.tools import ToolResultEnvelope
+from agent_driver.runtime.tool_gate import extract_reserved_metadata
 from agent_driver.tools.executor.result import GovernedExecutionResult
 from agent_driver.tools.executor.specs import ToolApprovalContext
 from agent_driver.tools.executor.trace import build_tool_trace, trace_spec_denied
@@ -17,6 +18,11 @@ def build_tool_approval_interrupt(ctx: ToolApprovalContext) -> InterruptRequest:
     args_preview = json.dumps(ctx.call.args, ensure_ascii=True, sort_keys=True)
     if len(args_preview) > 280:
         args_preview = args_preview[:280].rstrip() + "..."
+    # Forward runtime-authored provenance (reserved ``_ad_`` keys, e.g. the gate
+    # decision provenance) into the interrupt the host resumes against. Reserved
+    # keys are merged LAST so neither host run-metadata nor model/tool output can
+    # overwrite them.
+    reserved = extract_reserved_metadata(ctx.policy.metadata)
     return InterruptRequest(
         interrupt_id=f"int_{ctx.run_input.run_id or 'runtime'}_{ctx.index}",
         run_id=ctx.run_input.run_id or "run_pending",
@@ -51,6 +57,7 @@ def build_tool_approval_interrupt(ctx: ToolApprovalContext) -> InterruptRequest:
         metadata={
             "policy_reason": ctx.policy.reason,
             **ctx.run_metadata,
+            **reserved,
         },
     )
 
@@ -61,6 +68,7 @@ def record_interrupt_and_trace(
 ) -> None:
     """Append interrupt envelope + trace; sets result.interrupt via append()."""
     interrupt = build_tool_approval_interrupt(ctx)
+    reserved = extract_reserved_metadata(ctx.policy.metadata)
     result.append(
         envelope=ToolResultEnvelope(
             call=ctx.call,
@@ -69,6 +77,7 @@ def record_interrupt_and_trace(
             metadata={
                 "policy_reason": ctx.policy.reason,
                 **ctx.run_metadata,
+                **reserved,
             },
         ),
         trace=build_tool_trace(

@@ -75,7 +75,7 @@ benchmark-fitting, обязательна классификация tool/prompt
 | U | Под-эпик | Суть gap'а | Оценка |
 |---|---|---|---|
 | U1 | 049 embedding-facade | store/hook/stream-протоколы не на facade+не в embedding.md; `RunnerConfig` в internal; нет точного export-снапшота и runtime `__version__` | средне |
-| U2 | 050 gate-identity+provenance | `ToolGateContext` без `tool_call_id`/`attempt_id`; нет provenance-канала; `interrupt_id` выведен непоследовательно; валидация только `json.dumps` | крупно |
+| U2 | 050 gate-identity+provenance | **A/B/D DONE** (identity в контекст + `GateProvenance` под reserved `_ad_` + `ensure_bounded_json_metadata` fail-closed + ask-path→interrupt; свип 2889); осталось C/E (сквозные проекции, унификация `interrupt_id`, retry/timeout/abort-матрица) | крупно |
 | U3 | 051 atomic-approval | consume не атомарен (нет CAS/idempotency/expected-checkpoint; `save()` всегда новый id → upsert не контендит); durable approval-репо in-memory и не подключён; crash → переисполнение тула | **крупнейшее** |
 | U4 | 052 durable-stop | abort process-local, чек только на границах шагов; `observed` не выставляется; в handler нет cancel-token; terminal не различает cancelled/completed/failed/late | крупно |
 | U5 | 053 plan-integrity | `content_hash` не сравнивается → ревизия не детектируется; модель задаёт id/hash; `PlanArtifactStore` не подключён | средне |

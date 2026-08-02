@@ -30,6 +30,7 @@ from agent_driver.runtime.tool_gate import (
     ToolGateContext,
     ToolGateDeny,
     ToolGateResult,
+    build_gate_provenance_metadata,
 )
 from agent_driver.tools.executor.allowed import execute_allowed_path
 from agent_driver.tools.executor.blocks import (
@@ -371,6 +372,7 @@ class GovernedToolExecutor:
         manifest,
         run_input: AgentRunInput,
         current_tool_calls: int,
+        attempt_id: str | None = None,
     ):
         """A0.2 — invoke the caller-supplied tool gate; translate to
         a policy decision flip.
@@ -379,6 +381,12 @@ class GovernedToolExecutor:
         exception is logged and treated as DENY with the exception
         text as reason — fail-closed by design (better to block one
         call than to silently bypass an operator-level risk check).
+
+        When a gate result carries :class:`GateProvenance`, the validated
+        provenance is folded into the outcome metadata under the reserved
+        :data:`RESERVED_GATE_PROVENANCE_KEY` namespace. Non-JSON / oversized /
+        too-deep / reserved-key host provenance also fails closed (DENY) so a
+        malformed host payload cannot silently pass unaudited.
 
         ``policy`` is ``ToolPolicyOutcome``; left untyped above so the
         signature stays compatible with the implicit late-bound import.
@@ -392,6 +400,8 @@ class GovernedToolExecutor:
             risk=manifest.risk.value,
             side_effect=manifest.side_effect.value,
             current_tool_calls=current_tool_calls,
+            tool_call_id=call.tool_call_id,
+            attempt_id=attempt_id,
         )
         try:
             result: ToolGateResult = await gate(gate_ctx)
@@ -408,26 +418,61 @@ class GovernedToolExecutor:
                     "reason": f"tool_gate raised: {exc}",
                 }
             )
+        # Validate + pack any host provenance BEFORE the decision translation so
+        # a malformed payload fails closed regardless of allow/deny/ask.
+        provenance = getattr(result, "provenance", None)
+        provenance_meta: dict[str, Any] = {}
+        if provenance is not None:
+            try:
+                provenance_meta = build_gate_provenance_metadata(provenance)
+            except ValueError as exc:
+                logger.warning(
+                    "tool_gate returned invalid provenance for %r; treating as DENY "
+                    "(fail-closed): %s",
+                    call.tool_name,
+                    exc,
+                )
+                return policy.model_copy(
+                    update={
+                        "decision": ToolPolicyDecision.DENY,
+                        "reason": f"tool_gate provenance rejected: {exc}",
+                    }
+                )
+
+        def _with_provenance(update: dict[str, Any]) -> dict[str, Any]:
+            if provenance_meta:
+                update = {
+                    **update,
+                    "metadata": {**policy.metadata, **provenance_meta},
+                }
+            return update
+
         if isinstance(result, ToolGateAllow):
-            return policy
+            if not provenance_meta:
+                return policy
+            return policy.model_copy(update=_with_provenance({}))
         if isinstance(result, ToolGateDeny):
             return policy.model_copy(
-                update={
-                    "decision": ToolPolicyDecision.DENY,
-                    "reason": f"tool_gate denied: {result.reason}",
-                }
+                update=_with_provenance(
+                    {
+                        "decision": ToolPolicyDecision.DENY,
+                        "reason": f"tool_gate denied: {result.reason}",
+                    }
+                )
             )
         if isinstance(result, ToolGateAsk):
             return policy.model_copy(
-                update={
-                    "decision": ToolPolicyDecision.INTERRUPT,
-                    "reason": result.message,
-                    "interrupt_reason": "approval_required",
-                    # Carry the host's optional heading override through to the
-                    # interrupt (ToolGateAsk.title is documented to override the
-                    # default "Approval required for '<tool>'" heading).
-                    "interrupt_title": result.title,
-                }
+                update=_with_provenance(
+                    {
+                        "decision": ToolPolicyDecision.INTERRUPT,
+                        "reason": result.message,
+                        "interrupt_reason": "approval_required",
+                        # Carry the host's optional heading override through to the
+                        # interrupt (ToolGateAsk.title is documented to override the
+                        # default "Approval required for '<tool>'" heading).
+                        "interrupt_title": result.title,
+                    }
+                )
             )
         logger.warning(
             "tool_gate returned unsupported result type %r for %r; treating as DENY",
@@ -847,6 +892,7 @@ class GovernedToolExecutor:
                 manifest=manifest,
                 run_input=run_input,
                 current_tool_calls=spec.current_tool_calls + spec.index - 1,
+                attempt_id=f"attempt_{index}",
             )
         if policy.decision == ToolPolicyDecision.DENY:
             self._append_block(

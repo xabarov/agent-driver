@@ -7,6 +7,24 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — tool-gate call identity + decision provenance (epic 050 / U2, phases A/B/D)
+The dynamic `ToolGate` seam now carries **stable call identity** and an optional **host
+provenance** channel, for embedders (e.g. PentestLens) that bind an external policy decision to a
+specific planned call. `ToolGateContext` gains `tool_call_id` and `attempt_id`; `ToolGateAllow`,
+`ToolGateDeny`, and `ToolGateAsk` gain an optional `provenance: GateProvenance` (`decision_id`,
+`policy_snapshot_id`, bounded JSON-safe `metadata`). Validated provenance is folded onto the tool
+policy outcome under a reserved `_ad_gate_provenance` key (namespace `agent_driver.contracts.
+validation.RESERVED_METADATA_PREFIX = "_ad_"`), and — on the ask path — forwarded into the approval
+interrupt (and its envelope) the host resumes against, merged last so neither host run-metadata nor
+model/tool output can overwrite it. New `ensure_bounded_json_metadata` fails **closed** (translates
+the gate result to DENY) on non-JSON, oversized, too-deep, too-many-key, or reserved-namespace host
+metadata, so a malformed or forged payload cannot pass unaudited. `GateProvenance` is exported from
+the `agent_driver.runtime` facade. Additive and behaviour-neutral for gates that don't use the new
+fields; full sweep 2889 passed (+16). Remaining U2 work (epic 050 phases C/E): propagate provenance
+through event log / trace / terminal projections, unify the two `interrupt_id`/`attempt_id`
+derivations (`policy_interrupt` index-based vs `allowed` call-id-based), and the full
+retry/timeout/abort adversarial matrix.
+
 ### Changed — refactor: decompose the provider_catalog god-module (behaviour-neutral)
 `llm/provider_catalog.py` was 1193 lines and was earlier skipped as "mutually recursive". An
 AST call-graph scan (Tarjan SCC + topological layering) disproved that: the graph is a DAG.

@@ -1,7 +1,24 @@
 # U2 — ToolGate call identity + provenance
 
-Дата создания: 2026-08-02. Статус: **PROPOSED**. Родитель:
-[[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — фазы A/B/D DONE 2026-08-02; C/E открыты**.
+Родитель: [[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+
+> **Реализация A/B/D** (свип 2889, +16): **A** `ToolGateContext` получил `tool_call_id`+`attempt_id`
+> (заполняются в `governed._apply_tool_gate` из `call.tool_call_id` и `attempt_{index}`). **B**
+> `GateProvenance(decision_id, policy_snapshot_id, metadata)` + optional `provenance` на
+> Allow/Deny/Ask; валидированная provenance сворачивается в `ToolPolicyOutcome.metadata` под
+> reserved-ключом `_ad_gate_provenance` (namespace `contracts.validation.RESERVED_METADATA_PREFIX
+> = "_ad_"`); на ask-пути пробрасывается в approval-interrupt + его envelope (merge последним →
+> host/model не перезапишут). **D** `ensure_bounded_json_metadata` (depth/bytes/keys/reserved-key)
+> fail-closed → DENY на non-JSON/oversized/too-deep/reserved-namespace host-metadata (изоляция
+> authorship). `GateProvenance` экспортирован из `agent_driver.runtime`. Тесты:
+> `tests/runtime/test_tool_gate_provenance.py`, `tests/contracts/test_bounded_metadata.py`.
+>
+> **Осталось C/E:** сквозное сохранение provenance через event-log/trace/terminal-проекции;
+> harness-minted стабильный call-id с write-back на `ToolCall` (None-случай); унификация двух
+> `interrupt_id`/`attempt_id`-дериви (`policy_interrupt` index-based vs `allowed` call-id-based);
+> resume-корреляция по стабильному call-id; полная retry/timeout/abort-adversarial-матрица; различие
+> gate-DENY vs static-DENY в `RuntimeDecision`.
 
 Расширить доменно-нейтральный gate-контракт так, чтобы каждая оценка имела стабильную корреляцию
 (`tool_call_id`, `attempt_id`, run/session id, optional host-metadata), а каждое `allow`/`deny`/
