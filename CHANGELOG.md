@@ -79,6 +79,24 @@ polled there), a bounded cancellation deadline on the token, terminal-reason hon
 (cancelled vs completed-before vs cancellation-failed vs late-result-ignored), a fencing token
 against late handler results, and the uncooperative-handler / restart adversarial matrix.
 
+### Added — atomic, durable approval-consumption ledger (epic 051 / U3, phases B/C/D)
+The resume path's duplicate-approval guard was a TOCTOU read of the latest checkpoint's
+`consumed_approvals`: it only recognised a duplicate *after* the first approval's post-consume
+checkpoint committed, so two clients approving the same interrupt in the pre-commit window could both
+drive the run and execute the tool twice. New `agent_driver.runtime.control.ApprovalConsumptionStore`
+(in-memory + SQLite impls, re-exported from the `agent_driver.runtime` facade) closes that with a
+**compare-and-swap** ledger: the first `try_consume` for an interrupt wins via an atomic
+`INSERT OR IGNORE` (SQLite) / lock-guarded insert (in-memory), any concurrent or later duplicate loses
+and is refused with `ResumeConflictError` *before* the tool runs — the exactly-once gate, which also
+survives a crash between consume and result because the row is written before execution. Wired as an
+optional `RunnerConfig(approval_store=...)` dep consulted in `_handle_resume_with_pending`; when unset
+(default) the resume path keeps its prior TOCTOU + expected-checkpoint behaviour (fully
+backward-compatible). Tests prove one tool side-effect under 16-thread SQLite contention, two
+concurrent async resumes, restart (new store instance sees the consumption), conflicting decisions,
+and idempotency-key duplicates. Full sweep 2919 passed (+12). Remaining U3: prior-result full replay
+(the ledger records a result ref; returning the prior `AgentRunOutput` verbatim is not yet wired) and
+a monotonic checkpoint revision to replace the static `state_version="v1"`.
+
 ### Added — expected-checkpoint + idempotent approval consumption (epic 051 / U3, contract slice)
 `ResumeCommand` gains two optional, backward-compatible fields for durable approval:
 `idempotency_key` (a host-supplied key identifying one logical approval attempt) and

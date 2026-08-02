@@ -27,6 +27,7 @@ from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.memory.provider import MemoryProvider
 from agent_driver.runtime.abort import RunAbortHandle
+from agent_driver.runtime.control.approval_store import ApprovalConsumptionStore
 from agent_driver.runtime.control.protocols import CommandQueueStore
 from agent_driver.runtime.lifecycle_hooks import RunLifecycleHook
 from agent_driver.runtime.metadata_state import (
@@ -107,6 +108,7 @@ class RunnerConfig:
     code_executor: CodeActionExecutor | None
     tool_registry: ToolRegistry | None
     command_queue_store: CommandQueueStore | None
+    approval_store: ApprovalConsumptionStore | None
     memory_provider: MemoryProvider | None
     memory_consolidation_every_n_turns: int
     capabilities: CapabilitySettings
@@ -207,6 +209,7 @@ class RunnerConfig:
         self.code_executor = kwargs.pop("code_executor", None)
         self.tool_registry = kwargs.pop("tool_registry", None)
         self.command_queue_store = kwargs.pop("command_queue_store", None)
+        self.approval_store = kwargs.pop("approval_store", None)
         self.memory_provider = kwargs.pop("memory_provider", None)
         # Epic 031: cadence for background memory consolidation (0 = off). The
         # host supplies the durable turn ordinal via app_metadata["memory"]
@@ -521,6 +524,10 @@ class RunnerDeps:
     code_executor: CodeActionExecutor
     tool_registry: ToolRegistry
     command_queue_store: CommandQueueStore | None = None
+    # U3 B/C — optional durable CAS ledger that makes approval consumption
+    # atomic + exactly-once across concurrent clients / restarts. When None
+    # (default), the resume path keeps its TOCTOU + expected-checkpoint guard.
+    approval_store: ApprovalConsumptionStore | None = None
     python_backend: Any | None = None
     lifecycle_hooks: tuple[RunLifecycleHook, ...] = ()
     # Optional providers tried (in order) by the forced-final recovery ladder when the

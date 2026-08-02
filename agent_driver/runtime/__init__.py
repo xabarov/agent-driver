@@ -58,8 +58,11 @@ from agent_driver.runtime.single_agent.types import RunnerConfig, RuntimeStepRes
 from agent_driver.runtime.sqlite_store import SqliteRuntimeStore
 from agent_driver.runtime.state import RuntimeState
 from agent_driver.runtime.control import (
+    ApprovalConsumptionStore,
     CommandQueueStore,
+    InMemoryApprovalConsumptionStore,
     InMemoryCommandQueueStore,
+    SqliteApprovalConsumptionStore,
     SqliteCommandQueueStore,
 )
 from agent_driver.runtime.lifecycle_hooks import (
@@ -130,6 +133,9 @@ __all__ = [
     "CommandQueueStore",
     "InMemoryCommandQueueStore",
     "SqliteCommandQueueStore",
+    "ApprovalConsumptionStore",
+    "InMemoryApprovalConsumptionStore",
+    "SqliteApprovalConsumptionStore",
     "RunLifecycleHook",
     "BaseRunLifecycleHook",
     "project_runtime_events",

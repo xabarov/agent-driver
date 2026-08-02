@@ -118,6 +118,7 @@ class SingleAgentRunner(
                 python_backend=python_backend,
             ),
             command_queue_store=self._config.command_queue_store,
+            approval_store=getattr(self._config, "approval_store", None),
             python_backend=python_backend,
             lifecycle_hooks=self._build_lifecycle_hooks(),
             fallback_providers=tuple(

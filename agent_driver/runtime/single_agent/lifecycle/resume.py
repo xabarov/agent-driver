@@ -14,6 +14,10 @@ from agent_driver.contracts.enums import (
 )
 from agent_driver.context.planning.artifacts import plan_content_hash
 from agent_driver.contracts.interrupts import ResumeCommand
+from agent_driver.runtime.control.approval_store import (
+    ApprovalConsumeRequest,
+    ConsumeStatus,
+)
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.errors import (
@@ -304,6 +308,27 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             raise RuntimeExecutionError(
                 f"resume action '{resume.action.value}' is not allowed"
             )
+        # U3 B/C — when a durable approval store is configured, consuming the
+        # approval is an atomic compare-and-swap: exactly one concurrent client
+        # wins and may drive the tool; a duplicate/conflict is refused BEFORE any
+        # tool executes, closing the pre-commit race the checkpoint-based guard
+        # below cannot. The row is written now (before execution), so a crash
+        # between consume and result cannot let a retry run the tool twice.
+        approval_store = getattr(self._deps, "approval_store", None)
+        if approval_store is not None:
+            outcome = approval_store.try_consume(
+                ApprovalConsumeRequest(
+                    run_id=context.run_id,
+                    interrupt_id=pending.interrupt.interrupt_id,
+                    decision=resume.action.value,
+                    idempotency_key=resume.idempotency_key,
+                )
+            )
+            if outcome.status is not ConsumeStatus.CONSUMED:
+                raise ResumeConflictError(
+                    f"approval for interrupt '{pending.interrupt.interrupt_id}' "
+                    f"already consumed ({outcome.status.value})"
+                )
         # Record the consume so a later duplicate resume (idempotency-key or
         # same interrupt id) is recognised as already-consumed rather than
         # re-driving the run. Persisted with the next checkpoint via context

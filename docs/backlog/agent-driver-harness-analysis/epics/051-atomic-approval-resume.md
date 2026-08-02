@@ -1,8 +1,23 @@
 # U3 — Atomic approval and resume
 
-Дата создания: 2026-08-02. Статус: **IN PROGRESS — контракт-срез (A-часть) DONE 2026-08-02;
-B/C/D открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]] (крупнейшая дыра Goal'а).
-Происхождение: upstream Goal (host-adoption).
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — контракт-срез (A) + B/C/D-ядро DONE 2026-08-02;
+prior-result-replay + монотонный revision открыты**. Родитель:
+[[048-pentestlens-embedding-readiness-goal]] (крупнейшая дыра Goal'а). Происхождение: upstream Goal.
+
+> **Реализация B/C/D-ядра** (свип 2919, +12): `agent_driver.runtime.control.ApprovalConsumptionStore`
+> (in-memory + SQLite, ре-экспорт из facade `agent_driver.runtime`) — durable **CAS-ledger**: первый
+> `try_consume` interrupt'а выигрывает через атомарный `INSERT OR IGNORE` (SQLite) / lock-insert
+> (in-memory); дубль/конфликт проигрывает и отклоняется `ResumeConflictError` **до** второго запуска
+> тула = exactly-once, переживает crash-между-consume-и-result (строка пишется ДО исполнения).
+> Встроен опц. `RunnerConfig(approval_store=...)`, консультируется в `_handle_resume_with_pending`;
+> без стора (default) — прежнее TOCTOU+expected-checkpoint (обратно-совместимо). Тесты
+> (`test_approval_consumption_store.py`, `test_resume_atomic_store_integration.py`) доказывают **один**
+> side-effect тула под 16-поточной SQLite-гонкой, двумя concurrent async-resume, restart
+> (новый инстанс видит consumption), конфликт-решениями, idempotency-key-дублями.
+>
+> **Осталось:** prior-result **full replay** (ledger хранит result_ref; вернуть прежний
+> `AgentRunOutput` verbatim пока не проведено); монотонный checkpoint-revision вместо статичного
+> `state_version="v1"`.
 
 > **Реализация контракт-среза** (свип 2893, +4): `ResumeCommand` получил `idempotency_key` +
 > `expected_checkpoint_id` (оба optional → обратно-совместимо). Новый `ResumeConflictError`
