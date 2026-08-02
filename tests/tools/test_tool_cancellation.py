@@ -69,6 +69,33 @@ async def _execute(executor, planned, *, abort_handle=None):
 
 
 @pytest.mark.asyncio
+async def test_cancellation_token_carries_bounded_deadline() -> None:
+    registry = ToolRegistry()
+    seen: list[ToolCancellation | None] = []
+
+    async def _handler(args: dict[str, Any]) -> dict[str, Any]:
+        seen.append(current_tool_cancellation())
+        return {"ok": True}
+
+    registry.register(_read_manifest(), _handler)
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="hi",
+        run_id="run_deadline",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        deadline_seconds=30.0,
+    )
+    provider = FakeProvider(response_text="ok")
+    call = ToolCall(tool_name="lookup", tool_call_id="tc1", args={})
+    response = await provider.complete(llm_request_with_planned_calls(planned=[call]))
+    await executor.execute(run_input, response, abort_handle=RunAbortHandle())
+    assert seen and seen[0] is not None
+    assert seen[0].deadline_seconds == 30.0
+
+
+@pytest.mark.asyncio
 async def test_handler_sees_cancellation_token_with_identity() -> None:
     registry = ToolRegistry()
     seen: list[ToolCancellation | None] = []

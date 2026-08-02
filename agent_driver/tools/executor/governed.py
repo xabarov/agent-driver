@@ -972,6 +972,9 @@ class GovernedToolExecutor:
                 input_guard_decision=input_guard.decision,
                 run_metadata=run_metadata,
                 cancelled_check=spec.cancelled_check,
+                cancellation_deadline=getattr(
+                    spec.run_input, "deadline_seconds", None
+                ),
                 # Phase 12 H18 — pass the executor-scoped artifact store
                 # so the allow-path can spill oversized outputs when
                 # the manifest opts in via ``max_result_size_chars``.

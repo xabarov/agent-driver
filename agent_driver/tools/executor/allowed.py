@@ -259,7 +259,7 @@ async def execute_allowed_path(
                     if raw_attempt is not None
                     else f"attempt_{spec.index}"
                 ),
-                deadline_seconds=None,
+                deadline_seconds=spec.cancellation_deadline,
                 _check=spec.cancelled_check,
             )
 

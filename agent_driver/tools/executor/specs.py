@@ -86,6 +86,9 @@ class AllowedSpec:
     # U4 — cooperative-cancellation predicate for the running handler (see
     # ExecSpec.cancelled_check). None when no abort handle was plumbed in.
     cancelled_check: Callable[[], bool] | None = None
+    # U4 — bounded cancellation deadline surfaced on the handler's
+    # ToolCancellation (the run's deadline; None = unbounded).
+    cancellation_deadline: float | None = None
     # Phase 12 H18 — optional artifact store for spilling oversized
     # tool handler outputs. When ``None`` (default), no spill happens;
     # legacy ``output_char_budget`` truncation runs as before.

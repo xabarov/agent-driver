@@ -7,6 +7,14 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — bounded cancellation deadline on the tool cancellation token (epic 052 / U4)
+`ToolCancellation.deadline_seconds` — previously always `None` — is now populated from the run's
+`deadline_seconds`, so a cooperative handler consulting `current_tool_cancellation()` sees the outer
+time bound within which it should wrap up its own cancellation (socket/browser/query). Sourced at the
+handler-invocation site from `AgentRunInput.deadline_seconds` (no new config, no run-metadata
+pollution); `None` when the run set no deadline. Fills the last U4 cancellation-hook DoD field. Full
+sweep 2969 passed (+1).
+
 ### Added — single `agent_driver.embedding` aggregate namespace (epic 049 / U1, phase E)
 One import root re-exporting the embedding-essential names from the per-concern facades
 (`sdk`/`runtime`/`llm`/`contracts`/`tools`) — so a host can `from agent_driver.embedding import
