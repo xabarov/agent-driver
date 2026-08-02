@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from agent_driver.contracts import AgentRunOutput, RunStatus, TerminalReason
 from agent_driver.contracts.events import RuntimeEvent
-from agent_driver.subagents.specs import SubagentTaskSpec
 from agent_driver.runtime.single_agent.lifecycle.config_sections import SubagentSettings
 from agent_driver.runtime.single_agent.tool_stage.subagent_execution import (
     _group_spec_from_planned,
     _stamp_child_budget_defaults,
 )
 from agent_driver.subagents.executor import _child_budget_summary
+from agent_driver.subagents.specs import SubagentTaskSpec
 
 
 def _planned(task_metadata: dict | None = None) -> dict:

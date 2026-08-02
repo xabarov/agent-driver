@@ -2,12 +2,48 @@ name: tests
 
 on:
   push:
-    branches: [main, "remediation-*"]
+    branches: [main, "remediation-*", "release-*"]
   pull_request:
 
 jobs:
-  # Fast default sweep — excludes live/slow/postgres markers (see pyproject addopts).
-  default-suite:
+  # Fast default sweep across the supported Python matrix (>=3.11).
+  # Excludes live/slow/postgres markers (see pyproject addopts).
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Run default suite
+        run: python -m pytest
+
+  # Lint (isort/black/ruff/pylint) across the supported Python matrix.
+  lint:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: make lint
+        run: make lint BLACK="python -m black" ISORT="python -m isort" PYLINT="python -m pylint" RUFF="python -m ruff"
+
+  # Type-check the supported embedding surface + durable control plane
+  # (scope pinned in pyrightconfig.json; analysed against pythonVersion 3.11).
+  type:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,8 +52,21 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: python -m pip install -e ".[dev]"
-      - name: Run default suite
-        run: python -m pytest
+      - name: make type
+        run: make type PYRIGHT="python -m pyright"
+
+  # Docs-consistency gate (facade __all__ <-> docs/embedding.md, version/docs agree).
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: make docs-check
+        run: make docs-check VENV_PYTEST="python -m pytest"
 
   # Mandatory real-Postgres control-plane matrix (R2 / epic 058). This job must
   # FAIL — never skip green — if the DSN, the psycopg dependency, or the tests

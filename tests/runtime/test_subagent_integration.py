@@ -36,10 +36,10 @@ from agent_driver.runtime import (
     wrap_governed_executor,
 )
 from agent_driver.runtime.control import InMemoryCommandQueueStore
+from agent_driver.runtime.single_agent.subagent_stage import _apply_skill_preloads
 from agent_driver.runtime.single_agent.tool_stage.subagents import (
     apply_agent_tool_spawn_requests,
 )
-from agent_driver.runtime.single_agent.subagent_stage import _apply_skill_preloads
 from agent_driver.runtime.single_agent.types import RunContext
 from agent_driver.subagents import InMemorySubagentMailboxStore, InMemorySubagentStore
 from agent_driver.subagents.specs import SubagentGroupSpec, SubagentTaskSpec

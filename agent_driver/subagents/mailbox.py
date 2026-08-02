@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Protocol
 
 from agent_driver.contracts.control import utc_now_iso
-from agent_driver.persistence import open_sqlite_connection
 from agent_driver.contracts.subagent_mailbox import (
     SubagentMailboxItem,
     SubagentMailboxStatus,
 )
+from agent_driver.persistence import open_sqlite_connection
 
 
 class SubagentMailboxStore(Protocol):

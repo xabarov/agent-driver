@@ -1,5 +1,12 @@
 # Status ledger — U1–U7 / R0–R6 (авторитетный источник статуса)
 
+> **0.3.1 (2026-08-03):** downstream-верификатор нашёл 2 DoD-пробела в 0.3.0 — `make lint` падал на isort
+> (5 файлов) и не было type/docs/Python-matrix пруфов. Закрыто в **0.3.1**: `make lint` зелёный, добавлены
+> `make type` (pyrightconfig, supported surface, 0 errors) + `make docs-check` + CI-matrix 3.11/3.12 +
+> lint/type/docs jobs. Wheel `agent_driver-0.3.1-py3-none-any.whl` SHA-256 `4a12cc37…5f81` (reproducible).
+> Handoff `handoff-0.3.1-pentestlens-remediation.md`. 0.3.0 identity не переиспользуется.
+
+
 Этот файл — **единственный** авторитетный источник статуса по PentestLens embedding Goal.
 `upstream-requirements.md` — **неизменяемый approved input** (SHA
 `d4ed6c371eda50e6c0b7fa07df55974cfac7411e32a95708a3f203cbcd526316`); статус/evidence НЕ пишутся в него

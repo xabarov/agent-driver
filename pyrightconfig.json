@@ -1,0 +1,19 @@
+{
+  "include": [
+    "agent_driver/embedding.py",
+    "agent_driver/runtime/control/__init__.py",
+    "agent_driver/runtime/control/protocols.py",
+    "agent_driver/runtime/control/in_memory.py",
+    "agent_driver/runtime/control/sqlite.py",
+    "agent_driver/runtime/control/approval_store.py",
+    "agent_driver/runtime/control/abort_store.py",
+    "agent_driver/runtime/control/postgres.py",
+    "agent_driver/runtime/tool_gate.py",
+    "agent_driver/context/planning/artifacts.py"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.11"
+}

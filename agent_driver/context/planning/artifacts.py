@@ -40,12 +40,15 @@ class PlanArtifactStore(Protocol):
 
     def put(self, artifact: PlanArtifact) -> PlanArtifact:
         """Create or replace a plan artifact."""
+        ...
 
     def get(self, plan_id: str) -> PlanArtifact | None:
         """Load one plan artifact by id."""
+        ...
 
     def list_for_run(self, run_id: str) -> list[PlanArtifact]:
         """List artifacts for a run in insertion order."""
+        ...
 
 
 class InMemoryPlanArtifactStore(PlanArtifactStore):

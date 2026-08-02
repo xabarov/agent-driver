@@ -12,9 +12,11 @@ class CommandQueueStore(Protocol):
 
     def enqueue(self, request: ControlRequest) -> CommandQueueItem:
         """Persist a new queued command or return a deduped pending one."""
+        ...
 
     def get(self, queue_id: str) -> CommandQueueItem | None:
         """Return one command by id."""
+        ...
 
     def list_pending(
         self,
@@ -24,6 +26,7 @@ class CommandQueueStore(Protocol):
         agent_id: str | None = None,
     ) -> list[CommandQueueItem]:
         """Return queued commands ordered by priority and insertion order."""
+        ...
 
     def dequeue_next(
         self,

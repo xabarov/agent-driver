@@ -7,6 +7,28 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-03
+
+Follow-up to the `0.3.0` remediation, answering the downstream verifier's two findings against the DoD:
+`make lint` failed on isort import-ordering in five subagents files, and there was no type/docs check or
+supported-Python-matrix proof. This release makes `make lint` green, adds a real **type gate**
+(`make type` / `pyrightconfig.json`, scoped to the supported embedding surface + durable control plane)
+and a **docs-consistency gate** (`make docs-check`), and wires lint + type + docs + a Python **3.11/3.12
+matrix** into CI (`.github/workflows/tests.yml`). Because this changes the source tree (and therefore the
+wheel), `0.3.1` is a fresh release identity — `0.3.0`'s wheel/SHA is not reused. No public API change vs
+`0.3.0`. The OpenRouter credit-402 fix (below), previously carried on a separate branch and excluded from
+`0.3.0`, is merged into `main` and shipped transparently here.
+
+### Fixed — isort import-ordering + type/docs/Python-matrix DoD gates
+`isort` reordered imports in `agent_driver/subagents/{mailbox,executor,child_helpers}.py` and two subagent
+test files so `make lint` (ruff + isort/black + pylint ≥ 8.0) is green. Added `...` bodies to the
+`CommandQueueStore` and `PlanArtifactStore` Protocol method stubs so the type gate is clean. New
+`pyrightconfig.json` type-checks the supported surface (embedding facade, durable control stores, tool-gate
+contracts, plan artifacts) at 0 errors — the repo is not yet under a repo-wide type gate (pre-existing
+findings in internal modules are tracked separately). `make type` and `make docs-check` targets added;
+`ruff` + `pyright` added to the `dev` extra. CI now runs the default suite and `make lint` across Python
+3.11 + 3.12, plus dedicated `type` and `docs` jobs, alongside the mandatory `postgres-suite`.
+
 ### Fixed — credit-402 recovery clamps to the provider-stated affordable budget
 The OpenRouter credit `402` states the exact output budget a near-empty balance can support
 (`"...but can only afford 298"`). The `reduced_after_provider_402` retry ladder previously halved
