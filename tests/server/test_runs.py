@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any
 
 import pytest
@@ -35,16 +34,20 @@ def _body(content: str) -> dict[str, Any]:
     return {"model": "agent-driver", "messages": [{"role": "user", "content": content}]}
 
 
-def _poll(
-    client: TestClient, run_id: str, *, until: set[str], tries: int = 100
-) -> dict:
-    for _ in range(tries):
-        resp = client.get(f"/v1/runs/{run_id}")
-        data = resp.json()
-        if data["status"] in until:
-            return data
-        time.sleep(0.01)
-    raise AssertionError(f"run {run_id} did not reach {until}: last={data}")
+def _run_to_completion(client: TestClient, run_id: str) -> dict:
+    """Drive a run to its terminal state via the event stream, then return it.
+
+    The Starlette TestClient advances the event loop only *during* a request, so
+    a poll-with-sleep loop starves the fire-and-forget background run task on some
+    Python versions (3.11) — the run stays ``running`` forever. Consuming the SSE
+    events stream keeps the loop live until the run terminates (the endpoint ends
+    the stream on a terminal event), which is deterministic across versions.
+    """
+    with client.stream("GET", f"/v1/runs/{run_id}/events") as resp:
+        assert resp.status_code == 200
+        for _ in resp.iter_text():
+            pass
+    return client.get(f"/v1/runs/{run_id}").json()
 
 
 def test_run_completes() -> None:
@@ -58,7 +61,8 @@ def test_run_completes() -> None:
     run_id = start.json()["id"]
     assert start.json()["status"] in ("queued", "running")
 
-    done = _poll(client, run_id, until={"completed"})
+    done = _run_to_completion(client, run_id)
+    assert done["status"] == "completed"
     assert done["answer"] == "async answer"
     assert done["usage"]["total_tokens"] >= 1
     assert done["lifecycle"]["state"] == "completed"
@@ -216,7 +220,7 @@ def test_approval_conflict_when_not_paused() -> None:
     )
     client = TestClient(create_app(agent))
     run_id = client.post("/v1/runs", json=_body("hi")).json()["id"]
-    _poll(client, run_id, until={"completed"})
+    _run_to_completion(client, run_id)
     # Not awaiting approval -> 409.
     resp = client.post(f"/v1/runs/{run_id}/approval", json={"action": "approve"})
     assert resp.status_code == 409

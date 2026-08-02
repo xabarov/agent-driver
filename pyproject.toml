@@ -91,6 +91,17 @@ target-version = ["py311"]
 profile = "black"
 line_length = 88
 
+[tool.ruff]
+line-length = 88
+
+# Pin the rule set explicitly so `make lint` is deterministic across ruff
+# versions: newer ruff releases enable additional lint families (e.g. BLE, EXE)
+# by default, which would fail CI on pre-existing code the project never chose to
+# enforce. This is ruff's documented default select (pyflakes + a curated pycodestyle
+# subset) — matching what the project has always linted against.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
 [tool.pylint.main]
 py-version = "3.11"
 jobs = 0
