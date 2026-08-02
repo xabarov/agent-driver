@@ -15,7 +15,7 @@
 | U1 | Supported embedding facade | 049 | **DONE** | но `agent_driver.embedding` (post-cut `7bf1c6d`) НЕ в wheel `0.2.0` → войдёт в 0.3.0 (R5) |
 | U2 | ToolGate identity + provenance | 050 | **DONE** | interrupt/envelope + terminal/trace-проекция + adversarial-matrix закрыты R1/эпиком 057 |
 | U3 | Atomic approval + resume | 051 | **IN PROGRESS** | SQLite/in-mem CAS есть; **Postgres durable — R2/эпик 058** |
-| U4 | Durable Stop + cancellation | 052 | **IN PROGRESS** | код есть, но deadline (post-cut `d43720d`) НЕ в wheel `0.2.0`; полнота матрицы — R4/эпик 060 |
+| U4 | Durable Stop + cancellation | 052 | **DONE** | код + deadline в release-SHA (0.3.0); полная матрица закрыта R4/эпиком 060 |
 | U5 | Plan integrity extension point | 053 | **DONE** | hash+enforcement+PlanArtifact + trace projection закрыты R3/эпиком 059 |
 | U6 | Gateway truthfulness | 054 | **DONE** | process-local/non-durable + fail-fast (Option 2) — принято аудитом как допустимое |
 | U7 | Version/release/handoff | 055 | **SUPERSEDED** | `0.2.0` не переиспользуется; корректный релиз — 0.3.0/R5/эпик 061 |
@@ -30,7 +30,7 @@
 | R1 | 057 | **DONE** | `_ad_gate_decision`-маркер + provenance на envelope (allow/deny/ask) + terminal `runtime_decision`-проекция (gate≠static через `policy_id`/`trigger`) + redaction-safe `redacted_metadata` + stable identity + fail-closed; 7 тестов `test_provenance_lifecycle.py` |
 | R2 | 058 | **DONE** | 4 PG-стора + generic schema + facade + обязательный CI-job + **20 real-PG тестов** (validated на postgres:15): 17 store-unit (two-client race, replay, conflict, монотонный abort-CAS, restart, parity) + 3 resume-integration end-to-end (duplicate→conflict, два конкурентных resume→один side-effect, stale-checkpoint→conflict без consume) |
 | R3 | 059 | **DONE** | `policy_binding`+`approved_by` в `PLAN_APPROVED/REJECTED` trace-событии (из authoritative approved_plan) + real checkpoint readback + unforgeable + EDIT re-hash bugfix; 4 теста `test_plan_binding_trace.py` |
-| R4 | 060 | pending | — |
+| R4 | 060 | **DONE** | код в ветке (d43720d+7bf1c6d — ancestor) → в release-SHA; матрица-маппинг (cell→test) в эпике 060 + добор `test_u4_stop_matrix.py` (abort-before-planning, fenced-late-result-не-воскрешает) |
 | R5 | 061 | pending (blocked by 057–060) | релиз 0.3.0 |
 | R6 | 056b | pending (last) | финальная сверка статусов ↔ факт |
 

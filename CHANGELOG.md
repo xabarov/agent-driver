@@ -7,6 +7,15 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — U4 Stop matrix completion + release-artifact verification (epic 060 / R4)
+Fills the last uncovered cells of the U4 abort/cancellation matrix and documents the full cell→test
+mapping (epic 060): a pre-aborted planning run now has a test proving it terminates `CANCELLED` without
+starting the plan step (no new transition after an observed abort), and a test proving a fenced late
+result (straggler from a superseded attempt) is ignored and never reopens the run. All U4 code — including
+the bounded cancellation deadline wiring — is confirmed present in the release source tree (unlike `0.2.0`,
+whose wheel predated the deadline commit), so the 0.3.0 wheel actually carries the declared behaviour.
+Test: `tests/runtime/test_u4_stop_matrix.py` (2).
+
 ### Fixed — plan policy binding reaches the checkpoint/resume/trace projection (epic 059 / R3)
 The approved-plan `PLAN_APPROVED` / `PLAN_REJECTED` trace event now carries the host-authored
 `policy_binding` and `approved_by` alongside `plan_id` and `content_hash`, so a host can prove — after
