@@ -11,6 +11,21 @@ yield :class:`GatewayEvent` objects; a transport renders them (e.g.
 ``event.to_sse()``). Live token streaming is intentionally out of this slice —
 the existing :mod:`agent_driver.adapters.sse` covers pure streaming; this core
 owns the session + approval lifecycle.
+
+Durability (U6 / epic 054)
+--------------------------
+
+**The Gateway parks runs in process-local memory (``self._parked``); parked
+state does NOT survive a process restart.** This is a truthful, explicit
+declaration, not an oversight: a deployment that needs durable recovery of a
+paused/awaiting-approval run must use the **direct embedding path** — construct
+the :class:`~agent_driver.sdk.agent.Agent` with a durable checkpoint store
+(:class:`~agent_driver.runtime.SqliteRuntimeStore` / ``PostgresRuntimeStore``)
+and a durable command/control store (``SqliteCommandQueueStore``), and drive
+``run`` / ``resume`` / ``abort`` directly. That path already exposes every
+durable primitive PentestLens needs, without the Gateway. Call
+:meth:`AgentGateway.require_durable_recovery` in a deployment-readiness check to
+fail fast when durable recovery is required.
 """
 
 from __future__ import annotations
@@ -44,6 +59,12 @@ class _Parked:
 class AgentGateway:
     """Session-routed run/approve lifecycle over an :class:`Agent`."""
 
+    #: U6 — parked-run recovery is NOT durable: ``self._parked`` is a
+    #: process-local dict, empty after a restart. Declared explicitly so a host
+    #: (or a deployment-readiness gate) can branch on it instead of assuming
+    #: restart-safety. See :meth:`require_durable_recovery`.
+    durable_parked_runs: bool = False
+
     def __init__(
         self,
         agent: "Agent",
@@ -53,6 +74,22 @@ class AgentGateway:
         self._agent = agent
         self._tool_gate = tool_gate
         self._parked: dict[tuple[str, str], _Parked] = {}
+
+    def require_durable_recovery(self) -> None:
+        """Fail deployment-readiness when durable parked-run recovery is required.
+
+        Parked runs live in process-local memory and cannot be recovered after a
+        restart. Raise :class:`GatewayError` so a readiness check fails fast; a
+        deployment needing durable recovery must use the direct embedding path
+        (durable checkpoint + command-queue stores + abort handle) instead of the
+        Gateway. See the module docstring.
+        """
+        if not self.durable_parked_runs:
+            raise GatewayError(
+                "AgentGateway parks runs in process-local memory and cannot "
+                "recover them after a restart; use the direct embedding path "
+                "(durable checkpoint + command-queue stores) for durable recovery"
+            )
 
     async def submit(
         self, session_id: str, text: str, *, run_id: str | None = None

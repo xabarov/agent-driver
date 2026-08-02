@@ -7,6 +7,29 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — runtime `__version__`, single-sourced from package metadata (epic 055 / U7)
+`agent_driver.__version__` now exists, resolved from the installed distribution metadata
+(`importlib.metadata`) with a pyproject-matching fallback for a bare source tree. A guard test
+(`tests/test_version.py`) asserts it agrees with `pyproject.toml` `[project] version` and is a valid
+pre-1.0 version, so the runtime version, package metadata, and the eventual wheel cannot silently
+drift. Remaining U7 (release handoff, gated on the full Goal passing): select the next valid pre-1.0
+version, a clean deterministic wheel build with recorded SHA-256, and the upstream handoff document.
+
+### Changed — Gateway declares its parked-run state non-durable (epic 054 / U6)
+`AgentGateway` now explicitly declares that parked/awaiting-approval runs live in process-local
+memory and are lost on restart (`durable_parked_runs = False`), and offers
+`require_durable_recovery()` to fail a deployment-readiness check fast when durable recovery is
+required — instead of implying restart-safety it does not have. The module docstring documents the
+supported alternative: the direct embedding path (durable `SqliteRuntimeStore`/`PostgresRuntimeStore`
+checkpoint store + `SqliteCommandQueueStore` + `RunAbortHandle`), which already exposes every durable
+primitive a host needs without the Gateway. No behaviour change to `submit`/`respond`/`pending`.
+
+### Compatibility — this Unreleased set is additive and persisted-state compatible
+All Unreleased changes (U2 gate provenance, U3 `ResumeCommand` fields, U4 cancellation hook, U5 plan
+binding, U6/U7) are additive: new optional contract fields default to `None`/absent, new metadata
+keys (`_ad_gate_provenance`, `consumed_approvals`, `approved_plan.policy_binding`) are additive, and
+existing checkpoints/events remain readable. No public symbol was removed or renamed.
+
 ### Added — plan-integrity: authoritative hash, EDIT re-hash, host policy-binding (epic 053 / U5)
 The approved plan's content hash is now **harness-authored** rather than trusted from the model/tool
 `content_hash` field: `_mark_force_planning_approved` recomputes `plan_content_hash(...)` from the

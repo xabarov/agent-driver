@@ -79,8 +79,8 @@ benchmark-fitting, обязательна классификация tool/prompt
 | U3 | 051 atomic-approval | **контракт-срез DONE** (`ResumeCommand.idempotency_key`+`expected_checkpoint_id`; `ResumeConflictError` на stale/уже-консьюмнут; `consumed_approvals`-ledger → дубль=no-op, один side-effect; свип 2893); осталось B/C/D (concurrent CAS+Postgres store, interrupt↔real-checkpoint, prior-result replay, crash-effect-ledger, монотонный revision, two-client/restart-матрица) | **крупнейшее** |
 | U4 | 052 durable-stop | **cancellation-hook-срез DONE** (governed-executor принимает `abort_handle`→per-call `ToolCancellation` через `current_tool_cancellation()`; pre-call skip `run_aborted`; свип 2897); осталось A/B/D (durable lifecycle+`observed`+restart, mid-LLM-await abort, deadline, terminal-честность, fencing, uncooperative/restart-матрица) | крупно |
 | U5 | 053 plan-integrity | **ядро A/B/C DONE** (harness-авторский hash + EDIT-re-hash + публичный `detect_plan_revision` + opaque host policy-binding в approved_plan; свип 2901); осталось enforcement (`_force_planning_has_approved_plan` сравнивает hash, не presence) + подключить `PlanArtifactStore` | средне |
-| U6 | 054 gateway-truthfulness | `_parked` process-local без durable-бэкенда; прямой путь durable → Option 2 (документировать non-durable) предпочтителен | мелко |
-| U7 | 055 version-release | нет runtime `__version__`; выбрать pre-1.0; детерминированная wheel+SHA-256; migration-notes | мелко |
+| U6 | 054 gateway-truthfulness | **DONE (Option 2)** — `durable_parked_runs=False` + `require_durable_recovery()` fail-fast + docstring на прямой путь; свип 2907 | мелко |
+| U7 | 055 version-release | **`__version__`+compat-нота DONE** (single-source из metadata, guard-тест, additive/persisted-compat); осталось release-действие (version-bump/wheel/SHA-256/handoff-doc, в конце Goal) | мелко |
 
 Порядок: U2→U3→U4 вместе (общий durable-store+identity), U5 цепляется, U1 финализируется последним,
 U6/U7 — рано и независимо.

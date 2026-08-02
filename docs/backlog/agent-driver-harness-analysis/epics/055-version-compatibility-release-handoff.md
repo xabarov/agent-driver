@@ -1,7 +1,20 @@
 # U7 — Version, compatibility, release handoff
 
-Дата создания: 2026-08-02. Статус: **PROPOSED** (самый конец критического пути). Родитель:
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — `__version__` + compat-нота DONE 2026-08-02;
+version-bump/wheel/handoff-doc открыты (release-действие в самом конце Goal)**. Родитель:
 [[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+
+> **Реализация** (свип 2907, +3): `agent_driver.__version__` (из `importlib.metadata` с
+> pyproject-fallback), guard-тест `tests/test_version.py` (совпадает с `pyproject [project] version`,
+> валидная pre-1.0). CHANGELOG compat-нота: весь Unreleased-набор additive + persisted-state-
+> совместим (новые optional-поля `None`, новые metadata-ключи additive, старые checkpoint/event
+> читаются, ни один публичный символ не удалён/переименован).
+>
+> **Осталось (release-действие, gated на прохождении всего Goal — U1 и углубления ещё открыты):**
+> выбрать следующую валидную pre-1.0-версию по upstream-истории (НЕ хардкодить); согласовать
+> metadata/wheel/changelog; чистая детерминированная wheel-сборка + точный filename+SHA-256 (при
+> обещании reproducibility — две изолированные сборки); upstream handoff-документ (base+final commit,
+> facade-манифест символов, migration, wheel-hash, Python-версии/extras, остаточные риски).
 
 Выбрать следующую семантически валидную pre-1.0-версию **после** прохождения всех контрактов U1–U6.
 Согласовать package-metadata / runtime `__version__` / wheel-filename+metadata / docs / changelog.

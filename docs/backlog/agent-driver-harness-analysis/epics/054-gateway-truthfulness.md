@@ -1,7 +1,17 @@
 # U6 — Gateway truthfulness
 
-Дата создания: 2026-08-02. Статус: **PROPOSED** (дешёвое решение; предпочтителен Option 2).
-Родитель: [[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+Дата создания: 2026-08-02. Статус: **DONE (Option 2) 2026-08-02**. Родитель:
+[[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+
+> **Реализация Option 2** (свип 2907, +3): `AgentGateway.durable_parked_runs = False` — явная
+> декларация, что parked-состояние process-local и теряется при restart;
+> `require_durable_recovery()` фейлит deployment-readiness (`GatewayError`), когда нужна durable-
+> recovery. Module-docstring документирует поддерживаемую альтернативу — **прямой embedding-путь**
+> (durable `SqliteRuntimeStore`/`PostgresRuntimeStore` + `SqliteCommandQueueStore` + `RunAbortHandle`),
+> который уже отдаёт все durable-примитивы без Gateway. Поведение `submit`/`respond`/`pending` не
+> изменено. Тесты: `tests/gateway/test_gateway_durability.py` (readiness-reject + прямой путь отдаёт
+> примитивы). Option 1 (durable parked-backend) сознательно НЕ делали — не раздуваем Goal в
+> server-rewrite (PentestLens не берёт Gateway на MVP).
 
 Не выдавать process-local `_parked`-состояние за restart-safe. Выбрать одно: **(1)** добавить durable
 parked-run-бэкенд поверх atomic-approval/control-протокола (U3) с restart+concurrent-тестами; **или
