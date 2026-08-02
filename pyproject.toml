@@ -67,7 +67,11 @@ pythonpath = ["."]
 # scientific stack import) tests. Override with `-m slow` or
 # `-m "slow or not slow"` to include them. Opt-in parallel: `-n auto`
 # (requires pytest-xdist from the dev extra).
-addopts = "-q -m 'not live and not slow'"
+# ``--import-mode=importlib`` is the default: two test files share a basename
+# (tests/harness/test_lifecycle_hooks.py and tests/runtime/test_lifecycle_hooks.py)
+# with no __init__.py, so the legacy "prepend" mode aborts collection with an
+# "import file mismatch". importlib mode collects them cleanly — no per-invocation flag.
+addopts = "-q -m 'not live and not slow' --import-mode=importlib"
 markers = [
   "live: optional network/provider checks disabled by default",
   "slow: subprocess- or scientific-stack-bound tests; excluded from default sweep",
