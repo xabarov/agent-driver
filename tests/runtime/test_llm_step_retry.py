@@ -166,6 +166,66 @@ async def test_complete_request_retries_credit_error_with_lower_max_tokens() -> 
 
 
 @pytest.mark.asyncio
+async def test_credit_error_clamps_below_floor_to_stated_affordable_budget() -> None:
+    """A near-empty balance affords fewer tokens than the generic 512 floor.
+
+    OpenRouter states the exact ceiling ("can only afford 298"); recovery must
+    clamp to just under it (even below 512) instead of stalling at the floor and
+    hard-failing — the smoke-run regression where a tiny remaining balance made
+    every reduced retry keep 402-ing.
+    """
+    provider = SimpleNamespace(name="retry-test", calls=0)
+    seen_max_tokens: list[int | None] = []
+
+    async def complete(request: LlmRequest) -> LlmResponse:
+        provider.calls += 1
+        seen_max_tokens.append(request.max_tokens)
+        # Affordable ceiling is 298; anything above it 402s.
+        requested = request.max_tokens if request.max_tokens is not None else 4096
+        if requested > 298:
+            response = httpx.Response(
+                402,
+                text=(
+                    "This request requires more credits, or fewer max_tokens. "
+                    f"You requested up to {requested} tokens, but can only "
+                    "afford 298. To increase, add credits."
+                ),
+                request=httpx.Request("POST", "https://openrouter.test/chat"),
+            )
+            raise httpx.HTTPStatusError(
+                "payment required", request=response.request, response=response
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="ok"),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="retry", model_name="test"),
+            provider="retry",
+            model="test",
+        )
+
+    provider.complete = complete
+    emitted = []
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(provider=provider),
+        _emit=emitted.append,
+    )
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(stream=False, app_metadata={}),
+        metadata={},
+        run_id="run_test",
+        attempt_id="attempt_test",
+    )
+    request = LlmRequest(messages=[ChatMessage(role="user", content="hi")])
+
+    response = await _complete_request(host, context, request)
+
+    assert response.message.content == "ok"
+    # None -> clamps straight to int(298 * 0.9) = 268 (below the 512 floor).
+    assert seen_max_tokens == [None, 268]
+    assert context.metadata["max_tokens_retry"] == "reduced_after_provider_402"
+
+
+@pytest.mark.asyncio
 async def test_complete_request_retries_forced_tool_choice_provider_error() -> None:
     provider = SimpleNamespace(name="openrouter", calls=0)
     seen_tool_choice: list[object] = []

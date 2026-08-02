@@ -3,9 +3,22 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
+
+# Below this the completion cannot carry even a minimal tool call or one-line
+# final, so an explicit provider "afford" ceiling under it is treated as a
+# genuinely depleted balance and we stop reducing (the 402 propagates as a
+# clear error rather than looping on unusable budgets). 256 max_tokens is
+# empirically enough for a single tool call on reasoning models.
+_MIN_AFFORDABLE_MAX_TOKENS = 64
+# Stay just under the stated ceiling: the affordable figure drifts slightly
+# between attempts (prompt-token rounding / price ticks), so a bare clamp can
+# still 402. A 10% margin absorbs that drift in one retry.
+_AFFORDABLE_SAFETY_MARGIN = 0.9
+_AFFORDABLE_RE = re.compile(r"can only afford\s+(\d+)")
 
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
@@ -155,12 +168,42 @@ def is_reduce_max_tokens_credit_error(exc: httpx.HTTPStatusError) -> bool:
     return "fewer max_tokens" in body or "requested up to" in body
 
 
-def request_with_reduced_max_tokens(request: Any) -> Any:
-    """Return request retry copy with a smaller max_tokens budget."""
+def affordable_max_tokens_from_error(exc: httpx.HTTPStatusError) -> int | None:
+    """Parse the exact output budget the provider says the balance can afford.
+
+    OpenRouter's credit 402 states ``"...but can only afford 298..."`` — the
+    precise ceiling the remaining balance supports. Return the smallest such
+    figure in the body (the current attempt plus any ``previous_errors`` all
+    carry one; the min is the safe target), or ``None`` when absent.
+    """
+    matches = _AFFORDABLE_RE.findall(exc.response.text.lower())
+    if not matches:
+        return None
+    return min(int(value) for value in matches)
+
+
+def request_with_reduced_max_tokens(request: Any, affordable: int | None = None) -> Any:
+    """Return request retry copy with a smaller max_tokens budget.
+
+    Without ``affordable`` the budget is halved with a 512 floor (a low-cost
+    step down from a generic over-budget 402). When the provider states an
+    exact affordable ceiling (``affordable``), clamp to just under it — even
+    below 512 — because that figure is authoritative: a near-empty balance can
+    afford fewer tokens than the generic floor, and refusing to go lower turns
+    a recoverable best-effort answer into a hard failure. A ceiling below
+    ``_MIN_AFFORDABLE_MAX_TOKENS`` is treated as a depleted balance: no change,
+    so the 402 propagates as a clear error instead of looping on an unusable
+    budget.
+    """
     if not isinstance(request, LlmRequest):
         return request
     current = request.max_tokens if request.max_tokens is not None else 4096
     reduced = max(512, min(2048, int(current) // 2))
+    if affordable is not None:
+        target = int(affordable * _AFFORDABLE_SAFETY_MARGIN)
+        if target < _MIN_AFFORDABLE_MAX_TOKENS:
+            return request
+        reduced = min(reduced, target)
     if request.max_tokens == reduced:
         return request
     return request.model_copy(update={"max_tokens": reduced})
