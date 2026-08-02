@@ -43,7 +43,24 @@ def _force_planning_enabled(config: PlanningPolicyInput) -> bool:
     return config.enabled is True or config.mode != PlanningPolicyMode.REQUIRED_FOR_WRITES
 
 
+def _approved_content_hash(config: PlanningPolicyInput) -> str:
+    """The harness-authored content hash of the recorded approved plan, if any."""
+    approved_plan = config.approved_plan
+    if isinstance(approved_plan, dict):
+        content_hash = approved_plan.get("content_hash")
+        if isinstance(content_hash, str) and content_hash.strip():
+            return content_hash.strip()
+    return ""
+
+
 def _force_planning_has_approved_plan(config: PlanningPolicyInput) -> bool:
+    required = config.required_plan_hash
+    if isinstance(required, str) and required.strip():
+        # U5 enforcement: a content-bound approval. The recorded approval must be
+        # for THIS exact plan version; a materially revised plan (different hash)
+        # counts as unapproved and is re-gated before execution.
+        return _approved_content_hash(config) == required.strip()
+    # Presence-only (backward compatible) when the host sets no required hash.
     if config.approved is True:
         return True
     approved_plan_id = config.approved_plan_id

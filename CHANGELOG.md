@@ -46,6 +46,18 @@ binding, U6/U7) are additive: new optional contract fields default to `None`/abs
 keys (`_ad_gate_provenance`, `consumed_approvals`, `approved_plan.policy_binding`) are additive, and
 existing checkpoints/events remain readable. No public symbol was removed or renamed.
 
+### Added — plan-integrity enforcement: gate on the plan hash, not just presence (epic 053 / U5)
+The force-planning gate (`_force_planning_has_approved_plan`) previously counted any approval with a
+`plan_id` as sufficient — it never compared the plan's content. A new
+`PlanningPolicyInput.required_plan_hash` closes that: when set, the recorded approval only counts if
+its `approved_plan.content_hash` equals the required hash, so a materially revised plan (different
+hash) is treated as unapproved and re-gated (DENY) before any write runs. A host that requires
+re-approval on a plan change sets `required_plan_hash` to the hash it reviewed (pairs with U5's
+harness-authoritative hashing and the `plan_policy_binding`). When unset (default) the gate keeps its
+presence-only behaviour — fully backward compatible. Additive; full sweep 2939 passed (+6). Remaining
+U5: connect the durable `PlanArtifactStore` (still unwired) and carry the binding through the trace
+projection.
+
 ### Added — plan-integrity: authoritative hash, EDIT re-hash, host policy-binding (epic 053 / U5)
 The approved plan's content hash is now **harness-authored** rather than trusted from the model/tool
 `content_hash` field: `_mark_force_planning_approved` recomputes `plan_content_hash(...)` from the

@@ -1,7 +1,19 @@
 # U5 — Plan integrity extension point
 
-Дата создания: 2026-08-02. Статус: **IN PROGRESS — ядро A/B/C DONE 2026-08-02; enforcement/store
-открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal.
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — ядро A/B/C + enforcement DONE 2026-08-02;
+PlanArtifactStore-wiring + trace открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]].
+Происхождение: upstream Goal.
+
+> **Реализация enforcement** (свип 2939, +6): `PlanningPolicyInput.required_plan_hash` — когда задан,
+> `_force_planning_has_approved_plan` засчитывает approval только если `approved_plan.content_hash ==
+> required_plan_hash`; материально ревизованный план (другой hash) = unapproved → re-gated (DENY) до
+> исполнения любого write. Хост, требующий переодобрения при изменении плана, ставит `required_plan_
+> hash` = одобренный им hash (пара к harness-авторскому hashing + `plan_policy_binding`). Без него
+> (default) — прежнее presence-only (обратно-совместимо). Хелпер `_approved_content_hash`. Тесты:
+> `tests/tools/test_plan_hash_enforcement.py` (гейт + evaluator-DENY на ревизии).
+>
+> **Осталось:** подключить durable `PlanArtifactStore` (всё ещё unwired, гейтящий путь — untyped
+> `approved_plan`-dict); провести binding через trace-проекцию.
 
 > **Реализация ядра** (свип 2901, +4): **B** approved-plan content_hash теперь **harness-авторский** —
 > `_mark_force_planning_approved` пересчитывает `plan_content_hash(...)` из фактически одобренного
