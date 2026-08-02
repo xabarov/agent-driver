@@ -7,6 +7,25 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — cooperative host cancellation hook into running tool handlers (epic 052 / U4, hook slice)
+A running tool handler could not observe the run's process-local `RunAbortHandle`, so a host had
+no way to cancel its own in-flight work (a socket, a browser, a long query) when a run was stopped.
+The governed executor now optionally accepts the run's `abort_handle` (threaded from the step loop
+exactly like `tool_gate`, only when set → old executor signatures unaffected) and, per call, exposes
+a `ToolCancellation` (run/call/attempt identity + `is_cancelled` + `await wait_cancelled()`) to the
+handler via the same context-var idiom as `report_tool_progress` — `current_tool_cancellation()`.
+Handlers that never consult it keep the plain `Callable[[dict], Awaitable[dict]]` signature and incur
+no overhead. Additionally, once an abort is already observed, a not-yet-started call is skipped with a
+`run_aborted` block instead of launching new (possibly external) side-effecting work. New module
+`agent_driver.tools.cancellation` (`ToolCancellation`, `ToolCancelledError`); scope/accessor in
+`agent_driver.tools.context`. Additive and behaviour-neutral (no abort handle → token is `None`);
+full sweep 2897 passed (+4). Remaining U4 (epic 052 A/B/D): a durable abort lifecycle
+(`requested → observed → cancelled | completed_before_cancel`) that actually sets `observed` and
+survives restart, abort observation inside the mid-LLM await (today only the redirect probe is
+polled there), a bounded cancellation deadline on the token, terminal-reason honesty
+(cancelled vs completed-before vs cancellation-failed vs late-result-ignored), a fencing token
+against late handler results, and the uncooperative-handler / restart adversarial matrix.
+
 ### Added — expected-checkpoint + idempotent approval consumption (epic 051 / U3, contract slice)
 `ResumeCommand` gains two optional, backward-compatible fields for durable approval:
 `idempotency_key` (a host-supplied key identifying one logical approval attempt) and

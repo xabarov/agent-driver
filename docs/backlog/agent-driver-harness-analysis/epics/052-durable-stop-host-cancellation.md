@@ -1,7 +1,26 @@
 # U4 — Durable Stop + host cancellation
 
-Дата создания: 2026-08-02. Статус: **PROPOSED**. Родитель:
-[[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — cancellation-hook-срез (часть C) DONE
+2026-08-02; A/B/D открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]].
+Происхождение: upstream Goal (host-adoption).
+
+> **Реализация hook-среза** (свип 2897, +4): governed-executor опционально принимает
+> `abort_handle` (протянут из step-loop как `tool_gate`, только когда задан → старые сигнатуры
+> executor'ов не тронуты) и на каждый вызов выставляет handler'у `ToolCancellation` (run/call/
+> attempt-identity + `is_cancelled` + `await wait_cancelled()`) через тот же contextvar-идиом, что и
+> `report_tool_progress` — `current_tool_cancellation()`. Handler'ы без обращения к токену сохраняют
+> `Callable[[dict], Awaitable[dict]]` и накладных расходов не несут. Плюс: при уже-наблюдённом abort
+> не-начатый вызов скипается с `run_aborted`-блоком (no new work once observed). Новый модуль
+> `agent_driver.tools.cancellation`; scope/accessor в `agent_driver.tools.context`. Adapter
+> `RunAbortHandle→предикат` держит `tools` развязанным с runtime-abort. Тесты:
+> `tests/tools/test_tool_cancellation.py`.
+>
+> **Осталось A/B/D:** durable abort-lifecycle (`requested→observed→cancelled|completed_before_cancel`),
+> который реально выставляет `observed` и переживает restart (сейчас `DurableAbortRequestRecord.observed`
+> не выставляется, репо in-memory); наблюдение abort в mid-LLM-await (сейчас там поллится только
+> redirect-probe); bounded cancellation-deadline на токене (сейчас `deadline_seconds=None`);
+> terminal-честность (cancelled vs completed-before vs cancellation-failed vs late-result-ignored);
+> fencing-token против поздних handler-результатов; uncooperative-handler/restart-adversarial-матрица.
 
 Определить durable abort-lifecycle со стабильными состояниями/событиями (`abort_requested →
 abort_observed → cancelled | completed_before_cancel`), queryable после restart. Abort-request

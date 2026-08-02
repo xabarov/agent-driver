@@ -7,7 +7,12 @@ import json
 import logging
 import os
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from agent_driver.runtime.abort import RunAbortHandle
 
 from agent_driver.contracts.enums import GuardrailDecision, ToolPolicyDecision
 from agent_driver.contracts.hooks import HookResponse, ToolHook
@@ -221,6 +226,7 @@ class GovernedToolExecutor:
         *,
         current_tool_calls: int = 0,
         tool_gate: "ToolGate | None" = None,
+        abort_handle: "RunAbortHandle | None" = None,
     ) -> GovernedExecutionResult:
         """Run policy + guardrails + tool handlers for planned calls.
 
@@ -246,12 +252,19 @@ class GovernedToolExecutor:
             current_tool_calls=current_tool_calls,
         )
         units = self._partition_stage(planned_calls)
+        # U4 — adapt the run's process-local abort handle into a predicate so
+        # ``tools`` stays decoupled from the runtime abort primitive. Only build
+        # one when a handle was actually plumbed in (default: no cancellation).
+        cancelled_check = (
+            (lambda: abort_handle.is_aborted) if abort_handle is not None else None
+        )
         await self._execute_units_stage(
             units=units,
             run_input=run_input,
             result=result,
             current_tool_calls=current_tool_calls,
             tool_gate=tool_gate,
+            cancelled_check=cancelled_check,
         )
         self._apply_turn_output_budget(result)
         return result
@@ -332,6 +345,7 @@ class GovernedToolExecutor:
         result: GovernedExecutionResult,
         current_tool_calls: int,
         tool_gate: "ToolGate | None" = None,
+        cancelled_check: "Callable[[], bool] | None" = None,
     ) -> None:
         """Execute partitioned units and collect envelopes/traces in order."""
         next_index = 1
@@ -345,6 +359,7 @@ class GovernedToolExecutor:
                         index=next_index,
                         current_tool_calls=current_tool_calls,
                         tool_gate=tool_gate,
+                        cancelled_check=cancelled_check,
                     )
                 )
                 next_index += 1
@@ -358,6 +373,7 @@ class GovernedToolExecutor:
                 start_index=next_index,
                 current_tool_calls=current_tool_calls,
                 tool_gate=tool_gate,
+                cancelled_check=cancelled_check,
             )
             next_index += len(unit.items)
             if stop:
@@ -683,6 +699,7 @@ class GovernedToolExecutor:
         start_index: int,
         current_tool_calls: int,
         tool_gate: "ToolGate | None" = None,
+        cancelled_check: "Callable[[], bool] | None" = None,
     ) -> bool:
         """Run a parallel batch; merge sub-results into ``result`` in order.
 
@@ -720,6 +737,7 @@ class GovernedToolExecutor:
                         index=index,
                         current_tool_calls=current_tool_calls,
                         tool_gate=tool_gate,
+                        cancelled_check=cancelled_check,
                     )
                 )
                 return sub_result
@@ -953,6 +971,7 @@ class GovernedToolExecutor:
                 registered=registered,
                 input_guard_decision=input_guard.decision,
                 run_metadata=run_metadata,
+                cancelled_check=spec.cancelled_check,
                 # Phase 12 H18 — pass the executor-scoped artifact store
                 # so the allow-path can spill oversized outputs when
                 # the manifest opts in via ``max_result_size_chars``.

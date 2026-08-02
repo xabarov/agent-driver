@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from agent_driver.contracts.interrupts import InterruptRequest
 from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import ToolResultEnvelope, ToolTrace
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.runtime.tool_gate import ToolGate
+
+if TYPE_CHECKING:
+    from agent_driver.runtime.abort import RunAbortHandle
 
 
 @dataclass(slots=True)
@@ -48,6 +51,7 @@ class GovernedExecutorLike(Protocol):  # pylint: disable=too-few-public-methods
         llm_response: LlmResponse,
         *,
         tool_gate: ToolGate | None = None,
+        abort_handle: "RunAbortHandle | None" = None,
     ) -> GovernedExecutionLike:
         """Execute governed policy/guardrail/tool pipeline for one step."""
         raise NotImplementedError
@@ -58,9 +62,10 @@ async def fake_noop_tool_executor(
     llm_response: LlmResponse,
     *,
     tool_gate: ToolGate | None = None,
+    abort_handle: "RunAbortHandle | None" = None,
 ) -> ToolExecutionResult:
     """Default no-op tool executor used before full tool governance."""
-    _ = (run_input, llm_response, tool_gate)
+    _ = (run_input, llm_response, tool_gate, abort_handle)
     return ToolExecutionResult()
 
 
@@ -72,8 +77,14 @@ def wrap_governed_executor(executor: GovernedExecutorLike) -> ToolExecutor:
         llm_response: LlmResponse,
         *,
         tool_gate: ToolGate | None = None,
+        abort_handle: "RunAbortHandle | None" = None,
     ) -> ToolExecutionResult:
-        governed = await executor.execute(run_input, llm_response, tool_gate=tool_gate)
+        governed = await executor.execute(
+            run_input,
+            llm_response,
+            tool_gate=tool_gate,
+            abort_handle=abort_handle,
+        )
         return ToolExecutionResult(
             traces=governed.traces,
             envelopes=governed.envelopes,

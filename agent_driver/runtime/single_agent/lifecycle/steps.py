@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from agent_driver.code_agent.profile import run_code_agent_stage
 from agent_driver.context import CompactionOrchestrator
 from agent_driver.contracts.enums import (
@@ -130,7 +132,15 @@ class SingleAgentStepMixin:
         # the new contract documented in ``runtime/tools.py`` allows
         # ``tool_gate`` but we don't force it on the wire when None.
         tool_gate = _tool_gate_for_context(context)
-        gate_kwargs = {"tool_gate": tool_gate} if tool_gate is not None else {}
+        gate_kwargs: dict[str, Any] = (
+            {"tool_gate": tool_gate} if tool_gate is not None else {}
+        )
+        # U4 — forward the run's abort handle so the governed executor can expose
+        # a cooperative cancellation signal to running handlers and skip new work
+        # once an abort is observed. Only when set, for the same
+        # old-executor-signature-compatibility reason as ``tool_gate``.
+        if context.abort_handle is not None:
+            gate_kwargs["abort_handle"] = context.abort_handle
         if isinstance(approved_call, dict):
             request = context.llm_response.model_copy(
                 update={

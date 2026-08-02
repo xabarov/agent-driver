@@ -19,8 +19,10 @@ from agent_driver.contracts.tools import (
     ToolResultEnvelope,
 )
 from agent_driver.runtime.planning_check import is_exit_plan_mode_tool
+from agent_driver.tools.cancellation import ToolCancellation
 from agent_driver.tools.context import (
     tool_call_context_scope,
+    tool_cancellation_scope,
     tool_progress_scope,
 )
 from agent_driver.tools.executor.blocks import append_blocked_call
@@ -210,6 +212,21 @@ async def execute_allowed_path(
         return False
     if _deferred_blind_call_missing_required(spec):
         return False
+    # U4 — prevent new work once an abort was observed: if the run was already
+    # aborted before this handler starts, skip execution and record a blocked
+    # envelope instead of launching (possibly external) side-effecting work.
+    if spec.cancelled_check is not None and spec.cancelled_check():
+        append_blocked_call(
+            result=spec.result,
+            spec=BlockSpec(
+                index=spec.index,
+                call=spec.call,
+                manifest=spec.manifest,
+                code="run_aborted",
+                reason="run aborted before tool execution",
+            ),
+        )
+        return False
     try:
         # Phase 11 H16 — wire a per-call progress reporter that records
         # each ``report_tool_progress`` invocation into the executor
@@ -221,12 +238,32 @@ async def execute_allowed_path(
                 progress=progress,
             )
 
+        # U4 — expose a cooperative cancellation signal to the handler so it can
+        # stop its own external work when the run is aborted. Only built when an
+        # abort handle was plumbed into the executor (else None → no overhead).
+        cancellation = None
+        if spec.cancelled_check is not None:
+            raw_run_id = spec.run_metadata.get("run_id")
+            raw_attempt = spec.run_metadata.get("attempt_id")
+            cancellation = ToolCancellation(
+                run_id=str(raw_run_id) if raw_run_id is not None else None,
+                tool_call_id=spec.call.tool_call_id,
+                attempt_id=(
+                    str(raw_attempt)
+                    if raw_attempt is not None
+                    else f"attempt_{spec.index}"
+                ),
+                deadline_seconds=None,
+                _check=spec.cancelled_check,
+            )
+
         with (
             tool_call_context_scope(
                 run_id=str(spec.run_metadata.get("run_id") or ""),
                 thread_id=str(spec.run_metadata.get("thread_id") or ""),
             ),
             tool_progress_scope(_record_progress),
+            tool_cancellation_scope(cancellation),
         ):
             raw = await spec.registered.handler(spec.call.args)
         raw_guard = await guardrails.on_tool_result(

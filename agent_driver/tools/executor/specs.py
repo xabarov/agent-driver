@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -63,6 +64,12 @@ class ExecSpec:
     # than the executor instance so concurrent runs on the same
     # executor (multi-tenant) can carry their own gates.
     tool_gate: ToolGate | None = None
+    # U4 — predicate returning True once the enclosing run was aborted.
+    # Adapted from ``RunAbortHandle.is_aborted`` by the executor; used to
+    # build the per-call ``ToolCancellation`` exposed to the handler. A
+    # predicate (not the handle) keeps ``tools`` decoupled from the runtime
+    # abort primitive.
+    cancelled_check: Callable[[], bool] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +83,9 @@ class AllowedSpec:
     registered: RegisteredTool | None
     input_guard_decision: GuardrailDecision = GuardrailDecision.ALLOW
     run_metadata: dict[str, str | int | None] = field(default_factory=dict)
+    # U4 — cooperative-cancellation predicate for the running handler (see
+    # ExecSpec.cancelled_check). None when no abort handle was plumbed in.
+    cancelled_check: Callable[[], bool] | None = None
     # Phase 12 H18 — optional artifact store for spilling oversized
     # tool handler outputs. When ``None`` (default), no spill happens;
     # legacy ``output_char_budget`` truncation runs as before.

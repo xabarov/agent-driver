@@ -6,7 +6,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from agent_driver.tools.cancellation import ToolCancellation
 
 _workspace_cwd: ContextVar[Path | None] = ContextVar("workspace_cwd", default=None)
 _tool_call_context: ContextVar[dict[str, str] | None] = ContextVar(
@@ -92,6 +95,10 @@ _on_progress: ContextVar[ProgressReporter | None] = ContextVar(
     "tool_on_progress", default=None
 )
 
+_tool_cancellation: ContextVar["ToolCancellation | None"] = ContextVar(
+    "tool_cancellation", default=None
+)
+
 
 def get_workspace_cwd() -> Path:
     """Return run-scoped workspace cwd, fallback to process cwd."""
@@ -160,6 +167,30 @@ def report_tool_progress(
         logging.getLogger(__name__).warning(
             "tool_progress reporter raised; swallowing", exc_info=True
         )
+
+
+def current_tool_cancellation() -> "ToolCancellation | None":
+    """Return the cooperative cancellation signal for the running tool call.
+
+    U4 — handlers may call this freely; when the runtime did not plumb an abort
+    handle into the executor (default), it returns ``None`` and the handler runs
+    unbounded as before. When present, ``token.is_cancelled`` / ``await
+    token.wait_cancelled()`` let a cooperative handler stop its own external
+    work (socket, browser, long query) when the run is aborted.
+    """
+    return _tool_cancellation.get()
+
+
+@contextmanager
+def tool_cancellation_scope(
+    token: "ToolCancellation | None",
+) -> Iterator[None]:
+    """Temporarily expose ``token`` to the running tool handler call."""
+    reset = _tool_cancellation.set(token)
+    try:
+        yield
+    finally:
+        _tool_cancellation.reset(reset)
 
 
 def set_workspace_cwd(path: Path | None) -> Token[Path | None]:
