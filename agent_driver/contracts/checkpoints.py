@@ -23,6 +23,12 @@ class CheckpointRef(ContractModel):
     node_id: str | None = None
     created_at: str
     state_version: str
+    # F3 — monotonic per-run checkpoint revision (0 for the first, +1 per save
+    # along the parent chain). ``state_version`` is the serialization format;
+    # ``revision`` is the position of this checkpoint in the run's chain, giving
+    # a deterministic ordering signal and a token for revision-based optimistic
+    # concurrency (``ResumeCommand.expected_revision``). Additive (default 0).
+    revision: int = 0
     storage_backend: str
     metadata: dict[str, Any] = Field(default_factory=dict)
 

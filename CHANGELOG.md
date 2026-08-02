@@ -46,6 +46,18 @@ binding, U6/U7) are additive: new optional contract fields default to `None`/abs
 keys (`_ad_gate_provenance`, `consumed_approvals`, `approved_plan.policy_binding`) are additive, and
 existing checkpoints/events remain readable. No public symbol was removed or renamed.
 
+### Added — F3: monotonic checkpoint revision + expected-revision resume guard (epic 051 / U3)
+`CheckpointRef` gains a monotonic per-run `revision` (0 for the first checkpoint, +1 per save along
+the parent chain, derived in `build_checkpoint_ref` from the already-threaded previous row — no extra
+store read). This replaces the meaningless static `state_version="v1"` as the run's ordering/position
+signal (`state_version` stays the serialization format). `ResumeCommand.expected_revision` uses it for
+revision-based optimistic concurrency: when set, a resume applies only if the pending interrupt's
+checkpoint is at that revision, otherwise a stable `ResumeConflictError` — more robust than
+`expected_checkpoint_id` because the revision is ordered. Variant A (additive): `latest()` ordering is
+unchanged across the four stores, so no behaviour change and conformance tests are untouched (fields
+default `revision=0` / `expected_revision=None`). Full sweep 2960 passed (+3). F3 foundation from the
+backlog design-notes; the store-`latest()`-by-revision rewire (Variant B) remains deferred.
+
 ### Added — F2: prior-result replay for duplicate approvals (epic 051 / U3)
 The atomic approval-consumption ledger now durably records the winning consume's **terminal output**
 (full `AgentRunOutput` JSON), and a new `RunnerConfig(replay_prior_result=True)` makes a duplicate

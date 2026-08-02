@@ -186,6 +186,7 @@ PUBLIC_CONTRACT_FIELD_SNAPSHOTS: dict[str, tuple[str, ...]] = {
         "created_at",
         "idempotency_key",
         "expected_checkpoint_id",
+        "expected_revision",
         "approved_prompts",
         "metadata",
     ),

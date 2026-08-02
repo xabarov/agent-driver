@@ -1,7 +1,18 @@
 # F3 — Monotonic checkpoint revision foundation
 
-Дата: 2026-08-02. Статус: **design-note (кода нет)**. Разблокирует: детерминированный `latest()` +
-revision-based optimistic-concurrency (U3, эпик 051). Связано: [[051-atomic-approval-resume]].
+Дата: 2026-08-02. Статус: **Вариант A РЕАЛИЗОВАН 2026-08-02 (свип 2960, +3); Вариант B (ordering-rewire)
+отложен**. Разблокировал: revision-based optimistic-concurrency (U3). Связано:
+[[051-atomic-approval-resume]].
+
+> **Реализован Вариант A (additive):** `CheckpointRef.revision: int = 0`; вывод в
+> `build_checkpoint_ref` = `(chain.previous_row.ref.revision + 1) if previous_row else 0` (без доп.
+> чтений БД). Consumer: `ResumeCommand.expected_revision` + guard в `_handle_resume_with_pending`
+> (mismatch → `ResumeConflictError`, mirror `expected_checkpoint_id`). `latest()`-ordering НЕ тронут →
+> conformance-тесты целы; schema-snapshot ResumeCommand обновлён. Тесты:
+> `tests/runtime/test_checkpoint_revision.py` (revision 0→1→2+parent-chain; expected_revision
+> mismatch→conflict, match→approve). **Осталось (Вариант B, отложено):** перевести `latest()` всех 4
+> сторов на `revision DESC` (+ Postgres-колонка/индекс) — низкая марж. ценность, микросекундный тай
+> латентен; делать после доказанной необходимости.
 
 ## Зачем
 

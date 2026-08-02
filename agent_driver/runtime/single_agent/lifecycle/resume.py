@@ -369,6 +369,16 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                 f"resume expected checkpoint '{resume.expected_checkpoint_id}' "
                 f"but pending interrupt is at '{checkpoint_row.ref.checkpoint_id}'"
             )
+        # F3 — revision-based optimistic-concurrency guard (mirrors the
+        # checkpoint-id guard above, but by monotonic revision).
+        if (
+            resume.expected_revision is not None
+            and resume.expected_revision != checkpoint_row.ref.revision
+        ):
+            raise ResumeConflictError(
+                f"resume expected revision {resume.expected_revision} "
+                f"but pending interrupt is at revision {checkpoint_row.ref.revision}"
+            )
         if resume.action not in pending.interrupt.allowed_actions:
             raise RuntimeExecutionError(
                 f"resume action '{resume.action.value}' is not allowed"

@@ -150,6 +150,11 @@ class ResumeCommand(ContractModel):
     # instead of silently approving against a run that has moved on.
     idempotency_key: str | None = None
     expected_checkpoint_id: str | None = None
+    # F3 — optimistic-concurrency guard by monotonic checkpoint revision (more
+    # robust than expected_checkpoint_id: the revision is ordered). When set, the
+    # resume applies only if the pending interrupt's checkpoint is at this
+    # revision; otherwise a stable ``ResumeConflictError`` (stale).
+    expected_revision: int | None = None
     # Phase 11 H13 — categories the operator approves alongside the
     # specific call. These are scoped to the current run (runtime
     # stores them in run metadata so subsequent policy evaluation can

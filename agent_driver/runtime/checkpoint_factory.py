@@ -51,6 +51,9 @@ def build_checkpoint_ref(
         node_id=seed.node_id,
         created_at=datetime.now(tz=UTC).isoformat().replace("+00:00", "Z"),
         state_version="v1",
+        # F3 — monotonic per-run revision derived from the parent chain (already
+        # threaded in via ``chain.previous_row``, so no extra store read).
+        revision=(chain.previous_row.ref.revision + 1) if chain.previous_row else 0,
         storage_backend=seed.storage_backend,
         metadata={},
     )
