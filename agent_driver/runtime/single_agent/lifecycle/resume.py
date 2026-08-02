@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from agent_driver.contracts.enums import (
@@ -151,18 +151,47 @@ def _plan_lifecycle_payload(
     pending: PendingInterruptState,
     *,
     resume: ResumeCommand,
+    context: Any = None,
 ) -> dict[str, object] | None:
     payload = _plan_approval_payload(pending)
     if payload is None:
         return None
-    return {
+    # R3 — prefer the harness-authoritative ``approved_plan`` the approve/EDIT
+    # path already computed (``_mark_force_planning_approved`` runs BEFORE this):
+    # on an EDIT its ``content_hash`` is re-hashed from the edited content, so the
+    # trace event must carry THAT hash, not the stale pending one.
+    approved = (
+        context.metadata.get("approved_plan")
+        if context is not None and isinstance(getattr(context, "metadata", None), dict)
+        else None
+    )
+    approved = approved if isinstance(approved, dict) else {}
+    lifecycle: dict[str, object] = {
         "interrupt_id": resume.interrupt_id,
         "action": resume.action.value,
-        "plan_id": payload.get("plan_id") or pending.interrupt.metadata.get("plan_id"),
-        "content_hash": payload.get("content_hash")
+        "plan_id": approved.get("plan_id")
+        or payload.get("plan_id")
+        or pending.interrupt.metadata.get("plan_id"),
+        "content_hash": approved.get("content_hash")
+        or payload.get("content_hash")
         or pending.interrupt.metadata.get("content_hash"),
-        "path": payload.get("path"),
+        "path": approved.get("path") or payload.get("path"),
     }
+    # Carry the host-authored plan policy binding + approver into the
+    # PLAN_APPROVED/PLAN_REJECTED trace event so a host can prove, after
+    # compaction / reconnect / resume, that the executed plan is the one it
+    # bound to a specific authorization/policy snapshot. Sourced from the
+    # authoritative approved_plan (approve path) or the resume command (never
+    # model/tool output), so the binding is unforgeable.
+    approved_by = approved.get("approved_by") or resume.approved_by
+    if approved_by:
+        lifecycle["approved_by"] = approved_by
+    binding = approved.get("policy_binding")
+    if binding is None and resume.metadata:
+        binding = resume.metadata.get("plan_policy_binding")
+    if binding is not None:
+        lifecycle["policy_binding"] = binding
+    return lifecycle
 
 
 def _approval_already_consumed(
@@ -453,7 +482,7 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             return
 
         if resume.action == ResumeAction.REJECT:
-            plan_payload = _plan_lifecycle_payload(pending, resume=resume)
+            plan_payload = _plan_lifecycle_payload(pending, resume=resume, context=context)
             if plan_payload is not None:
                 self._emit(
                     EventSpec(
@@ -468,7 +497,7 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
 
         if resume.action in {ResumeAction.APPROVE, ResumeAction.EDIT}:
             _mark_force_planning_approved(context, pending=pending, resume=resume)
-            plan_payload = _plan_lifecycle_payload(pending, resume=resume)
+            plan_payload = _plan_lifecycle_payload(pending, resume=resume, context=context)
             if plan_payload is not None:
                 self._emit(
                     EventSpec(

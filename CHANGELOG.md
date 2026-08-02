@@ -7,6 +7,20 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed — plan policy binding reaches the checkpoint/resume/trace projection (epic 059 / R3)
+The approved-plan `PLAN_APPROVED` / `PLAN_REJECTED` trace event now carries the host-authored
+`policy_binding` and `approved_by` alongside `plan_id` and `content_hash`, so a host can prove — after
+compaction / reconnect / resume — that the executed plan is the exact version it bound to an
+authorization/policy snapshot. Previously the binding lived only in live `context.metadata` and never
+reached the runtime event a host reads. The lifecycle payload is now built from the harness-authoritative
+`approved_plan` (computed before the event is emitted), which fixes a latent bug: on an **EDIT** the trace
+event carried the *stale pending* `content_hash` instead of the re-hash of the edited content — a host
+enforcing re-approval against the traced hash would have compared against the wrong plan. The binding is
+sourced only from the resume command / authoritative approved plan, never model/tool output, so it stays
+unforgeable, and it survives a real checkpoint round-trip (`RuntimeState.metadata`). Closes R3.
+Tests: `tests/runtime/test_plan_binding_trace.py` (4 — trace event carries the binding, real checkpoint
+readback, unforgeable without resume metadata, EDIT re-hash on the trace event).
+
 ### Added — ToolGate provenance reaches the terminal / trace projection (epic 057 / R1)
 Gate decision provenance now flows all the way to the trace-safe `runtime_decision` projection a host
 reads, not just the tool policy outcome and the ask interrupt. The runtime stamps a reserved

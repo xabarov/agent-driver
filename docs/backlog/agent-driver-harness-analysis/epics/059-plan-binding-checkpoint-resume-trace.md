@@ -1,6 +1,9 @@
 # R3 — Plan policy binding через checkpoint/resume/trace
 
-Статус: **pending**. Доводит эпик 053 (U5 `IN PROGRESS`). Контекст: `../REMEDIATION_PLAN.md` §059.
+Статус: **DONE**. Закрыл эпик 053 (U5). Контекст: `../REMEDIATION_PLAN.md` §059.
+Реализация: `_plan_lifecycle_payload` в `runtime/single_agent/lifecycle/resume.py` теперь строит
+trace-payload из authoritative `approved_plan` (несёт `policy_binding`/`approved_by`/authoritative
+`content_hash`; попутно исправлен EDIT-stale-hash баг). Тест `tests/runtime/test_plan_binding_trace.py` (4).
 
 ## Что уже есть (не переделываем)
 
