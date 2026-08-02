@@ -7,6 +7,21 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed — credit-402 recovery clamps to the provider-stated affordable budget
+The OpenRouter credit `402` states the exact output budget a near-empty balance can support
+(`"...but can only afford 298"`). The `reduced_after_provider_402` retry ladder previously halved
+`max_tokens` with a hard **512 floor** — so when the affordable ceiling was below 512, every reduced
+retry kept 402-ing and the run hard-failed with a bare `LLM completion failed` (surfaced while running
+excel-ai's SSB benchmark on a nearly-depleted OpenRouter key: the model, tools, and reasoning path all
+worked, but the harness could not degrade to a best-effort answer). `affordable_max_tokens_from_error`
+now parses the stated ceiling (min across the body's current + `previous_errors` figures) and
+`request_with_reduced_max_tokens(request, affordable)` clamps to just under it (10% margin), **below the
+512 floor when the provider is that constrained** — the stated figure is authoritative. A ceiling below
+`_MIN_AFFORDABLE_MAX_TOKENS` (64, too small for even a minimal tool call / one-line final) is treated as
+a genuinely depleted balance: no change, so the 402 propagates as a clear error instead of looping. The
+generic (no-number) 402 path is unchanged (halve, 512 floor). Domain-neutral runtime robustness — no
+excel-ai change. Test: `test_credit_error_clamps_below_floor_to_stated_affordable_budget`.
+
 ### Added — bounded cancellation deadline on the tool cancellation token (epic 052 / U4)
 `ToolCancellation.deadline_seconds` — previously always `None` — is now populated from the run's
 `deadline_seconds`, so a cooperative handler consulting `current_tool_cancellation()` sees the outer

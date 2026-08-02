@@ -18,6 +18,7 @@ from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.llm.error_classifier import ProviderErrorReason, classify
 from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.llm_step.provider_requests import (
+    affordable_max_tokens_from_error,
     is_forced_tool_choice_provider_error,
     is_invalid_encrypted_reasoning_error,
     is_reduce_max_tokens_credit_error,
@@ -271,7 +272,8 @@ async def complete_request(  # pylint: disable=too-many-branches
                 request = request_without_forced_tool_choice(request)
                 continue
             if is_reduce_max_tokens_credit_error(exc):
-                reduced = request_with_reduced_max_tokens(request)
+                affordable = affordable_max_tokens_from_error(exc)
+                reduced = request_with_reduced_max_tokens(request, affordable)
                 if reduced is not request:
                     context.metadata["max_tokens_retry"] = "reduced_after_provider_402"
                     emit_step_event(
