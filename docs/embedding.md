@@ -56,6 +56,13 @@ Runnable examples for most of these live in [`examples/cookbook/`](../examples/c
   other `contracts` models are validated and round-trippable; treat their fields
   as the stable data contract. A schema-snapshot test guards public contract
   fields against accidental change.
+- **Export snapshot + deprecation policy.** The exact `__all__` of the embedding
+  facades (`agent_driver.sdk`, `.runtime`, `.tools`) is pinned by an
+  export-snapshot test — adding a public name is a deliberate surface change
+  (golden set + changelog), and *removing* one is a breaking change: a removed
+  name is first announced in the changelog and kept working for at least one
+  minor release before the symbol is dropped. New additions are additive and
+  need no deprecation window.
 - **Extending vs embedding.** To *add* a capability (new provider, tool, store,
   hook), see [extending.md](extending.md). This page is for *consuming* the
   runtime from an app.
