@@ -14,6 +14,17 @@ test` aborted collection under the legacy prepend mode with *import file mismatc
 contributor had to pass the flag by hand. Set it in `pyproject.toml` `addopts`; plain
 `pytest` now collects the whole suite cleanly.
 
+### Changed — refactor: decompose the durable_lifecycle god-module (behaviour-neutral)
+`harness/durable_lifecycle.py` was 1204 lines. An AST call-graph scan showed the seed
+fixtures are tightly coupled to the `DurableLifecycleRepository` class (they construct it),
+so the cleaner seam was the report layer: the compatibility-report build + markdown render +
+artifact write functions (plus their private helpers and the `_DURABLE_SCENARIOS` scenario
+table) operate on a repository passed in, referencing the class only in a parameter
+annotation. They were extracted into `harness/durable_lifecycle_report.py` with a
+`TYPE_CHECKING`-only class import (the annotation is a string under `from __future__ import
+annotations`, never evaluated), so the split stays a DAG with no runtime cycle. Pure
+structural change; full sweep 2873 passed. `durable_lifecycle.py` is now 899 lines (−25%).
+
 ### Changed — refactor: decompose the capability_packs god-module (behaviour-neutral)
 `harness/capability_packs.py` was 1218 lines, dominated by ~800 lines of pure seed fixtures
 (one `seed_scenario_specs` alone is ~585). An AST call-graph scan confirmed the fixtures are
