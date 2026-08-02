@@ -7,6 +7,20 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Changed — refactor: decompose the provider_catalog god-module (behaviour-neutral)
+`llm/provider_catalog.py` was 1193 lines and was earlier skipped as "mutually recursive". An
+AST call-graph scan (Tarjan SCC + topological layering) disproved that: the graph is a DAG.
+The earlier failed attempts partitioned by *name* (`seed_*` vs `build_*`) which cut across
+layers; the correct seam is a **topological layer cut**. The lower layer (leaf helpers,
+per-item fixture/plan builders, the `ProviderPluginRegistry` class, and the `_REPORT_VERSION`
+constant — depth ≤ 2 in the call graph) was extracted into `llm/provider_catalog_fixtures.py`;
+the report/orchestration layer (`build_provider_compatibility_report`,
+`seed_provider_preflight_reports`, `seed_provider_routing_plans`,
+`write_provider_catalog_artifacts`) stays in `provider_catalog` and imports the base
+one-directionally — no cycle. All names remain re-exported from `provider_catalog` so
+`context_windows` (which imports `seed_provider_catalogs`) and the tests are unaffected. Pure
+structural change; full sweep 2873 passed. `provider_catalog.py` is now 264 lines (−78%).
+
 ### Changed — test: `--import-mode=importlib` is now the pytest default
 Two test files share a basename (`tests/harness/test_lifecycle_hooks.py` and
 `tests/runtime/test_lifecycle_hooks.py`) with no `__init__.py`, so plain `pytest` / `make
