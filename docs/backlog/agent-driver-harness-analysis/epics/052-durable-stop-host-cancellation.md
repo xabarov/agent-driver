@@ -1,8 +1,16 @@
 # U4 — Durable Stop + host cancellation
 
-Дата создания: 2026-08-02. Статус: **IN PROGRESS — C(hook) + A/D + B(границы) + `CANCELLATION_FAILED`
-DONE 2026-08-02; fencing + mid-LLM-await открыты**. Родитель:
+Дата создания: 2026-08-02. Статус: **DONE 2026-08-02** (C-hook + A/D durable-lifecycle + B-границы +
+`CANCELLATION_FAILED` + F1 late-result fencing + mid-in-flight-LLM-await abort). Родитель:
 [[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+
+> **mid-LLM-await abort DONE** (свип 2961, +1): `_await_with_redirect` теперь поллит abort-handle и
+> при stop'е отменяет только этот provider-вызов + бросает типизированный `AbortRequested` (plain
+> `Exception`, не RuntimeError) → проходит мимо всех `except httpx.*/RuntimeError/ValueError` на
+> completion-пути → в `_drive_steps` явный `except AbortRequested` → `CANCELLED_BY_USER` (без
+> мис-маппинга в MODEL_ERROR). Redirect-путь не тронут; inert без abort-handle. Тест
+> `tests/runtime/test_mid_llm_abort.py` (застрявший 10с-вызов прерывается за ~0.1с). **U4 ЗАКРЫТ
+> ПОЛНОСТЬЮ.**
 
 > **`CANCELLATION_FAILED` DONE** (свип 2948): timeout-под-abort (uncooperative handler, застрявший шаг)
 > → `TerminalReason.CANCELLATION_FAILED` (enforced-stop) вместо `DEADLINE_EXCEEDED`; abort-ledger

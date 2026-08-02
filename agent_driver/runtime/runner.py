@@ -28,6 +28,7 @@ from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.lifecycle_hooks import dispatch_error
 from agent_driver.runtime.metadata_state import get_loop_control_state
 from agent_driver.runtime.single_agent.finalization.output import SingleAgentOutputMixin
+from agent_driver.runtime.single_agent.llm_step.completion import AbortRequested
 from agent_driver.runtime.single_agent.lifecycle.journal import SingleAgentJournalMixin
 from agent_driver.runtime.single_agent.lifecycle.resume import SingleAgentResumeMixin
 from agent_driver.runtime.single_agent.lifecycle.steps import SingleAgentStepMixin
@@ -405,6 +406,27 @@ class SingleAgentRunner(
                     self._emit_observe_policy_decisions(
                         context,
                         trigger="terminal_timeout",
+                    )
+                    return self._build_output(context, terminal)
+                except AbortRequested:
+                    # U4 — a stop was observed mid-LLM-call and the in-flight
+                    # request was cancelled promptly. Map the typed signal
+                    # explicitly to a CANCELLED terminal (never MODEL_ERROR).
+                    terminal = TerminalResult(
+                        status=RunStatus.CANCELLED,
+                        reason=TerminalReason.CANCELLED_BY_USER,
+                    )
+                    self._emit(
+                        EventSpec(
+                            run_id=context.run_id,
+                            attempt_id=context.attempt_id,
+                            event_type=RuntimeEventType.RUN_CANCELLED,
+                            payload={"reason": terminal.reason.value},
+                        )
+                    )
+                    self._emit_observe_policy_decisions(
+                        context,
+                        trigger="terminal_abort",
                     )
                     return self._build_output(context, terminal)
                 context.step_name = result.next_step

@@ -64,32 +64,62 @@ class RedirectRequested(Exception):
         super().__init__("redirect requested")
 
 
-async def _await_with_redirect(host: Any, coro: Awaitable[Any]) -> Any:
-    """Await ``coro`` (a provider call) while polling the redirect probe.
+class AbortRequested(Exception):
+    """U4 — the run was aborted while an LLM call was in flight; the call was
+    cancelled promptly instead of waiting for the step boundary.
 
-    Inert when no probe is configured — just awaits. Otherwise races the call
-    against the probe; a non-empty probe result aborts ONLY this request (cancels
-    the task) and raises :class:`RedirectRequested`. Never touches tools/children.
+    A dedicated exception (not a ``RuntimeError``/``CancelledError``) so it
+    escapes every provider-error ``except`` clause and is mapped explicitly to a
+    ``CANCELLED_BY_USER`` terminal by the runner loop — no mis-mapping to
+    ``MODEL_ERROR``/``RUNTIME_ERROR``."""
+
+
+async def _await_with_redirect(
+    host: Any,
+    coro: Awaitable[Any],
+    *,
+    abort_check: "Callable[[], bool] | None" = None,
+) -> Any:
+    """Await ``coro`` (a provider call) while polling for a redirect or an abort.
+
+    Inert when neither a redirect probe nor ``abort_check`` is configured — just
+    awaits. Otherwise races the call: a fired ``abort_check`` cancels the task and
+    raises :class:`AbortRequested` (stop wins over redirect); a non-empty probe
+    result cancels the task and raises :class:`RedirectRequested`. Only this
+    request is cancelled — never tools/children.
     """
     probe = getattr(getattr(host, "_config", None), "redirect_probe", None)
-    if probe is None:
+    if probe is None and abort_check is None:
         return await coro
     task = asyncio.ensure_future(coro)
     while True:
         done, _ = await asyncio.wait({task}, timeout=0.1)
         if task in done:
             return task.result()
-        try:
-            text = probe()
-        except Exception:  # noqa: BLE001 - a bad probe must not kill the call
-            text = None
-        if text:
-            task.cancel()
+        if abort_check is not None:
             try:
-                await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-            raise RedirectRequested(str(text))
+                aborted = bool(abort_check())
+            except Exception:  # noqa: BLE001 - a bad check must not kill the call
+                aborted = False
+            if aborted:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+                raise AbortRequested("run aborted during LLM call")
+        if probe is not None:
+            try:
+                text = probe()
+            except Exception:  # noqa: BLE001 - a bad probe must not kill the call
+                text = None
+            if text:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
+                raise RedirectRequested(str(text))
 
 
 async def complete_request(  # pylint: disable=too-many-branches
@@ -109,6 +139,14 @@ async def complete_request(  # pylint: disable=too-many-branches
     """
     last_timeout: httpx.TimeoutException | None = None
     overflow_recovered = False
+    # U4 — observe the run's abort while the provider call is in flight so a stop
+    # cancels it promptly (instead of waiting for the next step boundary).
+    _abort_handle = getattr(context, "abort_handle", None)
+    abort_check = (
+        (lambda: bool(getattr(_abort_handle, "is_aborted", False)))
+        if _abort_handle is not None
+        else None
+    )
     for attempt in range(3):
         # Single pre-send owner (epic 043 B): pad empty non-final turns so a
         # degenerate/interrupted turn can't make a strict provider reject the
@@ -118,7 +156,9 @@ async def complete_request(  # pylint: disable=too-many-branches
         try:
             if not is_stream_enabled(context.run_input):
                 response = await _await_with_redirect(
-                    host, host._deps.provider.complete(request)
+                    host,
+                    host._deps.provider.complete(request),
+                    abort_check=abort_check,
                 )
                 response = _mark_no_tool_text_form_suppression(
                     context, request, response
@@ -130,7 +170,9 @@ async def complete_request(  # pylint: disable=too-many-branches
                     response=response,
                 )
             response = await _await_with_redirect(
-                host, complete_streaming_request(host, context, request)
+                host,
+                complete_streaming_request(host, context, request),
+                abort_check=abort_check,
             )
             response = _mark_no_tool_text_form_suppression(context, request, response)
             if should_retry_empty_forced_final_non_stream(context, response):

@@ -46,6 +46,19 @@ binding, U6/U7) are additive: new optional contract fields default to `None`/abs
 keys (`_ad_gate_provenance`, `consumed_approvals`, `approved_plan.policy_binding`) are additive, and
 existing checkpoints/events remain readable. No public symbol was removed or renamed.
 
+### Added — U4: abort observed during an in-flight LLM call (epic 052 / U4) — U4 complete
+An abort is now observed *while a provider call is in flight* instead of only at the next step
+boundary: `_await_with_redirect` (the existing redirect-race helper) also polls the run's abort handle
+and, on a stop, cancels just that request and raises a typed `AbortRequested`. The signal is a plain
+`Exception` distinct from the provider-error types, so it escapes every `except httpx.*`/`RuntimeError`/
+`ValueError` clause on the completion path and is mapped **explicitly** to a `CANCELLED_BY_USER`
+terminal by the runner loop (a dedicated `except AbortRequested` beside the wall-clock `except
+TimeoutError`) — no mis-mapping to `MODEL_ERROR`/`RUNTIME_ERROR`. Inert unless an abort handle is
+supplied; the redirect path is unchanged. A stuck 10s provider call aborts within the ~0.1s poll
+interval as a truthful cancellation. Full sweep 2961 passed (+1). This closes the last U4 item — U4
+(durable stop + host cancellation) is now complete across the hook, durable lifecycle, transition
+checks, `CANCELLATION_FAILED`, late-result fencing, and mid-call abort.
+
 ### Added — F3: monotonic checkpoint revision + expected-revision resume guard (epic 051 / U3)
 `CheckpointRef` gains a monotonic per-run `revision` (0 for the first checkpoint, +1 per save along
 the parent chain, derived in `build_checkpoint_ref` from the already-threaded previous row — no extra
