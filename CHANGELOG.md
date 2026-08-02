@@ -14,6 +14,15 @@ test` aborted collection under the legacy prepend mode with *import file mismatc
 contributor had to pass the flag by hand. Set it in `pyproject.toml` `addopts`; plain
 `pytest` now collects the whole suite cleanly.
 
+### Changed — refactor: decompose the capability_packs god-module (behaviour-neutral)
+`harness/capability_packs.py` was 1218 lines, dominated by ~800 lines of pure seed fixtures
+(one `seed_scenario_specs` alone is ~585). An AST call-graph scan confirmed the fixtures are
+a leaf layer (resolution depends on fixtures, never the reverse), so they were extracted into
+`harness/capability_packs_fixtures.py` and re-imported. The one shared constant
+(`_LIVE_SKIP_REASON`) moved to the base fixtures module and is imported back, keeping the split
+a DAG. Pure structural change; full sweep 2873 passed. `capability_packs.py` is now 376 lines
+(−69% — the module is now the resolution layer it was named for).
+
 ### Changed — refactor: decompose the skills/lifecycle god-module (behaviour-neutral)
 `skills/lifecycle.py` was 1484 lines (46 top-level defs). The evidence/reporting layer was
 extracted; the shared product-family helpers were lifted into a small base module so the
