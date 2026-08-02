@@ -1,8 +1,15 @@
 # U7 — Version, compatibility, release handoff
 
-Дата создания: 2026-08-02. Статус: **IN PROGRESS — `__version__` + compat-нота DONE 2026-08-02;
-version-bump/wheel/handoff-doc открыты (release-действие в самом конце Goal)**. Родитель:
+Дата создания: 2026-08-02. Статус: **DONE 2026-08-02** — релиз `0.2.0` нарезан. Родитель:
 [[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+
+> **Release cut** (свип 2965): версия `0.1.0`→**`0.2.0`** (minor-bump, additive/backward-compat;
+> `pyproject`==runtime `__version__`==dist-metadata, guard `test_version.py`); CHANGELOG `[Unreleased]`
+> → `[0.2.0] - 2026-08-02`. **Wheel** `agent_driver-0.2.0-py3-none-any.whl`, **SHA-256**
+> `f03fad0d3c5c2883c0e76fdd073b83c8287ec28343731c493938b0561367a121`, **byte-for-byte воспроизводим**
+> (2 изолированные сборки с `SOURCE_DATE_EPOCH`). **Handoff-документ:**
+> `handoff-0.2.0-pentestlens.md` (release-identity, facade-манифест, контракты U1-U7, тест-команды,
+> wheel+SHA, migration/compat, остаточные риски). Migration: всё additive + persisted-compat.
 
 > **Реализация** (свип 2907, +3): `agent_driver.__version__` (из `importlib.metadata` с
 > pyproject-fallback), guard-тест `tests/test_version.py` (совпадает с `pyproject [project] version`,

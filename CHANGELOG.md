@@ -7,6 +7,17 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-02
+
+Release candidate for the PentestLens embedding Goal (epics 048–055 / U1–U7): a supported embedding
+facade plus durable, domain-neutral control contracts — tool-gate call identity + provenance (U2),
+atomic exactly-once approval consumption with prior-result replay (U3), a durable stop / host
+cancellation lifecycle with result fencing (U4), plan-integrity hashing + enforcement (U5), a truthful
+non-durable Gateway declaration (U6), and a coherent `__version__`/release handoff (U7). Every change
+below is **additive and persisted-state compatible** — new optional contract fields default to
+`None`/absent, new metadata keys are additive, existing checkpoints/events remain readable, and no
+public symbol was removed or renamed.
+
 ### Added — embedding e2e example + cookbook off internal paths (epic 049 / U1, phase D)
 New `examples/cookbook/19_embedded_e2e.py` assembles a full durable embedding from the supported
 facades only (`agent_driver.sdk`/`.runtime`/`.llm`/`.contracts`): a fake provider, host-owned

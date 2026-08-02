@@ -80,7 +80,7 @@ benchmark-fitting, обязательна классификация tool/prompt
 | U4 | 052 durable-stop | **C(hook) + A/D + B(границы) + `CANCELLATION_FAILED` DONE** — `AbortLifecycleStore` (restart-queryable lifecycle, facade), `_finalize_abort_lifecycle`, timeout-под-abort→`CANCELLATION_FAILED`; свип 2948. + **F1 attempt-epoch + fencing enforce** + **mid-in-flight-LLM-await abort** (`AbortRequested`→`CANCELLED_BY_USER`, без мис-маппинга; свип 2961). **U4 ЗАКРЫТ.** Опц. осталось: deadline на cancellation-токене (мелко) | крупно |
 | U5 | 053 plan-integrity | **ядро A/B/C + enforcement + PlanArtifactStore-wiring DONE** — harness-hash + EDIT-re-hash + `detect_plan_revision` + policy-binding + `required_plan_hash` (гейт DENY на ревизии) + durable `PlanArtifact` на approve/reject (`RunnerConfig(plan_artifact_store=)`); свип 2948. Осталось: binding через trace-проекцию (мелко) | средне |
 | U6 | 054 gateway-truthfulness | **DONE (Option 2)** — `durable_parked_runs=False` + `require_durable_recovery()` fail-fast + docstring на прямой путь; свип 2907 | мелко |
-| U7 | 055 version-release | **`__version__`+compat-нота DONE** (single-source из metadata, guard-тест, additive/persisted-compat); осталось release-действие (version-bump/wheel/SHA-256/handoff-doc, в конце Goal) | мелко |
+| U7 | 055 version-release | **DONE** — релиз `0.2.0` нарезан (`__version__`==pyproject==dist; CHANGELOG `[0.2.0]`; wheel `agent_driver-0.2.0-py3-none-any.whl` SHA `f03fad0d…` byte-for-byte воспроизводим; handoff-0.2.0-pentestlens.md) | мелко |
 
 Порядок: U2→U3→U4 вместе (общий durable-store+identity), U5 цепляется, U1 финализируется последним,
 U6/U7 — рано и независимо.
