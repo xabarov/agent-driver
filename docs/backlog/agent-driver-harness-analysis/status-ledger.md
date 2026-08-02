@@ -4,7 +4,11 @@
 > (5 файлов) и не было type/docs/Python-matrix пруфов. Закрыто в **0.3.1**: `make lint` зелёный, добавлены
 > `make type` (pyrightconfig, supported surface, 0 errors) + `make docs-check` + CI-matrix 3.11/3.12 +
 > lint/type/docs jobs. Wheel `agent_driver-0.3.1-py3-none-any.whl` SHA-256 `4a12cc37…5f81` (reproducible).
-> Handoff `handoff-0.3.1-pentestlens-remediation.md`. 0.3.0 identity не переиспользуется.
+> Handoff `handoff-0.3.1-pentestlens-remediation.md`. 0.3.0 identity не переиспользуется. **CI зелёный на
+> release SHA `2867a5f`** (GH Actions run 30772741913 = success: test 3.11/3.12, lint 3.11/3.12, type, docs,
+> postgres — все 7). Урок: первый прогон вскрыл, что «жирный» локальный venv скрывал CI-расхождения
+> (missing extras, ruff-version-drift, 3.11 TestClient-portal starvation) — проверять на чистом CI + реальном
+> 3.11 (`uv venv --python 3.11`), не на локальных receipts.
 
 
 Этот файл — **единственный** авторитетный источник статуса по PentestLens embedding Goal.
