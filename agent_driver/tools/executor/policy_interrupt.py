@@ -8,6 +8,10 @@ from agent_driver.contracts.enums import InterruptReason, ResumeAction
 from agent_driver.contracts.interrupts import InterruptRequest
 from agent_driver.contracts.tools import ToolResultEnvelope
 from agent_driver.runtime.tool_gate import extract_reserved_metadata
+from agent_driver.tools.executor.interrupt_ids import (
+    build_attempt_id,
+    build_interrupt_id,
+)
 from agent_driver.tools.executor.result import GovernedExecutionResult
 from agent_driver.tools.executor.specs import ToolApprovalContext
 from agent_driver.tools.executor.trace import build_tool_trace, trace_spec_denied
@@ -24,9 +28,15 @@ def build_tool_approval_interrupt(ctx: ToolApprovalContext) -> InterruptRequest:
     # overwrite them.
     reserved = extract_reserved_metadata(ctx.policy.metadata)
     return InterruptRequest(
-        interrupt_id=f"int_{ctx.run_input.run_id or 'runtime'}_{ctx.index}",
+        interrupt_id=build_interrupt_id(
+            run_id=ctx.run_input.run_id,
+            tool_call_id=ctx.call.tool_call_id,
+            index=ctx.index,
+        ),
         run_id=ctx.run_input.run_id or "run_pending",
-        attempt_id=f"attempt_{ctx.index}",
+        attempt_id=build_attempt_id(
+            index=ctx.index, attempt_id=ctx.run_metadata.get("attempt_id")
+        ),
         checkpoint_id="checkpoint_pending",
         reason=InterruptReason(ctx.policy.interrupt_reason or "approval_required"),
         # Honor a host-provided heading (e.g. a localised ToolGateAsk.title);

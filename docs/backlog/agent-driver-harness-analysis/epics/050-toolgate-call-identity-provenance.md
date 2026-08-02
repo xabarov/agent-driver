@@ -14,11 +14,16 @@
 > authorship). `GateProvenance` экспортирован из `agent_driver.runtime`. Тесты:
 > `tests/runtime/test_tool_gate_provenance.py`, `tests/contracts/test_bounded_metadata.py`.
 >
-> **Осталось C/E:** сквозное сохранение provenance через event-log/trace/terminal-проекции;
-> harness-minted стабильный call-id с write-back на `ToolCall` (None-случай); унификация двух
-> `interrupt_id`/`attempt_id`-дериви (`policy_interrupt` index-based vs `allowed` call-id-based);
-> resume-корреляция по стабильному call-id; полная retry/timeout/abort-adversarial-матрица; различие
-> gate-DENY vs static-DENY в `RuntimeDecision`.
+> **interrupt_id-унификация DONE 2026-08-02 (свип 2964, +3):** оба билдера через общий
+> `tools/executor/interrupt_ids.py` (`build_interrupt_id`/`build_attempt_id`) → единая схема
+> `int_{run_id}_{tool_call_id or index}` (run-scoped + call-stable). Безопасно: resume матчит только
+> эхнутый `pending.interrupt.interrupt_id` (никто не реконструирует независимо), HITL-suite цел. Тест
+> `tests/runtime/test_interrupt_id_unification.py`.
+>
+> **Осталось C/E:** сквозное сохранение provenance через event-log/trace/terminal-проекции (в
+> envelope/interrupt уже течёт); harness-minted стабильный call-id с write-back на `ToolCall` (None-
+> случай); полная retry/timeout/abort-adversarial-матрица; различие gate-DENY vs static-DENY в
+> `RuntimeDecision`.
 
 Расширить доменно-нейтральный gate-контракт так, чтобы каждая оценка имела стабильную корреляцию
 (`tool_call_id`, `attempt_id`, run/session id, optional host-metadata), а каждое `allow`/`deny`/

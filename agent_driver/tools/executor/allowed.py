@@ -26,6 +26,10 @@ from agent_driver.tools.context import (
     tool_progress_scope,
 )
 from agent_driver.tools.executor.blocks import append_blocked_call
+from agent_driver.tools.executor.interrupt_ids import (
+    build_attempt_id,
+    build_interrupt_id,
+)
 from agent_driver.tools.executor.specs import (
     AllowedSpec,
     BlockSpec,
@@ -109,7 +113,9 @@ def _planning_update_payload(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _interrupt_identifiers(spec: AllowedSpec) -> tuple[str, str]:
     run_id = str(spec.run_metadata.get("run_id") or "run_pending")
-    attempt_id = str(spec.run_metadata.get("attempt_id") or f"attempt_{spec.index}")
+    attempt_id = build_attempt_id(
+        index=spec.index, attempt_id=spec.run_metadata.get("attempt_id")
+    )
     return run_id, attempt_id
 
 
@@ -421,7 +427,7 @@ def _append_clarification_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) -
     allow_multiple = bool(raw.get("allow_multiple", False))
     run_id, attempt_id = _interrupt_identifiers(spec)
     interrupt = InterruptRequest(
-        interrupt_id=f"int_{spec.call.tool_call_id or spec.index}",
+        interrupt_id=build_interrupt_id(run_id=run_id, tool_call_id=spec.call.tool_call_id, index=spec.index),
         run_id=run_id,
         attempt_id=attempt_id,
         checkpoint_id="checkpoint_pending",
@@ -527,7 +533,7 @@ def _append_wait_for_event_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) 
     subscription = WaitForEventRequest.model_validate(subscription_raw)
     run_id, attempt_id = _interrupt_identifiers(spec)
     interrupt = InterruptRequest(
-        interrupt_id=f"int_{spec.call.tool_call_id or spec.index}",
+        interrupt_id=build_interrupt_id(run_id=run_id, tool_call_id=spec.call.tool_call_id, index=spec.index),
         run_id=run_id,
         attempt_id=attempt_id,
         checkpoint_id="checkpoint_pending",
@@ -596,7 +602,7 @@ def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
         },
     )
     interrupt = InterruptRequest(
-        interrupt_id=f"int_{spec.call.tool_call_id or spec.index}",
+        interrupt_id=build_interrupt_id(run_id=run_id, tool_call_id=spec.call.tool_call_id, index=spec.index),
         run_id=run_id,
         attempt_id=attempt_id,
         checkpoint_id="checkpoint_pending",

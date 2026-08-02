@@ -221,6 +221,18 @@ checkpoint id (it still carries the `checkpoint_pending` sentinel), prior-result
 crash-after-consume effect ledger, and the two-client/restart adversarial matrix against a real
 durable store.
 
+### Changed — unify the interrupt-id / attempt-id derivation across both builders (epic 050 / U2)
+The two interrupt builders minted ids by different schemes — the tool-approval / gate path
+(`policy_interrupt`) used `int_{run_id}_{index}` while the allow-path clarification / wait-for-event /
+plan-approval interrupts (`allowed.py`) used `int_{tool_call_id or index}`. Both now route through one
+shared helper (`agent_driver.tools.executor.interrupt_ids.build_interrupt_id` /
+`build_attempt_id`): a **run-scoped, per-call-stable** id `int_{run_id}_{tool_call_id or index}`
+(prefers the harness tool_call_id so the id survives gate → interrupt → approval/resume; equal to the
+old tool-approval scheme when no tool_call_id exists). Safe because resume correlation only ever
+matches the *echoed* `pending.interrupt.interrupt_id` (nothing reconstructs the id independently), so
+the whole HITL suite passed unchanged. Full sweep 2964 passed (+3). This is one of the remaining U2
+items; provenance projection through the terminal is the last U2 refinement.
+
 ### Added — tool-gate call identity + decision provenance (epic 050 / U2, phases A/B/D)
 The dynamic `ToolGate` seam now carries **stable call identity** and an optional **host
 provenance** channel, for embedders (e.g. PentestLens) that bind an external policy decision to a
