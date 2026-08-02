@@ -74,7 +74,7 @@ benchmark-fitting, обязательна классификация tool/prompt
 
 | U | Под-эпик | Суть gap'а | Оценка |
 |---|---|---|---|
-| U1 | 049 embedding-facade | store/hook/stream-протоколы не на facade+не в embedding.md; `RunnerConfig` в internal; нет точного export-снапшота и runtime `__version__` | средне |
+| U1 | 049 embedding-facade | **Phase A DONE** (store-протоколы + command-store + `RunLifecycleHook` + stream-проекции ре-экспортированы из `agent_driver.runtime`; embedding.md + guard обновлены; свип 2907); `__version__` — в U7; осталось C/D/E (единый `embedding`-namespace, exact export-снапшот, переписать examples + e2e) | средне |
 | U2 | 050 gate-identity+provenance | **A/B/D DONE** (identity в контекст + `GateProvenance` под reserved `_ad_` + `ensure_bounded_json_metadata` fail-closed + ask-path→interrupt; свип 2889); осталось C/E (сквозные проекции, унификация `interrupt_id`, retry/timeout/abort-матрица) | крупно |
 | U3 | 051 atomic-approval | **контракт-срез DONE** (`ResumeCommand.idempotency_key`+`expected_checkpoint_id`; `ResumeConflictError` на stale/уже-консьюмнут; `consumed_approvals`-ledger → дубль=no-op, один side-effect; свип 2893); осталось B/C/D (concurrent CAS+Postgres store, interrupt↔real-checkpoint, prior-result replay, crash-effect-ledger, монотонный revision, two-client/restart-матрица) | **крупнейшее** |
 | U4 | 052 durable-stop | **cancellation-hook-срез DONE** (governed-executor принимает `abort_handle`→per-call `ToolCancellation` через `current_tool_cancellation()`; pre-call skip `run_aborted`; свип 2897); осталось A/B/D (durable lifecycle+`observed`+restart, mid-LLM-await abort, deadline, terminal-честность, fencing, uncooperative/restart-матрица) | крупно |

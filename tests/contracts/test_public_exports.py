@@ -65,6 +65,22 @@ def test_runtime_public_exports_remain_runtime_focused() -> None:
         "create_runtime_store_bundle",
         "wrap_governed_executor",
         "write_validation_artifacts",
+        # U1 (epic 049) — host-store protocols, durable command-queue impls,
+        # lifecycle-hook protocol, and run/stream projections belong on the
+        # facade so embedders don't reach into runtime submodules.
+        "CheckpointStore",
+        "RuntimeEventLog",
+        "CheckpointRecord",
+        "StorageCapabilities",
+        "CommandQueueStore",
+        "InMemoryCommandQueueStore",
+        "SqliteCommandQueueStore",
+        "RunLifecycleHook",
+        "BaseRunLifecycleHook",
+        "project_runtime_events",
+        "project_run_timeline",
+        "summarize_run_lifecycle",
+        "RunLifecycleSnapshot",
     }
     forbidden = {"ToolRegistry", "GovernedToolExecutor", "SubagentGroupSpec"}
     exports = set(runtime.__all__)

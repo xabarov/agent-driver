@@ -7,6 +7,22 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added — embedding facade completed for durable-host primitives (epic 049 / U1)
+The `agent_driver.runtime` facade now re-exports the categories an embedder previously had to reach
+into runtime submodules for: the **host-store protocols** (`CheckpointStore`, `RuntimeEventLog`,
+`CheckpointRecord`, `StorageCapabilities`), the **durable command/control store** family
+(`CommandQueueStore`, `InMemoryCommandQueueStore`, `SqliteCommandQueueStore`), the **lifecycle-hook
+protocol** (`RunLifecycleHook`, `BaseRunLifecycleHook`), and the **run/stream projections**
+(`project_runtime_events`, `project_run_timeline`, `backfill_stream_events`, `summarize_run_lifecycle`,
+`RunLifecycleSnapshot`, `RunLifecycleState`, `RunTimelineRow`, `RuntimeSessionDiagnostics`). A host can
+now build a durable embedding (host stores + lifecycle hook + stream projections) importing only from
+`agent_driver.runtime`, never `runtime.storage` / `.control` / `.lifecycle_hooks` / `.stream`. The
+`docs/embedding.md` table and the `test_public_exports` guard were updated to lock the surface; the
+tools-vs-runtime boundary (no `ToolRegistry`/`GovernedToolExecutor` on `runtime`) is preserved.
+Additive; full sweep 2907 passed. Remaining U1 (epic 049): a single `agent_driver.embedding`
+aggregate namespace, an exact (equality) export snapshot + deprecation policy, and repointing the
+cookbook examples off internal paths onto the supported facade.
+
 ### Added — runtime `__version__`, single-sourced from package metadata (epic 055 / U7)
 `agent_driver.__version__` now exists, resolved from the installed distribution metadata
 (`importlib.metadata`) with a pyproject-matching fallback for a bare source tree. A guard test

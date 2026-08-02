@@ -57,6 +57,21 @@ from agent_driver.runtime.single_agent.llm_step.defer_primer import (
 from agent_driver.runtime.single_agent.types import RunnerConfig, RuntimeStepResult
 from agent_driver.runtime.sqlite_store import SqliteRuntimeStore
 from agent_driver.runtime.state import RuntimeState
+from agent_driver.runtime.control import (
+    CommandQueueStore,
+    InMemoryCommandQueueStore,
+    SqliteCommandQueueStore,
+)
+from agent_driver.runtime.lifecycle_hooks import (
+    BaseRunLifecycleHook,
+    RunLifecycleHook,
+)
+from agent_driver.runtime.storage import (
+    CheckpointRecord,
+    CheckpointStore,
+    RuntimeEventLog,
+    StorageCapabilities,
+)
 from agent_driver.runtime.storage.factory import (
     RuntimeStoreBundle,
     RuntimeStoreFactoryConfig,
@@ -64,6 +79,16 @@ from agent_driver.runtime.storage.factory import (
     create_runtime_store_bundle,
     preflight_runtime_store,
     runtime_store_config_from_env,
+)
+from agent_driver.runtime.stream import (
+    RunLifecycleSnapshot,
+    RunLifecycleState,
+    RunTimelineRow,
+    RuntimeSessionDiagnostics,
+    backfill_stream_events,
+    project_run_timeline,
+    project_runtime_events,
+    summarize_run_lifecycle,
 )
 from agent_driver.runtime.tool_gate import (
     GateProvenance,
@@ -94,6 +119,27 @@ __all__ = [
     "keyword_relevance_primer",
     "InMemoryCheckpointStore",
     "InMemoryEventLog",
+    # U1 (epic 049) — host-store protocols + durable impls, lifecycle-hook
+    # protocol, and run/stream projections. Supported on the facade so an
+    # embedder never imports runtime.storage / .control / .lifecycle_hooks /
+    # .stream directly.
+    "CheckpointStore",
+    "RuntimeEventLog",
+    "CheckpointRecord",
+    "StorageCapabilities",
+    "CommandQueueStore",
+    "InMemoryCommandQueueStore",
+    "SqliteCommandQueueStore",
+    "RunLifecycleHook",
+    "BaseRunLifecycleHook",
+    "project_runtime_events",
+    "project_run_timeline",
+    "backfill_stream_events",
+    "summarize_run_lifecycle",
+    "RunLifecycleSnapshot",
+    "RunLifecycleState",
+    "RunTimelineRow",
+    "RuntimeSessionDiagnostics",
     "POSTGRES_CAPABILITIES",
     "POSTGRES_SCHEMA_VERSION",
     "PostgresRuntimeStore",

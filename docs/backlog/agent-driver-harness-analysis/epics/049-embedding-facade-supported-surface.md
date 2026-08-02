@@ -1,7 +1,26 @@
 # U1 — Supported embedding facade
 
-Дата создания: 2026-08-02. Статус: **PROPOSED**. Родитель:
-[[048-pentestlens-embedding-readiness-goal]]. Происхождение: upstream Goal (host-adoption).
+Дата создания: 2026-08-02. Статус: **IN PROGRESS — facade-довод (Phase A) + `__version__` (B, в U7)
+DONE 2026-08-02; C/D/E открыты**. Родитель: [[048-pentestlens-embedding-readiness-goal]].
+Происхождение: upstream Goal (host-adoption).
+
+> **Реализация Phase A** (свип 2907): `agent_driver.runtime` facade теперь ре-экспортирует
+> категории, за которыми embedder раньше лез в подмодули: store-протоколы (`CheckpointStore`,
+> `RuntimeEventLog`, `CheckpointRecord`, `StorageCapabilities`), durable command/control-store
+> (`CommandQueueStore`, `InMemoryCommandQueueStore`, `SqliteCommandQueueStore`), lifecycle-hook-
+> протокол (`RunLifecycleHook`, `BaseRunLifecycleHook`), run/stream-проекции (`project_runtime_events`,
+> `project_run_timeline`, `backfill_stream_events`, `summarize_run_lifecycle`, `RunLifecycleSnapshot`,
+> `RunLifecycleState`, `RunTimelineRow`, `RuntimeSessionDiagnostics`). Хост строит durable-embedding,
+> импортя только из `agent_driver.runtime`. `docs/embedding.md` + `test_public_exports` обновлены;
+> граница tools-vs-runtime сохранена (forbidden-набор чист). **Phase B** (`__version__`) — сделан в
+> U7 (эпик 055).
+>
+> **Осталось C/D/E:** единый `agent_driver.embedding`-namespace (опционально — сейчас всё на
+> `runtime`); **точный (equality) export-снапшот** + deprecation-policy (сейчас subset-guard);
+> переписать `examples/cookbook/*` с internal-путей (`single_agent.types`, `config_sections`,
+> `filesystem._paths`, `runtime.storage/control/stream`) на supported-facade + один e2e-embedded-
+> пример (fake-provider + host-stores + governed fake-tool + lifecycle-hook + approval + resume +
+> abort, только supported-импорты); декларация stability/deprecation/Python-matrix/extras в одном месте.
 
 Один документированный поддерживаемый namespace/facade для хостов-встраивателей. Embedder НЕ
 должен нуждаться в `runtime.single_agent.*`, internal-миксинах, underscore-модулях/классах,
