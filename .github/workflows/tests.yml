@@ -111,3 +111,53 @@ jobs:
           fi
       - name: Run real-Postgres control-plane matrix
         run: python -m pytest -m postgres -v
+
+  # The release artifact is built only after every behavioral gate is green.
+  # Two caller umasks must still produce byte-identical wheels because the
+  # repository-owned builder normalizes the exported Git tree itself.
+  release-wheel:
+    needs: [test, lint, type, docs, postgres-suite]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned build requirements
+        run: python -m pip install "setuptools>=68" wheel
+      - name: Build twice and prove byte identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          first="$RUNNER_TEMP/release-wheel-first"
+          second="$RUNNER_TEMP/release-wheel-second"
+          mkdir -p "$first" "$second"
+          (umask 077; make release-wheel RELEASE_PYTHON=python RELEASE_WHEEL_DIR="$first")
+          (umask 002; make release-wheel RELEASE_PYTHON=python RELEASE_WHEEL_DIR="$second")
+          first_wheel=$(find "$first" -maxdepth 1 -name 'agent_driver-*.whl' -print)
+          second_wheel=$(find "$second" -maxdepth 1 -name 'agent_driver-*.whl' -print)
+          cmp "$first_wheel" "$second_wheel"
+          sha256sum "$first_wheel" "$second_wheel"
+          python -m zipfile -t "$first_wheel"
+          python -m pip install --no-deps "$first_wheel"
+          python - <<'PY'
+          from importlib.metadata import metadata, version
+          import agent_driver
+          import agent_driver.embedding
+          import agent_driver.runtime
+
+          package = metadata("agent-driver")
+          assert version("agent-driver") == agent_driver.__version__
+          assert package["Requires-Python"] == ">=3.11"
+          print(f"verified agent-driver {agent_driver.__version__}")
+          PY
+          cp "$first_wheel" "$GITHUB_WORKSPACE/"
+      - name: Upload exact release wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-driver-wheel-${{ github.sha }}
+          path: agent_driver-*.whl
+          if-no-files-found: error
+          retention-days: 30

@@ -7,6 +7,23 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-03
+
+Patch release replacing the non-reproducible `0.3.1` artifact identity. The
+`0.3.1` wheel build inherited the checkout permissions of
+`scripts/check_package_layout.py`, so otherwise identical source trees could
+produce wheels whose ZIP metadata recorded `100777`, `100775`, or `100755` and
+therefore had different SHA-256 values. Runtime payloads were identical, but
+the byte-for-byte reproducibility claim was false.
+
+`make release-wheel` now builds exclusively from a clean committed
+`git archive`, normalizes every tracked regular file to its Git executable bit
+(`0644` or `0755`), sets a fixed process umask and locale, and derives
+`SOURCE_DATE_EPOCH` from the exact commit. CI invokes this builder twice under
+different caller umasks, requires byte-identical wheels, verifies metadata and
+imports, and publishes the selected wheel as a run artifact. No public runtime
+API or persisted-state contract changes from `0.3.1`.
+
 ## [0.3.1] - 2026-08-03
 
 Follow-up to the `0.3.0` remediation, answering the downstream verifier's two findings against the DoD:

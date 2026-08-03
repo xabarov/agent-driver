@@ -5,6 +5,8 @@ PYTEST ?= uv run pytest
 RUFF ?= ./.venv/bin/ruff
 PYRIGHT ?= ./.venv/bin/pyright
 VENV_PYTEST ?= ./.venv/bin/python -m pytest
+RELEASE_PYTHON ?= ./.venv/bin/python
+RELEASE_WHEEL_DIR ?= dist
 PLAYWRIGHT_PY ?= ./.venv/bin/python
 CHAT_DEMO_URL ?= http://localhost:5174
 POLICY_SUPERVISION_ENV_FILE ?= .env
@@ -17,7 +19,7 @@ POLICY_SUPERVISION_PYTESTS ?= tests/llm/test_provider_route_profiles.py tests/ru
 POLICY_SUPERVISION_RUFF_PATHS ?= agent_driver/llm/provider_route_profiles.py agent_driver/llm/__init__.py agent_driver/contracts/policy.py agent_driver/contracts/runtime_decisions.py agent_driver/contracts/__init__.py agent_driver/runtime/policy.py agent_driver/runtime/supervision.py agent_driver/runtime/validation.py agent_driver/runtime/validation_artifacts.py agent_driver/runtime/openrouter_preflight.py agent_driver/runtime/phoenix_gate.py agent_driver/runtime/playwright_gate.py agent_driver/runtime/benchmark_gate.py agent_driver/runtime/policy_supervision_audit.py agent_driver/runtime/__init__.py agent_driver/runtime/runner.py agent_driver/runtime/single_agent/lifecycle/journal.py agent_driver/runtime/single_agent/lifecycle/steps.py agent_driver/runtime/single_agent/tool_stage/__init__.py agent_driver/observability/support_bundle.py agent_driver/observability/run_trace/summary.py agent_driver/observability/provenance.py agent_driver/observability/phoenix.py agent_driver/observability/openinference.py agent_driver/observability/__init__.py agent_driver/batch/contracts.py agent_driver/evals/aggregate.py agent_driver/evals/compare.py tests/llm/test_provider_route_profiles.py tests/runtime/test_policy_evaluator.py tests/runtime/test_supervision.py tests/runtime/test_validation_artifacts.py tests/runtime/test_openrouter_preflight.py tests/runtime/test_phoenix_gate.py tests/runtime/test_playwright_gate.py tests/runtime/test_benchmark_gate.py tests/runtime/test_policy_supervision_audit.py tests/runtime/test_runtime_runner_core.py tests/runtime/test_runner_multistep_react.py tests/runtime/test_run_agent_span.py tests/observability/test_support_bundle.py tests/observability/test_run_trace_summary.py tests/observability/test_openinference_emitter.py tests/batch/test_batch_runner.py tests/evals/test_aggregate.py tests/evals/test_compare.py tests/contracts/test_public_exports.py tests/contracts/test_schema_snapshots.py examples/chat-demo/backend/app/workspace.py examples/chat-demo/backend/tests/test_workspace.py examples/chat-demo/backend/tests/test_run_trace_summary.py tools/policy_supervision/openrouter_preflight.py tools/policy_supervision/openrouter_trace_scenarios.py tools/policy_supervision/openrouter_trace_ui_review.py tools/policy_supervision/product_trace_smoke.py tools/policy_supervision/product_trace_ui_review.py tools/policy_supervision/phoenix_gate.py tools/policy_supervision/phoenix_smoke.py tools/policy_supervision/phoenix_ui_review.py tools/policy_supervision/playwright_gate.py tools/policy_supervision/benchmark_gate.py tools/policy_supervision/audit.py
 CHAT_DEMO_BACKEND_PY ?= examples/chat-demo/backend/.venv/bin/python
 
-.PHONY: test format format-check lint lint-python lint-fast type docs-check selftest selftest-fake eval-deep-offline eval-regression eval-nightly-live-deep eval-scientific test-plan-ui test-chat-concepts policy-supervision-test policy-supervision-lint policy-supervision-doctor policy-supervision-phoenix-up policy-supervision-phoenix-down policy-supervision-phoenix-status policy-supervision-phoenix-smoke policy-supervision-phoenix-ui-review policy-supervision-openrouter-preflight policy-supervision-openrouter-live-preflight policy-supervision-openrouter-trace-scenarios policy-supervision-openrouter-trace-ui-review policy-supervision-excel-trace-smoke policy-supervision-excel-trace-ui-review policy-supervision-chat-demo-trace-smoke policy-supervision-chat-demo-trace-ui-review policy-supervision-phoenix-gate policy-supervision-playwright-gate policy-supervision-benchmark-gate policy-supervision-artifacts policy-supervision-audit policy-supervision-acceptance
+.PHONY: test format format-check lint lint-python lint-fast type docs-check release-wheel selftest selftest-fake eval-deep-offline eval-regression eval-nightly-live-deep eval-scientific test-plan-ui test-chat-concepts policy-supervision-test policy-supervision-lint policy-supervision-doctor policy-supervision-phoenix-up policy-supervision-phoenix-down policy-supervision-phoenix-status policy-supervision-phoenix-smoke policy-supervision-phoenix-ui-review policy-supervision-openrouter-preflight policy-supervision-openrouter-live-preflight policy-supervision-openrouter-trace-scenarios policy-supervision-openrouter-trace-ui-review policy-supervision-excel-trace-smoke policy-supervision-excel-trace-ui-review policy-supervision-chat-demo-trace-smoke policy-supervision-chat-demo-trace-ui-review policy-supervision-phoenix-gate policy-supervision-playwright-gate policy-supervision-benchmark-gate policy-supervision-artifacts policy-supervision-audit policy-supervision-acceptance
 
 test:
 	$(PYTEST) -q
@@ -50,6 +52,13 @@ docs-check:
 	$(VENV_PYTEST) tests/contracts/test_export_snapshot.py \
 		tests/contracts/test_public_exports.py \
 		tests/test_version.py -q
+
+# Build only from the committed clean Git tree. The builder exports HEAD into a
+# disposable tree, normalizes Git file modes and process umask, and derives
+# SOURCE_DATE_EPOCH from the selected commit. It never packages mutable
+# worktree metadata or caller-specific permission bits.
+release-wheel:
+	RELEASE_PYTHON="$(RELEASE_PYTHON)" ./scripts/build_release_wheel.sh "$(RELEASE_WHEEL_DIR)"
 
 selftest:
 	uv run python tools/selftest/run.py --scenarios A,B,C,D
