@@ -28,6 +28,7 @@ CONTEXT_BREAKDOWN_CATEGORIES = (
     "tool_results",
     "scaffolding",
     "conversation",
+    "message_metadata",
 )
 
 _CHARS_PER_TOKEN = 4
@@ -47,6 +48,28 @@ def _message_role(message: Any) -> str:
     return str(getattr(role, "value", role) or "")
 
 
+def _json_chars(value: Any) -> int:
+    try:
+        return len(
+            json.dumps(
+                value,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+        )
+    except (TypeError, ValueError):
+        return len(str(value))
+
+
+def _message_metadata_chars(message: Any) -> int:
+    metadata = getattr(message, "metadata", None)
+    if metadata is None and isinstance(message, dict):
+        metadata = message.get("metadata")
+    return _json_chars(metadata) if metadata else 0
+
+
 def _category_of(message: Any) -> str:
     """Classify a message into one breakdown category (order matters)."""
     role = _message_role(message)
@@ -64,10 +87,7 @@ def _tool_definition_chars(tools: Iterable[Any] | None) -> int:
         return 0
     total = 0
     for tool in tools:
-        try:
-            total += len(json.dumps(tool, ensure_ascii=True, default=str))
-        except (TypeError, ValueError):
-            total += len(str(tool))
+        total += _json_chars(tool)
     return total
 
 
@@ -85,6 +105,7 @@ def estimate_context_breakdown(
     chars: dict[str, int] = {cat: 0 for cat in CONTEXT_BREAKDOWN_CATEGORIES}
     for message in messages:
         chars[_category_of(message)] += _message_chars(message)
+        chars["message_metadata"] += _message_metadata_chars(message)
     chars["tool_definitions"] += _tool_definition_chars(tools)
 
     total_chars = sum(chars.values())

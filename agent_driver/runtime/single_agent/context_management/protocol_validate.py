@@ -206,9 +206,16 @@ def _truncate_total_content(
             continue
         if message.role == ChatRole.TOOL:
             remaining = max(0, max_total_content_chars - running)
-            stub = content[:remaining] if remaining else ""
-            if len(content) > len(stub):
-                repairs.append(f"truncated_tool_message:{message.name or 'tool'}")
+            full_stub = build_tool_trim_stub_content(
+                tool_name=message.name,
+                tool_call_id=message.tool_call_id,
+            )
+            stub = (
+                full_stub
+                if len(full_stub) <= remaining
+                else "[trimmed] Full raw payload omitted."
+            )
+            repairs.append(f"truncated_tool_message:{message.name or 'tool'}")
             trimmed.append(
                 ChatMessage(
                     role=message.role,

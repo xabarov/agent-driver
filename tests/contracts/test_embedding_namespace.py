@@ -51,6 +51,9 @@ def test_covers_the_durable_embedding_essentials() -> None:
         "AllowedPrompt",
         "MemoryStep",
         "MemoryStepKind",
+        "RunContextBudget",
+        "resolve_run_context_budget",
+        "serialize_runtime_state_for_compatibility",
         "FakeProvider",
         "register_skill_tools",
     }

@@ -32,6 +32,7 @@ from agent_driver.context.project_memory import (
     assemble_project_memory,
     load_project_memory,
 )
+from agent_driver.context.run_budget import resolve_run_context_budget
 from agent_driver.context.tool_arg_truncation import (
     ToolArgTruncationResult,
     truncate_tool_call_args,
@@ -111,6 +112,7 @@ __all__ = [
     "ProjectMemoryResult",
     "assemble_project_memory",
     "load_project_memory",
+    "resolve_run_context_budget",
     "ToolArgTruncationResult",
     "truncate_tool_call_args",
     "TokenPressureInput",

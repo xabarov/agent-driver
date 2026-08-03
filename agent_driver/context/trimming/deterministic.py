@@ -107,6 +107,7 @@ def _trim_messages_to_budget(
     digest_pool: list[str],
     artifact_pool: list[str],
     protect_from_index: int | None = None,
+    protected_indices: set[int] | None = None,
 ) -> tuple[list[dict[str, object]], list[TrimAuditRecord]]:
     """Trim messages with digest/artifact fallback when budget overflows.
 
@@ -124,9 +125,11 @@ def _trim_messages_to_budget(
     if protect_from_index is None:
         protect_from_index = total
     protect_from_index = max(0, min(protect_from_index, total))
+    protected = set(protected_indices or ())
+    protected.update(range(protect_from_index, total))
     protected_chars = sum(
         len(str(working_messages[i].get("content", "")))
-        for i in range(protect_from_index, total)
+        for i in protected
     )
     # Budget the older (non-protected) messages must share, after reserving the
     # protected tail. Floored at zero: a fully consumed budget simply drops all
@@ -139,6 +142,31 @@ def _trim_messages_to_budget(
     for idx, row in enumerate(working_messages):
         if str(row.get("role", "")).strip().lower() == "tool":
             last_tool_index = idx
+
+    protected_message_ids = {
+        id(working_messages[index]) for index in protected
+    }
+
+    def _drop_oldest_unprotected(reason: str, record_id: str) -> bool:
+        """Remove one budgeted message without evicting integrity-protected rows."""
+        nonlocal running_chars
+        for kept_index, candidate in enumerate(kept):
+            if id(candidate) in protected_message_ids:
+                continue
+            removed = kept.pop(kept_index)
+            removed_content = str(removed.get("content", ""))
+            running_chars = max(0, running_chars - len(removed_content))
+            audit.append(
+                TrimAuditRecord(
+                    record_id=record_id,
+                    kind="message",
+                    action=TrimAction.DROPPED,
+                    reason=reason,
+                    metadata={"length": len(removed_content)},
+                )
+            )
+            return True
+        return False
 
     def _tool_stub(message: dict[str, object]) -> dict[str, object]:
         name = str(message.get("name") or "tool")
@@ -156,19 +184,50 @@ def _trim_messages_to_budget(
 
     for index, message in enumerate(working_messages):
         content = str(message.get("content", ""))
-        if index >= protect_from_index:
+        if index in protected:
             # Protected recent-turn window: keep verbatim regardless of budget so
             # the antecedent for a follow-up ("those 15", "of those", "from that
             # list") survives — including the assistant's own prior enumeration.
             kept.append(message)
-            running_chars += len(content)
+            metadata = message.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            material_hashes = metadata.get("material_unit_hashes")
+            material_unit_count = (
+                len(
+                    {
+                        item.strip()
+                        for item in material_hashes
+                        if isinstance(item, str) and item.strip()
+                    }
+                )
+                if isinstance(material_hashes, list)
+                else 0
+            )
+            if material_unit_count and metadata.get("compaction_evidence") is True:
+                reason = (
+                    "material_context_preserved_for_compaction_over_budget"
+                    if protected_chars > max_chars
+                    else "material_context_preserved_for_compaction"
+                )
+            elif metadata.get("compaction_protected") is True:
+                reason = "compaction_protected"
+            else:
+                reason = "protected_recent_turn"
             audit.append(
                 TrimAuditRecord(
                     record_id=f"trim_{index}",
                     kind="message",
                     action=TrimAction.KEPT,
-                    reason="protected_recent_turn",
-                    metadata={"length": len(content), "protected": True},
+                    reason=reason,
+                    metadata={
+                        "length": len(content),
+                        "protected": True,
+                        **(
+                            {"material_unit_count": material_unit_count}
+                            if material_unit_count
+                            else {}
+                        ),
+                    },
                 )
             )
             continue
@@ -213,18 +272,11 @@ def _trim_messages_to_budget(
             stub = _tool_stub(message)
             stub_content = str(stub.get("content", ""))
             while kept and running_chars + len(stub_content) > head_budget:
-                removed = kept.pop(0)
-                removed_content = str(removed.get("content", ""))
-                running_chars = max(0, running_chars - len(removed_content))
-                audit.append(
-                    TrimAuditRecord(
-                        record_id=f"trim_rebalance_{index}_{len(kept)}",
-                        kind="message",
-                        action=TrimAction.DROPPED,
-                        reason="budget_rebalanced_for_tool_stub",
-                        metadata={"length": len(removed_content)},
-                    )
-                )
+                if not _drop_oldest_unprotected(
+                    "budget_rebalanced_for_tool_stub",
+                    f"trim_rebalance_{index}_{len(kept)}",
+                ):
+                    break
             kept.append(stub)
             running_chars += len(stub_content)
             audit.append(
@@ -244,19 +296,12 @@ def _trim_messages_to_budget(
             # messages first so the current turn keeps a meaningful budget.
             budget_left = head_budget - running_chars
             while kept and budget_left < min(len(content), _MIN_LAST_MESSAGE_CHARS):
-                removed = kept.pop(0)
-                removed_content = str(removed.get("content", ""))
-                running_chars = max(0, running_chars - len(removed_content))
+                if not _drop_oldest_unprotected(
+                    "budget_rebalanced_for_last_message",
+                    f"trim_rebalance_last_{index}_{len(kept)}",
+                ):
+                    break
                 budget_left = head_budget - running_chars
-                audit.append(
-                    TrimAuditRecord(
-                        record_id=f"trim_rebalance_last_{index}_{len(kept)}",
-                        kind="message",
-                        action=TrimAction.DROPPED,
-                        reason="budget_rebalanced_for_last_message",
-                        metadata={"length": len(removed_content)},
-                    )
-                )
             keep_chars = max(
                 _MIN_LAST_MESSAGE_CHARS if not kept else 0,
                 min(len(content), budget_left),
@@ -368,9 +413,39 @@ def _enforce_max_messages(
     """Apply deterministic max_messages cap after primary trimming."""
     if max_messages is None or len(kept) <= max_messages:
         return kept, []
-    overflow = len(kept) - max_messages
-    dropped = kept[:overflow]
-    retained = kept[overflow:]
+    leading_system: set[int] = set()
+    for index, item in enumerate(kept):
+        if str(item.get("role", "")).strip().lower() != "system":
+            break
+        leading_system.add(index)
+    current_non_system = next(
+        (
+            index
+            for index in range(len(kept) - 1, -1, -1)
+            if str(kept[index].get("role", "")).strip().lower() != "system"
+        ),
+        None,
+    )
+    mandatory = set(leading_system)
+    if current_non_system is not None:
+        mandatory.add(current_non_system)
+    for index, item in enumerate(kept):
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        material_hashes = metadata.get("material_unit_hashes")
+        if metadata.get("compaction_protected") is True or (
+            metadata.get("compaction_evidence") is True
+            and isinstance(material_hashes, list)
+            and any(isinstance(value, str) and value.strip() for value in material_hashes)
+        ):
+            mandatory.add(index)
+
+    remaining_slots = max(0, max_messages - len(mandatory))
+    optional = [index for index in range(len(kept)) if index not in mandatory]
+    selected = mandatory | set(optional[-remaining_slots:] if remaining_slots else [])
+    retained = [item for index, item in enumerate(kept) if index in selected]
+    dropped = [item for index, item in enumerate(kept) if index not in selected]
     audit: list[TrimAuditRecord] = []
     for idx, item in enumerate(dropped):
         audit.append(
@@ -380,6 +455,19 @@ def _enforce_max_messages(
                 action=TrimAction.DROPPED,
                 reason="max_messages_exceeded",
                 metadata={"content_length": len(str(item.get("content", "")))},
+            )
+        )
+    if len(retained) > max_messages:
+        audit.append(
+            TrimAuditRecord(
+                record_id="trim_max_messages_integrity_overrun",
+                kind="message",
+                action=TrimAction.KEPT,
+                reason="max_messages_overridden_for_protected_context",
+                metadata={
+                    "max_messages": max_messages,
+                    "protected_messages": len(retained),
+                },
             )
         )
     return retained, audit
@@ -412,12 +500,25 @@ def trim_context(
     protect_from_index: int | None = None
     if protect_recent_turns is not None and protect_recent_turns > 0:
         protect_from_index = max(0, len(working_messages) - protect_recent_turns)
+    protected_indices: set[int] = set()
+    for index, message in enumerate(working_messages):
+        metadata = message.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        material_hashes = metadata.get("material_unit_hashes")
+        if metadata.get("compaction_protected") is True or (
+            metadata.get("compaction_evidence") is True
+            and isinstance(material_hashes, list)
+            and any(isinstance(value, str) and value.strip() for value in material_hashes)
+        ):
+            protected_indices.add(index)
     kept, message_audit = _trim_messages_to_budget(
         working_messages=working_messages,
         max_chars=budget.max_chars,
         digest_pool=digest_pool,
         artifact_pool=artifact_pool,
         protect_from_index=protect_from_index,
+        protected_indices=protected_indices,
     )
     audit.extend(message_audit)
     kept, max_message_audit = _enforce_max_messages(
@@ -453,9 +554,14 @@ def trim_context(
             "max_observations": budget.max_observations,
             "protect_recent_turns": protect_recent_turns,
             "protected_messages": (
-                len(working_messages) - protect_from_index
-                if protect_from_index is not None
-                else 0
+                len(
+                    protected_indices
+                    | (
+                        set(range(protect_from_index, len(working_messages)))
+                        if protect_from_index is not None
+                        else set()
+                    )
+                )
             ),
             "input_messages": len(working_messages),
             "kept_messages": len(kept),

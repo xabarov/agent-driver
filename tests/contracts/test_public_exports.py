@@ -45,6 +45,7 @@ def test_contracts_public_exports_are_stable() -> None:
         "ValidationGateResult",
         "RuntimeEvent",
         "RunStreamEvent",
+        "RunContextBudget",
         "InterruptRequest",
         "MemoryStep",
         "MemoryStepKind",
@@ -84,6 +85,8 @@ def test_runtime_public_exports_remain_runtime_focused() -> None:
         "project_run_timeline",
         "summarize_run_lifecycle",
         "RunLifecycleSnapshot",
+        "resolve_run_context_budget",
+        "serialize_runtime_state_for_compatibility",
     }
     forbidden = {"ToolRegistry", "GovernedToolExecutor", "SubagentGroupSpec"}
     exports = set(runtime.__all__)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Protocol
 
 from agent_driver.context import (
@@ -30,6 +32,100 @@ from agent_driver.runtime.single_agent.types import (
     RunnerConfig,
     RunnerDeps,
 )
+
+_MAX_SCALED_COMPACTION_CHARS = 262_144
+
+
+def _message_material_unit_hashes(message: Any) -> set[str]:
+    """Return bounded host-supplied identities without reading raw evidence."""
+    metadata = message.metadata if isinstance(message.metadata, dict) else {}
+    raw = metadata.get("material_unit_hashes")
+    if not isinstance(raw, list):
+        return set()
+    return {
+        value.strip()
+        for item in raw
+        if isinstance(item, str) and (value := item.strip()) and len(value) <= 128
+    }
+
+
+def _material_unit_receipt(
+    *,
+    original_messages: list[Any],
+    retained_messages: list[Any],
+    pre_summary_groups_dropped: bool,
+) -> dict[str, list[str]]:
+    """Partition material identities across retained/compacted/omitted paths."""
+    original = (
+        set().union(
+            *(_message_material_unit_hashes(message) for message in original_messages)
+        )
+        if original_messages
+        else set()
+    )
+    retained = (
+        set().union(
+            *(_message_material_unit_hashes(message) for message in retained_messages)
+        )
+        if retained_messages
+        else set()
+    )
+    unresolved = original - retained
+    return {
+        "retained_unit_hashes": sorted(retained),
+        "compacted_unit_hashes": (
+            [] if pre_summary_groups_dropped else sorted(unresolved)
+        ),
+        "omitted_unit_hashes": (
+            sorted(unresolved) if pre_summary_groups_dropped else []
+        ),
+    }
+
+
+def _retained_messages_after_full_compaction(messages: list[Any]) -> list[Any]:
+    """Keep stable contracts and the live instruction after successful summary."""
+    if not messages:
+        return []
+    last_index = len(messages) - 1
+    retained: list[Any] = []
+    for index, message in enumerate(messages):
+        role = str(getattr(message.role, "value", message.role) or "").casefold()
+        metadata = message.metadata if isinstance(message.metadata, dict) else {}
+        if (
+            role == "system"
+            or index == last_index
+            or bool(metadata.get("compaction_protected"))
+            or bool(metadata.get("material_fact_ids"))
+        ):
+            retained.append(message)
+    return retained
+
+
+def _scaled_context_char_cap(
+    host: Any,
+    *,
+    context: RunContext,
+    base_max_chars: int,
+) -> tuple[int, str]:
+    """Scale a compaction-related cap from the resolved public run budget."""
+    raw = context.metadata.get("effective_context_budget")
+    if not isinstance(raw, dict):
+        return base_max_chars, "runner_config"
+    resolved_compaction = raw.get("max_compaction_chars")
+    max_chars = raw.get("max_chars")
+    source = str(raw.get("source") or "runner_config")
+    if not isinstance(resolved_compaction, int) or resolved_compaction < 1:
+        return base_max_chars, "runner_config"
+    baseline = max(1, int(host._config.ptl_retry_max_chars))
+    scaled = (
+        base_max_chars * resolved_compaction + baseline - 1
+    ) // baseline
+    cap = min(
+        max(base_max_chars, scaled),
+        int(max_chars) if isinstance(max_chars, int) and max_chars > 0 else scaled,
+        _MAX_SCALED_COMPACTION_CHARS,
+    )
+    return cap, source
 
 
 def _account_compaction_cost(
@@ -74,16 +170,25 @@ def _apply_tool_arg_truncation(host: Any, *, context: RunContext, request: Any) 
         truncate_tool_call_args,
     )
 
+    effective_max_chars, budget_source = _scaled_context_char_cap(
+        host,
+        context=context,
+        base_max_chars=host._config.tool_arg_truncation_max_chars,
+    )
     result = truncate_tool_call_args(
         list(request.messages),
-        max_arg_chars=host._config.tool_arg_truncation_max_chars,
+        max_arg_chars=effective_max_chars,
     )
-    if not result.changed:
+    if not result.changed and not result.retained_structured:
         return
-    request.messages = result.messages
+    if result.changed:
+        request.messages = result.messages
     context.metadata["tool_arg_truncation"] = {
         "chars_saved": result.chars_saved,
+        "effective_max_chars": effective_max_chars,
+        "budget_source": budget_source,
         "clipped": result.audit,
+        "retained_structured": result.retained_structured,
     }
 
 
@@ -517,20 +622,44 @@ async def _apply_llm_full_compaction(
     compaction_id: str,
     circuit_breaker_open_before: bool,
 ) -> bool:
+    original_messages = list(request.messages)
     # Epic 043 C: drop runtime scaffolding turns (nudges, recovery hints) from the
     # compaction excerpt — they are ephemeral and role is flattened away here, so
     # the summary model would otherwise be free to read a nudge as user intent.
-    raw_groups = [
-        str(message.content)
-        for message in request.messages[-8:]
-        if not is_scaffolding(message)
-    ]
+    raw_groups: list[str] = []
+    protected_indexes: set[int] = set()
+    last_message_index = len(request.messages) - 1
+    for message_index, message in enumerate(request.messages):
+        if is_scaffolding(message):
+            continue
+        content = str(message.content or "")
+        if not content.strip():
+            continue
+        group_index = len(raw_groups)
+        raw_groups.append(content)
+        role = str(getattr(message.role, "value", message.role) or "").casefold()
+        metadata = message.metadata if isinstance(message.metadata, dict) else {}
+        if (
+            role == "system"
+            or message_index == last_message_index
+            or bool(metadata.get("compaction_protected"))
+            or bool(metadata.get("compaction_evidence"))
+            or bool(metadata.get("material_fact_ids"))
+            or bool(_message_material_unit_hashes(message))
+        ):
+            protected_indexes.add(group_index)
     kept_groups = list(raw_groups)
     dropped_groups: list[str] = []
+    effective_ptl_max_chars, budget_source = _scaled_context_char_cap(
+        host,
+        context=context,
+        base_max_chars=host._config.ptl_retry_max_chars,
+    )
     if host._config.enable_ptl_retry:
         kept_groups, dropped_groups = ptl_retry_drop_oldest_groups(
             groups=raw_groups,
-            max_chars=host._config.ptl_retry_max_chars,
+            max_chars=effective_ptl_max_chars,
+            protected_indexes=protected_indexes,
         )
     history_excerpt = "\n".join(kept_groups)
     sanitized_excerpt = sanitize_compaction_text(history_excerpt)
@@ -552,6 +681,8 @@ async def _apply_llm_full_compaction(
         history_excerpt=sanitized_excerpt,
         user_request=context.run_input.input or "",
         idle_timeout_seconds=host._config.aux_idle_timeout_seconds,
+        max_history_chars=effective_ptl_max_chars,
+        history_is_bounded=True,
     )
     _account_compaction_cost(context, compaction_result, provider=compaction_provider)
     if compaction_result is None or not compaction_result.success:
@@ -608,12 +739,38 @@ async def _apply_llm_full_compaction(
     compaction_result = compaction_result.model_copy(
         update={"compaction_id": compaction_id}
     )
-    request.messages = request.messages[-4:]
-    summary_text = str(summary.get("current_work", ""))
-    request.messages.append(
-        ChatMessage.model_validate(
-            {"role": "system", "content": f"Compacted summary:\n{summary_text}"}
-        )
+    retained_messages = _retained_messages_after_full_compaction(original_messages)
+    summary_text = json.dumps(
+        summary,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    summary_message = ChatMessage.model_validate(
+        {
+            "role": "system",
+            "content": f"Compacted summary:\n{summary_text}",
+            "metadata": {"compaction_summary": True},
+        }
+    )
+    first_non_system = next(
+        (
+            index
+            for index, message in enumerate(retained_messages)
+            if str(getattr(message.role, "value", message.role) or "").casefold()
+            != "system"
+        ),
+        len(retained_messages),
+    )
+    request.messages = [
+        *retained_messages[:first_non_system],
+        summary_message,
+        *retained_messages[first_non_system:],
+    ]
+    unit_receipt = _material_unit_receipt(
+        original_messages=original_messages,
+        retained_messages=retained_messages,
+        pre_summary_groups_dropped=bool(dropped_groups),
     )
     context.metadata[COMPACTION_RESULT_KEY] = compaction_result.model_dump(mode="json")
     context.metadata[COMPACTION_AUDIT_KEY] = {
@@ -626,8 +783,20 @@ async def _apply_llm_full_compaction(
             "ptl_retry": {
                 "enabled": host._config.enable_ptl_retry,
                 "dropped_groups": len(dropped_groups),
+                "dropped_group_sha256": [
+                    hashlib.sha256(item.encode("utf-8")).hexdigest()
+                    for item in dropped_groups
+                ],
                 "kept_groups": len(kept_groups),
-                "max_chars": host._config.ptl_retry_max_chars,
+                "protected_groups": len(protected_indexes),
+                "max_chars": effective_ptl_max_chars,
+                "budget_source": budget_source,
+                "budget_overrun_chars": max(
+                    0,
+                    sum(len(item) for item in kept_groups)
+                    - effective_ptl_max_chars,
+                ),
+                **unit_receipt,
             },
         }
     cleanup = apply_post_compact_cleanup(

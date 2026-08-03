@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from time import monotonic
 
@@ -55,6 +56,8 @@ async def run_full_llm_compaction(
     history_excerpt: str,
     user_request: str,
     idle_timeout_seconds: float | None = None,
+    max_history_chars: int = 5000,
+    history_is_bounded: bool = False,
 ) -> tuple[CompactionResult, dict[str, object]]:
     """Run full no-tool compaction with structured validation.
 
@@ -66,11 +69,31 @@ async def run_full_llm_compaction(
     """
     sanitized_history = sanitize_compaction_text(history_excerpt)
     groups = [item for item in sanitized_history.splitlines() if item.strip()]
-    kept_groups, dropped_groups = ptl_retry_drop_oldest_groups(
-        groups=groups,
-        max_chars=5000,
-    )
+    if history_is_bounded:
+        kept_groups, dropped_groups = groups, []
+    else:
+        protected_indexes = {0, len(groups) - 1} if groups else set()
+        kept_groups, dropped_groups = ptl_retry_drop_oldest_groups(
+            groups=groups,
+            max_chars=max_history_chars,
+            protected_indexes=protected_indexes,
+        )
     bounded_history = "\n".join(kept_groups)
+    reduction_metadata = {
+        "ptl_history_max_chars": max_history_chars,
+        "ptl_input_groups": len(groups),
+        "ptl_retained_groups": len(kept_groups),
+        "ptl_dropped_groups": len(dropped_groups),
+        "ptl_dropped_group_sha256": [
+            hashlib.sha256(item.encode("utf-8")).hexdigest()
+            for item in dropped_groups
+        ],
+        "ptl_budget_overrun_chars": max(
+            0,
+            sum(len(item) for item in kept_groups) - max_history_chars,
+        ),
+        "ptl_history_prebounded": history_is_bounded,
+    }
     prompt = build_full_compaction_prompt(
         history_excerpt=bounded_history,
         user_request=user_request,
@@ -98,7 +121,7 @@ async def run_full_llm_compaction(
                 metadata={
                     "failure": str(exc),
                     "failure_kind": "aux_idle_timeout",
-                    "ptl_dropped_groups": len(dropped_groups),
+                    **reduction_metadata,
                 },
             ),
             {},
@@ -119,7 +142,7 @@ async def run_full_llm_compaction(
                 output_tokens_estimate=response.usage.output_tokens,
                 metadata={
                     "failure": str(exc),
-                    "ptl_dropped_groups": len(dropped_groups),
+                    **reduction_metadata,
                 },
             ),
             {},
@@ -136,7 +159,7 @@ async def run_full_llm_compaction(
             output_tokens_estimate=response.usage.output_tokens,
             metadata={
                 "draft_removed": draft is not None,
-                "ptl_dropped_groups": len(dropped_groups),
+                **reduction_metadata,
             },
         ),
         summary,
