@@ -7,6 +7,26 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-03
+
+Context-integrity patch release for constrained, long-context embeddings.
+Leading system contracts and current turns now survive message-count trimming;
+messages explicitly marked for compaction remain atomic with a deterministic
+size-only audit when their semantic protection exceeds a route limit. Structured
+JSON tool results are replaced by an unambiguous stub instead of a malformed raw
+slice, and structured tool arguments remain atomic. Token pressure now includes
+message metadata/tool calls and the surfaced tool catalogue, and the public
+context breakdown uses the same accounting.
+
+Adds the supported `RunContextBudget` field on `AgentRunInput`, the
+`resolve_run_context_budget` facade, a bounded full-compaction packet, and one
+deprecation window for `app_metadata.context_budget`. Adds
+`serialize_runtime_state_for_compatibility(..., target="0.2.0rc5")` for rolling
+rollback without a database reset; its audit contains paths and strategies, not
+raw messages, evidence, tool payloads, or reasoning. The package now declares
+the explicit SPDX-compatible reference `LicenseRef-NOASSERTION`; see
+`docs/licensing.md`.
+
 ## [0.3.2] - 2026-08-03
 
 Patch release replacing the non-reproducible `0.3.1` artifact identity. The

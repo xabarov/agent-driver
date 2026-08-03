@@ -10,6 +10,9 @@ current, and tied to code that exists in the repository.
   support bundle, self-consistency, capability-pack validation, and errors.
 - [Embedding](embedding.md) - supported public import surface and stability
   policy for applications that depend on this package.
+- [Run context budgets and rollback](context-budget-and-rollback.md) - typed
+  per-run windows, bounded compaction, and rolling state compatibility.
+- [Licensing](licensing.md) - explicit package licence metadata status.
 - [Runtime overview](runtime.md) - runner loop, stores, events, tool execution,
   loop budgets, deferred-tool priming, and where durable state lives.
 - [Built-in tools](builtin-tools.md) - current tool packs and what each tool is
