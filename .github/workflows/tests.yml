@@ -141,7 +141,11 @@ jobs:
           cmp "$first_wheel" "$second_wheel"
           sha256sum "$first_wheel" "$second_wheel"
           python -m zipfile -t "$first_wheel"
-          python -m pip install --no-deps "$first_wheel"
+          # Exercise the artifact as a real consumer would.  The public
+          # embedding modules import declared runtime dependencies (for
+          # example pydantic), so a --no-deps install cannot be an import
+          # smoke test on an otherwise clean release runner.
+          python -m pip install "$first_wheel"
           python - <<'PY'
           from importlib.metadata import metadata, version
           import agent_driver
