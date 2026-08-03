@@ -1,6 +1,7 @@
 """Tool governance package for registry, policy, and guardrails."""
 
 from agent_driver.tools.builtin import register_builtin_tools, register_mcp_tools
+from agent_driver.tools.builtin.skills import register_skill_tools
 from agent_driver.tools.contract import (
     ContractHandler,
     manifest_from_contract,
@@ -68,6 +69,7 @@ __all__ = [
     "register_planning_tool",
     "register_builtin_tools",
     "register_mcp_tools",
+    "register_skill_tools",
     "AntipatternMatch",
     "AntipatternRule",
     "ContractHandler",

@@ -21,8 +21,14 @@ the byte-for-byte reproducibility claim was false.
 (`0644` or `0755`), sets a fixed process umask and locale, and derives
 `SOURCE_DATE_EPOCH` from the exact commit. CI invokes this builder twice under
 different caller umasks, requires byte-identical wheels, verifies metadata and
-imports, and publishes the selected wheel as a run artifact. No public runtime
-API or persisted-state contract changes from `0.3.1`.
+imports, and publishes the selected wheel as a run artifact.
+
+The patch also adds two additive embedding seams needed by downstream hosts:
+`agent_driver.runtime.runner_config_parameter_names` replaces imports of
+private flattened-settings field sets, and
+`agent_driver.tools.register_skill_tools` supports intentionally narrow tool
+registries. Both are re-exported by `agent_driver.embedding`; persisted-state
+contracts and existing runtime behavior are unchanged from `0.3.1`.
 
 ## [0.3.1] - 2026-08-03
 

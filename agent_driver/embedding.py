@@ -16,18 +16,6 @@ facades directly.
 
 from __future__ import annotations
 
-# — App construction / run lifecycle (agent_driver.sdk) —
-from agent_driver.sdk import (
-    Agent,
-    RunHandle,
-    RunStream,
-    Session,
-    ToolSet,
-    create_agent,
-    query,
-    resume_command_from_payload,
-)
-
 # — Wire contracts (agent_driver.contracts) —
 from agent_driver.contracts import (
     AgentRunInput,
@@ -77,8 +65,21 @@ from agent_driver.runtime import (
     ToolGateResult,
     project_run_timeline,
     project_runtime_events,
+    runner_config_parameter_names,
     summarize_run_lifecycle,
     wrap_governed_executor,
+)
+
+# — App construction / run lifecycle (agent_driver.sdk) —
+from agent_driver.sdk import (
+    Agent,
+    RunHandle,
+    RunStream,
+    Session,
+    ToolSet,
+    create_agent,
+    query,
+    resume_command_from_payload,
 )
 
 # — Tool registry + custom tools (agent_driver.tools) —
@@ -87,6 +88,7 @@ from agent_driver.tools import (
     ToolRegistry,
     custom_tool,
     register_custom_function,
+    register_skill_tools,
     tool,
 )
 
@@ -129,6 +131,7 @@ __all__ = [
     "RunAbortHandle",
     "RunLifecycleHook",
     "RunnerConfig",
+    "runner_config_parameter_names",
     "RuntimeEventLog",
     "SqliteAbortLifecycleStore",
     "SqliteApprovalConsumptionStore",
@@ -149,5 +152,6 @@ __all__ = [
     "ToolRegistry",
     "custom_tool",
     "register_custom_function",
+    "register_skill_tools",
     "tool",
 ]

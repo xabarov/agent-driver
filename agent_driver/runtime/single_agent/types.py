@@ -10,6 +10,7 @@ from typing import Any
 
 from agent_driver.code_agent.executor import CodeActionExecutor
 from agent_driver.context.artifacts import ArtifactStore, ContextStore
+from agent_driver.context.planning.artifacts import PlanArtifactStore
 from agent_driver.context.sessions import SessionStore
 from agent_driver.contracts.artifacts import RedactionInfo
 from agent_driver.contracts.checkpoints import CheckpointRef
@@ -27,7 +28,6 @@ from agent_driver.llm.contracts import LlmResponse
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.memory.provider import MemoryProvider
 from agent_driver.runtime.abort import RunAbortHandle
-from agent_driver.context.planning.artifacts import PlanArtifactStore
 from agent_driver.runtime.control.abort_store import AbortLifecycleStore
 from agent_driver.runtime.control.approval_store import ApprovalConsumptionStore
 from agent_driver.runtime.control.protocols import CommandQueueStore
@@ -57,6 +57,14 @@ _SUBAGENT_FIELDS = {item.name for item in fields(SubagentSettings)}
 _CODE_AGENT_FIELDS = {item.name for item in fields(CodeAgentSettings)}
 _PYTHON_TOOL_FIELDS = {item.name for item in fields(PythonToolSettings)}
 _CAPABILITY_FIELDS = {item.name for item in fields(CapabilitySettings)}
+_RUNNER_CONFIG_EXTRA_FIELDS = {
+    "default_hard_max_seconds",
+    "default_idle_timeout_seconds",
+    "default_max_tool_calls",
+    "fallback_providers",
+    "finalize_hook_timeout",
+    "stage_heartbeat_seconds",
+}
 
 # Defensive backstop on the agent step loop. A run whose model never emits a
 # final answer (e.g. a tool that always fails, or a tool-calling spiral) would
@@ -511,6 +519,26 @@ class RunContext:
         self.metadata["attempt_epoch"] = int(value)
 
 
+def runner_config_parameter_names() -> frozenset[str]:
+    """Return every supported keyword name accepted by :class:`RunnerConfig`.
+
+    ``RunnerConfig`` accepts both its direct fields and flattened fields from
+    the nested lifecycle settings sections. Host applications can use this
+    public helper when adapting a larger legacy settings mapping without
+    importing private ``runtime.single_agent`` field sets.
+    """
+
+    return frozenset(RunnerConfig.__annotations__) | frozenset(
+        _RUNNER_CONFIG_EXTRA_FIELDS
+        | _TRIMMING_FIELDS
+        | _COMPACTION_FIELDS
+        | _SUBAGENT_FIELDS
+        | _CODE_AGENT_FIELDS
+        | _PYTHON_TOOL_FIELDS
+        | _CAPABILITY_FIELDS
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class EventSpec:
     """Structured emit spec for runtime events."""
@@ -585,6 +613,7 @@ __all__ = [
     "PendingInterruptState",
     "RunContext",
     "RunnerConfig",
+    "runner_config_parameter_names",
     "RunnerDeps",
     "RuntimeStepResult",
     "TerminalResult",

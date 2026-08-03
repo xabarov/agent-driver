@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from agent_driver import contracts, runtime, tools
-from agent_driver import sdk
+from agent_driver import contracts, runtime, sdk, tools
 
 
 def test_contracts_public_exports_are_stable() -> None:
@@ -57,6 +56,7 @@ def test_runtime_public_exports_remain_runtime_focused() -> None:
     required = {
         "SingleAgentRunner",
         "RunnerConfig",
+        "runner_config_parameter_names",
         "InMemoryCheckpointStore",
         "InMemoryEventLog",
         "SqliteRuntimeStore",
@@ -98,6 +98,7 @@ def test_tools_public_exports_cover_governance_surface() -> None:
         "register_custom_function",
         "register_custom_tool",
         "register_mcp_tools",
+        "register_skill_tools",
     }
     assert required.issubset(set(tools.__all__))
 

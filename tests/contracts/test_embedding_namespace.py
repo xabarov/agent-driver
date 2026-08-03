@@ -36,6 +36,7 @@ def test_covers_the_durable_embedding_essentials() -> None:
     required = {
         "create_agent",
         "RunnerConfig",
+        "runner_config_parameter_names",
         "InMemoryCheckpointStore",
         "InMemoryEventLog",
         "SqliteRuntimeStore",
@@ -47,5 +48,6 @@ def test_covers_the_durable_embedding_essentials() -> None:
         "RunAbortHandle",
         "AgentRunInput",
         "FakeProvider",
+        "register_skill_tools",
     }
     assert required.issubset(set(embedding.__all__))
