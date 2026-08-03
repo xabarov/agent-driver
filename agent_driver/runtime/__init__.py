@@ -34,6 +34,7 @@ from agent_driver.runtime.hook_chains import (
 )
 from agent_driver.runtime.lifecycle_hooks import (
     BaseRunLifecycleHook,
+    RevisionRequest,
     RunLifecycleHook,
 )
 from agent_driver.runtime.lifecycle_middleware import (
@@ -163,6 +164,7 @@ __all__ = [
     "PostgresCommandQueueStore",
     "RunLifecycleHook",
     "BaseRunLifecycleHook",
+    "RevisionRequest",
     "project_runtime_events",
     "project_run_timeline",
     "backfill_stream_events",

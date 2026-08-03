@@ -96,6 +96,7 @@ _RUNTIME = {
     "PostgresRuntimeStoreConfig",
     "RubricGradeInput",
     "RubricLifecycleHook",
+    "RevisionRequest",
     "RunAbortHandle",
     "RunLifecycleHook",
     "RunLifecycleSnapshot",

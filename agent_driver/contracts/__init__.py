@@ -136,6 +136,8 @@ from agent_driver.contracts.hook_chains import (
     HookTriggerEvent,
 )
 from agent_driver.contracts.interrupts import (
+    AllowedPrompt,
+    AllowedPromptPattern,
     ApprovalPayload,
     InterruptRequest,
     ResumeCommand,
@@ -262,6 +264,8 @@ __all__ = [
     "AgentRunInput",
     "AgentRunOutput",
     "AgentProfile",
+    "AllowedPrompt",
+    "AllowedPromptPattern",
     "AttachPlan",
     "BackgroundRunLease",
     "BackgroundRunLogRef",

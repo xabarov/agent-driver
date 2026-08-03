@@ -20,6 +20,8 @@ from __future__ import annotations
 from agent_driver.contracts import (
     AgentRunInput,
     AgentRunOutput,
+    AllowedPrompt,
+    AllowedPromptPattern,
     InterruptRequest,
     ResumeCommand,
 )
@@ -51,6 +53,7 @@ from agent_driver.runtime import (
     PostgresRuntimeStore,
     RunAbortHandle,
     RunLifecycleHook,
+    RevisionRequest,
     RunnerConfig,
     RuntimeEventLog,
     SqliteAbortLifecycleStore,
@@ -105,6 +108,8 @@ __all__ = [
     # contracts
     "AgentRunInput",
     "AgentRunOutput",
+    "AllowedPrompt",
+    "AllowedPromptPattern",
     "InterruptRequest",
     "ResumeCommand",
     # llm
@@ -130,6 +135,7 @@ __all__ = [
     "PostgresRuntimeStore",
     "RunAbortHandle",
     "RunLifecycleHook",
+    "RevisionRequest",
     "RunnerConfig",
     "runner_config_parameter_names",
     "RuntimeEventLog",

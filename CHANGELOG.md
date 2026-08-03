@@ -27,7 +27,10 @@ The patch also adds two additive embedding seams needed by downstream hosts:
 `agent_driver.runtime.runner_config_parameter_names` replaces imports of
 private flattened-settings field sets, and
 `agent_driver.tools.register_skill_tools` supports intentionally narrow tool
-registries. Both are re-exported by `agent_driver.embedding`; persisted-state
+registries. `agent_driver.runtime.RevisionRequest` and the contracts
+`AllowedPrompt`/`AllowedPromptPattern` are also promoted to their owning
+facades so lifecycle and HITL host adapters do not import implementation
+modules. All are re-exported by `agent_driver.embedding`; persisted-state
 contracts and existing runtime behavior are unchanged from `0.3.1`.
 
 ## [0.3.1] - 2026-08-03

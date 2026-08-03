@@ -44,9 +44,11 @@ def test_covers_the_durable_embedding_essentials() -> None:
         "SqliteAbortLifecycleStore",
         "RunLifecycleHook",
         "BaseRunLifecycleHook",
+        "RevisionRequest",
         "ToolGateAsk",
         "RunAbortHandle",
         "AgentRunInput",
+        "AllowedPrompt",
         "FakeProvider",
         "register_skill_tools",
     }

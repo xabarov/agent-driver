@@ -77,6 +77,7 @@ def test_runtime_public_exports_remain_runtime_focused() -> None:
         "SqliteCommandQueueStore",
         "RunLifecycleHook",
         "BaseRunLifecycleHook",
+        "RevisionRequest",
         "project_runtime_events",
         "project_run_timeline",
         "summarize_run_lifecycle",
