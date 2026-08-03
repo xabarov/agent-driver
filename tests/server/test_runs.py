@@ -74,16 +74,18 @@ async def test_run_completes() -> None:
     assert done["lifecycle"]["reconnect_cursor"].startswith(f"{run_id}:")
 
 
-def test_run_events_stream() -> None:
+@pytest.mark.asyncio
+async def test_run_events_stream() -> None:
     agent = create_agent(
         provider=FakeProvider(response_text="streamed run"), tools=ToolSet.only()
     )
-    client = TestClient(create_app(agent))
-    run_id = client.post("/v1/runs", json=_body("hi")).json()["id"]
+    transport = httpx.ASGITransport(app=create_app(agent))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        run_id = (await client.post("/v1/runs", json=_body("hi"))).json()["id"]
 
-    with client.stream("GET", f"/v1/runs/{run_id}/events") as resp:
-        assert resp.status_code == 200
-        text = "".join(resp.iter_text())
+        async with client.stream("GET", f"/v1/runs/{run_id}/events") as resp:
+            assert resp.status_code == 200
+            text = "".join([chunk async for chunk in resp.aiter_text()])
 
     assert "event: run.started" in text
     assert "event: run.completed" in text
