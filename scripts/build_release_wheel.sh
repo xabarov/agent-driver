@@ -10,6 +10,24 @@ repository_root=$(git rev-parse --show-toplevel)
 output_dir=$1
 release_python=${RELEASE_PYTHON:-python3}
 
+"$release_python" - <<'PY'
+from importlib.metadata import version
+
+required = {
+    "setuptools": "83.0.0",
+    "wheel": "0.47.0",
+}
+actual = {distribution: version(distribution) for distribution in required}
+if actual != required:
+    detail = ", ".join(
+        f"{distribution}=={actual[distribution]} (expected {required[distribution]})"
+        for distribution in required
+    )
+    raise SystemExit(
+        "release wheel requires the pinned build toolchain: " + detail
+    )
+PY
+
 if [ -n "$(git -C "$repository_root" status --porcelain --untracked-files=all)" ]; then
   echo "release wheel requires a clean Git worktree" >&2
   exit 1
