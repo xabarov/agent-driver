@@ -1,5 +1,18 @@
 # Status ledger — U1–U7 / R0–R6 (авторитетный источник статуса)
 
+> **0.3.2 (2026-08-03):** PentestLens independently found that the `0.3.1`
+> wheel was not byte-reproducible across checkout umasks and still required
+> several private imports on its active Chat path. Release source
+> `39d9736fc4eeaedbc1c3b4c61e8d33907f3e2ba5` fixes both: the release builder
+> exports a clean commit, normalizes Git file modes and requires CPython 3.12
+> with `setuptools==83.0.0` / `wheel==0.47.0`; the needed runner, skill,
+> revision, prompt and memory projection seams are public facades. Wheel
+> `agent_driver-0.3.2-py3-none-any.whl` has SHA-256 `d8c8d61e…e127` under
+> caller umasks 077 and 002. GitHub Actions run 30777491633 is green across
+> all eight jobs, including real Postgres and release-wheel. Downstream pins
+> the release source SHA, not later `main`. Handoff:
+> `handoff-0.3.2-pentestlens-remediation.md`.
+
 > **0.3.1 (2026-08-03):** downstream-верификатор нашёл 2 DoD-пробела в 0.3.0 — `make lint` падал на isort
 > (5 файлов) и не было type/docs/Python-matrix пруфов. Закрыто в **0.3.1**: `make lint` зелёный, добавлены
 > `make type` (pyrightconfig, supported surface, 0 errors) + `make docs-check` + CI-matrix 3.11/3.12 +
