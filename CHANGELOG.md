@@ -7,6 +7,18 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed — blind-retry transient connection/transport errors in the LLM step
+The completion retry loop already retried transient HTTP statuses (429/5xx) and timeouts, but a
+connection/transport blip fell through to a bare `raise` and failed the whole run. `httpx.ConnectError`
+("All connection attempts failed"), `httpx.RemoteProtocolError` ("Server disconnected"), the
+sibling-teardown `ReadError`, and the wrapping `ProviderTransportError` are now blind-retried up to twice
+with a bounded backoff (`transient_transport_retries` in run metadata; a `provider_transient_transport_retry`
+warning event), mirroring the existing transient-status path. `LocalProtocolError` (a client-side body bug)
+is deliberately excluded. Surfaced while running excel-ai's SpreadsheetBench on OpenRouter, where ~14 of
+200 tasks failed purely on transient network hiccups that a retry recovers. Tests:
+`test_complete_request_retries_transient_transport_error`,
+`test_complete_request_gives_up_transport_error_after_bounded_retries`.
+
 ## [0.3.2] - 2026-08-03
 
 Patch release replacing the non-reproducible `0.3.1` artifact identity. The

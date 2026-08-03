@@ -226,6 +226,72 @@ async def test_credit_error_clamps_below_floor_to_stated_affordable_budget() -> 
 
 
 @pytest.mark.asyncio
+async def test_complete_request_retries_transient_transport_error() -> None:
+    """A connection/transport blip (ConnectError) is blind-retried, not fatal."""
+    provider = SimpleNamespace(name="retry-test", calls=0)
+
+    async def complete(request: LlmRequest) -> LlmResponse:
+        provider.calls += 1
+        if provider.calls <= 2:
+            raise httpx.ConnectError("All connection attempts failed")
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content="ok"),
+            finish_reason=LlmFinishReason.STOP,
+            usage=UsageSummary(model_provider="retry", model_name="test"),
+            provider="retry",
+            model="test",
+        )
+
+    provider.complete = complete
+    emitted = []
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(provider=provider),
+        _emit=emitted.append,
+    )
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(stream=False, app_metadata={}),
+        metadata={},
+        run_id="run_test",
+        attempt_id="attempt_test",
+    )
+    request = LlmRequest(messages=[ChatMessage(role="user", content="hi")])
+
+    response = await _complete_request(host, context, request)
+
+    assert response.message.content == "ok"
+    assert provider.calls == 3  # two transport blips retried, third succeeds
+    assert context.metadata["transient_transport_retries"] == 2
+    assert emitted and emitted[0].event_type.value == "warning"
+
+
+@pytest.mark.asyncio
+async def test_complete_request_gives_up_transport_error_after_bounded_retries() -> None:
+    """A persistent transport failure surfaces after the bounded retries."""
+    provider = SimpleNamespace(name="retry-test", calls=0)
+
+    async def complete(request: LlmRequest) -> LlmResponse:
+        provider.calls += 1
+        raise httpx.RemoteProtocolError("Server disconnected without a response")
+
+    provider.complete = complete
+    host = SimpleNamespace(
+        _deps=SimpleNamespace(provider=provider),
+        _emit=lambda e: None,
+    )
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(stream=False, app_metadata={}),
+        metadata={},
+        run_id="run_test",
+        attempt_id="attempt_test",
+    )
+    request = LlmRequest(messages=[ChatMessage(role="user", content="hi")])
+
+    with pytest.raises(httpx.RemoteProtocolError):
+        await _complete_request(host, context, request)
+    assert provider.calls == 3  # attempts 0,1 retry; attempt 2 surfaces
+
+
+@pytest.mark.asyncio
 async def test_complete_request_retries_forced_tool_choice_provider_error() -> None:
     provider = SimpleNamespace(name="openrouter", calls=0)
     seen_tool_choice: list[object] = []

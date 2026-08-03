@@ -15,7 +15,11 @@ from agent_driver.llm.context_windows import (
     provider_model_hint,
 )
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
-from agent_driver.llm.error_classifier import ProviderErrorReason, classify
+from agent_driver.llm.error_classifier import (
+    ProviderErrorReason,
+    ProviderTransportError,
+    classify,
+)
 from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.llm_step.provider_requests import (
     affordable_max_tokens_from_error,
@@ -348,6 +352,33 @@ async def complete_request(  # pylint: disable=too-many-branches
                     exc=exc,
                     transition_reason="provider_stream_open_failed",
                 )
+            # Transient connection/transport hiccups — ConnectError ("All
+            # connection attempts failed"), RemoteProtocolError ("Server
+            # disconnected"), the sibling-teardown ReadError, and the wrapping
+            # ``ProviderTransportError`` — usually clear within seconds (unlike a
+            # deterministic 4xx). The status/timeout branches above already retry
+            # their classes; this closes the gap where a network blip fails the
+            # whole run instead of a bounded blind retry.
+            if attempt < 2 and _is_transient_transport_error(exc):
+                delay = 2.0 * (attempt + 1)
+                context.metadata["transient_transport_retries"] = attempt + 1
+                emit_step_event(
+                    host,
+                    context,
+                    event_type=RuntimeEventType.WARNING,
+                    payload={
+                        "warning": (
+                            "Provider transport error; retrying after a short "
+                            "backoff."
+                        ),
+                        "signal_id": "provider_transient_transport_retry",
+                        "severity": "warning",
+                        "error": str(exc)[:200],
+                        "attempt": attempt + 1,
+                    },
+                )
+                await asyncio.sleep(delay)
+                continue
             raise
     if last_timeout is not None:
         raise last_timeout
@@ -355,6 +386,21 @@ async def complete_request(  # pylint: disable=too-many-branches
 
 
 _TRANSIENT_PROVIDER_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+
+# Non-timeout transport failures worth a bounded blind retry: httpx.NetworkError
+# covers ConnectError/ReadError/WriteError/CloseError; RemoteProtocolError is the
+# "server disconnected" class. LocalProtocolError (a client-side body bug) is
+# intentionally excluded — retrying it never helps.
+_TRANSIENT_HTTPX_TRANSPORT = (httpx.NetworkError, httpx.RemoteProtocolError)
+
+
+def _is_transient_transport_error(exc: BaseException) -> bool:
+    """Whether ``exc`` is a transient network/transport hiccup worth retrying."""
+    if isinstance(exc, _TRANSIENT_HTTPX_TRANSPORT):
+        return True
+    # ``ProviderTransportError`` (a RuntimeError subclass) wraps the httpx
+    # transport errors the provider raised while opening/reading the stream.
+    return isinstance(exc, ProviderTransportError)
 
 
 def _is_transient_provider_status(exc: httpx.HTTPStatusError) -> bool:
