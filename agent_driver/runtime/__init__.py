@@ -1,7 +1,13 @@
 """Runtime skeleton exports (runtime-only public surface)."""
 
+from agent_driver.context import resolve_run_context_budget
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
+from agent_driver.runtime.compatibility import (
+    ROLLBACK_TARGET_0_2_RC5,
+    RuntimeStateCompatibilityResult,
+    serialize_runtime_state_for_compatibility,
+)
 from agent_driver.runtime.control import (
     AbortLifecycleState,
     AbortLifecycleStore,
@@ -137,6 +143,10 @@ __all__ = [
     "DeferPrimerInput",
     "keyword_relevance_primer",
     "InMemoryCheckpointStore",
+    "resolve_run_context_budget",
+    "ROLLBACK_TARGET_0_2_RC5",
+    "RuntimeStateCompatibilityResult",
+    "serialize_runtime_state_for_compatibility",
     "InMemoryEventLog",
     # U1 (epic 049) — host-store protocols + durable impls, lifecycle-hook
     # protocol, and run/stream projections. Supported on the facade so an

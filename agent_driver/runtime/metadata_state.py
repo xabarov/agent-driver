@@ -378,6 +378,7 @@ class CompactionRuntimeState(_MetadataView):
         self.metadata["trim_audit"] = payload["trim_audit"]
         self.metadata["trim_metadata"] = payload["trim_metadata"]
         self.metadata["token_pressure"] = payload["token_pressure"]
+        self.metadata["context_breakdown"] = payload.get("context_breakdown", {})
         self.metadata["prompt_render"] = payload["prompt_render"]
 
     def observations(self) -> list[JsonDict]:
@@ -421,6 +422,13 @@ class CompactionRuntimeState(_MetadataView):
             "microcompaction_audit": self.metadata.get("microcompaction_audit", []),
             "microcompaction": self.metadata.get("microcompaction", {}),
             "token_pressure": self.metadata.get("token_pressure", {}),
+            "context_breakdown": self.metadata.get("context_breakdown", {}),
+            "effective_context_budget": self.metadata.get(
+                "effective_context_budget", {}
+            ),
+            "provider_max_tokens_source": self.metadata.get(
+                "provider_max_tokens_source", "provider_default"
+            ),
             COMPACTION_DECISION_KEY: self.metadata.get(COMPACTION_DECISION_KEY),
             COMPACTION_AUDIT_KEY: self.metadata.get(COMPACTION_AUDIT_KEY),
             COMPACTION_RESULT_KEY: self.metadata.get(COMPACTION_RESULT_KEY),
@@ -442,6 +450,9 @@ class CompactionRuntimeState(_MetadataView):
             "trim_audit": self.metadata.get("trim_audit", []),
             "microcompaction_audit": self.metadata.get("microcompaction_audit", []),
             "token_pressure": self.metadata.get("token_pressure", {}),
+            "effective_context_budget": self.metadata.get(
+                "effective_context_budget", {}
+            ),
             "compaction_decision": self.metadata.get(COMPACTION_DECISION_KEY),
             "compaction_audit": self.metadata.get(COMPACTION_AUDIT_KEY),
             "compaction_result": self.metadata.get(COMPACTION_RESULT_KEY),

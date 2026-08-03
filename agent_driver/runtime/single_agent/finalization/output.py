@@ -71,6 +71,9 @@ def _safe_context_breakdown(context: RunContext) -> dict[str, Any]:
     synthesized user turn from ``input`` so a tool-less run still reports its prompt.
     """
     try:
+        assembled = context.metadata.get("context_breakdown")
+        if isinstance(assembled, dict) and assembled:
+            return assembled
         protocol = context.metadata.get("protocol_messages")
         if isinstance(protocol, list) and protocol:
             return estimate_context_breakdown(protocol)

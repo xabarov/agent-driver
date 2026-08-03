@@ -24,6 +24,7 @@ from agent_driver.contracts.context import (
     CompactionResult,
     ContextArtifactRef,
     ContextBudget,
+    ContextBudgetDefaults,
     ObservationMemory,
     ObservationProvenance,
     PlanApprovalPayload,
@@ -38,6 +39,8 @@ from agent_driver.contracts.context import (
     TrimAuditRecord,
     TrimmedContext,
     TurnDigest,
+    ResolvedRunContextBudget,
+    RunContextBudget,
 )
 from agent_driver.contracts.continuous_validation import (
     FlakeRecord,
@@ -299,6 +302,9 @@ __all__ = [
     "PlanApprovalPayload",
     "PlanArtifact",
     "ContextBudget",
+    "ContextBudgetDefaults",
+    "ResolvedRunContextBudget",
+    "RunContextBudget",
     "TrimAuditRecord",
     "TrimmedContext",
     "ContractModel",

@@ -12,6 +12,7 @@ from agent_driver.code_agent.tool_surface import (
     render_callable_tool_docs,
 )
 from agent_driver.context import trim_context
+from agent_driver.context.breakdown import estimate_context_breakdown
 from agent_driver.context.token_pressure import (
     TokenPressureInput,
     estimate_token_pressure,
@@ -57,6 +58,7 @@ class LlmRequestBuildContext:
     compact_threshold: int = 9000
     blocking_threshold: int = 10500
     output_token_reserve: int = 1500
+    request_max_tokens: int | None = None
     stream: bool = False
     system_instruction: str | None = None
     protocol_messages: tuple[ChatMessage, ...] | None = None
@@ -500,7 +502,11 @@ def build_single_agent_llm_request(
         tool_choice=ctx.tool_choice,
         response_format=response_format,
         temperature=run_input.temperature,
-        max_tokens=run_input.max_tokens,
+        max_tokens=(
+            ctx.request_max_tokens
+            if ctx.request_max_tokens is not None
+            else run_input.max_tokens
+        ),
         enable_prompt_cache=ctx.enable_prompt_cache,
         metadata=request_metadata,
     )
@@ -514,17 +520,14 @@ def build_single_agent_llm_request(
             trim_metadata["post_trim_protocol_warnings"] = list(
                 post_trim_protocol_warnings
             )
-    retained_observations = (
-        trim_metadata.get("retained_observations", [])
-        if isinstance(trim_metadata, dict)
-        else []
-    )
     token_pressure = estimate_token_pressure(
         TokenPressureInput(
             prompt_messages=tuple(final_prompt_messages),
-            observations=tuple(
-                retained_observations if isinstance(retained_observations, list) else []
-            ),
+            # Observation previews were injected into final_prompt_messages by
+            # trim_context, so counting them again here would make the pressure
+            # trigger disagree with the provider-facing context breakdown.
+            observations=(),
+            tool_schemas=tuple(request_tools),
             retained_digest_ids=tuple(trimmed.retained_digest_ids),
             retained_artifact_ids=tuple(trimmed.retained_artifact_ids),
             context_window_estimate=ctx.context_window_estimate,
@@ -534,12 +537,17 @@ def build_single_agent_llm_request(
             output_token_reserve=ctx.output_token_reserve,
         )
     )
+    context_breakdown = estimate_context_breakdown(
+        final_prompt_messages,
+        tools=request_tools,
+    )
     return request, {
         "trim_audit": [item.model_dump(mode="json") for item in trimmed.audit],
         "trim_metadata": trim_metadata,
         "retained_digest_ids": trimmed.retained_digest_ids,
         "retained_artifact_ids": trimmed.retained_artifact_ids,
         "token_pressure": token_pressure,
+        "context_breakdown": context_breakdown,
         "prompt_render": (
             code_prompt_render.model_dump(mode="json")
             if code_prompt_render is not None

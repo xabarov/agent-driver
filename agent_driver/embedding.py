@@ -25,7 +25,10 @@ from agent_driver.contracts import (
     InterruptRequest,
     MemoryStep,
     MemoryStepKind,
+    ContextBudgetDefaults,
+    ResolvedRunContextBudget,
     ResumeCommand,
+    RunContextBudget,
 )
 
 # — Provider protocol + built-ins (agent_driver.llm) —
@@ -56,8 +59,10 @@ from agent_driver.runtime import (
     RunAbortHandle,
     RunLifecycleHook,
     RevisionRequest,
+    ROLLBACK_TARGET_0_2_RC5,
     RunnerConfig,
     RuntimeEventLog,
+    RuntimeStateCompatibilityResult,
     SqliteAbortLifecycleStore,
     SqliteApprovalConsumptionStore,
     SqliteCommandQueueStore,
@@ -71,7 +76,9 @@ from agent_driver.runtime import (
     project_run_timeline,
     project_runtime_events,
     runner_config_parameter_names,
+    resolve_run_context_budget,
     summarize_run_lifecycle,
+    serialize_runtime_state_for_compatibility,
     wrap_governed_executor,
 )
 
@@ -115,7 +122,10 @@ __all__ = [
     "InterruptRequest",
     "MemoryStep",
     "MemoryStepKind",
+    "ContextBudgetDefaults",
+    "ResolvedRunContextBudget",
     "ResumeCommand",
+    "RunContextBudget",
     # llm
     "FakeProvider",
     "LlmProvider",
@@ -140,9 +150,12 @@ __all__ = [
     "RunAbortHandle",
     "RunLifecycleHook",
     "RevisionRequest",
+    "ROLLBACK_TARGET_0_2_RC5",
     "RunnerConfig",
     "runner_config_parameter_names",
+    "resolve_run_context_budget",
     "RuntimeEventLog",
+    "RuntimeStateCompatibilityResult",
     "SqliteAbortLifecycleStore",
     "SqliteApprovalConsumptionStore",
     "SqliteCommandQueueStore",
@@ -156,6 +169,7 @@ __all__ = [
     "project_run_timeline",
     "project_runtime_events",
     "summarize_run_lifecycle",
+    "serialize_runtime_state_for_compatibility",
     "wrap_governed_executor",
     # tools
     "GovernedToolExecutor",

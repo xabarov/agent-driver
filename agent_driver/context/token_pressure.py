@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,6 +12,7 @@ class TokenPressureInput:  # pylint: disable=too-many-instance-attributes
     """Inputs for deterministic token pressure estimation."""
 
     prompt_messages: tuple[dict[str, Any], ...]
+    tool_schemas: tuple[dict[str, Any], ...] = ()
     observations: tuple[dict[str, Any], ...] = ()
     retained_digest_ids: tuple[str, ...] = ()
     retained_artifact_ids: tuple[str, ...] = ()
@@ -29,10 +31,22 @@ def estimate_token_pressure(inp: TokenPressureInput) -> dict[str, Any]:
     prompt_chars = sum(
         len(str(item.get("content", ""))) for item in inp.prompt_messages
     )
+    prompt_metadata_chars = sum(
+        _serialized_chars(item.get("metadata", {}))
+        for item in inp.prompt_messages
+        if item.get("metadata")
+    )
+    tool_schema_chars = sum(_serialized_chars(item) for item in inp.tool_schemas)
     observation_chars = sum(
         len(str(item.get("text_preview", ""))) for item in inp.observations
     )
-    used_tokens_estimate = (prompt_chars + observation_chars) // 4
+    total_chars = (
+        prompt_chars
+        + prompt_metadata_chars
+        + observation_chars
+        + tool_schema_chars
+    )
+    used_tokens_estimate = total_chars // 4
     available_after_reserve = max(
         0,
         inp.context_window_estimate - inp.output_token_reserve,
@@ -47,6 +61,12 @@ def estimate_token_pressure(inp: TokenPressureInput) -> dict[str, Any]:
     return {
         "state": state,
         "used_tokens_estimate": used_tokens_estimate,
+        "total_chars": total_chars,
+        "prompt_content_chars": prompt_chars,
+        "prompt_metadata_chars": prompt_metadata_chars,
+        "observation_chars": observation_chars,
+        "tool_schema_chars": tool_schema_chars,
+        "tool_schema_count": len(inp.tool_schemas),
         "context_usage_ratio": context_usage_ratio,
         "remaining_tokens_estimate": remaining_tokens,
         "context_window_estimate": inp.context_window_estimate,
@@ -62,6 +82,22 @@ def estimate_token_pressure(inp: TokenPressureInput) -> dict[str, Any]:
         "prompt_message_count": len(inp.prompt_messages),
         "observation_count": len(inp.observations),
     }
+
+
+def _serialized_chars(value: Any) -> int:
+    """Return deterministic JSON size without exposing the serialized payload."""
+    try:
+        return len(
+            json.dumps(
+                value,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            )
+        )
+    except (TypeError, ValueError):
+        return len(str(value))
 
 
 def _pressure_state(

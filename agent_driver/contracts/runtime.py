@@ -16,6 +16,7 @@ from agent_driver.contracts.memory import MemoryProjection
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.node_contract import NodeContract
 from agent_driver.contracts.profiles import PromptRenderResult
+from agent_driver.contracts.context.run_budget import RunContextBudget
 from agent_driver.contracts.runtime_decisions import GoalContract
 from agent_driver.contracts.serialization import ExecutorSerializationPolicy
 from agent_driver.contracts.subagents import SubagentGroup, SubagentRun
@@ -89,6 +90,12 @@ class AgentRunInput(ContractModel):
     — real dialogue history belongs in ``messages``, and mixing the two is how
     anaphora breaks (epic 026; reference: openclaude ``requestOnlyMessages``,
     hermes ``api_content``)."""
+    context_budget: RunContextBudget | None = None
+    """Typed per-run input/output and semantic context policy.
+
+    This field supersedes ``app_metadata["context_budget"]``. The legacy
+    mapping remains readable for one deprecation window.
+    """
     app_metadata: dict[str, Any] = Field(default_factory=dict)
     response_format: dict[str, Any] | None = None
     """Provider-level structured output enforcement. Mirrors the

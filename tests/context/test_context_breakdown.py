@@ -34,13 +34,16 @@ def test_categorizes_by_role_and_scaffolding_marker() -> None:
     assert cats["tool_results"]["chars"] == 80
     assert cats["scaffolding"]["chars"] == 16  # tagged turn NOT counted as conversation
     assert cats["tool_definitions"]["chars"] == 0
+    assert cats["message_metadata"]["chars"] > 0
 
 
 def test_total_tokens_matches_chars_over_four() -> None:
     # The authoritative total equals the same (total_chars // 4) the compaction
     # trigger uses — UI number and trigger never disagree.
     out = estimate_context_breakdown(_messages())
-    assert out["total_chars"] == 40 + 20 + 20 + 80 + 16
+    assert out["total_chars"] == (
+        40 + 20 + 20 + 80 + 16 + out["categories"]["message_metadata"]["chars"]
+    )
     assert out["total_tokens"] == out["total_chars"] // 4
 
 
@@ -66,3 +69,24 @@ def test_empty_input_is_all_zero() -> None:
     assert out["total_chars"] == 0
     assert out["total_tokens"] == 0
     assert all(c["chars"] == 0 for c in out["categories"].values())
+
+
+def test_total_matches_token_pressure_for_same_request() -> None:
+    from agent_driver.context.token_pressure import (
+        TokenPressureInput,
+        estimate_token_pressure,
+    )
+
+    tools = [
+        {"type": "function", "function": {"name": "lookup", "parameters": {}}}
+    ]
+    messages = [message.model_dump(mode="json") for message in _messages()]
+    breakdown = estimate_context_breakdown(messages, tools=tools)
+    pressure = estimate_token_pressure(
+        TokenPressureInput(
+            prompt_messages=tuple(messages),
+            tool_schemas=tuple(tools),
+        )
+    )
+    assert pressure["total_chars"] == breakdown["total_chars"]
+    assert pressure["used_tokens_estimate"] == breakdown["total_tokens"]

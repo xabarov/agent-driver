@@ -12,6 +12,7 @@ list of ``{tool_name, args: {...}, ...}`` dicts.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -26,6 +27,7 @@ class ToolArgTruncationResult:
 
     messages: list[ChatMessage]
     audit: list[dict[str, Any]] = field(default_factory=list)
+    retained_structured: list[dict[str, Any]] = field(default_factory=list)
     chars_saved: int = 0
 
     @property
@@ -58,6 +60,7 @@ def truncate_tool_call_args(
         raise ValueError("max_arg_chars must be >= 0")
     cutoff = max(0, len(messages) - max(0, protect_last))
     audit: list[dict[str, Any]] = []
+    retained_structured: list[dict[str, Any]] = []
     saved = 0
     out: list[ChatMessage] = []
     for index, message in enumerate(messages):
@@ -68,9 +71,10 @@ def truncate_tool_call_args(
         if not isinstance(tool_calls, list) or not tool_calls:
             out.append(message)
             continue
-        new_calls, msg_saved, msg_audit = _truncate_calls(
+        new_calls, msg_saved, msg_audit, msg_retained = _truncate_calls(
             tool_calls, index=index, max_arg_chars=max_arg_chars
         )
+        retained_structured.extend(msg_retained)
         if not msg_audit:
             out.append(message)
             continue
@@ -81,16 +85,22 @@ def truncate_tool_call_args(
                 update={"metadata": {**message.metadata, "tool_calls": new_calls}}
             )
         )
-    return ToolArgTruncationResult(messages=out, audit=audit, chars_saved=saved)
+    return ToolArgTruncationResult(
+        messages=out,
+        audit=audit,
+        chars_saved=saved,
+        retained_structured=retained_structured,
+    )
 
 
 def _truncate_calls(
     tool_calls: list[Any], *, index: int, max_arg_chars: int
-) -> tuple[list[Any], int, list[dict[str, Any]]]:
+) -> tuple[list[Any], int, list[dict[str, Any]], list[dict[str, Any]]]:
     """Return (new_calls, chars_saved, audit) for one message's tool_calls."""
     new_calls: list[Any] = []
     saved = 0
     audit: list[dict[str, Any]] = []
+    retained_structured: list[dict[str, Any]] = []
     for call in tool_calls:
         if not isinstance(call, dict) or not isinstance(call.get("args"), dict):
             new_calls.append(call)
@@ -98,6 +108,18 @@ def _truncate_calls(
         new_args = dict(call["args"])
         changed = False
         for key, value in list(new_args.items()):
+            structured_size = _structured_size(value)
+            if structured_size is not None and structured_size > max_arg_chars:
+                retained_structured.append(
+                    {
+                        "message_index": index,
+                        "tool_name": str(call.get("tool_name", "") or ""),
+                        "arg": key,
+                        "original_chars": structured_size,
+                        "strategy": "structured_json_retained_atomically",
+                    }
+                )
+                continue
             if not isinstance(value, str):
                 continue
             clipped, dropped = _truncate_value(value, max_arg_chars)
@@ -114,7 +136,32 @@ def _truncate_calls(
                     }
                 )
         new_calls.append({**call, "args": new_args} if changed else call)
-    return new_calls, saved, audit
+    return new_calls, saved, audit, retained_structured
+
+
+def _structured_size(value: Any) -> int | None:
+    """Return JSON size for structured values, including serialized objects/arrays."""
+    parsed = value
+    if isinstance(value, str):
+        if value.lstrip()[:1] not in ("{", "["):
+            return None
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if not isinstance(parsed, (dict, list)):
+        return None
+    try:
+        return len(
+            json.dumps(
+                parsed,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 __all__ = ["ToolArgTruncationResult", "truncate_tool_call_args"]

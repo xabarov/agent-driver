@@ -9,8 +9,9 @@ from typing import Any, Protocol
 from agent_driver.context import (
     microcompact_observations,
     render_planning_step_prompt,
+    resolve_run_context_budget,
 )
-from agent_driver.contracts.context import PlanningStep
+from agent_driver.contracts.context import ContextBudgetDefaults, PlanningStep
 from agent_driver.contracts.enums import ChatRole, RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.context_windows import provider_model_hint
@@ -77,16 +78,66 @@ class LlmRequestPrepHost(Protocol):
     def _emit(self, event: EventSpec) -> None: ...
 
 
+def _run_context_budget_defaults(
+    host: LlmRequestPrepHost,
+    *,
+    trimming: object | None = None,
+) -> ContextBudgetDefaults:
+    """Project runner/model settings into the supported resolver contract."""
+    settings = trimming or host._config
+    return ContextBudgetDefaults(
+        max_chars=int(getattr(settings, "trim_max_chars")),
+        max_messages=getattr(settings, "trim_max_messages", None),
+        max_observations=getattr(settings, "trim_max_observations", None),
+        protect_recent_messages=getattr(
+            settings, "trim_protect_recent_turns", None
+        ),
+        preserve_recent_observations=getattr(
+            settings, "microcompact_preserve_recent", None
+        ),
+        max_observation_preview_chars=getattr(
+            settings, "microcompact_max_preview_chars", None
+        ),
+        context_window_estimate=int(
+            getattr(settings, "context_window_estimate")
+        ),
+        warning_threshold=int(getattr(settings, "token_warning_threshold")),
+        compact_threshold=int(getattr(settings, "token_compact_threshold")),
+        blocking_threshold=int(getattr(settings, "token_blocking_threshold")),
+        output_token_reserve=int(getattr(settings, "output_token_reserve")),
+        max_compaction_chars=int(
+            getattr(host._config, "ptl_retry_max_chars", 4000)
+        ),
+        source=(
+            "model_catalog"
+            if getattr(settings, "context_window_source", "") == "model_catalog"
+            else "runner_config"
+        ),
+    )
+
+
 def microcompact_context_observations(
     host: LlmRequestPrepHost, context: RunContext
 ) -> list[dict[str, object]]:
     """Apply cheap observation microcompaction before request trimming."""
     compaction_state = get_compaction_runtime_state(context)
     observations = compaction_state.observations()
+    context_budget = resolve_run_context_budget(
+        context.run_input,
+        _run_context_budget_defaults(host),
+    )
     micro = microcompact_observations(
         [item for item in observations if isinstance(item, dict)],
-        preserve_recent=host._config.microcompact_preserve_recent,
-        max_preview_chars=host._config.microcompact_max_preview_chars,
+        preserve_recent=(
+            context_budget.preserve_recent_observations
+            if context_budget.preserve_recent_observations is not None
+            else len(observations)
+        ),
+        max_preview_chars=(
+            context_budget.max_observation_preview_chars
+            if context_budget.max_observation_preview_chars is not None
+            else 2**31 - 1
+        ),
     )
     compaction_state.set_microcompaction(
         observations=micro.observations,
@@ -229,6 +280,24 @@ def build_trimmed_request(
                 "source": "model_catalog",
             },
         )
+    context_budget = resolve_run_context_budget(
+        context.run_input,
+        _run_context_budget_defaults(host, trimming=trimming),
+    )
+    context.metadata["effective_context_budget"] = context_budget.model_dump(
+        mode="json"
+    )
+    request_max_tokens = context.run_input.max_tokens
+    max_tokens_source = "run_input.max_tokens"
+    if request_max_tokens is None:
+        max_tokens_source = "provider_default"
+        if (
+            context_budget.source.startswith("run_input.")
+            and context_budget.output_tokens > 0
+        ):
+            request_max_tokens = context_budget.output_tokens
+            max_tokens_source = f"{context_budget.source}.output_tokens"
+    context.metadata["provider_max_tokens_source"] = max_tokens_source
     return build_single_agent_llm_request(
         LlmRequestBuildContext(
             run_input=context.run_input,
@@ -256,15 +325,16 @@ def build_trimmed_request(
                 for item in artifact_refs
                 if isinstance(item, dict) and item.get("artifact_id")
             ),
-            max_chars=trimming.trim_max_chars,
-            max_messages=trimming.trim_max_messages,
-            max_observations=trimming.trim_max_observations,
-            protect_recent_turns=trimming.trim_protect_recent_turns,
-            context_window_estimate=trimming.context_window_estimate,
-            warning_threshold=trimming.token_warning_threshold,
-            compact_threshold=trimming.token_compact_threshold,
-            blocking_threshold=trimming.token_blocking_threshold,
-            output_token_reserve=trimming.output_token_reserve,
+            max_chars=context_budget.max_chars,
+            max_messages=context_budget.max_messages,
+            max_observations=context_budget.max_observations,
+            protect_recent_turns=context_budget.protect_recent_messages,
+            context_window_estimate=context_budget.context_window_estimate,
+            warning_threshold=context_budget.warning_threshold,
+            compact_threshold=context_budget.compact_threshold,
+            blocking_threshold=context_budget.blocking_threshold,
+            output_token_reserve=context_budget.output_token_reserve,
+            request_max_tokens=request_max_tokens,
             stream=is_stream_enabled(context.run_input),
             system_instruction=system_instruction,
             protocol_messages=protocol_messages,
