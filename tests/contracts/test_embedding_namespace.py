@@ -49,6 +49,8 @@ def test_covers_the_durable_embedding_essentials() -> None:
         "RunAbortHandle",
         "AgentRunInput",
         "AllowedPrompt",
+        "MemoryStep",
+        "MemoryStepKind",
         "FakeProvider",
         "register_skill_tools",
     }

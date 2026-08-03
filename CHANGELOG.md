@@ -30,8 +30,10 @@ private flattened-settings field sets, and
 registries. `agent_driver.runtime.RevisionRequest` and the contracts
 `AllowedPrompt`/`AllowedPromptPattern` are also promoted to their owning
 facades so lifecycle and HITL host adapters do not import implementation
-modules. All are re-exported by `agent_driver.embedding`; persisted-state
-contracts and existing runtime behavior are unchanged from `0.3.1`.
+modules. `MemoryStep`/`MemoryStepKind` likewise move to the contracts facade
+for host memory projections. All are re-exported by
+`agent_driver.embedding`; persisted-state contracts and existing runtime
+behavior are unchanged from `0.3.1`.
 
 ## [0.3.1] - 2026-08-03
 

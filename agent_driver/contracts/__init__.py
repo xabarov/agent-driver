@@ -88,6 +88,7 @@ from agent_driver.contracts.enums import (
     EventSeverity,
     GuardrailDecision,
     InterruptReason,
+    MemoryStepKind,
     ObservationSource,
     ObservationTrust,
     ParentStateWriteMode,
@@ -172,7 +173,7 @@ from agent_driver.contracts.mcp_governance import (
     McpServerDescriptor,
     McpToolResourceRef,
 )
-from agent_driver.contracts.memory import MemoryProjection
+from agent_driver.contracts.memory import MemoryProjection, MemoryStep
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.node_contract import FinalizeNow, NodeContract
 from agent_driver.contracts.observability import (
@@ -383,6 +384,8 @@ __all__ = [
     "McpServerDescriptor",
     "McpToolResourceRef",
     "MemoryProjection",
+    "MemoryStep",
+    "MemoryStepKind",
     "MergeProvenance",
     "PromptRenderResult",
     "HarnessProfile",

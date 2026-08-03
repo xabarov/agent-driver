@@ -23,6 +23,8 @@ from agent_driver.contracts import (
     AllowedPrompt,
     AllowedPromptPattern,
     InterruptRequest,
+    MemoryStep,
+    MemoryStepKind,
     ResumeCommand,
 )
 
@@ -111,6 +113,8 @@ __all__ = [
     "AllowedPrompt",
     "AllowedPromptPattern",
     "InterruptRequest",
+    "MemoryStep",
+    "MemoryStepKind",
     "ResumeCommand",
     # llm
     "FakeProvider",

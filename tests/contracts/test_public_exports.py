@@ -46,6 +46,8 @@ def test_contracts_public_exports_are_stable() -> None:
         "RuntimeEvent",
         "RunStreamEvent",
         "InterruptRequest",
+        "MemoryStep",
+        "MemoryStepKind",
         "ResumeCommand",
     }
     assert required.issubset(set(contracts.__all__))
