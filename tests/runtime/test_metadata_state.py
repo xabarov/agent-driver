@@ -144,6 +144,11 @@ def test_loop_and_compaction_state_preserve_output_shapes() -> None:
         "post_compact_cleanup": {"removed": []},
         "session_memory_extraction": {"updated": False},
         "prompt_render": {"messages": 2},
+        # 0.3.3 context-integrity: additive projection keys (default-empty when
+        # no run budget / breakdown / max_tokens override is present).
+        "context_breakdown": {},
+        "effective_context_budget": {},
+        "provider_max_tokens_source": "provider_default",
     }
     CompactionRuntimeState(metadata).set_microcompaction(
         observations=[{"summary": "new"}],
