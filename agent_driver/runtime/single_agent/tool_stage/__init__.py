@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Protocol
 
+from agent_driver.contracts.control import LiveMessagePhase
 from agent_driver.contracts.enums import (
     AgentProfile,
     ChatRole,
@@ -306,6 +307,14 @@ def _try_build_interrupt_transition(
         event_type=RuntimeEventType.INTERRUPT_REQUESTED,
         payload={"reason": result.interrupt.reason.value},
     )
+    set_phase = getattr(host._deps.command_queue_store, "set_run_phase", None)
+    if callable(set_phase):
+        set_phase(
+            context.run_id,
+            LiveMessagePhase.APPROVAL_PAUSE,
+            thread_id=context.run_input.thread_id,
+            agent_id=context.run_input.agent_id,
+        )
     paused_output = host._build_paused_output(context, result)
     context.metadata["terminal_output"] = paused_output.model_dump(mode="json")
     host._save_checkpoint(context, latest_output=paused_output, node_id="tool_stage")

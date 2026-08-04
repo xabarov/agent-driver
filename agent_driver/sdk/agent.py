@@ -11,10 +11,15 @@ from importlib import import_module
 import uuid
 
 from agent_driver.contracts.control import (
+    CommandQueueItem,
+    CommandQueueStatus,
     ControlKind,
     ControlPriority,
     ControlRequest,
     ControlResponse,
+    LiveMessageAdmissionError,
+    LiveMessageIdempotencyError,
+    LiveMessageSemantic,
 )
 from agent_driver.contracts.enums import ResumeAction, RuntimeEventType
 from agent_driver.contracts.events import RuntimeEventContext, new_runtime_event
@@ -23,7 +28,11 @@ from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.contracts.stream import RunStreamEvent
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.runner import SingleAgentRunner
-from agent_driver.runtime.control import CommandQueueStore, InMemoryCommandQueueStore
+from agent_driver.runtime.control import (
+    CommandQueueStore,
+    InMemoryCommandQueueStore,
+    live_message_receipt,
+)
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.runtime.stream import project_runtime_events
@@ -76,34 +85,142 @@ class Agent:  # pylint: disable=too-many-public-methods
         """Expose steering command queue store for advanced embedders."""
         return self._command_queue_store
 
-    def control(self, request: ControlRequest) -> ControlResponse:
+    def control(
+        self,
+        request: ControlRequest,
+        *,
+        require_live_state: bool = False,
+    ) -> ControlResponse:
         """Queue a typed steering control request."""
-        item = self._command_queue_store.enqueue(request)
-        self._emit_control_event(
+        admit = getattr(self._command_queue_store, "admit", None)
+        try:
+            item = (
+                admit(request)
+                if require_live_state and callable(admit)
+                else self._command_queue_store.enqueue(request)
+            )
+        except (LiveMessageAdmissionError, LiveMessageIdempotencyError) as exc:
+            reason_code = getattr(exc, "reason_code", "live_message_rejected")
+            return ControlResponse(
+                ok=False,
+                control_id=request.control_id,
+                error=reason_code,
+                metadata={"reason_code": reason_code},
+            )
+        receipt = live_message_receipt(item)
+        if not self._control_event_exists(
             run_id=item.run_id,
-            event_type=RuntimeEventType.CONTROL_REQUESTED,
-            payload={
-                "control_id": item.control_id,
-                "queue_id": item.queue_id,
-                "kind": item.kind.value,
-                "priority": item.priority.value,
-            },
-        )
-        self._emit_control_event(
-            run_id=item.run_id,
-            event_type=RuntimeEventType.COMMAND_QUEUED,
-            payload={
-                "control_id": item.control_id,
-                "queue_id": item.queue_id,
-                "kind": item.kind.value,
-                "priority": item.priority.value,
-            },
-        )
+            event_type=RuntimeEventType.COMMAND_ACCEPTED,
+            queue_id=item.queue_id,
+        ):
+            for event_type in (
+                RuntimeEventType.CONTROL_REQUESTED,
+                RuntimeEventType.COMMAND_ACCEPTED,
+                RuntimeEventType.COMMAND_QUEUED,
+            ):
+                self._emit_control_event(
+                    run_id=item.run_id,
+                    event_type=event_type,
+                    payload=receipt,
+                )
+        if item.requested_semantic is LiveMessageSemantic.STOP:
+            list_for_run = getattr(self._command_queue_store, "list_for_run", None)
+            rows = (
+                list_for_run(item.run_id)
+                if item.run_id and callable(list_for_run)
+                else []
+            )
+            for stopped_item in rows:
+                if stopped_item.reason_code != "run_stopped" or self._control_event_exists(
+                    run_id=stopped_item.run_id,
+                    event_type=RuntimeEventType.COMMAND_STOP_PREEMPTED,
+                    queue_id=stopped_item.queue_id,
+                ):
+                    continue
+                self._emit_control_event(
+                    run_id=stopped_item.run_id,
+                    event_type=RuntimeEventType.COMMAND_STOP_PREEMPTED,
+                    payload=live_message_receipt(stopped_item),
+                )
         return ControlResponse(
             ok=True,
             control_id=item.control_id,
             queue_id=item.queue_id,
+            metadata=receipt,
         )
+
+    def steer(
+        self,
+        message: str,
+        *,
+        run_id: str,
+        dedupe_key: str | None = None,
+    ) -> ControlResponse:
+        """Soft-steer an active turn at its next safe boundary."""
+        return self.control(
+            ControlRequest(
+                kind=ControlKind.ENQUEUE_USER_MESSAGE,
+                run_id=run_id,
+                priority=ControlPriority.NOW,
+                payload={"message": message},
+                dedupe_key=dedupe_key,
+            ),
+            require_live_state=True,
+        )
+
+    def redirect(
+        self,
+        message: str,
+        *,
+        run_id: str,
+        dedupe_key: str | None = None,
+    ) -> ControlResponse:
+        """Urgently redirect only an in-flight model await."""
+        return self.control(
+            ControlRequest(
+                kind=ControlKind.REDIRECT_USER_MESSAGE,
+                run_id=run_id,
+                priority=ControlPriority.NOW,
+                payload={"message": message},
+                dedupe_key=dedupe_key,
+            ),
+            require_live_state=True,
+        )
+
+    def queue_next(
+        self,
+        message: str,
+        *,
+        run_id: str,
+        dedupe_key: str | None = None,
+    ) -> ControlResponse:
+        """Queue a separate turn that is ineligible before source terminal."""
+        return self.control(
+            ControlRequest(
+                kind=ControlKind.ENQUEUE_USER_MESSAGE,
+                run_id=run_id,
+                priority=ControlPriority.NEXT,
+                payload={"message": message},
+                dedupe_key=dedupe_key,
+            ),
+            require_live_state=True,
+        )
+
+    def stop(self, *, run_id: str, reason: str = "operator_stop") -> ControlResponse:
+        """Accept a durable Stop boundary distinct from all message controls."""
+        return self.control(
+            ControlRequest(
+                kind=ControlKind.INTERRUPT,
+                run_id=run_id,
+                priority=ControlPriority.NOW,
+                payload={"reason": reason},
+            ),
+            require_live_state=True,
+        )
+
+    def get_control(self, queue_id: str) -> CommandQueueItem | None:
+        """Read back one typed durable command receipt."""
+        return self._command_queue_store.get(queue_id)
 
     def enqueue(
         self,
@@ -171,23 +288,56 @@ class Agent:  # pylint: disable=too-many-public-methods
     def cancel_queued_message(self, queue_id: str) -> ControlResponse:
         """Cancel a pending queued steering command."""
         item = self._command_queue_store.cancel(queue_id)
+        return self._cancel_response(queue_id, item)
+
+    def cancel_next(self, queue_id: str) -> ControlResponse:
+        """Cancel only a still-pending separate NEXT-turn message."""
+        cancel_next = getattr(self._command_queue_store, "cancel_next", None)
+        item = cancel_next(queue_id) if callable(cancel_next) else None
+        return self._cancel_response(queue_id, item)
+
+    def _cancel_response(
+        self,
+        queue_id: str,
+        item: CommandQueueItem | None,
+    ) -> ControlResponse:
         if item is None:
             return ControlResponse(
                 ok=False, queue_id=queue_id, error="queue item not found"
             )
+        if item.status is not CommandQueueStatus.CANCELLED:
+            return ControlResponse(
+                ok=False,
+                control_id=item.control_id,
+                queue_id=item.queue_id,
+                error="queue_item_not_cancellable",
+                metadata=live_message_receipt(item),
+            )
+        receipt = live_message_receipt(item)
         self._emit_control_event(
             run_id=item.run_id,
             event_type=RuntimeEventType.COMMAND_CANCELLED,
-            payload={
-                "control_id": item.control_id,
-                "queue_id": item.queue_id,
-                "kind": item.kind.value,
-            },
+            payload=receipt,
         )
         return ControlResponse(
             ok=True,
             control_id=item.control_id,
             queue_id=item.queue_id,
+            metadata=receipt,
+        )
+
+    def _control_event_exists(
+        self,
+        *,
+        run_id: str | None,
+        event_type: RuntimeEventType,
+        queue_id: str,
+    ) -> bool:
+        if not run_id:
+            return False
+        return any(
+            event.type is event_type and event.payload.get("queue_id") == queue_id
+            for event in self._runner.deps.event_log.list_for_run(run_id)
         )
 
     def _emit_control_event(

@@ -12,6 +12,7 @@ from agent_driver.contracts import (
     ControlKind,
     ControlPriority,
     ControlRequest,
+    LiveMessagePhase,
     RuntimeEventType,
     ToolCall,
     ToolManifest,
@@ -229,6 +230,33 @@ def test_sdk_cancel_queued_message_marks_item_cancelled() -> None:
     assert any(event.type == RuntimeEventType.COMMAND_CANCELLED for event in events)
 
 
+def test_sdk_live_methods_fail_closed_and_stop_emits_preemption() -> None:
+    queue = InMemoryCommandQueueStore()
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"),
+        tools=ToolSet.only(),
+        command_queue_store=queue,
+    )
+
+    unavailable = agent.steer("unknown run", run_id="run_sdk_live")
+    assert unavailable.ok is False
+    assert unavailable.error == "live_message_state_unavailable"
+
+    queue.set_run_phase("run_sdk_live", LiveMessagePhase.LLM_IN_FLIGHT)
+    queued = agent.queue_next("later", run_id="run_sdk_live")
+    stopped = agent.stop(run_id="run_sdk_live")
+    events = agent.runner.deps.event_log.list_for_run("run_sdk_live")
+
+    assert queued.ok is True
+    assert stopped.ok is True
+    assert queue.get(queued.queue_id or "").reason_code == "run_stopped"
+    assert any(
+        event.type is RuntimeEventType.COMMAND_STOP_PREEMPTED
+        and event.payload.get("queue_id") == queued.queue_id
+        for event in events
+    )
+
+
 @pytest.mark.asyncio
 async def test_sdk_stream_projects_runtime_events() -> None:
     """SDK stream should yield projected stream events."""
@@ -328,8 +356,8 @@ async def test_sdk_set_model_control_affects_next_llm_request() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sdk_enqueue_control_appends_user_message_at_next_llm_boundary() -> None:
-    """Queued user messages should be appended before the next LLM request."""
+async def test_sdk_enqueue_next_is_not_drained_at_active_llm_boundary() -> None:
+    """NEXT user messages remain pending until a separate turn handoff."""
     provider = _CaptureRequestProvider()
     queue = InMemoryCommandQueueStore()
     agent = create_agent(
@@ -351,15 +379,17 @@ async def test_sdk_enqueue_control_appends_user_message_at_next_llm_boundary() -
     assert provider.last_request is not None
     contents = [message.content for message in provider.last_request.messages]
     assert "original task" in contents
-    assert contents[-1] == "steer this next"
-    assert queue.list_pending(run_id="run_sdk_enqueue_control") == []
+    assert "steer this next" not in contents
+    pending = queue.list_pending(run_id="run_sdk_enqueue_control")
+    assert len(pending) == 1
+    assert pending[0].resolved_semantic.value == "queue_next"
 
 
 @pytest.mark.asyncio
-async def test_sdk_command_queue_survives_runner_recreation_before_llm_boundary(
+async def test_sdk_next_queue_survives_runner_recreation_until_terminal_handoff(
     tmp_path,
 ) -> None:
-    """Queued controls should survive a pre-LLM restart and then apply once."""
+    """NEXT survives a pre-LLM restart and is never folded into the active run."""
     path = tmp_path / "steering_queue.db"
     first_queue = SqliteCommandQueueStore(path=str(path))
     first_agent = create_agent(
@@ -401,11 +431,12 @@ async def test_sdk_command_queue_survives_runner_recreation_before_llm_boundary(
 
     assert provider.last_request is not None
     contents = [message.content for message in provider.last_request.messages]
-    assert contents[-1] == "persisted steer"
-    assert second_queue.list_pending(run_id="run_sdk_queue_restart") == []
+    assert "persisted steer" not in contents
+    pending = second_queue.list_pending(run_id="run_sdk_queue_restart")
+    assert [item.queue_id for item in pending] == [queued.queue_id]
     events = second_agent.runner.deps.event_log.list_for_run("run_sdk_queue_restart")
-    assert any(event.type == RuntimeEventType.COMMAND_DEQUEUED for event in events)
-    assert any(event.type == RuntimeEventType.CONTROL_APPLIED for event in events)
+    assert not any(event.type == RuntimeEventType.COMMAND_DEQUEUED for event in events)
+    assert not any(event.type == RuntimeEventType.CONTROL_APPLIED for event in events)
 
 
 class _ToolLoopProvider(FakeProvider):

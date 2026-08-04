@@ -10,6 +10,7 @@ from agent_driver.llm.providers import LlmProvider
 from agent_driver.memory.provider import MemoryProvider
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
 from agent_driver.runtime.control import CommandQueueStore
+from agent_driver.runtime.control import InMemoryCommandQueueStore
 from agent_driver.runtime.events import InMemoryEventLog
 from agent_driver.runtime.lifecycle_hooks import RunLifecycleHook
 from agent_driver.runtime.runner import SingleAgentRunner
@@ -77,8 +78,12 @@ def create_agent(
     config_copy.memory_provider = effective_memory
     if lifecycle_hooks is not None:
         config_copy.lifecycle_hooks = tuple(lifecycle_hooks)
-    if command_queue_store is not None:
-        config_copy.command_queue_store = command_queue_store
+    effective_command_store = (
+        command_queue_store
+        or getattr(config_copy, "command_queue_store", None)
+        or InMemoryCommandQueueStore()
+    )
+    config_copy.command_queue_store = effective_command_store
     source_registry = config_copy.tool_registry or build_default_registry(config_copy)
     selected_tools = tools or ToolSet.all()
     selected_tools.validate_known_names(source_registry)
@@ -101,7 +106,7 @@ def create_agent(
     return Agent(
         runner,
         defaults=AgentDefaults(agent_id=agent_id, graph_preset=graph_preset),
-        command_queue_store=command_queue_store,
+        command_queue_store=effective_command_store,
         default_tool_gate=tool_gate,
     )
 

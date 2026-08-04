@@ -23,7 +23,7 @@ from agent_driver.contracts.context import (
     SessionTurn,
     TurnDigest,
 )
-from agent_driver.contracts.enums import RunStatus
+from agent_driver.contracts.enums import RunStatus, TerminalReason
 from agent_driver.contracts.interrupts import ApprovalPayload, InterruptRequest
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunOutput, ContextDiagnostics
@@ -46,6 +46,10 @@ from agent_driver.runtime.research_artifacts import (
 from agent_driver.runtime.research_evidence import (
     research_source_ledger_from_tool_results,
 )
+from agent_driver.runtime.control.live_messages import (
+    live_message_receipt,
+    live_message_transition_event,
+)
 from agent_driver.runtime.single_agent.finalization.answer_recovery import (
     recover_degenerate_terminal_answer,
 )
@@ -56,6 +60,7 @@ from agent_driver.runtime.single_agent.finalization.output_builders import (
     list_dict_metadata,
 )
 from agent_driver.runtime.single_agent.types import (
+    EventSpec,
     RunContext,
     RunnerDeps,
     TerminalResult,
@@ -347,6 +352,44 @@ class SingleAgentOutputMixin:
         context: RunContext,
         terminal: TerminalResult,
     ) -> AgentRunOutput:
+        command_store = getattr(self._deps, "command_queue_store", None)
+        commit_terminal = getattr(command_store, "commit_terminal", None)
+        if callable(commit_terminal):
+            changed = commit_terminal(
+                context.run_id,
+                stopped=terminal.reason
+                in (
+                    TerminalReason.CANCELLED_BY_USER,
+                    TerminalReason.CANCELLATION_FAILED,
+                ),
+            )
+            if changed:
+                for item in changed:
+                    self._emit(
+                        EventSpec(
+                            run_id=context.run_id,
+                            attempt_id=context.attempt_id,
+                            event_type=live_message_transition_event(item),
+                            payload=live_message_receipt(item),
+                        )
+                    )
+                context.metadata["live_message_terminal_reconciliation"] = [
+                    {
+                        "queue_id": item.queue_id,
+                        "requested_semantic": (
+                            item.requested_semantic.value
+                            if item.requested_semantic is not None
+                            else None
+                        ),
+                        "resolved_semantic": (
+                            item.resolved_semantic.value
+                            if item.resolved_semantic is not None
+                            else None
+                        ),
+                        "reason_code": item.reason_code,
+                    }
+                    for item in changed
+                ]
         answer = self._sanitize_terminal_answer(context)
         # Planning events must be emitted BEFORE the run-event snapshot below —
         # otherwise they land in the event log but fall outside ``run_events`` and
@@ -478,6 +521,9 @@ class SingleAgentOutputMixin:
         leftover = self._leftover_controls(context)
         if leftover:
             metadata["leftover_controls"] = leftover
+        reconciliation = context.metadata.get("live_message_terminal_reconciliation")
+        if isinstance(reconciliation, list):
+            metadata["live_message_terminal_reconciliation"] = reconciliation
         if context.llm_response is not None:
             output_audio = context.llm_response.message.metadata.get("output_audio")
             if isinstance(output_audio, dict):
@@ -520,12 +566,23 @@ class SingleAgentOutputMixin:
             kind = str(getattr(item.kind, "value", item.kind))
             if kind not in ("enqueue_user_message", "redirect_user_message"):
                 continue
-            text = item.payload.get("message") or item.payload.get("text") or ""
             out.append(
                 {
                     "queue_id": item.queue_id,
                     "kind": kind,
-                    "text_preview": str(text)[:120],
+                    "requested_semantic": (
+                        item.requested_semantic.value
+                        if item.requested_semantic is not None
+                        else None
+                    ),
+                    "resolved_semantic": (
+                        item.resolved_semantic.value
+                        if item.resolved_semantic is not None
+                        else None
+                    ),
+                    "applies_at": item.applies_at,
+                    "reason_code": item.reason_code,
+                    "content_sha256": item.content_sha256,
                 }
             )
         return out

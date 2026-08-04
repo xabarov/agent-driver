@@ -30,7 +30,9 @@ from agent_driver.contracts.control import (
     CommandQueueStatus,
     ControlPriority,
     ControlRequest,
-    utc_now_iso,
+    LiveMessagePhase,
+    LiveMessageSemantic,
+    LiveRunState,
 )
 from agent_driver.runtime.control.abort_store import (
     AbortLifecycleState,
@@ -42,6 +44,7 @@ from agent_driver.runtime.control.approval_store import (
     ConsumeStatus,
 )
 from agent_driver.contracts.context import PlanArtifact
+from agent_driver.runtime.control.in_memory import InMemoryCommandQueueStore
 
 _PRIORITY_ORDER = {
     ControlPriority.NOW: 0,
@@ -436,6 +439,14 @@ class PostgresCommandQueueStore(_PostgresControlStoreBase):
 
     _table_name = "command_queue"
 
+    @property
+    def _runs_table(self) -> str:
+        return f"{self._config.schema}.live_message_runs"
+
+    @property
+    def _meta_table(self) -> str:
+        return f"{self._config.schema}.control_schema_meta"
+
     def _init_schema(self, cur: Any) -> None:
         cur.execute(
             f"""
@@ -455,14 +466,42 @@ class PostgresCommandQueueStore(_PostgresControlStoreBase):
             )
             """
         )
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._runs_table} (
+                run_id TEXT PRIMARY KEY,
+                payload TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._meta_table} (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            f"""
+            INSERT INTO {self._meta_table} (key, value)
+            VALUES ('live_message_contract_version', '1')
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """
+        )
 
     def enqueue(self, request: ControlRequest) -> CommandQueueItem:
-        existing = self._dedupe_match(request)
-        if existing is not None:
-            return existing
-        item = CommandQueueItem.from_request(request)
-        self._upsert(item)
-        return item
+        return self._mutate("enqueue", request)
+
+    def admit(
+        self,
+        request: ControlRequest,
+        *,
+        accepted_phase: LiveMessagePhase | None = None,
+    ) -> CommandQueueItem:
+        return self._mutate(
+            "admit", request, accepted_phase=accepted_phase
+        )
 
     def get(self, queue_id: str) -> CommandQueueItem | None:
         with self._connect(autocommit=True) as conn:
@@ -504,7 +543,22 @@ class PostgresCommandQueueStore(_PostgresControlStoreBase):
                 agent_id=agent_id,
             )
         ]
-        items.sort(key=lambda item: (_PRIORITY_ORDER[item.priority], item.created_at))
+        items.sort(key=lambda item: (_dispatch_order(item), item.sequence, item.created_at))
+        return items
+
+    def list_for_run(self, run_id: str) -> list[CommandQueueItem]:
+        with self._connect(autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT payload FROM {self._table} WHERE run_id = %s "
+                    "ORDER BY created_at ASC, queue_id ASC",
+                    (run_id,),
+                )
+                rows = cur.fetchall()
+        items = [
+            CommandQueueItem.model_validate_json(row["payload"]) for row in rows
+        ]
+        items.sort(key=lambda item: (item.sequence or 2**63, item.created_at))
         return items
 
     def dequeue_next(
@@ -520,106 +574,225 @@ class PostgresCommandQueueStore(_PostgresControlStoreBase):
         return pending[0] if pending else None
 
     def cancel(self, queue_id: str) -> CommandQueueItem | None:
-        item = self.get(queue_id)
-        if item is None or item.status != CommandQueueStatus.QUEUED:
-            return item
-        now = utc_now_iso()
-        updated = item.model_copy(
-            update={
-                "status": CommandQueueStatus.CANCELLED,
-                "updated_at": now,
-                "cancelled_at": now,
-            }
-        )
-        self._upsert(updated)
-        return updated
+        return self._mutate("cancel", queue_id)
 
-    def mark_applied(self, queue_id: str) -> CommandQueueItem | None:
-        item = self.get(queue_id)
-        if item is None:
-            return None
-        now = utc_now_iso()
-        updated = item.model_copy(
-            update={
-                "status": CommandQueueStatus.APPLIED,
-                "updated_at": now,
-                "applied_at": now,
-            }
+    def mark_applied(
+        self,
+        queue_id: str,
+        *,
+        claimant_id: str | None = None,
+        applied_phase: LiveMessagePhase | None = None,
+    ) -> CommandQueueItem | None:
+        return self._mutate(
+            "mark_applied",
+            queue_id,
+            claimant_id=claimant_id,
+            applied_phase=applied_phase,
         )
-        self._upsert(updated)
-        return updated
 
     def mark_failed(self, queue_id: str, *, error: str) -> CommandQueueItem | None:
-        item = self.get(queue_id)
-        if item is None:
-            return None
-        now = utc_now_iso()
-        updated = item.model_copy(
-            update={
-                "status": CommandQueueStatus.FAILED,
-                "updated_at": now,
-                "failed_at": now,
-                "error": error,
-            }
-        )
-        self._upsert(updated)
-        return updated
+        return self._mutate("mark_failed", queue_id, error=error)
 
-    def _upsert(self, item: CommandQueueItem) -> None:
+    def set_run_phase(
+        self,
+        run_id: str,
+        phase: LiveMessagePhase,
+        *,
+        thread_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> LiveRunState:
+        return self._mutate(
+            "set_run_phase",
+            run_id,
+            phase,
+            thread_id=thread_id,
+            agent_id=agent_id,
+        )
+
+    def get_run_state(self, run_id: str) -> LiveRunState | None:
         with self._connect(autocommit=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"""
-                    INSERT INTO {self._table} (
-                        queue_id, control_id, run_id, thread_id, agent_id, priority,
-                        kind, status, source, dedupe_key, created_at, payload
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (queue_id) DO UPDATE SET
-                        control_id = EXCLUDED.control_id,
-                        run_id = EXCLUDED.run_id,
-                        thread_id = EXCLUDED.thread_id,
-                        agent_id = EXCLUDED.agent_id,
-                        priority = EXCLUDED.priority,
-                        kind = EXCLUDED.kind,
-                        status = EXCLUDED.status,
-                        source = EXCLUDED.source,
-                        dedupe_key = EXCLUDED.dedupe_key,
-                        created_at = EXCLUDED.created_at,
-                        payload = EXCLUDED.payload
-                    """,
-                    (
-                        item.queue_id,
-                        item.control_id,
-                        item.run_id,
-                        item.thread_id,
-                        item.agent_id,
-                        item.priority.value,
-                        item.kind.value,
-                        item.status.value,
-                        item.source,
-                        item.dedupe_key,
-                        item.created_at,
-                        item.model_dump_json(),
-                    ),
+                    f"SELECT payload FROM {self._runs_table} WHERE run_id = %s",
+                    (run_id,),
                 )
+                row = cur.fetchone()
+        return LiveRunState.model_validate_json(row["payload"]) if row else None
 
-    def _dedupe_match(self, request: ControlRequest) -> CommandQueueItem | None:
-        if not request.dedupe_key:
-            return None
-        for item in self.list_pending(
-            run_id=request.run_id,
-            thread_id=request.thread_id,
-            agent_id=request.agent_id,
-        ):
-            if (
-                item.kind == request.kind
-                and item.source == request.source
-                and item.dedupe_key == request.dedupe_key
-            ):
-                return item
-        return None
+    def current_llm_generation(self, run_id: str) -> int:
+        state = self.get_run_state(run_id)
+        return state.llm_generation if state is not None else 0
 
+    def claim_for_boundary(
+        self,
+        *,
+        run_id: str,
+        claimant_id: str,
+        applied_phase: LiveMessagePhase,
+    ) -> CommandQueueItem | None:
+        return self._mutate(
+            "claim_for_boundary",
+            run_id=run_id,
+            claimant_id=claimant_id,
+            applied_phase=applied_phase,
+        )
+
+    def claim_hard_redirect(
+        self, *, run_id: str, claimant_id: str, expected_generation: int
+    ) -> CommandQueueItem | None:
+        return self._mutate(
+            "claim_hard_redirect",
+            run_id=run_id,
+            claimant_id=claimant_id,
+            expected_generation=expected_generation,
+        )
+
+    def release_claim(
+        self, queue_id: str, *, claimant_id: str
+    ) -> CommandQueueItem | None:
+        return self._mutate(
+            "release_claim", queue_id, claimant_id=claimant_id
+        )
+
+    def commit_terminal(
+        self, run_id: str, *, stopped: bool = False
+    ) -> list[CommandQueueItem]:
+        return self._mutate("commit_terminal", run_id, stopped=stopped)
+
+    def stop_run(self, run_id: str) -> list[CommandQueueItem]:
+        return self._mutate("stop_run", run_id)
+
+    def cancel_next(self, queue_id: str) -> CommandQueueItem | None:
+        return self._mutate("cancel_next", queue_id)
+
+    def claim_next_handoff(
+        self, *, source_run_id: str, claimant_id: str
+    ) -> CommandQueueItem | None:
+        return self._mutate(
+            "claim_next_handoff",
+            source_run_id=source_run_id,
+            claimant_id=claimant_id,
+        )
+
+    def complete_handoff(
+        self,
+        queue_id: str,
+        *,
+        claimant_id: str,
+        destination_turn_id: str,
+    ) -> CommandQueueItem | None:
+        return self._mutate(
+            "complete_handoff",
+            queue_id,
+            claimant_id=claimant_id,
+            destination_turn_id=destination_turn_id,
+        )
+
+    def contract_schema_version(self) -> int:
+        with self._connect(autocommit=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT value FROM {self._meta_table} WHERE key = %s",
+                    ("live_message_contract_version",),
+                )
+                row = cur.fetchone()
+        return int(row["value"]) if row else 0
+
+    def quarantine_legacy_rows(self) -> list[CommandQueueItem]:
+        """Fail ambiguous pre-v1 NEXT rows while preserving their payload."""
+        return self._mutate("_quarantine_legacy")
+
+    def _mutate(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Serialize the complete state transition in one Postgres transaction.
+
+        A schema-scoped advisory transaction lock provides a simple, explicit
+        cross-process CAS boundary. Live-message volume is tiny; correctness and
+        crash recovery are more important than parallelizing mutations inside
+        one run/control schema.
+        """
+        with self._connect(autocommit=False) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f"{self._config.schema}:live-message-v1",),
+                )
+                memory = self._snapshot(cur)
+                quarantined = _quarantine_legacy(memory)
+                result = (
+                    quarantined
+                    if method == "_quarantine_legacy"
+                    else getattr(memory, method)(*args, **kwargs)
+                )
+                self._persist_snapshot(cur, memory)
+                return result
+
+    def _snapshot(self, cur: Any) -> InMemoryCommandQueueStore:
+        memory = InMemoryCommandQueueStore()
+        cur.execute(
+            f"SELECT payload FROM {self._table} ORDER BY created_at ASC, queue_id ASC"
+        )
+        items = [
+            CommandQueueItem.model_validate_json(row["payload"])
+            for row in cur.fetchall()
+        ]
+        items.sort(key=lambda item: (item.sequence or 2**63, item.created_at))
+        memory._items = {item.queue_id: item for item in items}  # noqa: SLF001
+        memory._order = [item.queue_id for item in items]  # noqa: SLF001
+        cur.execute(f"SELECT payload FROM {self._runs_table}")
+        states = [
+            LiveRunState.model_validate_json(row["payload"])
+            for row in cur.fetchall()
+        ]
+        memory._run_states = {state.run_id: state for state in states}  # noqa: SLF001
+        return memory
+
+    def _persist_snapshot(
+        self, cur: Any, memory: InMemoryCommandQueueStore
+    ) -> None:
+        for item in memory._items.values():  # noqa: SLF001
+            cur.execute(
+                f"""
+                INSERT INTO {self._table} (
+                    queue_id, control_id, run_id, thread_id, agent_id, priority,
+                    kind, status, source, dedupe_key, created_at, payload
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (queue_id) DO UPDATE SET
+                    control_id = EXCLUDED.control_id,
+                    run_id = EXCLUDED.run_id,
+                    thread_id = EXCLUDED.thread_id,
+                    agent_id = EXCLUDED.agent_id,
+                    priority = EXCLUDED.priority,
+                    kind = EXCLUDED.kind,
+                    status = EXCLUDED.status,
+                    source = EXCLUDED.source,
+                    dedupe_key = EXCLUDED.dedupe_key,
+                    created_at = EXCLUDED.created_at,
+                    payload = EXCLUDED.payload
+                """,
+                (
+                    item.queue_id,
+                    item.control_id,
+                    item.run_id,
+                    item.thread_id,
+                    item.agent_id,
+                    item.priority.value,
+                    item.kind.value,
+                    item.status.value,
+                    item.source,
+                    item.dedupe_key,
+                    item.created_at,
+                    item.model_dump_json(),
+                ),
+            )
+        for state in memory._run_states.values():  # noqa: SLF001
+            cur.execute(
+                f"""
+                INSERT INTO {self._runs_table} (run_id, payload)
+                VALUES (%s, %s)
+                ON CONFLICT (run_id) DO UPDATE SET payload = EXCLUDED.payload
+                """,
+                (state.run_id, state.model_dump_json()),
+            )
 
 def _matches_route(
     item: CommandQueueItem,
@@ -635,6 +808,34 @@ def _matches_route(
     if agent_id is not None and item.agent_id != agent_id:
         return False
     return True
+
+
+def _dispatch_order(item: CommandQueueItem) -> int:
+    if item.kind.value == "interrupt":
+        return 0
+    if item.requested_semantic is LiveMessageSemantic.REDIRECT_CURRENT:
+        return 1
+    if item.requested_semantic is LiveMessageSemantic.STEER_CURRENT:
+        return 2
+    return 10 + _PRIORITY_ORDER[item.priority]
+
+
+def _quarantine_legacy(
+    memory: InMemoryCommandQueueStore,
+) -> list[CommandQueueItem]:
+    changed: list[CommandQueueItem] = []
+    for queue_id in list(memory._order):  # noqa: SLF001
+        item = memory._items[queue_id]  # noqa: SLF001
+        if (
+            item.schema_version == 0
+            and item.status is CommandQueueStatus.QUEUED
+            and item.kind.value in {"enqueue_user_message", "redirect_user_message"}
+            and item.priority is ControlPriority.NEXT
+        ):
+            failed = memory.mark_failed(queue_id, error="legacy_unresolved")
+            if failed is not None:
+                changed.append(failed)
+    return changed
 
 
 __all__ = [

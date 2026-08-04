@@ -6,6 +6,7 @@ from typing import Any
 
 from agent_driver.code_agent.profile import run_code_agent_stage
 from agent_driver.context import CompactionOrchestrator
+from agent_driver.contracts.control import CommandQueueItem, LiveMessagePhase
 from agent_driver.contracts.enums import (
     EventSeverity,
     RunStatus,
@@ -15,6 +16,10 @@ from agent_driver.contracts.enums import (
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.observability.provenance import build_provenance_summary
 from agent_driver.runtime.control.dispatcher import drain_step_boundary_controls
+from agent_driver.runtime.control.live_messages import (
+    live_message_receipt,
+    live_message_transition_event,
+)
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.lifecycle_hooks import (
     dispatch_finalize,
@@ -355,35 +360,49 @@ class SingleAgentStepMixin:
                 )
             )
 
+        command_store = self._deps.command_queue_store
+
+        def _emit_live_transition(item: CommandQueueItem) -> None:
+            self._emit(
+                EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=live_message_transition_event(item),
+                    payload=live_message_receipt(item),
+                )
+            )
+
+        get_state = getattr(command_store, "get_run_state", None)
+        state = get_state(context.run_id) if callable(get_state) else None
+        boundary_phase = (
+            state.phase if state is not None else LiveMessagePhase.TOOL_IN_FLIGHT
+        )
         applied_controls = drain_step_boundary_controls(
             context=context,
-            store=self._deps.command_queue_store,
+            store=command_store,
             abort_handle=context.abort_handle,
             emit=_emit_control_warning,
+            phase=boundary_phase,
+            claimant_id=context.attempt_id,
+            persist=lambda: self._save_checkpoint(
+                context, latest_output=None, node_id="live_message_boundary"
+            ),
+            transition=_emit_live_transition,
         )
         for item in applied_controls:
-            payload = {
-                "queue_id": item.queue_id,
-                "control_id": item.control_id,
-                "kind": item.kind.value,
-                "priority": item.priority.value,
-            }
-            self._emit(
-                EventSpec(
-                    run_id=context.run_id,
-                    attempt_id=context.attempt_id,
-                    event_type=RuntimeEventType.COMMAND_DEQUEUED,
-                    payload=payload,
+            payload = live_message_receipt(item)
+            for event_type in (
+                RuntimeEventType.COMMAND_DEQUEUED,
+                RuntimeEventType.CONTROL_APPLIED,
+            ):
+                self._emit(
+                    EventSpec(
+                        run_id=context.run_id,
+                        attempt_id=context.attempt_id,
+                        event_type=event_type,
+                        payload=payload,
+                    )
                 )
-            )
-            self._emit(
-                EventSpec(
-                    run_id=context.run_id,
-                    attempt_id=context.attempt_id,
-                    event_type=RuntimeEventType.CONTROL_APPLIED,
-                    payload=payload,
-                )
-            )
             self._emit_runtime_decision(
                 context,
                 kind="steering",
@@ -397,15 +416,40 @@ class SingleAgentStepMixin:
                     "priority": item.priority.value,
                 },
             )
+        set_phase = getattr(command_store, "set_run_phase", None)
+        if callable(set_phase):
+            live_state = set_phase(
+                context.run_id,
+                LiveMessagePhase.LLM_IN_FLIGHT,
+                thread_id=context.run_input.thread_id,
+                agent_id=context.run_input.agent_id,
+            )
+            context.metadata["llm_generation"] = live_state.llm_generation
         return await execute_llm_call_step(self, context)
 
     async def _execute_tool_stage(self, context: RunContext) -> RuntimeStepResult:
+        set_phase = getattr(self._deps.command_queue_store, "set_run_phase", None)
+        if callable(set_phase):
+            set_phase(
+                context.run_id,
+                LiveMessagePhase.TOOL_IN_FLIGHT,
+                thread_id=context.run_input.thread_id,
+                agent_id=context.run_input.agent_id,
+            )
         return await execute_tool_stage_step(self, context)
 
     async def _maybe_execute_subagent_group(self, context: RunContext) -> None:
         await maybe_execute_subagent_group(self, context)
 
     async def _execute_finalize(self, context: RunContext) -> RuntimeStepResult:
+        set_phase = getattr(self._deps.command_queue_store, "set_run_phase", None)
+        if callable(set_phase):
+            set_phase(
+                context.run_id,
+                LiveMessagePhase.FINALIZING,
+                thread_id=context.run_input.thread_id,
+                agent_id=context.run_input.agent_id,
+            )
         if context.llm_response is None and isinstance(
             context.metadata.get("last_llm_response"), dict
         ):

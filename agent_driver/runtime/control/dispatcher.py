@@ -16,6 +16,7 @@ from agent_driver.contracts.control import (
     CommandQueueItem,
     ControlKind,
     ControlPriority,
+    LiveMessagePhase,
 )
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
@@ -26,6 +27,7 @@ from agent_driver.runtime.single_agent.types import RunContext
 
 # A control event emitter: called with a raw-free payload for a WARNING event.
 ControlEmit = Callable[[dict[str, Any]], None]
+TransitionEmit = Callable[[CommandQueueItem], None]
 
 
 class _Result(Enum):
@@ -40,8 +42,12 @@ def drain_step_boundary_controls(
     store: CommandQueueStore | None,
     abort_handle: Any = None,
     emit: ControlEmit | None = None,
+    phase: LiveMessagePhase = LiveMessagePhase.TOOL_IN_FLIGHT,
+    claimant_id: str = "runner",
+    persist: Callable[[], None] | None = None,
+    transition: TransitionEmit | None = None,
 ) -> list[CommandQueueItem]:
-    """Apply pending now/next controls for this run boundary.
+    """Apply pending current-turn controls at one safe run boundary.
 
     ``abort_handle`` bridges INTERRUPT into the run's cancellation seam so the
     control plane and the host ``/cancel`` path share one signal (epic 030 A).
@@ -51,22 +57,67 @@ def drain_step_boundary_controls(
     if store is None:
         return []
     applied: list[CommandQueueItem] = []
-    for item in store.list_pending():
-        if item.priority == ControlPriority.LATER:
-            continue
-        if not _matches_context(item, context):
-            continue
+    claim = getattr(store, "claim_for_boundary", None)
+    while True:
+        if callable(claim):
+            item = claim(
+                run_id=context.run_id,
+                claimant_id=claimant_id,
+                applied_phase=phase,
+            )
+            if item is None:
+                break
+        else:
+            item = next(
+                (
+                    pending
+                    for pending in store.list_pending()
+                    if pending.priority != ControlPriority.LATER
+                    and not (
+                        pending.kind == ControlKind.ENQUEUE_USER_MESSAGE
+                        and pending.priority == ControlPriority.NEXT
+                    )
+                    and _matches_context(pending, context)
+                ),
+                None,
+            )
+            if item is None:
+                break
         result = _apply_control_item(
             context, item, store=store, abort_handle=abort_handle, emit=emit
         )
         if result is _Result.APPLIED:
-            marked = store.mark_applied(item.queue_id)
-            applied.append(marked or item)
+            if persist is not None:
+                persist()
+            try:
+                marked = store.mark_applied(
+                    item.queue_id,
+                    claimant_id=claimant_id,
+                    applied_phase=phase,
+                )
+            except TypeError:  # compatibility with pre-v1 custom stores
+                marked = store.mark_applied(item.queue_id)
+            applied_item = marked or item
+            applied.append(applied_item)
+            if transition is not None:
+                transition(applied_item)
+            if item.kind == ControlKind.INTERRUPT:
+                stop_run = getattr(store, "stop_run", None)
+                if callable(stop_run):
+                    stopped = stop_run(context.run_id)
+                    if transition is not None:
+                        for stopped_item in stopped:
+                            transition(stopped_item)
+                break
         elif result is _Result.INVALID:
-            store.mark_failed(item.queue_id, error="invalid_control_payload")
+            failed = store.mark_failed(item.queue_id, error="invalid_control_payload")
+            if transition is not None and failed is not None:
+                transition(failed)
             _emit_control_warning(emit, item, signal_id="control_payload_invalid")
         else:  # UNSUPPORTED
-            store.mark_failed(item.queue_id, error="control_kind_unsupported")
+            failed = store.mark_failed(item.queue_id, error="control_kind_unsupported")
+            if transition is not None and failed is not None:
+                transition(failed)
             _emit_control_warning(emit, item, signal_id="control_kind_unsupported")
     if applied:
         existing = context.metadata.get("applied_controls")
@@ -146,7 +197,7 @@ def _apply_control_item(
         message = item.payload.get("message")
         if not isinstance(message, str) or not message.strip():
             return _Result.INVALID
-        _append_user_message(context, message.strip())
+        _append_user_message(context, message.strip(), queue_id=item.queue_id)
         return _Result.APPLIED
     if kind == ControlKind.REDIRECT_USER_MESSAGE:
         # A REDIRECT that reaches the STEP BOUNDARY (not mid-LLM-await) means there
@@ -156,7 +207,7 @@ def _apply_control_item(
         message = item.payload.get("message") or item.payload.get("text")
         if not isinstance(message, str) or not message.strip():
             return _Result.INVALID
-        _append_user_message(context, message.strip())
+        _append_user_message(context, message.strip(), queue_id=item.queue_id)
         return _Result.APPLIED
     if kind == ControlKind.INTERRUPT:
         if abort_handle is not None and hasattr(abort_handle, "abort"):
@@ -172,7 +223,11 @@ def _apply_control_item(
         if not isinstance(target, str) or not target.strip():
             return _Result.INVALID
         try:
-            store.cancel(target.strip())
+            cancel_next = getattr(store, "cancel_next", None)
+            if callable(cancel_next):
+                cancel_next(target.strip())
+            else:
+                store.cancel(target.strip())
         except Exception:  # noqa: BLE001
             return _Result.INVALID
         return _Result.APPLIED
@@ -207,16 +262,38 @@ def _apply_control_item(
     return _Result.UNSUPPORTED
 
 
-def _append_user_message(context: RunContext, message: str) -> None:
+def _append_user_message(
+    context: RunContext, message: str, *, queue_id: str | None = None
+) -> None:
     messages = list(context.run_input.messages)
+    if queue_id is not None and any(
+        item.metadata.get("live_message_queue_id") == queue_id for item in messages
+    ):
+        return
     if not messages and (context.run_input.input or "").strip():
         messages.append(
             ChatMessage(role=ChatRole.USER, content=context.run_input.input or "")
         )
-    messages.append(ChatMessage(role=ChatRole.USER, content=message))
+    appended = ChatMessage(
+        role=ChatRole.USER,
+        content=message,
+        metadata=(
+            {"live_message_queue_id": queue_id} if queue_id is not None else {}
+        ),
+    )
+    messages.append(appended)
     context.run_input = context.run_input.model_copy(
         update={"input": message, "messages": messages}
     )
+    protocol = context.metadata.get("protocol_messages")
+    if isinstance(protocol, list) and not any(
+        isinstance(row, dict)
+        and row.get("metadata", {}).get("live_message_queue_id") == queue_id
+        for row in protocol
+        if queue_id is not None
+    ):
+        protocol.append(appended.model_dump(mode="json"))
+        context.metadata["protocol_messages"] = protocol
 
 
 __all__ = ["drain_step_boundary_controls"]

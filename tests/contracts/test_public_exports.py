@@ -50,6 +50,11 @@ def test_contracts_public_exports_are_stable() -> None:
         "MemoryStep",
         "MemoryStepKind",
         "ResumeCommand",
+        "CommandQueueItem",
+        "LiveMessageCapabilities",
+        "LiveMessagePhase",
+        "LiveMessageSemantic",
+        "NextTurnHandoff",
     }
     assert required.issubset(set(contracts.__all__))
 
@@ -87,6 +92,11 @@ def test_runtime_public_exports_remain_runtime_focused() -> None:
         "RunLifecycleSnapshot",
         "resolve_run_context_budget",
         "serialize_runtime_state_for_compatibility",
+        "PostgresCommandQueueStore",
+        "PostgresControlStoreConfig",
+        "dispatch_next_turn",
+        "live_message_capabilities",
+        "live_message_receipt",
     }
     forbidden = {"ToolRegistry", "GovernedToolExecutor", "SubagentGroupSpec"}
     exports = set(runtime.__all__)

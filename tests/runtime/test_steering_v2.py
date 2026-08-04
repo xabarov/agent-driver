@@ -163,4 +163,5 @@ async def test_leftover_controls_surfaced_in_terminal_metadata() -> None:
     leftover = (out.metadata or {}).get("leftover_controls")
     assert leftover, "LATER steering message should surface as leftover"
     assert leftover[0]["kind"] == "enqueue_user_message"
-    assert "сроки" in leftover[0]["text_preview"]
+    assert len(leftover[0]["content_sha256"]) == 64
+    assert "text_preview" not in leftover[0]

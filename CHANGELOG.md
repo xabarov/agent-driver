@@ -7,6 +7,37 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-04
+
+Minor release adding the public live-message contract v1 for host embeddings.
+`ENQUEUE_USER_MESSAGE/NOW` is now a non-aborting current-turn soft steer,
+`REDIRECT_USER_MESSAGE/NOW` advances a durable LLM generation and redirects
+only an in-flight model await (degrading visibly during tool/approval phases),
+and `ENQUEUE_USER_MESSAGE/NEXT` remains pending until a distinct post-terminal
+turn. Pending NEXT messages are cancellable; Stop remains a separate durable
+preemption boundary.
+
+The generic command receipt now records explicit requested/resolved semantics,
+FIFO sequence, phase, `applies_at`, timestamps, stable reason codes, content and
+request hashes, LLM generations, claim identity, and NEXT handoff/destination
+identity. Typed accepted/applied/cancelled/failed/redirected/promoted/
+Stop-preempted/handoff events use the raw-message-free receipt projection.
+Hard redirect fences late old-generation streaming and non-streaming output
+before transcript, checkpoint, tool, or terminal mutation.
+
+Postgres adds additive `live_message_runs` and `control_schema_meta` state and
+serializes semantic mutations across processes. Ambiguous legacy NEXT rows are
+quarantined as `legacy_unresolved`; mixed runtime/schema generations fail
+closed. In-memory and SQLite implement the same reference state machine for
+tests/diagnostics. `dispatch_next_turn()` supplies the stable host seam for an
+idempotent one-turn/one-message handoff across claim/create/append/readback
+crashes.
+
+New supported symbols are exported from `agent_driver.contracts`,
+`agent_driver.runtime`, and `agent_driver.embedding`; the SDK adds `steer`,
+`redirect`, `queue_next`, `cancel_next`, `stop`, and typed readback. See
+`docs/live-message-controls.md` and `docs/live-message-migration.md`.
+
 ## [0.3.3] - 2026-08-03
 
 Context-integrity patch release for constrained, long-context embeddings.

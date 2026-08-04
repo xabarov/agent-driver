@@ -38,6 +38,10 @@ class LlmStreamIdleTimeout(httpx.ReadTimeout):
         )
 
 
+class LlmGenerationSuperseded(Exception):
+    """Provider output arrived after a durable hard-redirect generation fence."""
+
+
 def is_stream_enabled(run_input: AgentRunInput) -> bool:
     """Resolve stream mode from explicit input field or legacy app metadata."""
     if run_input.stream:
@@ -86,6 +90,7 @@ async def complete_streaming_request(
     host: StreamingHost, context: RunContext, request: Any
 ) -> LlmResponse:
     """Collect streaming provider deltas into one normalized LlmResponse."""
+    generation = int(context.metadata.get("llm_generation") or 0)
     delta_chunks: list[str] = []
     reasoning_chunks: list[str] = []
     audio_state: dict[str, Any] = {}
@@ -131,6 +136,11 @@ async def complete_streaming_request(
                     emitted_chunks=len(delta_chunks) + len(reasoning_chunks),
                 ) from exc
 
+            if not _generation_is_current(host, context, generation):
+                raise LlmGenerationSuperseded(
+                    f"LLM generation {generation} was superseded"
+                )
+
             _collect_stream_item(
                 host=host,
                 context=context,
@@ -153,6 +163,8 @@ async def complete_streaming_request(
         if callable(aclose):
             with suppress(BaseException):
                 await asyncio.wait_for(aclose(), timeout=2.0)
+    if not _generation_is_current(host, context, generation):
+        raise LlmGenerationSuperseded(f"LLM generation {generation} was superseded")
     content = "".join(delta_chunks)
     message_metadata: dict[str, Any] = {}
     output_audio = _finalize_stream_audio(audio_state)
@@ -189,6 +201,19 @@ async def complete_streaming_request(
             **stream_metadata,
         },
     )
+
+
+def _generation_is_current(
+    host: StreamingHost, context: RunContext, generation: int
+) -> bool:
+    store = getattr(host._deps, "command_queue_store", None)
+    current = getattr(store, "current_llm_generation", None)
+    if not callable(current):
+        return True
+    try:
+        return int(current(context.run_id)) == generation
+    except Exception:  # a failed fence read cannot authorize stale output
+        return False
 
 
 def _is_meaningful_stream_item(item: Any) -> bool:
@@ -397,6 +422,7 @@ def _same_reasoning_block(left: dict[str, Any], right: dict[str, Any]) -> bool:
 
 __all__ = [
     "LlmStreamIdleTimeout",
+    "LlmGenerationSuperseded",
     "complete_streaming_request",
     "emit_reasoning_delta_events",
     "emit_token_delta_events",

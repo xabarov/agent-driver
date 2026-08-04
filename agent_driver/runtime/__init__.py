@@ -25,6 +25,10 @@ from agent_driver.runtime.control import (
     SqliteAbortLifecycleStore,
     SqliteApprovalConsumptionStore,
     SqliteCommandQueueStore,
+    dispatch_next_turn,
+    live_message_capabilities,
+    live_message_receipt,
+    live_message_transition_event,
 )
 from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecutionError
 from agent_driver.runtime.events import InMemoryEventLog
@@ -159,6 +163,10 @@ __all__ = [
     "CommandQueueStore",
     "InMemoryCommandQueueStore",
     "SqliteCommandQueueStore",
+    "dispatch_next_turn",
+    "live_message_capabilities",
+    "live_message_receipt",
+    "live_message_transition_event",
     "ApprovalConsumptionStore",
     "InMemoryApprovalConsumptionStore",
     "SqliteApprovalConsumptionStore",

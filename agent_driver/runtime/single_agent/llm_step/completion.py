@@ -9,6 +9,7 @@ from typing import Any, Protocol
 import httpx
 
 from agent_driver.contracts.enums import ChatRole, RuntimeEventType
+from agent_driver.contracts.control import CommandQueueItem
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.context_windows import (
     preferred_history_view,
@@ -40,6 +41,7 @@ from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     should_retry_empty_forced_final_non_stream,
 )
 from agent_driver.runtime.single_agent.llm_step.streaming import (
+    LlmGenerationSuperseded,
     LlmStreamIdleTimeout,
     complete_streaming_request,
     is_stream_enabled,
@@ -64,8 +66,16 @@ class RedirectRequested(Exception):
     call. Carries the correction text; the caller re-asks with it as a real user
     turn. Raised only when a ``redirect_probe`` is configured (opt-in)."""
 
-    def __init__(self, text: str) -> None:
+    def __init__(
+        self,
+        text: str,
+        *,
+        item: CommandQueueItem | None = None,
+        claimant_id: str | None = None,
+    ) -> None:
         self.text = text
+        self.item = item
+        self.claimant_id = claimant_id
         super().__init__("redirect requested")
 
 
@@ -84,6 +94,7 @@ async def _await_with_redirect(
     coro: Awaitable[Any],
     *,
     abort_check: "Callable[[], bool] | None" = None,
+    context: RunContext | None = None,
 ) -> Any:
     """Await ``coro`` (a provider call) while polling for a redirect or an abort.
 
@@ -94,9 +105,20 @@ async def _await_with_redirect(
     request is cancelled — never tools/children.
     """
     probe = getattr(getattr(host, "_config", None), "redirect_probe", None)
-    if probe is None and abort_check is None:
+    durable_store = (
+        getattr(getattr(host, "_deps", None), "command_queue_store", None)
+        if context is not None
+        else None
+    )
+    durable_claim = getattr(durable_store, "claim_hard_redirect", None)
+    if probe is None and abort_check is None and not callable(durable_claim):
         return await coro
     task = asyncio.ensure_future(coro)
+    await_generation = (
+        int(context.metadata.get("llm_generation") or 0)
+        if context is not None
+        else 0
+    )
     while True:
         done, _ = await asyncio.wait({task}, timeout=0.1)
         if task in done:
@@ -107,24 +129,70 @@ async def _await_with_redirect(
             except Exception:  # noqa: BLE001 - a bad check must not kill the call
                 aborted = False
             if aborted:
-                task.cancel()
-                try:
-                    await task
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                    pass
+                _cancel_detached(task)
                 raise AbortRequested("run aborted during LLM call")
+        if context is not None:
+            get_run_state = getattr(durable_store, "get_run_state", None)
+            if callable(get_run_state):
+                try:
+                    live_state = get_run_state(context.run_id)
+                except Exception:
+                    live_state = None
+                if live_state is not None and live_state.stopped:
+                    _cancel_detached(task)
+                    raise AbortRequested("durable Stop accepted during LLM call")
+            if callable(durable_claim):
+                item = durable_claim(
+                    run_id=context.run_id,
+                    claimant_id=context.attempt_id,
+                    expected_generation=await_generation,
+                )
+                if item is not None:
+                    text = item.payload.get("message") or item.payload.get("text")
+                    if isinstance(text, str) and text.strip():
+                        context.metadata["llm_generation"] = item.llm_generation
+                        _cancel_detached(task)
+                        raise RedirectRequested(
+                            text.strip(), item=item, claimant_id=context.attempt_id
+                        )
+            current_generation = getattr(
+                durable_store, "current_llm_generation", None
+            )
+            if callable(current_generation):
+                try:
+                    durable_generation = int(current_generation(context.run_id))
+                except Exception as exc:
+                    _cancel_detached(task)
+                    raise LlmGenerationSuperseded(
+                        "LLM generation fence became unavailable"
+                    ) from exc
+                if durable_generation != await_generation:
+                    _cancel_detached(task)
+                    raise LlmGenerationSuperseded(
+                        f"LLM generation {await_generation} was superseded by "
+                        f"{durable_generation}"
+                    )
         if probe is not None:
             try:
                 text = probe()
             except Exception:  # noqa: BLE001 - a bad probe must not kill the call
                 text = None
             if text:
-                task.cancel()
-                try:
-                    await task
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                    pass
+                _cancel_detached(task)
                 raise RedirectRequested(str(text))
+
+
+def _cancel_detached(task: "asyncio.Task[Any]") -> None:
+    """Request local cancellation without waiting on an uncooperative provider."""
+    task.cancel()
+
+    def _consume(done: "asyncio.Task[Any]") -> None:
+        try:
+            done.result()
+        except BaseException:  # cancellation/provider late failure is quarantined
+            pass
+
+    task.add_done_callback(_consume)
 
 
 async def complete_request(  # pylint: disable=too-many-branches
@@ -164,6 +232,7 @@ async def complete_request(  # pylint: disable=too-many-branches
                     host,
                     host._deps.provider.complete(request),
                     abort_check=abort_check,
+                    context=context,
                 )
                 response = _mark_no_tool_text_form_suppression(
                     context, request, response
@@ -178,6 +247,7 @@ async def complete_request(  # pylint: disable=too-many-branches
                 host,
                 complete_streaming_request(host, context, request),
                 abort_check=abort_check,
+                context=context,
             )
             response = _mark_no_tool_text_form_suppression(context, request, response)
             if should_retry_empty_forced_final_non_stream(context, response):

@@ -14,6 +14,7 @@ from agent_driver.context import (
     InMemoryContextStore,
     InMemorySessionStore,
 )
+from agent_driver.contracts.control import LiveMessagePhase
 from agent_driver.contracts.enums import RunStatus, RuntimeEventType, TerminalReason
 from agent_driver.contracts.runtime import AgentRunInput, AgentRunOutput
 from agent_driver.llm.providers import LlmProvider
@@ -29,6 +30,9 @@ from agent_driver.runtime.lifecycle_hooks import dispatch_error
 from agent_driver.runtime.metadata_state import get_loop_control_state
 from agent_driver.runtime.single_agent.finalization.output import SingleAgentOutputMixin
 from agent_driver.runtime.single_agent.llm_step.completion import AbortRequested
+from agent_driver.runtime.single_agent.llm_step.streaming import (
+    LlmGenerationSuperseded,
+)
 from agent_driver.runtime.single_agent.lifecycle.journal import SingleAgentJournalMixin
 from agent_driver.runtime.single_agent.lifecycle.resume import SingleAgentResumeMixin
 from agent_driver.runtime.single_agent.lifecycle.steps import SingleAgentStepMixin
@@ -206,6 +210,23 @@ class SingleAgentRunner(
         context = self._init_context(
             run_input, abort_handle=abort_handle, tool_gate=tool_gate
         )
+        command_store = getattr(self._deps, "command_queue_store", None)
+        set_phase = getattr(command_store, "set_run_phase", None)
+        if callable(set_phase):
+            initial_phase = (
+                LiveMessagePhase.TOOL_IN_FLIGHT
+                if context.step_name == "tool_stage"
+                else LiveMessagePhase.FINALIZING
+                if context.step_name == "finalize"
+                else LiveMessagePhase.LLM_IN_FLIGHT
+            )
+            state = set_phase(
+                context.run_id,
+                initial_phase,
+                thread_id=context.run_input.thread_id,
+                agent_id=context.run_input.agent_id,
+            )
+            context.metadata["llm_generation"] = state.llm_generation
         output: AgentRunOutput | None = None
         with oi_span("agent.run", kind=SPAN_KIND_AGENT) as run_span:
             _annotate_run_span_input(run_span, run_input)
@@ -429,6 +450,24 @@ class SingleAgentRunner(
                         trigger="terminal_abort",
                     )
                     return self._build_output(context, terminal)
+                except LlmGenerationSuperseded:
+                    # Another worker/redirect generation now owns this run. The
+                    # stale attempt may record that it was fenced, but must not
+                    # checkpoint, dispatch tools, or commit a terminal outcome.
+                    self._emit(
+                        EventSpec(
+                            run_id=context.run_id,
+                            attempt_id=context.attempt_id,
+                            event_type=RuntimeEventType.RESULT_FENCED,
+                            payload={
+                                "reason": "llm_generation_superseded",
+                                "llm_generation": context.metadata.get(
+                                    "llm_generation", 0
+                                ),
+                            },
+                        )
+                    )
+                    raise
                 context.step_name = result.next_step
             payload = get_loop_control_state(context).terminal_output()
             if not isinstance(payload, dict):

@@ -16,6 +16,12 @@ from agent_driver.runtime.control.approval_store import (
     SqliteApprovalConsumptionStore,
 )
 from agent_driver.runtime.control.in_memory import InMemoryCommandQueueStore
+from agent_driver.runtime.control.live_messages import (
+    dispatch_next_turn,
+    live_message_capabilities,
+    live_message_receipt,
+    live_message_transition_event,
+)
 from agent_driver.runtime.control.postgres import (
     PostgresAbortLifecycleStore,
     PostgresApprovalConsumptionStore,
@@ -46,4 +52,8 @@ __all__ = [
     "CommandQueueStore",
     "InMemoryCommandQueueStore",
     "SqliteCommandQueueStore",
+    "dispatch_next_turn",
+    "live_message_capabilities",
+    "live_message_receipt",
+    "live_message_transition_event",
 ]

@@ -54,6 +54,13 @@ def test_covers_the_durable_embedding_essentials() -> None:
         "RunContextBudget",
         "resolve_run_context_budget",
         "serialize_runtime_state_for_compatibility",
+        "PostgresCommandQueueStore",
+        "PostgresControlStoreConfig",
+        "LiveMessageCapabilities",
+        "LiveMessagePhase",
+        "LiveMessageSemantic",
+        "dispatch_next_turn",
+        "live_message_capabilities",
         "FakeProvider",
         "register_skill_tools",
     }

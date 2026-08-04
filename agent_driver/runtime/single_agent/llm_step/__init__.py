@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from agent_driver.contracts.control import LiveMessagePhase
 from agent_driver.contracts.enums import (
     RuntimeEventType,
     TerminalReason,
@@ -17,6 +18,10 @@ from agent_driver.llm.payload_debug import (
     summarize_llm_request_payload,
 )
 from agent_driver.runtime.errors import RuntimeExecutionError
+from agent_driver.runtime.control.live_messages import (
+    live_message_receipt,
+    live_message_transition_event,
+)
 from agent_driver.runtime.lifecycle_hooks import (
     dispatch_after_llm,
     dispatch_before_llm,
@@ -260,6 +265,8 @@ def _apply_redirect_correction(
     observations: Any,
     clarification: Any,
     text: str,
+    *,
+    queue_id: str | None = None,
 ) -> Any:
     """Fold a hard-redirect correction into the run + rebuild the request (030 B).
 
@@ -275,15 +282,29 @@ def _apply_redirect_correction(
     correction = (text or "").strip()
     run_input = context.run_input
     messages = list(run_input.messages)
-    messages.append(
-        ChatMessage(
-            role=ChatRole.ASSISTANT,
-            content="[Предыдущий ответ прерван поправкой пользователя.]",
-            metadata=scaffolding_metadata("redirect_interrupt_checkpoint"),
+    if queue_id is not None and any(
+        message.metadata.get("live_message_queue_id") == queue_id
+        for message in messages
+    ):
+        rebuilt, _ = _build_trimmed_request(
+            host, context, observations, clarification
         )
+        return _narrow_request_tools_to_forced_choice(rebuilt)
+    interrupted = ChatMessage(
+        role=ChatRole.ASSISTANT,
+        content="[Предыдущий ответ прерван поправкой пользователя.]",
+        metadata=scaffolding_metadata("redirect_interrupt_checkpoint"),
     )
+    messages.append(interrupted)
     # The correction itself is a GENUINE user turn (epic 030) — never tagged.
-    messages.append(ChatMessage(role=ChatRole.USER, content=correction))
+    corrected = ChatMessage(
+        role=ChatRole.USER,
+        content=correction,
+        metadata=(
+            {"live_message_queue_id": queue_id} if queue_id is not None else {}
+        ),
+    )
+    messages.append(corrected)
     frame = ChatMessage(
         role=ChatRole.USER,
         content=(
@@ -298,6 +319,15 @@ def _apply_redirect_correction(
             "request_only_context": [*run_input.request_only_context, frame],
         }
     )
+    protocol = context.metadata.get("protocol_messages")
+    if isinstance(protocol, list):
+        protocol.extend(
+            [
+                interrupted.model_dump(mode="json"),
+                corrected.model_dump(mode="json"),
+            ]
+        )
+        context.metadata["protocol_messages"] = protocol
     count = int(context.metadata.get("redirect_count_step", 0) or 0) + 1
     context.metadata["redirect_count_step"] = count
     emit_step_event(
@@ -424,8 +454,43 @@ async def execute_llm_call_step(
                         # and rebuild the request (host clears the probe after one
                         # read, so the re-ask completes normally).
                         request = _apply_redirect_correction(
-                            host, context, observations, clarification, _redirect.text
+                            host,
+                            context,
+                            observations,
+                            clarification,
+                            _redirect.text,
+                            queue_id=(
+                                _redirect.item.queue_id
+                                if _redirect.item is not None
+                                else None
+                            ),
                         )
+                        if _redirect.item is not None:
+                            host._save_checkpoint(
+                                context,
+                                latest_output=None,
+                                node_id="llm_redirect",
+                            )
+                            mark_applied = getattr(
+                                host._deps.command_queue_store,
+                                "mark_applied",
+                                None,
+                            )
+                            if callable(mark_applied):
+                                applied = mark_applied(
+                                    _redirect.item.queue_id,
+                                    claimant_id=_redirect.claimant_id,
+                                    applied_phase=LiveMessagePhase.LLM_IN_FLIGHT,
+                                )
+                                if applied is not None:
+                                    emit_step_event(
+                                        host,
+                                        context,
+                                        event_type=live_message_transition_event(
+                                            applied
+                                        ),
+                                        payload=live_message_receipt(applied),
+                                    )
 
             _resp = context.llm_response
             _usage = getattr(_resp, "usage", None)

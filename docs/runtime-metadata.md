@@ -74,6 +74,7 @@ not a public SDK contract.
 | `applied_controls`, `workspace_cwd`, `eval_sandbox_dir` | control dispatcher / runner env | output/checkpoint | diagnostics | `LoopControlState` or run input metadata |
 | `tool_output_budget` | raw-free per-run rollup of the epic-033 tier-3 per-turn output-budget pass (`spilled_count`, `chars_saved`) — how much tool-output tax was trimmed | checkpoint | diagnostics | tool stage (`enforce_turn_output_budget`) |
 | `redirect_count_step` | hard-redirect anti-storm counter per LLM step (эпик 030 B) | transient | diagnostics | run metadata |
+| `llm_generation`, `live_message_terminal_reconciliation` | live-message generation fence and raw-free terminal promotion/Stop reconciliation | checkpoint/output | live-control diagnostics | versioned live-message control state |
 | `recalled_memory`, `memory_synced` | long-term memory prefetch (run start) / one-time sync guard (finalize) | checkpoint | diagnostics | memory provider hooks (`MemoryProvider`) |
 | `memory_recall_count` | raw-free count of long-term memory records recalled at run start (epic 021 observability) | checkpoint | diagnostics | memory provider hooks (`MemoryProvider`) |
 | `memory_consolidation` | raw-free outcome of a background consolidation pass (`applied`, `reason`, `before`/`after` counts) when the cadence gate lands (epic 031) | checkpoint | diagnostics / governance notice | memory provider hooks (`MemoryProvider.consolidate`) |
