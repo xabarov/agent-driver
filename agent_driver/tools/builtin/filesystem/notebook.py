@@ -6,12 +6,14 @@ import json
 from typing import Any
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.contracts.execution import CapabilityName, ToolExecutionRequirement
 from agent_driver.tools.builtin.filesystem._edit_result import edit_output_schema
 from agent_driver.tools.builtin.filesystem._paths import (
     MAX_BYTES_DEFAULT,
     as_int,
-    read_text_with_size_guard,
+    read_text_routed,
     resolve_file_path,
+    write_text_routed,
 )
 
 NOTEBOOK_EDIT_TOOL = "notebook_edit"
@@ -32,6 +34,9 @@ def notebook_edit_manifest() -> ToolManifest:
         timeout_seconds=15.0,
         output_char_budget=4000,
         idempotent=False,
+        execution_requirement=ToolExecutionRequirement(
+            required=(CapabilityName.FILE_WRITE,)
+        ),
         args_schema={
             "type": "object",
             "properties": {
@@ -82,7 +87,7 @@ async def notebook_edit_handler(args: dict[str, Any]) -> dict[str, Any]:
     """Insert or edit one notebook cell deterministically."""
     path = resolve_file_path(args.get("path"))
     max_bytes = as_int(args.get("max_bytes"), default=MAX_BYTES_DEFAULT, minimum=1)
-    notebook = _load_notebook(path=path, max_bytes=max_bytes)
+    notebook = await _load_notebook(path=path, max_bytes=max_bytes)
     cells = notebook.get("cells")
     if not isinstance(cells, list):
         raise ValueError("notebook payload missing 'cells' list")
@@ -95,7 +100,7 @@ async def notebook_edit_handler(args: dict[str, Any]) -> dict[str, Any]:
     size_bytes = len(rendered.encode("utf-8"))
     if size_bytes > max_bytes:
         raise ValueError(f"content exceeds max_bytes ({size_bytes}>{max_bytes})")
-    path.write_text(rendered, encoding="utf-8")
+    await write_text_routed(path, rendered)
     return {
         "summary": f"{operation} notebook cell in {path}",
         "path": str(path),
@@ -111,8 +116,8 @@ async def notebook_edit_handler(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _load_notebook(*, path, max_bytes: int) -> dict[str, Any]:
-    raw = read_text_with_size_guard(path, max_bytes=max_bytes)
+async def _load_notebook(*, path, max_bytes: int) -> dict[str, Any]:
+    raw = await read_text_routed(path, max_bytes=max_bytes)
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
