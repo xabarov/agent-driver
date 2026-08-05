@@ -264,7 +264,7 @@ class SingleAgentRunner(
                 # EPIC-03: authoritative, idempotent lease release/detach on EVERY
                 # exit (normal, exception, timeout, cancellation). Safe when no
                 # lease was acquired (``output`` may be None here).
-                await self._release_execution_lease(context)
+                await self._release_execution_lease(context, output)
                 _annotate_run_span_output(run_span, output)
 
     def _maybe_replay_prior_result(
@@ -398,6 +398,16 @@ class SingleAgentRunner(
     ) -> AgentRunOutput | None:
         """Acquire or attach the run's workspace lease, or return a terminal
         FAILED output on fail-closed. Returns ``None`` when no lease is needed."""
+        # Subagent lease policy (EPIC-03 scenario 11): the DEFAULT is ISOLATE —
+        # a subagent child neither acquires nor attaches an execution lease. This
+        # prevents an accidental double-acquire and guarantees a child can never
+        # release/detach the parent's lease (the parent's lease is fully isolated
+        # from subagent activity). A child run is identified by the parent-handoff
+        # metadata the subagent executor stamps.
+        if context.metadata.get("parent_run_id") or context.metadata.get(
+            "subagent_group_id"
+        ):
+            return None
         attach_ref = self._lease_attach_ref(context)
         ownership = getattr(self._config, "execution_lease_ownership", None)
         if attach_ref is None and ownership is None:
@@ -440,13 +450,33 @@ class SingleAgentRunner(
         stack.enter_context(execution_lease_scope(lease))
         return None
 
-    async def _release_execution_lease(self, context: _RunContext) -> None:
-        """Idempotently release (runtime-owned) or detach (host-owned) the lease.
-        Called from the outer ``finally`` on every exit; never raises."""
+    async def _release_execution_lease(
+        self, context: _RunContext, output: AgentRunOutput | None
+    ) -> None:
+        """Idempotently release (runtime-owned) or detach (host-owned) the lease
+        on TERMINAL exits. A PAUSED run RETAINS its lease (explicit policy, not
+        accidental retention): the safe reference is already persisted to
+        metadata so resume re-attaches. Called from the outer ``finally``; never
+        raises. ``output`` is None when the run raised before producing one."""
         manager = getattr(context, "execution_lease_manager", None)
         if manager is None:
             return
+        if output is not None and output.status is RunStatus.PAUSED:
+            # keep the lease alive across the interrupt; surface its receipts
+            self._record_lease_receipts(context, manager)
+            return
         await manager.close(self._resolved_backend(context))
+        self._record_lease_receipts(context, manager)
+
+    @staticmethod
+    def _record_lease_receipts(context: _RunContext, manager: object) -> None:
+        """Surface lease phase timings (queue/acquire/ready/release) into run
+        metadata for independent observation (EPIC-03 scenario 10)."""
+        receipts = getattr(manager, "receipts", ())
+        if receipts:
+            context.metadata["execution_lease_receipts"] = [
+                r.model_dump(mode="json") for r in receipts
+            ]
 
     async def _drive_steps(self, context: _RunContext) -> AgentRunOutput:
         """Drive the deterministic step loop to a terminal output.
