@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 import json
@@ -36,7 +36,6 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency
     patch_stdout = None  # type: ignore[assignment]
 
-_EXIT_COMMANDS = {"exit", "quit"}
 _CTRL_C_WINDOW_SECONDS = 2.0
 
 
@@ -166,6 +165,364 @@ def _resolve_run_id(args: list[str], state: ChatSessionState) -> str | None:
     return state.last_run_id
 
 
+@dataclass(slots=True)
+class _ChatCommandContext:
+    """Pass-through state shared by every local slash-command handler."""
+
+    agent: Agent
+    state: ChatSessionState
+    event_log: RuntimeEventLog
+    session_store: SessionStore
+    provider_name: str
+    model_name: str | None
+    max_steps: int | None
+    max_tool_calls: int | None
+    deadline_seconds: float | None
+    selected_manifests: list[ToolManifest]
+    output: Callable[[str], None]
+    clear_screen: Callable[[], None] | None = None
+    welcome: Callable[[], None] | None = None
+    renderer: object | None = None
+
+
+async def _cmd_help(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    _print_help(ctx.output)
+    return True
+
+
+async def _cmd_exit(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    ctx.output("chat> bye\n")
+    return False
+
+
+async def _cmd_clear(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    ctx.state.transcript.clear()
+    ctx.state.run_ids.clear()
+    ctx.state.planning_state = None
+    if ctx.renderer is not None and hasattr(ctx.renderer, "clear_plan_panel"):
+        ctx.renderer.clear_plan_panel()
+    if ctx.clear_screen is not None:
+        ctx.clear_screen()
+    ctx.output("chat> cleared\n")
+    if ctx.welcome is not None:
+        ctx.welcome()
+    return True
+
+
+async def _cmd_reset(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    ctx.state.transcript.clear()
+    ctx.state.run_ids.clear()
+    ctx.state.planning_state = None
+    if ctx.renderer is not None and hasattr(ctx.renderer, "clear_plan_panel"):
+        ctx.renderer.clear_plan_panel()
+    ctx.state.thread_id = f"thread_{uuid.uuid4().hex[:8]}"
+    ctx.state.turn_index = 0
+    ctx.output(f"chat> memory reset thread={ctx.state.thread_id}\n")
+    return True
+
+
+async def _cmd_plan(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    if isinstance(ctx.state.planning_state, dict) and ctx.state.planning_state.get(
+        "todos"
+    ):
+        ctx.output(f"{format_plan_panel(ctx.state.planning_state)}\n")
+    else:
+        ctx.output("plan> empty (no todos in this session)\n")
+    return True
+
+
+async def _cmd_runs(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    if not ctx.state.run_ids:
+        ctx.output("chat> no runs yet\n")
+        return True
+    for run_id in ctx.state.run_ids:
+        ctx.output(f"run> {run_id}\n")
+    return True
+
+
+async def _cmd_sessions(
+    ctx: _ChatCommandContext, command: str, args: list[str]
+) -> bool:
+    sessions = ctx.session_store.list_sessions()
+    if not sessions:
+        ctx.output("session> none\n")
+        return True
+    for item in sessions:
+        ctx.output(
+            f"session> {item.session_id} thread={item.thread_id} runs={len(item.run_ids)}\n"
+        )
+    return True
+
+
+async def _cmd_history(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    if not ctx.state.transcript:
+        ctx.output("history> empty\n")
+        return True
+    for role, text in ctx.state.transcript[-30:]:
+        compact = text.replace("\n", " ")
+        if len(compact) > 80:
+            compact = f"{compact[:80].rstrip()}..."
+        ctx.output(f"{role}> {compact}\n")
+    return True
+
+
+async def _cmd_resume(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    if not args:
+        ctx.output("chat> /resume requires session_id\n")
+        return True
+    record = ctx.session_store.get(args[0])
+    if record is None:
+        ctx.output(f"chat> unknown session '{args[0]}'\n")
+        return True
+    ctx.state.session_id = record.session_id
+    ctx.state.thread_id = record.thread_id
+    ctx.state.run_ids = list(record.run_ids)
+    ctx.state.transcript = list(record.transcript)
+    ctx.state.turn_index = len(ctx.state.run_ids)
+    ctx.output(
+        f"chat> resumed session={ctx.state.session_id} thread={ctx.state.thread_id}\n"
+    )
+    return True
+
+
+async def _cmd_tools(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    if not ctx.selected_manifests:
+        ctx.output("tools> none\n")
+        return True
+    verbose = bool(args and args[0].lower() == "verbose")
+    if verbose:
+        for manifest in ctx.selected_manifests:
+            ctx.output(
+                "tools> "
+                f"{manifest.name} risk={manifest.risk.value} "
+                f"side_effect={manifest.side_effect.value} "
+                f"description={manifest.description}\n"
+            )
+        return True
+    names = ", ".join(manifest.name for manifest in ctx.selected_manifests)
+    ctx.output(f"tools> {names}\n")
+    return True
+
+
+async def _cmd_workspace(
+    ctx: _ChatCommandContext, command: str, args: list[str]
+) -> bool:
+    if not args:
+        ctx.output(f"workspace> {ctx.state.workspace_cwd or Path.cwd()}\n")
+        return True
+    try:
+        ctx.state.workspace_cwd = _resolve_workspace_path(
+            args[0], ctx.state.workspace_cwd
+        )
+    except ValueError as exc:
+        ctx.output(f"workspace> error: {exc}\n")
+        return True
+    ctx.output(f"workspace> {ctx.state.workspace_cwd}\n")
+    return True
+
+
+async def _cmd_model(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    ctx.output(f"model> {ctx.model_name or 'default'}\n")
+    return True
+
+
+async def _cmd_provider(
+    ctx: _ChatCommandContext, command: str, args: list[str]
+) -> bool:
+    ctx.output(f"provider> {ctx.provider_name}\n")
+    return True
+
+
+async def _cmd_limits(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    ctx.output(
+        "limits> "
+        f"max_steps={ctx.max_steps} max_tool_calls={ctx.max_tool_calls} "
+        f"deadline_seconds={ctx.deadline_seconds}\n"
+    )
+    return True
+
+
+async def _cmd_debug(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    if not args:
+        ctx.output(f"debug> {'on' if ctx.state.debug_tool_protocol else 'off'}\n")
+        return True
+    value = args[0].lower()
+    if value in {"on", "1", "true"}:
+        ctx.state.debug_tool_protocol = True
+        ctx.output("debug> on\n")
+    elif value in {"off", "0", "false"}:
+        ctx.state.debug_tool_protocol = False
+        ctx.output("debug> off\n")
+    else:
+        ctx.output("chat> /debug expects on|off\n")
+    return True
+
+
+async def _cmd_doctor(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    python_settings = getattr(ctx.agent.runner.config, "python_tool", None)
+    python_imports = (
+        python_tool_runtime_facts(python_settings).imports_short
+        if python_settings is not None and getattr(python_settings, "enabled", False)
+        else "disabled"
+    )
+    tools = ", ".join(manifest.name for manifest in ctx.selected_manifests) or "none"
+    last_signal = _doctor_last_signal(ctx.state, ctx.event_log)
+    try:
+        status = await ctx.agent.runner.deps.provider.healthcheck()
+    except Exception as exc:  # noqa: BLE001 - doctor must not crash chat loop
+        ctx.output(
+            "doctor> "
+            f"name={ctx.agent.runner.deps.provider.name} healthy=False configured=True "
+            f"latency_ms=0 provider_check_error={_provider_check_error_label(exc)}\n"
+        )
+    else:
+        ctx.output(
+            "doctor> "
+            f"name={status.provider_name} healthy={status.healthy} "
+            f"configured={status.configured} latency_ms={status.latency_ms}\n"
+        )
+    ctx.output(
+        f"doctor> limits max_steps={ctx.max_steps} max_tool_calls={ctx.max_tool_calls} "
+        f"deadline_seconds={ctx.deadline_seconds}\n"
+    )
+    ctx.output(f"doctor> tools {tools}\n")
+    ctx.output(f"doctor> python_imports {python_imports}\n")
+    ctx.output(f"doctor> last_signal {last_signal}\n")
+    return True
+
+
+async def _cmd_save(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    record = ctx.session_store.upsert(
+        session_id=ctx.state.session_id,
+        thread_id=ctx.state.thread_id,
+        run_ids=ctx.state.run_ids,
+        transcript=ctx.state.transcript,
+    )
+    target = args[0] if args else str(ctx.session_store.path)
+    if args:
+        output_path = Path(args[0])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(
+                {
+                    "session_id": record.session_id,
+                    "thread_id": record.thread_id,
+                    "run_ids": list(record.run_ids),
+                    "transcript": [list(item) for item in record.transcript],
+                    "created_at": record.created_at,
+                    "updated_at": record.updated_at,
+                },
+                ensure_ascii=True,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    ctx.output(f"save> {target}\n")
+    return True
+
+
+async def _cmd_export(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    export_path = Path(args[0]) if args else Path.cwd() / f"{ctx.state.session_id}.md"
+    lines = [f"# Session {ctx.state.session_id}", ""]
+    for role, text in ctx.state.transcript:
+        lines.append(f"## {role}")
+        lines.append(text)
+        lines.append("")
+    export_path.write_text("\n".join(lines), encoding="utf-8")
+    ctx.output(f"export> {export_path}\n")
+    return True
+
+
+async def _cmd_resume_control(
+    ctx: _ChatCommandContext, command: str, args: list[str]
+) -> bool:
+    if len(args) < 2:
+        ctx.output(f"chat> /{command} requires <run_id> <interrupt_id>\n")
+        return True
+    run_id, interrupt_id = args[0], args[1]
+    if command == "approve":
+        _ = await ctx.agent.approve(run_id=run_id, interrupt_id=interrupt_id)
+    elif command == "reject":
+        message = " ".join(args[2:]) if len(args) >= 3 else None
+        _ = await ctx.agent.reject(
+            run_id=run_id, interrupt_id=interrupt_id, message=message
+        )
+    elif command == "cancel":
+        _ = await ctx.agent.cancel(run_id=run_id, interrupt_id=interrupt_id)
+    else:
+        if len(args) < 3:
+            ctx.output("chat> /clarify requires message after interrupt_id\n")
+            return True
+        _ = await ctx.agent.clarify(
+            run_id=run_id, interrupt_id=interrupt_id, message=" ".join(args[2:])
+        )
+    ctx.output(f"resume> {command} ok run_id={run_id}\n")
+    return True
+
+
+async def _cmd_replay(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    run_id = _resolve_run_id(args, ctx.state)
+    if run_id is None:
+        ctx.output("chat> replay requires run_id or existing session run\n")
+        return True
+    for line in cli_replay_lines(ctx.event_log, run_id=run_id):
+        ctx.output(f"{line}\n")
+    return True
+
+
+async def _cmd_tail(ctx: _ChatCommandContext, command: str, args: list[str]) -> bool:
+    run_id = _resolve_run_id(args, ctx.state)
+    if run_id is None:
+        ctx.output("chat> tail requires run_id or existing session run\n")
+        return True
+    last_n = 20
+    if len(args) >= 2:
+        try:
+            last_n = int(args[1])
+        except ValueError:
+            ctx.output("chat> tail last_n must be integer\n")
+            return True
+    for line in cli_tail_lines(ctx.event_log, run_id=run_id, last_n=last_n):
+        ctx.output(f"{line}\n")
+    return True
+
+
+_CommandHandler = Callable[
+    [_ChatCommandContext, str, list[str]], Awaitable[bool]
+]
+
+# One entry per slash command (aliases point at the same handler). The dispatch
+# order no longer matters — each handler owns exactly its command.
+_LOCAL_COMMAND_HANDLERS: dict[str, _CommandHandler] = {
+    "help": _cmd_help,
+    "exit": _cmd_exit,
+    "quit": _cmd_exit,
+    "clear": _cmd_clear,
+    "reset": _cmd_reset,
+    "plan": _cmd_plan,
+    "runs": _cmd_runs,
+    "sessions": _cmd_sessions,
+    "history": _cmd_history,
+    "resume": _cmd_resume,
+    "tools": _cmd_tools,
+    "workspace": _cmd_workspace,
+    "cd": _cmd_workspace,
+    "model": _cmd_model,
+    "provider": _cmd_provider,
+    "limits": _cmd_limits,
+    "debug": _cmd_debug,
+    "doctor": _cmd_doctor,
+    "save": _cmd_save,
+    "export": _cmd_export,
+    "approve": _cmd_resume_control,
+    "reject": _cmd_resume_control,
+    "cancel": _cmd_resume_control,
+    "clarify": _cmd_resume_control,
+    "replay": _cmd_replay,
+    "tail": _cmd_tail,
+}
+
+
 async def _handle_local_command(
     *,
     agent: Agent,
@@ -185,252 +542,27 @@ async def _handle_local_command(
     welcome: Callable[[], None] | None = None,
     renderer: object | None = None,
 ) -> bool:
-    if command == "help":
-        _print_help(output)
+    handler = _LOCAL_COMMAND_HANDLERS.get(command)
+    if handler is None:
+        output(f"chat> unknown command '/{command}'\n")
         return True
-    if command in _EXIT_COMMANDS:
-        output("chat> bye\n")
-        return False
-    if command == "clear":
-        state.transcript.clear()
-        state.run_ids.clear()
-        state.planning_state = None
-        if renderer is not None and hasattr(renderer, "clear_plan_panel"):
-            renderer.clear_plan_panel()
-        if clear_screen is not None:
-            clear_screen()
-        output("chat> cleared\n")
-        if welcome is not None:
-            welcome()
-        return True
-    if command == "reset":
-        state.transcript.clear()
-        state.run_ids.clear()
-        state.planning_state = None
-        if renderer is not None and hasattr(renderer, "clear_plan_panel"):
-            renderer.clear_plan_panel()
-        state.thread_id = f"thread_{uuid.uuid4().hex[:8]}"
-        state.turn_index = 0
-        output(f"chat> memory reset thread={state.thread_id}\n")
-        return True
-    if command == "plan":
-        if isinstance(state.planning_state, dict) and state.planning_state.get("todos"):
-            output(f"{format_plan_panel(state.planning_state)}\n")
-        else:
-            output("plan> empty (no todos in this session)\n")
-        return True
-    if command == "runs":
-        if not state.run_ids:
-            output("chat> no runs yet\n")
-            return True
-        for run_id in state.run_ids:
-            output(f"run> {run_id}\n")
-        return True
-    if command == "sessions":
-        sessions = session_store.list_sessions()
-        if not sessions:
-            output("session> none\n")
-            return True
-        for item in sessions:
-            output(f"session> {item.session_id} thread={item.thread_id} runs={len(item.run_ids)}\n")
-        return True
-    if command == "history":
-        if not state.transcript:
-            output("history> empty\n")
-            return True
-        for role, text in state.transcript[-30:]:
-            compact = text.replace("\n", " ")
-            if len(compact) > 80:
-                compact = f"{compact[:80].rstrip()}..."
-            output(f"{role}> {compact}\n")
-        return True
-    if command == "resume":
-        if not args:
-            output("chat> /resume requires session_id\n")
-            return True
-        record = session_store.get(args[0])
-        if record is None:
-            output(f"chat> unknown session '{args[0]}'\n")
-            return True
-        state.session_id = record.session_id
-        state.thread_id = record.thread_id
-        state.run_ids = list(record.run_ids)
-        state.transcript = list(record.transcript)
-        state.turn_index = len(state.run_ids)
-        output(f"chat> resumed session={state.session_id} thread={state.thread_id}\n")
-        return True
-    if command == "tools":
-        if not selected_manifests:
-            output("tools> none\n")
-            return True
-        verbose = bool(args and args[0].lower() == "verbose")
-        if verbose:
-            for manifest in selected_manifests:
-                output(
-                    "tools> "
-                    f"{manifest.name} risk={manifest.risk.value} "
-                    f"side_effect={manifest.side_effect.value} "
-                    f"description={manifest.description}\n"
-                )
-            return True
-        names = ", ".join(manifest.name for manifest in selected_manifests)
-        output(f"tools> {names}\n")
-        return True
-    if command in {"workspace", "cd"}:
-        if not args:
-            output(f"workspace> {state.workspace_cwd or Path.cwd()}\n")
-            return True
-        try:
-            state.workspace_cwd = _resolve_workspace_path(args[0], state.workspace_cwd)
-        except ValueError as exc:
-            output(f"workspace> error: {exc}\n")
-            return True
-        output(f"workspace> {state.workspace_cwd}\n")
-        return True
-    if command == "model":
-        output(f"model> {model_name or 'default'}\n")
-        return True
-    if command == "provider":
-        output(f"provider> {provider_name}\n")
-        return True
-    if command == "limits":
-        output(
-            "limits> "
-            f"max_steps={max_steps} max_tool_calls={max_tool_calls} "
-            f"deadline_seconds={deadline_seconds}\n"
-        )
-        return True
-    if command == "debug":
-        if not args:
-            output(f"debug> {'on' if state.debug_tool_protocol else 'off'}\n")
-            return True
-        value = args[0].lower()
-        if value in {"on", "1", "true"}:
-            state.debug_tool_protocol = True
-            output("debug> on\n")
-        elif value in {"off", "0", "false"}:
-            state.debug_tool_protocol = False
-            output("debug> off\n")
-        else:
-            output("chat> /debug expects on|off\n")
-        return True
-    if command == "doctor":
-        python_settings = getattr(agent.runner.config, "python_tool", None)
-        python_imports = (
-            python_tool_runtime_facts(python_settings).imports_short
-            if python_settings is not None and getattr(python_settings, "enabled", False)
-            else "disabled"
-        )
-        tools = ", ".join(manifest.name for manifest in selected_manifests) or "none"
-        last_signal = _doctor_last_signal(state, event_log)
-        try:
-            status = await agent.runner.deps.provider.healthcheck()
-        except Exception as exc:  # noqa: BLE001 - doctor must not crash chat loop
-            output(
-                "doctor> "
-                f"name={agent.runner.deps.provider.name} healthy=False configured=True "
-                f"latency_ms=0 provider_check_error={_provider_check_error_label(exc)}\n"
-            )
-        else:
-            output(
-                "doctor> "
-                f"name={status.provider_name} healthy={status.healthy} "
-                f"configured={status.configured} latency_ms={status.latency_ms}\n"
-            )
-        output(
-            f"doctor> limits max_steps={max_steps} max_tool_calls={max_tool_calls} "
-            f"deadline_seconds={deadline_seconds}\n"
-        )
-        output(f"doctor> tools {tools}\n")
-        output(f"doctor> python_imports {python_imports}\n")
-        output(f"doctor> last_signal {last_signal}\n")
-        return True
-    if command == "save":
-        record = session_store.upsert(
-            session_id=state.session_id,
-            thread_id=state.thread_id,
-            run_ids=state.run_ids,
-            transcript=state.transcript,
-        )
-        target = args[0] if args else str(session_store.path)
-        if args:
-            output_path = Path(args[0])
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(
-                json.dumps(
-                    {
-                        "session_id": record.session_id,
-                        "thread_id": record.thread_id,
-                        "run_ids": list(record.run_ids),
-                        "transcript": [list(item) for item in record.transcript],
-                        "created_at": record.created_at,
-                        "updated_at": record.updated_at,
-                    },
-                    ensure_ascii=True,
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-        output(f"save> {target}\n")
-        return True
-    if command == "export":
-        export_path = Path(args[0]) if args else Path.cwd() / f"{state.session_id}.md"
-        lines = [f"# Session {state.session_id}", ""]
-        for role, text in state.transcript:
-            lines.append(f"## {role}")
-            lines.append(text)
-            lines.append("")
-        export_path.write_text("\n".join(lines), encoding="utf-8")
-        output(f"export> {export_path}\n")
-        return True
-    if command in {"approve", "reject", "cancel", "clarify"}:
-        if len(args) < 2:
-            output(f"chat> /{command} requires <run_id> <interrupt_id>\n")
-            return True
-        run_id, interrupt_id = args[0], args[1]
-        if command == "approve":
-            _ = await agent.approve(run_id=run_id, interrupt_id=interrupt_id)
-        elif command == "reject":
-            message = " ".join(args[2:]) if len(args) >= 3 else None
-            _ = await agent.reject(
-                run_id=run_id, interrupt_id=interrupt_id, message=message
-            )
-        elif command == "cancel":
-            _ = await agent.cancel(run_id=run_id, interrupt_id=interrupt_id)
-        else:
-            if len(args) < 3:
-                output("chat> /clarify requires message after interrupt_id\n")
-                return True
-            _ = await agent.clarify(
-                run_id=run_id, interrupt_id=interrupt_id, message=" ".join(args[2:])
-            )
-        output(f"resume> {command} ok run_id={run_id}\n")
-        return True
-    if command == "replay":
-        run_id = _resolve_run_id(args, state)
-        if run_id is None:
-            output("chat> replay requires run_id or existing session run\n")
-            return True
-        for line in cli_replay_lines(event_log, run_id=run_id):
-            output(f"{line}\n")
-        return True
-    if command == "tail":
-        run_id = _resolve_run_id(args, state)
-        if run_id is None:
-            output("chat> tail requires run_id or existing session run\n")
-            return True
-        last_n = 20
-        if len(args) >= 2:
-            try:
-                last_n = int(args[1])
-            except ValueError:
-                output("chat> tail last_n must be integer\n")
-                return True
-        for line in cli_tail_lines(event_log, run_id=run_id, last_n=last_n):
-            output(f"{line}\n")
-        return True
-    output(f"chat> unknown command '/{command}'\n")
-    return True
+    ctx = _ChatCommandContext(
+        agent=agent,
+        state=state,
+        event_log=event_log,
+        session_store=session_store,
+        provider_name=provider_name,
+        model_name=model_name,
+        max_steps=max_steps,
+        max_tool_calls=max_tool_calls,
+        deadline_seconds=deadline_seconds,
+        selected_manifests=selected_manifests,
+        output=output,
+        clear_screen=clear_screen,
+        welcome=welcome,
+        renderer=renderer,
+    )
+    return await handler(ctx, command, args)
 
 
 async def _run_shell_bang(
