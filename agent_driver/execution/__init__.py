@@ -116,6 +116,7 @@ from agent_driver.execution.fake import CommandOutcome, FakeExecutionBackend
 from agent_driver.execution.jobs import (
     JobObserver,
     JobSession,
+    JobStageTiming,
     JobStopOutcome,
     TerminalConflictError,
     fence_stale,
@@ -151,6 +152,7 @@ __all__ = [
     # job observation
     "JobObserver",
     "JobSession",
+    "JobStageTiming",
     "JobStopOutcome",
     "TerminalConflictError",
     "fence_stale",

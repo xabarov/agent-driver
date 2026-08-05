@@ -147,6 +147,7 @@ _FACADE_EXPORTS = {
     # job observation
     "JobObserver",
     "JobSession",
+    "JobStageTiming",
     "JobStopOutcome",
     "TerminalConflictError",
     "fence_stale",

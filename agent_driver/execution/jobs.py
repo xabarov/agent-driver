@@ -9,6 +9,7 @@ snapshot, and never lets a late/stale delivery become a normal observation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import monotonic
 from typing import TYPE_CHECKING, Any, Callable
 
 from agent_driver.contracts.execution import ExecutionCommandRequest
@@ -20,6 +21,7 @@ from agent_driver.contracts.execution_job import (
     ExecutionEventCursor,
     ExecutionEventPage,
     ExecutionHandle,
+    ExecutionReasonCode,
     ExecutionTerminalSnapshot,
     TeardownReceipt,
 )
@@ -154,6 +156,17 @@ def restore_job_recovery(
     return handle, cursor
 
 
+@dataclass(frozen=True, slots=True)
+class JobStageTiming:
+    """One job lifecycle stage timing (EPIC-04 WP-E). ``phase`` is
+    start/first_output/terminal/observe; ``reason_code`` carries a typed outcome
+    (e.g. a ``*_TIMEOUT`` or ``TRANSPORT_LOST``) when one applies."""
+
+    phase: str
+    duration_ms: float
+    reason_code: "ExecutionReasonCode | None" = None
+
+
 class JobSession:
     """Drive one execution job start→observe→terminal with reconnect + fencing.
 
@@ -167,17 +180,43 @@ class JobSession:
 
     def __init__(self, backend: "JobCapableBackend") -> None:
         self._backend = backend
+        self._timings: list[JobStageTiming] = []
+
+    @property
+    def timings(self) -> tuple["JobStageTiming", ...]:
+        """Per-phase stage timings (start/first_output/terminal) with reason
+        codes, for independent observation (EPIC-04 WP-E scenario 9)."""
+        return tuple(self._timings)
+
+    def _record(
+        self,
+        phase: str,
+        started: float,
+        reason_code: "ExecutionReasonCode | None" = None,
+    ) -> None:
+        self._timings.append(
+            JobStageTiming(
+                phase=phase,
+                duration_ms=max(0.0, (monotonic() - started) * 1000.0),
+                reason_code=reason_code,
+            )
+        )
 
     async def start(self, request: ExecutionCommandRequest) -> ExecutionHandle:
         key = request.identity.request_id
+        started = monotonic()
         try:
-            return await self._backend.start_job(request)
+            handle = await self._backend.start_job(request)
+            self._record("start", started)
+            return handle
         except ExecutionError:
             # The start reply may have been lost while the job actually started;
             # resolve by idempotency key rather than starting a second one.
             found = await self._backend.lookup_job(key)
             if found is not None:
+                self._record("start", started, ExecutionReasonCode.TRANSPORT_LOST)
                 return found
+            self._record("start", started, ExecutionReasonCode.INDETERMINATE_DISPATCH)
             raise IndeterminateExecutionError(
                 f"job start for {key} is indeterminate; not re-dispatched"
             ) from None
@@ -193,14 +232,27 @@ class JobSession:
         """Observe from ``start_cursor`` (or the initial cursor) to terminal.
 
         Fresh, in-generation, non-duplicate events are handed to ``on_event``.
-        On a gap, or when the pages are exhausted, the terminal snapshot resolves
-        the outcome (fencing a stale-generation or conflicting terminal)."""
+        A transport loss mid-observation is not fatal: it stops paging and the
+        terminal snapshot resolves the outcome. On a gap, or when the pages are
+        exhausted, the snapshot likewise resolves it (fencing a stale-generation
+        or conflicting terminal)."""
         observer = JobObserver(handle)
         cursor = start_cursor or initial_cursor(handle)
+        first_output_at = monotonic()
+        first_output_recorded = False
         pages = 0
         while pages < max_pages:
-            page = await self._backend.observe(handle, cursor)
+            try:
+                page = await self._backend.observe(handle, cursor)
+            except ExecutionError:
+                self._record(
+                    "observe", first_output_at, ExecutionReasonCode.TRANSPORT_LOST
+                )
+                break  # transport loss -> resolve via snapshot, never crash
             for event in observer.ingest(page):
+                if not first_output_recorded:
+                    self._record("first_output", first_output_at)
+                    first_output_recorded = True
                 if on_event is not None:
                     on_event(event)
             cursor = observer.cursor
@@ -209,7 +261,9 @@ class JobSession:
             if not page.events:
                 break  # no more output available without a terminal
             pages += 1
+        terminal_at = monotonic()
         snapshot = await self._backend.snapshot(handle)
+        self._record("terminal", terminal_at, snapshot.reason_code)
         return observer.resolve_terminal(snapshot)
 
 
@@ -266,6 +320,7 @@ async def stop_job(
 __all__ = [
     "JobObserver",
     "JobSession",
+    "JobStageTiming",
     "JobStopOutcome",
     "TerminalConflictError",
     "fence_stale",
