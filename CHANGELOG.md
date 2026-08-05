@@ -7,6 +7,32 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-05
+
+### Added
+
+- **Backend compatibility kit & release surface (execution-backend EPIC-05,
+  final epic of the package).** Backend authors can implement the public
+  protocol and prove exactly which guarantees their adapter provides, from public
+  docs alone.
+  - Compliance contracts (`agent_driver.contracts.execution_compliance`,
+    re-exported from `agent_driver.execution`): `ComplianceReport` /
+    `ComplianceCheck` / `ComplianceStatus` (passed/failed/unsupported/skipped/
+    stale/no_claim) / `ComplianceGroup` — versioned, bounded, redaction-safe.
+  - `run_compliance(backend)` runs the deterministic compatibility suite against
+    ANY backend with no live LLM / Docker / network / credentials: each group
+    runs only when the backend advertises the matching capability, an
+    unadvertised group is `no_claim` (never inflated to a pass), and a
+    guarantee that is advertised but not proved (e.g. hard teardown only
+    acknowledged) is a `failed`. `render_markdown` emits a concise report.
+  - `examples/cookbook/21_backend_compliance.py`: a minimal third-party-style
+    backend implemented with ONLY public imports, qualified by the suite. The
+    built-in `LocalExecutionBackend` qualifies truthfully (command + identity
+    proved; remote-lifecycle groups `no_claim`).
+  - `docs/execution-backend-migration.md`: migrating legacy
+    `AsyncCommandRunner`/`AsyncFileIO` hosts to an injected `ExecutionBackend`
+    (via `CompositeExecutionBackend`) within the pre-1.0 deprecation window.
+
 ## [0.8.0] - 2026-08-05
 
 ### Added
