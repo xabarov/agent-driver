@@ -45,6 +45,7 @@ equivalent, and `config.<field>` reads work either way.
 | `tool_concurrency_limit` | cap parallel tool execution | else `AGENT_DRIVER_TOOL_CONCURRENCY` / default 8 |
 | `subagent_model_routing` | `{agent_type: model}` for child runs | explicit `forced_model` overrides; routed model rides `forced_model` |
 | `default_max_steps` | config-level backstop when `AgentRunInput.max_steps` is unset | default `80`; use `None` only for intentionally unbounded loops |
+| `default_max_tool_calls_per_step` | cap calls accepted from one model response before approval/execution | default `None`; set `1` for sequential evidence-led workflows; a run-level value overrides it |
 | `budget_grace_enabled` | grants one bounded no-tools final-answer window after soft step/tool budgets | cost ceilings still hard-stop |
 | `defer_primer` | surfaces relevant deferred tools before each LLM step | `keyword_relevance_primer()` is the generic default helper; `None` keeps pure `tool_search` behavior |
 

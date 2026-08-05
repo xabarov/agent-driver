@@ -116,6 +116,7 @@ class RunnerConfig:
     observation_max_chars: int
     include_planning_prompt: bool
     default_max_steps: int | None
+    default_max_tool_calls_per_step: int | None
     budget_grace_enabled: bool
     defer_primer: Callable[[Any], Any] | None
     subagent_store: SubagentStore | None
@@ -197,6 +198,14 @@ class RunnerConfig:
         self.default_max_tool_calls = kwargs.pop(
             "default_max_tool_calls", DEFAULT_MAX_TOOL_CALLS_BACKSTOP
         )
+        self.default_max_tool_calls_per_step = kwargs.pop(
+            "default_max_tool_calls_per_step", None
+        )
+        if (
+            self.default_max_tool_calls_per_step is not None
+            and self.default_max_tool_calls_per_step <= 0
+        ):
+            raise ValueError("default_max_tool_calls_per_step must be > 0")
         # Epic 019 wall-clock safety nets (openclaude QueryGuard reference): hard cap on
         # the whole run and an idle cap on a single step's await (wedged tool/provider).
         # None opts out; per-run deadline_seconds is an explicit caller budget on top.

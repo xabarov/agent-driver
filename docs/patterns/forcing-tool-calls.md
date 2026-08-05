@@ -72,9 +72,38 @@ example, repeated zero-result loops or deliverable final-answer guards can set
 `tool_choice="none"` to force a final answer. Caller-provided `tool_choice` is
 the starting preference, not a way to disable runtime safety.
 
+## Sequential Evidence-Led Tool Use
+
+Set `AgentRunInput.max_tool_calls_per_step=1` when each tool result must be
+observed before the model chooses the next action (for example, approval-led or
+evidence-led workflows):
+
+```python
+AgentRunInput(
+    input="Inspect the authorized target and stop when the claim is proved.",
+    agent_id="assistant",
+    graph_preset="single_react",
+    max_tool_calls=12,
+    max_tool_calls_per_step=1,
+)
+```
+
+The total `max_tool_calls` budget is unchanged. The per-step limit asks
+OpenAI-compatible providers to disable parallel tool calls and is also enforced
+inside the runtime before approval or execution. If a provider still returns a
+batch, only the allowed prefix is considered; the remainder is suppressed and
+the next model step receives the accepted call's real result. This avoids
+pre-authorizing stale speculative actions while leaving the default (`None`)
+fully backward compatible.
+
+For a host-wide default (including resume calls that carry only an interrupt
+command), set `RunnerConfig(default_max_tool_calls_per_step=1)`. An explicit
+`AgentRunInput.max_tool_calls_per_step` overrides that default for one run.
+
 ## Related Tests
 
 - `tests/contracts/test_runtime_contracts.py`
 - `tests/llm/test_tool_choice_normalization.py`
 - `tests/runtime/test_run_input_tool_choice.py`
+- `tests/runtime/test_tool_call_step_limit.py`
 - `tests/runtime/test_tool_schema_filtering.py`

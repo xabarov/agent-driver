@@ -198,6 +198,7 @@ async def execute_tool_stage_step(
     _repair_deep_research_parent_file_write_args(context)
     _coerce_deep_research_artifact_repair_batch(context)
     _clamp_deep_research_parent_artifact_batch(context)
+    _apply_tool_call_step_limit(host, context)
     _emit_tool_started_if_needed(host, context)
     # Epic 025: liveness heartbeat over the whole tool stage — a wedged tool
     # without TOOL_PROGRESS opt-in is otherwise a silent stage.
@@ -225,6 +226,51 @@ async def execute_tool_stage_step(
     if code_loop is not None:
         return code_loop
     return await _finalize_tool_stage_transition(host, context, result)
+
+
+def _apply_tool_call_step_limit(host: ToolStageHost, context: RunContext) -> None:
+    """Clamp one provider response before any tool approval or execution.
+
+    Provider-side ``parallel_tool_calls=False`` is only a request hint. Some
+    compatible routes ignore it or synthesize multiple calls from text, so the
+    runtime is the authoritative boundary. Extra calls are deliberately not
+    replayed automatically: after the accepted prefix finishes, the next model
+    step observes real results and may propose the still-relevant work again.
+    """
+    limit = (
+        context.run_input.max_tool_calls_per_step
+        if context.run_input.max_tool_calls_per_step is not None
+        else host._config.default_max_tool_calls_per_step
+    )
+    response = context.llm_response
+    if limit is None or response is None:
+        return
+    planned = extract_planned_tool_calls(response)
+    if len(planned) <= limit:
+        return
+
+    accepted = planned[:limit]
+    suppressed = planned[limit:]
+    response.metadata["planned_tool_calls"] = [
+        call.model_dump(mode="json") for call in accepted
+    ]
+    response.metadata["step_limited_planned_tool_calls"] = [
+        call.model_dump(mode="json") for call in suppressed
+    ]
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.WARNING,
+        payload={
+            "signal_id": "planned_tool_call_step_limit_applied",
+            "severity": "info",
+            "limit": limit,
+            "planned_count": len(planned),
+            "accepted_count": len(accepted),
+            "suppressed_count": len(suppressed),
+            "suppressed_tools": [call.tool_name for call in suppressed],
+        },
+    )
 
 
 def _post_process_tool_result(

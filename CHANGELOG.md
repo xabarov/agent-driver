@@ -7,6 +7,20 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-05
+
+### Added
+
+- **Sequential evidence-led tool-call control.**
+  `AgentRunInput.max_tool_calls_per_step` and
+  `RunnerConfig.default_max_tool_calls_per_step` add an opt-in cap on calls
+  accepted from one model response. A limit of one sends
+  `parallel_tool_calls=false` to OpenAI-compatible providers and is also
+  enforced inside the runtime before approval or execution. Provider-returned
+  calls above the limit are suppressed with the redaction-safe
+  `planned_tool_call_step_limit_applied` diagnostic, so the next reasoning step
+  observes real results before choosing more work. Defaults remain unchanged.
+
 ## [0.9.0] - 2026-08-05
 
 ### Added

@@ -64,6 +64,7 @@ class LlmRequestBuildContext:
     protocol_messages: tuple[ChatMessage, ...] | None = None
     tool_choice: str | dict[str, Any] | None = None
     response_format: dict[str, Any] | None = None
+    max_tool_calls_per_step: int | None = None
     request_allowed_tools: tuple[str, ...] | None = None
     enable_prompt_cache: bool = False
     harness_profiles: tuple[HarnessProfile, ...] = ()
@@ -581,6 +582,10 @@ def build_single_agent_llm_request(
             if ctx.request_max_tokens is not None
             else run_input.max_tokens
         ),
+        # Provider-side best effort. The runtime independently clamps the
+        # normalized response before approval/execution because compatible
+        # routes are not guaranteed to honor this flag.
+        parallel_tool_calls=(False if ctx.max_tool_calls_per_step == 1 else None),
         enable_prompt_cache=ctx.enable_prompt_cache,
         metadata=request_metadata,
     )

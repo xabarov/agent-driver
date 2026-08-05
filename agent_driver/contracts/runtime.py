@@ -58,6 +58,16 @@ class AgentRunInput(ContractModel):
     deadline_seconds: float | None = None
     max_steps: int | None = None
     max_tool_calls: int | None = None
+    max_tool_calls_per_step: int | None = None
+    """Maximum planned tool calls accepted from one model response.
+
+    ``None`` preserves the provider/runtime default. ``1`` also asks providers
+    that support the OpenAI-compatible control to disable parallel tool calls.
+    The runtime still enforces this limit before approval or execution because
+    provider support is advisory and route-dependent. Calls above the limit are
+    suppressed, never queued for a later step; after the accepted calls finish,
+    the model observes their results and decides what to do next.
+    """
     cost_budget_usd: float | None = None
     temperature: float | None = None
     """Sampling temperature passed through to ``LlmRequest.temperature`` for
@@ -152,7 +162,7 @@ class AgentRunInput(ContractModel):
         """Validate positive deadline seconds when provided."""
         return ensure_positive_float(value, field_name="deadline_seconds")
 
-    @field_validator("max_steps", "max_tool_calls")
+    @field_validator("max_steps", "max_tool_calls", "max_tool_calls_per_step")
     @classmethod
     def validate_positive_optional_ints(cls, value: int | None) -> int | None:
         """Validate positive numeric run limits."""

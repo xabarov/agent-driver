@@ -343,6 +343,11 @@ def build_trimmed_request(
                 if isinstance(tool_choice, str)
                 else (tool_choice if isinstance(tool_choice, dict) else None)
             ),
+            max_tool_calls_per_step=(
+                context.run_input.max_tool_calls_per_step
+                if context.run_input.max_tool_calls_per_step is not None
+                else host._config.default_max_tool_calls_per_step
+            ),
             request_allowed_tools=request_allowed_tools,
             enable_prompt_cache=host._config.enable_prompt_cache,
             harness_profiles=host._config.harness_profiles,

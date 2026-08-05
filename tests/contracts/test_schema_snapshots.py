@@ -59,6 +59,7 @@ PUBLIC_CONTRACT_FIELD_SNAPSHOTS: dict[str, tuple[str, ...]] = {
         "deadline_seconds",
         "max_steps",
         "max_tool_calls",
+        "max_tool_calls_per_step",
         "cost_budget_usd",
         "temperature",
         "max_tokens",
