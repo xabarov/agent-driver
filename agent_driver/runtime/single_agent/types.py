@@ -52,6 +52,8 @@ from agent_driver.subagents.store import SubagentStore
 from agent_driver.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
+    from agent_driver.contracts.execution_lease import LeaseOwnership
+    from agent_driver.execution.lease import ExecutionLeaseManager
     from agent_driver.execution.protocol import ExecutionBackend
 
 _TRIMMING_FIELDS = {item.name for item in fields(TrimmingSettings)}
@@ -123,6 +125,11 @@ class RunnerConfig:
     # tools. None keeps the default local subprocess + local-disk behavior. The
     # model never selects it; governance stays above dispatch.
     execution_backend: "ExecutionBackend | None"
+    # EPIC-03: when set, a lease-capable backend acquires a workspace lease with
+    # this ownership at run start (reused across steps, released/detached on exit).
+    # None keeps stateless backend use (EPIC-01/02). A host-supplied attach ref in
+    # ``app_metadata["execution_lease_ref"]`` attaches instead of acquiring.
+    execution_lease_ownership: "LeaseOwnership | None"
     tool_registry: ToolRegistry | None
     command_queue_store: CommandQueueStore | None
     approval_store: ApprovalConsumptionStore | None
@@ -228,6 +235,7 @@ class RunnerConfig:
         self.subagent_mailbox_store = kwargs.pop("subagent_mailbox_store", None)
         self.code_executor = kwargs.pop("code_executor", None)
         self.execution_backend = kwargs.pop("execution_backend", None)
+        self.execution_lease_ownership = kwargs.pop("execution_lease_ownership", None)
         self.tool_registry = kwargs.pop("tool_registry", None)
         self.command_queue_store = kwargs.pop("command_queue_store", None)
         self.approval_store = kwargs.pop("approval_store", None)
@@ -468,6 +476,12 @@ class RunContext:
     # ``RunnerConfig.execution_backend``. Lives on RunContext, not on the
     # JSON-serialisable ``AgentRunInput``, for the same reason as ``abort_handle``.
     execution_backend: "ExecutionBackend | None" = None
+    # EPIC-03: the run's execution-lease manager (live; holds the acquired/attached
+    # lease). Set inside the drive loop after acquire; the outer run() finally
+    # closes it exactly once. Lives here, not on the JSON AgentRunInput, for the
+    # same reason as ``execution_backend`` — the durable part is the lease REF in
+    # ``metadata["execution_lease_ref"]``, not this live object.
+    execution_lease_manager: "ExecutionLeaseManager | None" = None
 
     @property
     def run_id(self) -> str:

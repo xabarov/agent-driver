@@ -73,6 +73,32 @@ def get_capability_snapshot() -> Any | None:
     return _capability_snapshot.get()
 
 
+# EPIC-03: the run-scoped active execution lease (an ``ExecutionLease``, stored as
+# Any to keep this leaf module free of a lease-contracts import). ``None`` means
+# no lease was acquired/attached for this run — tools use the stateless path.
+_execution_lease: ContextVar[Any | None] = ContextVar("execution_lease", default=None)
+
+
+def get_execution_lease() -> Any | None:
+    """Return the run-scoped active execution lease, or ``None``."""
+    return _execution_lease.get()
+
+
+@contextmanager
+def execution_lease_scope(lease: Any | None) -> Iterator[None]:
+    """Temporarily expose the active execution lease to workspace tool routing.
+
+    Installed once per run by the runner after acquire/attach, alongside the
+    command/fs/capability scopes, so filesystem tools reach the lease the same
+    way they reach the capability snapshot.
+    """
+    token = _execution_lease.set(lease)
+    try:
+        yield
+    finally:
+        _execution_lease.reset(token)
+
+
 @contextmanager
 def capability_snapshot_scope(snapshot: Any | None) -> Iterator[None]:
     """Temporarily expose the backend capability snapshot to tool routing.
@@ -368,6 +394,8 @@ __all__ = [
     "fs_io_scope",
     "capability_snapshot_scope",
     "get_capability_snapshot",
+    "execution_lease_scope",
+    "get_execution_lease",
     "get_command_runner",
     "get_fs_io",
     "get_workspace_cwd",

@@ -57,14 +57,21 @@ from agent_driver.runtime.tools import fake_noop_tool_executor
 from agent_driver.subagents.mailbox import InMemorySubagentMailboxStore
 from agent_driver.subagents.store import InMemorySubagentStore
 from agent_driver.tools import register_builtin_tools, register_planning_tool
+from agent_driver.contracts.execution_lease import (
+    ExecutionLeaseRef,
+    ExecutionLeaseRequest,
+)
 from agent_driver.execution.adapters import BackendCommandRunner, BackendFileIO
 from agent_driver.execution.capabilities import resolve_capability_snapshot
+from agent_driver.execution.errors import UnsupportedCapabilityError
+from agent_driver.execution.lease import ExecutionLeaseManager, LeaseNotUsableError
 
 if TYPE_CHECKING:
     from agent_driver.execution.protocol import ExecutionBackend
 from agent_driver.tools.context import (
     capability_snapshot_scope,
     command_runner_scope,
+    execution_lease_scope,
     fs_io_scope,
     workspace_cwd_scope,
 )
@@ -253,6 +260,10 @@ class SingleAgentRunner(
                 await self._dispatch_run_error(context, output)
                 return output
             finally:
+                # EPIC-03: authoritative, idempotent lease release/detach on EVERY
+                # exit (normal, exception, timeout, cancellation). Safe when no
+                # lease was acquired (``output`` may be None here).
+                await self._release_execution_lease(context)
                 _annotate_run_span_output(run_span, output)
 
     def _maybe_replay_prior_result(
@@ -361,6 +372,81 @@ class SingleAgentRunner(
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("run lifecycle on_error hook failed")
 
+    def _resolved_backend(self, context: _RunContext) -> "ExecutionBackend | None":
+        return context.execution_backend or getattr(
+            self._config, "execution_backend", None
+        )
+
+    def _lease_attach_ref(self, context: _RunContext) -> ExecutionLeaseRef | None:
+        """Parse a persisted/host-supplied lease reference from run metadata.
+
+        Covers both resume (the runner wrote it after acquire) and a host-owned
+        attach (``app_metadata["execution_lease_ref"]``). A malformed value is
+        ignored rather than crashing the run.
+        """
+        raw = context.metadata.get("execution_lease_ref")
+        if not isinstance(raw, dict):
+            return None
+        try:
+            return ExecutionLeaseRef.model_validate(raw)
+        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            return None
+
+    async def _setup_execution_lease(
+        self, context: _RunContext, backend: object, stack: "contextlib.ExitStack"
+    ) -> AgentRunOutput | None:
+        """Acquire or attach the run's workspace lease, or return a terminal
+        FAILED output on fail-closed. Returns ``None`` when no lease is needed."""
+        attach_ref = self._lease_attach_ref(context)
+        ownership = getattr(self._config, "execution_lease_ownership", None)
+        if attach_ref is None and ownership is None:
+            return None  # no lease requested — stateless backend use
+        manager = ExecutionLeaseManager()
+        try:
+            if attach_ref is not None:
+                lease = await manager.attach_by_ref(backend, attach_ref)
+            else:
+                request = ExecutionLeaseRequest(
+                    request_id=f"{context.run_id}:{context.attempt_id}:lease",
+                    backend_id=getattr(backend, "backend_id", "unknown"),
+                    ownership=ownership,
+                    workspace_id=context.run_input.workspace_id,
+                )
+                lease = await manager.acquire_or_attach(backend, request)
+        except (LeaseNotUsableError, UnsupportedCapabilityError) as exc:
+            # Fail closed: a requested lease could not be secured. Never fall back
+            # to local execution — terminate with a typed FAILED outcome.
+            context.metadata["execution_lease_failure"] = {
+                "reason_code": exc.code,
+                "message": exc.message,
+            }
+            self._emit(
+                EventSpec(
+                    run_id=context.run_id,
+                    attempt_id=context.attempt_id,
+                    event_type=RuntimeEventType.RUN_FAILED,
+                    payload={"reason": "execution_lease_unavailable"},
+                )
+            )
+            return self._build_output(
+                context,
+                TerminalResult(
+                    status=RunStatus.FAILED, reason=TerminalReason.RUNTIME_ERROR
+                ),
+            )
+        context.execution_lease_manager = manager
+        context.metadata["execution_lease_ref"] = lease.ref.model_dump(mode="json")
+        stack.enter_context(execution_lease_scope(lease))
+        return None
+
+    async def _release_execution_lease(self, context: _RunContext) -> None:
+        """Idempotently release (runtime-owned) or detach (host-owned) the lease.
+        Called from the outer ``finally`` on every exit; never raises."""
+        manager = getattr(context, "execution_lease_manager", None)
+        if manager is None:
+            return
+        await manager.close(self._resolved_backend(context))
+
     async def _drive_steps(self, context: _RunContext) -> AgentRunOutput:
         """Drive the deterministic step loop to a terminal output.
 
@@ -392,6 +478,14 @@ class SingleAgentRunner(
                 stack.enter_context(command_runner_scope(BackendCommandRunner(backend)))
                 stack.enter_context(fs_io_scope(BackendFileIO(backend)))
                 stack.enter_context(capability_snapshot_scope(capability_snapshot))
+                # EPIC-03: acquire/attach the workspace lease once, reuse across
+                # the loop. On fail-closed it returns a terminal FAILED output
+                # (never a silent local fallback after a lease was requested).
+                lease_terminal = await self._setup_execution_lease(
+                    context, backend, stack
+                )
+                if lease_terminal is not None:
+                    return lease_terminal
             while context.step_name != "done":
                 terminal = self._terminal_from_limits(context)
                 if terminal is not None:
