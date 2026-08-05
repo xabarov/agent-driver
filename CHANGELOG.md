@@ -29,6 +29,13 @@ change between minor versions.
   `render_chat_stream` render loop lost its two most tangled inline blocks to the
   `_run_failure_hint` / `_completed_tool_card` helpers. Behavior-preserving; the
   `agent_driver.cli` surface is unchanged.
+- **Internal: split the `mcp_server/governance` god-module (1030 lines → 72).**
+  Behaviour-neutral split into `governance_core` (catalog, registry, approval,
+  provenance, usage, policies — 20 functions) and `governance_report` (support-bundle
+  projection, compatibility report, evidence index, markdown, artifact write/replay,
+  deterministic seeds — 15 functions), verified one-directional (report→core, no
+  cycle). `governance` is now a thin re-export shim, so every existing
+  `agent_driver.mcp_server.governance` import (and its `__all__`) is unchanged.
 - **Internal: consolidated the observer-redaction and artifact-manifest dups.**
   The three copies of the recursive `_redact_value` + base_url-aware
   `_is_sensitive_key` (support_bundle / provenance / stream projection) collapse to
