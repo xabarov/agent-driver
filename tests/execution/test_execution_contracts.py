@@ -140,9 +140,15 @@ _FACADE_EXPORTS = {
     "CapabilityAwareBackend",
     "LeaseCapableBackend",
     "WorkspaceCapableBackend",
+    "JobCapableBackend",
     # lease manager
     "ExecutionLeaseManager",
     "LeaseNotUsableError",
+    # job observation
+    "JobObserver",
+    "TerminalConflictError",
+    "fence_stale",
+    "initial_cursor",
     # workspace path safety
     "validate_workspace_path",
     "WorkspacePathError",
@@ -222,6 +228,20 @@ _FACADE_EXPORTS = {
     "ExecutionStatResult",
     "ExecutionDeleteRequest",
     "ExecutionDeleteResult",
+    # job contracts
+    "EXECUTION_JOB_SCHEMA_VERSION",
+    "ExecutionJobState",
+    "ExecutionEventKind",
+    "ExecutionControlKind",
+    "ExecutionReasonCode",
+    "ExecutionHandle",
+    "ExecutionEvent",
+    "ExecutionEventCursor",
+    "ExecutionEventPage",
+    "ExecutionTerminalSnapshot",
+    "ExecutionControlRequest",
+    "ExecutionControlReceipt",
+    "TeardownReceipt",
 }
 
 _CONTRACT_FIELD_SNAPSHOTS = {

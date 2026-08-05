@@ -30,6 +30,15 @@ from agent_driver.contracts.execution_lease import (
     ExecutionLeaseRef,
     ExecutionLeaseRequest,
 )
+from agent_driver.contracts.execution_job import (
+    ExecutionControlRequest,
+    ExecutionControlReceipt,
+    ExecutionEventCursor,
+    ExecutionEventPage,
+    ExecutionHandle,
+    ExecutionTerminalSnapshot,
+    TeardownReceipt,
+)
 from agent_driver.contracts.execution_workspace import (
     ExecutionDeleteRequest,
     ExecutionDeleteResult,
@@ -130,9 +139,46 @@ class WorkspaceCapableBackend(ExecutionBackend, Protocol):
         """Delete a path (optionally recursive). Idempotent on a missing path."""
 
 
+@runtime_checkable
+class JobCapableBackend(ExecutionBackend, Protocol):
+    """An ``ExecutionBackend`` that runs reconnectable execution JOBS (EPIC-04).
+
+    Optional: a backend without these still runs the blocking ``run_command``.
+    ``start_job`` is idempotent on ``request.identity.request_id`` and returns a
+    safe ``ExecutionHandle``; ``lookup_job`` resolves a lost start reply by that
+    idempotency key. ``observe`` returns bounded, ordered event pages from a
+    cursor (duplicate-tolerant, gap-flagged); ``snapshot`` resolves terminal
+    state without re-dispatch. ``control`` and ``teardown`` report truthful,
+    capability-backed, SEPARATE facts.
+    """
+
+    async def start_job(self, request: ExecutionCommandRequest) -> ExecutionHandle:
+        """Idempotently start a job; the same idempotency key never starts two."""
+
+    async def lookup_job(self, idempotency_key: str) -> ExecutionHandle | None:
+        """Resolve a job by its start idempotency key (lost-start recovery)."""
+
+    async def observe(
+        self, handle: ExecutionHandle, cursor: ExecutionEventCursor
+    ) -> ExecutionEventPage:
+        """Return the next bounded page of ordered events from ``cursor``."""
+
+    async def snapshot(self, handle: ExecutionHandle) -> ExecutionTerminalSnapshot:
+        """Return the current terminal snapshot without re-dispatching."""
+
+    async def control(
+        self, request: ExecutionControlRequest
+    ) -> ExecutionControlReceipt:
+        """Apply the strongest supported control; report accepted/applied facts."""
+
+    async def teardown(self, handle: ExecutionHandle) -> TeardownReceipt:
+        """Request environment teardown (a fact SEPARATE from execution-terminal)."""
+
+
 __all__ = [
     "ExecutionBackend",
     "CapabilityAwareBackend",
     "LeaseCapableBackend",
     "WorkspaceCapableBackend",
+    "JobCapableBackend",
 ]

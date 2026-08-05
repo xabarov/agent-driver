@@ -35,6 +35,17 @@ from agent_driver.contracts.execution_lease import (
     LeaseState,
     WorkspacePaths,
 )
+from agent_driver.contracts.execution_job import (
+    ExecutionControlReceipt,
+    ExecutionControlRequest,
+    ExecutionEventCursor,
+    ExecutionEventPage,
+    ExecutionHandle,
+    ExecutionReasonCode,
+    ExecutionTerminalSnapshot,
+    TeardownReceipt,
+)
+from agent_driver.contracts.execution_lease import LeaseOwnership as _LeaseOwnership
 from agent_driver.contracts.execution_workspace import (
     ExecutionDeleteRequest,
     ExecutionDeleteResult,
@@ -114,6 +125,19 @@ class FakeExecutionBackend:
     lease_releases: list[ExecutionLeaseRef] = field(default_factory=list)
     lease_detaches: list[ExecutionLeaseRef] = field(default_factory=list)
     _lease_seq: int = 0
+    # Job scripting (EPIC-04). ``job_pages`` are returned by observe() in order;
+    # ``job_terminal`` by snapshot(); ``lose_start`` makes start_job raise while
+    # lookup_job still resolves the same handle (lost-start recovery).
+    job_pages: list[ExecutionEventPage] = field(default_factory=list)
+    job_terminal: "ExecutionTerminalSnapshot | None" = None
+    lose_start: bool = False
+    control_receipt: "ExecutionControlReceipt | None" = None
+    teardown_confirmed: bool = False
+    job_starts: list[ExecutionHandle] = field(default_factory=list)
+    job_controls: list[ExecutionControlRequest] = field(default_factory=list)
+    job_teardowns: list[ExecutionHandle] = field(default_factory=list)
+    _job_observe_calls: int = 0
+    _known_jobs: dict[str, ExecutionHandle] = field(default_factory=dict)
 
     async def run_command(
         self, request: ExecutionCommandRequest
@@ -313,6 +337,79 @@ class FakeExecutionBackend:
             self.files.pop(p, None)
         return ExecutionDeleteResult(
             identity=request.identity, path=request.path, deleted=bool(targets)
+        )
+
+    # -- execution jobs (EPIC-04) ----------------------------------------- #
+    def _handle_for(self, request: ExecutionCommandRequest) -> ExecutionHandle:
+        key = request.identity.request_id
+        return ExecutionHandle(
+            job_id=f"job-{key}",
+            idempotency_key=key,
+            backend_id=self.backend_id,
+            execution_generation="gen-1",
+        )
+
+    async def start_job(self, request: ExecutionCommandRequest) -> ExecutionHandle:
+        handle = self._handle_for(request)
+        self._known_jobs[handle.idempotency_key] = handle
+        if self.lose_start:
+            # transport dropped the reply — the job exists but the caller must
+            # resolve it via lookup_job(idempotency_key).
+            raise ExecutionTimeoutError("fake lost start reply")
+        self.job_starts.append(handle)
+        return handle
+
+    async def lookup_job(self, idempotency_key: str) -> ExecutionHandle | None:
+        return self._known_jobs.get(idempotency_key)
+
+    async def observe(
+        self, handle: ExecutionHandle, cursor: ExecutionEventCursor
+    ) -> ExecutionEventPage:
+        idx = self._job_observe_calls
+        self._job_observe_calls += 1
+        if idx < len(self.job_pages):
+            return self.job_pages[idx]
+        return ExecutionEventPage(
+            events=(),
+            next_cursor=cursor,
+            complete=self.job_terminal is not None,
+        )
+
+    async def snapshot(self, handle: ExecutionHandle) -> ExecutionTerminalSnapshot:
+        if self.job_terminal is not None:
+            return self.job_terminal
+        from agent_driver.contracts.execution_job import ExecutionJobState
+
+        return ExecutionTerminalSnapshot(
+            handle=handle, state=ExecutionJobState.INDETERMINATE, indeterminate=True
+        )
+
+    async def control(
+        self, request: ExecutionControlRequest
+    ) -> ExecutionControlReceipt:
+        self.job_controls.append(request)
+        if self.control_receipt is not None:
+            return self.control_receipt
+        return ExecutionControlReceipt(
+            handle=request.handle,
+            kind=request.kind,
+            accepted=True,
+            applied=False,
+            reason_code=ExecutionReasonCode.UNSUPPORTED,
+        )
+
+    async def teardown(self, handle: ExecutionHandle) -> TeardownReceipt:
+        self.job_teardowns.append(handle)
+        return TeardownReceipt(
+            handle=handle,
+            ownership=_LeaseOwnership.RUNTIME_OWNED,
+            requested=True,
+            confirmed=self.teardown_confirmed,
+            reason_code=(
+                ExecutionReasonCode.OK
+                if self.teardown_confirmed
+                else ExecutionReasonCode.UNSUPPORTED
+            ),
         )
 
 

@@ -488,3 +488,57 @@ Confirmed integration seams for the remaining WPs (from inventory):
   only `AgentRunInput`; a lease inherit/share/isolate policy travels as a
   metadata token or widens the callable; cleanup co-locates with
   `cleanup_child_workspace`. Cover all ~10 exit paths idempotently.
+
+## EPIC-04 design decision (recorded 2026-08-05)
+
+Work Package A (job/event/control contracts + fencing observer), on
+`feat/execution-backend-epic04`. Grounded in a full baseline inventory.
+
+1. **New job vocabulary in `contracts/execution_job.py`** — `ExecutionHandle`
+   (safe, durable, generation-bound; `idempotency_key` = start idempotency so a
+   lost start is resolved by lookup, never re-dispatched), `ExecutionEvent`
+   (identity `(execution_generation, sequence)`, bounded 8 KB text,
+   secret-rejecting metadata, `conflicts_with` for protocol-violation detection),
+   `ExecutionEventCursor`/`ExecutionEventPage` (bounded, gap-flagged replay),
+   `ExecutionTerminalSnapshot` (resolves terminal without re-dispatch; a terminal
+   result does NOT imply a released lease), `ExecutionControlRequest`/`Receipt`
+   (accepted vs applied are SEPARATE, capability-driven), `TeardownReceipt`
+   (confirmed teardown is a fact SEPARATE from execution-terminal), enums
+   `ExecutionJobState`/`ExecutionEventKind`/`ExecutionControlKind`/
+   `ExecutionReasonCode`, `EXECUTION_JOB_SCHEMA_VERSION`.
+
+2. **Optional `JobCapableBackend(ExecutionBackend, Protocol)`** with
+   `start_job`/`lookup_job`/`observe`/`snapshot`/`control`/`teardown` — kept
+   separate so EPIC-01/02/03 backends stay valid; a backend without it still runs
+   the blocking `run_command`. Makes the reserved `CapabilityName`
+   EVENT/CONTROL/RECONNECT/TIMEOUT/TEARDOWN real.
+
+3. **`execution/jobs.py` `JobObserver`** — duplicate-tolerant, generation-fenced
+   event accumulation across reconnects; drops stale-generation events and
+   already-seen `(gen, seq)` identities; flags a compaction gap
+   (`needs_snapshot`); `resolve_terminal` is idempotent on a duplicate and raises
+   `TerminalConflictError` on conflicting content, fencing a stale-generation
+   terminal. `FakeExecutionBackend` implements the full job surface with
+   `lose_start`/`job_pages`/`job_terminal`/`control_receipt`/`teardown_confirmed`
+   test knobs.
+
+Confirmed integration seams for the remaining WPs (from inventory):
+- **B (runtime observation bridge):** `progress_events` are currently DROPPED at
+  `runtime/tools.py` (`ToolExecutionResult` has no `progress_events`;
+  `wrap_governed_executor` forwards only traces/envelopes/interrupt/budget) and
+  NO code emits `RuntimeEventType.TOOL_PROGRESS` (the `projection.py:352`
+  consumer is dead for lack of a producer). Add `progress_events` to
+  `ToolExecutionResult` + forward it + emit per-entry `TOOL_PROGRESS` in the tool
+  stage, correlated by `tool_call_id`. A blocking `run_command` stays an adapter
+  over start/observe/snapshot.
+- **C (reconnect + fencing):** persist `ExecutionHandle` + last
+  `ExecutionEventCursor` in `context.metadata` exactly as `execution_lease_ref`
+  (`runner.py:449`/`381-388`); reuse the U4 attempt-epoch fencing
+  (`_fence_and_stamp_envelopes`, `fencing.py`) for folded-in results and
+  `JobObserver`/`fence_stale` for backend generations.
+- **D (Stop + teardown):** map `RunAbortHandle.abort` / live-message STOP
+  (`run_abort_boundary`) to `JobCapableBackend.control`; keep run-terminal,
+  execution-terminal, and teardown receipts independently visible.
+- **E (timing + failure injection):** per-job reason codes
+  (`ExecutionReasonCode.*_TIMEOUT`, `TRANSPORT_LOST`, `INDETERMINATE_DISPATCH`)
+  on receipts/snapshots; prove duplicate/loss/restart/late-result/timeout paths.

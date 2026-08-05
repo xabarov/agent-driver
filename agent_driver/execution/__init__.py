@@ -52,6 +52,21 @@ from agent_driver.contracts.execution_lease import (
     LeaseState,
     WorkspacePaths,
 )
+from agent_driver.contracts.execution_job import (
+    EXECUTION_JOB_SCHEMA_VERSION,
+    ExecutionControlKind,
+    ExecutionControlReceipt,
+    ExecutionControlRequest,
+    ExecutionEvent,
+    ExecutionEventCursor,
+    ExecutionEventKind,
+    ExecutionEventPage,
+    ExecutionHandle,
+    ExecutionJobState,
+    ExecutionReasonCode,
+    ExecutionTerminalSnapshot,
+    TeardownReceipt,
+)
 from agent_driver.contracts.execution_workspace import (
     ExecutionDeleteRequest,
     ExecutionDeleteResult,
@@ -98,6 +113,12 @@ from agent_driver.execution.errors import (
     UnsupportedCapabilityError,
 )
 from agent_driver.execution.fake import CommandOutcome, FakeExecutionBackend
+from agent_driver.execution.jobs import (
+    JobObserver,
+    TerminalConflictError,
+    fence_stale,
+    initial_cursor,
+)
 from agent_driver.execution.lease import ExecutionLeaseManager, LeaseNotUsableError
 from agent_driver.execution.local import LocalExecutionBackend
 from agent_driver.execution.pathsafety import (
@@ -107,6 +128,7 @@ from agent_driver.execution.pathsafety import (
 from agent_driver.execution.protocol import (
     CapabilityAwareBackend,
     ExecutionBackend,
+    JobCapableBackend,
     LeaseCapableBackend,
     WorkspaceCapableBackend,
 )
@@ -117,9 +139,15 @@ __all__ = [
     "CapabilityAwareBackend",
     "LeaseCapableBackend",
     "WorkspaceCapableBackend",
+    "JobCapableBackend",
     # lease manager
     "ExecutionLeaseManager",
     "LeaseNotUsableError",
+    # job observation
+    "JobObserver",
+    "TerminalConflictError",
+    "fence_stale",
+    "initial_cursor",
     # workspace path safety
     "validate_workspace_path",
     "WorkspacePathError",
@@ -199,4 +227,18 @@ __all__ = [
     "ExecutionStatResult",
     "ExecutionDeleteRequest",
     "ExecutionDeleteResult",
+    # job contracts
+    "EXECUTION_JOB_SCHEMA_VERSION",
+    "ExecutionJobState",
+    "ExecutionEventKind",
+    "ExecutionControlKind",
+    "ExecutionReasonCode",
+    "ExecutionHandle",
+    "ExecutionEvent",
+    "ExecutionEventCursor",
+    "ExecutionEventPage",
+    "ExecutionTerminalSnapshot",
+    "ExecutionControlRequest",
+    "ExecutionControlReceipt",
+    "TeardownReceipt",
 ]
