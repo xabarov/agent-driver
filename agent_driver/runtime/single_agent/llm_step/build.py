@@ -314,6 +314,17 @@ def effective_tool_names_from_registry(
     return tuple(names)
 
 
+def _insert_before_last_user(
+    prompt_messages: list[dict[str, Any]], extra: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if not extra:
+        return prompt_messages
+    for index in range(len(prompt_messages) - 1, -1, -1):
+        if str(prompt_messages[index].get("role", "")) == "user":
+            return prompt_messages[:index] + extra + prompt_messages[index:]
+    return prompt_messages + extra
+
+
 def _inject_request_only_context(
     prompt_messages: list[dict[str, Any]], run_input: Any
 ) -> list[dict[str, Any]]:
@@ -327,10 +338,32 @@ def _inject_request_only_context(
     if not extra:
         return prompt_messages
     dumped = [message.model_dump(mode="json") for message in extra]
-    for index in range(len(prompt_messages) - 1, -1, -1):
-        if str(prompt_messages[index].get("role", "")) == "user":
-            return prompt_messages[:index] + dumped + prompt_messages[index:]
-    return prompt_messages + dumped
+    return _insert_before_last_user(prompt_messages, dumped)
+
+
+def _inject_environment_brief(
+    prompt_messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """EPIC-02 WP-D: inject a deterministic, bounded environment brief for the
+    injected backend as request-only context (before the latest user turn).
+
+    Model-visible for this turn only; it never enters the durable transcript.
+    Skipped entirely when no backend/snapshot is in scope, so default runs are
+    byte-for-byte unchanged.
+    """
+    from agent_driver.execution.capabilities import (
+        derive_environment_brief,
+        render_environment_brief_text,
+    )
+    from agent_driver.tools.context import get_capability_snapshot
+
+    snapshot = get_capability_snapshot()
+    if snapshot is None:
+        return prompt_messages
+    text = render_environment_brief_text(derive_environment_brief(snapshot))
+    return _insert_before_last_user(
+        prompt_messages, [{"role": "system", "content": text}]
+    )
 
 
 def build_single_agent_llm_request(
@@ -405,6 +438,7 @@ def build_single_agent_llm_request(
     # run_input.messages, not from the built request) — so it stays model-visible
     # without ever becoming durable dialogue.
     prompt_messages = _inject_request_only_context(prompt_messages, run_input)
+    prompt_messages = _inject_environment_brief(prompt_messages)
     # Harness-profile system slots are applied before trimming so the budget
     # accounts for the prefix/suffix and they cannot be trimmed away.
     harness_profile = select_harness_profile(
@@ -490,17 +524,46 @@ def build_single_agent_llm_request(
     )
     from agent_driver.tools.context import get_capability_snapshot
 
+    capability_snapshot = get_capability_snapshot()
     request_tools = _request_tools_from_registry(
         ctx.registry,
         allowed=request_allowed,
         denied=request_denied,
         surface_deferred=ctx.surface_deferred_tools + adaptive_surface,
-        capability_snapshot=get_capability_snapshot(),
+        capability_snapshot=capability_snapshot,
     )
     if harness_profile is not None:
         request_tools = apply_tool_overrides(request_tools, harness_profile)
     if defer_audit.get("candidate_count"):
         request_metadata = {**request_metadata, "tool_defer_audit": defer_audit}
+    # EPIC-02 WP-E: redaction-safe capability-selection diagnostics on request
+    # metadata (backend id, revision, supported/degraded, withheld tool names) —
+    # never snapshot metadata values or secrets.
+    if capability_snapshot is not None:
+        from agent_driver.execution.capabilities import (
+            capability_diagnostics,
+            derive_environment_brief,
+            tool_is_withheld,
+        )
+
+        _rows_fn = getattr(ctx.registry, "list_registered", None)
+        _withheld = (
+            tuple(
+                item.manifest.name
+                for item in _rows_fn()
+                if tool_is_withheld(item.manifest, capability_snapshot)
+            )
+            if callable(_rows_fn)
+            else ()
+        )
+        request_metadata = {
+            **request_metadata,
+            "capability_audit": capability_diagnostics(
+                capability_snapshot,
+                withheld_tools=_withheld,
+                brief=derive_environment_brief(capability_snapshot),
+            ),
+        }
     request = LlmRequest(
         # E8: strip lone surrogates / NUL so the request can encode to UTF-8.
         messages=sanitize_request_messages(

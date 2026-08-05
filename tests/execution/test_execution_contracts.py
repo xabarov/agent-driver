@@ -151,7 +151,11 @@ _FACADE_EXPORTS = {
     "resolve_capability_snapshot",
     "unknown_snapshot",
     "check_requirement",
+    "check_manifest_requirement",
+    "tool_is_withheld",
     "derive_environment_brief",
+    "render_environment_brief_text",
+    "capability_diagnostics",
     "DEFAULT_BRIEF_MAX_CHARS",
     # errors
     "ExecutionError",

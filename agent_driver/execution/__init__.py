@@ -48,9 +48,13 @@ from agent_driver.execution.adapters import (
 )
 from agent_driver.execution.capabilities import (
     DEFAULT_BRIEF_MAX_CHARS,
+    capability_diagnostics,
+    check_manifest_requirement,
     check_requirement,
     derive_environment_brief,
+    render_environment_brief_text,
     resolve_capability_snapshot,
+    tool_is_withheld,
     unknown_snapshot,
 )
 from agent_driver.execution.composite import CompositeExecutionBackend
@@ -84,7 +88,11 @@ __all__ = [
     "resolve_capability_snapshot",
     "unknown_snapshot",
     "check_requirement",
+    "check_manifest_requirement",
+    "tool_is_withheld",
     "derive_environment_brief",
+    "render_environment_brief_text",
+    "capability_diagnostics",
     "DEFAULT_BRIEF_MAX_CHARS",
     # errors
     "ExecutionError",

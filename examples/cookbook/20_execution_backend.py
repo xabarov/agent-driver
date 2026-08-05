@@ -87,6 +87,29 @@ async def main() -> None:
     )
     print("local command:", res.terminal_state.value, repr(res.stdout))
 
+    # 3) Capabilities (EPIC-02): a backend can report truthful, revisioned facts.
+    #    Agent Driver withholds a tool whose HARD requirement is unmet (pre-model)
+    #    and denies it before dispatch (pre-dispatch), and shows the model a
+    #    bounded environment brief. "unknown" never counts as supported.
+    from agent_driver.execution import (
+        CapabilityName,
+        ToolExecutionRequirement,
+        check_requirement,
+        derive_environment_brief,
+        render_environment_brief_text,
+        resolve_capability_snapshot,
+    )
+
+    snapshot = await resolve_capability_snapshot(local)
+    print("local capabilities:", snapshot.status_of(CapabilityName.COMMAND).state.value)
+
+    needs_reconnect = ToolExecutionRequirement(required=(CapabilityName.RECONNECT,))
+    check = check_requirement(snapshot, needs_reconnect)
+    print("reconnect-requiring tool satisfied:", check.satisfied, "-", check.reason)
+
+    print("--- environment brief the model would see ---")
+    print(render_environment_brief_text(derive_environment_brief(snapshot)))
+
     # To wire a backend into a real agent, pass it to the runner/agent:
     #
     #     from agent_driver.runtime import RunnerConfig

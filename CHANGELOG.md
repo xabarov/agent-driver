@@ -7,6 +7,39 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-05
+
+### Added
+
+- **Execution capabilities & safe environment routing (execution-backend
+  EPIC-02).** A host-injected backend can now report truthful, revisioned
+  capabilities; Agent Driver enforces them above and below the model and shows
+  the model a bounded environment brief. The host stays the only authority that
+  selects the backend.
+  - New capability contracts (in `agent_driver.contracts.execution`, re-exported
+    from `agent_driver.execution`): `ExecutionCapabilitySnapshot` (typed
+    `CapabilityName` → `CapabilityStatus` map, bounded `ProgramInfo` inventory,
+    `environment_revision`/`lease_generation`/`digest`, secret-rejecting
+    `metadata`), `ToolExecutionRequirement`, `RequirementCheck`,
+    `EnvironmentBrief`, and `EXECUTION_CAPABILITY_SCHEMA_VERSION`. The reserved
+    minimal `CapabilitySnapshot` from 0.5.0 is replaced by this fuller model.
+  - Optional `CapabilityAwareBackend` protocol adds `async capabilities()`;
+    `LocalExecutionBackend`/`FakeExecutionBackend`/`CompositeExecutionBackend`
+    report truthfully. A backend that does not implement it is treated as
+    all-`UNKNOWN` (hard requirements then fail closed).
+  - Routing helpers `resolve_capability_snapshot` (fail-safe to all-`UNKNOWN`),
+    `check_requirement`/`check_manifest_requirement`/`tool_is_withheld`,
+    `derive_environment_brief`, `render_environment_brief_text`,
+    `capability_diagnostics`.
+  - `ToolManifest.execution_requirement` (host/registry data, never a model
+    argument): a tool with an unmet HARD requirement is withheld from the model
+    schema (pre-model) and denied before dispatch (pre-dispatch, anti-TOCTOU,
+    typed `capability_unmet`). The runner performs one capability handshake per
+    run and exposes it to both checks via a run-scoped snapshot.
+  - The deterministic environment brief is injected as request-only context
+    (never persisted); a redaction-safe `capability_audit` rides request
+    metadata. Default runs with no backend / no requirements are unchanged.
+
 ## [0.5.0] - 2026-08-05
 
 ### Added

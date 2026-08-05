@@ -121,6 +121,33 @@ def derive_environment_brief(
     )
 
 
+def render_environment_brief_text(brief: EnvironmentBrief) -> str:
+    """Render a brief as a compact, deterministic, request-only prompt block.
+
+    Only non-empty sections appear. Unknown/unsupported capabilities are never
+    described as available (they are already omitted from the brief). The text
+    is guidance for the model, explicitly not an authorization boundary.
+    """
+    lines = [
+        f"Execution environment (capability revision {brief.capability_revision}):"
+    ]
+    if brief.supported:
+        lines.append(f"- available capabilities: {', '.join(brief.supported)}")
+    if brief.degraded:
+        lines.append(f"- degraded capabilities: {', '.join(brief.degraded)}")
+    if brief.programs:
+        lines.append(f"- available programs: {', '.join(brief.programs)}")
+    if brief.limitations:
+        lines.append(f"- limitations: {'; '.join(brief.limitations)}")
+    if brief.truncated:
+        lines.append("- (environment summary truncated)")
+    lines.append(
+        "Tools requiring capabilities not listed here are hidden. This is "
+        "guidance about the prepared environment, not an authorization boundary."
+    )
+    return "\n".join(lines)
+
+
 def check_requirement(
     snapshot: ExecutionCapabilitySnapshot,
     requirement: ToolExecutionRequirement,
@@ -184,6 +211,34 @@ def tool_is_withheld(
     return check is not None and not check.satisfied
 
 
+def capability_diagnostics(
+    snapshot: ExecutionCapabilitySnapshot,
+    *,
+    withheld_tools: tuple[str, ...] = (),
+    brief: EnvironmentBrief | None = None,
+) -> dict[str, object]:
+    """A redaction-safe diagnostics payload for capability selection.
+
+    Backend id, capability revision, observed status counts, and the names of
+    tools withheld this step — never snapshot metadata values or secrets. Safe
+    to place on request metadata / events / traces.
+    """
+    return {
+        "backend_id": snapshot.backend_id,
+        "environment_revision": snapshot.environment_revision,
+        "capability_revision": (
+            brief.capability_revision
+            if brief is not None
+            else (snapshot.digest or snapshot.environment_revision)
+        ),
+        "lease_generation": snapshot.lease_generation,
+        "supported": list(brief.supported) if brief is not None else [],
+        "degraded": list(brief.degraded) if brief is not None else [],
+        "withheld_tools": list(withheld_tools),
+        "brief_truncated": bool(brief.truncated) if brief is not None else False,
+    }
+
+
 __all__ = [
     "DEFAULT_BRIEF_MAX_CHARS",
     "unknown_snapshot",
@@ -192,4 +247,6 @@ __all__ = [
     "check_requirement",
     "check_manifest_requirement",
     "tool_is_withheld",
+    "render_environment_brief_text",
+    "capability_diagnostics",
 ]
