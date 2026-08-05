@@ -29,6 +29,13 @@ change between minor versions.
   `render_chat_stream` render loop lost its two most tangled inline blocks to the
   `_run_failure_hint` / `_completed_tool_card` helpers. Behavior-preserving; the
   `agent_driver.cli` surface is unchanged.
+- **Internal: split the `skills/lifecycle` god-module (1191 lines → 80).**
+  Continuing the earlier `lifecycle_common` / `lifecycle_evidence` extraction, the
+  remaining bulk splits into `lifecycle_inventory` (skill id/inventory/lock/diff +
+  selection decisions — 24 symbols) and `lifecycle_report` (compatibility report,
+  usage summary, hook/adapter projections, support-bundle projection, seeds — 15),
+  call-graph-verified one-directional (report→inventory, no cycle). `lifecycle` is
+  now a thin re-export shim preserving every existing import and its `__all__`.
 - **Internal: split the `mcp_server/governance` god-module (1030 lines → 72).**
   Behaviour-neutral split into `governance_core` (catalog, registry, approval,
   provenance, usage, policies — 20 functions) and `governance_report` (support-bundle
