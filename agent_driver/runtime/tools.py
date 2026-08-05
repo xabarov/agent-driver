@@ -25,6 +25,11 @@ class ToolExecutionResult:
     interrupt: InterruptRequest | None = None
     # Epic 033 B tier 3 — raw-free per-turn output-budget audit (or None).
     turn_output_budget_audit: dict | None = None
+    # EPIC-04 WP-B — intermediate progress entries captured during tool
+    # execution (``ProgressEntry`` list; untyped here to avoid importing the
+    # executor internals into the runtime protocol). The tool stage projects
+    # each into a ``RuntimeEventType.TOOL_PROGRESS`` event, in order.
+    progress_events: list = field(default_factory=list)
 
 
 # Executors accept an optional ``tool_gate`` kwarg added in A0.2. Older
@@ -92,6 +97,7 @@ def wrap_governed_executor(executor: GovernedExecutorLike) -> ToolExecutor:
             turn_output_budget_audit=getattr(
                 governed, "turn_output_budget_audit", None
             ),
+            progress_events=list(getattr(governed, "progress_events", []) or []),
         )
 
     return _run

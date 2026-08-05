@@ -242,6 +242,7 @@ async def execute_allowed_path(
                 call_index=spec.index,
                 tool_name=spec.call.tool_name,
                 progress=progress,
+                tool_call_id=spec.call.tool_call_id,
             )
 
         # U4 — expose a cooperative cancellation signal to the handler so it can

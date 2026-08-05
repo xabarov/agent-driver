@@ -21,6 +21,9 @@ class ProgressEntry:
     call_index: int
     tool_name: str
     progress: ToolProgress
+    # EPIC-04 WP-B: the originating tool_call_id, so a projected TOOL_PROGRESS
+    # runtime event correlates to the same call as its trace/envelope.
+    tool_call_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -58,6 +61,7 @@ class GovernedExecutionResult:
         call_index: int,
         tool_name: str,
         progress: ToolProgress,
+        tool_call_id: str | None = None,
     ) -> None:
         """Append one progress update from an in-flight tool handler."""
         self.progress_events.append(
@@ -65,5 +69,6 @@ class GovernedExecutionResult:
                 call_index=call_index,
                 tool_name=tool_name,
                 progress=progress,
+                tool_call_id=tool_call_id,
             )
         )

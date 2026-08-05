@@ -209,10 +209,13 @@ async def execute_tool_stage_step(
         host,
         context,
         stage="tool_stage",
-        interval=getattr(getattr(host, "_config", None), "stage_heartbeat_seconds", None),
+        interval=getattr(
+            getattr(host, "_config", None), "stage_heartbeat_seconds", None
+        ),
     ):
         result = await host._tool_result_with_approved_override(context)
     host._store_tool_stage_outputs(context, result)
+    _emit_tool_progress_events(host, context, result)
     _post_process_tool_result(host, context, result)
     emit_plan_lifecycle_events(host, context, result)
     interrupt_result = _try_build_interrupt_transition(host, context, result)
@@ -480,6 +483,7 @@ async def _maybe_finalize_from_tool_evidence(
             reason="finalize_when_tools_satisfied",
         )
         return True
+
     def _emit_hook_event(event_type: str, payload: dict) -> None:
         host._emit(
             EventSpec(
@@ -500,6 +504,34 @@ async def _maybe_finalize_from_tool_evidence(
         nc.set_early_finalize(context, answer=directive.answer, reason=directive.reason)
         return True
     return False
+
+
+def _emit_tool_progress_events(
+    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
+) -> None:
+    """EPIC-04 WP-B: project each captured tool-progress entry into a
+    ``RuntimeEventType.TOOL_PROGRESS`` runtime event, correlated by tool_call_id.
+
+    This is what makes a handler's ``report_tool_progress`` (and a backend job's
+    bounded observed events, surfaced through it) reach the runtime event log /
+    stream projection. No progress entries ⇒ no events (zero overhead)."""
+    for entry in getattr(result, "progress_events", None) or []:
+        progress = getattr(entry, "progress", None)
+        if progress is None:
+            continue
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.TOOL_PROGRESS,
+            payload={
+                "tool_call_id": getattr(entry, "tool_call_id", None),
+                "tool_name": getattr(entry, "tool_name", None),
+                "call_index": getattr(entry, "call_index", None),
+                "kind": getattr(progress, "kind", None),
+                "message": getattr(progress, "message", None),
+                "completion_ratio": getattr(progress, "completion_ratio", None),
+            },
+        )
 
 
 def _emit_tool_completed_if_needed(
