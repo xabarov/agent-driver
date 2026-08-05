@@ -30,6 +30,18 @@ from agent_driver.contracts.execution_lease import (
     ExecutionLeaseRef,
     ExecutionLeaseRequest,
 )
+from agent_driver.contracts.execution_workspace import (
+    ExecutionDeleteRequest,
+    ExecutionDeleteResult,
+    ExecutionGlobRequest,
+    ExecutionGlobResult,
+    ExecutionGrepRequest,
+    ExecutionGrepResult,
+    ExecutionListRequest,
+    ExecutionListResult,
+    ExecutionStatRequest,
+    ExecutionStatResult,
+)
 
 
 @runtime_checkable
@@ -94,4 +106,33 @@ class LeaseCapableBackend(ExecutionBackend, Protocol):
         """Relinquish a HOST-owned lease without destroying it. Idempotent."""
 
 
-__all__ = ["ExecutionBackend", "CapabilityAwareBackend", "LeaseCapableBackend"]
+@runtime_checkable
+class WorkspaceCapableBackend(ExecutionBackend, Protocol):
+    """An ``ExecutionBackend`` that also serves workspace enumeration/search/stat/
+    delete against its leased filesystem (EPIC-03 WP-C). Optional: a backend
+    without these can still do command + text read/write. Paths are
+    backend-relative and validated against the lease ``WorkspacePaths`` before a
+    method here is reached."""
+
+    async def list_dir(self, request: ExecutionListRequest) -> ExecutionListResult:
+        """Enumerate entries under a directory (optionally recursive)."""
+
+    async def glob(self, request: ExecutionGlobRequest) -> ExecutionGlobResult:
+        """Return paths matching a glob pattern under a base path."""
+
+    async def grep(self, request: ExecutionGrepRequest) -> ExecutionGrepResult:
+        """Return regex matches across files under a base path."""
+
+    async def stat(self, request: ExecutionStatRequest) -> ExecutionStatResult:
+        """Return existence/kind/size for a path."""
+
+    async def delete(self, request: ExecutionDeleteRequest) -> ExecutionDeleteResult:
+        """Delete a path (optionally recursive). Idempotent on a missing path."""
+
+
+__all__ = [
+    "ExecutionBackend",
+    "CapabilityAwareBackend",
+    "LeaseCapableBackend",
+    "WorkspaceCapableBackend",
+]

@@ -8,6 +8,8 @@ the host machine.
 
 from __future__ import annotations
 
+import fnmatch
+import re
 from dataclasses import dataclass, field
 
 from agent_driver.contracts.execution import (
@@ -31,6 +33,20 @@ from agent_driver.contracts.execution_lease import (
     LeaseOwnership,
     LeaseState,
     WorkspacePaths,
+)
+from agent_driver.contracts.execution_workspace import (
+    ExecutionDeleteRequest,
+    ExecutionDeleteResult,
+    ExecutionGlobRequest,
+    ExecutionGlobResult,
+    ExecutionGrepRequest,
+    ExecutionGrepResult,
+    ExecutionListRequest,
+    ExecutionListResult,
+    ExecutionStatRequest,
+    ExecutionStatResult,
+    GrepMatch,
+    WorkspaceEntry,
 )
 from agent_driver.execution.errors import (
     ExecutionTimeoutError,
@@ -203,6 +219,97 @@ class FakeExecutionBackend:
 
     async def detach_lease(self, ref: ExecutionLeaseRef) -> None:
         self.lease_detaches.append(ref)
+
+    # -- workspace operations (EPIC-03 WP-C) ------------------------------ #
+    def _under(self, base: str) -> list[str]:
+        prefix = base.rstrip("/") + "/"
+        return [p for p in self.files if p == base or p.startswith(prefix)]
+
+    async def list_dir(self, request: ExecutionListRequest) -> ExecutionListResult:
+        prefix = request.path.rstrip("/") + "/"
+        seen: dict[str, WorkspaceEntry] = {}
+        for p in self.files:
+            if not p.startswith(prefix):
+                continue
+            rest = p[len(prefix) :]
+            if not request.recursive and "/" in rest:
+                # only the immediate child directory
+                child = prefix + rest.split("/", 1)[0]
+                seen.setdefault(child, WorkspaceEntry(path=child, is_dir=True))
+            else:
+                seen[p] = WorkspaceEntry(
+                    path=p, is_dir=False, size_bytes=len(self.files[p].encode())
+                )
+        entries = tuple(seen.values())[: request.max_entries]
+        return ExecutionListResult(
+            identity=request.identity,
+            entries=entries,
+            truncated=len(seen) > request.max_entries,
+        )
+
+    async def glob(self, request: ExecutionGlobRequest) -> ExecutionGlobResult:
+        prefix = request.base_path.rstrip("/") + "/"
+        matches = [
+            p
+            for p in sorted(self.files)
+            if p.startswith(prefix)
+            and fnmatch.fnmatch(p[len(prefix) :], request.pattern)
+        ]
+        return ExecutionGlobResult(
+            identity=request.identity,
+            paths=tuple(matches[: request.max_entries]),
+            truncated=len(matches) > request.max_entries,
+        )
+
+    async def grep(self, request: ExecutionGrepRequest) -> ExecutionGrepResult:
+        regex = re.compile(request.pattern)
+        prefix = request.base_path.rstrip("/") + "/"
+        matches: list[GrepMatch] = []
+        for p in sorted(self.files):
+            if not (p == request.base_path or p.startswith(prefix)):
+                continue
+            if request.path_glob and not fnmatch.fnmatch(p, request.path_glob):
+                continue
+            for i, line in enumerate(self.files[p].splitlines(), start=1):
+                if regex.search(line):
+                    matches.append(GrepMatch(path=p, line_number=i, line=line))
+                    if len(matches) >= request.max_matches:
+                        return ExecutionGrepResult(
+                            identity=request.identity,
+                            matches=tuple(matches),
+                            truncated=True,
+                        )
+        return ExecutionGrepResult(
+            identity=request.identity, matches=tuple(matches), truncated=False
+        )
+
+    async def stat(self, request: ExecutionStatRequest) -> ExecutionStatResult:
+        if request.path in self.files:
+            return ExecutionStatResult(
+                identity=request.identity,
+                path=request.path,
+                exists=True,
+                is_dir=False,
+                size_bytes=len(self.files[request.path].encode()),
+            )
+        is_dir = any(p.startswith(request.path.rstrip("/") + "/") for p in self.files)
+        return ExecutionStatResult(
+            identity=request.identity,
+            path=request.path,
+            exists=is_dir,
+            is_dir=is_dir,
+        )
+
+    async def delete(self, request: ExecutionDeleteRequest) -> ExecutionDeleteResult:
+        if request.recursive:
+            targets = self._under(request.path)
+        else:
+            targets = [request.path] if request.path in self.files else []
+        for p in targets:
+            self.files.pop(p, None)
+        return ExecutionDeleteResult(
+            identity=request.identity, path=request.path, deleted=bool(targets)
+        )
 
 
 __all__ = ["FakeExecutionBackend", "CommandOutcome"]

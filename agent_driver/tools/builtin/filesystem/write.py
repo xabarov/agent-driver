@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.contracts.execution import CapabilityName, ToolExecutionRequirement
 from agent_driver.tools.builtin.filesystem._edit_result import edit_output_schema
 from agent_driver.tools.builtin.filesystem._paths import (
     MAX_BYTES_DEFAULT,
@@ -36,6 +37,11 @@ def file_write_manifest() -> ToolManifest:
         timeout_seconds=10.0,
         output_char_budget=4000,
         idempotent=False,
+        # EPIC-03: requires FILE_WRITE from an injected backend (withheld/denied
+        # otherwise; no local fallback). Skipped for default local runs.
+        execution_requirement=ToolExecutionRequirement(
+            required=(CapabilityName.FILE_WRITE,)
+        ),
         args_schema={
             "type": "object",
             "properties": {

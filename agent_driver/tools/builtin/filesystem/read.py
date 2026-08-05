@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.contracts.execution import CapabilityName, ToolExecutionRequirement
 from agent_driver.tools.builtin.filesystem._paths import (
     MAX_BYTES_DEFAULT,
     as_int,
@@ -30,6 +31,12 @@ def read_file_manifest() -> ToolManifest:
         timeout_seconds=10.0,
         output_char_budget=8000,
         idempotent=True,
+        # EPIC-03: when an execution backend is injected it must observe FILE_READ
+        # as SUPPORTED, else this tool is withheld/denied (no local fallback).
+        # Skipped entirely for default local runs (no capability snapshot).
+        execution_requirement=ToolExecutionRequirement(
+            required=(CapabilityName.FILE_READ,)
+        ),
         args_schema={
             "type": "object",
             "properties": {

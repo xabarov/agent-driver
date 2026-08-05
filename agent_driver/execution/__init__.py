@@ -52,6 +52,20 @@ from agent_driver.contracts.execution_lease import (
     LeaseState,
     WorkspacePaths,
 )
+from agent_driver.contracts.execution_workspace import (
+    ExecutionDeleteRequest,
+    ExecutionDeleteResult,
+    ExecutionGlobRequest,
+    ExecutionGlobResult,
+    ExecutionGrepRequest,
+    ExecutionGrepResult,
+    ExecutionListRequest,
+    ExecutionListResult,
+    ExecutionStatRequest,
+    ExecutionStatResult,
+    GrepMatch,
+    WorkspaceEntry,
+)
 from agent_driver.execution.adapters import (
     BackendCommandRunner,
     BackendFileIO,
@@ -81,10 +95,15 @@ from agent_driver.execution.errors import (
 from agent_driver.execution.fake import CommandOutcome, FakeExecutionBackend
 from agent_driver.execution.lease import ExecutionLeaseManager, LeaseNotUsableError
 from agent_driver.execution.local import LocalExecutionBackend
+from agent_driver.execution.pathsafety import (
+    WorkspacePathError,
+    validate_workspace_path,
+)
 from agent_driver.execution.protocol import (
     CapabilityAwareBackend,
     ExecutionBackend,
     LeaseCapableBackend,
+    WorkspaceCapableBackend,
 )
 
 __all__ = [
@@ -92,9 +111,13 @@ __all__ = [
     "ExecutionBackend",
     "CapabilityAwareBackend",
     "LeaseCapableBackend",
+    "WorkspaceCapableBackend",
     # lease manager
     "ExecutionLeaseManager",
     "LeaseNotUsableError",
+    # workspace path safety
+    "validate_workspace_path",
+    "WorkspacePathError",
     # backends
     "LocalExecutionBackend",
     "FakeExecutionBackend",
@@ -154,4 +177,17 @@ __all__ = [
     "WorkspacePaths",
     "ExecutionLease",
     "LeaseReceipt",
+    # workspace op contracts
+    "WorkspaceEntry",
+    "ExecutionListRequest",
+    "ExecutionListResult",
+    "ExecutionGlobRequest",
+    "ExecutionGlobResult",
+    "GrepMatch",
+    "ExecutionGrepRequest",
+    "ExecutionGrepResult",
+    "ExecutionStatRequest",
+    "ExecutionStatResult",
+    "ExecutionDeleteRequest",
+    "ExecutionDeleteResult",
 ]

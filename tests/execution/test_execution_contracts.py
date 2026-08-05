@@ -139,9 +139,13 @@ _FACADE_EXPORTS = {
     "ExecutionBackend",
     "CapabilityAwareBackend",
     "LeaseCapableBackend",
+    "WorkspaceCapableBackend",
     # lease manager
     "ExecutionLeaseManager",
     "LeaseNotUsableError",
+    # workspace path safety
+    "validate_workspace_path",
+    "WorkspacePathError",
     # backends
     "LocalExecutionBackend",
     "FakeExecutionBackend",
@@ -201,6 +205,19 @@ _FACADE_EXPORTS = {
     "WorkspacePaths",
     "ExecutionLease",
     "LeaseReceipt",
+    # workspace op contracts
+    "WorkspaceEntry",
+    "ExecutionListRequest",
+    "ExecutionListResult",
+    "ExecutionGlobRequest",
+    "ExecutionGlobResult",
+    "GrepMatch",
+    "ExecutionGrepRequest",
+    "ExecutionGrepResult",
+    "ExecutionStatRequest",
+    "ExecutionStatResult",
+    "ExecutionDeleteRequest",
+    "ExecutionDeleteResult",
 }
 
 _CONTRACT_FIELD_SNAPSHOTS = {
