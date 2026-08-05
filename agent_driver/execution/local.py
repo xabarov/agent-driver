@@ -13,7 +13,11 @@ import asyncio
 from pathlib import Path
 
 from agent_driver.contracts.execution import (
+    CapabilityName,
+    CapabilityState,
+    CapabilityStatus,
     ExecutionBounds,
+    ExecutionCapabilitySnapshot,
     ExecutionCommandRequest,
     ExecutionCommandResult,
     ExecutionReadRequest,
@@ -23,6 +27,8 @@ from agent_driver.contracts.execution import (
     ExecutionWriteResult,
 )
 from agent_driver.execution.errors import OutputLimitExceededError
+
+_SUPPORTED = CapabilityStatus(state=CapabilityState.SUPPORTED)
 
 
 class LocalExecutionBackend:
@@ -97,6 +103,25 @@ class LocalExecutionBackend:
             identity=request.identity,
             path=request.path,
             bytes_written=len(request.content.encode("utf-8")),
+        )
+
+    async def capabilities(self) -> ExecutionCapabilitySnapshot:
+        """Truthful facts for local execution: command + text file IO + timeout
+        honoring are SUPPORTED; remote-only capabilities stay UNKNOWN. The local
+        PATH is deliberately NOT probed into a program inventory."""
+        return ExecutionCapabilitySnapshot(
+            backend_id=self._backend_id,
+            environment_revision="local",
+            capabilities={
+                CapabilityName.COMMAND: _SUPPORTED,
+                CapabilityName.FILE_READ: _SUPPORTED,
+                CapabilityName.FILE_WRITE: _SUPPORTED,
+                CapabilityName.TIMEOUT: _SUPPORTED,
+            },
+            limitations=(
+                "remote-only features (events, reconnect, teardown) are not "
+                "available on the local backend",
+            ),
         )
 
 

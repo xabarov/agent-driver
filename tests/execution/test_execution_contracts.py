@@ -73,16 +73,29 @@ def test_read_write_contracts():
 
 
 def test_capability_snapshot_defaults_unknown_and_versioned():
-    snap = ex.CapabilitySnapshot(backend_id="local")
-    assert snap.schema_version == ex.EXECUTION_SCHEMA_VERSION
+    snap = ex.ExecutionCapabilitySnapshot(backend_id="local", environment_revision="r1")
+    assert snap.schema_version == ex.EXECUTION_CAPABILITY_SCHEMA_VERSION
     # missing evidence is UNKNOWN, never SUPPORTED
-    assert snap.command is ex.CapabilityState.UNKNOWN
-    assert snap.file_read is ex.CapabilityState.UNKNOWN
+    assert snap.status_of(ex.CapabilityName.COMMAND).state is ex.CapabilityState.UNKNOWN
+    assert (
+        snap.status_of(ex.CapabilityName.FILE_READ).state is ex.CapabilityState.UNKNOWN
+    )
 
 
 def test_capability_snapshot_metadata_bounded():
     with pytest.raises(ValueError):
-        ex.CapabilitySnapshot(backend_id="local", metadata={"x": object()})
+        ex.ExecutionCapabilitySnapshot(
+            backend_id="local", environment_revision="r1", metadata={"x": object()}
+        )
+
+
+def test_capability_snapshot_rejects_secret_like_keys():
+    with pytest.raises(ValueError):
+        ex.ExecutionCapabilitySnapshot(
+            backend_id="local",
+            environment_revision="r1",
+            metadata={"api_key": "sk-123"},
+        )
 
 
 def test_typed_errors_are_categorizable_by_code_and_type():
@@ -110,7 +123,9 @@ def test_json_schema_generation_smoke():
         ex.ExecutionCommandResult,
         ex.ExecutionReadResult,
         ex.ExecutionWriteResult,
-        ex.CapabilitySnapshot,
+        ex.ExecutionCapabilitySnapshot,
+        ex.EnvironmentBrief,
+        ex.ToolExecutionRequirement,
     ):
         schema = model.model_json_schema()
         assert schema["type"] == "object"
@@ -120,8 +135,9 @@ def test_json_schema_generation_smoke():
 # Public surface + schema snapshots (exact — a drift is a deliberate change)
 # --------------------------------------------------------------------------- #
 _FACADE_EXPORTS = {
-    # protocol
+    # protocols
     "ExecutionBackend",
+    "CapabilityAwareBackend",
     # backends
     "LocalExecutionBackend",
     "FakeExecutionBackend",
@@ -131,6 +147,12 @@ _FACADE_EXPORTS = {
     "BackendCommandRunner",
     "BackendFileIO",
     "identity_from_context",
+    # capability routing helpers
+    "resolve_capability_snapshot",
+    "unknown_snapshot",
+    "check_requirement",
+    "derive_environment_brief",
+    "DEFAULT_BRIEF_MAX_CHARS",
     # errors
     "ExecutionError",
     "UnsupportedCapabilityError",
@@ -141,6 +163,7 @@ _FACADE_EXPORTS = {
     "BackendProtocolError",
     # contracts (re-exported)
     "EXECUTION_SCHEMA_VERSION",
+    "EXECUTION_CAPABILITY_SCHEMA_VERSION",
     "ExecutionTerminalState",
     "CapabilityState",
     "ExecutionIdentity",
@@ -152,7 +175,14 @@ _FACADE_EXPORTS = {
     "ExecutionReadResult",
     "ExecutionWriteRequest",
     "ExecutionWriteResult",
-    "CapabilitySnapshot",
+    # capability contracts
+    "CapabilityName",
+    "CapabilityStatus",
+    "ProgramInfo",
+    "ExecutionCapabilitySnapshot",
+    "ToolExecutionRequirement",
+    "RequirementCheck",
+    "EnvironmentBrief",
 }
 
 _CONTRACT_FIELD_SNAPSHOTS = {
@@ -183,17 +213,28 @@ _CONTRACT_FIELD_SNAPSHOTS = {
     ),
     "ExecutionReadResult": ("identity", "path", "content", "size_bytes"),
     "ExecutionWriteResult": ("identity", "path", "bytes_written"),
-    "CapabilitySnapshot": (
+    "ExecutionCapabilitySnapshot": (
         "schema_version",
         "backend_id",
-        "command",
-        "file_read",
-        "file_write",
-        "reconnect",
-        "teardown",
+        "environment_revision",
+        "lease_generation",
         "observed_at",
+        "digest",
+        "capabilities",
+        "programs",
+        "limitations",
         "metadata",
     ),
+    "EnvironmentBrief": (
+        "backend_id",
+        "capability_revision",
+        "supported",
+        "degraded",
+        "limitations",
+        "programs",
+        "truncated",
+    ),
+    "ToolExecutionRequirement": ("required", "hard"),
 }
 
 

@@ -1,4 +1,4 @@
-"""Public execution-backend facade (EPIC-01).
+"""Public execution-backend facade (EPIC-01, EPIC-02).
 
 A host injects a supported :class:`ExecutionBackend` so the built-in
 ``bash``/``read``/``write`` run in a prepared local or (later) remote workspace,
@@ -10,16 +10,25 @@ backend, a deterministic fake for tests, a composite that adapts the legacy
 ``AsyncCommandRunner``/``AsyncFileIO`` (for ACP), typed failures, and the
 validated request/result/identity contracts (re-exported from
 ``agent_driver.contracts.execution``).
+
+EPIC-02 adds capability truth: the optional ``CapabilityAwareBackend`` protocol,
+the ``ExecutionCapabilitySnapshot``/``EnvironmentBrief``/``ToolExecutionRequirement``
+contracts, and the deterministic ``resolve_capability_snapshot`` /
+``check_requirement`` / ``derive_environment_brief`` routing helpers.
 """
 
 from __future__ import annotations
 
 from agent_driver.contracts.execution import (
+    EXECUTION_CAPABILITY_SCHEMA_VERSION,
     EXECUTION_SCHEMA_VERSION,
     ArtifactRef,
-    CapabilitySnapshot,
+    CapabilityName,
     CapabilityState,
+    CapabilityStatus,
+    EnvironmentBrief,
     ExecutionBounds,
+    ExecutionCapabilitySnapshot,
     ExecutionCommandRequest,
     ExecutionCommandResult,
     ExecutionIdentity,
@@ -28,11 +37,21 @@ from agent_driver.contracts.execution import (
     ExecutionTerminalState,
     ExecutionWriteRequest,
     ExecutionWriteResult,
+    ProgramInfo,
+    RequirementCheck,
+    ToolExecutionRequirement,
 )
 from agent_driver.execution.adapters import (
     BackendCommandRunner,
     BackendFileIO,
     identity_from_context,
+)
+from agent_driver.execution.capabilities import (
+    DEFAULT_BRIEF_MAX_CHARS,
+    check_requirement,
+    derive_environment_brief,
+    resolve_capability_snapshot,
+    unknown_snapshot,
 )
 from agent_driver.execution.composite import CompositeExecutionBackend
 from agent_driver.execution.errors import (
@@ -46,11 +65,12 @@ from agent_driver.execution.errors import (
 )
 from agent_driver.execution.fake import CommandOutcome, FakeExecutionBackend
 from agent_driver.execution.local import LocalExecutionBackend
-from agent_driver.execution.protocol import ExecutionBackend
+from agent_driver.execution.protocol import CapabilityAwareBackend, ExecutionBackend
 
 __all__ = [
-    # protocol
+    # protocols
     "ExecutionBackend",
+    "CapabilityAwareBackend",
     # backends
     "LocalExecutionBackend",
     "FakeExecutionBackend",
@@ -60,6 +80,12 @@ __all__ = [
     "BackendCommandRunner",
     "BackendFileIO",
     "identity_from_context",
+    # capability routing helpers
+    "resolve_capability_snapshot",
+    "unknown_snapshot",
+    "check_requirement",
+    "derive_environment_brief",
+    "DEFAULT_BRIEF_MAX_CHARS",
     # errors
     "ExecutionError",
     "UnsupportedCapabilityError",
@@ -70,6 +96,7 @@ __all__ = [
     "BackendProtocolError",
     # contracts (re-exported)
     "EXECUTION_SCHEMA_VERSION",
+    "EXECUTION_CAPABILITY_SCHEMA_VERSION",
     "ExecutionTerminalState",
     "CapabilityState",
     "ExecutionIdentity",
@@ -81,5 +108,12 @@ __all__ = [
     "ExecutionReadResult",
     "ExecutionWriteRequest",
     "ExecutionWriteResult",
-    "CapabilitySnapshot",
+    # capability contracts
+    "CapabilityName",
+    "CapabilityStatus",
+    "ProgramInfo",
+    "ExecutionCapabilitySnapshot",
+    "ToolExecutionRequirement",
+    "RequirementCheck",
+    "EnvironmentBrief",
 ]

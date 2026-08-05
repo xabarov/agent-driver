@@ -13,7 +13,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from agent_driver.contracts.execution import (
+    CapabilityName,
+    CapabilityState,
+    CapabilityStatus,
     ExecutionBounds,
+    ExecutionCapabilitySnapshot,
     ExecutionCommandRequest,
     ExecutionCommandResult,
     ExecutionReadRequest,
@@ -109,6 +113,32 @@ class CompositeExecutionBackend:
             identity=request.identity,
             path=request.path,
             bytes_written=len(request.content.encode("utf-8")),
+        )
+
+    async def capabilities(self) -> ExecutionCapabilitySnapshot:
+        """Report truthfully which halves the wrapped host actually provided: a
+        present runner/file-IO is SUPPORTED, an absent one UNSUPPORTED (never
+        UNKNOWN — absence here IS observed evidence)."""
+
+        def _state(present: bool) -> CapabilityStatus:
+            return CapabilityStatus(
+                state=(
+                    CapabilityState.SUPPORTED
+                    if present
+                    else CapabilityState.UNSUPPORTED
+                ),
+                reason=None if present else "not provided by the host adapter",
+            )
+
+        has_files = self._file_io is not None
+        return ExecutionCapabilitySnapshot(
+            backend_id=self._backend_id,
+            environment_revision=self._backend_id,
+            capabilities={
+                CapabilityName.COMMAND: _state(self._command_runner is not None),
+                CapabilityName.FILE_READ: _state(has_files),
+                CapabilityName.FILE_WRITE: _state(has_files),
+            },
         )
 
 

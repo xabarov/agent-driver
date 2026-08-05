@@ -11,7 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from agent_driver.contracts.execution import (
+    CapabilityName,
+    CapabilityState,
+    CapabilityStatus,
     ExecutionBounds,
+    ExecutionCapabilitySnapshot,
     ExecutionCommandRequest,
     ExecutionCommandResult,
     ExecutionReadRequest,
@@ -24,6 +28,19 @@ from agent_driver.execution.errors import (
     ExecutionTimeoutError,
     OutputLimitExceededError,
 )
+
+
+def _default_fake_snapshot() -> ExecutionCapabilitySnapshot:
+    supported = CapabilityStatus(state=CapabilityState.SUPPORTED)
+    return ExecutionCapabilitySnapshot(
+        backend_id="fake",
+        environment_revision="fake-1",
+        capabilities={
+            CapabilityName.COMMAND: supported,
+            CapabilityName.FILE_READ: supported,
+            CapabilityName.FILE_WRITE: supported,
+        },
+    )
 
 
 @dataclass
@@ -53,6 +70,10 @@ class FakeExecutionBackend:
     default_outcome: CommandOutcome = field(default_factory=CommandOutcome)
     files: dict[str, str] = field(default_factory=dict)
     raise_timeout_for: set[str] = field(default_factory=set)
+    capability_snapshot: ExecutionCapabilitySnapshot = field(
+        default_factory=_default_fake_snapshot
+    )
+    raise_on_capabilities: bool = False
     command_calls: list[ExecutionCommandRequest] = field(default_factory=list)
     read_calls: list[ExecutionReadRequest] = field(default_factory=list)
     write_calls: list[ExecutionWriteRequest] = field(default_factory=list)
@@ -106,6 +127,13 @@ class FakeExecutionBackend:
             path=request.path,
             bytes_written=len(request.content.encode("utf-8")),
         )
+
+    async def capabilities(self) -> ExecutionCapabilitySnapshot:
+        """Return the scripted snapshot (or raise to simulate a handshake fault
+        so the resolver's fail-safe path can be exercised)."""
+        if self.raise_on_capabilities:
+            raise ExecutionTimeoutError("fake capability handshake timeout")
+        return self.capability_snapshot
 
 
 __all__ = ["FakeExecutionBackend", "CommandOutcome"]

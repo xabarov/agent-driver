@@ -142,24 +142,171 @@ class ExecutionWriteResult(ContractModel):
     bytes_written: int = Field(ge=0)
 
 
-class CapabilitySnapshot(ContractModel):
-    """RESERVED for EPIC-02. Minimal versioned backend facts. Defined now so the
-    wire vocabulary is stable; the ``capabilities()`` method lands in EPIC-02."""
+EXECUTION_CAPABILITY_SCHEMA_VERSION = "agent_driver.execution.capability.v1"
 
-    schema_version: str = EXECUTION_SCHEMA_VERSION
+# Bounds for the redaction-safe, deterministic capability surface.
+_MAX_REASON_CHARS = 200
+_MAX_PROGRAMS = 128
+_MAX_LIMITATIONS = 32
+_MAX_LIMITATION_CHARS = 200
+# Substrings that make a metadata KEY look secret-bearing; such keys are rejected
+# from a snapshot before it can reach persistence, events, logs, or a prompt.
+_SECRET_KEY_MARKERS = (
+    "secret",
+    "token",
+    "password",
+    "passwd",
+    "api_key",
+    "apikey",
+    "credential",
+    "private_key",
+    "access_key",
+    "auth",
+)
+
+
+def _reject_secret_like_keys(value: dict[str, Any], *, field_name: str) -> None:
+    for key in value:
+        lowered = str(key).lower()
+        if any(marker in lowered for marker in _SECRET_KEY_MARKERS):
+            raise ValueError(
+                f"{field_name} key {key!r} looks secret-bearing; a capability "
+                "snapshot must not carry credentials"
+            )
+
+
+class CapabilityName(str, Enum):
+    """The observable execution capabilities a snapshot reports on. A tool may
+    require any of these; the host/backend observes them (never the model)."""
+
+    COMMAND = "command"
+    FILE_READ = "file_read"
+    FILE_WRITE = "file_write"
+    EVENT = "event"
+    CONTROL = "control"
+    ARTIFACT = "artifact"
+    RECONNECT = "reconnect"
+    TIMEOUT = "timeout"
+    OUTPUT = "output"
+    RESOURCE = "resource"
+    TEARDOWN = "teardown"
+
+
+class CapabilityStatus(ContractModel):
+    """One capability's observed state plus an optional bounded reason.
+
+    ``state`` is an observation, never a self-asserted claim. Missing evidence
+    is :attr:`CapabilityState.UNKNOWN`, never ``SUPPORTED``.
+    """
+
+    state: CapabilityState = CapabilityState.UNKNOWN
+    reason: str | None = Field(default=None, max_length=_MAX_REASON_CHARS)
+
+
+class ProgramInfo(ContractModel):
+    """A verified program/runtime the environment provides. Name (and version
+    where verified) only — never the full PATH or environment dump."""
+
+    name: str = Field(min_length=1)
+    version: str | None = None
+
+
+class ExecutionCapabilitySnapshot(ContractModel):
+    """Truthful, revisioned facts about one prepared execution environment.
+
+    Bound to a backend + environment revision (and a lease generation when one
+    exists) so a cache entry can be keyed and its freshness reasoned about. The
+    per-capability map defaults to ``UNKNOWN`` for any capability not reported —
+    absence of evidence is never a support claim.
+    """
+
+    schema_version: str = EXECUTION_CAPABILITY_SCHEMA_VERSION
     backend_id: str = Field(min_length=1)
-    command: CapabilityState = CapabilityState.UNKNOWN
-    file_read: CapabilityState = CapabilityState.UNKNOWN
-    file_write: CapabilityState = CapabilityState.UNKNOWN
-    reconnect: CapabilityState = CapabilityState.UNKNOWN
-    teardown: CapabilityState = CapabilityState.UNKNOWN
+    environment_revision: str = Field(min_length=1)
+    lease_generation: str | None = None
     observed_at: str | None = None
+    digest: str | None = None
+    capabilities: dict[CapabilityName, CapabilityStatus] = Field(default_factory=dict)
+    programs: tuple[ProgramInfo, ...] = ()
+    limitations: tuple[str, ...] = ()
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("programs")
+    @classmethod
+    def _bounded_programs(
+        cls, value: tuple[ProgramInfo, ...]
+    ) -> tuple[ProgramInfo, ...]:
+        if len(value) > _MAX_PROGRAMS:
+            raise ValueError(f"too many programs (>{_MAX_PROGRAMS})")
+        return value
+
+    @field_validator("limitations")
+    @classmethod
+    def _bounded_limitations(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) > _MAX_LIMITATIONS:
+            raise ValueError(f"too many limitations (>{_MAX_LIMITATIONS})")
+        for item in value:
+            if len(item) > _MAX_LIMITATION_CHARS:
+                raise ValueError("limitation exceeds max length")
+        return value
 
     @field_validator("metadata", mode="after")
     @classmethod
     def _bounded_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        _reject_secret_like_keys(value, field_name="metadata")
         return ensure_bounded_json_metadata(value, field_name="metadata")
+
+    def status_of(self, name: CapabilityName) -> CapabilityStatus:
+        """Return the observed status of ``name``; ``UNKNOWN`` if unreported."""
+        # pylint: disable=no-member  # pydantic dict field; .get is valid at runtime
+        return self.capabilities.get(name, CapabilityStatus())
+
+    def cache_key(self) -> str:
+        """Stable identity for caching: backend + environment + lease generation."""
+        return f"{self.backend_id}|{self.environment_revision}|{self.lease_generation or '-'}"
+
+
+class ToolExecutionRequirement(ContractModel):
+    """A tool's declared execution requirement — host/registry data, never a
+    model-visible argument. A ``hard`` requirement withholds the tool pre-model
+    and denies it pre-dispatch unless every named capability is ``SUPPORTED``.
+    """
+
+    required: tuple[CapabilityName, ...] = ()
+    hard: bool = True
+
+    @field_validator("required")
+    @classmethod
+    def _dedupe_nonempty(
+        cls, value: tuple[CapabilityName, ...]
+    ) -> tuple[CapabilityName, ...]:
+        # order-preserving dedupe so the requirement is canonical
+        seen: dict[CapabilityName, None] = {}
+        for cap in value:
+            seen.setdefault(cap, None)
+        return tuple(seen)
+
+
+class RequirementCheck(ContractModel):
+    """Typed outcome of checking a tool requirement against a snapshot. The
+    ``reason`` is host-facing and safe for events/logs (no secret values)."""
+
+    satisfied: bool
+    reason: str | None = Field(default=None, max_length=_MAX_REASON_CHARS)
+    unmet: tuple[CapabilityName, ...] = ()
+
+
+class EnvironmentBrief(ContractModel):
+    """Deterministic, bounded, redaction-safe projection of a snapshot for
+    request-only model context. Guidance, not an authorization boundary."""
+
+    backend_id: str = Field(min_length=1)
+    capability_revision: str = Field(min_length=1)
+    supported: tuple[str, ...] = ()
+    degraded: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
+    programs: tuple[str, ...] = ()
+    truncated: bool = False
 
 
 __all__ = [
@@ -175,5 +322,13 @@ __all__ = [
     "ExecutionReadResult",
     "ExecutionWriteRequest",
     "ExecutionWriteResult",
-    "CapabilitySnapshot",
+    # EPIC-02 capabilities & routing
+    "EXECUTION_CAPABILITY_SCHEMA_VERSION",
+    "CapabilityName",
+    "CapabilityStatus",
+    "ProgramInfo",
+    "ExecutionCapabilitySnapshot",
+    "ToolExecutionRequirement",
+    "RequirementCheck",
+    "EnvironmentBrief",
 ]

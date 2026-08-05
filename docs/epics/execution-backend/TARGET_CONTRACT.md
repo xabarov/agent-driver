@@ -393,3 +393,49 @@ Two points from decisions 7 and 10 were refined against the real code:
   so ACP stays green (acceptance scenario 8) with no divergence, only a
   not-yet-unified call site. This satisfies the epic's "provide compatibility
   shims for ACP … OR migrate ACP" as the shim branch.
+
+## EPIC-02 design decision (recorded 2026-08-05)
+
+Work Package A (capability contracts + routing helpers), landed on
+`feat/execution-backend-epic02`:
+
+1. **`ExecutionCapabilitySnapshot` replaces the reserved minimal
+   `CapabilitySnapshot`.** The EPIC-01 placeholder shipped in 0.5.0 as reserved +
+   unused; it is now removed and superseded by the fuller model (per-capability
+   `CapabilityStatus{state,reason}` map keyed by a typed `CapabilityName`, bounded
+   `ProgramInfo` inventory, `environment_revision`, `lease_generation`, `digest`,
+   `observed_at`, bounded+secret-rejecting `metadata`). New capability wire
+   version `EXECUTION_CAPABILITY_SCHEMA_VERSION = "agent_driver.execution.capability.v1"`
+   (distinct from the request/result `EXECUTION_SCHEMA_VERSION`). Additive minor.
+
+2. **`CapabilityName` vocabulary:** command, file_read, file_write, event,
+   control, artifact, reconnect, timeout, output, resource, teardown. Distinct
+   from `CapabilitySettings` (runner knobs), `HarnessCapabilityPack` (product
+   validation), and `HarnessAdapterCapability` (adapter features) — no reuse.
+
+3. **Optional `CapabilityAwareBackend(ExecutionBackend, Protocol)`** adds
+   `async capabilities() -> ExecutionCapabilitySnapshot`. Keeping it a SEPARATE
+   runtime_checkable protocol (not a new required method on `ExecutionBackend`)
+   means EPIC-01 minimal backends and external adapters stay valid; a backend
+   that does not report capabilities is treated as all-`UNKNOWN`.
+
+4. **`resolve_capability_snapshot(backend)` fails safe:** missing `capabilities`,
+   a raised handshake, or a wrong return type all yield an all-`UNKNOWN`
+   snapshot. `unknown` never satisfies a hard requirement.
+
+5. **`ToolExecutionRequirement{required, hard}` + `check_requirement` +
+   `RequirementCheck`:** a HARD requirement is satisfied only when every named
+   capability is `SUPPORTED` (`DEGRADED`/`UNSUPPORTED`/`UNKNOWN` fail closed); a
+   SOFT requirement never blocks but still surfaces unmet capabilities. Pure,
+   deterministic, snapshot-only.
+
+6. **`derive_environment_brief` → `EnvironmentBrief`:** deterministic, sorted,
+   char-bounded projection for request-only context; `capability_revision` =
+   `digest or environment_revision`; unknown/unsupported capabilities are omitted
+   (never described as available); over-budget programs/limitations are trimmed
+   from the tail with `truncated=True`.
+
+Remaining WPs (deferred within EPIC-02): B backend handshake + cache/freshness;
+C tool-requirement routing in `llm_step/build.py` (pre-model filter) + a
+pre-dispatch re-check in `executor/governed.py` (anti-TOCTOU); D brief injection
+via `request_only_context`; E redaction-safe selection diagnostics/timings.

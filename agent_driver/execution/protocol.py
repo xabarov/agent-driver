@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from agent_driver.contracts.execution import (
+    ExecutionCapabilitySnapshot,
     ExecutionCommandRequest,
     ExecutionCommandResult,
     ExecutionReadRequest,
@@ -52,4 +53,15 @@ class ExecutionBackend(Protocol):
         """Write text to an already-resolved path."""
 
 
-__all__ = ["ExecutionBackend"]
+@runtime_checkable
+class CapabilityAwareBackend(ExecutionBackend, Protocol):
+    """An ``ExecutionBackend`` that can also report a truthful capability
+    snapshot (EPIC-02). Optional: a backend that does not implement
+    ``capabilities`` is treated as all-``UNKNOWN`` (hard requirements then fail
+    closed). Host-observed facts only — never model-asserted content."""
+
+    async def capabilities(self) -> ExecutionCapabilitySnapshot:
+        """Return the current capability snapshot for this backend/environment."""
+
+
+__all__ = ["ExecutionBackend", "CapabilityAwareBackend"]
