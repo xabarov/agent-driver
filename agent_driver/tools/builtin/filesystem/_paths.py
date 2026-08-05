@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_driver.tools.context import (
+    get_execution_lease,
     get_fs_io,
     get_workspace_cwd,
     get_workspace_jail_root,
@@ -29,6 +30,52 @@ def _ensure_within_workspace_jail(path: Path) -> None:
         raise ValueError(f"path outside workspace ({jail_root}): {resolved}") from exc
 
 
+def _routing_active() -> bool:
+    """True when built-in file bytes are routed to an injected backend, so path
+    resolution MUST validate against the backend workspace contract instead of
+    the local disk (no local ``stat``/``resolve``, no local fallback)."""
+    return get_fs_io() is not None
+
+
+def _workspace_paths_for_routing():
+    """The backend-relative path contract to validate against while routing.
+
+    Prefers the active lease's ``WorkspacePaths``; falls back to the run-scoped
+    jail root (as an all-writable workspace root) so a routed-but-unleased
+    backend still gets lexical jail validation without touching local disk.
+    """
+    lease = get_execution_lease()
+    paths = getattr(lease, "paths", None)
+    if paths is not None:
+        return paths
+    jail = get_workspace_jail_root()
+    if jail is not None:
+        from agent_driver.contracts.execution_lease import WorkspacePaths
+
+        return WorkspacePaths(workspace_root=str(jail))
+    return None
+
+
+def _resolve_routed_path(raw: Any, *, require_writable: bool = False) -> Path:
+    """Validate a path against the backend workspace contract, WITHOUT any local
+    disk access. Existence is the backend's concern (its op errors if missing)."""
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("path must be a non-empty string")
+    paths = _workspace_paths_for_routing()
+    if paths is None:
+        # Routing active but no jail/lease root known: absolutize against the
+        # run cwd string lexically (still no local stat) and pass through.
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path(str(get_workspace_cwd())) / candidate
+        return candidate
+    from agent_driver.execution.pathsafety import validate_workspace_path
+
+    return Path(
+        validate_workspace_path(str(raw), paths, require_writable=require_writable)
+    )
+
+
 _ALWAYS_IGNORED_PREFIXES = (
     ".git/",
     ".venv/",
@@ -39,6 +86,8 @@ _ALWAYS_IGNORED_PREFIXES = (
 
 def resolve_file_path(raw: Any) -> Path:
     """Resolve an absolute existing file path."""
+    if _routing_active():
+        return _resolve_routed_path(raw)
     if not isinstance(raw, str) or not raw.strip():
         raise ValueError("path must be a non-empty string")
     path = Path(raw).expanduser()
@@ -54,6 +103,13 @@ def resolve_file_path(raw: Any) -> Path:
 
 def resolve_base_dir(raw: Any) -> Path:
     """Resolve an absolute existing directory path."""
+    if _routing_active():
+        if raw is None:
+            paths = _workspace_paths_for_routing()
+            return (
+                Path(paths.workspace_root) if paths is not None else get_workspace_cwd()
+            )
+        return _resolve_routed_path(raw)
     if raw is None:
         base = get_workspace_cwd()
     elif isinstance(raw, str) and raw.strip():
@@ -74,6 +130,10 @@ def resolve_base_dir(raw: Any) -> Path:
 
 def resolve_writable_path(raw: Any, *, create_parent: bool) -> Path:
     """Resolve target file path, optionally creating parent directories."""
+    if _routing_active():
+        # No local parent creation / stat: the backend owns its filesystem. The
+        # path must fall under a declared writable root.
+        return _resolve_routed_path(raw, require_writable=True)
     if not isinstance(raw, str) or not raw.strip():
         raise ValueError("path must be a non-empty string")
     path = Path(raw).expanduser()
