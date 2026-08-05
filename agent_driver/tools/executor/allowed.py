@@ -429,7 +429,9 @@ def _append_clarification_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) -
     allow_multiple = bool(raw.get("allow_multiple", False))
     run_id, attempt_id = _interrupt_identifiers(spec)
     interrupt = InterruptRequest(
-        interrupt_id=build_interrupt_id(run_id=run_id, tool_call_id=spec.call.tool_call_id, index=spec.index),
+        interrupt_id=build_interrupt_id(
+            run_id=run_id, tool_call_id=spec.call.tool_call_id, index=spec.index
+        ),
         run_id=run_id,
         attempt_id=attempt_id,
         checkpoint_id="checkpoint_pending",
@@ -535,7 +537,9 @@ def _append_wait_for_event_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) 
     subscription = WaitForEventRequest.model_validate(subscription_raw)
     run_id, attempt_id = _interrupt_identifiers(spec)
     interrupt = InterruptRequest(
-        interrupt_id=build_interrupt_id(run_id=run_id, tool_call_id=spec.call.tool_call_id, index=spec.index),
+        interrupt_id=build_interrupt_id(
+            run_id=run_id, tool_call_id=spec.call.tool_call_id, index=spec.index
+        ),
         run_id=run_id,
         attempt_id=attempt_id,
         checkpoint_id="checkpoint_pending",
@@ -604,7 +608,9 @@ def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
         },
     )
     interrupt = InterruptRequest(
-        interrupt_id=build_interrupt_id(run_id=run_id, tool_call_id=spec.call.tool_call_id, index=spec.index),
+        interrupt_id=build_interrupt_id(
+            run_id=run_id, tool_call_id=spec.call.tool_call_id, index=spec.index
+        ),
         run_id=run_id,
         attempt_id=attempt_id,
         checkpoint_id="checkpoint_pending",

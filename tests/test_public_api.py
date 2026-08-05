@@ -30,6 +30,15 @@ _PUBLIC_SURFACE = {
     ),
     "agent_driver.runtime": ("RunnerConfig", "CapabilitySettings", "RunAbortHandle"),
     "agent_driver.contracts": ("AgentRunInput", "AgentRunOutput", "HarnessProfile"),
+    "agent_driver.execution": (
+        "ExecutionBackend",
+        "LocalExecutionBackend",
+        "FakeExecutionBackend",
+        "CompositeExecutionBackend",
+        "ExecutionCommandResult",
+        "ExecutionError",
+        "EXECUTION_SCHEMA_VERSION",
+    ),
     "agent_driver.llm": (
         "FakeProvider",
         "resolve_provider",

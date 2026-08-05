@@ -135,10 +135,13 @@ class Agent:  # pylint: disable=too-many-public-methods
                 else []
             )
             for stopped_item in rows:
-                if stopped_item.reason_code != "run_stopped" or self._control_event_exists(
-                    run_id=stopped_item.run_id,
-                    event_type=RuntimeEventType.COMMAND_STOP_PREEMPTED,
-                    queue_id=stopped_item.queue_id,
+                if (
+                    stopped_item.reason_code != "run_stopped"
+                    or self._control_event_exists(
+                        run_id=stopped_item.run_id,
+                        event_type=RuntimeEventType.COMMAND_STOP_PREEMPTED,
+                        queue_id=stopped_item.queue_id,
+                    )
                 ):
                     continue
                 self._emit_control_event(
@@ -535,6 +538,7 @@ class Agent:  # pylint: disable=too-many-public-methods
             registry.register(fn.manifest, fn.handler)
             return fn.manifest
         if fn is None:
+
             def _decorator(func: object) -> object:
                 return register_custom_function(registry, func, **manifest_overrides)
 

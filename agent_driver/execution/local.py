@@ -91,9 +91,7 @@ class LocalExecutionBackend:
             size_bytes=len(content.encode("utf-8")),
         )
 
-    async def write_text(
-        self, request: ExecutionWriteRequest
-    ) -> ExecutionWriteResult:
+    async def write_text(self, request: ExecutionWriteRequest) -> ExecutionWriteResult:
         Path(request.path).write_text(request.content, encoding="utf-8")
         return ExecutionWriteResult(
             identity=request.identity,

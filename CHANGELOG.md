@@ -7,6 +7,35 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-05
+
+### Added
+
+- **Public `ExecutionBackend` seam (execution-backend EPIC-01).** A new supported
+  `agent_driver.execution` facade lets a host route the built-in `bash`/`read`/
+  `write` byte transfer through an injected backend (a prepared local or, later,
+  remote workspace) without changing the agent loop or governance order — the
+  model can never select the backend.
+  - Validated, JSON-safe contracts (`agent_driver.contracts.execution`, re-exported
+    from the facade): `ExecutionIdentity`, `ExecutionBounds`, `ArtifactRef`,
+    command/read/write request+result models, a reserved `CapabilitySnapshot`, and
+    `EXECUTION_SCHEMA_VERSION`. Results are typed, never a raw `dict`.
+  - A runtime-checkable async `ExecutionBackend` protocol (minimal command +
+    text read/write surface; lease/capability/event/control vocabulary reserved
+    for later epics).
+  - Typed, bounded, redaction-safe `ExecutionError` hierarchy, categorizable by
+    type/`code` without parsing messages.
+  - `LocalExecutionBackend` (faithful subprocess + local-disk reference),
+    `FakeExecutionBackend` (deterministic, for tests), and
+    `CompositeExecutionBackend` (bridges a legacy `AsyncCommandRunner`/`AsyncFileIO`
+    pair; the supported ACP shim primitive).
+  - Injection via `RunnerConfig.execution_backend` and a per-run
+    `Agent.run(execution_backend=...)` / `SingleAgentRunner.run(execution_backend=...)`
+    override; the executor propagates full run/attempt/tool-call/request identity
+    to the backend only after governance allows the call.
+  - Default local behavior is unchanged when no backend is configured. ACP keeps
+    its current terminal/file routing; its full cutover to the seam is EPIC-02.
+
 ## [0.4.0] - 2026-08-04
 
 Minor release adding the public live-message contract v1 for host embeddings.

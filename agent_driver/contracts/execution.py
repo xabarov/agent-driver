@@ -101,7 +101,10 @@ class ExecutionCommandResult(ContractModel):
     @model_validator(mode="after")
     def _timed_out_consistency(self) -> "ExecutionCommandResult":
         # The timed_out flag and the TIMED_OUT terminal state must agree.
-        if self.timed_out and self.terminal_state is not ExecutionTerminalState.TIMED_OUT:
+        if (
+            self.timed_out
+            and self.terminal_state is not ExecutionTerminalState.TIMED_OUT
+        ):
             object.__setattr__(self, "terminal_state", ExecutionTerminalState.TIMED_OUT)
         return self
 

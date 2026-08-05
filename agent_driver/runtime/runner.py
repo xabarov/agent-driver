@@ -381,9 +381,7 @@ class SingleAgentRunner(
                 # injected backend WITHOUT touching the tools: install the
                 # adapters into the existing run-scoped seams. Path resolution /
                 # jailing and all governance still run above dispatch.
-                stack.enter_context(
-                    command_runner_scope(BackendCommandRunner(backend))
-                )
+                stack.enter_context(command_runner_scope(BackendCommandRunner(backend)))
                 stack.enter_context(fs_io_scope(BackendFileIO(backend)))
             while context.step_name != "done":
                 terminal = self._terminal_from_limits(context)
@@ -434,9 +432,7 @@ class SingleAgentRunner(
                         handle, "is_aborted", False
                     )
                     terminal = TerminalResult(
-                        status=RunStatus.CANCELLED
-                        if aborted
-                        else RunStatus.TIMED_OUT,
+                        status=RunStatus.CANCELLED if aborted else RunStatus.TIMED_OUT,
                         reason=TerminalReason.CANCELLATION_FAILED
                         if aborted
                         else TerminalReason.DEADLINE_EXCEEDED,

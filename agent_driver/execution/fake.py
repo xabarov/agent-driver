@@ -98,9 +98,7 @@ class FakeExecutionBackend:
             size_bytes=size,
         )
 
-    async def write_text(
-        self, request: ExecutionWriteRequest
-    ) -> ExecutionWriteResult:
+    async def write_text(self, request: ExecutionWriteRequest) -> ExecutionWriteResult:
         self.write_calls.append(request)
         self.files[request.path] = request.content
         return ExecutionWriteResult(

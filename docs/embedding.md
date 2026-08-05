@@ -36,6 +36,7 @@ redirect, NEXT, cancellation, Stop, events, and Postgres migration rules.
 | `agent_driver.permissions` | `PermissionPolicy`, `PermissionRule` (incl. `path_under` scope predicate), `PermissionMode`, `build_permission_gate`, `classify_command` |
 | `agent_driver.memory` | `MemoryProvider`, `StoreBackedMemoryProvider`, `InMemoryMemoryStore`, `SqliteMemoryStore` |
 | `agent_driver.fs` | `FileBackend` protocol + `StateBackend` / `LocalFilesystemBackend` / `CompositeBackend`, `FileBackendError` |
+| `agent_driver.execution` | `ExecutionBackend` protocol (route built-in `bash`/`read`/`write` through a host-injected backend) + `LocalExecutionBackend` / `FakeExecutionBackend` / `CompositeExecutionBackend`, `BackendCommandRunner` / `BackendFileIO` adapters, validated `Execution*Request`/`Execution*Result` / `ExecutionIdentity` / `ExecutionBounds` / `ArtifactRef` / `CapabilitySnapshot` contracts, typed `ExecutionError` hierarchy, `EXECUTION_SCHEMA_VERSION` |
 | `agent_driver.harness` | `select_harness_profile`, `apply_system_slots`, `apply_tool_overrides`, `profile_excluded_tools` |
 | `agent_driver.batch` | `BatchRunner`, `Trajectory`, `TrajectoryStore` backends, `compress_trajectory` / `compress_trajectories` |
 | `agent_driver.evals` | `run_comparison` / `compare_aggregates` / `render_comparison`, `aggregate_trajectories`, `general_task_suite`, open-weight `presets`, replay helpers |

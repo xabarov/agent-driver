@@ -58,18 +58,14 @@ class CompositeExecutionBackend:
         self, request: ExecutionCommandRequest
     ) -> ExecutionCommandResult:
         if self._command_runner is None:
-            raise UnsupportedCapabilityError(
-                "composite backend has no command runner"
-            )
+            raise UnsupportedCapabilityError("composite backend has no command runner")
         raw = await self._command_runner.run_command(
             request.command,
             cwd=request.cwd,
             timeout_seconds=request.timeout_seconds,
         )
         if not isinstance(raw, dict):
-            raise BackendProtocolError(
-                "command runner returned a non-dict result"
-            )
+            raise BackendProtocolError("command runner returned a non-dict result")
         timed_out = bool(raw.get("timed_out", False))
         exit_code_raw = raw.get("exit_code", 1)
         try:
@@ -105,9 +101,7 @@ class CompositeExecutionBackend:
             size_bytes=len(content.encode("utf-8")),
         )
 
-    async def write_text(
-        self, request: ExecutionWriteRequest
-    ) -> ExecutionWriteResult:
+    async def write_text(self, request: ExecutionWriteRequest) -> ExecutionWriteResult:
         if self._file_io is None:
             raise UnsupportedCapabilityError("composite backend has no file IO")
         await self._file_io.write_text(request.path, request.content)

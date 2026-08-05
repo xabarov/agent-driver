@@ -115,5 +115,7 @@ def test_per_run_backend_threads_onto_context():
 def test_context_backend_default_is_none():
     from agent_driver.contracts import AgentRunInput
 
-    ctx = _runner()._init_context(AgentRunInput(input="q", run_id="r", agent_id="a", graph_preset="single_react"))
+    ctx = _runner()._init_context(
+        AgentRunInput(input="q", run_id="r", agent_id="a", graph_preset="single_react")
+    )
     assert ctx.execution_backend is None

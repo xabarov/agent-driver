@@ -483,7 +483,9 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             return
 
         if resume.action == ResumeAction.REJECT:
-            plan_payload = _plan_lifecycle_payload(pending, resume=resume, context=context)
+            plan_payload = _plan_lifecycle_payload(
+                pending, resume=resume, context=context
+            )
             if plan_payload is not None:
                 self._emit(
                     EventSpec(
@@ -498,7 +500,9 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
 
         if resume.action in {ResumeAction.APPROVE, ResumeAction.EDIT}:
             _mark_force_planning_approved(context, pending=pending, resume=resume)
-            plan_payload = _plan_lifecycle_payload(pending, resume=resume, context=context)
+            plan_payload = _plan_lifecycle_payload(
+                pending, resume=resume, context=context
+            )
             if plan_payload is not None:
                 self._emit(
                     EventSpec(

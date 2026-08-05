@@ -34,7 +34,6 @@ class ExecutionBackend(Protocol):
     @property
     def backend_id(self) -> str:
         """Stable identifier of this backend implementation/route."""
-        ...
 
     async def run_command(
         self, request: ExecutionCommandRequest
@@ -45,17 +44,12 @@ class ExecutionBackend(Protocol):
         than raising for a normal timeout. Raise a typed
         :class:`agent_driver.execution.errors.ExecutionError` for backend faults.
         """
-        ...
 
     async def read_text(self, request: ExecutionReadRequest) -> ExecutionReadResult:
         """Return the text content at an already-resolved path."""
-        ...
 
-    async def write_text(
-        self, request: ExecutionWriteRequest
-    ) -> ExecutionWriteResult:
+    async def write_text(self, request: ExecutionWriteRequest) -> ExecutionWriteResult:
         """Write text to an already-resolved path."""
-        ...
 
 
 __all__ = ["ExecutionBackend"]
