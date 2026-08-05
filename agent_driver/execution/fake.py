@@ -24,6 +24,14 @@ from agent_driver.contracts.execution import (
     ExecutionWriteRequest,
     ExecutionWriteResult,
 )
+from agent_driver.contracts.execution_lease import (
+    ExecutionLease,
+    ExecutionLeaseRef,
+    ExecutionLeaseRequest,
+    LeaseOwnership,
+    LeaseState,
+    WorkspacePaths,
+)
 from agent_driver.execution.errors import (
     ExecutionTimeoutError,
     OutputLimitExceededError,
@@ -74,9 +82,19 @@ class FakeExecutionBackend:
         default_factory=_default_fake_snapshot
     )
     raise_on_capabilities: bool = False
+    # Lease scripting (EPIC-03). ``acquire_state`` lets a test force a non-READY
+    # lease; ``known_generations`` maps lease_id -> current generation so a stale
+    # attach fails closed.
+    acquire_state: "LeaseState" = None  # type: ignore[assignment]
+    known_generations: dict[str, str] = field(default_factory=dict)
     command_calls: list[ExecutionCommandRequest] = field(default_factory=list)
     read_calls: list[ExecutionReadRequest] = field(default_factory=list)
     write_calls: list[ExecutionWriteRequest] = field(default_factory=list)
+    lease_acquires: list[ExecutionLeaseRequest] = field(default_factory=list)
+    lease_attaches: list[ExecutionLeaseRef] = field(default_factory=list)
+    lease_releases: list[ExecutionLeaseRef] = field(default_factory=list)
+    lease_detaches: list[ExecutionLeaseRef] = field(default_factory=list)
+    _lease_seq: int = 0
 
     async def run_command(
         self, request: ExecutionCommandRequest
@@ -134,6 +152,57 @@ class FakeExecutionBackend:
         if self.raise_on_capabilities:
             raise ExecutionTimeoutError("fake capability handshake timeout")
         return self.capability_snapshot
+
+    # -- lease lifecycle (EPIC-03) ---------------------------------------- #
+    def _new_lease(
+        self, *, lease_id: str, generation: str, ownership: LeaseOwnership
+    ) -> ExecutionLease:
+        state = self.acquire_state or LeaseState.READY
+        ref = ExecutionLeaseRef(
+            lease_id=lease_id,
+            generation=generation,
+            backend_id=self.backend_id,
+            ownership=ownership,
+        )
+        return ExecutionLease(
+            ref=ref,
+            state=state,
+            paths=WorkspacePaths(workspace_root="/work", writable_roots=("/work",)),
+            capabilities=self.capability_snapshot,
+        )
+
+    async def acquire_lease(self, request: ExecutionLeaseRequest) -> ExecutionLease:
+        self.lease_acquires.append(request)
+        if request.attach_ref is not None:
+            return await self.attach_lease(request.attach_ref)
+        self._lease_seq += 1
+        lease_id = f"lease-{self._lease_seq}"
+        generation = "gen-1"
+        self.known_generations[lease_id] = generation
+        return self._new_lease(
+            lease_id=lease_id, generation=generation, ownership=request.ownership
+        )
+
+    async def attach_lease(self, ref: ExecutionLeaseRef) -> ExecutionLease:
+        self.lease_attaches.append(ref)
+        current = self.known_generations.get(ref.lease_id)
+        if current is None or current != ref.generation:
+            # unknown or stale generation -> fail closed with an EXPIRED lease
+            return self._new_lease(
+                lease_id=ref.lease_id,
+                generation=ref.generation,
+                ownership=ref.ownership,
+            ).model_copy(update={"state": LeaseState.EXPIRED})
+        return self._new_lease(
+            lease_id=ref.lease_id, generation=ref.generation, ownership=ref.ownership
+        )
+
+    async def release_lease(self, ref: ExecutionLeaseRef) -> None:
+        self.lease_releases.append(ref)
+        self.known_generations.pop(ref.lease_id, None)
+
+    async def detach_lease(self, ref: ExecutionLeaseRef) -> None:
+        self.lease_detaches.append(ref)
 
 
 __all__ = ["FakeExecutionBackend", "CommandOutcome"]

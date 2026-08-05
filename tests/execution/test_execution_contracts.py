@@ -138,6 +138,10 @@ _FACADE_EXPORTS = {
     # protocols
     "ExecutionBackend",
     "CapabilityAwareBackend",
+    "LeaseCapableBackend",
+    # lease manager
+    "ExecutionLeaseManager",
+    "LeaseNotUsableError",
     # backends
     "LocalExecutionBackend",
     "FakeExecutionBackend",
@@ -187,6 +191,16 @@ _FACADE_EXPORTS = {
     "ToolExecutionRequirement",
     "RequirementCheck",
     "EnvironmentBrief",
+    # lease contracts
+    "EXECUTION_LEASE_SCHEMA_VERSION",
+    "LeaseOwnership",
+    "LeaseState",
+    "LeaseLifecyclePhase",
+    "ExecutionLeaseRequest",
+    "ExecutionLeaseRef",
+    "WorkspacePaths",
+    "ExecutionLease",
+    "LeaseReceipt",
 }
 
 _CONTRACT_FIELD_SNAPSHOTS = {

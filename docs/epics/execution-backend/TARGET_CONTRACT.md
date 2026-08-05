@@ -439,3 +439,52 @@ Remaining WPs (deferred within EPIC-02): B backend handshake + cache/freshness;
 C tool-requirement routing in `llm_step/build.py` (pre-model filter) + a
 pre-dispatch re-check in `executor/governed.py` (anti-TOCTOU); D brief injection
 via `request_only_context`; E redaction-safe selection diagnostics/timings.
+
+## EPIC-03 design decision (recorded 2026-08-05)
+
+Work Package A (lease contracts + manager + optional protocol), on
+`feat/execution-backend-epic03`. Grounded in a full baseline inventory.
+
+1. **New `ExecutionLease` vocabulary in `contracts/execution_lease.py`** —
+   `ExecutionLeaseRequest`, `ExecutionLeaseRef` (the ONLY durable, non-secret,
+   generation-bound reference), `ExecutionLease` (live: ref+state+expiry+
+   `WorkspacePaths`+capability snapshot), `LeaseReceipt`, enums
+   `LeaseOwnership{RUNTIME_OWNED,HOST_OWNED}` / `LeaseState` /
+   `LeaseLifecyclePhase`, `EXECUTION_LEASE_SCHEMA_VERSION`. Distinct from
+   `BackgroundRunLease` (worker-ownership of a run) — confirmed a different axis.
+   Metadata rejects secret-like keys; refs `fences()` a stale generation.
+
+2. **Optional `LeaseCapableBackend(ExecutionBackend, Protocol)`** adds
+   `acquire_lease`/`attach_lease`/`release_lease`/`detach_lease` (all idempotent),
+   kept separate so EPIC-01/02 minimal backends stay valid (a backend without
+   them simply cannot be leased — never a silent local fallback).
+
+3. **`ExecutionLeaseManager`** (a small run session component, NOT a tool): one
+   lease per run, idempotent acquire/attach per `request_id`, reuse across steps,
+   `attach_by_ref` for resume (stale generation fails closed), and `close()` that
+   releases (runtime-owned) or detaches (host-owned) exactly once and swallows
+   backend teardown errors into a `teardown_pending` receipt — safe from a
+   `finally`-equivalent path. Non-lease backend → `UnsupportedCapabilityError`;
+   non-READY lease → `LeaseNotUsableError` (fail closed).
+
+Confirmed integration seams for the remaining WPs (from inventory):
+- **B (run/checkpoint):** `ExecutionLease` as a 4th live field on `RunContext`
+  (like `execution_backend`); acquire/attach in the `_drive_steps` `ExitStack`
+  and add a lease-scoped ContextVar next to `capability_snapshot_scope`; the
+  **outer `finally` at `runner.py:255`** is the authoritative idempotent release
+  seam (output may be `None`). Durable = the `ExecutionLeaseRef` JSON under
+  `context.metadata` (persisted via `RuntimeState(metadata=...)` in `journal.py`),
+  re-attached on resume — never the live object.
+- **C (routing):** ROUTED today: read/write/edit/patch. UNROUTED (direct disk):
+  `glob_search`, `grep_search`, `notebook_edit`, `artifact_list/read/preview`,
+  and the universal local `Path.exists/is_file/resolve` in
+  `filesystem/_paths.py`. `ExecutionBackend` needs list/glob/grep/stat/delete
+  methods; partial support must be visible via capabilities (no local fallback
+  after a remote lease).
+- **D (artifacts):** reconcile execution `ArtifactRef` (has `digest`) with the
+  context `ContextArtifactRef` spill vocabulary at `executor/spill.py` /
+  `executor/allowed.py:303-330`.
+- **E (subagent policy + cleanup):** child re-enters via `ChildRunner` taking
+  only `AgentRunInput`; a lease inherit/share/isolate policy travels as a
+  metadata token or widens the callable; cleanup co-locates with
+  `cleanup_child_workspace`. Cover all ~10 exit paths idempotently.

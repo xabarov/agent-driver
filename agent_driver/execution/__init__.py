@@ -41,6 +41,17 @@ from agent_driver.contracts.execution import (
     RequirementCheck,
     ToolExecutionRequirement,
 )
+from agent_driver.contracts.execution_lease import (
+    EXECUTION_LEASE_SCHEMA_VERSION,
+    ExecutionLease,
+    ExecutionLeaseRef,
+    ExecutionLeaseRequest,
+    LeaseLifecyclePhase,
+    LeaseOwnership,
+    LeaseReceipt,
+    LeaseState,
+    WorkspacePaths,
+)
 from agent_driver.execution.adapters import (
     BackendCommandRunner,
     BackendFileIO,
@@ -68,13 +79,22 @@ from agent_driver.execution.errors import (
     UnsupportedCapabilityError,
 )
 from agent_driver.execution.fake import CommandOutcome, FakeExecutionBackend
+from agent_driver.execution.lease import ExecutionLeaseManager, LeaseNotUsableError
 from agent_driver.execution.local import LocalExecutionBackend
-from agent_driver.execution.protocol import CapabilityAwareBackend, ExecutionBackend
+from agent_driver.execution.protocol import (
+    CapabilityAwareBackend,
+    ExecutionBackend,
+    LeaseCapableBackend,
+)
 
 __all__ = [
     # protocols
     "ExecutionBackend",
     "CapabilityAwareBackend",
+    "LeaseCapableBackend",
+    # lease manager
+    "ExecutionLeaseManager",
+    "LeaseNotUsableError",
     # backends
     "LocalExecutionBackend",
     "FakeExecutionBackend",
@@ -124,4 +144,14 @@ __all__ = [
     "ToolExecutionRequirement",
     "RequirementCheck",
     "EnvironmentBrief",
+    # lease contracts
+    "EXECUTION_LEASE_SCHEMA_VERSION",
+    "LeaseOwnership",
+    "LeaseState",
+    "LeaseLifecyclePhase",
+    "ExecutionLeaseRequest",
+    "ExecutionLeaseRef",
+    "WorkspacePaths",
+    "ExecutionLease",
+    "LeaseReceipt",
 ]

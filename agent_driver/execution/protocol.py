@@ -25,6 +25,11 @@ from agent_driver.contracts.execution import (
     ExecutionWriteRequest,
     ExecutionWriteResult,
 )
+from agent_driver.contracts.execution_lease import (
+    ExecutionLease,
+    ExecutionLeaseRef,
+    ExecutionLeaseRequest,
+)
 
 
 @runtime_checkable
@@ -64,4 +69,29 @@ class CapabilityAwareBackend(ExecutionBackend, Protocol):
         """Return the current capability snapshot for this backend/environment."""
 
 
-__all__ = ["ExecutionBackend", "CapabilityAwareBackend"]
+@runtime_checkable
+class LeaseCapableBackend(ExecutionBackend, Protocol):
+    """An ``ExecutionBackend`` that grants task-scoped workspace leases (EPIC-03).
+
+    Optional: a backend without these methods simply cannot be leased (the run
+    uses it statelessly as in EPIC-01/02). ``acquire_lease``/``attach_lease``
+    return a READY lease; ``release_lease`` destroys a runtime-owned environment;
+    ``detach_lease`` relinquishes a host-owned one WITHOUT destroying it. All are
+    idempotent on a stale/unknown reference.
+    """
+
+    async def acquire_lease(self, request: ExecutionLeaseRequest) -> ExecutionLease:
+        """Acquire (or, when ``request.attach_ref`` is set, attach) a lease."""
+
+    async def attach_lease(self, ref: ExecutionLeaseRef) -> ExecutionLease:
+        """Re-attach to an existing lease by its safe reference (e.g. on resume);
+        verify its generation is current or return a non-usable/EXPIRED lease."""
+
+    async def release_lease(self, ref: ExecutionLeaseRef) -> None:
+        """Destroy a RUNTIME-owned environment. Idempotent."""
+
+    async def detach_lease(self, ref: ExecutionLeaseRef) -> None:
+        """Relinquish a HOST-owned lease without destroying it. Idempotent."""
+
+
+__all__ = ["ExecutionBackend", "CapabilityAwareBackend", "LeaseCapableBackend"]
