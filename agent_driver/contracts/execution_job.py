@@ -25,12 +25,9 @@ from typing import Any
 from pydantic import Field, field_validator
 
 from agent_driver.contracts.base import ContractModel
-from agent_driver.contracts.execution import (
-    ExecutionCommandResult,
-    _reject_secret_like_keys,
-)
+from agent_driver.contracts.execution import ExecutionCommandResult
 from agent_driver.contracts.execution_lease import LeaseOwnership
-from agent_driver.contracts.validation import ensure_bounded_json_metadata
+from agent_driver.contracts.validation import ensure_secret_free_bounded_metadata
 
 EXECUTION_JOB_SCHEMA_VERSION = "agent_driver.execution.job.v1"
 
@@ -126,8 +123,7 @@ class ExecutionEvent(ContractModel):
     @field_validator("metadata", mode="after")
     @classmethod
     def _bounded_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
-        _reject_secret_like_keys(value, field_name="metadata")
-        return ensure_bounded_json_metadata(value, field_name="metadata")
+        return ensure_secret_free_bounded_metadata(value)
 
     def identity_key(self) -> tuple[str, int]:
         """The stable, duplicate-tolerant event identity."""

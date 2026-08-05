@@ -19,11 +19,8 @@ from typing import Any
 from pydantic import Field, field_validator
 
 from agent_driver.contracts.base import ContractModel
-from agent_driver.contracts.execution import (
-    ExecutionCapabilitySnapshot,
-    _reject_secret_like_keys,
-)
-from agent_driver.contracts.validation import ensure_bounded_json_metadata
+from agent_driver.contracts.execution import ExecutionCapabilitySnapshot
+from agent_driver.contracts.validation import ensure_secret_free_bounded_metadata
 
 EXECUTION_LEASE_SCHEMA_VERSION = "agent_driver.execution.lease.v1"
 
@@ -82,8 +79,7 @@ class ExecutionLeaseRequest(ContractModel):
     @field_validator("metadata", mode="after")
     @classmethod
     def _bounded_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
-        _reject_secret_like_keys(value, field_name="metadata")
-        return ensure_bounded_json_metadata(value, field_name="metadata")
+        return ensure_secret_free_bounded_metadata(value)
 
 
 class ExecutionLeaseRef(ContractModel):
@@ -129,8 +125,7 @@ class ExecutionLease(ContractModel):
     @field_validator("metadata", mode="after")
     @classmethod
     def _bounded_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
-        _reject_secret_like_keys(value, field_name="metadata")
-        return ensure_bounded_json_metadata(value, field_name="metadata")
+        return ensure_secret_free_bounded_metadata(value)
 
     @property
     def is_usable(self) -> bool:

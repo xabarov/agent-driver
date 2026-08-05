@@ -90,6 +90,48 @@ def ensure_bounded_json_metadata(
     return value
 
 
+# Substrings that make a metadata KEY look secret-bearing. Execution metadata is
+# durable and surfaced in briefs/receipts, so a credential-looking key almost
+# always means a secret leaked into a field meant for non-sensitive provenance —
+# fail closed rather than persist it.
+SECRET_KEY_MARKERS = (
+    "secret",
+    "token",
+    "password",
+    "passwd",
+    "api_key",
+    "apikey",
+    "credential",
+    "private_key",
+    "access_key",
+    "auth",
+)
+
+
+def reject_secret_like_keys(value: dict[str, Any], *, field_name: str) -> None:
+    """Fail closed when any top-level metadata key looks credential-bearing."""
+    for key in value:
+        lowered = str(key).lower()
+        if any(marker in lowered for marker in SECRET_KEY_MARKERS):
+            raise ValueError(
+                f"{field_name} key {key!r} looks secret-bearing; execution "
+                "metadata must not carry credentials"
+            )
+
+
+def ensure_secret_free_bounded_metadata(
+    value: dict[str, Any], *, field_name: str = "metadata"
+) -> dict[str, Any]:
+    """Reject secret-like keys, then validate JSON-safe, bounded metadata.
+
+    The standard metadata validator for durable execution contracts: it composes
+    :func:`reject_secret_like_keys` and :func:`ensure_bounded_json_metadata` so
+    every contract enforces the same policy from one place.
+    """
+    reject_secret_like_keys(value, field_name=field_name)
+    return ensure_bounded_json_metadata(value, field_name=field_name)
+
+
 def ensure_non_negative_int(value: int | None, *, field_name: str) -> int | None:
     """Validate non-negative integer metrics."""
     if value is not None and value < 0:

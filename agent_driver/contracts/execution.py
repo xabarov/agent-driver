@@ -16,7 +16,7 @@ from typing import Any
 from pydantic import Field, field_validator, model_validator
 
 from agent_driver.contracts.base import ContractModel
-from agent_driver.contracts.validation import ensure_bounded_json_metadata
+from agent_driver.contracts.validation import ensure_secret_free_bounded_metadata
 
 EXECUTION_SCHEMA_VERSION = "agent_driver.execution.v1"
 
@@ -149,30 +149,6 @@ _MAX_REASON_CHARS = 200
 _MAX_PROGRAMS = 128
 _MAX_LIMITATIONS = 32
 _MAX_LIMITATION_CHARS = 200
-# Substrings that make a metadata KEY look secret-bearing; such keys are rejected
-# from a snapshot before it can reach persistence, events, logs, or a prompt.
-_SECRET_KEY_MARKERS = (
-    "secret",
-    "token",
-    "password",
-    "passwd",
-    "api_key",
-    "apikey",
-    "credential",
-    "private_key",
-    "access_key",
-    "auth",
-)
-
-
-def _reject_secret_like_keys(value: dict[str, Any], *, field_name: str) -> None:
-    for key in value:
-        lowered = str(key).lower()
-        if any(marker in lowered for marker in _SECRET_KEY_MARKERS):
-            raise ValueError(
-                f"{field_name} key {key!r} looks secret-bearing; a capability "
-                "snapshot must not carry credentials"
-            )
 
 
 class CapabilityName(str, Enum):
@@ -253,8 +229,7 @@ class ExecutionCapabilitySnapshot(ContractModel):
     @field_validator("metadata", mode="after")
     @classmethod
     def _bounded_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
-        _reject_secret_like_keys(value, field_name="metadata")
-        return ensure_bounded_json_metadata(value, field_name="metadata")
+        return ensure_secret_free_bounded_metadata(value)
 
     def status_of(self, name: CapabilityName) -> CapabilityStatus:
         """Return the observed status of ``name``; ``UNKNOWN`` if unreported."""
