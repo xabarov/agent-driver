@@ -29,6 +29,13 @@ change between minor versions.
   `render_chat_stream` render loop lost its two most tangled inline blocks to the
   `_run_failure_hint` / `_completed_tool_card` helpers. Behavior-preserving; the
   `agent_driver.cli` surface is unchanged.
+- **Internal: safe extractions in the `compaction_stage` god-functions**
+  (behaviour-preserving, self-contained sub-blocks only — no control-flow change):
+  `_apply_llm_full_compaction` (222 lines) lifts its ~40-line excerpt builder to a
+  pure `_build_full_compaction_excerpt` (returning a small dataclass unpacked back
+  into the same locals, so downstream code is byte-identical) and its provider/model
+  resolution to `_resolve_compaction_backend`; `apply_compaction_if_eligible` lifts
+  its ineligible-skip block to `_finalize_ineligible_compaction`.
 - **Internal: extracted `research_signals` from `research_session_contract`
   (1086 lines → 620).** This module has no clean core/report seam (its contract
   builders and gating predicates are mutually recursive), so instead the

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from agent_driver.context import (
@@ -348,6 +349,31 @@ def _maybe_emit_circuit_breaker_warning(
         )
 
 
+def _finalize_ineligible_compaction(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    decision: CompactionDecision,
+    orchestrator: CompactionOrchestrator,
+) -> None:
+    """Record the no-op audit and emit a ``skipped`` outcome for a decision that
+    was not eligible to compact."""
+    context.metadata[COMPACTION_FAILURES_KEY] = []
+    context.metadata[COMPACTION_AUDIT_KEY] = {
+        "decision": context.metadata[COMPACTION_DECISION_KEY]
+    }
+    skip_payload: dict[str, Any] = {"mode": decision.mode.value}
+    if decision.skip_reason is not None:
+        skip_payload["skip_reason"] = decision.skip_reason.value
+    _emit_compaction_outcome(
+        host,
+        context=context,
+        outcome="skipped",
+        payload_extras=skip_payload,
+        orchestrator=orchestrator,
+    )
+
+
 async def apply_compaction_if_eligible(
     host: CompactionStageHost,
     *,
@@ -374,21 +400,8 @@ async def apply_compaction_if_eligible(
     )
     context.metadata[COMPACTION_DECISION_KEY] = decision.model_dump(mode="json")
     if not decision.eligible:
-        context.metadata[COMPACTION_FAILURES_KEY] = []
-        context.metadata[COMPACTION_AUDIT_KEY] = {
-            "decision": context.metadata[COMPACTION_DECISION_KEY]
-        }
-        skip_payload: dict[str, Any] = {
-            "mode": decision.mode.value,
-        }
-        if decision.skip_reason is not None:
-            skip_payload["skip_reason"] = decision.skip_reason.value
-        _emit_compaction_outcome(
-            host,
-            context=context,
-            outcome="skipped",
-            payload_extras=skip_payload,
-            orchestrator=orchestrator,
+        _finalize_ineligible_compaction(
+            host, context=context, decision=decision, orchestrator=orchestrator
         )
         return
     circuit_breaker_open_before = bool(
@@ -612,20 +625,30 @@ async def _apply_session_memory_compaction(
     return True
 
 
-async def _apply_llm_full_compaction(
-    host: CompactionStageHost,
-    *,
-    context: RunContext,
-    request: Any,
-    orchestrator: CompactionOrchestrator,
-    decision: CompactionDecision,
-    compaction_id: str,
-    circuit_breaker_open_before: bool,
-) -> bool:
-    original_messages = list(request.messages)
-    # Epic 043 C: drop runtime scaffolding turns (nudges, recovery hints) from the
-    # compaction excerpt — they are ephemeral and role is flattened away here, so
-    # the summary model would otherwise be free to read a nudge as user intent.
+@dataclass(slots=True)
+class _FullCompactionExcerpt:
+    """The prepared LLM-full-compaction excerpt plus the PTL-retry accounting the
+    success receipt needs."""
+
+    sanitized_excerpt: str
+    max_chars: int
+    budget_source: str
+    kept_groups: list[str]
+    dropped_groups: list[str]
+    protected_indexes: set[int]
+
+
+def _build_full_compaction_excerpt(
+    host: CompactionStageHost, *, context: RunContext, request: Any
+) -> _FullCompactionExcerpt:
+    """Flatten non-scaffolding, non-empty message content into groups, mark the
+    protected ones, apply the PTL-retry oldest-drop within the scaled char budget,
+    and return the sanitized excerpt plus the drop/keep accounting.
+
+    Epic 043 C: runtime scaffolding turns (nudges, recovery hints) are dropped —
+    they are ephemeral and role is flattened away here, so the summary model would
+    otherwise be free to read a nudge as user intent.
+    """
     raw_groups: list[str] = []
     protected_indexes: set[int] = set()
     last_message_index = len(request.messages) - 1
@@ -661,20 +684,49 @@ async def _apply_llm_full_compaction(
             max_chars=effective_ptl_max_chars,
             protected_indexes=protected_indexes,
         )
-    history_excerpt = "\n".join(kept_groups)
-    sanitized_excerpt = sanitize_compaction_text(history_excerpt)
-    # E1: route this side task to the auxiliary (cheaper) provider/model when
-    # configured; otherwise the main provider + compaction_model. Auxiliary
-    # provider and model resolve independently so either can be overridden.
-    aux_provider = host._config.auxiliary_provider
-    compaction_provider = aux_provider or host._deps.provider
-    # Epic 034: resolve the compaction model through the per-task aux registry
-    # (aux_model_for("compaction") → auxiliary_model → compaction_model) so the
-    # side task shares the one aux-backend seam instead of reading auxiliary_model
-    # directly (which bypassed the 032 registry).
-    compaction_model = (
-        host._config.aux_model_for("compaction") or host._config.compaction_model
+    sanitized_excerpt = sanitize_compaction_text("\n".join(kept_groups))
+    return _FullCompactionExcerpt(
+        sanitized_excerpt=sanitized_excerpt,
+        max_chars=effective_ptl_max_chars,
+        budget_source=budget_source,
+        kept_groups=kept_groups,
+        dropped_groups=dropped_groups,
+        protected_indexes=protected_indexes,
     )
+
+
+def _resolve_compaction_backend(host: CompactionStageHost) -> tuple[Any, str]:
+    """Resolve the (provider, model) for the compaction side task.
+
+    E1: route to the auxiliary (cheaper) provider/model when configured, else the
+    main provider + compaction_model. Epic 034: the model resolves through the
+    per-task aux registry (``aux_model_for("compaction")`` → auxiliary_model →
+    compaction_model) so the side task shares the one aux-backend seam.
+    """
+    provider = host._config.auxiliary_provider or host._deps.provider
+    model = host._config.aux_model_for("compaction") or host._config.compaction_model
+    return provider, model
+
+
+async def _apply_llm_full_compaction(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    request: Any,
+    orchestrator: CompactionOrchestrator,
+    decision: CompactionDecision,
+    compaction_id: str,
+    circuit_breaker_open_before: bool,
+) -> bool:
+    original_messages = list(request.messages)
+    excerpt = _build_full_compaction_excerpt(host, context=context, request=request)
+    sanitized_excerpt = excerpt.sanitized_excerpt
+    effective_ptl_max_chars = excerpt.max_chars
+    budget_source = excerpt.budget_source
+    kept_groups = excerpt.kept_groups
+    dropped_groups = excerpt.dropped_groups
+    protected_indexes = excerpt.protected_indexes
+    compaction_provider, compaction_model = _resolve_compaction_backend(host)
     compaction_result, summary = await run_full_llm_compaction(
         provider=compaction_provider,
         model=compaction_model,
