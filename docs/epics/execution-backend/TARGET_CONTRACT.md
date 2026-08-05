@@ -364,3 +364,32 @@ Lease acquire/attach/reuse/release (EPIC-03), capability snapshot + routing
 (EPIC-02), events/reconnect/control/teardown (EPIC-04), full workspace routing
 (paths, `ls/glob/grep/delete/edit`, the bypass tools) (EPIC-03), the reusable
 compliance kit (EPIC-05). These names are reserved above but not implemented now.
+
+### Revision (2026-08-05, during WP-D/E implementation)
+
+Two points from decisions 7 and 10 were refined against the real code:
+
+- **Injection (decision 7) — CONFIRMED both paths.** `RunnerConfig.execution_backend`
+  is the config-level default; a per-run override threads through `Agent.run` /
+  `SingleAgentRunner.run(execution_backend=...)` → `_init_context` →
+  `RunContext.execution_backend` (beside `abort_handle`/`tool_gate`, for the same
+  "live object, not a JSON transport field" reason). `_drive_steps` resolves
+  `context.execution_backend or config.execution_backend`. Per-run is a HOST
+  concern (e.g. one prepared env per session), distinct from model-driven lease
+  selection, which stays EPIC-03.
+
+- **ACP cutover (decision 10) — DEFERRED to EPIC-02.** The baseline is more
+  capable than the inventory implied: `_command_runner(session)` and
+  `_file_io(session)` are **independently** `None` (client may advertise terminal
+  without fs, or vice-versa), each with a per-capability **local fallback** via a
+  `None` scope; and tools run in BOTH the initial `run()` leg and the
+  `resume()` leg (the scopes currently wrap both). A faithful single-backend
+  cutover therefore needs (a) a per-capability fallback in
+  `CompositeExecutionBackend` (missing half → delegate to local, not raise) and
+  (b) `execution_backend` threaded through `resume()` as well. Both belong with
+  EPIC-02's capability model. For EPIC-01, `CompositeExecutionBackend` ships as the
+  supported **shim primitive**, and ACP keeps using the public, supported
+  `command_runner_scope`/`fs_io_scope` (which the new adapters themselves use) —
+  so ACP stays green (acceptance scenario 8) with no divergence, only a
+  not-yet-unified call site. This satisfies the epic's "provide compatibility
+  shims for ACP … OR migrate ACP" as the shim branch.

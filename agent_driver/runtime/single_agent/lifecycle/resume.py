@@ -48,6 +48,7 @@ from agent_driver.runtime.storage import CheckpointRecord
 
 if TYPE_CHECKING:
     from agent_driver.context.planning.artifacts import PlanArtifactStore
+    from agent_driver.execution.protocol import ExecutionBackend
     from agent_driver.runtime.abort import RunAbortHandle
     from agent_driver.runtime.tool_gate import ToolGate
 
@@ -550,6 +551,7 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
         *,
         abort_handle: "RunAbortHandle | None" = None,
         tool_gate: "ToolGate | None" = None,
+        execution_backend: "ExecutionBackend | None" = None,
     ) -> RunContext:
         checkpoint_row = self._resolve_resume_checkpoint(run_input)
         if checkpoint_row is None:
@@ -578,6 +580,7 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                 },
                 abort_handle=abort_handle,
                 tool_gate=tool_gate,
+                execution_backend=execution_backend,
             )
         metadata = dict(checkpoint_row.state.metadata)
         # F1 / U4 — a resume re-drives the run: bump the execution-attempt epoch
@@ -602,6 +605,7 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             ),
             abort_handle=abort_handle,
             tool_gate=tool_gate,
+            execution_backend=execution_backend,
         )
         resume = run_input.resume
         if resume is not None:

@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass
 from importlib import import_module
+from typing import TYPE_CHECKING
 import uuid
 
 from agent_driver.contracts.control import (
@@ -39,6 +40,9 @@ from agent_driver.runtime.stream import project_runtime_events
 from agent_driver.sdk.errors import sdk_provider_error_from_runtime
 from agent_driver.sdk.handle import RunHandle, RunStream
 from agent_driver.sdk.trace import TraceSummary, summarize_output, support_bundle
+
+if TYPE_CHECKING:
+    from agent_driver.execution.protocol import ExecutionBackend
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +373,7 @@ class Agent:  # pylint: disable=too-many-public-methods
         *,
         abort_handle: RunAbortHandle | None = None,
         tool_gate: ToolGate | None = None,
+        execution_backend: "ExecutionBackend | None" = None,
     ) -> AgentRunOutput:
         """Execute one agent run.
 
@@ -390,11 +395,20 @@ class Agent:  # pylint: disable=too-many-public-methods
         ``default_tool_gate`` (if any) applies; an explicit per-call gate always
         wins. All other entry points (``start``/``stream``/``stream_run`` and the
         ``Session`` helpers) route through here, so they inherit the default too.
+
+        ``execution_backend`` (EPIC-01) is an optional per-run
+        :class:`ExecutionBackend`. When provided, the built-in bash/read/write
+        run through it (e.g. a host's prepared per-session environment) instead
+        of the local subprocess + local disk; it overrides any backend set on
+        ``RunnerConfig``.
         """
         effective_gate = tool_gate if tool_gate is not None else self._default_tool_gate
         try:
             return await self._runner.run(
-                run_input, abort_handle=abort_handle, tool_gate=effective_gate
+                run_input,
+                abort_handle=abort_handle,
+                tool_gate=effective_gate,
+                execution_backend=execution_backend,
             )
         except RuntimeExecutionError as exc:
             sdk_error = sdk_provider_error_from_runtime(exc)

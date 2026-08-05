@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 from time import monotonic
 
 from agent_driver.code_agent.backends import create_python_backend
@@ -57,6 +58,9 @@ from agent_driver.subagents.mailbox import InMemorySubagentMailboxStore
 from agent_driver.subagents.store import InMemorySubagentStore
 from agent_driver.tools import register_builtin_tools, register_planning_tool
 from agent_driver.execution.adapters import BackendCommandRunner, BackendFileIO
+
+if TYPE_CHECKING:
+    from agent_driver.execution.protocol import ExecutionBackend
 from agent_driver.tools.context import (
     command_runner_scope,
     fs_io_scope,
@@ -192,6 +196,7 @@ class SingleAgentRunner(
         *,
         abort_handle: "RunAbortHandle | None" = None,
         tool_gate: "ToolGate | None" = None,
+        execution_backend: "ExecutionBackend | None" = None,
     ) -> AgentRunOutput:
         """Execute deterministic step loop with per-step checkpointing.
 
@@ -214,7 +219,10 @@ class SingleAgentRunner(
         if replayed is not None:
             return replayed
         context = self._init_context(
-            run_input, abort_handle=abort_handle, tool_gate=tool_gate
+            run_input,
+            abort_handle=abort_handle,
+            tool_gate=tool_gate,
+            execution_backend=execution_backend,
         )
         command_store = getattr(self._deps, "command_queue_store", None)
         set_phase = getattr(command_store, "set_run_phase", None)
@@ -361,7 +369,11 @@ class SingleAgentRunner(
         re-enters :meth:`run` synchronously opens its own AGENT span under
         this one, giving Phoenix native subagent grouping.
         """
-        backend = getattr(self._config, "execution_backend", None)
+        # A per-run backend (host-injected via run(execution_backend=...)) wins
+        # over the config default; None keeps the local subprocess + disk path.
+        backend = context.execution_backend or getattr(
+            self._config, "execution_backend", None
+        )
         with contextlib.ExitStack() as stack:
             stack.enter_context(workspace_cwd_scope(_pick_workspace_cwd(context)))
             if backend is not None:

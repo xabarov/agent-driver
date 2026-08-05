@@ -462,6 +462,12 @@ class RunContext:
     # ``abort_handle`` — callables don't belong on a JSON-serialisable
     # transport contract.
     tool_gate: "ToolGate | None" = None
+    # Optional caller-supplied execution backend for THIS run (EPIC-01). A host
+    # (e.g. the ACP adapter) injects a per-session backend so the built-in
+    # bash/read/write run in that session's prepared environment. Overrides
+    # ``RunnerConfig.execution_backend``. Lives on RunContext, not on the
+    # JSON-serialisable ``AgentRunInput``, for the same reason as ``abort_handle``.
+    execution_backend: "ExecutionBackend | None" = None
 
     @property
     def run_id(self) -> str:

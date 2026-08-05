@@ -83,3 +83,37 @@ async def test_routed_read_still_enforces_size_guard(tmp_path):
     with fs_io_scope(BackendFileIO(fake)):
         with pytest.raises(ValueError):
             await read_text_routed(tmp_path / "big.txt", max_bytes=10)
+
+
+def _runner():
+    from agent_driver.llm.providers_impl.fake import FakeProvider
+    from agent_driver.runtime import (
+        FakeSingleStepRunner,
+        InMemoryCheckpointStore,
+        InMemoryEventLog,
+    )
+
+    return FakeSingleStepRunner(
+        provider=FakeProvider(response_text="x"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+    )
+
+
+def test_per_run_backend_threads_onto_context():
+    from agent_driver.contracts import AgentRunInput
+
+    fake = ex.FakeExecutionBackend()
+    runner = _runner()
+    ctx = runner._init_context(
+        AgentRunInput(input="q", run_id="r", agent_id="a", graph_preset="single_react"),
+        execution_backend=fake,
+    )
+    assert ctx.execution_backend is fake
+
+
+def test_context_backend_default_is_none():
+    from agent_driver.contracts import AgentRunInput
+
+    ctx = _runner()._init_context(AgentRunInput(input="q", run_id="r", agent_id="a", graph_preset="single_react"))
+    assert ctx.execution_backend is None
