@@ -59,6 +59,34 @@ _command_runner: ContextVar["AsyncCommandRunner | None"] = ContextVar(
     "command_runner", default=None
 )
 
+# EPIC-02: the run-scoped execution-capability snapshot for the injected backend
+# (an ``ExecutionCapabilitySnapshot``, stored as Any to keep this leaf module
+# free of an execution-contracts import). ``None`` means no backend/handshake in
+# scope, so capability routing is skipped and tools behave as before.
+_capability_snapshot: ContextVar[Any | None] = ContextVar(
+    "capability_snapshot", default=None
+)
+
+
+def get_capability_snapshot() -> Any | None:
+    """Return the run-scoped execution-capability snapshot, or ``None``."""
+    return _capability_snapshot.get()
+
+
+@contextmanager
+def capability_snapshot_scope(snapshot: Any | None) -> Iterator[None]:
+    """Temporarily expose the backend capability snapshot to tool routing.
+
+    Set once per run (by the runner, after the backend handshake) so both the
+    pre-model tool-schema filter and the pre-dispatch governed re-check observe
+    the same truthful snapshot.
+    """
+    token = _capability_snapshot.set(snapshot)
+    try:
+        yield
+    finally:
+        _capability_snapshot.reset(token)
+
 
 # Phase 11 H16 — optional progress reporter for long-running tools.
 # Stored as a ContextVar so handlers don't need an extra parameter; the
@@ -338,6 +366,8 @@ __all__ = [
     "ToolProgress",
     "command_runner_scope",
     "fs_io_scope",
+    "capability_snapshot_scope",
+    "get_capability_snapshot",
     "get_command_runner",
     "get_fs_io",
     "get_workspace_cwd",

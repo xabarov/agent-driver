@@ -153,10 +153,43 @@ def check_requirement(
     return RequirementCheck(satisfied=False, reason=reason, unmet=tuple(unmet))
 
 
+def check_manifest_requirement(
+    manifest: object,
+    snapshot: ExecutionCapabilitySnapshot | None,
+) -> RequirementCheck | None:
+    """Check a tool manifest's execution requirement against a snapshot.
+
+    Returns ``None`` (skip — the tool is unaffected) when there is no snapshot
+    in scope (no backend injected) or the manifest declares no requirement.
+    Otherwise returns the :class:`RequirementCheck`; a hard requirement is
+    unsatisfied unless every named capability is ``SUPPORTED``.
+    """
+    if snapshot is None:
+        return None
+    requirement = getattr(manifest, "execution_requirement", None)
+    if requirement is None or not isinstance(requirement, ToolExecutionRequirement):
+        return None
+    if not requirement.required:
+        return None
+    return check_requirement(snapshot, requirement)
+
+
+def tool_is_withheld(
+    manifest: object,
+    snapshot: ExecutionCapabilitySnapshot | None,
+) -> bool:
+    """True when a hard, unmet requirement means the tool must not be exposed
+    or dispatched. Soft/absent requirements and no-snapshot never withhold."""
+    check = check_manifest_requirement(manifest, snapshot)
+    return check is not None and not check.satisfied
+
+
 __all__ = [
     "DEFAULT_BRIEF_MAX_CHARS",
     "unknown_snapshot",
     "resolve_capability_snapshot",
     "derive_environment_brief",
     "check_requirement",
+    "check_manifest_requirement",
+    "tool_is_withheld",
 ]

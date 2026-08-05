@@ -58,10 +58,12 @@ from agent_driver.subagents.mailbox import InMemorySubagentMailboxStore
 from agent_driver.subagents.store import InMemorySubagentStore
 from agent_driver.tools import register_builtin_tools, register_planning_tool
 from agent_driver.execution.adapters import BackendCommandRunner, BackendFileIO
+from agent_driver.execution.capabilities import resolve_capability_snapshot
 
 if TYPE_CHECKING:
     from agent_driver.execution.protocol import ExecutionBackend
 from agent_driver.tools.context import (
+    capability_snapshot_scope,
     command_runner_scope,
     fs_io_scope,
     workspace_cwd_scope,
@@ -374,6 +376,12 @@ class SingleAgentRunner(
         backend = context.execution_backend or getattr(
             self._config, "execution_backend", None
         )
+        # EPIC-02: one capability handshake per run, fail-safe to all-UNKNOWN.
+        # The same snapshot governs the pre-model tool filter and the
+        # pre-dispatch governed re-check, so both see identical truth.
+        capability_snapshot = (
+            await resolve_capability_snapshot(backend) if backend is not None else None
+        )
         with contextlib.ExitStack() as stack:
             stack.enter_context(workspace_cwd_scope(_pick_workspace_cwd(context)))
             if backend is not None:
@@ -383,6 +391,7 @@ class SingleAgentRunner(
                 # jailing and all governance still run above dispatch.
                 stack.enter_context(command_runner_scope(BackendCommandRunner(backend)))
                 stack.enter_context(fs_io_scope(BackendFileIO(backend)))
+                stack.enter_context(capability_snapshot_scope(capability_snapshot))
             while context.step_name != "done":
                 terminal = self._terminal_from_limits(context)
                 if terminal is not None:

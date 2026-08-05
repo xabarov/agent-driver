@@ -15,6 +15,7 @@ from agent_driver.contracts.enums import (
     SideEffectClass,
     ToolRisk,
 )
+from agent_driver.contracts.execution import ToolExecutionRequirement
 from agent_driver.contracts.validation import (
     ensure_json_serializable,
     ensure_positive_int,
@@ -119,6 +120,13 @@ class ToolManifest(ContractModel):
         ]
     )
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # EPIC-02: host/registry-declared execution requirement. NEVER a
+    # model-visible argument. A hard requirement withholds the tool from the
+    # model schema (pre-model) and denies dispatch (pre-dispatch) unless the
+    # injected backend's capability snapshot reports every named capability
+    # SUPPORTED. ``None`` (default) = no capability gating; the tool behaves as
+    # before, so this is fully backward-compatible.
+    execution_requirement: ToolExecutionRequirement | None = None
 
     def is_concurrency_safe(self) -> bool:
         """Resolve the effective concurrency-safe flag.

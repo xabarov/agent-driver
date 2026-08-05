@@ -24,6 +24,7 @@ from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.tools import (
     MANAGEMENT_TOOL_NAMES,
     ToolCall,
+    ToolManifest,
     ToolResultEnvelope,
 )
 from agent_driver.llm.contracts import LlmResponse
@@ -128,7 +129,7 @@ def _read_concurrency_limit_env() -> int:
         value = int(raw)
     except ValueError:
         logger.warning(
-            "AGENT_DRIVER_TOOL_CONCURRENCY=%r is not an integer; " "falling back to %d",
+            "AGENT_DRIVER_TOOL_CONCURRENCY=%r is not an integer; falling back to %d",
             raw,
             DEFAULT_CONCURRENCY_LIMIT,
         )
@@ -220,6 +221,32 @@ class GovernedToolExecutor:
         spec: BlockSpec,
     ) -> None:
         append_blocked_call(result=result, spec=spec)
+
+    @staticmethod
+    def _capability_predispatch_block(
+        call: ToolCall, manifest: ToolManifest, *, index: int
+    ) -> BlockSpec | None:
+        """Return a block spec when the tool's HARD execution requirement is
+        unmet by the current run-scoped capability snapshot, else ``None``.
+
+        Fail-safe and side-effect free: no snapshot in scope (no backend) or no
+        requirement means no gating. The reason is host-facing and carries no
+        secret values.
+        """
+        from agent_driver.execution.capabilities import check_manifest_requirement
+        from agent_driver.tools.context import get_capability_snapshot
+
+        check = check_manifest_requirement(manifest, get_capability_snapshot())
+        if check is None or check.satisfied:
+            return None
+        return BlockSpec(
+            index=index,
+            call=call,
+            manifest=manifest,
+            reason=check.reason or "required execution capability not available",
+            code="capability_unmet",
+            stage="capability",
+        )
 
     async def execute(
         self,
@@ -609,7 +636,7 @@ class GovernedToolExecutor:
                 continue
             except Exception:
                 logger.warning(
-                    "tool_hook %r raised in pre_tool_use; preserving " "previous call",
+                    "tool_hook %r raised in pre_tool_use; preserving previous call",
                     getattr(hook, "name", type(hook).__name__),
                     exc_info=True,
                 )
@@ -882,8 +909,7 @@ class GovernedToolExecutor:
                     update={
                         "decision": ToolPolicyDecision.ALLOW,
                         "reason": (
-                            f"matches approved prompt category "
-                            f"{matched.category_id!r}"
+                            f"matches approved prompt category {matched.category_id!r}"
                         ),
                         "interrupt_reason": None,
                     }
@@ -969,6 +995,17 @@ class GovernedToolExecutor:
                 ),
             )
             return False
+        # EPIC-02: re-check the tool's execution requirement against the CURRENT
+        # run-scoped capability snapshot, immediately before dispatch. This is
+        # below the model and after policy/gate/guardrail, so a model argument
+        # cannot bypass it and a snapshot that drifted since the tool schema was
+        # built (time-of-check/time-of-use) still fences the call here.
+        capability_block = self._capability_predispatch_block(
+            call, manifest, index=index
+        )
+        if capability_block is not None:
+            self._append_block(result=result, spec=capability_block)
+            return False
         envelopes_before = len(result.envelopes)
         outcome = await execute_allowed_path(
             guardrails=self._guardrails,
@@ -981,9 +1018,7 @@ class GovernedToolExecutor:
                 input_guard_decision=input_guard.decision,
                 run_metadata=run_metadata,
                 cancelled_check=spec.cancelled_check,
-                cancellation_deadline=getattr(
-                    spec.run_input, "deadline_seconds", None
-                ),
+                cancellation_deadline=getattr(spec.run_input, "deadline_seconds", None),
                 # Phase 12 H18 — pass the executor-scoped artifact store
                 # so the allow-path can spill oversized outputs when
                 # the manifest opts in via ``max_result_size_chars``.

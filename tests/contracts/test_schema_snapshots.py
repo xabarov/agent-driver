@@ -132,6 +132,7 @@ PUBLIC_CONTRACT_FIELD_SNAPSHOTS: dict[str, tuple[str, ...]] = {
         "remediation_hints",
         "supported_profiles",
         "metadata",
+        "execution_requirement",
     ),
     "ToolTrace": (
         "step",

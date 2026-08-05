@@ -154,6 +154,7 @@ def _request_tools_from_registry(
     allowed: tuple[str, ...] | None = None,
     denied: tuple[str, ...] | None = None,
     surface_deferred: tuple[str, ...] = (),
+    capability_snapshot: Any | None = None,
 ) -> list[dict[str, Any]]:
     """Build the LLM-visible tool list, applying allow/deny filters.
 
@@ -198,6 +199,11 @@ def _request_tools_from_registry(
     rows = getattr(registry, "list_registered", None)
     if not callable(rows):
         return []
+    # EPIC-02: withhold tools whose HARD execution requirement is unmet by the
+    # injected backend's capability snapshot, so the model never sees a tool it
+    # cannot run in this environment. No snapshot / no requirement = unaffected.
+    from agent_driver.execution.capabilities import tool_is_withheld
+
     schemas: list[dict[str, Any]] = []
     for item in rows():
         manifest = item.manifest
@@ -208,6 +214,8 @@ def _request_tools_from_registry(
             and manifest.name not in explicit_allow
             and manifest.name not in surfaced
         ):
+            continue
+        if tool_is_withheld(manifest, capability_snapshot):
             continue
         schemas.append(_tool_schema_from_manifest(manifest))
     return schemas
@@ -480,11 +488,14 @@ def build_single_agent_llm_request(
         mode=ctx.tool_defer_mode,
         threshold_pct=ctx.tool_defer_threshold_pct,
     )
+    from agent_driver.tools.context import get_capability_snapshot
+
     request_tools = _request_tools_from_registry(
         ctx.registry,
         allowed=request_allowed,
         denied=request_denied,
         surface_deferred=ctx.surface_deferred_tools + adaptive_surface,
+        capability_snapshot=get_capability_snapshot(),
     )
     if harness_profile is not None:
         request_tools = apply_tool_overrides(request_tools, harness_profile)
