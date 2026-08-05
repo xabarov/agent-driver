@@ -147,11 +147,13 @@ _FACADE_EXPORTS = {
     # job observation
     "JobObserver",
     "JobSession",
+    "JobStopOutcome",
     "TerminalConflictError",
     "fence_stale",
     "initial_cursor",
     "persist_job_recovery",
     "restore_job_recovery",
+    "stop_job",
     # workspace path safety
     "validate_workspace_path",
     "WorkspacePathError",

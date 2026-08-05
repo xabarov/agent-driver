@@ -8,16 +8,22 @@ snapshot, and never lets a late/stale delivery become a normal observation.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from agent_driver.contracts.execution import ExecutionCommandRequest
 from agent_driver.contracts.execution_job import (
+    ExecutionControlKind,
+    ExecutionControlReceipt,
+    ExecutionControlRequest,
     ExecutionEvent,
     ExecutionEventCursor,
     ExecutionEventPage,
     ExecutionHandle,
     ExecutionTerminalSnapshot,
+    TeardownReceipt,
 )
+from agent_driver.contracts.execution_lease import LeaseOwnership
 from agent_driver.execution.errors import (
     ExecutionError,
     IndeterminateExecutionError,
@@ -207,12 +213,64 @@ class JobSession:
         return observer.resolve_terminal(snapshot)
 
 
+@dataclass(frozen=True, slots=True)
+class JobStopOutcome:
+    """The SEPARATE, truthful facts of a stop request against a job (EPIC-04
+    WP-D). ``accepted`` (backend took the request) and ``applied`` (it took
+    effect) are distinct; ``execution_terminal`` (the job ended) and
+    ``teardown_confirmed`` (the environment was destroyed) are distinct again — a
+    cooperative-only backend may accept a STOP while confirming NONE of the rest,
+    and a run cancel never fabricates teardown."""
+
+    control: ExecutionControlReceipt
+    teardown: TeardownReceipt | None = None
+
+    @property
+    def accepted(self) -> bool:
+        return self.control.accepted
+
+    @property
+    def applied(self) -> bool:
+        return self.control.applied
+
+    @property
+    def execution_terminal(self) -> bool:
+        return self.control.execution_terminal
+
+    @property
+    def teardown_confirmed(self) -> bool:
+        return self.teardown is not None and self.teardown.confirmed
+
+
+async def stop_job(
+    backend: "JobCapableBackend",
+    handle: ExecutionHandle,
+    *,
+    kind: ExecutionControlKind = ExecutionControlKind.STOP,
+    ownership: LeaseOwnership = LeaseOwnership.RUNTIME_OWNED,
+    with_teardown: bool = False,
+) -> JobStopOutcome:
+    """Apply the strongest supported control to a job and report truthful,
+    SEPARATE facts. Teardown is DESTRUCTIVE, so it is requested only for a
+    RUNTIME-owned environment and only when ``with_teardown`` — a host-owned
+    environment is never torn down here. The returned receipts carry exactly what
+    the backend reported; this helper never upgrades accepted→applied or claims
+    an unconfirmed teardown."""
+    control = await backend.control(ExecutionControlRequest(handle=handle, kind=kind))
+    teardown: TeardownReceipt | None = None
+    if with_teardown and ownership is LeaseOwnership.RUNTIME_OWNED:
+        teardown = await backend.teardown(handle)
+    return JobStopOutcome(control=control, teardown=teardown)
+
+
 __all__ = [
     "JobObserver",
     "JobSession",
+    "JobStopOutcome",
     "TerminalConflictError",
     "fence_stale",
     "initial_cursor",
     "persist_job_recovery",
     "restore_job_recovery",
+    "stop_job",
 ]
