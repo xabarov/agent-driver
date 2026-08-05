@@ -7,6 +7,44 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-05
+
+### Added
+
+- **Execution leases & complete workspace routing (execution-backend EPIC-03).**
+  A task-scoped, generation-bound lease lets one prepared backend workspace be
+  acquired/attached once, reused across the whole agent loop, and released
+  (runtime-owned) or detached (host-owned) on every exit — while every built-in
+  filesystem operation routes to that workspace with backend-relative path
+  safety. The external backend owns infrastructure; Agent Driver owns correct
+  use of the lease inside the run.
+  - Lease contracts (`agent_driver.contracts.execution_lease`, re-exported from
+    `agent_driver.execution`): `ExecutionLeaseRequest`, `ExecutionLeaseRef` (the
+    only durable, non-secret, generation-bound reference), `ExecutionLease`,
+    `LeaseReceipt`, `WorkspacePaths`, ownership/state/phase enums,
+    `EXECUTION_LEASE_SCHEMA_VERSION`. Optional `LeaseCapableBackend` protocol and
+    an `ExecutionLeaseManager` (idempotent acquire/attach/reuse; release/detach
+    exactly once; fail-closed to `LeaseNotUsableError`/`UnsupportedCapabilityError`,
+    never a silent local fallback).
+  - Runner integration: `RunnerConfig.execution_lease_ownership` (or a host-
+    supplied attach ref in `app_metadata["execution_lease_ref"]`); acquire/attach
+    once, reuse across steps, persist the safe ref for resume, and release in the
+    authoritative outer `finally`. A PAUSED run retains its lease; a subagent
+    child never acquires or releases the parent's lease (default ISOLATE policy).
+  - Complete workspace routing: `WorkspaceCapableBackend` (list/glob/grep/stat/
+    delete) plus routing-aware path resolution — when a backend is active,
+    `read`/`write`/`edit`/`patch`/`glob`/`grep`/`artifact_*`/`notebook_edit`
+    validate paths lexically against the lease `WorkspacePaths` (no local stat,
+    no local fallback) via `validate_workspace_path`, and route bytes/enumeration
+    to the backend. Filesystem builtins declare FILE_READ/FILE_WRITE execution
+    requirements (capability-gated).
+  - Artifact bridge: a backend-produced content-addressed `ArtifactRef`
+    (digest + size) is surfaced as a bounded, model-facing reference
+    (`execution_artifact_reference_payload`) and mapped to the context artifact
+    vocabulary (`execution_artifact_to_context_ref`) — only a bounded preview
+    enters model context, never an implicit full-content load.
+  - Per-phase lease timings are surfaced to `metadata["execution_lease_receipts"]`.
+
 ## [0.6.0] - 2026-08-05
 
 ### Added

@@ -110,6 +110,45 @@ async def main() -> None:
     print("--- environment brief the model would see ---")
     print(render_environment_brief_text(derive_environment_brief(snapshot)))
 
+    # 4) Leases (EPIC-03): a lease-capable backend grants one task-scoped
+    #    workspace that spans the whole run. The manager acquires once, reuses,
+    #    and releases (runtime-owned) or detaches (host-owned) on every exit.
+    from agent_driver.execution import (
+        ExecutionLeaseManager,
+        ExecutionLeaseRequest,
+        LeaseOwnership,
+        validate_workspace_path,
+    )
+
+    lease_backend = FakeExecutionBackend()  # implements the lease + workspace ops
+    manager = ExecutionLeaseManager()
+    lease = await manager.acquire_or_attach(
+        lease_backend,
+        ExecutionLeaseRequest(
+            request_id="run-1:lease",
+            backend_id=lease_backend.backend_id,
+            ownership=LeaseOwnership.RUNTIME_OWNED,
+        ),
+    )
+    print(
+        "lease:",
+        lease.ref.lease_id,
+        lease.state.value,
+        "root:",
+        lease.paths.workspace_root,
+    )
+    # Backend-relative path safety (no local disk): traversal is rejected.
+    try:
+        validate_workspace_path("../escape", lease.paths)
+    except Exception as exc:  # WorkspacePathError
+        print("path traversal rejected:", type(exc).__name__)
+    await manager.close(lease_backend)  # released exactly once
+    print("lease released:", [r.phase.value for r in manager.receipts])
+    #
+    # In a real run, set RunnerConfig(execution_lease_ownership=...) and the
+    # runner does acquire/reuse/release for you; every filesystem builtin routes
+    # to the leased workspace with this same path safety.
+
     # To wire a backend into a real agent, pass it to the runner/agent:
     #
     #     from agent_driver.runtime import RunnerConfig
