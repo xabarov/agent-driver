@@ -31,6 +31,9 @@ current, and tied to code that exists in the repository.
 
 - [Roadmap](roadmap.md) - short current direction, the few genuinely-open
   threads, verification loop, and quality bar. Start here.
+- [Execution backends and task workspaces](epics/execution-backend/README.md) -
+  sequential epics for a backend-neutral local/remote tool execution plane,
+  reusable task leases, recovery, and backend qualification.
 - [Unified work plan](archive/unified-work-plan-2026-05-31.md) - slim record of the work
   left after the shipped cycles (Deep Research hard-profile hardening, live eval
   cost discipline, deferred-by-choice adapters).

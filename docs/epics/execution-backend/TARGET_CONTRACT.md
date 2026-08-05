@@ -1,0 +1,366 @@
+# Target Execution Contract
+
+This page fixes the architectural boundary and minimum semantics shared by all
+execution-backend epics. Exact Python names may be refined during EPIC-01, but a
+change to the responsibilities or guarantees below is an architecture decision
+and must be recorded here.
+
+## Terms
+
+- **Execution backend**: a host-selected adapter that performs command and file
+  operations in a prepared environment.
+- **Execution lease**: a generation-bound right to use one task workspace for a
+  bounded period. It may map to a local directory, container, VM, or remote
+  worker.
+- **Workspace**: the filesystem view associated with a lease.
+- **Execution**: one command or other backend operation within a lease.
+- **Capability snapshot**: versioned backend facts observed for a particular
+  environment generation.
+- **Environment brief**: a bounded, redacted model-facing projection derived
+  from a capability snapshot. It is guidance, not an authorization boundary.
+- **Control receipt**: evidence that a requested action was accepted, rejected,
+  or applied. Acceptance alone does not prove effect.
+- **Teardown receipt**: evidence of the strongest cleanup fact the backend can
+  honestly claim.
+
+## Separation from existing concepts
+
+| Existing concept | Meaning | Relationship to this contract |
+| --- | --- | --- |
+| `AgentRunInput.workspace_id` | Host's logical workspace/session grouping | May be included as correlation metadata; never used as a lease token |
+| `workspace_cwd` | Local path hint | Used by the local adapter; not a remote capability proof |
+| `BackgroundRunLease` | Worker ownership for durable run supervision | Remains separate from `ExecutionLease` |
+| `HarnessAdapter*` | Projection of runs to host protocols | May expose execution summaries but does not execute tools |
+| `ToolManifest` | Model tool policy and governance metadata | Remains the source of tool risk/approval semantics |
+| `RunAbortHandle` | Run-level abort signal | Can initiate backend control, but does not by itself prove hard teardown |
+
+## Public surface
+
+The final API should be importable from a supported facade, with embedding
+essentials re-exported from `agent_driver.embedding`. The target shape is one
+backend protocol plus validated contracts; it is not a collection of untyped
+callbacks or `app_metadata` dictionaries.
+
+An illustrative protocol is:
+
+```python
+class ExecutionBackend(Protocol):
+    async def acquire(self, request: ExecutionLeaseRequest) -> ExecutionLease: ...
+    async def attach(self, ref: ExecutionLeaseRef) -> ExecutionLease: ...
+    async def capabilities(self, lease: ExecutionLeaseRef) -> CapabilitySnapshot: ...
+    async def start(self, lease: ExecutionLeaseRef, request: ExecutionRequest) -> ExecutionHandle: ...
+    async def events(self, handle: ExecutionHandle, *, after: str | None) -> ExecutionEventPage: ...
+    async def snapshot(self, handle: ExecutionHandle) -> ExecutionSnapshot: ...
+    async def control(self, handle: ExecutionHandle, request: ExecutionControlRequest) -> ControlReceipt: ...
+    async def workspace(self, lease: ExecutionLeaseRef) -> AsyncWorkspace: ...
+    async def detach(self, lease: ExecutionLeaseRef) -> LeaseReceipt: ...
+    async def release(self, lease: ExecutionLeaseRef) -> TeardownReceipt: ...
+```
+
+This is a semantic target, not permission to publish a needlessly broad first
+version. EPIC-01 should keep the smallest coherent API and add later methods in
+the epic that proves their behavior. Unsupported optional operations must be
+discoverable through capabilities and return a typed unsupported error.
+
+## Required identities
+
+The contracts must keep these identities distinct:
+
+- `run_id` and `attempt_id`: the Agent Driver run attempt;
+- `tool_call_id`: the model/tool-governance call;
+- `backend_id`: the host-selected backend implementation/route;
+- `lease_id` and `lease_generation`: the task environment instance;
+- `execution_id` and `execution_generation`: one backend operation;
+- `request_id` or idempotency key: one mutating backend request;
+- event `cursor` and monotonic sequence within an execution;
+- artifact identity and digest.
+
+Every event, result, control receipt, and teardown receipt must carry enough
+identity to reject a response from an obsolete attempt or generation.
+
+## Lease request and ownership
+
+An execution lease request contains only backend-neutral needs, for example:
+
+- run/attempt correlation;
+- an opaque host-selected environment/profile reference;
+- required capability names and minimum revisions;
+- requested lifetime and resource bounds;
+- optional logical workspace correlation;
+- an idempotency key;
+- redacted metadata.
+
+It does not contain model-selected image names, raw credentials, unrestricted
+shell setup scripts, or network policy authored by model output.
+
+The returned lease declares whether it is:
+
+- **runtime-owned**: Agent Driver must release it on every terminal path; or
+- **host-owned**: Agent Driver may attach/detach but must not destroy it.
+
+Acquire and attach are idempotent for the same key. Reuse is allowed only while
+backend identity, lease generation, expiry, and required capabilities match.
+
+## Capability snapshot
+
+The snapshot is a validated, bounded, redacted contract. At minimum it reports:
+
+- backend ID, contract version, environment revision, and observed-at time;
+- lease generation to which the snapshot applies;
+- supported command, file, event, control, reconnect, artifact, and teardown
+  semantics;
+- workspace path model and writable roots without exposing host secrets;
+- bounded program/runtime inventory sufficient for tool availability decisions;
+- declared output, timeout, and resource limits;
+- degradation/unknown reasons and snapshot freshness.
+
+Capability states use at least `supported`, `unsupported`, `degraded`, and
+`unknown`. Missing evidence is `unknown`, never `supported`.
+
+The snapshot is not a tool registry. A binary may be installed but hidden from
+the model; a registered tool may be withheld if its backend requirements are
+not satisfied.
+
+## Environment brief
+
+Agent Driver may add a concise environment brief to request-only model context.
+It must be derived from the accepted snapshot, capped by a deterministic size
+budget, redact secret-like values, and include the snapshot revision. It may
+describe available tools/programs, workspace conventions, limits, and known
+gaps. It must not contain executable setup instructions from untrusted output.
+
+Prompt text never expands policy. The executor checks the actual lease and
+capability snapshot again before dispatch.
+
+### Prepared environment without repeated setup
+
+The external backend gives an environment revision to a prepared filesystem and
+program set. Agent Driver caches and reuses the accepted snapshot for the lease,
+so the model can see what is already available instead of repeatedly trying to
+install or rediscover it.
+
+The responsibilities stay separate:
+
+- the backend reports the observed environment/program revision;
+- Agent Driver owns the registered tools, skills, prompts, and their normal
+  model-facing projection;
+- capability requirements connect a registered tool to the environment facts
+  it needs; and
+- a missing requirement withholds or fails the tool explicitly. It does not
+  trigger an automatic installation fallback in core.
+
+Skill and prompt contents do not belong in the backend snapshot. If useful, a
+combined brief may name their host-supplied revisions without copying secrets or
+unbounded content.
+
+## Command and workspace behavior
+
+- The built-in `bash` path routes through the execution backend when configured.
+- Every built-in file tool that claims remote-workspace support routes all
+  relevant operations through the backend. It must not validate remotely and
+  then read or enumerate the local filesystem by accident.
+- Paths are backend-relative or use an explicit validated workspace root.
+  Backend paths must never be resolved against an unrelated local process path.
+- The local compatibility backend preserves current local jail and command
+  policy behavior.
+- Policy and approval remain above dispatch. The backend receives an already
+  authorized, bounded request plus correlation metadata; it does not replace
+  Agent Driver governance.
+
+## Results, output, and artifacts
+
+An execution result contains a typed terminal state, exit/status information,
+start/end times, applied bounds, truncation facts, and references to full
+artifacts when available. Standard output and error are bounded before entering
+runtime events, traces, checkpoints, or model context.
+
+Large or binary results use content-addressed artifacts with at least digest,
+size, media type when known, backend/lease/execution identity, and a safe
+retrieval reference. A reference is not proof that content was inspected.
+
+## Events and reconnect
+
+Execution events are ordered within an execution and replayable from a stable
+cursor. The event page states whether history is complete, compacted, or has a
+gap. Duplicate delivery is allowed; conflicting content for the same identity
+and sequence is not.
+
+After transport loss, Agent Driver queries a snapshot and resumes from the last
+committed cursor. It does not rerun an unknown mutating operation merely because
+the response was lost. The backend must support idempotent lookup or return an
+explicit indeterminate state for manual/host resolution.
+
+## Controls and teardown
+
+Minimum controls are capability-driven. The contract must distinguish:
+
+- cancellation requested;
+- cancellation accepted;
+- cooperative stop observed;
+- process terminated;
+- process tree terminated;
+- execution environment destroyed;
+- cleanup unknown or failed.
+
+Pause, resume, signal, or PTY features are optional and out of the initial
+contract unless an acceptance scenario proves demand. Stop can request the
+strongest supported control, but terminal run state and teardown confirmation
+remain separate receipts.
+
+## Failure classes
+
+Public typed failures must distinguish at least:
+
+- unsupported capability;
+- invalid/stale lease or generation;
+- policy/precondition rejection before dispatch;
+- queue/acquire timeout;
+- execution timeout;
+- transport interruption with known execution identity;
+- indeterminate dispatch/result;
+- output/artifact limit exceeded;
+- cancellation or teardown failure;
+- backend protocol violation.
+
+Error text is redaction-safe, bounded, and suitable for traces. Raw remote
+payloads remain outside model context and support artifacts unless sanitized.
+
+## Lifecycle timing
+
+Receipts and events expose enough monotonic or timestamp data to separate:
+
+`queued -> lease acquiring -> environment ready -> execution started -> first
+output -> terminal -> release requested -> teardown confirmed`.
+
+This makes cold-start, queue, command, reconnect, and cleanup delays measurable
+without inferring them from one total duration.
+
+## Initial exclusions
+
+The target does not require Agent Driver to provide:
+
+- a container engine, cluster scheduler, or remote-worker service;
+- image construction, package installation, or update policy;
+- user-to-workstation assignment or multi-tenant fleet scheduling;
+- network/egress enforcement or credential brokerage;
+- domain-specific tools, skills, policies, or evidence interpretation;
+- an unrestricted interactive terminal, PTY, SSH, desktop, or browser session;
+- a second planning agent inside the execution environment;
+- exactly-once side effects when a backend can only offer at-least-once or an
+  indeterminate result.
+
+## Deployment mapping (non-normative)
+
+The same contract supports different infrastructure without putting topology
+decisions in Agent Driver:
+
+| Infrastructure shape | Execution-contract view |
+| --- | --- |
+| Current local directory/process | Local compatibility backend and a bounded local lease |
+| Fresh container for one task/run | Runtime-owned lease; reused across its tool calls; released at terminal |
+| Long-lived prepared workstation | Host-owned lease; Agent Driver attaches and detaches, but does not destroy it |
+| Remote worker pool | Host/backend selects placement; Agent Driver sees only backend, lease, generation, and capabilities |
+
+The host decides which shape to use and how long it should persist. Agent Driver
+does not infer that decision from a user ID, workspace ID, tool argument, or
+model message.
+
+## EPIC-01 design decision (recorded 2026-08-05, from baseline inventory)
+
+This section records the concrete Python realization chosen for EPIC-01. It
+refines names only; the responsibilities/guarantees above are unchanged.
+
+### Baseline reality that shapes the seam
+
+- Two run-scoped `ContextVar` seams already exist in `agent_driver/tools/context.py`
+  and are the ONLY current injection points:
+  - `AsyncCommandRunner.run_command(command, *, cwd: str, timeout_seconds: float)
+    -> {stdout, stderr, timed_out, exit_code}` (consumed by `bash`, `shell.py`).
+  - `AsyncFileIO.read_text(path)->str` / `write_text(path, content)->None`
+    (consumed by `read_file`/`file_write`/`file_edit`/`file_patch` via
+    `read_text_routed`/`write_text_routed` in `filesystem/_paths.py`).
+- cwd resolution + jail + `.exists()/.is_file()` gating are a THIRD, disk-bound
+  layer (`workspace_cwd_scope`, `_resolve_cwd`, `_ensure_within_workspace_jail`)
+  that runs BEFORE the byte/command seam and is not injectable. Output bounds /
+  truncation / size-guard live in the tool handlers, not the seam.
+- Coverage gap: `notebook_edit`, `glob_search`, `grep_search`, `artifact_*` bypass
+  `AsyncFileIO` (direct disk). ACP is the only current consumer of the scopes
+  (`adapters/acp/server.py` enters both around `agent.run`).
+
+### Decisions
+
+1. **Path resolution stays local/disk-bound in EPIC-01** (byte/command-only seam,
+   as today). Full backend-owned workspace routing (paths, discovery, the bypass
+   tools) is EPIC-03. The local backend preserves current cwd/jail/existence
+   behavior by wrapping today's code, not reimplementing it.
+
+2. **Public surface** — a new supported subpackage `agent_driver/execution/`
+   (facade `agent_driver.execution`), embedding-essentials re-exported from
+   `agent_driver.embedding`. Validated contracts live in `agent_driver/contracts/
+   execution.py` (subclassing `ContractModel`, `extra="forbid"`), constant
+   `EXECUTION_SCHEMA_VERSION = "agent_driver.execution.v1"`.
+
+3. **`ExecutionBackend` protocol (async, minimal for EPIC-01):**
+   - `backend_id: str` (property)
+   - `async run_command(request: ExecutionCommandRequest) -> ExecutionCommandResult`
+   - `async read_text(request: ExecutionReadRequest) -> ExecutionReadResult`
+   - `async write_text(request: ExecutionWriteRequest) -> ExecutionWriteResult`
+   Reserved-but-not-yet-methods (defined as contracts / vocabulary only): lease
+   (`ExecutionLeaseRequest/Ref/Receipt`), `CapabilitySnapshot` +
+   `CapabilityState{supported,unsupported,degraded,unknown}`, events/control,
+   teardown. `capabilities()`/lease methods land in EPIC-02/03/04.
+
+4. **Typed results, never raw dict.** `ExecutionCommandResult` carries
+   `stdout/stderr/exit_code/timed_out` + applied bounds + truncation facts +
+   identity; formalizes the current bash dict. Read/write results are typed too.
+
+5. **Identity on every request** (`ExecutionIdentity`): `backend_id`, `run_id`,
+   `attempt_id`, `tool_call_id`, `request_id` (idempotency key). Enough to fence a
+   stale response. Sourced from the per-call `tool_call_context` at dispatch time.
+
+6. **Typed failures** — an `ExecutionError` hierarchy (bounded, redaction-safe,
+   categorizable without message parsing): at least `UnsupportedCapabilityError`,
+   `ExecutionTimeoutError`, `ExecutionTransportError`, `IndeterminateExecutionError`,
+   `OutputLimitExceededError`, `BackendProtocolError`. Lease/stale-generation
+   classes are reserved for later epics.
+
+7. **Injection = a `RunnerConfig` field** `execution_backend: ExecutionBackend |
+   None` (mirrors `tool_executor`), resolved `None -> LocalExecutionBackend()` into
+   a non-optional `RunnerDeps.execution_backend` in `SingleAgentRunner.__init__`.
+   PLUS an optional per-run `run(..., execution_backend=...)` param (parallel to
+   `abort_handle`/`tool_gate`) so ACP keeps per-session routing. Model text / tool
+   args / metadata can NEVER select the backend.
+
+8. **Wiring via thin adapters to the existing scopes** (tools stay UNCHANGED):
+   when a backend is configured, `_drive_steps` enters
+   `command_runner_scope(_BackendCommandRunner(backend))` and
+   `fs_io_scope(_BackendFileIO(backend))` beside `workspace_cwd_scope`. The
+   adapters read per-call identity from `get_tool_call_context()`, build the typed
+   request, call the backend, and map the typed result back to the dict/text the
+   handlers already expect. Governance stays above dispatch (`GovernedToolExecutor`
+   ladder in `executor/`); the adapter is only reached from inside an
+   already-authorized handler body, so DENY/INTERRUPT/BLOCK/abort never hit it.
+
+9. **`LocalExecutionBackend`** wraps current local subprocess + disk behavior
+   (exact `{stdout,stderr,timed_out,exit_code}`, `read_text_with_size_guard`,
+   `write_text` UTF-8). **`FakeExecutionBackend`** — deterministic, scripted
+   results for tests (minimal; the reusable compliance kit is EPIC-05).
+
+10. **ACP migration** — publish `CompositeExecutionBackend(file_io=AsyncFileIO,
+    command_runner=AsyncCommandRunner)` in `agent_driver.execution`; `server.py`
+    passes it via `run(execution_backend=...)` and drops
+    `from agent_driver.tools.context import command_runner_scope, fs_io_scope`.
+    `AcpClientFileIO`/`AcpTerminalRunner` are unchanged (already implement the two
+    protocols); the composite drives them through the raw scopes internally.
+
+11. **SemVer / snapshots** — additive public surface ⇒ minor bump `0.4.0 -> 0.5.0`,
+    `CHANGELOG [Unreleased] → Added`. Update `test_export_snapshot.py` golden sets,
+    `test_public_exports.py` required subsets, `test_embedding_namespace.py`
+    identity/essentials, `test_schema_snapshots.py` field + JSON-schema snapshots.
+
+### Explicitly deferred (not EPIC-01)
+
+Lease acquire/attach/reuse/release (EPIC-03), capability snapshot + routing
+(EPIC-02), events/reconnect/control/teardown (EPIC-04), full workspace routing
+(paths, `ls/glob/grep/delete/edit`, the bypass tools) (EPIC-03), the reusable
+compliance kit (EPIC-05). These names are reserved above but not implemented now.
