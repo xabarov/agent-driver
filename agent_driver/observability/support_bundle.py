@@ -21,27 +21,8 @@ from agent_driver.runtime.stream import (
     summarize_runtime_session_diagnostics,
 )
 from agent_driver.contracts.skills_lifecycle import SkillLifecycleCompatibilityReport
+from agent_driver.observability.redaction import redact_sensitive_values as _redact_value
 from agent_driver.skills.lifecycle import build_skill_support_bundle_projection
-
-_SECRET_KEY_MARKERS = ("token", "secret", "password", "api_key", "auth")
-
-
-def _is_sensitive_key(key: str) -> bool:
-    lower = key.lower()
-    if lower == "base_url" or lower.endswith("_base_url"):
-        return True
-    return any(marker in lower for marker in _SECRET_KEY_MARKERS)
-
-
-def _redact_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: ("<redacted>" if _is_sensitive_key(str(key)) else _redact_value(item))
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_value(item) for item in value]
-    return value
 
 
 def _latest_llm_payload(output: AgentRunOutput, key: str) -> dict[str, Any] | None:

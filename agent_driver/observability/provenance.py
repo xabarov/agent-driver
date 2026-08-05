@@ -14,9 +14,17 @@ from agent_driver.contracts.context import (
     SkillAttachment,
     SourceEvidenceRecord,
 )
+from agent_driver.observability.redaction import (
+    is_sensitive_observer_key,
+    redact_sensitive_values,
+)
 from agent_driver.observability.source_evidence import merge_source_evidence
 
-_SECRET_KEY_MARKERS = ("token", "secret", "password", "api_key", "auth")
+# Raw-content fields dropped entirely (never just masked) from provenance
+# projections: they can carry unbounded model/tool/resource text.
+_RAW_CONTENT_KEYS = frozenset(
+    {"content", "text", "raw", "raw_content", "body", "page_content", "prompt"}
+)
 _CONTEXT_LIST_KEYS = ("context_provenance", "context_provenance_records")
 _MEMORY_LIST_KEYS = ("memory_fact_provenance", "memory_facts")
 _SKILL_LIST_KEYS = ("skill_attachments", "invoked_skill_refs", "skill_invocations")
@@ -479,51 +487,17 @@ def _safe_payload(row: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         key: value
         for key, value in row.items()
-        if key
-        not in {
-            "content",
-            "text",
-            "raw",
-            "raw_content",
-            "body",
-            "page_content",
-            "prompt",
-        }
-        and not _is_sensitive_key(str(key))
+        if key not in _RAW_CONTENT_KEYS and not is_sensitive_observer_key(str(key))
     }
-    return _redact_value(allowed)
-
-
-def _redact_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: ("<redacted>" if _is_sensitive_key(str(key)) else _redact_value(item))
-            for key, item in value.items()
-            if key
-            not in {
-                "content",
-                "text",
-                "raw",
-                "raw_content",
-                "body",
-                "page_content",
-                "prompt",
-            }
-        }
-    if isinstance(value, list):
-        return [_redact_value(item) for item in value]
-    return value
-
-
-def _is_sensitive_key(key: str) -> bool:
-    lower = key.lower()
-    return lower == "base_url" or lower.endswith("_base_url") or any(
-        marker in lower for marker in _SECRET_KEY_MARKERS
-    )
+    return redact_sensitive_values(allowed, drop_keys=_RAW_CONTENT_KEYS)
 
 
 def _metadata_subset(row: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
-    return {key: _redact_value(row[key]) for key in keys if key in row}
+    return {
+        key: redact_sensitive_values(row[key], drop_keys=_RAW_CONTENT_KEYS)
+        for key in keys
+        if key in row
+    }
 
 
 def _dedupe_models(items: list[Any], key: str) -> list[Any]:

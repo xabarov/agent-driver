@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Iterable
@@ -31,6 +30,7 @@ from agent_driver.runtime.stream import (
     summarize_run_lifecycle,
     summarize_runtime_session_diagnostics,
 )
+from agent_driver.runtime.validation_artifacts import artifact_manifest_row
 
 _SECRET_KEY_MARKERS = ("token", "secret", "password", "api_key", "auth")
 _SECRET_VALUE_RE = re.compile(
@@ -431,11 +431,11 @@ def write_harness_adapter_compatibility_artifacts(
             encoding="utf-8",
         )
     artifacts = [
-        _artifact_row(json_path, "adapter_compatibility_report", root=root),
-        _artifact_row(md_path, "adapter_compatibility_report", root=root),
+        artifact_manifest_row(json_path, "adapter_compatibility_report", root=root),
+        artifact_manifest_row(md_path, "adapter_compatibility_report", root=root),
     ]
     if event_rows:
-        artifacts.append(_artifact_row(events_path, "adapter_events", root=root))
+        artifacts.append(artifact_manifest_row(events_path, "adapter_events", root=root))
     manifest = {
         "artifact_count": len(artifacts),
         "artifacts": artifacts,
@@ -867,14 +867,6 @@ def _text(value: Any) -> str | None:
     return None
 
 
-def _artifact_row(path: Path, artifact_type: str, *, root: Path) -> dict[str, Any]:
-    data = path.read_bytes()
-    return {
-        "artifact_type": artifact_type,
-        "path": str(path.relative_to(root)),
-        "size_bytes": len(data),
-        "sha256": hashlib.sha256(data).hexdigest(),
-    }
 
 
 __all__ = [

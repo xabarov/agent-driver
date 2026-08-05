@@ -15,6 +15,7 @@ under sensitive KEYS, which is the right scope for a structured hook payload.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from agent_driver.contracts.artifacts import RedactionInfo
@@ -51,6 +52,54 @@ def is_sensitive_hook_key(key: str) -> bool:
     """Whether a mapping key names a secret whose VALUE must be masked."""
     lowered = key.lower().replace("-", "_")
     return lowered in _SENSITIVE_EXACT or lowered.endswith("_api_key")
+
+
+# Substring markers for the broader observer/diagnostic redaction flavor used by
+# support-bundle / provenance / stream projections (distinct from the exact-match
+# hook policy above).
+_OBSERVER_SECRET_MARKERS = ("token", "secret", "password", "api_key", "auth")
+
+
+def is_sensitive_observer_key(key: str) -> bool:
+    """Sensitive-key test for observer/diagnostic payload redaction.
+
+    Unlike :func:`is_sensitive_hook_key` (exact-match hook policy), this masks any
+    key CONTAINING a secret marker substring, plus a provider ``base_url`` /
+    ``*_base_url`` (which can embed inline credentials)."""
+    lower = key.lower()
+    if lower == "base_url" or lower.endswith("_base_url"):
+        return True
+    return any(marker in lower for marker in _OBSERVER_SECRET_MARKERS)
+
+
+def redact_sensitive_values(
+    value: Any,
+    *,
+    is_sensitive: Callable[[str], bool] = is_sensitive_observer_key,
+    drop_keys: frozenset[str] = frozenset(),
+) -> Any:
+    """Recursively mask values under sensitive KEYS with ``<redacted>``.
+
+    Keys in ``drop_keys`` are removed entirely (used to strip raw-content fields
+    from provenance projections). Non-container values pass through unchanged."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                _REDACTED
+                if is_sensitive(str(key))
+                else redact_sensitive_values(
+                    item, is_sensitive=is_sensitive, drop_keys=drop_keys
+                )
+            )
+            for key, item in value.items()
+            if key not in drop_keys
+        }
+    if isinstance(value, list):
+        return [
+            redact_sensitive_values(item, is_sensitive=is_sensitive, drop_keys=drop_keys)
+            for item in value
+        ]
+    return value
 
 
 def sanitize_observer_payload(

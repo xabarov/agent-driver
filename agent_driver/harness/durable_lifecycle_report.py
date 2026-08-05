@@ -7,7 +7,6 @@ re-exported from ``durable_lifecycle`` for existing callers.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -21,6 +20,7 @@ from agent_driver.contracts.durable_lifecycle import (
     ResumePlan,
 )
 from agent_driver.contracts.harness_adapter import HarnessAdapterEvent
+from agent_driver.runtime.validation_artifacts import artifact_manifest_row
 
 if TYPE_CHECKING:
     from agent_driver.harness.durable_lifecycle import DurableLifecycleRepository
@@ -229,12 +229,12 @@ def write_durable_lifecycle_artifacts(
             encoding="utf-8",
         )
     artifacts = [
-        _artifact_row(json_path, "durable_lifecycle_compatibility_report", root=root),
-        _artifact_row(md_path, "durable_lifecycle_compatibility_report", root=root),
-        _artifact_row(records_path, "durable_lifecycle_records", root=root),
+        artifact_manifest_row(json_path, "durable_lifecycle_compatibility_report", root=root, include_id=True),
+        artifact_manifest_row(md_path, "durable_lifecycle_compatibility_report", root=root, include_id=True),
+        artifact_manifest_row(records_path, "durable_lifecycle_records", root=root, include_id=True),
     ]
     if event_rows:
-        artifacts.append(_artifact_row(events_path, "adapter_events", root=root))
+        artifacts.append(artifact_manifest_row(events_path, "adapter_events", root=root, include_id=True))
     manifest = {
         "artifact_count": len(artifacts),
         "artifacts": artifacts,
@@ -326,15 +326,6 @@ def _records_payload(report: DurableLifecycleCompatibilityReport) -> dict[str, A
     }
 
 
-def _artifact_row(path: Path, artifact_type: str, *, root: Path) -> dict[str, Any]:
-    data = path.read_bytes()
-    return {
-        "artifact_id": path.name,
-        "artifact_type": artifact_type,
-        "path": str(path.relative_to(root)),
-        "size_bytes": len(data),
-        "sha256": hashlib.sha256(data).hexdigest(),
-    }
 
 
 __all__ = [

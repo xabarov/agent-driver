@@ -29,6 +29,15 @@ change between minor versions.
   `render_chat_stream` render loop lost its two most tangled inline blocks to the
   `_run_failure_hint` / `_completed_tool_card` helpers. Behavior-preserving; the
   `agent_driver.cli` surface is unchanged.
+- **Internal: consolidated the observer-redaction and artifact-manifest dups.**
+  The three copies of the recursive `_redact_value` + base_url-aware
+  `_is_sensitive_key` (support_bundle / provenance / stream projection) collapse to
+  `redact_sensitive_values` + `is_sensitive_observer_key` in
+  `agent_driver.observability.redaction` (provenance's raw-content drop is threaded
+  through `drop_keys`); the three `_artifact_row` sha256 manifest-row builders
+  (durable-lifecycle report / adapter protocol / validation artifacts) collapse to a
+  shared `artifact_manifest_row(..., include_id=…)`, so the writer and the
+  policy-supervision verifier can't drift on hash algorithm. Behavior-preserving.
 - **Internal: safe extractions in three runtime hot-path functions**
   (behavior-preserving, self-contained sub-blocks only): the LLM completion
   retry loop's seven repeated WARNING emits collapse to `_emit_provider_retry_warning`;

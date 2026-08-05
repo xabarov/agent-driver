@@ -11,6 +11,7 @@ from pydantic import Field
 from agent_driver.contracts.base import ContractModel
 from agent_driver.contracts.events import RuntimeEvent
 from agent_driver.contracts.stream import RunStreamEvent
+from agent_driver.observability.redaction import redact_sensitive_values as _redact_value
 from agent_driver.runtime.storage import RuntimeEventLog
 
 TimelineCategory = Literal[
@@ -39,7 +40,6 @@ TimelineState = Literal[
     "retrying",
 ]
 
-_SECRET_KEY_MARKERS = ("token", "secret", "password", "api_key", "auth")
 _TERMINAL_EVENTS = {"run_completed", "run_failed", "run_cancelled"}
 _CONTROL_EVENTS = {
     "control_requested",
@@ -636,22 +636,6 @@ def _text(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _is_sensitive_key(key: str) -> bool:
-    lower = key.lower()
-    if lower == "base_url" or lower.endswith("_base_url"):
-        return True
-    return any(marker in lower for marker in _SECRET_KEY_MARKERS)
-
-
-def _redact_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: ("<redacted>" if _is_sensitive_key(str(key)) else _redact_value(item))
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_value(item) for item in value]
-    return value
 
 
 __all__ = [

@@ -135,7 +135,7 @@ def _write_json(
         json.dumps(safe_payload, ensure_ascii=True, indent=2) + "\n",
         encoding="utf-8",
     )
-    return _artifact_row(path, artifact_type, root=root)
+    return artifact_manifest_row(path, artifact_type, root=root)
 
 
 def _write_text(
@@ -147,7 +147,7 @@ def _write_text(
 ) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload, encoding="utf-8")
-    return _artifact_row(path, artifact_type, root=root)
+    return artifact_manifest_row(path, artifact_type, root=root)
 
 
 def _copy_screenshot(root: Path, source: Path) -> dict[str, Any]:
@@ -155,22 +155,31 @@ def _copy_screenshot(root: Path, source: Path) -> dict[str, Any]:
     screenshot_dir.mkdir(parents=True, exist_ok=True)
     target = screenshot_dir / source.name
     shutil.copyfile(source, target)
-    return _artifact_row(target, "playwright_screenshot", root=root)
+    return artifact_manifest_row(target, "playwright_screenshot", root=root)
 
 
 def _safe_artifact_name(name: str) -> str:
     return "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in name)
 
 
-def _artifact_row(path: Path, artifact_type: str, *, root: Path) -> dict[str, Any]:
+def artifact_manifest_row(
+    path: Path, artifact_type: str, *, root: Path, include_id: bool = False
+) -> dict[str, Any]:
+    """One artifact manifest row: type, root-relative path, size, sha256.
+
+    With ``include_id`` the file name is emitted first as ``artifact_id`` (durable
+    lifecycle reports carry it; adapter/validation manifests do not). Shared by the
+    harness report builders and the validation-artifact writer so the manifest
+    shape and hash algorithm can never drift between them."""
     data = path.read_bytes()
-    relative = path.relative_to(root)
-    return {
-        "artifact_type": artifact_type,
-        "path": str(relative),
-        "size_bytes": len(data),
-        "sha256": hashlib.sha256(data).hexdigest(),
-    }
+    row: dict[str, Any] = {}
+    if include_id:
+        row["artifact_id"] = path.name
+    row["artifact_type"] = artifact_type
+    row["path"] = str(path.relative_to(root))
+    row["size_bytes"] = len(data)
+    row["sha256"] = hashlib.sha256(data).hexdigest()
+    return row
 
 
 __all__ = ["write_validation_artifacts"]
