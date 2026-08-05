@@ -29,6 +29,13 @@ change between minor versions.
   `render_chat_stream` render loop lost its two most tangled inline blocks to the
   `_run_failure_hint` / `_completed_tool_card` helpers. Behavior-preserving; the
   `agent_driver.cli` surface is unchanged.
+- **Internal: safe extractions in three runtime hot-path functions**
+  (behavior-preserving, self-contained sub-blocks only): the LLM completion
+  retry loop's seven repeated WARNING emits collapse to `_emit_provider_retry_warning`;
+  `execute_allowed_path` lifts its progress-recorder and cancellation setup to
+  `_make_progress_recorder` / `_build_cancellation`; and deterministic trimming
+  lifts the tool-stub builder and the protected-message reason logic to
+  `_tool_trim_stub` / `_protected_keep_reason`. No control-flow or behavior change.
 
 ## [0.10.0] - 2026-08-05
 

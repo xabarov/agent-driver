@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 from typing import Any
 
@@ -168,6 +169,41 @@ def _append_tool_handler_exception(*, spec: AllowedSpec, error: Exception) -> No
     spec.result.append(envelope=envelope, trace=trace)
 
 
+def _make_progress_recorder(spec: AllowedSpec) -> Callable[[Any], None]:
+    """Per-call progress reporter that records each ``report_tool_progress``
+    invocation into the executor result (Phase 11 H16). Tools that never call the
+    reporter incur no overhead."""
+
+    def _record_progress(progress) -> None:  # noqa: ANN001
+        spec.result.record_progress(
+            call_index=spec.index,
+            tool_name=spec.call.tool_name,
+            progress=progress,
+            tool_call_id=spec.call.tool_call_id,
+        )
+
+    return _record_progress
+
+
+def _build_cancellation(spec: AllowedSpec) -> ToolCancellation | None:
+    """Cooperative cancellation signal exposed to the handler so it can stop its
+    own external work when the run is aborted (U4). ``None`` — and no overhead —
+    when no abort handle was plumbed into the executor."""
+    if spec.cancelled_check is None:
+        return None
+    raw_run_id = spec.run_metadata.get("run_id")
+    raw_attempt = spec.run_metadata.get("attempt_id")
+    return ToolCancellation(
+        run_id=str(raw_run_id) if raw_run_id is not None else None,
+        tool_call_id=spec.call.tool_call_id,
+        attempt_id=(
+            str(raw_attempt) if raw_attempt is not None else f"attempt_{spec.index}"
+        ),
+        deadline_seconds=spec.cancellation_deadline,
+        _check=spec.cancelled_check,
+    )
+
+
 async def execute_allowed_path(
     *,
     guardrails: GuardrailPipeline,
@@ -234,36 +270,6 @@ async def execute_allowed_path(
         )
         return False
     try:
-        # Phase 11 H16 — wire a per-call progress reporter that records
-        # each ``report_tool_progress`` invocation into the executor
-        # result. Tools that don't call the reporter incur no overhead.
-        def _record_progress(progress) -> None:  # noqa: ANN001
-            spec.result.record_progress(
-                call_index=spec.index,
-                tool_name=spec.call.tool_name,
-                progress=progress,
-                tool_call_id=spec.call.tool_call_id,
-            )
-
-        # U4 — expose a cooperative cancellation signal to the handler so it can
-        # stop its own external work when the run is aborted. Only built when an
-        # abort handle was plumbed into the executor (else None → no overhead).
-        cancellation = None
-        if spec.cancelled_check is not None:
-            raw_run_id = spec.run_metadata.get("run_id")
-            raw_attempt = spec.run_metadata.get("attempt_id")
-            cancellation = ToolCancellation(
-                run_id=str(raw_run_id) if raw_run_id is not None else None,
-                tool_call_id=spec.call.tool_call_id,
-                attempt_id=(
-                    str(raw_attempt)
-                    if raw_attempt is not None
-                    else f"attempt_{spec.index}"
-                ),
-                deadline_seconds=spec.cancellation_deadline,
-                _check=spec.cancelled_check,
-            )
-
         with (
             tool_call_context_scope(
                 run_id=str(spec.run_metadata.get("run_id") or ""),
@@ -271,8 +277,8 @@ async def execute_allowed_path(
                 tool_call_id=spec.call.tool_call_id,
                 attempt_id=str(spec.run_metadata.get("attempt_id") or ""),
             ),
-            tool_progress_scope(_record_progress),
-            tool_cancellation_scope(cancellation),
+            tool_progress_scope(_make_progress_recorder(spec)),
+            tool_cancellation_scope(_build_cancellation(spec)),
         ):
             raw = await spec.registered.handler(spec.call.args)
         raw_guard = await guardrails.on_tool_result(

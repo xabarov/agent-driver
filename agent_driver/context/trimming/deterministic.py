@@ -100,6 +100,55 @@ def _append_observations_to_tail_message(
     return updated_messages
 
 
+def _tool_trim_stub(message: dict[str, object]) -> dict[str, object]:
+    """A minimal tool-role stub standing in for a budget-trimmed tool result."""
+    name = str(message.get("name") or "tool")
+    tool_call_id = str(message.get("tool_call_id") or "")
+    return {
+        "role": "tool",
+        "name": name,
+        "tool_call_id": tool_call_id or None,
+        "content": build_tool_trim_stub_content(
+            tool_name=name,
+            tool_call_id=tool_call_id,
+        ),
+        "metadata": {"tool_trim_stub": True},
+    }
+
+
+def _protected_keep_reason(
+    message: dict[str, object], *, over_budget: bool
+) -> tuple[str, int]:
+    """Audit reason code + distinct material-unit count for a protected message
+    kept verbatim. ``over_budget`` is True when the protected tail alone already
+    exceeds the char budget."""
+    metadata = message.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    material_hashes = metadata.get("material_unit_hashes")
+    material_unit_count = (
+        len(
+            {
+                item.strip()
+                for item in material_hashes
+                if isinstance(item, str) and item.strip()
+            }
+        )
+        if isinstance(material_hashes, list)
+        else 0
+    )
+    if material_unit_count and metadata.get("compaction_evidence") is True:
+        reason = (
+            "material_context_preserved_for_compaction_over_budget"
+            if over_budget
+            else "material_context_preserved_for_compaction"
+        )
+    elif metadata.get("compaction_protected") is True:
+        reason = "compaction_protected"
+    else:
+        reason = "protected_recent_turn"
+    return reason, material_unit_count
+
+
 def _trim_messages_to_budget(
     *,
     working_messages: list[dict[str, object]],
@@ -168,20 +217,6 @@ def _trim_messages_to_budget(
             return True
         return False
 
-    def _tool_stub(message: dict[str, object]) -> dict[str, object]:
-        name = str(message.get("name") or "tool")
-        tool_call_id = str(message.get("tool_call_id") or "")
-        return {
-            "role": "tool",
-            "name": name,
-            "tool_call_id": tool_call_id or None,
-            "content": build_tool_trim_stub_content(
-                tool_name=name,
-                tool_call_id=tool_call_id,
-            ),
-            "metadata": {"tool_trim_stub": True},
-        }
-
     for index, message in enumerate(working_messages):
         content = str(message.get("content", ""))
         if index in protected:
@@ -189,30 +224,9 @@ def _trim_messages_to_budget(
             # the antecedent for a follow-up ("those 15", "of those", "from that
             # list") survives — including the assistant's own prior enumeration.
             kept.append(message)
-            metadata = message.get("metadata")
-            metadata = metadata if isinstance(metadata, dict) else {}
-            material_hashes = metadata.get("material_unit_hashes")
-            material_unit_count = (
-                len(
-                    {
-                        item.strip()
-                        for item in material_hashes
-                        if isinstance(item, str) and item.strip()
-                    }
-                )
-                if isinstance(material_hashes, list)
-                else 0
+            reason, material_unit_count = _protected_keep_reason(
+                message, over_budget=protected_chars > max_chars
             )
-            if material_unit_count and metadata.get("compaction_evidence") is True:
-                reason = (
-                    "material_context_preserved_for_compaction_over_budget"
-                    if protected_chars > max_chars
-                    else "material_context_preserved_for_compaction"
-                )
-            elif metadata.get("compaction_protected") is True:
-                reason = "compaction_protected"
-            else:
-                reason = "protected_recent_turn"
             audit.append(
                 TrimAuditRecord(
                     record_id=f"trim_{index}",
@@ -269,7 +283,7 @@ def _trim_messages_to_budget(
             )
             continue
         if index == last_tool_index:
-            stub = _tool_stub(message)
+            stub = _tool_trim_stub(message)
             stub_content = str(stub.get("content", ""))
             while kept and running_chars + len(stub_content) > head_budget:
                 if not _drop_oldest_unprotected(

@@ -195,6 +195,29 @@ def _cancel_detached(task: "asyncio.Task[Any]") -> None:
     task.add_done_callback(_consume)
 
 
+def _emit_provider_retry_warning(
+    host: LlmCompletionHost,
+    context: RunContext,
+    *,
+    warning: str,
+    signal_id: str,
+    **extra: object,
+) -> None:
+    """Emit the standard provider-retry WARNING step event (``severity`` warning)
+    carrying ``warning`` / ``signal_id`` plus any extra diagnostic fields."""
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.WARNING,
+        payload={
+            "warning": warning,
+            "signal_id": signal_id,
+            "severity": "warning",
+            **extra,
+        },
+    )
+
+
 async def complete_request(  # pylint: disable=too-many-branches
     host: LlmCompletionHost,
     context: RunContext,
@@ -252,18 +275,14 @@ async def complete_request(  # pylint: disable=too-many-branches
             response = _mark_no_tool_text_form_suppression(context, request, response)
             if should_retry_empty_forced_final_non_stream(context, response):
                 context.metadata["empty_forced_final_retry"] = "non_streaming"
-                emit_step_event(
+                _emit_provider_retry_warning(
                     host,
                     context,
-                    event_type=RuntimeEventType.WARNING,
-                    payload={
-                        "warning": (
-                            "Provider returned an empty forced final stream; "
-                            "retrying once without streaming."
-                        ),
-                        "signal_id": "provider_empty_forced_final_non_stream_retry",
-                        "severity": "warning",
-                    },
+                    warning=(
+                        "Provider returned an empty forced final stream; "
+                        "retrying once without streaming."
+                    ),
+                    signal_id="provider_empty_forced_final_non_stream_retry",
                 )
                 response = await host._deps.provider.complete(
                     request.model_copy(update={"stream": False})
@@ -288,19 +307,15 @@ async def complete_request(  # pylint: disable=too-many-branches
             ):
                 overflow_recovered = True
                 context.metadata["context_overflow_recovery"] = "compacted_and_retried"
-                emit_step_event(
+                _emit_provider_retry_warning(
                     host,
                     context,
-                    event_type=RuntimeEventType.WARNING,
-                    payload={
-                        "warning": (
-                            "Provider rejected the request as too long for the "
-                            "context window; compacting and retrying once."
-                        ),
-                        "signal_id": "provider_context_overflow_compact_retry",
-                        "severity": "warning",
-                        "status_code": exc.response.status_code,
-                    },
+                    warning=(
+                        "Provider rejected the request as too long for the "
+                        "context window; compacting and retrying once."
+                    ),
+                    signal_id="provider_context_overflow_compact_retry",
+                    status_code=exc.response.status_code,
                 )
                 request = await recover_context_overflow()
                 continue
@@ -310,18 +325,14 @@ async def complete_request(  # pylint: disable=too-many-branches
                     context.metadata["reasoning_echo_retry"] = (
                         "stripped_invalid_encrypted_content"
                     )
-                    emit_step_event(
+                    _emit_provider_retry_warning(
                         host,
                         context,
-                        event_type=RuntimeEventType.WARNING,
-                        payload={
-                            "warning": (
-                                "Provider rejected echoed encrypted reasoning; "
-                                "retrying once without reasoning metadata."
-                            ),
-                            "signal_id": "provider_invalid_encrypted_reasoning_retry",
-                            "severity": "warning",
-                        },
+                        warning=(
+                            "Provider rejected echoed encrypted reasoning; "
+                            "retrying once without reasoning metadata."
+                        ),
+                        signal_id="provider_invalid_encrypted_reasoning_retry",
                     )
                     request = stripped
                     continue
@@ -329,19 +340,15 @@ async def complete_request(  # pylint: disable=too-many-branches
                 context.metadata["forced_tool_choice_retry"] = (
                     "removed_after_provider_rejection"
                 )
-                emit_step_event(
+                _emit_provider_retry_warning(
                     host,
                     context,
-                    event_type=RuntimeEventType.WARNING,
-                    payload={
-                        "warning": (
-                            "Provider rejected a forced tool_choice; retrying "
-                            "once with the same tools and no forced tool_choice."
-                        ),
-                        "signal_id": "provider_forced_tool_choice_removed_retry",
-                        "severity": "warning",
-                        "status_code": exc.response.status_code,
-                    },
+                    warning=(
+                        "Provider rejected a forced tool_choice; retrying "
+                        "once with the same tools and no forced tool_choice."
+                    ),
+                    signal_id="provider_forced_tool_choice_removed_retry",
+                    status_code=exc.response.status_code,
                 )
                 request = request_without_forced_tool_choice(request)
                 continue
@@ -350,41 +357,33 @@ async def complete_request(  # pylint: disable=too-many-branches
                 reduced = request_with_reduced_max_tokens(request, affordable)
                 if reduced is not request:
                     context.metadata["max_tokens_retry"] = "reduced_after_provider_402"
-                    emit_step_event(
+                    _emit_provider_retry_warning(
                         host,
                         context,
-                        event_type=RuntimeEventType.WARNING,
-                        payload={
-                            "warning": (
-                                "Provider rejected the requested output budget; "
-                                "retrying once with fewer max_tokens."
-                            ),
-                            "signal_id": "provider_max_tokens_reduced_retry",
-                            "severity": "warning",
-                            "max_tokens": reduced.max_tokens,
-                        },
+                        warning=(
+                            "Provider rejected the requested output budget; "
+                            "retrying once with fewer max_tokens."
+                        ),
+                        signal_id="provider_max_tokens_reduced_retry",
+                        max_tokens=reduced.max_tokens,
                     )
                     request = reduced
                     continue
             if attempt < 2 and _is_transient_provider_status(exc):
                 delay = _transient_retry_delay(exc, attempt)
                 context.metadata["transient_provider_retries"] = attempt + 1
-                emit_step_event(
+                _emit_provider_retry_warning(
                     host,
                     context,
-                    event_type=RuntimeEventType.WARNING,
-                    payload={
-                        "warning": (
-                            "Provider returned a transient error "
-                            f"(HTTP {exc.response.status_code}); retrying "
-                            f"in {delay:g}s."
-                        ),
-                        "signal_id": "provider_transient_error_retry",
-                        "severity": "warning",
-                        "status_code": exc.response.status_code,
-                        "retry_attempt": attempt + 1,
-                        "retry_in_seconds": delay,
-                    },
+                    warning=(
+                        "Provider returned a transient error "
+                        f"(HTTP {exc.response.status_code}); retrying "
+                        f"in {delay:g}s."
+                    ),
+                    signal_id="provider_transient_error_retry",
+                    status_code=exc.response.status_code,
+                    retry_attempt=attempt + 1,
+                    retry_in_seconds=delay,
                 )
                 await asyncio.sleep(delay)
                 continue
@@ -432,20 +431,16 @@ async def complete_request(  # pylint: disable=too-many-branches
             if attempt < 2 and _is_transient_transport_error(exc):
                 delay = 2.0 * (attempt + 1)
                 context.metadata["transient_transport_retries"] = attempt + 1
-                emit_step_event(
+                _emit_provider_retry_warning(
                     host,
                     context,
-                    event_type=RuntimeEventType.WARNING,
-                    payload={
-                        "warning": (
-                            "Provider transport error; retrying after a short "
-                            "backoff."
-                        ),
-                        "signal_id": "provider_transient_transport_retry",
-                        "severity": "warning",
-                        "error": str(exc)[:200],
-                        "attempt": attempt + 1,
-                    },
+                    warning=(
+                        "Provider transport error; retrying after a short "
+                        "backoff."
+                    ),
+                    signal_id="provider_transient_transport_retry",
+                    error=str(exc)[:200],
+                    attempt=attempt + 1,
                 )
                 await asyncio.sleep(delay)
                 continue
