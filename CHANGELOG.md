@@ -29,6 +29,14 @@ change between minor versions.
   `render_chat_stream` render loop lost its two most tangled inline blocks to the
   `_run_failure_hint` / `_completed_tool_card` helpers. Behavior-preserving; the
   `agent_driver.cli` surface is unchanged.
+- **Internal: extracted `research_signals` from `research_session_contract`
+  (1086 lines → 620).** This module has no clean core/report seam (its contract
+  builders and gating predicates are mutually recursive), so instead the
+  call-graph-verified pure leaf — the deep-research signal vocabulary (phase /
+  readiness / tool-set constants) plus the 30 context/gating predicate functions
+  that read signals from a run context, task contract, and tool state — was moved
+  to `runtime/research_signals.py`. The contract dataclasses and builders depend on
+  it one-directionally; every existing import and the `__all__` are preserved.
 - **Internal: split the `skills/lifecycle` god-module (1191 lines → 80).**
   Continuing the earlier `lifecycle_common` / `lifecycle_evidence` extraction, the
   remaining bulk splits into `lifecycle_inventory` (skill id/inventory/lock/diff +
