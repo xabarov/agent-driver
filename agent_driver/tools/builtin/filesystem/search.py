@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_driver.contracts import ApprovalMode, SideEffectClass, ToolManifest, ToolRisk
+from agent_driver.contracts.execution import CapabilityName, ToolExecutionRequirement
 from agent_driver.tools.builtin.filesystem._paths import (
     as_int,
     depth_from_relative,
@@ -16,6 +17,7 @@ from agent_driver.tools.builtin.filesystem._paths import (
     load_ignore_patterns,
     resolve_base_dir,
 )
+from agent_driver.tools.context import get_workspace_backend
 
 GLOB_SEARCH_TOOL = "glob_search"
 GREP_SEARCH_TOOL = "grep_search"
@@ -51,6 +53,9 @@ def glob_search_manifest() -> ToolManifest:
         timeout_seconds=10.0,
         output_char_budget=8000,
         idempotent=True,
+        execution_requirement=ToolExecutionRequirement(
+            required=(CapabilityName.FILE_READ,)
+        ),
         args_schema={
             "type": "object",
             "properties": {
@@ -90,13 +95,18 @@ def grep_search_manifest() -> ToolManifest:
     """Build grep_search manifest."""
     return ToolManifest(
         name=GREP_SEARCH_TOOL,
-        description=("Search workspace files by regex content and return file/line matches."),
+        description=(
+            "Search workspace files by regex content and return file/line matches."
+        ),
         risk=ToolRisk.LOW,
         side_effect=SideEffectClass.READ_ONLY,
         approval_mode=ApprovalMode.NEVER,
         timeout_seconds=15.0,
         output_char_budget=9000,
         idempotent=True,
+        execution_requirement=ToolExecutionRequirement(
+            required=(CapabilityName.FILE_READ,)
+        ),
         args_schema={
             "type": "object",
             "properties": {
@@ -143,7 +153,9 @@ async def glob_search_handler(args: dict[str, Any]) -> dict[str, Any]:
     pattern = str(args.get("pattern") or "").strip()
     if not pattern:
         raise ValueError("pattern is required")
-    if pattern.startswith("/") or any(segment == ".." for segment in pattern.split("/")):
+    if pattern.startswith("/") or any(
+        segment == ".." for segment in pattern.split("/")
+    ):
         raise ValueError(
             "pattern must be workspace-relative; use base_dir='..' to traverse up"
         )
@@ -151,6 +163,13 @@ async def glob_search_handler(args: dict[str, Any]) -> dict[str, Any]:
     max_results = as_int(args.get("max_results"), MAX_RESULTS_DEFAULT, minimum=1)
     max_depth = as_int(args.get("max_depth"), MAX_DEPTH_DEFAULT, minimum=0)
     recursive = bool(args.get("recursive", False))
+    workspace_backend = get_workspace_backend()
+    if workspace_backend is not None:
+        # Routed: the backend owns enumeration; no local disk walk. The backend
+        # applies its own ignore/traversal rules.
+        return await _routed_glob(
+            workspace_backend, base=str(base), pattern=pattern, max_results=max_results
+        )
     ignored = load_ignore_patterns(base)
     rows: list[str] = []
     truncated = False
@@ -174,7 +193,9 @@ async def glob_search_handler(args: dict[str, Any]) -> dict[str, Any]:
             continue
         if is_ignored(rel, ignored):
             continue
-        if _glob_match(rel=rel, path=path, pattern=raw_pattern, recursive=recursive_pattern):
+        if _glob_match(
+            rel=rel, path=path, pattern=raw_pattern, recursive=recursive_pattern
+        ):
             rows.append(f"{rel}/" if directory_only else rel)
     preview = ", ".join(rows[:10])
     payload = {
@@ -196,6 +217,77 @@ async def glob_search_handler(args: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+async def _routed_glob(
+    backend: Any, *, base: str, pattern: str, max_results: int
+) -> dict[str, Any]:
+    """Enumerate matches via a workspace-capable backend (no local disk)."""
+    from agent_driver.contracts.execution_workspace import ExecutionGlobRequest
+    from agent_driver.execution.adapters import identity_from_context
+
+    result = await backend.glob(
+        ExecutionGlobRequest(
+            identity=identity_from_context(getattr(backend, "backend_id", "backend")),
+            base_path=base,
+            pattern=pattern.rstrip("/") or "*",
+            max_entries=max_results,
+        )
+    )
+    rows = list(result.paths)
+    payload: dict[str, Any] = {
+        "summary": f"{len(rows)} paths matched '{pattern}'",
+        "base_dir": base,
+        "pattern": pattern,
+        "recursive": True,
+        "results": rows,
+        "returned_count": len(rows),
+        "truncated": bool(result.truncated),
+    }
+    if result.truncated:
+        payload["limit"] = "max_results"
+        payload["limit_value"] = max_results
+        payload["more_available"] = True
+    return payload
+
+
+async def _routed_grep(
+    backend: Any, *, pattern: str, config: GrepConfig
+) -> dict[str, Any]:
+    """Search file contents via a workspace-capable backend (no local disk)."""
+    from agent_driver.contracts.execution_workspace import ExecutionGrepRequest
+    from agent_driver.execution.adapters import identity_from_context
+
+    result = await backend.grep(
+        ExecutionGrepRequest(
+            identity=identity_from_context(getattr(backend, "backend_id", "backend")),
+            base_path=str(config.base),
+            pattern=pattern,
+            path_glob=config.path_glob,
+            max_matches=config.max_matches,
+        )
+    )
+    matches = [
+        {"path": m.path, "line": m.line_number, "text": m.line[: config.preview_chars]}
+        for m in result.matches
+    ]
+    matched_files = len({m.path for m in result.matches})
+    payload: dict[str, Any] = {
+        "summary": (f"{len(matches)} matches for /{pattern}/ in {matched_files} files"),
+        "base_dir": str(config.base),
+        "pattern": pattern,
+        "matches": matches,
+        "returned_count": len(matches),
+        "files_with_matches": matched_files,
+        "files_scanned": matched_files,
+        "skipped_files_count": 0,
+        "truncated": bool(result.truncated),
+    }
+    if result.truncated:
+        payload["limit"] = "max_matches"
+        payload["limit_value"] = config.max_matches
+        payload["more_available"] = True
+    return payload
+
+
 def _glob_match(*, rel: str, path: Path, pattern: str, recursive: bool) -> bool:
     if recursive:
         return fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(rel, f"**/{pattern}")
@@ -205,9 +297,14 @@ def _glob_match(*, rel: str, path: Path, pattern: str, recursive: bool) -> bool:
 async def grep_search_handler(args: dict[str, Any]) -> dict[str, Any]:
     """Search files by regex content."""
     regex, pattern, config = parse_grep_args(args)
-    matches, files_scanned, matched_files, skipped_files, limit_reason = scan_grep_matches(
-        config=config,
-        regex=regex,
+    workspace_backend = get_workspace_backend()
+    if workspace_backend is not None:
+        return await _routed_grep(workspace_backend, pattern=pattern, config=config)
+    matches, files_scanned, matched_files, skipped_files, limit_reason = (
+        scan_grep_matches(
+            config=config,
+            regex=regex,
+        )
     )
     payload: dict[str, Any] = {
         "summary": (

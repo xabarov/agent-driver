@@ -73,6 +73,7 @@ from agent_driver.tools.context import (
     command_runner_scope,
     execution_lease_scope,
     fs_io_scope,
+    workspace_backend_scope,
     workspace_cwd_scope,
 )
 from agent_driver.tools.registry import ToolRegistry
@@ -478,6 +479,12 @@ class SingleAgentRunner(
                 stack.enter_context(command_runner_scope(BackendCommandRunner(backend)))
                 stack.enter_context(fs_io_scope(BackendFileIO(backend)))
                 stack.enter_context(capability_snapshot_scope(capability_snapshot))
+                # EPIC-03 WP-C: route workspace enumeration/search/stat/delete to
+                # the backend when it supports those operations (no local disk).
+                if callable(getattr(backend, "glob", None)) and callable(
+                    getattr(backend, "grep", None)
+                ):
+                    stack.enter_context(workspace_backend_scope(backend))
                 # EPIC-03: acquire/attach the workspace lease once, reuse across
                 # the loop. On fail-closed it returns a terminal FAILED output
                 # (never a silent local fallback after a lease was requested).

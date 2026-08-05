@@ -84,6 +84,31 @@ def get_execution_lease() -> Any | None:
     return _execution_lease.get()
 
 
+# EPIC-03 WP-C: the run-scoped ``WorkspaceCapableBackend`` for enumeration/search/
+# stat/delete routing (stored as Any to keep this leaf import-light). ``None``
+# means those operations run against local disk as before.
+_workspace_backend: ContextVar[Any | None] = ContextVar(
+    "workspace_backend", default=None
+)
+
+
+def get_workspace_backend() -> Any | None:
+    """Return the run-scoped workspace-capable backend, or ``None``."""
+    return _workspace_backend.get()
+
+
+@contextmanager
+def workspace_backend_scope(backend: Any | None) -> Iterator[None]:
+    """Temporarily route workspace enumeration/search/stat/delete through
+    ``backend``. Installed by the runner when the injected backend supports the
+    workspace operations; ``None`` keeps local-disk behavior."""
+    token = _workspace_backend.set(backend)
+    try:
+        yield
+    finally:
+        _workspace_backend.reset(token)
+
+
 @contextmanager
 def execution_lease_scope(lease: Any | None) -> Iterator[None]:
     """Temporarily expose the active execution lease to workspace tool routing.
@@ -396,6 +421,8 @@ __all__ = [
     "get_capability_snapshot",
     "execution_lease_scope",
     "get_execution_lease",
+    "workspace_backend_scope",
+    "get_workspace_backend",
     "get_command_runner",
     "get_fs_io",
     "get_workspace_cwd",
