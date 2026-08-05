@@ -16,6 +16,7 @@ from pydantic import Field, field_validator, model_validator
 from agent_driver.contracts.base import ContractModel
 from agent_driver.contracts.enums import StrEnum
 from agent_driver.contracts.validation import (
+    assert_no_secret_fields,
     ensure_json_serializable,
     ensure_non_negative_float,
     ensure_non_negative_int,
@@ -386,33 +387,13 @@ def _validate_redacted_json(value: Any, *, field_name: str) -> None:
 
 
 def _assert_no_secret_fields(value: Any, *, path: str) -> None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            key_text = str(key)
-            next_path = f"{path}.{key_text}"
-            if _is_sensitive_key(key_text):
-                if not (isinstance(item, str) and _looks_like_env_name(item)):
-                    raise ValueError(
-                        "lifecycle hook metadata may name secret env vars but "
-                        f"must not contain secret values: {next_path}"
-                    )
-            _assert_no_secret_fields(item, path=next_path)
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            _assert_no_secret_fields(item, path=f"{path}[{index}]")
-    elif isinstance(value, str) and _SECRET_VALUE_RE.search(value):
-        raise ValueError(
-            "lifecycle hook metadata must not contain secret-shaped values: " f"{path}"
-        )
-
-
-def _is_sensitive_key(key: str) -> bool:
-    lower = key.lower()
-    return any(marker in lower for marker in _SECRET_KEY_MARKERS)
-
-
-def _looks_like_env_name(value: str) -> bool:
-    return bool(value) and value.upper() == value and " " not in value
+    assert_no_secret_fields(
+        value,
+        subject="lifecycle hook metadata",
+        path=path,
+        markers=_SECRET_KEY_MARKERS,
+        value_pattern=_SECRET_VALUE_RE,
+    )
 
 
 __all__ = [

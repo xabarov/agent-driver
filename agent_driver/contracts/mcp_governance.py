@@ -17,6 +17,8 @@ from agent_driver.contracts.base import ContractModel
 from agent_driver.contracts.validation import (
     ensure_json_serializable,
     ensure_non_negative_int,
+    is_sensitive_key,
+    looks_like_env_name,
 )
 
 McpGovernanceStatus = Literal[
@@ -92,10 +94,6 @@ _RAW_CONTENT_MARKERS = (
 )
 
 
-def _looks_like_env_name(value: str) -> bool:
-    return bool(value) and value.upper() == value and " " not in value
-
-
 def _assert_redaction_safe(value: Any, *, path: str = "") -> None:
     """Reject secret-shaped values and raw MCP resource/prompt content fields."""
     if isinstance(value, dict):
@@ -103,10 +101,10 @@ def _assert_redaction_safe(value: Any, *, path: str = "") -> None:
             key_text = str(key)
             lower = key_text.lower()
             next_path = f"{path}.{key_text}" if path else key_text
-            if lower not in _SAFE_METADATA_KEYS and any(
-                marker in lower for marker in _SECRET_KEY_MARKERS
+            if is_sensitive_key(
+                key_text, markers=_SECRET_KEY_MARKERS, safe_keys=_SAFE_METADATA_KEYS
             ):
-                if not (isinstance(item, str) and _looks_like_env_name(item)):
+                if not (isinstance(item, str) and looks_like_env_name(item)):
                     raise ValueError(
                         "mcp governance metadata may name secret env vars but must "
                         f"not contain secret values: {next_path}"
@@ -182,7 +180,7 @@ class McpServerDescriptor(ContractModel):
     def validate_auth_mode(cls, value: str) -> str:
         # auth_mode names a mechanism (none/token/oauth/env), never a secret.
         # A long opaque string is treated as an accidental credential.
-        if len(value) > 32 and not _looks_like_env_name(value):
+        if len(value) > 32 and not looks_like_env_name(value):
             raise ValueError("auth_mode must name a mechanism, not a credential")
         return value
 

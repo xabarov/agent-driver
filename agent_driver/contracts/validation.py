@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Container, Iterable
 from typing import Any
 
 # Agent-driver reserved metadata namespace. The runtime writes identity and
@@ -130,6 +132,81 @@ def ensure_secret_free_bounded_metadata(
     """
     reject_secret_like_keys(value, field_name=field_name)
     return ensure_bounded_json_metadata(value, field_name=field_name)
+
+
+def looks_like_env_name(value: str) -> bool:
+    """True when ``value`` looks like an env-var *name* (``OPENAI_API_KEY``) rather
+    than a secret value: non-empty, all-uppercase, no spaces. Redaction-safe
+    metadata may name the env var holding a secret, never carry the secret itself.
+    """
+    return bool(value) and value.upper() == value and " " not in value
+
+
+def is_sensitive_key(
+    key: str,
+    *,
+    markers: Iterable[str] = SECRET_KEY_MARKERS,
+    safe_keys: Container[str] = frozenset(),
+) -> bool:
+    """True when a metadata KEY looks secret-bearing. ``safe_keys`` (compared
+    lower-cased) lists keys that legitimately contain a marker substring but never
+    a secret value (e.g. ``auth_mode``, ``max_tokens``)."""
+    lower = key.lower()
+    if lower in safe_keys:
+        return False
+    return any(marker in lower for marker in markers)
+
+
+def assert_no_secret_fields(
+    value: Any,
+    *,
+    subject: str,
+    path: str = "",
+    markers: Iterable[str] = SECRET_KEY_MARKERS,
+    safe_keys: Container[str] = frozenset(),
+    value_pattern: re.Pattern[str] | None = None,
+) -> None:
+    """Recursively reject metadata that carries a secret VALUE.
+
+    A sensitive key may only *name* an env var (:func:`looks_like_env_name`); any
+    other value under it fails closed. ``subject`` names the metadata in the error
+    (e.g. ``"harness adapter metadata"``); ``path`` seeds the dotted field path.
+    When ``value_pattern`` is given, any string value matching it is rejected as a
+    secret-shaped literal even under a non-sensitive key.
+    """
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key)
+            next_path = f"{path}.{key_text}" if path else key_text
+            if is_sensitive_key(key_text, markers=markers, safe_keys=safe_keys):
+                if not (isinstance(item, str) and looks_like_env_name(item)):
+                    raise ValueError(
+                        f"{subject} may name secret env vars but must not contain "
+                        f"secret values: {next_path}"
+                    )
+            assert_no_secret_fields(
+                item,
+                subject=subject,
+                path=next_path,
+                markers=markers,
+                safe_keys=safe_keys,
+                value_pattern=value_pattern,
+            )
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            assert_no_secret_fields(
+                item,
+                subject=subject,
+                path=f"{path}[{index}]",
+                markers=markers,
+                safe_keys=safe_keys,
+                value_pattern=value_pattern,
+            )
+    elif value_pattern is not None and isinstance(value, str):
+        if value_pattern.search(value):
+            raise ValueError(
+                f"{subject} must not contain secret-shaped values: {path}"
+            )
 
 
 def ensure_non_negative_int(value: int | None, *, field_name: str) -> int | None:

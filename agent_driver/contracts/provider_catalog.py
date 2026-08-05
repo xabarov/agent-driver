@@ -11,6 +11,8 @@ from agent_driver.contracts.validation import (
     ensure_json_serializable,
     ensure_non_negative_float,
     ensure_positive_int,
+    is_sensitive_key,
+    looks_like_env_name,
 )
 
 PROVIDER_CATALOG_STATUSES = frozenset(
@@ -41,20 +43,9 @@ _SAFE_TOKEN_METRIC_KEYS = {
 }
 
 
-def _is_sensitive_key(key: str) -> bool:
-    lower = key.lower()
-    if lower in _SAFE_TOKEN_METRIC_KEYS:
-        return False
-    return any(marker in lower for marker in _SECRET_KEY_MARKERS)
-
-
 def _is_raw_response_key(key: str) -> bool:
     lower = key.lower()
     return any(marker in lower for marker in _RAW_RESPONSE_MARKERS)
-
-
-def _looks_like_env_name(value: str) -> bool:
-    return bool(value) and value.upper() == value and " " not in value
 
 
 def _assert_redaction_safe(value: Any, *, path: str = "") -> None:
@@ -67,10 +58,14 @@ def _assert_redaction_safe(value: Any, *, path: str = "") -> None:
                     f"provider catalog metadata must not contain raw provider "
                     f"responses: {next_path}"
                 )
-            if _is_sensitive_key(key_text):
+            if is_sensitive_key(
+                key_text,
+                markers=_SECRET_KEY_MARKERS,
+                safe_keys=_SAFE_TOKEN_METRIC_KEYS,
+            ):
                 if not (
                     isinstance(item, bool)
-                    or (isinstance(item, str) and _looks_like_env_name(item))
+                    or (isinstance(item, str) and looks_like_env_name(item))
                 ):
                     raise ValueError(
                         f"provider catalog metadata may name secret env vars but "

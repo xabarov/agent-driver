@@ -8,7 +8,10 @@ from pydantic import Field, field_validator, model_validator
 
 from agent_driver.contracts.base import ContractModel
 from agent_driver.contracts.policy import ValidationGateResult
-from agent_driver.contracts.validation import ensure_json_serializable
+from agent_driver.contracts.validation import (
+    assert_no_secret_fields,
+    ensure_json_serializable,
+)
 
 _PACK_STATUSES = frozenset({"draft", "experimental", "active", "deprecated", "blocked"})
 _SCENARIO_STATUSES = frozenset(
@@ -67,31 +70,11 @@ _ARTIFACT_TYPES = frozenset(
 _SECRET_KEY_MARKERS = ("token", "secret", "password", "api_key", "auth")
 
 
-def _is_sensitive_key(key: str) -> bool:
-    lower = key.lower()
-    return any(marker in lower for marker in _SECRET_KEY_MARKERS)
-
-
-def _looks_like_env_name(value: str) -> bool:
-    return bool(value) and value.upper() == value and " " not in value
-
-
-def _assert_no_secret_fields(value: Any, *, path: str = "") -> None:
+def _assert_no_secret_fields(value: Any) -> None:
     """Reject secret-shaped keys except when the value is an env-var name."""
-    if isinstance(value, dict):
-        for key, item in value.items():
-            key_text = str(key)
-            next_path = f"{path}.{key_text}" if path else key_text
-            if _is_sensitive_key(key_text):
-                if not (isinstance(item, str) and _looks_like_env_name(item)):
-                    raise ValueError(
-                        f"capability pack metadata may name secret env vars but "
-                        f"must not contain secret values: {next_path}"
-                    )
-            _assert_no_secret_fields(item, path=next_path)
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            _assert_no_secret_fields(item, path=f"{path}[{index}]")
+    assert_no_secret_fields(
+        value, subject="capability pack metadata", markers=_SECRET_KEY_MARKERS
+    )
 
 
 class HarnessReleaseGate(ContractModel):

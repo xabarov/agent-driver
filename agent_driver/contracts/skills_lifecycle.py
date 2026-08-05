@@ -10,6 +10,8 @@ from agent_driver.contracts.base import ContractModel
 from agent_driver.contracts.validation import (
     ensure_json_serializable,
     ensure_non_negative_int,
+    is_sensitive_key,
+    looks_like_env_name,
 )
 
 SkillLifecycleStatus = Literal[
@@ -63,10 +65,6 @@ _RAW_CONTENT_MARKERS = (
 )
 
 
-def _looks_like_env_name(value: str) -> bool:
-    return bool(value) and value.upper() == value and " " not in value
-
-
 def _assert_redaction_safe(value: Any, *, path: str = "") -> None:
     """Reject secret-shaped values and raw skill content fields."""
     if isinstance(value, dict):
@@ -74,8 +72,8 @@ def _assert_redaction_safe(value: Any, *, path: str = "") -> None:
             key_text = str(key)
             lower = key_text.lower()
             next_path = f"{path}.{key_text}" if path else key_text
-            if any(marker in lower for marker in _SECRET_KEY_MARKERS):
-                if not (isinstance(item, str) and _looks_like_env_name(item)):
+            if is_sensitive_key(key_text, markers=_SECRET_KEY_MARKERS):
+                if not (isinstance(item, str) and looks_like_env_name(item)):
                     raise ValueError(
                         "skill lifecycle metadata may name secret env vars but "
                         f"must not contain secret values: {next_path}"
