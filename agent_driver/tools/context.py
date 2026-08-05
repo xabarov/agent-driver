@@ -229,22 +229,22 @@ def set_tool_call_context(
     tool_call_id: str | None = None,
     attempt_id: str | None = None,
 ) -> Token[dict[str, str] | None]:
-    """Set run/thread/call metadata for tool handlers.
+    """Set executor-owned run/thread/call metadata for tool handlers.
 
-    ``tool_call_id`` / ``attempt_id`` let an injected execution backend build a
-    full :class:`~agent_driver.contracts.execution.ExecutionIdentity` (the
-    executor supplies them per tool call); they are optional so existing callers
-    are unaffected.
+    ``tool_call_id`` / ``attempt_id`` also let an injected execution backend
+    build a full :class:`~agent_driver.contracts.execution.ExecutionIdentity`
+    (the executor supplies them per tool call); they are optional so existing
+    callers are unaffected.
     """
     payload: dict[str, str] = {}
-    if isinstance(run_id, str) and run_id.strip():
-        payload["run_id"] = run_id.strip()
-    if isinstance(thread_id, str) and thread_id.strip():
-        payload["thread_id"] = thread_id.strip()
-    if isinstance(tool_call_id, str) and tool_call_id.strip():
-        payload["tool_call_id"] = tool_call_id.strip()
-    if isinstance(attempt_id, str) and attempt_id.strip():
-        payload["attempt_id"] = attempt_id.strip()
+    for key, value in (
+        ("run_id", run_id),
+        ("thread_id", thread_id),
+        ("tool_call_id", tool_call_id),
+        ("attempt_id", attempt_id),
+    ):
+        if isinstance(value, str) and value.strip():
+            payload[key] = value.strip()
     if not payload:
         return _tool_call_context.set(None)
     return _tool_call_context.set(payload)
@@ -268,7 +268,7 @@ def tool_call_context_scope(
     tool_call_id: str | None = None,
     attempt_id: str | None = None,
 ) -> Iterator[None]:
-    """Temporarily set run/thread/call metadata for current tool handler call."""
+    """Temporarily set executor-owned identity for the current tool handler."""
     token = set_tool_call_context(
         run_id=run_id,
         thread_id=thread_id,

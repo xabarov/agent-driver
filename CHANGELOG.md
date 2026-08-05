@@ -36,6 +36,21 @@ change between minor versions.
   - Default local behavior is unchanged when no backend is configured. ACP keeps
     its current terminal/file routing; its full cutover to the seam is EPIC-02.
 
+## [0.4.1] - 2026-08-05
+
+Patch release fixing executor-owned tool-call identity inside host handlers.
+The governed allow path now places the exact `ToolCall.tool_call_id` and its
+per-call execution `attempt_id` into the existing run-scoped tool context,
+alongside `run_id` and `thread_id`. This lets embedding hosts durably correlate
+a handler's product action, approval, execution, evidence, and terminal result
+with the same call that appears in Agent Driver events, instead of inventing a
+fallback identity.
+
+The change is backward compatible: handler arguments, tool/result schemas,
+public facades, stores, and provider contracts are unchanged; the existing
+context setters only gain optional identity values and still reset after each
+handler. A regression test covers exact propagation and scope cleanup.
+
 ## [0.4.0] - 2026-08-04
 
 Minor release adding the public live-message contract v1 for host embeddings.

@@ -26,6 +26,7 @@ from agent_driver.tools import (
 )
 from agent_driver.tools.builtin.agent import register_agent_tools
 from agent_driver.tools.builtin.skills import register_skill_tools
+from agent_driver.tools.context import get_tool_call_context
 from tests.runtime.conftest import (
     BlockingToolArgsGuardrails,
     BlockingToolInputGuardrails,
@@ -71,6 +72,61 @@ async def test_governed_executor_completes_tool_and_truncates() -> None:
     assert result.interrupt is None
     assert len(result.traces) == 1
     assert result.traces[0].truncated
+
+
+@pytest.mark.asyncio
+async def test_executor_exposes_complete_tool_call_identity_to_handler() -> None:
+    """A host handler receives the exact executor-owned call and attempt ids."""
+
+    registry = ToolRegistry()
+    observed: dict[str, str] = {}
+
+    async def _observe(_args):
+        observed.update(get_tool_call_context())
+        return {"summary": "observed"}
+
+    registry.register(
+        ToolManifest(
+            name="observe_identity",
+            description="Observe executor-owned call identity",
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.READ_ONLY,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _observe,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="hello",
+        run_id="run_identity",
+        thread_id="thread_identity",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[
+                ToolCall(
+                    tool_name="observe_identity",
+                    tool_call_id="call_identity_1",
+                    args={},
+                )
+            ]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert result.envelopes[0].error is None
+    assert observed == {
+        "run_id": "run_identity",
+        "thread_id": "thread_identity",
+        "tool_call_id": "call_identity_1",
+        "attempt_id": "attempt_1",
+    }
+    assert get_tool_call_context() == {}
 
 
 @pytest.mark.asyncio
