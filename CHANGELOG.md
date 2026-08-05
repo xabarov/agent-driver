@@ -23,6 +23,12 @@ change between minor versions.
 - **Internal: removed proven-dead private helpers** (unused thin wrappers
   `_gemma_tool_call_payloads` / `_dsml_tool_call_payloads` / `_resolve_args_with_config`
   and the orphan `_is_sequence_of_str`). No behavior or surface change.
+- **Internal: de-tangled the interactive chat CLI.** `_handle_local_command`'s
+  264-line 24-branch if/chain became one small handler per slash command plus a
+  dispatch table (`_ChatCommandContext` bundles the shared pass-throughs); the
+  `render_chat_stream` render loop lost its two most tangled inline blocks to the
+  `_run_failure_hint` / `_completed_tool_card` helpers. Behavior-preserving; the
+  `agent_driver.cli` surface is unchanged.
 
 ## [0.10.0] - 2026-08-05
 
