@@ -155,6 +155,9 @@ _FACADE_EXPORTS = {
     "persist_job_recovery",
     "restore_job_recovery",
     "stop_job",
+    # compatibility kit
+    "run_compliance",
+    "render_markdown",
     # workspace path safety
     "validate_workspace_path",
     "WorkspacePathError",
@@ -248,6 +251,12 @@ _FACADE_EXPORTS = {
     "ExecutionControlRequest",
     "ExecutionControlReceipt",
     "TeardownReceipt",
+    # compliance contracts
+    "EXECUTION_COMPLIANCE_SCHEMA_VERSION",
+    "ComplianceStatus",
+    "ComplianceGroup",
+    "ComplianceCheck",
+    "ComplianceReport",
 }
 
 _CONTRACT_FIELD_SNAPSHOTS = {

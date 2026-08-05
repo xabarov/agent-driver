@@ -52,6 +52,13 @@ from agent_driver.contracts.execution_lease import (
     LeaseState,
     WorkspacePaths,
 )
+from agent_driver.contracts.execution_compliance import (
+    EXECUTION_COMPLIANCE_SCHEMA_VERSION,
+    ComplianceCheck,
+    ComplianceGroup,
+    ComplianceReport,
+    ComplianceStatus,
+)
 from agent_driver.contracts.execution_job import (
     EXECUTION_JOB_SCHEMA_VERSION,
     ExecutionControlKind,
@@ -102,6 +109,7 @@ from agent_driver.execution.capabilities import (
     tool_is_withheld,
     unknown_snapshot,
 )
+from agent_driver.execution.compliance import render_markdown, run_compliance
 from agent_driver.execution.composite import CompositeExecutionBackend
 from agent_driver.execution.errors import (
     BackendProtocolError,
@@ -160,6 +168,9 @@ __all__ = [
     "persist_job_recovery",
     "restore_job_recovery",
     "stop_job",
+    # compatibility kit
+    "run_compliance",
+    "render_markdown",
     # workspace path safety
     "validate_workspace_path",
     "WorkspacePathError",
@@ -253,4 +264,10 @@ __all__ = [
     "ExecutionControlRequest",
     "ExecutionControlReceipt",
     "TeardownReceipt",
+    # compliance contracts
+    "EXECUTION_COMPLIANCE_SCHEMA_VERSION",
+    "ComplianceStatus",
+    "ComplianceGroup",
+    "ComplianceCheck",
+    "ComplianceReport",
 ]
