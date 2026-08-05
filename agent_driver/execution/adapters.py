@@ -79,13 +79,18 @@ class BackendCommandRunner:
         )
         result = await self._backend.run_command(request)
         # Same shape the local executor returns; the shell tool applies its own
-        # display truncation downstream.
-        return {
+        # display truncation downstream. When the backend spilled large output to
+        # a content-addressed artifact, carry the reference so the tool can
+        # surface a bounded reference instead of full content (EPIC-03 WP-D).
+        payload: dict[str, Any] = {
             "stdout": result.stdout,
             "stderr": result.stderr,
             "timed_out": result.timed_out,
             "exit_code": result.exit_code,
         }
+        if result.artifact is not None:
+            payload["artifact"] = result.artifact
+        return payload
 
 
 class BackendFileIO:

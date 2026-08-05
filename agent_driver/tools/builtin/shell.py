@@ -143,7 +143,7 @@ async def _bash_handler(args: dict[str, Any]) -> dict[str, Any]:
         f"timed_out={execution['timed_out']}, "
         f"risk={policy.risk}, category={policy.category})"
     )
-    return {
+    payload = {
         "summary": summary,
         "command": request.command,
         "cwd": str(request.cwd),
@@ -156,6 +156,19 @@ async def _bash_handler(args: dict[str, Any]) -> dict[str, Any]:
         "stderr": stderr_preview,
         "truncated": truncated,
     }
+    # EPIC-03 WP-D: when the backend spilled large output to a content-addressed
+    # artifact, surface a bounded reference (id + digest + size + preview) so the
+    # model sees the reference, never an implicit full-content load.
+    artifact = execution.get("artifact")
+    if artifact is not None:
+        from agent_driver.execution.artifacts import (
+            execution_artifact_reference_payload,
+        )
+
+        payload["artifact"] = execution_artifact_reference_payload(
+            artifact, preview=stdout_preview
+        )
+    return payload
 
 
 def _evaluate_command_policy(command: str) -> _CommandPolicyResult:

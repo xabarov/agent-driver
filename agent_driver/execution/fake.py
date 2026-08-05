@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass, field
 
 from agent_driver.contracts.execution import (
+    ArtifactRef,
     CapabilityName,
     CapabilityState,
     CapabilityStatus,
@@ -69,13 +70,15 @@ def _default_fake_snapshot() -> ExecutionCapabilitySnapshot:
 
 @dataclass
 class CommandOutcome:
-    """A scripted command result. ``timed_out=True`` yields a TIMED_OUT result."""
+    """A scripted command result. ``timed_out=True`` yields a TIMED_OUT result.
+    ``artifact`` scripts a spilled-output reference (EPIC-03 WP-D)."""
 
     stdout: str = ""
     stderr: str = ""
     exit_code: int = 0
     timed_out: bool = False
     truncated: bool = False
+    artifact: "ArtifactRef | None" = None
 
 
 @dataclass
@@ -134,6 +137,7 @@ class FakeExecutionBackend:
             stderr=outcome.stderr,
             truncated=outcome.truncated,
             bounds=ExecutionBounds(max_output_chars=request.max_output_chars),
+            artifact=outcome.artifact,
         )
 
     async def read_text(self, request: ExecutionReadRequest) -> ExecutionReadResult:

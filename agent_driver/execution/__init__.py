@@ -71,6 +71,11 @@ from agent_driver.execution.adapters import (
     BackendFileIO,
     identity_from_context,
 )
+from agent_driver.execution.artifacts import (
+    ARTIFACT_PREVIEW_MAX_CHARS,
+    execution_artifact_reference_payload,
+    execution_artifact_to_context_ref,
+)
 from agent_driver.execution.capabilities import (
     DEFAULT_BRIEF_MAX_CHARS,
     capability_diagnostics,
@@ -118,6 +123,10 @@ __all__ = [
     # workspace path safety
     "validate_workspace_path",
     "WorkspacePathError",
+    # artifact bridge
+    "execution_artifact_to_context_ref",
+    "execution_artifact_reference_payload",
+    "ARTIFACT_PREVIEW_MAX_CHARS",
     # backends
     "LocalExecutionBackend",
     "FakeExecutionBackend",

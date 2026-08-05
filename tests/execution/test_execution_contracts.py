@@ -146,6 +146,10 @@ _FACADE_EXPORTS = {
     # workspace path safety
     "validate_workspace_path",
     "WorkspacePathError",
+    # artifact bridge
+    "execution_artifact_to_context_ref",
+    "execution_artifact_reference_payload",
+    "ARTIFACT_PREVIEW_MAX_CHARS",
     # backends
     "LocalExecutionBackend",
     "FakeExecutionBackend",
