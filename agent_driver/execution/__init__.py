@@ -29,6 +29,12 @@ from agent_driver.contracts.execution import (
     ExecutionWriteRequest,
     ExecutionWriteResult,
 )
+from agent_driver.execution.adapters import (
+    BackendCommandRunner,
+    BackendFileIO,
+    identity_from_context,
+)
+from agent_driver.execution.composite import CompositeExecutionBackend
 from agent_driver.execution.errors import (
     BackendProtocolError,
     ExecutionError,
@@ -38,11 +44,22 @@ from agent_driver.execution.errors import (
     OutputLimitExceededError,
     UnsupportedCapabilityError,
 )
+from agent_driver.execution.fake import CommandOutcome, FakeExecutionBackend
+from agent_driver.execution.local import LocalExecutionBackend
 from agent_driver.execution.protocol import ExecutionBackend
 
 __all__ = [
     # protocol
     "ExecutionBackend",
+    # backends
+    "LocalExecutionBackend",
+    "FakeExecutionBackend",
+    "CommandOutcome",
+    "CompositeExecutionBackend",
+    # adapters (backend -> legacy run-scoped seams)
+    "BackendCommandRunner",
+    "BackendFileIO",
+    "identity_from_context",
     # errors
     "ExecutionError",
     "UnsupportedCapabilityError",
