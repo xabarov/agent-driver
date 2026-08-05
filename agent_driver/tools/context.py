@@ -223,14 +223,22 @@ def set_workspace_cwd(path: Path | None) -> Token[Path | None]:
 
 
 def set_tool_call_context(
-    *, run_id: str | None = None, thread_id: str | None = None
+    *,
+    run_id: str | None = None,
+    thread_id: str | None = None,
+    tool_call_id: str | None = None,
+    attempt_id: str | None = None,
 ) -> Token[dict[str, str] | None]:
-    """Set run/thread metadata for tool handlers."""
+    """Set executor-owned run/thread/call metadata for tool handlers."""
     payload: dict[str, str] = {}
-    if isinstance(run_id, str) and run_id.strip():
-        payload["run_id"] = run_id.strip()
-    if isinstance(thread_id, str) and thread_id.strip():
-        payload["thread_id"] = thread_id.strip()
+    for key, value in (
+        ("run_id", run_id),
+        ("thread_id", thread_id),
+        ("tool_call_id", tool_call_id),
+        ("attempt_id", attempt_id),
+    ):
+        if isinstance(value, str) and value.strip():
+            payload[key] = value.strip()
     if not payload:
         return _tool_call_context.set(None)
     return _tool_call_context.set(payload)
@@ -248,10 +256,19 @@ def workspace_cwd_scope(path: Path | None) -> Iterator[None]:
 
 @contextmanager
 def tool_call_context_scope(
-    *, run_id: str | None = None, thread_id: str | None = None
+    *,
+    run_id: str | None = None,
+    thread_id: str | None = None,
+    tool_call_id: str | None = None,
+    attempt_id: str | None = None,
 ) -> Iterator[None]:
-    """Temporarily set run/thread metadata for current tool handler call."""
-    token = set_tool_call_context(run_id=run_id, thread_id=thread_id)
+    """Temporarily set executor-owned identity for the current tool handler."""
+    token = set_tool_call_context(
+        run_id=run_id,
+        thread_id=thread_id,
+        tool_call_id=tool_call_id,
+        attempt_id=attempt_id,
+    )
     try:
         yield
     finally:
