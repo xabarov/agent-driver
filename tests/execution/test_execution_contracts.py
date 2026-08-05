@@ -146,9 +146,12 @@ _FACADE_EXPORTS = {
     "LeaseNotUsableError",
     # job observation
     "JobObserver",
+    "JobSession",
     "TerminalConflictError",
     "fence_stale",
     "initial_cursor",
+    "persist_job_recovery",
+    "restore_job_recovery",
     # workspace path safety
     "validate_workspace_path",
     "WorkspacePathError",

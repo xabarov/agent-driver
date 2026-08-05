@@ -115,9 +115,12 @@ from agent_driver.execution.errors import (
 from agent_driver.execution.fake import CommandOutcome, FakeExecutionBackend
 from agent_driver.execution.jobs import (
     JobObserver,
+    JobSession,
     TerminalConflictError,
     fence_stale,
     initial_cursor,
+    persist_job_recovery,
+    restore_job_recovery,
 )
 from agent_driver.execution.lease import ExecutionLeaseManager, LeaseNotUsableError
 from agent_driver.execution.local import LocalExecutionBackend
@@ -145,9 +148,12 @@ __all__ = [
     "LeaseNotUsableError",
     # job observation
     "JobObserver",
+    "JobSession",
     "TerminalConflictError",
     "fence_stale",
     "initial_cursor",
+    "persist_job_recovery",
+    "restore_job_recovery",
     # workspace path safety
     "validate_workspace_path",
     "WorkspacePathError",

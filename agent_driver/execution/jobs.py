@@ -8,6 +8,9 @@ snapshot, and never lets a late/stale delivery become a normal observation.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any, Callable
+
+from agent_driver.contracts.execution import ExecutionCommandRequest
 from agent_driver.contracts.execution_job import (
     ExecutionEvent,
     ExecutionEventCursor,
@@ -15,6 +18,13 @@ from agent_driver.contracts.execution_job import (
     ExecutionHandle,
     ExecutionTerminalSnapshot,
 )
+from agent_driver.execution.errors import (
+    ExecutionError,
+    IndeterminateExecutionError,
+)
+
+if TYPE_CHECKING:
+    from agent_driver.execution.protocol import JobCapableBackend
 
 
 def fence_stale(handle: ExecutionHandle, execution_generation: str) -> bool:
@@ -111,9 +121,98 @@ class JobObserver:
         return snapshot
 
 
+def persist_job_recovery(
+    handle: ExecutionHandle, cursor: ExecutionEventCursor
+) -> dict[str, Any]:
+    """Serialize the SAFE, non-secret handle + cursor for durable checkpoint
+    state, so a restarted run can re-attach and resume observation without
+    re-dispatching. Mirrors how the lease ref is persisted in run metadata."""
+    return {
+        "handle": handle.model_dump(mode="json"),
+        "cursor": cursor.model_dump(mode="json"),
+    }
+
+
+def restore_job_recovery(
+    raw: dict[str, Any],
+) -> tuple[ExecutionHandle, ExecutionEventCursor] | None:
+    """Rebuild ``(handle, cursor)`` from persisted recovery state, or ``None``
+    when the payload is missing/malformed (fail closed, never crash a resume)."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        handle = ExecutionHandle.model_validate(raw["handle"])
+        cursor = ExecutionEventCursor.model_validate(raw["cursor"])
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        return None
+    return handle, cursor
+
+
+class JobSession:
+    """Drive one execution job start→observe→terminal with reconnect + fencing.
+
+    - ``start`` is idempotent and lost-start-safe: a transport fault on start is
+      resolved by ``lookup_job(idempotency_key)``; if still unresolved the
+      dispatch is INDETERMINATE (raised) and MUST NOT be blindly re-dispatched.
+    - ``observe_to_terminal`` pages events through a :class:`JobObserver`
+      (duplicate-tolerant, generation-fenced); a compaction gap falls back to the
+      terminal snapshot; the terminal is resolved without re-dispatch.
+    """
+
+    def __init__(self, backend: "JobCapableBackend") -> None:
+        self._backend = backend
+
+    async def start(self, request: ExecutionCommandRequest) -> ExecutionHandle:
+        key = request.identity.request_id
+        try:
+            return await self._backend.start_job(request)
+        except ExecutionError:
+            # The start reply may have been lost while the job actually started;
+            # resolve by idempotency key rather than starting a second one.
+            found = await self._backend.lookup_job(key)
+            if found is not None:
+                return found
+            raise IndeterminateExecutionError(
+                f"job start for {key} is indeterminate; not re-dispatched"
+            ) from None
+
+    async def observe_to_terminal(
+        self,
+        handle: ExecutionHandle,
+        *,
+        on_event: Callable[[ExecutionEvent], None] | None = None,
+        start_cursor: ExecutionEventCursor | None = None,
+        max_pages: int = 1000,
+    ) -> ExecutionTerminalSnapshot:
+        """Observe from ``start_cursor`` (or the initial cursor) to terminal.
+
+        Fresh, in-generation, non-duplicate events are handed to ``on_event``.
+        On a gap, or when the pages are exhausted, the terminal snapshot resolves
+        the outcome (fencing a stale-generation or conflicting terminal)."""
+        observer = JobObserver(handle)
+        cursor = start_cursor or initial_cursor(handle)
+        pages = 0
+        while pages < max_pages:
+            page = await self._backend.observe(handle, cursor)
+            for event in observer.ingest(page):
+                if on_event is not None:
+                    on_event(event)
+            cursor = observer.cursor
+            if observer.needs_snapshot or page.complete or observer.complete:
+                break
+            if not page.events:
+                break  # no more output available without a terminal
+            pages += 1
+        snapshot = await self._backend.snapshot(handle)
+        return observer.resolve_terminal(snapshot)
+
+
 __all__ = [
     "JobObserver",
+    "JobSession",
     "TerminalConflictError",
     "fence_stale",
     "initial_cursor",
+    "persist_job_recovery",
+    "restore_job_recovery",
 ]
