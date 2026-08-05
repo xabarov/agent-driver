@@ -351,6 +351,44 @@ def _extract_planning_snapshot(event: RunStreamEvent) -> dict[str, object] | Non
     return None
 
 
+_RUN_FAILURE_HINTS = {
+    "max_steps_exceeded": "Increase --max-steps if needed.",
+    "provider_protocol": (
+        "Provider rejected the request payload; retry with fewer tool calls."
+    ),
+    "tool_policy_denied": "Check --max-tool-calls and tool policy.",
+}
+
+
+def _run_failure_hint(reason: str) -> str | None:
+    """Actionable one-line hint for a terminal ``run_failed`` reason, if any."""
+    return _RUN_FAILURE_HINTS.get(reason)
+
+
+def _completed_tool_card(
+    *, state: ToolState, previous: ToolState | None, planned_summary: str
+) -> ToolCardEvent:
+    """Merge a completed tool's state with its pending ``started`` state (falling
+    back to the model-planned args summary) into the card to render."""
+    if previous is not None:
+        if not state.args_summary:
+            state.args_summary = previous.args_summary
+        if state.result_summary is None:
+            state.result_summary = previous.result_summary
+        if state.status is None:
+            state.status = previous.status
+    if not state.args_summary:
+        state.args_summary = planned_summary
+    return ToolCardEvent(
+        name=state.name,
+        args_summary=state.args_summary,
+        status=state.status,
+        result_summary=state.result_summary,
+        truncated=state.truncated,
+        error_code=state.error_code,
+    )
+
+
 async def render_chat_stream(
     *,
     stream,
@@ -429,23 +467,11 @@ async def render_chat_stream(
             elif event.event == "tool_call_completed":
                 for key, state in tool_states.items():
                     previous = pending_tools.pop(key, None)
-                    if previous is not None:
-                        if not state.args_summary:
-                            state.args_summary = previous.args_summary
-                        if state.result_summary is None:
-                            state.result_summary = previous.result_summary
-                        if state.status is None:
-                            state.status = previous.status
-                    if not state.args_summary:
-                        state.args_summary = planned_args.get(key, "")
                     cards_to_emit.append(
-                        ToolCardEvent(
-                            name=state.name,
-                            args_summary=state.args_summary,
-                            status=state.status,
-                            result_summary=state.result_summary,
-                            truncated=state.truncated,
-                            error_code=state.error_code,
+                        _completed_tool_card(
+                            state=state,
+                            previous=previous,
+                            planned_summary=planned_args.get(key, ""),
                         )
                     )
             if cards_to_emit:
@@ -487,19 +513,10 @@ async def render_chat_stream(
                 reason = str(event.data.get("reason") or "run_failed")
                 if reason == "tool_policy_denied" and saw_denied_tool:
                     continue
-                hint = (
-                    "Increase --max-steps if needed."
-                    if reason == "max_steps_exceeded"
-                    else "Provider rejected the request payload; retry with fewer tool calls."
-                    if reason == "provider_protocol"
-                    else "Check --max-tool-calls and tool policy."
-                    if reason == "tool_policy_denied"
-                    else None
-                )
                 active_renderer.emit_error_card(
                     title="Run failed",
                     reason=reason,
-                    hint=hint,
+                    hint=_run_failure_hint(reason),
                 )
             if event.event in _TERMINAL_EVENTS:
                 saw_terminal = True
