@@ -339,10 +339,6 @@ def _eval_inspect_command(args: argparse.Namespace) -> int:
     )
 
 
-def _resolve_args_with_config(args: argparse.Namespace) -> argparse.Namespace:
-    return _resolve_args_with_config_and_explicit(args, explicit_options=set())
-
-
 def _resolve_args_with_config_and_explicit(
     args: argparse.Namespace, *, explicit_options: set[str]
 ) -> argparse.Namespace:

@@ -306,10 +306,6 @@ _GEMMA_STRAY_RE = re.compile(r"<\|[^<>]*>|<[^<>]*\|>")
 _BARE_KEY_RE = re.compile(r"([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)")
 
 
-def _gemma_tool_call_payloads(text: str) -> list[dict[str, Any]]:
-    return [payload for _start, _end, payload in _gemma_tool_call_candidates(text)]
-
-
 def _gemma_tool_call_candidates(text: str) -> list[tuple[int, int, dict[str, Any]]]:
     """Parse gemma ``call:NAME{...}`` leaks into ``{name, arguments}`` dicts.
 
@@ -403,10 +399,6 @@ def _coerce_dsml_value(value: str, *, is_string: bool) -> Any:
         return json.loads(text)
     except (ValueError, TypeError):
         return _coerce_xmlish_arg_value(text)
-
-
-def _dsml_tool_call_payloads(text: str) -> list[dict[str, Any]]:
-    return [payload for _start, _end, payload in _dsml_tool_call_candidates(text)]
 
 
 def _dsml_tool_call_candidates(text: str) -> list[tuple[int, int, dict[str, Any]]]:

@@ -29,7 +29,7 @@ The framework is intentionally domain-neutral:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -306,13 +306,6 @@ def build_default_tool_choice_registry() -> ToolChoicePolicyRegistry:
         "generic_after_specialized_search", generic_after_specialized_search
     )
     return registry
-
-
-def _is_sequence_of_str(value: Any) -> bool:
-    """Return True for a non-mutable sequence whose entries are all strings."""
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        return False
-    return all(isinstance(item, str) for item in value)
 
 
 __all__ = [

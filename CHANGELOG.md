@@ -7,6 +7,23 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Changed
+
+- **Internal: consolidated the secret-field redaction validators.** The
+  `reject_secret_like_keys` / `is_sensitive_key` / `looks_like_env_name` /
+  `assert_no_secret_fields` helpers (and the secret-marker list) now live once in
+  `agent_driver.contracts.validation`; nine contract modules
+  (`execution`, `execution_lease`, `execution_job`, `harness_adapter`,
+  `continuous_validation`, `capability_packs`, `lifecycle_hooks`,
+  `durable_lifecycle`, `provider_catalog`, `mcp_governance`, `skills_lifecycle`)
+  that had each carried a copy now call the shared helpers. Behavior-preserving
+  (the secret-value regex and raw-content guards are threaded through unchanged);
+  no public surface change. Removed the private cross-module import of
+  `_reject_secret_like_keys`.
+- **Internal: removed proven-dead private helpers** (unused thin wrappers
+  `_gemma_tool_call_payloads` / `_dsml_tool_call_payloads` / `_resolve_args_with_config`
+  and the orphan `_is_sequence_of_str`). No behavior or surface change.
+
 ## [0.10.0] - 2026-08-05
 
 ### Added
