@@ -7,6 +7,41 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-05
+
+### Added
+
+- **Reconnectable execution jobs, events, control & teardown (execution-backend
+  EPIC-04).** A long-running backend operation that can outlive a transport
+  connection now has a stable identity, bounded ordered events, reconnectable
+  snapshots, truthful controls, generation fencing, and a separate teardown
+  proof — a lost HTTP/WebSocket/process reply never makes Agent Driver blindly
+  repeat an unknown side effect.
+  - Job contracts (`agent_driver.contracts.execution_job`, re-exported from
+    `agent_driver.execution`): `ExecutionHandle` (safe, durable,
+    generation-bound; carries the start idempotency key), `ExecutionEvent`
+    (identity `(execution_generation, sequence)`, bounded text, secret-rejecting
+    metadata, conflict detection), `ExecutionEventCursor`/`Page` (bounded,
+    gap-flagged replay), `ExecutionTerminalSnapshot`, `ExecutionControlRequest`/
+    `Receipt` (accepted vs applied are distinct), `TeardownReceipt`, and the
+    `ExecutionJobState`/`ExecutionEventKind`/`ExecutionControlKind`/
+    `ExecutionReasonCode` enums.
+  - Optional `JobCapableBackend` protocol (`start_job`/`lookup_job`/`observe`/
+    `snapshot`/`control`/`teardown`) — a backend without it still runs the
+    blocking `run_command`.
+  - `JobObserver` (duplicate-tolerant, generation-fenced event accumulation;
+    gap → snapshot; conflicting terminal → `TerminalConflictError`) and
+    `JobSession` (idempotent + lost-start-safe start → `lookup` → INDETERMINATE
+    without re-dispatch; observe-to-terminal resilient to transport loss;
+    per-phase `JobStageTiming` with typed reason codes). `stop_job` /
+    `JobStopOutcome` report accepted/applied/execution-terminal/teardown-confirmed
+    as SEPARATE, capability-backed facts (a cooperative-only backend claims
+    nothing more; a host-owned environment is never torn down). Durable recovery
+    via `persist_job_recovery`/`restore_job_recovery`.
+  - Runtime bridge: tool progress (and, through it, a job's bounded observed
+    events) now reaches the runtime event log / stream projection as
+    `RuntimeEventType.TOOL_PROGRESS`, correlated to the originating tool_call_id.
+
 ## [0.7.0] - 2026-08-05
 
 ### Added

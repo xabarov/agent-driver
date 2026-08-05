@@ -149,6 +149,72 @@ async def main() -> None:
     # runner does acquire/reuse/release for you; every filesystem builtin routes
     # to the leased workspace with this same path safety.
 
+    # 5) Jobs (EPIC-04): a reconnectable long-running operation with bounded
+    #    ordered events, generation fencing, and lost-start recovery. JobSession
+    #    orchestrates start -> observe -> terminal, tolerating duplicates and
+    #    resolving an unknown dispatch as INDETERMINATE (never re-dispatched).
+    from agent_driver.execution import (
+        ExecutionEvent,
+        ExecutionEventCursor,
+        ExecutionEventKind,
+        ExecutionEventPage,
+        ExecutionHandle,
+        ExecutionJobState,
+        ExecutionTerminalSnapshot,
+        JobSession,
+    )
+
+    ident = _identity("fake")
+    _job_handle = ExecutionHandle(
+        job_id="job-call_1",
+        idempotency_key="call_1",
+        backend_id="fake",
+        execution_generation="gen-1",
+    )
+    job_backend = FakeExecutionBackend(
+        job_terminal=ExecutionTerminalSnapshot(
+            handle=_job_handle, state=ExecutionJobState.COMPLETED, exit_code=0
+        ),
+        job_pages=[
+            ExecutionEventPage(
+                events=(
+                    ExecutionEvent(
+                        execution_generation="gen-1",
+                        sequence=0,
+                        kind=ExecutionEventKind.OUTPUT,
+                        text="building...",
+                    ),
+                    ExecutionEvent(
+                        execution_generation="gen-1",
+                        sequence=1,
+                        kind=ExecutionEventKind.OUTPUT,
+                        text="done",
+                        terminal=True,
+                    ),
+                ),
+                next_cursor=ExecutionEventCursor(
+                    job_id="job-call_1", execution_generation="gen-1", last_sequence=1
+                ),
+                complete=True,
+            )
+        ],
+    )
+    session = JobSession(job_backend)
+    req = ExecutionCommandRequest(
+        identity=ident,
+        command="make build",
+        cwd="/work",
+        timeout_seconds=600,
+        max_output_chars=8000,
+    )
+    handle = await session.start(req)  # idempotent; lost-start resolves by lookup
+    lines: list[str] = []
+    terminal = await session.observe_to_terminal(
+        handle, on_event=lambda e: lines.append(e.text)
+    )
+    print("job events:", lines, "terminal:", terminal.state.value)
+    print("job stage timings:", [t.phase for t in session.timings])
+
     # To wire a backend into a real agent, pass it to the runner/agent:
     #
     #     from agent_driver.runtime import RunnerConfig
