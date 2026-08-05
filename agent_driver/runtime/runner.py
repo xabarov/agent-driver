@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from pathlib import Path
 from time import monotonic
@@ -55,7 +56,12 @@ from agent_driver.runtime.tools import fake_noop_tool_executor
 from agent_driver.subagents.mailbox import InMemorySubagentMailboxStore
 from agent_driver.subagents.store import InMemorySubagentStore
 from agent_driver.tools import register_builtin_tools, register_planning_tool
-from agent_driver.tools.context import workspace_cwd_scope
+from agent_driver.execution.adapters import BackendCommandRunner, BackendFileIO
+from agent_driver.tools.context import (
+    command_runner_scope,
+    fs_io_scope,
+    workspace_cwd_scope,
+)
 from agent_driver.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -355,7 +361,18 @@ class SingleAgentRunner(
         re-enters :meth:`run` synchronously opens its own AGENT span under
         this one, giving Phoenix native subagent grouping.
         """
-        with workspace_cwd_scope(_pick_workspace_cwd(context)):
+        backend = getattr(self._config, "execution_backend", None)
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(workspace_cwd_scope(_pick_workspace_cwd(context)))
+            if backend is not None:
+                # Route the built-in bash/read/write byte transfer through the
+                # injected backend WITHOUT touching the tools: install the
+                # adapters into the existing run-scoped seams. Path resolution /
+                # jailing and all governance still run above dispatch.
+                stack.enter_context(
+                    command_runner_scope(BackendCommandRunner(backend))
+                )
+                stack.enter_context(fs_io_scope(BackendFileIO(backend)))
             while context.step_name != "done":
                 terminal = self._terminal_from_limits(context)
                 if terminal is not None:

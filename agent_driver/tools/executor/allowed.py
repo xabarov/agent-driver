@@ -267,6 +267,8 @@ async def execute_allowed_path(
             tool_call_context_scope(
                 run_id=str(spec.run_metadata.get("run_id") or ""),
                 thread_id=str(spec.run_metadata.get("thread_id") or ""),
+                tool_call_id=spec.call.tool_call_id,
+                attempt_id=str(spec.run_metadata.get("attempt_id") or ""),
             ),
             tool_progress_scope(_record_progress),
             tool_cancellation_scope(cancellation),

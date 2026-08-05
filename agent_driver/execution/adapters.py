@@ -45,12 +45,19 @@ def identity_from_context(backend_id: str) -> ExecutionIdentity:
     idempotency key per call.
     """
     ctx = get_tool_call_context()
+    tool_call_id = ctx.get("tool_call_id") or "unbound"
     return ExecutionIdentity(
         backend_id=backend_id,
         run_id=ctx.get("run_id") or "unknown-run",
         attempt_id=ctx.get("attempt_id") or str(current_tool_attempt_epoch()),
-        tool_call_id=ctx.get("tool_call_id") or "unbound",
-        request_id=ctx.get("request_id") or uuid.uuid4().hex,
+        tool_call_id=tool_call_id,
+        # Idempotency key for a mutating request. The tool call is the natural
+        # unit of idempotency (one handler invocation = one backend op in
+        # EPIC-01); fall back to a fresh key only when unbound.
+        request_id=(
+            ctx.get("request_id")
+            or (tool_call_id if tool_call_id != "unbound" else uuid.uuid4().hex)
+        ),
     )
 
 

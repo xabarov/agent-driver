@@ -6,7 +6,7 @@ import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from time import monotonic
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_driver.code_agent.executor import CodeActionExecutor
 from agent_driver.context.artifacts import ArtifactStore, ContextStore
@@ -50,6 +50,9 @@ from agent_driver.runtime.tools import ToolExecutor
 from agent_driver.subagents.mailbox import SubagentMailboxStore
 from agent_driver.subagents.store import SubagentStore
 from agent_driver.tools.registry import ToolRegistry
+
+if TYPE_CHECKING:
+    from agent_driver.execution.protocol import ExecutionBackend
 
 _TRIMMING_FIELDS = {item.name for item in fields(TrimmingSettings)}
 _COMPACTION_FIELDS = {item.name for item in fields(CompactionSettings)}
@@ -116,6 +119,10 @@ class RunnerConfig:
     subagent_store: SubagentStore | None
     subagent_mailbox_store: SubagentMailboxStore | None
     code_executor: CodeActionExecutor | None
+    # EPIC-01: host-injected execution backend for the built-in bash/read/write
+    # tools. None keeps the default local subprocess + local-disk behavior. The
+    # model never selects it; governance stays above dispatch.
+    execution_backend: "ExecutionBackend | None"
     tool_registry: ToolRegistry | None
     command_queue_store: CommandQueueStore | None
     approval_store: ApprovalConsumptionStore | None
@@ -220,6 +227,7 @@ class RunnerConfig:
         self.subagent_store = kwargs.pop("subagent_store", None)
         self.subagent_mailbox_store = kwargs.pop("subagent_mailbox_store", None)
         self.code_executor = kwargs.pop("code_executor", None)
+        self.execution_backend = kwargs.pop("execution_backend", None)
         self.tool_registry = kwargs.pop("tool_registry", None)
         self.command_queue_store = kwargs.pop("command_queue_store", None)
         self.approval_store = kwargs.pop("approval_store", None)
