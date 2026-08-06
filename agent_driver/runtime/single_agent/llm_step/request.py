@@ -14,6 +14,10 @@ from agent_driver.context import (
 from agent_driver.contracts.context import ContextBudgetDefaults, PlanningStep
 from agent_driver.contracts.enums import ChatRole, RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.context.token_estimation import (
+    DEFAULT_CHARS_PER_TOKEN,
+    clamp_chars_per_token,
+)
 from agent_driver.llm.context_windows import provider_model_hint
 from agent_driver.runtime.metadata_state import (
     get_compaction_runtime_state,
@@ -78,6 +82,15 @@ class LlmRequestPrepHost(Protocol):
     def _emit(self, event: EventSpec) -> None: ...
 
 
+def _calibrated_chars_per_token(context: RunContext) -> float:
+    """The run's calibrated chars-per-token (BUG-6), or the default before any
+    provider usage has been observed. Clamped to the sane range."""
+    raw = context.metadata.get("context_chars_per_token")
+    if isinstance(raw, (int, float)) and raw > 0:
+        return clamp_chars_per_token(float(raw))
+    return DEFAULT_CHARS_PER_TOKEN
+
+
 def _run_context_budget_defaults(
     host: LlmRequestPrepHost,
     *,
@@ -136,6 +149,7 @@ def microcompact_context_observations(
     context_budget = resolve_run_context_budget(
         context.run_input,
         _run_context_budget_defaults(host),
+        chars_per_token=_calibrated_chars_per_token(context),
     )
     micro = microcompact_observations(
         [item for item in observations if isinstance(item, dict)],
@@ -315,6 +329,7 @@ def build_trimmed_request(
     context_budget = resolve_run_context_budget(
         context.run_input,
         _run_context_budget_defaults(host, trimming=trimming),
+        chars_per_token=_calibrated_chars_per_token(context),
     )
     context.metadata["effective_context_budget"] = context_budget.model_dump(
         mode="json"
@@ -362,6 +377,7 @@ def build_trimmed_request(
             max_observations=context_budget.max_observations,
             protect_recent_turns=context_budget.protect_recent_messages,
             context_window_estimate=context_budget.context_window_estimate,
+            chars_per_token=_calibrated_chars_per_token(context),
             warning_threshold=context_budget.warning_threshold,
             compact_threshold=context_budget.compact_threshold,
             blocking_threshold=context_budget.blocking_threshold,

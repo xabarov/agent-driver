@@ -53,6 +53,8 @@ def _declared_budget(run_input: Any) -> tuple[RunContextBudget | None, str, bool
 def resolve_run_context_budget(
     run_input: Any,
     defaults: ContextBudgetDefaults,
+    *,
+    chars_per_token: float = _ESTIMATED_CHARS_PER_TOKEN,
 ) -> ResolvedRunContextBudget:
     """Resolve typed caller policy, then legacy metadata, then runner defaults.
 
@@ -65,7 +67,7 @@ def resolve_run_context_budget(
     if declared is None:
         return ResolvedRunContextBudget(
             source=defaults.source,
-            input_tokens=max(1, defaults.max_chars // _ESTIMATED_CHARS_PER_TOKEN),
+            input_tokens=max(1, int(defaults.max_chars / chars_per_token)),
             output_tokens=defaults.output_token_reserve,
             max_chars=defaults.max_chars,
             max_messages=defaults.max_messages,
@@ -93,11 +95,7 @@ def resolve_run_context_budget(
     # window on large-context models.
     window_char_cap = max(
         1,
-        int(
-            input_tokens
-            * _ESTIMATED_CHARS_PER_TOKEN
-            * COMPACTION_WINDOW_CHAR_FRACTION
-        ),
+        int(input_tokens * chars_per_token * COMPACTION_WINDOW_CHAR_FRACTION),
     )
     max_compaction_chars = declared.max_compaction_chars
     if max_compaction_chars is None:
@@ -114,7 +112,7 @@ def resolve_run_context_budget(
         source=source,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-        max_chars=input_tokens * _ESTIMATED_CHARS_PER_TOKEN,
+        max_chars=int(input_tokens * chars_per_token),
         max_messages=(
             declared.max_messages
             if declared.max_messages is not None

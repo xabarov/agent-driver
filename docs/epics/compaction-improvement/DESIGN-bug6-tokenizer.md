@@ -1,7 +1,20 @@
 # Design Decision — BUG-6: real token counting (kill hardcoded chars/token=4)
 
-Status: proposed (awaiting sign-off). Branch: `epic/compaction-bug6`. Predecessor:
-Option A phase-1/1b + typed-ceiling + BUG-3 (all merged).
+Status: **decided + phase-1 implemented** (2026-08-06). Branch: `epic/compaction-bug6`.
+Predecessor: Option A phase-1/1b + typed-ceiling + BUG-3 (all merged).
+
+**Sign-off (user):** bounded EMA (0.7 prior / 0.3 observed, clamp [2, 8]); phase 1 =
+trigger + budget only (defer `TokenCounter` protocol + display sites to phase 2).
+**Phase-1 implemented:** shared `context/token_estimation.py` (`estimate_tokens` /
+`chars_for_tokens` / `calibrate_chars_per_token`); `token_pressure` uses a `chars_per_token`
+field; `run_budget.resolve_run_context_budget` takes `chars_per_token`; `request.py` reads
+the per-run calibrated `context_chars_per_token` from metadata and threads it into both;
+`llm_step` updates the EMA from `_usage.input_tokens` after each response. Blast radius: **zero**
+(the fake provider reports input_tokens = chars//4, so calibration is a no-op in tests but
+active with real providers). Tests: `tests/context/test_token_estimation.py`.
+**Phase-2 (later):** the optional `TokenCounter` protocol + fold the display/accounting sites
+(`breakdown`, `tool_history`, `span_collapse`, `microcompaction`, `batch/compress`) onto the
+shared estimator.
 
 ## Finding
 

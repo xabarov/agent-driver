@@ -6,6 +6,11 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from agent_driver.context.token_estimation import (
+    DEFAULT_CHARS_PER_TOKEN,
+    estimate_tokens,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class TokenPressureInput:  # pylint: disable=too-many-instance-attributes
@@ -17,6 +22,9 @@ class TokenPressureInput:  # pylint: disable=too-many-instance-attributes
     retained_digest_ids: tuple[str, ...] = ()
     retained_artifact_ids: tuple[str, ...] = ()
     context_window_estimate: int = 12000
+    # Chars-per-token ratio for the estimate; the runtime calibrates this from real
+    # provider usage over a run (BUG-6). Default is the English-prose average.
+    chars_per_token: float = DEFAULT_CHARS_PER_TOKEN
     warning_threshold: int = 7500
     compact_threshold: int = 9000
     blocking_threshold: int = 10500
@@ -52,7 +60,9 @@ def estimate_token_pressure(inp: TokenPressureInput) -> dict[str, Any]:
         + observation_chars
         + tool_schema_chars
     )
-    used_tokens_estimate = total_chars // 4
+    used_tokens_estimate = estimate_tokens(
+        total_chars, chars_per_token=inp.chars_per_token
+    )
     available_after_reserve = max(
         0,
         inp.context_window_estimate - inp.output_token_reserve,
@@ -76,6 +86,7 @@ def estimate_token_pressure(inp: TokenPressureInput) -> dict[str, Any]:
         "context_usage_ratio": context_usage_ratio,
         "remaining_tokens_estimate": remaining_tokens,
         "context_window_estimate": inp.context_window_estimate,
+        "chars_per_token": inp.chars_per_token,
         "output_token_reserve": inp.output_token_reserve,
         "warning_threshold": inp.warning_threshold,
         "compact_threshold": inp.compact_threshold,

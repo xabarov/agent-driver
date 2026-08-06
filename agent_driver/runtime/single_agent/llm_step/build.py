@@ -13,6 +13,7 @@ from agent_driver.code_agent.tool_surface import (
 )
 from agent_driver.context import trim_context
 from agent_driver.context.breakdown import estimate_context_breakdown
+from agent_driver.context.token_estimation import DEFAULT_CHARS_PER_TOKEN
 from agent_driver.context.token_pressure import (
     TokenPressureInput,
     estimate_token_pressure,
@@ -58,6 +59,9 @@ class LlmRequestBuildContext:
     compact_threshold: int = 9000
     blocking_threshold: int = 10500
     output_token_reserve: int = 1500
+    # Per-run calibrated chars-per-token for the pressure estimate (BUG-6); the
+    # runtime updates it from real provider usage between turns.
+    chars_per_token: float = DEFAULT_CHARS_PER_TOKEN
     request_max_tokens: int | None = None
     stream: bool = False
     system_instruction: str | None = None
@@ -610,6 +614,7 @@ def build_single_agent_llm_request(
             retained_digest_ids=tuple(trimmed.retained_digest_ids),
             retained_artifact_ids=tuple(trimmed.retained_artifact_ids),
             context_window_estimate=ctx.context_window_estimate,
+            chars_per_token=ctx.chars_per_token,
             warning_threshold=ctx.warning_threshold,
             compact_threshold=ctx.compact_threshold,
             blocking_threshold=ctx.blocking_threshold,

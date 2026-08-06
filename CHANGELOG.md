@@ -32,7 +32,14 @@ change between minor versions.
   - **(follow-up)** The typed-budget path's compaction cap is now a fraction of the
     window char budget too (`COMPACTION_WINDOW_CHAR_FRACTION`, single-sourced with the
     compaction stage) instead of the fixed 262144 clamp — finishing BUG-1 on both
-    paths. A real tokenizer (BUG-6) remains a follow-up.
+    paths.
+  - **(BUG-6, phase 1)** The pressure trigger and budget conversions no longer assume a
+    fixed 4 chars/token: the runtime now calibrates the ratio from each provider
+    response's ACTUAL input-token count (a bounded EMA in `context_chars_per_token`,
+    clamped to [2, 8]) and uses it for the next turn's estimate — so on CJK/RU/code
+    content the compaction trigger fires closer to the real token count. Dependency-free
+    and network-free; the first turn uses the 4.0 default until usage is observed. An
+    optional pluggable `TokenCounter` and the display-only estimate sites remain phase 2.
   - **(BUG-3)** `compact_recommended` now has a window-relative floor
     (`TokenPressureInput.compact_ratio = 0.75`), like the other pressure states —
     previously it was the only state with no ratio net, so compaction fired at

@@ -26,6 +26,10 @@ from agent_driver.runtime.lifecycle_hooks import (
     dispatch_after_llm,
     dispatch_before_llm,
 )
+from agent_driver.context.token_estimation import (
+    DEFAULT_CHARS_PER_TOKEN,
+    calibrate_chars_per_token,
+)
 from agent_driver.runtime.metadata_state import (
     get_compaction_runtime_state,
     get_cost_runtime_state,
@@ -520,6 +524,25 @@ async def execute_llm_call_step(
             # Fold this call's tokens/cost into the run ledger so the budget
             # gate (_terminal_from_limits) can fail fast when exceeded.
             get_cost_runtime_state(context).accumulate(_usage)
+            # BUG-6: calibrate chars/token from the provider's ACTUAL input count vs
+            # the chars we estimated we sent, so the next turn's pressure/budget
+            # estimate is content-accurate (EMA, clamped; a bad datapoint is ignored).
+            _pressure_snapshot = context.metadata.get("token_pressure")
+            _chars_sent = (
+                _pressure_snapshot.get("total_chars")
+                if isinstance(_pressure_snapshot, dict)
+                else None
+            )
+            if isinstance(_chars_sent, int):
+                context.metadata["context_chars_per_token"] = calibrate_chars_per_token(
+                    float(
+                        context.metadata.get(
+                            "context_chars_per_token", DEFAULT_CHARS_PER_TOKEN
+                        )
+                    ),
+                    chars_sent=_chars_sent,
+                    actual_input_tokens=getattr(_usage, "input_tokens", None),
+                )
             # Epic 028 phase E: cache-break forensics (no-op when the provider
             # reports no cache fields — honesty over fabricated verdicts).
             from agent_driver.runtime.single_agent.llm_step.cache_forensics import (  # noqa: PLC0415
