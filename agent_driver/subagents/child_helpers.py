@@ -118,9 +118,105 @@ def _child_tool_policy(
         parent_tool_policy=parent.tool_policy,
         worker_type=str(worker_type) if worker_type is not None else None,
     )
+    policy = _apply_task_tool_surface(
+        policy=policy,
+        parent=parent,
+        task=task,
+        worker_type=str(worker_type) if worker_type is not None else None,
+    )
     if task.metadata.get("deep_research_child_notes_only") is True:
         policy = _strip_parent_research_contract(policy)
     return policy
+
+
+def _apply_task_tool_surface(
+    *,
+    policy: dict[str, object],
+    parent: SubagentParentHandoff,
+    task: SubagentTaskSpec,
+    worker_type: str | None,
+) -> dict[str, object]:
+    """Narrow a child policy by host-declared and task-declared surfaces.
+
+    A model-authored ``agent_tool`` request may select a role and ask for a
+    smaller set of tools, but it must never widen the parent's allow-list.
+    Hosts can make that narrowing mandatory by declaring
+    ``task_contract.child_tool_surfaces`` and ``child_denied_tools`` in the
+    parent policy metadata.  This keeps product-specific role names and tool
+    names outside agent-driver while making leaf-agent least privilege
+    enforceable rather than prompt-only.
+    """
+
+    parent_metadata = parent.tool_policy.get("metadata")
+    task_contract = (
+        parent_metadata.get("task_contract")
+        if isinstance(parent_metadata, dict)
+        else None
+    )
+    contract_allowed: object = None
+    contract_denied: object = None
+    if isinstance(task_contract, dict):
+        surfaces = task_contract.get("child_tool_surfaces")
+        if isinstance(surfaces, dict):
+            # Once a host declares an exhaustive child surface map, an
+            # unknown/missing model-selected role is denied by default.  It
+            # must never fall back to the broader parent surface.
+            contract_allowed = surfaces.get(worker_type, []) if worker_type else []
+        contract_denied = task_contract.get("child_denied_tools")
+
+    requested_surfaces = [
+        value
+        for value in (contract_allowed, task.metadata.get("allowed_tools"))
+        if isinstance(value, list)
+    ]
+    current_allowed = policy.get("allowed_tools")
+    allowed = (
+        [str(value) for value in current_allowed]
+        if isinstance(current_allowed, list)
+        else None
+    )
+    for requested in requested_surfaces:
+        requested_set = {str(value) for value in requested}
+        if allowed is None:
+            allowed = [str(value) for value in requested]
+        else:
+            allowed = [value for value in allowed if value in requested_set]
+
+    denied: list[str] = []
+    for source in (
+        policy.get("denied_tools"),
+        contract_denied,
+        task.metadata.get("denied_tools"),
+    ):
+        if not isinstance(source, list):
+            continue
+        for value in source:
+            normalized = str(value)
+            if normalized not in denied:
+                denied.append(normalized)
+    if allowed is not None and denied:
+        denied_set = set(denied)
+        allowed = [value for value in allowed if value not in denied_set]
+
+    if not requested_surfaces and not denied:
+        return policy
+    metadata = dict(policy.get("metadata") or {})
+    metadata.update(
+        {
+            "task_tool_surface": "narrowed",
+            "task_worker_type": worker_type,
+            "task_requested_allowed_tools": [
+                [str(value) for value in source] for source in requested_surfaces
+            ],
+            "task_denied_tools": denied,
+        }
+    )
+    result = {**policy, "metadata": metadata}
+    if allowed is not None:
+        result["allowed_tools"] = allowed
+    if denied:
+        result["denied_tools"] = denied
+    return result
 
 
 def _strip_parent_research_contract(policy: dict[str, object]) -> dict[str, object]:

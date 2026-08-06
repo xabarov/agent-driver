@@ -156,6 +156,116 @@ async def test_sync_child_execution_restricts_worker_tool_surface() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sync_child_execution_enforces_host_declared_custom_role_surface() -> (
+    None
+):
+    """Unknown product roles receive a host policy; a model cannot widen it."""
+    store = InMemorySubagentStore()
+    seen = {}
+
+    async def _runner(run_input):
+        seen["tool_policy"] = run_input.tool_policy
+        return await _ok_child_runner(run_input)
+
+    await execute_subagent_group_sync(
+        parent=default_parent_handoff(
+            answer="parent summary",
+            tool_policy={
+                "allowed_tools": [
+                    "dns_lookup",
+                    "httpx",
+                    "nmap",
+                    "agent_tool",
+                ],
+                "metadata": {
+                    "task_contract": {
+                        "child_tool_surfaces": {
+                            "hostname_verifier": ["dns_lookup", "httpx"]
+                        },
+                        "child_denied_tools": ["agent_tool"],
+                    }
+                },
+            },
+        ),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_recon",
+            purpose="hostname verification",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="names_1",
+                    task="verify assigned names",
+                    description="bounded hostname shard",
+                    metadata={
+                        "worker_type": "hostname_verifier",
+                        # This model-authored list may narrow the host surface,
+                        # but nmap must not widen it.
+                        "allowed_tools": ["httpx", "nmap"],
+                    },
+                ),
+            ),
+        ),
+        store=store,
+        child_runner=_runner,
+        max_child_runs=4,
+    )
+
+    policy = seen["tool_policy"]
+    assert policy.allowed_tools == ["httpx"]
+    assert policy.denied_tools == ["agent_tool"]
+    assert policy.metadata["task_tool_surface"] == "narrowed"
+    assert policy.metadata["task_worker_type"] == "hostname_verifier"
+
+
+@pytest.mark.asyncio
+async def test_sync_child_execution_denies_unknown_host_declared_role_surface() -> None:
+    """An exhaustive host role map must fail closed for model-invented roles."""
+    seen = {}
+
+    async def _runner(run_input):
+        seen["tool_policy"] = run_input.tool_policy
+        return await _ok_child_runner(run_input)
+
+    await execute_subagent_group_sync(
+        parent=default_parent_handoff(
+            answer="parent summary",
+            tool_policy={
+                "allowed_tools": ["dns_lookup", "httpx", "nmap"],
+                "metadata": {
+                    "task_contract": {
+                        "child_tool_surfaces": {
+                            "hostname_verifier": ["dns_lookup", "httpx"]
+                        }
+                    }
+                },
+            },
+        ),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_unknown_role",
+            purpose="unknown role must not inherit tools",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="invented_1",
+                    task="do everything",
+                    description="model-invented role",
+                    metadata={
+                        "worker_type": "invented_super_scanner",
+                        "allowed_tools": ["nmap"],
+                    },
+                ),
+            ),
+        ),
+        store=InMemorySubagentStore(),
+        child_runner=_runner,
+        max_child_runs=1,
+    )
+
+    policy = seen["tool_policy"]
+    assert policy.allowed_tools == []
+    assert policy.metadata["task_tool_surface"] == "narrowed"
+    assert policy.metadata["task_worker_type"] == "invented_super_scanner"
+
+
+@pytest.mark.asyncio
 async def test_sync_child_execution_strips_parent_deep_research_contract() -> None:
     """Deep Research child notes workers should not inherit parent repair loops."""
     store = InMemorySubagentStore()

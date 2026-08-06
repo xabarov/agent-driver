@@ -44,9 +44,9 @@ See [SDK](sdk.md) for the full `Agent` surface and [capabilities](sdk.md#capabil
 | `agent_driver.observability.cost_ledger` | `CostLedger`, `Pricing`, `register_pricing`, `estimate_cost_usd` |
 | `agent_driver.security` | `scan_context_text` (ingestion injection scanner) |
 
-The `agent_driver.tools` facade also exposes `register_skill_tools` for hosts
-that deliberately assemble a narrow registry instead of registering the full
-built-in tool pack.
+The `agent_driver.tools` facade also exposes `register_skill_tools` and
+`register_agent_tools` for hosts that deliberately assemble a narrow registry
+instead of registering the full built-in tool pack.
 
 Runnable examples for most of these live in [`examples/cookbook/`](../examples/cookbook/README.md).
 For a full durable-embedding assembly — host stores + a custom governed tool + a lifecycle hook + an

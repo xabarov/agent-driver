@@ -183,6 +183,7 @@ _TOOLS = {
     "persisted_output_envelope",
     "planning_state_update_tool",
     "prefer_specialized_over_generic",
+    "register_agent_tools",
     "register_builtin_tools",
     "register_contract_tool",
     "register_custom_function",

@@ -7,6 +7,23 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-06
+
+### Added — host-enforced task-scoped child tool surfaces
+
+Subagent child policies can now be narrowed by a domain-neutral host contract:
+`tool_policy.metadata.task_contract.child_tool_surfaces` maps worker roles to
+their allowed tools, while `child_denied_tools` applies a common deny set. A
+task may narrow that surface further through `metadata.allowed_tools`, but can
+never widen the parent or host surface. When a host declares the role map, an
+unknown or missing model-selected role receives an empty tool surface instead
+of inheriting the broader parent policy. This gives multi-agent hosts an
+enforceable least-privilege boundary without putting product role or tool names
+inside Agent Driver.
+`register_agent_tools` is now available from the supported
+`agent_driver.tools` facade so hosts do not need to import an internal built-in
+module when enabling the native subagent request tool.
+
 ## [0.3.3] - 2026-08-03
 
 Context-integrity patch release for constrained, long-context embeddings.
