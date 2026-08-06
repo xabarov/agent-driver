@@ -107,6 +107,158 @@ from .subagent_signals import (
 )
 
 
+def _build_failure_verdicts(
+    *,
+    events: list[dict[str, object]],
+    tool_names: list[str],
+    terminal_event: str | None,
+    interrupt_reasons: Any,
+    continuation_reason: str | None,
+    requires_research: bool,
+    user_prompt: str | None,
+    text: str,
+    provider_rejected: bool,
+    research: dict[str, Any],
+    planning: dict[str, Any],
+    subagents: dict[str, Any],
+    python: dict[str, Any],
+    unknown_tools: dict[str, Any],
+    research_efficiency: dict[str, Any],
+    provenance: dict[str, Any],
+    deep_research_artifact_handoff_complete: bool,
+    research_final_covers_plan: bool,
+) -> dict[str, bool]:
+    """Aggregate every per-run failure verdict (the trace summary's fail signals) from
+    the gathered sub-summaries. Each entry is a named boolean the eval layer keys on;
+    ``**provenance`` folds in the contract-violation verdicts."""
+    return {
+        "stuck_on_interrupt": bool(interrupt_reasons) and terminal_event is None,
+        "missing_terminal_event": terminal_event is None,
+        "run_failed_or_cancelled": terminal_event in {"run_failed", "run_cancelled"},
+        "missing_required_research_evidence": (
+            requires_research
+            and not any(name in _RESEARCH_TOOLS for name in tool_names)
+            and not deep_research_artifact_handoff_complete
+        ),
+        "search_only_research_report": research["fetch_required_but_missing"]
+        and not deep_research_artifact_handoff_complete,
+        "insufficient_research_source_diversity": research[
+            "insufficient_source_diversity"
+        ],
+        "final_missing_source_links": research["final_missing_source_links"],
+        "progress_only_final": continuation_reason == "continuation_signal",
+        "text_form_tool_call": continuation_reason == "text_form_tool_call"
+        and not deep_research_artifact_handoff_complete,
+        "fabricated_planning": planning["verdict"] == "fabricated"
+        and not provider_rejected
+        and _planning_execution_expected(
+            requires_research=requires_research,
+            user_prompt=user_prompt,
+            assistant_text=text,
+        ),
+        "repeated_approval_planning": planning["approval_cycles"] > 1,
+        "plan_todos_incomplete_on_final": (
+            terminal_event == "run_completed"
+            and not deep_research_artifact_handoff_complete
+            and _planning_todos_incomplete(
+                planning,
+                assistant_text=text,
+                allow_all_todos=research_final_covers_plan,
+            )
+        ),
+        "extra_ask_user_question": _extra_ask_user_question(
+            tool_names=tool_names,
+            requires_research=requires_research,
+            user_prompt=user_prompt,
+            assistant_text=text,
+        ),
+        "missed_explicit_delegation": (
+            subagents["delegation_requested"] and not subagents["agent_tool_used"]
+        ),
+        "unnecessary_delegation": (
+            subagents["agent_tool_used"] and _simple_prompt(user_prompt)
+        ),
+        "subagent_no_final": (
+            subagents["agent_tool_used"] and not subagents["parent_synthesized_final"]
+        ),
+        "child_result_not_used": (
+            subagents["groups_joined"] > 0 and not subagents["parent_synthesized_final"]
+        ),
+        "child_prompt_not_bounded": (
+            subagents["agent_tool_used"] and _agent_tool_prompt_unbounded(events)
+        ),
+        "missed_python": False,
+        "python_no_final": (
+            python["python_tool_used"] and not python["final_after_python"]
+        ),
+        "python_policy_loop": python["python_policy_errors"] > 1,
+        "unnecessary_python": False,
+        "python_result_ignored": (
+            python["python_tool_used"]
+            and python["python_result_observed"]
+            and not python["final_after_python"]
+        ),
+        "unknown_tool_call": unknown_tools["count"] > 0,
+        "deep_research_no_report_artifact": research_efficiency[
+            "missing_report_artifact"
+        ],
+        "deep_research_no_source_ledger_artifact": research_efficiency[
+            "missing_source_ledger_artifact"
+        ],
+        "deep_research_full_report_rewrite": research_efficiency["full_report_rewrite"],
+        "deep_research_stale_report_edit": research_efficiency["stale_report_edit"],
+        "deep_research_repeated_report_read": research_efficiency[
+            "repeated_report_read"
+        ],
+        "deep_research_final_missing_report_reference": research_efficiency[
+            "final_missing_report_reference"
+        ],
+        "deep_research_long_final_after_report": research_efficiency[
+            "long_final_after_report"
+        ]
+        and not deep_research_artifact_handoff_complete,
+        "deep_research_missing_initial_todo": research_efficiency[
+            "missing_initial_todo"
+        ],
+        "deep_research_unexpected_agent_tool": research_efficiency[
+            "unexpected_agent_tool"
+        ],
+        "deep_research_skill_denied": research_efficiency["skill_denied"],
+        "deep_research_low_verified_coverage": research_efficiency[
+            "low_verified_coverage"
+        ]
+        and not deep_research_artifact_handoff_complete,
+        "deep_research_preliminary_final": research_efficiency["preliminary_final"]
+        and not deep_research_artifact_handoff_complete,
+        "deep_research_repeated_search_args": research_efficiency[
+            "repeated_search_args"
+        ],
+        "deep_research_search_without_fetch_progress": research_efficiency[
+            "search_without_fetch_progress"
+        ],
+        "deep_research_tool_entropy_high": research_efficiency["tool_entropy_high"],
+        "deep_research_phase_violation": research_efficiency["phase_violation"],
+        "deep_research_browser_action_without_opt_in": research_efficiency[
+            "hard_browser_action_without_opt_in"
+        ],
+        "deep_research_browser_used_before_source_read": research_efficiency[
+            "hard_browser_used_before_source_read"
+        ],
+        "deep_research_browser_read_missing_fallback_reason": research_efficiency[
+            "hard_browser_read_missing_fallback_reason"
+        ],
+        "deep_research_hard_claims_missing": research_efficiency["hard_claims_missing"],
+        "deep_research_hard_claims_empty": research_efficiency["hard_claims_empty"],
+        "deep_research_hard_claims_no_verified": research_efficiency[
+            "hard_claims_no_verified"
+        ],
+        "deep_research_hard_claims_unsupported": research_efficiency[
+            "hard_claims_unsupported"
+        ],
+        **provenance["contract_verdicts"]["violations"],
+    }
+
+
 def summarize_run_trace(
     *,
     run_id: str,
@@ -233,132 +385,26 @@ def summarize_run_trace(
         )
     )
 
-    failures: dict[str, bool] = {
-        "stuck_on_interrupt": bool(interrupt_reasons) and terminal_event is None,
-        "missing_terminal_event": terminal_event is None,
-        "run_failed_or_cancelled": terminal_event in {"run_failed", "run_cancelled"},
-        "missing_required_research_evidence": (
-            requires_research
-            and not any(name in _RESEARCH_TOOLS for name in tool_names)
-            and not deep_research_artifact_handoff_complete
-        ),
-        "search_only_research_report": research["fetch_required_but_missing"]
-        and not deep_research_artifact_handoff_complete,
-        "insufficient_research_source_diversity": research[
-            "insufficient_source_diversity"
-        ],
-        "final_missing_source_links": research["final_missing_source_links"],
-        "progress_only_final": continuation.reason == "continuation_signal",
-        "text_form_tool_call": continuation.reason == "text_form_tool_call"
-        and not deep_research_artifact_handoff_complete,
-        "fabricated_planning": planning["verdict"] == "fabricated"
-        and not provider_rejected
-        and _planning_execution_expected(
-            requires_research=requires_research,
-            user_prompt=user_prompt,
-            assistant_text=text,
-        ),
-        "repeated_approval_planning": planning["approval_cycles"] > 1,
-        "plan_todos_incomplete_on_final": (
-            terminal_event == "run_completed"
-            and not deep_research_artifact_handoff_complete
-            and _planning_todos_incomplete(
-                planning,
-                assistant_text=text,
-                allow_all_todos=research_final_covers_plan,
-            )
-        ),
-        "extra_ask_user_question": _extra_ask_user_question(
-            tool_names=tool_names,
-            requires_research=requires_research,
-            user_prompt=user_prompt,
-            assistant_text=text,
-        ),
-        "missed_explicit_delegation": (
-            subagents["delegation_requested"] and not subagents["agent_tool_used"]
-        ),
-        "unnecessary_delegation": (
-            subagents["agent_tool_used"] and _simple_prompt(user_prompt)
-        ),
-        "subagent_no_final": (
-            subagents["agent_tool_used"] and not subagents["parent_synthesized_final"]
-        ),
-        "child_result_not_used": (
-            subagents["groups_joined"] > 0 and not subagents["parent_synthesized_final"]
-        ),
-        "child_prompt_not_bounded": (
-            subagents["agent_tool_used"] and _agent_tool_prompt_unbounded(events)
-        ),
-        "missed_python": False,
-        "python_no_final": (
-            python["python_tool_used"] and not python["final_after_python"]
-        ),
-        "python_policy_loop": python["python_policy_errors"] > 1,
-        "unnecessary_python": False,
-        "python_result_ignored": (
-            python["python_tool_used"]
-            and python["python_result_observed"]
-            and not python["final_after_python"]
-        ),
-        "unknown_tool_call": unknown_tools["count"] > 0,
-        "deep_research_no_report_artifact": research_efficiency[
-            "missing_report_artifact"
-        ],
-        "deep_research_no_source_ledger_artifact": research_efficiency[
-            "missing_source_ledger_artifact"
-        ],
-        "deep_research_full_report_rewrite": research_efficiency["full_report_rewrite"],
-        "deep_research_stale_report_edit": research_efficiency["stale_report_edit"],
-        "deep_research_repeated_report_read": research_efficiency[
-            "repeated_report_read"
-        ],
-        "deep_research_final_missing_report_reference": research_efficiency[
-            "final_missing_report_reference"
-        ],
-        "deep_research_long_final_after_report": research_efficiency[
-            "long_final_after_report"
-        ]
-        and not deep_research_artifact_handoff_complete,
-        "deep_research_missing_initial_todo": research_efficiency[
-            "missing_initial_todo"
-        ],
-        "deep_research_unexpected_agent_tool": research_efficiency[
-            "unexpected_agent_tool"
-        ],
-        "deep_research_skill_denied": research_efficiency["skill_denied"],
-        "deep_research_low_verified_coverage": research_efficiency[
-            "low_verified_coverage"
-        ]
-        and not deep_research_artifact_handoff_complete,
-        "deep_research_preliminary_final": research_efficiency["preliminary_final"]
-        and not deep_research_artifact_handoff_complete,
-        "deep_research_repeated_search_args": research_efficiency[
-            "repeated_search_args"
-        ],
-        "deep_research_search_without_fetch_progress": research_efficiency[
-            "search_without_fetch_progress"
-        ],
-        "deep_research_tool_entropy_high": research_efficiency["tool_entropy_high"],
-        "deep_research_phase_violation": research_efficiency["phase_violation"],
-        "deep_research_browser_action_without_opt_in": research_efficiency[
-            "hard_browser_action_without_opt_in"
-        ],
-        "deep_research_browser_used_before_source_read": research_efficiency[
-            "hard_browser_used_before_source_read"
-        ],
-        "deep_research_browser_read_missing_fallback_reason": research_efficiency[
-            "hard_browser_read_missing_fallback_reason"
-        ],
-        "deep_research_hard_claims_missing": research_efficiency["hard_claims_missing"],
-        "deep_research_hard_claims_empty": research_efficiency["hard_claims_empty"],
-        "deep_research_hard_claims_no_verified": research_efficiency[
-            "hard_claims_no_verified"
-        ],
-        "deep_research_hard_claims_unsupported": research_efficiency[
-            "hard_claims_unsupported"
-        ],
-        **provenance["contract_verdicts"]["violations"],
-    }
+    failures = _build_failure_verdicts(
+        events=events,
+        tool_names=tool_names,
+        terminal_event=terminal_event,
+        interrupt_reasons=interrupt_reasons,
+        continuation_reason=continuation.reason,
+        requires_research=requires_research,
+        user_prompt=user_prompt,
+        text=text,
+        provider_rejected=provider_rejected,
+        research=research,
+        planning=planning,
+        subagents=subagents,
+        python=python,
+        unknown_tools=unknown_tools,
+        research_efficiency=research_efficiency,
+        provenance=provenance,
+        deep_research_artifact_handoff_complete=deep_research_artifact_handoff_complete,
+        research_final_covers_plan=research_final_covers_plan,
+    )
     notes = _notes(
         failures=failures,
         continuation_reason=continuation.reason,
