@@ -763,92 +763,75 @@ def _resolve_compaction_backend(
     return provider, model
 
 
-async def _apply_llm_full_compaction(
+def _finalize_failed_llm_full_compaction(
     host: CompactionStageHost,
     *,
     context: RunContext,
-    request: Any,
     orchestrator: CompactionOrchestrator,
     decision: CompactionDecision,
+    compaction_result: Any,
     compaction_id: str,
     circuit_breaker_open_before: bool,
 ) -> bool:
-    original_messages = list(request.messages)
-    excerpt = _build_full_compaction_excerpt(host, context=context, request=request)
-    sanitized_excerpt = excerpt.sanitized_excerpt
-    effective_ptl_max_chars = excerpt.max_chars
-    budget_source = excerpt.budget_source
-    kept_groups = excerpt.kept_groups
-    dropped_groups = excerpt.dropped_groups
-    protected_indexes = excerpt.protected_indexes
-    compaction_provider, compaction_model = _resolve_compaction_backend(
-        host, request=request
+    """Record + emit an unsuccessful llm_full compaction attempt (including the
+    honest aux idle-timeout failure kind) and signal the caller to stop."""
+    # Epic 041 C: a liveness idle-timeout is a distinct, honest failure kind so
+    # hosts can tell "summary provider stalled" from a content/parse failure.
+    result_meta = (
+        compaction_result.metadata if compaction_result is not None else {}
+    ) or {}
+    idle_timed_out = result_meta.get("failure_kind") == "aux_idle_timeout"
+    failure = {
+        "kind": (
+            "llm_compaction_aux_idle_timeout"
+            if idle_timed_out
+            else "llm_compaction_failed"
+        ),
+        "mode": "llm_full",
+        "message": (
+            "compaction summary provider stalled (idle timeout)"
+            if idle_timed_out
+            else "provider compaction returned unsuccessful result"
+        ),
+    }
+    audit = orchestrator.complete_attempt(
+        decision=decision,
+        result=compaction_result,
+        failures=[failure],
     )
-    compaction_result, summary = await run_full_llm_compaction(
-        provider=compaction_provider,
-        model=compaction_model,
-        history_excerpt=sanitized_excerpt,
-        user_request=context.run_input.input or "",
-        idle_timeout_seconds=host._config.aux_idle_timeout_seconds,
-        max_history_chars=effective_ptl_max_chars,
-        history_is_bounded=True,
+    context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+    context.metadata[COMPACTION_RESULT_KEY] = (
+        compaction_result.model_dump(mode="json")
+        if compaction_result is not None
+        else None
     )
-    _account_compaction_cost(context, compaction_result, provider=compaction_provider)
-    if compaction_result is None or not compaction_result.success:
-        # Epic 041 C: a liveness idle-timeout is a distinct, honest failure kind so
-        # hosts can tell "summary provider stalled" from a content/parse failure.
-        result_meta = (
-            compaction_result.metadata if compaction_result is not None else {}
-        ) or {}
-        idle_timed_out = result_meta.get("failure_kind") == "aux_idle_timeout"
-        failure = {
-            "kind": (
-                "llm_compaction_aux_idle_timeout"
-                if idle_timed_out
-                else "llm_compaction_failed"
-            ),
+    context.metadata[COMPACTION_FAILURES_KEY] = [failure]
+    _emit_compaction_outcome(
+        host,
+        context=context,
+        outcome="failed",
+        payload_extras={
             "mode": "llm_full",
-            "message": (
-                "compaction summary provider stalled (idle timeout)"
-                if idle_timed_out
-                else "provider compaction returned unsuccessful result"
-            ),
-        }
-        audit = orchestrator.complete_attempt(
-            decision=decision,
-            result=compaction_result,
-            failures=[failure],
-        )
-        context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
-        context.metadata[COMPACTION_RESULT_KEY] = (
-            compaction_result.model_dump(mode="json")
-            if compaction_result is not None
-            else None
-        )
-        context.metadata[COMPACTION_FAILURES_KEY] = [failure]
-        _emit_compaction_outcome(
-            host,
-            context=context,
-            outcome="failed",
-            payload_extras={
-                "mode": "llm_full",
-                "compaction_id": compaction_id,
-                "failure_kind": failure["kind"],
-                "failure_message": failure["message"],
-            },
-            orchestrator=orchestrator,
-        )
-        _maybe_emit_circuit_breaker_warning(
-            host,
-            context=context,
-            before_open=circuit_breaker_open_before,
-            orchestrator=orchestrator,
-        )
-        return True
-    compaction_result = compaction_result.model_copy(
-        update={"compaction_id": compaction_id}
+            "compaction_id": compaction_id,
+            "failure_kind": failure["kind"],
+            "failure_message": failure["message"],
+        },
+        orchestrator=orchestrator,
     )
-    retained_messages = _retained_messages_after_full_compaction(original_messages)
+    _maybe_emit_circuit_breaker_warning(
+        host,
+        context=context,
+        before_open=circuit_breaker_open_before,
+        orchestrator=orchestrator,
+    )
+    return True
+
+
+def _splice_summary_message(
+    retained_messages: list[ChatMessage], summary: Any
+) -> list[ChatMessage]:
+    """Insert the compacted-summary system message ahead of the first non-system
+    retained message (keeping any leading system prompt first)."""
     summary_text = json.dumps(
         summary,
         ensure_ascii=False,
@@ -871,16 +854,23 @@ async def _apply_llm_full_compaction(
         ),
         len(retained_messages),
     )
-    request.messages = [
+    return [
         *retained_messages[:first_non_system],
         summary_message,
         *retained_messages[first_non_system:],
     ]
-    unit_receipt = _material_unit_receipt(
-        original_messages=original_messages,
-        retained_messages=retained_messages,
-        pre_summary_groups_dropped=bool(dropped_groups),
-    )
+
+
+def _record_llm_full_result_metadata(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    compaction_result: Any,
+    excerpt: "_FullCompactionExcerpt",
+    unit_receipt: dict[str, Any],
+) -> None:
+    """Write the successful-compaction result + audit metadata, folding in the
+    ptl-retry group-drop receipt (kept/dropped/protected group hashes + budget)."""
     context.metadata[COMPACTION_RESULT_KEY] = compaction_result.model_dump(mode="json")
     context.metadata[COMPACTION_AUDIT_KEY] = {
         "decision": context.metadata[COMPACTION_DECISION_KEY],
@@ -891,23 +881,77 @@ async def _apply_llm_full_compaction(
             **context.metadata[COMPACTION_RESULT_KEY].get("metadata", {}),
             "ptl_retry": {
                 "enabled": host._config.enable_ptl_retry,
-                "dropped_groups": len(dropped_groups),
+                "dropped_groups": len(excerpt.dropped_groups),
                 "dropped_group_sha256": [
                     hashlib.sha256(item.encode("utf-8")).hexdigest()
-                    for item in dropped_groups
+                    for item in excerpt.dropped_groups
                 ],
-                "kept_groups": len(kept_groups),
-                "protected_groups": len(protected_indexes),
-                "max_chars": effective_ptl_max_chars,
-                "budget_source": budget_source,
+                "kept_groups": len(excerpt.kept_groups),
+                "protected_groups": len(excerpt.protected_indexes),
+                "max_chars": excerpt.max_chars,
+                "budget_source": excerpt.budget_source,
                 "budget_overrun_chars": max(
                     0,
-                    sum(len(item) for item in kept_groups)
-                    - effective_ptl_max_chars,
+                    sum(len(item) for item in excerpt.kept_groups)
+                    - excerpt.max_chars,
                 ),
                 **unit_receipt,
             },
         }
+
+
+async def _apply_llm_full_compaction(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    request: Any,
+    orchestrator: CompactionOrchestrator,
+    decision: CompactionDecision,
+    compaction_id: str,
+    circuit_breaker_open_before: bool,
+) -> bool:
+    original_messages = list(request.messages)
+    excerpt = _build_full_compaction_excerpt(host, context=context, request=request)
+    compaction_provider, compaction_model = _resolve_compaction_backend(
+        host, request=request
+    )
+    compaction_result, summary = await run_full_llm_compaction(
+        provider=compaction_provider,
+        model=compaction_model,
+        history_excerpt=excerpt.sanitized_excerpt,
+        user_request=context.run_input.input or "",
+        idle_timeout_seconds=host._config.aux_idle_timeout_seconds,
+        max_history_chars=excerpt.max_chars,
+        history_is_bounded=True,
+    )
+    _account_compaction_cost(context, compaction_result, provider=compaction_provider)
+    if compaction_result is None or not compaction_result.success:
+        return _finalize_failed_llm_full_compaction(
+            host,
+            context=context,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_result=compaction_result,
+            compaction_id=compaction_id,
+            circuit_breaker_open_before=circuit_breaker_open_before,
+        )
+    compaction_result = compaction_result.model_copy(
+        update={"compaction_id": compaction_id}
+    )
+    retained_messages = _retained_messages_after_full_compaction(original_messages)
+    request.messages = _splice_summary_message(retained_messages, summary)
+    unit_receipt = _material_unit_receipt(
+        original_messages=original_messages,
+        retained_messages=retained_messages,
+        pre_summary_groups_dropped=bool(excerpt.dropped_groups),
+    )
+    _record_llm_full_result_metadata(
+        host,
+        context=context,
+        compaction_result=compaction_result,
+        excerpt=excerpt,
+        unit_receipt=unit_receipt,
+    )
     cleanup = apply_post_compact_cleanup(
         metadata=context.metadata,
         max_reinjected_artifact_refs=host._config.post_compact_max_reinjected_artifact_refs,
