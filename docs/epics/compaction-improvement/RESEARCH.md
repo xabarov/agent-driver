@@ -77,10 +77,10 @@ Two parallel char↔token conversions both hardcode 4 (`input_tokens*4` for max_
 
 ## 3. Reference projects
 
-`reference/hermes-agent`, `reference/openclaude`, and `reference/openhands` (added
-2026-08-06; OpenHands "condenser" survey pending — §3.3). The first two have **far
-more elaborate** compaction than us, and several of their solutions map directly
-onto our bugs.
+`reference/hermes-agent`, `reference/openclaude`, `reference/openhands` (frontend)
+and `reference/openhands-sdk` (the real Python condensers), all added/surveyed
+2026-08-06. All have **more elaborate** compaction than us, and several of their
+solutions map directly onto our bugs (OpenHands condenser in §3.3).
 
 **Model-window resolution (→ BUG-2).** Neither hardcodes a low estimate:
 - hermes `agent/model_metadata.py::get_model_context_length()` — a **9-step
@@ -141,6 +141,48 @@ hashes) could beat keyword overlap.
 **Caveats:** openclaude leans on feature flags (several paths dead-code-eliminated
 in external builds); hermes runtime compaction is a 6.5k-line class entangled with
 SQLite session rotation — learn the ideas, don't lift wholesale.
+
+### 3.3 OpenHands condenser (verified against `reference/openhands-sdk`)
+
+Two repos vendored: `reference/openhands` (the Agent-Canvas frontend — proves only
+the wire/config contract: `condenser {enabled, max_size}`, a `CondensationEvent`
+with `forgotten_event_ids`/`summary`/`summary_offset`, per-condenser cost metrics)
+and `reference/openhands-sdk` (`OpenHands/software-agent-sdk` — the real Python
+condensers under `openhands-sdk/openhands/sdk/context/condenser/`).
+
+**Architecture — the cleanest of the three.** `CondenserBase.condense(view) ->
+View | Condensation` (`context/condenser/base.py:33`). History is an **immutable
+event log**; a condenser returns either a derived **View** (what the LLM sees) or a
+**Condensation** action (recording `forgotten_event_ids` + a `summary` spliced at
+`summary_offset`). The docstring explicitly warns *not to mutate the view in place*
+(prompt-cache safety). `RollingCondenser` (`base.py:107`) is the incremental base;
+`PipelineCondenser` composes condensers. Strategies: NoOp, RecentEvents (window),
+**LLMSummarizingCondenser** (default, rolling), LLMAttention (LLM picks keep-list),
+AmortizedForgetting (drop middle, no LLM), ObservationMasking/BrowserOutput
+(truncate one huge observation, keep event count).
+
+**Verified defaults** (`llm_summarizing_condenser.py`): `max_size=240` (`:48`),
+`keep_first=2` (`:51`), **`minimum_progress=0.1`** (`:56` — a condensation must free
+≥10% or it's rejected; a real anti-thrashing guard, same idea as hermes'
+"ineffective" reason), `hard_context_reset_max_retries=5` (`:65`),
+`hard_context_reset_context_scaling=0.8` (`:68`). Validated `keep_first < max_size//2`.
+Mechanism: keep the `keep_first` head, summarize the overflowed middle folding in the
+**previous summary** (rolling/amortized), keep the recent tail.
+
+**Window resolution** (`llm/utils/model_info.py`): via **litellm `get_model_info`**
+(`:83`) with openrouter/proxy fallbacks (`:93,104`); returns `None` when unresolved —
+i.e. derive from the model registry, exactly the BUG-2 fix direction.
+
+**Weakness worth beating:** OpenHands triggers on **event count** (`max_size`), not a
+token budget — events vary wildly in size, so it's a poor pressure proxy; and the
+condenser doesn't consult the resolved window. Agent Driver should trigger on a
+**token budget from the resolved window**.
+
+**Adopt into Option B:** (1) immutable log + derived **View** (non-destructive,
+cache-safe compaction) — arguably the single best structural idea; (2) rolling
+summary folding the prior summary; (3) `minimum_progress` anti-thrash as a first-class
+knob; (4) **condenser pipeline** composition with a separate content-masking axis;
+(5) `summary_offset` splice + `keep_first` head; (6) on-demand `CondensationRequest`.
 
 ## 4. External prior art (surveyed 2026-08)
 
@@ -242,10 +284,20 @@ A memory-tool that lets the agent write notes outside the window and pull them b
 for very long runs but the most speculative; evaluate after A+B with real trajectories.
 
 ### Recommendation
-Sequence **A → B**, defer **C**. Start A with the window-derivation chain (unblocks all
-fractional caps) and the BUG-4 retention unification (correctness/data-loss). Keep each
-increment small and test-gated (unit + `evals/context_compaction_runner.py` + full
-suite); keep default behaviour green except the documented, opt-out-able window-default
-change. The OpenHands condenser survey (§3.3, pending) should inform the Option-B tier
-abstraction (its `Condenser` composition + amortized/rolling summary are the closest
-prior art to the pipeline we'd build).
+Sequence **A → B**, defer **C**. Start A with the window-derivation chain (litellm-
+style `get_model_info`, unblocks all fractional caps) and the BUG-4 retention
+unification (correctness/data-loss). Keep each increment small and test-gated (unit +
+`evals/context_compaction_runner.py` + full suite); keep default behaviour green except
+the documented, opt-out-able window-default change.
+
+**Option B should adopt the OpenHands structural model (§3.3):** an immutable event/
+message log with a derived **View** for what the LLM sees (non-destructive, prompt-cache
+safe), a **rolling summary** that folds in the prior summary, a **pipeline** of
+composable condensers (cheap content-masking + tool-clear tiers before the LLM summary),
+and `minimum_progress`-style anti-thrashing as a first-class knob. That is the closest
+prior art to the tier pipeline we'd build, and it directly resolves BUG-7 (honest,
+token-aware, non-destructive) and the "cheap tiers first" cost win.
+
+**Next step (post-research, on your go):** write the design decision (contracts/knobs/
+behaviour/SemVer) for Option A phase 1 — the window-derivation chain + fractional caps
++ BUG-4 fix — then implement test-gated.
