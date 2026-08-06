@@ -204,15 +204,11 @@ def _build_cancellation(spec: AllowedSpec) -> ToolCancellation | None:
     )
 
 
-async def execute_allowed_path(
-    *,
-    guardrails: GuardrailPipeline,
-    spec: AllowedSpec,
-) -> bool:
-    """Execute allow-path flow including guardrails and budgets."""
-    args_guard = await guardrails.on_tool_args(
-        {"tool_name": spec.call.tool_name, "args": spec.call.args}
-    )
+def _allowed_precheck_blocked(spec: AllowedSpec, *, args_guard: Any) -> bool:
+    """Pre-execution gates for the allow path: tool-args guardrail block, unregistered
+    tool (with fuzzy-match feedback), a deferred blind call missing required args, and a
+    pre-start abort. Appends the blocked envelope and returns True when the call must not
+    execute; False to proceed to the handler."""
     if args_guard.decision == GuardrailDecision.BLOCK:
         append_blocked_call(
             result=spec.result,
@@ -225,7 +221,7 @@ async def execute_allowed_path(
                 stage="tool_args",
             ),
         )
-        return False
+        return True
     if spec.registered is None:
         # Phase 13 H29.3 — enrich the feedback string with closest-match
         # suggestions when the executor knows the registry's tool names.
@@ -251,9 +247,9 @@ async def execute_allowed_path(
                 reason=reason,
             ),
         )
-        return False
+        return True
     if _deferred_blind_call_missing_required(spec):
-        return False
+        return True
     # U4 — prevent new work once an abort was observed: if the run was already
     # aborted before this handler starts, skip execution and record a blocked
     # envelope instead of launching (possibly external) side-effecting work.
@@ -268,7 +264,120 @@ async def execute_allowed_path(
                 reason="run aborted before tool execution",
             ),
         )
+        return True
+    return False
+
+
+async def _finalize_allowed_envelope(
+    guardrails: GuardrailPipeline,
+    spec: AllowedSpec,
+    *,
+    raw: Any,
+    bounded_summary: str | None,
+    truncated: bool,
+    structured_truncated: bool,
+    args_guard_decision: Any,
+    raw_guard_decision: Any,
+) -> tuple[ToolResultEnvelope, Any]:
+    """Build the ALLOW result envelope from the bounded handler output, run the
+    final-output guardrail, and produce the matching trace: a guardrail block yields a
+    DENY envelope + denied trace; otherwise a self-reported success-field failure yields
+    a FAILED trace, and a clean run a COMPLETED trace."""
+    envelope = ToolResultEnvelope(
+        call=spec.call,
+        decision=ToolPolicyDecision.ALLOW,
+        guardrail_decision=merge_guardrail_decisions(
+            spec.input_guard_decision,
+            args_guard_decision,
+            raw_guard_decision,
+        ),
+        summary=bounded_summary,
+        structured_output=raw,
+        truncated=truncated or structured_truncated,
+        metadata={
+            "idempotent": spec.manifest.idempotent,
+            **spec.run_metadata,
+        },
+    )
+    final_guard = await guardrails.on_final_output(envelope.model_dump(mode="json"))
+    if final_guard.decision == GuardrailDecision.BLOCK:
+        envelope = ToolResultEnvelope(
+            call=spec.call,
+            decision=ToolPolicyDecision.DENY,
+            guardrail_decision=final_guard.decision,
+            error=ToolError(
+                code="guardrail_blocked",
+                message=final_guard.reason or "guardrail blocked final output",
+            ),
+            metadata={
+                "guardrail_stage": "final_output",
+                **spec.run_metadata,
+            },
+        )
+        trace = build_tool_trace(
+            trace_spec_denied(
+                index=spec.index,
+                call=spec.call,
+                manifest=spec.manifest,
+                error_code="guardrail_blocked",
+            )
+        )
+        return envelope, trace
+    envelope = envelope.model_copy(
+        update={
+            "guardrail_decision": merge_guardrail_decisions(
+                envelope.guardrail_decision,
+                final_guard.decision,
+            )
+        }
+    )
+    failure = _success_field_failure(manifest=spec.manifest, raw=raw)
+    if failure is not None:
+        # The tool ran and was policy-allowed, but self-reported
+        # failure. Keep decision=ALLOW (it executed) yet make the
+        # failure honest: FAILED trace + error on the envelope, so
+        # no consumer has to re-classify status downstream.
+        message, error_code = failure
+        envelope = envelope.model_copy(
+            update={"error": ToolError(code=error_code, message=message)}
+        )
+        trace = build_tool_trace(
+            trace_spec_failed(
+                index=spec.index,
+                call=spec.call,
+                manifest=spec.manifest,
+                summary=message,
+                error_code=error_code,
+                truncated=envelope.truncated,
+            )
+        )
+        return envelope, trace
+    trace = build_tool_trace(
+        trace_spec_completed(
+            index=spec.index,
+            call=spec.call,
+            manifest=spec.manifest,
+            summary=envelope.summary,
+            truncated=envelope.truncated,
+        )
+    )
+    return envelope, trace
+
+
+async def execute_allowed_path(
+    *,
+    guardrails: GuardrailPipeline,
+    spec: AllowedSpec,
+) -> bool:
+    """Execute allow-path flow including guardrails and budgets."""
+    args_guard = await guardrails.on_tool_args(
+        {"tool_name": spec.call.tool_name, "args": spec.call.args}
+    )
+    if _allowed_precheck_blocked(spec, args_guard=args_guard):
         return False
+    # The precheck returns True (handled above) when spec.registered is None, so a
+    # registered tool is guaranteed here.
+    assert spec.registered is not None
     try:
         with (
             tool_call_context_scope(
@@ -336,84 +445,16 @@ async def execute_allowed_path(
         bounded_summary, truncated = enforce_output_budget(
             summary, spec.manifest.output_char_budget
         )
-        envelope = ToolResultEnvelope(
-            call=spec.call,
-            decision=ToolPolicyDecision.ALLOW,
-            guardrail_decision=merge_guardrail_decisions(
-                spec.input_guard_decision,
-                args_guard.decision,
-                raw_guard.decision,
-            ),
-            summary=bounded_summary,
-            structured_output=raw,
-            truncated=truncated or structured_truncated,
-            metadata={
-                "idempotent": spec.manifest.idempotent,
-                **spec.run_metadata,
-            },
+        envelope, trace = await _finalize_allowed_envelope(
+            guardrails,
+            spec,
+            raw=raw,
+            bounded_summary=bounded_summary,
+            truncated=truncated,
+            structured_truncated=structured_truncated,
+            args_guard_decision=args_guard.decision,
+            raw_guard_decision=raw_guard.decision,
         )
-        final_guard = await guardrails.on_final_output(envelope.model_dump(mode="json"))
-        if final_guard.decision == GuardrailDecision.BLOCK:
-            envelope = ToolResultEnvelope(
-                call=spec.call,
-                decision=ToolPolicyDecision.DENY,
-                guardrail_decision=final_guard.decision,
-                error=ToolError(
-                    code="guardrail_blocked",
-                    message=final_guard.reason or "guardrail blocked final output",
-                ),
-                metadata={
-                    "guardrail_stage": "final_output",
-                    **spec.run_metadata,
-                },
-            )
-            trace = build_tool_trace(
-                trace_spec_denied(
-                    index=spec.index,
-                    call=spec.call,
-                    manifest=spec.manifest,
-                    error_code="guardrail_blocked",
-                )
-            )
-        else:
-            envelope = envelope.model_copy(
-                update={
-                    "guardrail_decision": merge_guardrail_decisions(
-                        envelope.guardrail_decision,
-                        final_guard.decision,
-                    )
-                }
-            )
-            failure = _success_field_failure(manifest=spec.manifest, raw=raw)
-            if failure is not None:
-                # The tool ran and was policy-allowed, but self-reported
-                # failure. Keep decision=ALLOW (it executed) yet make the
-                # failure honest: FAILED trace + error on the envelope, so
-                # no consumer has to re-classify status downstream.
-                message, error_code = failure
-                envelope = envelope.model_copy(
-                    update={"error": ToolError(code=error_code, message=message)}
-                )
-                trace = build_tool_trace(
-                    trace_spec_failed(
-                        index=spec.index,
-                        call=spec.call,
-                        manifest=spec.manifest,
-                        summary=message,
-                        error_code=error_code,
-                        truncated=envelope.truncated,
-                    )
-                )
-            else:
-                trace = build_tool_trace(
-                    trace_spec_completed(
-                        index=spec.index,
-                        call=spec.call,
-                        manifest=spec.manifest,
-                        summary=envelope.summary,
-                        truncated=envelope.truncated,
-                    )
-                )
         spec.result.append(
             envelope=envelope,
             trace=trace,
