@@ -149,6 +149,83 @@ def _protected_keep_reason(
     return reason, material_unit_count
 
 
+def _resolve_trim_protection(
+    working_messages: list[dict[str, object]],
+    *,
+    max_chars: int,
+    protect_from_index: int | None,
+    protected_indices: set[int] | None,
+) -> tuple[set[int], set[int], int, int, int]:
+    """Resolve the protected recent-turn window and the older-message budget. Returns
+    ``(protected, protected_message_ids, protected_chars, head_budget,
+    last_tool_index)``: the protected index set (always-kept tail + caller extras),
+    their identity set, their total chars, the char budget left for older messages
+    after reserving the protected tail, and the last tool message's index."""
+    total = len(working_messages)
+    if protect_from_index is None:
+        protect_from_index = total
+    protect_from_index = max(0, min(protect_from_index, total))
+    protected = set(protected_indices or ())
+    protected.update(range(protect_from_index, total))
+    protected_chars = sum(
+        len(str(working_messages[i].get("content", "")))
+        for i in protected
+    )
+    # Budget the older (non-protected) messages must share, after reserving the
+    # protected tail. Floored at zero: a fully consumed budget simply drops all
+    # older messages while the protected tail is still kept verbatim.
+    head_budget = max(0, max_chars - protected_chars)
+    last_tool_index = -1
+    for idx, row in enumerate(working_messages):
+        if str(row.get("role", "")).strip().lower() == "tool":
+            last_tool_index = idx
+    protected_message_ids = {id(working_messages[index]) for index in protected}
+    return (
+        protected,
+        protected_message_ids,
+        protected_chars,
+        head_budget,
+        last_tool_index,
+    )
+
+
+def _build_truncated_last_message(
+    message: dict[str, object],
+    content: str,
+    *,
+    budget_left: int,
+    has_kept: bool,
+    index: int,
+) -> tuple[dict[str, object], TrimAuditRecord]:
+    """Truncate the current turn (the final message) to fit the remaining budget — it
+    is never dropped, since an empty request is rejected by providers. Structure
+    preserving: shrink a serialized-JSON tool result's long string leaves (still-valid
+    JSON), else plain-slice prose with a marker; a JSON message that can't shrink stays
+    full rather than broken. Returns the new message + its TRUNCATED audit record."""
+    keep_chars = max(
+        _MIN_LAST_MESSAGE_CHARS if not has_kept else 0,
+        min(len(content), budget_left),
+    )
+    keep_chars = min(len(content), max(keep_chars, 1))
+    truncated_message = dict(message)
+    json_shrunk = shrink_json_tool_content(content)
+    if json_shrunk is not None:
+        new_content = json_shrunk
+    else:
+        new_content = content[:keep_chars].rstrip()
+        if len(new_content) < len(content):
+            new_content = f"{new_content}{_TRUNCATION_MARKER}"
+    truncated_message["content"] = new_content
+    record = TrimAuditRecord(
+        record_id=f"trim_{index}",
+        kind="message",
+        action=TrimAction.TRUNCATED,
+        reason="budget_overflow_last_message",
+        metadata={"length": len(content), "kept_length": len(new_content)},
+    )
+    return truncated_message, record
+
+
 def _trim_messages_to_budget(
     *,
     working_messages: list[dict[str, object]],
@@ -170,31 +247,21 @@ def _trim_messages_to_budget(
     accordingly; if the protected tail alone exceeds ``max_chars`` it is still
     kept and every older message is dropped/digested first.
     """
-    total = len(working_messages)
-    if protect_from_index is None:
-        protect_from_index = total
-    protect_from_index = max(0, min(protect_from_index, total))
-    protected = set(protected_indices or ())
-    protected.update(range(protect_from_index, total))
-    protected_chars = sum(
-        len(str(working_messages[i].get("content", "")))
-        for i in protected
+    (
+        protected,
+        protected_message_ids,
+        protected_chars,
+        head_budget,
+        last_tool_index,
+    ) = _resolve_trim_protection(
+        working_messages,
+        max_chars=max_chars,
+        protect_from_index=protect_from_index,
+        protected_indices=protected_indices,
     )
-    # Budget the older (non-protected) messages must share, after reserving the
-    # protected tail. Floored at zero: a fully consumed budget simply drops all
-    # older messages while the protected tail is still kept verbatim.
-    head_budget = max(0, max_chars - protected_chars)
     kept: list[dict[str, object]] = []
     audit: list[TrimAuditRecord] = []
     running_chars = 0
-    last_tool_index = -1
-    for idx, row in enumerate(working_messages):
-        if str(row.get("role", "")).strip().lower() == "tool":
-            last_tool_index = idx
-
-    protected_message_ids = {
-        id(working_messages[index]) for index in protected
-    }
 
     def _drop_oldest_unprotected(reason: str, record_id: str) -> bool:
         """Remove one budgeted message without evicting integrity-protected rows."""
@@ -316,35 +383,16 @@ def _trim_messages_to_budget(
                 ):
                     break
                 budget_left = head_budget - running_chars
-            keep_chars = max(
-                _MIN_LAST_MESSAGE_CHARS if not kept else 0,
-                min(len(content), budget_left),
+            truncated_message, record = _build_truncated_last_message(
+                message,
+                content,
+                budget_left=budget_left,
+                has_kept=bool(kept),
+                index=index,
             )
-            keep_chars = min(len(content), max(keep_chars, 1))
-            truncated_message = dict(message)
-            # Structure-preserving: never raw-slice a serialized-JSON tool result (it
-            # would cut the JSON mid-structure). Shrink its long string leaves instead
-            # (still-valid JSON); a JSON message that can't shrink stays full rather
-            # than broken. Non-JSON prose keeps the plain slice + marker.
-            json_shrunk = shrink_json_tool_content(content)
-            if json_shrunk is not None:
-                new_content = json_shrunk
-            else:
-                new_content = content[:keep_chars].rstrip()
-                if len(new_content) < len(content):
-                    new_content = f"{new_content}{_TRUNCATION_MARKER}"
-            truncated_message["content"] = new_content
             kept.append(truncated_message)
-            running_chars += len(new_content)
-            audit.append(
-                TrimAuditRecord(
-                    record_id=f"trim_{index}",
-                    kind="message",
-                    action=TrimAction.TRUNCATED,
-                    reason="budget_overflow_last_message",
-                    metadata={"length": len(content), "kept_length": len(new_content)},
-                )
-            )
+            running_chars += len(str(truncated_message["content"]))
+            audit.append(record)
             continue
         audit.append(
             TrimAuditRecord(
