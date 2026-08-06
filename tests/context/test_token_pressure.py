@@ -58,6 +58,36 @@ def test_token_pressure_reports_delegate_or_summarize_state() -> None:
     assert pressure["context_usage_ratio"] == 0.4667
 
 
+def test_compact_ratio_net_triggers_compaction_below_absolute_threshold() -> None:
+    """BUG-3: compact_recommended now has a window-relative floor. Usage at 80% of
+    the window compacts via the ratio net even when the absolute compact_threshold
+    (path-dependent) is set high — previously this only reached delegate_or_summarize."""
+    pressure = estimate_token_pressure(
+        TokenPressureInput(
+            prompt_messages=({"content": "x" * 3200},),  # ~800 used tokens
+            context_window_estimate=1000,  # ratio 0.80
+            warning_threshold=100,
+            compact_threshold=9000,  # deliberately high: absolute never fires
+            blocking_threshold=99000,
+            output_token_reserve=0,
+        )
+    )
+    assert pressure["context_usage_ratio"] == 0.8
+    assert pressure["state"] == "compact_recommended"
+    assert pressure["compact_ratio"] == 0.75
+
+
+def test_pressure_ratio_ladder_is_ordered() -> None:
+    """early < delegate < compact < blocking — a future edit must not invert it."""
+    inp = TokenPressureInput(prompt_messages=())
+    assert (
+        inp.early_warning_ratio
+        < inp.delegate_or_summarize_ratio
+        < inp.compact_ratio
+        < inp.blocking_ratio
+    )
+
+
 def test_token_pressure_reports_blocking_state() -> None:
     """Pressure should enter blocking state when estimate crosses blocking threshold."""
     pressure = estimate_token_pressure(

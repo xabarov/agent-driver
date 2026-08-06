@@ -23,6 +23,12 @@ class TokenPressureInput:  # pylint: disable=too-many-instance-attributes
     output_token_reserve: int = 1500
     early_warning_ratio: float = 0.35
     delegate_or_summarize_ratio: float = 0.45
+    # Window-relative floor for compact_recommended (BUG-3): compaction has an
+    # absolute compact_threshold that differs by path (0.75*window default vs
+    # ~0.90*input_tokens typed); this net makes it fire consistently at
+    # compact_ratio*window regardless of path, completing the ratio ladder
+    # (early 0.35 < delegate 0.45 < compact 0.75 < blocking 0.92).
+    compact_ratio: float = 0.75
     blocking_ratio: float = 0.92
 
 
@@ -76,6 +82,7 @@ def estimate_token_pressure(inp: TokenPressureInput) -> dict[str, Any]:
         "blocking_threshold": inp.blocking_threshold,
         "early_warning_ratio": inp.early_warning_ratio,
         "delegate_or_summarize_ratio": inp.delegate_or_summarize_ratio,
+        "compact_ratio": inp.compact_ratio,
         "blocking_ratio": inp.blocking_ratio,
         "retained_digest_count": len(inp.retained_digest_ids),
         "retained_artifact_count": len(inp.retained_artifact_ids),
@@ -110,7 +117,9 @@ def _pressure_state(
         context_usage_ratio, inp.blocking_ratio
     ):
         return "blocking"
-    if used_tokens_estimate >= inp.compact_threshold:
+    if used_tokens_estimate >= inp.compact_threshold or _ratio_at_least(
+        context_usage_ratio, inp.compact_ratio
+    ):
         return "compact_recommended"
     if _ratio_at_least(context_usage_ratio, inp.delegate_or_summarize_ratio):
         return "delegate_or_summarize"

@@ -1,7 +1,15 @@
 # Design Decision — BUG-3: pressure-threshold ratio consistency
 
-Status: proposed (awaiting sign-off). Branch: `epic/compaction-bug3`. Predecessor:
-Option A phase-1/1b + the typed-path ceiling follow-up (all merged).
+Status: **decided + implemented** (2026-08-06). Branch: `epic/compaction-bug3`.
+Predecessor: Option A phase-1/1b + the typed-path ceiling follow-up (all merged).
+
+**Sign-off (user):** `compact_ratio = 0.75`; do NOT unify the absolute-threshold formulas.
+**Implemented:** `TokenPressureInput.compact_ratio = 0.75` (slots between delegate 0.45 and
+blocking 0.92); `_pressure_state` compact branch is now
+`used ≥ compact_threshold OR ratio ≥ compact_ratio`; the snapshot carries `compact_ratio`.
+Default path unchanged (0.75·window); typed path now compacts at 0.75·window instead of
+~0.90. Regressions: `test_compact_ratio_net_triggers_compaction_below_absolute_threshold`,
+`test_pressure_ratio_ladder_is_ordered`.
 
 ## Precise finding (supersedes the earlier "reconcile the numbers")
 

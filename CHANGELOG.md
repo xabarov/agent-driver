@@ -32,8 +32,14 @@ change between minor versions.
   - **(follow-up)** The typed-budget path's compaction cap is now a fraction of the
     window char budget too (`COMPACTION_WINDOW_CHAR_FRACTION`, single-sourced with the
     compaction stage) instead of the fixed 262144 clamp — finishing BUG-1 on both
-    paths. A real tokenizer (BUG-6) and the pressure-threshold ratio reconciliation
-    (BUG-3) remain follow-ups (the latter needs a design decision — see the epic).
+    paths. A real tokenizer (BUG-6) remains a follow-up.
+  - **(BUG-3)** `compact_recommended` now has a window-relative floor
+    (`TokenPressureInput.compact_ratio = 0.75`), like the other pressure states —
+    previously it was the only state with no ratio net, so compaction fired at
+    0.75·window on the default path but ~0.90·input_tokens on the typed path. Both
+    paths now compact at ~0.75·window (default path unchanged; typed path earlier and
+    consistent). The absolute-threshold formulas are intentionally left per-path (the
+    ratio nets govern behaviour).
 
 ### Changed
 
