@@ -18,6 +18,18 @@ change between minor versions.
 
 ### Fixed
 
+- **Compaction model sentinel no longer 400s (compaction-improvement epic).** A host
+  that enabled `llm_compaction` without also configuring an `auxiliary_model` or an
+  explicit `compaction_model` sent the field's `"default"` sentinel *literally* to the
+  provider the first time compaction fired (`400 … "default" is not a valid model ID`),
+  failing the compaction and tripping the circuit breaker. `_resolve_compaction_backend`
+  now resolves the `"default"` sentinel (and an empty value) to the run's own model
+  (`request.model`, which may be `None` → the provider's configured default), mirroring
+  the primary completion. Found while A/B-measuring compaction on excel-ai's SSB
+  workload, where enabling compaction is otherwise inert (single-turn tasks never reach
+  the 0.85×window trigger). Regression:
+  `tests/runtime/test_auxiliary_model_routing.py::test_default_compaction_model_sentinel_resolves_to_run_model`.
+
 - **Compaction budget correctness (compaction-improvement epic, Option A phase 1).**
   - An unresolved model id (unknown/renamed/proxied) no longer silently assumes a
     12K context window — it falls back to a modern `UNRESOLVED_MODEL_CONTEXT_WINDOW`

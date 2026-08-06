@@ -52,7 +52,7 @@ def _extract_persisted_summary_json(text: str) -> dict[str, object]:
 async def run_full_llm_compaction(
     *,
     provider: LlmProvider,
-    model: str,
+    model: str | None,
     history_excerpt: str,
     user_request: str,
     idle_timeout_seconds: float | None = None,
