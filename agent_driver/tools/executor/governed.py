@@ -847,27 +847,15 @@ class GovernedToolExecutor:
                 )
             return stop
 
-    async def _execute_one_call(self, spec: ExecSpec) -> bool:
-        """Execute one tool call, returning True when loop must stop."""
-        result = spec.result
+    async def _resolve_call_policy(self, spec: ExecSpec, *, manifest):
+        """Resolve the effective ``ToolPolicyOutcome`` for a planned call: static
+        policy evaluation, the two INTERRUPT->ALLOW collapses (a call the operator
+        already approved via a prior interrupt, and a call matching a run-approved
+        prompt category), then the dynamic per-call tool gate. The returned policy's
+        ``decision`` drives dispatch in ``_execute_one_call``."""
         run_input = spec.run_input
         call = spec.call
         index = spec.index
-        run_metadata = {
-            "run_id": run_input.run_id,
-            "thread_id": run_input.thread_id,
-            "attempt_id": f"attempt_{index}",
-            "agent_id": run_input.agent_id,
-            "agent_profile": run_input.agent_profile.value,
-            "prompt_template_id": run_input.prompt_template_id,
-            "prompt_template_version": run_input.prompt_template_version,
-        }
-        registered = self._registry.get(call.tool_name)
-        manifest = (
-            registered.manifest
-            if registered is not None
-            else safe_manifest(call.tool_name)
-        )
         # Phase 11 H12 — use index-based cumulative count rather than
         # ``len(result.traces)``. In sequential mode the two are
         # equivalent (the result accumulates one trace per completed
@@ -944,6 +932,60 @@ class GovernedToolExecutor:
                 current_tool_calls=spec.current_tool_calls + spec.index - 1,
                 attempt_id=f"attempt_{index}",
             )
+        return policy
+
+    async def _postprocess_new_envelopes(
+        self, result, *, envelopes_before: int, policy
+    ) -> None:
+        """Post-process every envelope the allow-path appended for this call: apply
+        the post_tool_use hook chain, then merge reserved (``_ad_``) gate provenance
+        onto them LAST so neither a hook nor tool output can overwrite host-authored
+        provenance."""
+        # Phase 11 H15 — apply post_tool_use hook chain to any envelope
+        # appended by ``execute_allowed_path``. We replace in place so
+        # the trace pair remains aligned. Note that block-paths
+        # (guardrail BLOCK, unregistered, etc.) also append an envelope
+        # — hooks see those too; the typical pattern is to enrich
+        # ``metadata`` regardless of decision.
+        if self._tool_hooks and len(result.envelopes) > envelopes_before:
+            for slot in range(envelopes_before, len(result.envelopes)):
+                envelope = result.envelopes[slot]
+                transformed = await self._apply_post_hooks(envelope)
+                result.envelopes[slot] = transformed
+        # R1 — preserve reserved (``_ad_``) gate provenance/decision on the
+        # allow-path envelopes (e.g. a ToolGateAllow that attached provenance).
+        # Merged LAST, after post-hooks, so neither a hook nor tool output can
+        # overwrite host-authored provenance.
+        gate_reserved = extract_reserved_metadata(policy.metadata)
+        if gate_reserved and len(result.envelopes) > envelopes_before:
+            for slot in range(envelopes_before, len(result.envelopes)):
+                envelope = result.envelopes[slot]
+                result.envelopes[slot] = envelope.model_copy(
+                    update={"metadata": {**(envelope.metadata or {}), **gate_reserved}}
+                )
+
+    async def _execute_one_call(self, spec: ExecSpec) -> bool:
+        """Execute one tool call, returning True when loop must stop."""
+        result = spec.result
+        run_input = spec.run_input
+        call = spec.call
+        index = spec.index
+        run_metadata = {
+            "run_id": run_input.run_id,
+            "thread_id": run_input.thread_id,
+            "attempt_id": f"attempt_{index}",
+            "agent_id": run_input.agent_id,
+            "agent_profile": run_input.agent_profile.value,
+            "prompt_template_id": run_input.prompt_template_id,
+            "prompt_template_version": run_input.prompt_template_version,
+        }
+        registered = self._registry.get(call.tool_name)
+        manifest = (
+            registered.manifest
+            if registered is not None
+            else safe_manifest(call.tool_name)
+        )
+        policy = await self._resolve_call_policy(spec, manifest=manifest)
         if policy.decision == ToolPolicyDecision.DENY:
             self._append_block(
                 result=result,
@@ -1030,26 +1072,7 @@ class GovernedToolExecutor:
                 available_tool_names=tuple(self._registry.list_names()),
             ),
         )
-        # Phase 11 H15 — apply post_tool_use hook chain to any envelope
-        # appended by ``execute_allowed_path``. We replace in place so
-        # the trace pair remains aligned. Note that block-paths
-        # (guardrail BLOCK, unregistered, etc.) also append an envelope
-        # — hooks see those too; the typical pattern is to enrich
-        # ``metadata`` regardless of decision.
-        if self._tool_hooks and len(result.envelopes) > envelopes_before:
-            for slot in range(envelopes_before, len(result.envelopes)):
-                envelope = result.envelopes[slot]
-                transformed = await self._apply_post_hooks(envelope)
-                result.envelopes[slot] = transformed
-        # R1 — preserve reserved (``_ad_``) gate provenance/decision on the
-        # allow-path envelopes (e.g. a ToolGateAllow that attached provenance).
-        # Merged LAST, after post-hooks, so neither a hook nor tool output can
-        # overwrite host-authored provenance.
-        gate_reserved = extract_reserved_metadata(policy.metadata)
-        if gate_reserved and len(result.envelopes) > envelopes_before:
-            for slot in range(envelopes_before, len(result.envelopes)):
-                envelope = result.envelopes[slot]
-                result.envelopes[slot] = envelope.model_copy(
-                    update={"metadata": {**(envelope.metadata or {}), **gate_reserved}}
-                )
+        await self._postprocess_new_envelopes(
+            result, envelopes_before=envelopes_before, policy=policy
+        )
         return outcome
