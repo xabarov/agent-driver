@@ -109,3 +109,23 @@ def test_scaled_cap_falls_back_without_budget():
     )
     assert cap == 4000
     assert source == "runner_config"
+
+
+def test_scaled_cap_uses_window_not_trim_budget():
+    # BUG-5: with a 128k window the compaction cap derives from the window char
+    # budget (0.8 * (128000-4000) * 4 = 396800), NOT from the tiny trim max_chars
+    # (6000) which would otherwise clamp it. max_compaction_chars is window-derived.
+    context = SimpleNamespace(
+        metadata={
+            "effective_context_budget": {
+                "context_window_estimate": 128_000,
+                "output_token_reserve": 4_000,
+                "max_chars": 6_000,  # the deterministic-trimming budget — must NOT clamp
+                "max_compaction_chars": (128_000 - 4_000) * 4,
+                "source": "model_catalog",
+            }
+        }
+    )
+    cap, _ = _scaled_context_char_cap(_host(), context=context, base_max_chars=4000)
+    assert cap > 100_000  # far above the 6000 trim budget and the old 4000
+    assert cap == int((128_000 - 4_000) * 4 * 0.8)

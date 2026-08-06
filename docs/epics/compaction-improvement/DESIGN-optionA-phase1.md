@@ -28,6 +28,45 @@ window fraction (drop the fixed 262144); (3) default-on + loud diagnostic (no op
   its own increment validated with `evals/context_compaction_runner.py`, not a rushed end-of-
   turn change. BUG-3's scaling-formula reconciliation rides along with it.
 
+## Phase-1b diagnosis (before implementing)
+
+The exact mechanism (confirmed by tracing): `enable_ptl_retry` defaults **True**, so the
+llm-full excerpt IS clipped by `_scaled_context_char_cap` on every default-path run — to
+~4000 chars, because both inputs to the cap are static: `max_compaction_chars =
+ptl_retry_max_chars (4000)` and the cap's window bound = `budget.max_chars = trim_max_chars
+(6000)`. So "full" compaction summarises a sliver of history regardless of a 128K window.
+
+**The trap:** `budget.max_chars` is **dual-purpose** — `context/trimming/deterministic.py:531`
+uses it as the deterministic-trimming char budget too. Repointing `max_chars` to the window
+would silently DISABLE trimming (trim-to-510K = keep everything). So the fix must decouple:
+
+1. Derive `max_compaction_chars` (which only the compaction cap + diagnostics read) from the
+   resolved window in `_run_context_budget_defaults`, leaving `max_chars` = `trim_max_chars`
+   for the trimming plane.
+2. Make `_scaled_context_char_cap` compute its window char budget from
+   `effective_context_budget["context_window_estimate"]` (× chars/token, minus output
+   reserve), NOT from `max_chars` (the trim budget). Then the compaction cap scales with the
+   real window (× `COMPACTION_INPUT_WINDOW_FRACTION`) instead of the 6000 trim budget.
+
+Effect: on a 128K default-path run the excerpt cap rises from ~4000 to ~0.8·(window−reserve)·4
+chars — more complete summaries at higher aux-compaction cost (measured via the eval runner).
+The typed-budget path's contract ceiling (`MAX_RUN_COMPACTION_CHARS`) is a separate follow-up.
+
+**Phase-1b — IMPLEMENTED (2026-08-06).** Both changes landed:
+(1) `_run_context_budget_defaults.max_compaction_chars` = `max(ptl_retry_max_chars,
+(window−reserve)·4)`; (2) `_scaled_context_char_cap` computes its window char budget from
+`context_window_estimate` (not the trim `max_chars`). Blast radius: exactly 1 golden
+(`test_typed_output_budget…` typed-path `max_compaction_chars` 5625→262144, now bounded by
+the contract ceiling — an improvement). Eval runner (`render_context_compaction_report`)
+shows strategies still function (session_memory recall 1.0, full_llm 0.75). Regression:
+`test_scaled_cap_uses_window_not_trim_budget`. Full suite green.
+
+**Remaining follow-ups (phase-1c / Option-B adjacent):** the typed-path
+`MAX_RUN_COMPACTION_CHARS = 262144` contract ceiling (fractionalise it); BUG-3 (reconcile
+the `config_sections` 0.35/0.75/0.92 vs `run_budget` 0.75/0.90/0.98 ratio sets + document);
+BUG-6 (real/provider tokenizer replacing the `_COMPACTION_CHARS_PER_TOKEN=4` and every other
+hardcoded 4).
+
 Option A is the **budget-correctness foundation**: most compaction defects are
 downstream of "the runtime doesn't know the real context window, so every char/token
 cap is wrong." Phase 1 lands the three highest-severity, lowest-architecture fixes.

@@ -159,12 +159,14 @@ async def test_typed_output_budget_reaches_provider_and_output_audit() -> None:
     assert provider.requests
     assert provider.requests[0].max_tokens == 30_000
     assert output.metadata["effective_context_budget"]["max_chars"] == 720_000
-    # Baseline is now the resolved window (128k fallback for the unresolved fake
-    # model) rather than the legacy 12k, so the scaled cap shifts:
-    # 4000 * 180000 / 128000 = 5625. (The scaling formula itself is BUG-3, later.)
+    # Phase-1b: the default compaction budget now derives from the resolved window
+    # (BUG-5), so the scaled typed-path cap rises to the contract ceiling
+    # MAX_RUN_COMPACTION_CHARS (262144) instead of the old sliver. Lifting that
+    # contract-level ceiling to a window fraction is a documented follow-up (BUG-1
+    # on the typed path).
     assert (
         output.metadata["effective_context_budget"]["max_compaction_chars"]
-        == 5_625
+        == 262_144
     )
     assert output.metadata["provider_max_tokens_source"] == (
         "run_input.context_budget.output_tokens"

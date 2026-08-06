@@ -105,8 +105,19 @@ def _run_context_budget_defaults(
         compact_threshold=int(getattr(settings, "token_compact_threshold")),
         blocking_threshold=int(getattr(settings, "token_blocking_threshold")),
         output_token_reserve=int(getattr(settings, "output_token_reserve")),
-        max_compaction_chars=int(
-            getattr(host._config, "ptl_retry_max_chars", 4000)
+        # BUG-5: the DEFAULT compaction char budget derives from the resolved model
+        # window (usable input tokens × ~4 chars), not the static ptl_retry_max_chars
+        # (4000) — otherwise "full" compaction summarises a sliver of history on a
+        # large-context model. Never below the configured base. (max_chars above
+        # stays the trimming budget; only compaction reads max_compaction_chars.)
+        max_compaction_chars=max(
+            int(getattr(host._config, "ptl_retry_max_chars", 4000)),
+            max(
+                1,
+                int(getattr(settings, "context_window_estimate"))
+                - int(getattr(settings, "output_token_reserve", 0)),
+            )
+            * 4,
         ),
         source=(
             "model_catalog"

@@ -23,7 +23,13 @@ change between minor versions.
     post-summary retention).
   - The summariser-input char cap is now a fraction of the resolved window's budget
     instead of a fixed 262144 ceiling that bound below the window on large-context
-    models. (The default-path budget derivation, BUG-5, follows in a later phase.)
+    models.
+  - **(phase 1b)** The default (`runner_defaults`) path no longer clips the LLM-full
+    compaction excerpt to ~4000 chars regardless of the model window: the compaction
+    char budget now derives from the resolved window (kept separate from the
+    deterministic-trimming `max_chars`, which is unchanged), so "full" compaction
+    summarises history proportional to the real window. The typed-path contract
+    ceiling (`MAX_RUN_COMPACTION_CHARS`) and a real tokenizer (BUG-6) remain follow-ups.
 
 ### Changed
 

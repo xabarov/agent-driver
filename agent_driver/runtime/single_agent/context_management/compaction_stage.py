@@ -38,6 +38,9 @@ from agent_driver.runtime.single_agent.types import (
 # (BUG-1). Chosen to not bind for normal windows while still bounding aux cost on
 # very large-context models.
 COMPACTION_INPUT_WINDOW_FRACTION = 0.8
+# Rough char↔token ratio for turning the token window into a char budget. A single
+# constant here (BUG-6 will replace all such 4s with a real/provider tokenizer).
+_COMPACTION_CHARS_PER_TOKEN = 4
 # Absolute memory backstop only (not a window-relative cap): guards against a
 # pathologically-large configured window feeding an unbounded excerpt. Large enough
 # to never be the effective cap for a realistic model.
@@ -136,7 +139,6 @@ def _scaled_context_char_cap(
     if not isinstance(raw, dict):
         return base_max_chars, "runner_config"
     resolved_compaction = raw.get("max_compaction_chars")
-    max_chars = raw.get("max_chars")
     source = str(raw.get("source") or "runner_config")
     if not isinstance(resolved_compaction, int) or resolved_compaction < 1:
         return base_max_chars, "runner_config"
@@ -144,18 +146,27 @@ def _scaled_context_char_cap(
     scaled = (
         base_max_chars * resolved_compaction + baseline - 1
     ) // baseline
-    window_chars = (
-        int(max_chars) if isinstance(max_chars, int) and max_chars > 0 else scaled
-    )
-    # BUG-1: cost-cap the summariser input at a FRACTION of the window's char budget,
-    # not a fixed 262144 (which bound below the window on large-context models — a
-    # 200K-token model's ~720K-char budget was clamped to 256K). The absolute
-    # backstop remains only as a memory guard, never the effective cap for a normal
-    # window.
+    # BUG-5: the compaction char budget derives from the resolved MODEL window, NOT
+    # budget.max_chars — that field is the deterministic-TRIMMING budget (default
+    # ~6000) and would otherwise clamp the summariser to a sliver of history on a
+    # large-context model. Falls back to max_chars only when the window is unknown.
+    window_tokens = raw.get("context_window_estimate")
+    output_reserve = raw.get("output_token_reserve") or 0
+    if isinstance(window_tokens, int) and window_tokens > 0:
+        window_chars = (
+            max(1, window_tokens - int(output_reserve)) * _COMPACTION_CHARS_PER_TOKEN
+        )
+    else:
+        max_chars = raw.get("max_chars")
+        window_chars = (
+            int(max_chars) if isinstance(max_chars, int) and max_chars > 0 else scaled
+        )
+    # BUG-1: cost-cap the summariser input at a FRACTION of the window char budget,
+    # not a fixed 262144 (which bound below the window on large-context models). The
+    # absolute backstop remains only as a memory guard, never the effective cap.
     input_cap = max(base_max_chars, int(window_chars * COMPACTION_INPUT_WINDOW_FRACTION))
     cap = min(
         max(base_max_chars, scaled),
-        window_chars,
         input_cap,
         _MAX_SCALED_COMPACTION_CHARS,
     )
