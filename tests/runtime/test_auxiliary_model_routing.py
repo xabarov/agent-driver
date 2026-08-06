@@ -64,6 +64,54 @@ class _AuxCapturingProvider(FakeProvider):
         return await super().complete(request)
 
 
+class _CompactionModelCapturingProvider(FakeProvider):
+    """Records the model on every full-compaction call routed to it."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="ok")
+        self.compaction_models: list[str | None] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        if (request.metadata or {}).get("compaction_mode") == "llm_full":
+            self.compaction_models.append(request.model)
+        return await super().complete(request)
+
+
+@pytest.mark.asyncio
+async def test_default_compaction_model_sentinel_resolves_to_run_model() -> None:
+    """Regression: a host that enables llm_compaction WITHOUT naming a
+    compaction/aux model must not ship the ``"default"`` sentinel to the provider
+    (a guaranteed invalid-model 400). It resolves to the run's own model instead
+    — here ``None``, i.e. the provider's configured default, mirroring the primary
+    completion."""
+    main = _CompactionModelCapturingProvider()
+    runner = FakeSingleStepRunner(
+        provider=main,
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            enable_compaction=True,
+            enable_llm_compaction=True,
+            # No auxiliary_model and compaction_model left at its "default" default.
+            token_compact_threshold=1,
+            token_blocking_threshold=2,
+            context_window_estimate=100,
+            output_token_reserve=1,
+        ),
+    )
+    await runner.run(
+        AgentRunInput(
+            input="hello " * 100,
+            run_id="run_default_model",
+            agent_id="agent-test",
+            graph_preset="single_react",
+        )
+    )
+    # Compaction fired against the main provider, and never with the literal sentinel.
+    assert main.compaction_models, "expected the forced-low threshold to fire compaction"
+    assert all(m != "default" for m in main.compaction_models)
+
+
 @pytest.mark.asyncio
 async def test_compaction_routed_to_auxiliary_provider() -> None:
     """When configured, the full-compaction call uses the auxiliary provider."""

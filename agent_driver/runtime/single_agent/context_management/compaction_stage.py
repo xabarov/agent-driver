@@ -731,16 +731,35 @@ def _build_full_compaction_excerpt(
     )
 
 
-def _resolve_compaction_backend(host: CompactionStageHost) -> tuple[Any, str]:
+#: ``CompactionSettings.compaction_model`` default — a sentinel meaning "use the
+#: run's own model", NOT a literal model id. Sending it to a provider is a
+#: guaranteed invalid-model error, so it must resolve to the main completion's model
+#: (``request.model``, which may itself be ``None`` → the provider's configured
+#: default) exactly as the primary LLM call does.
+_DEFAULT_COMPACTION_MODEL_SENTINEL = "default"
+
+
+def _resolve_compaction_backend(
+    host: CompactionStageHost, *, request: Any = None
+) -> tuple[Any, str | None]:
     """Resolve the (provider, model) for the compaction side task.
 
     E1: route to the auxiliary (cheaper) provider/model when configured, else the
     main provider + compaction_model. Epic 034: the model resolves through the
     per-task aux registry (``aux_model_for("compaction")`` → auxiliary_model →
     compaction_model) so the side task shares the one aux-backend seam.
+
+    When no aux override is configured and ``compaction_model`` is left at its
+    ``"default"`` sentinel, fall back to the run's own model (``request.model``)
+    rather than sending the literal string ``"default"`` — a host that enables
+    llm_compaction without explicitly naming a model would otherwise 400 on the
+    first compaction. ``request.model`` may be ``None``, which the provider reads
+    as its configured default, mirroring the primary completion.
     """
     provider = host._config.auxiliary_provider or host._deps.provider
     model = host._config.aux_model_for("compaction") or host._config.compaction_model
+    if not model or model == _DEFAULT_COMPACTION_MODEL_SENTINEL:
+        model = getattr(request, "model", None) if request is not None else None
     return provider, model
 
 
@@ -762,7 +781,9 @@ async def _apply_llm_full_compaction(
     kept_groups = excerpt.kept_groups
     dropped_groups = excerpt.dropped_groups
     protected_indexes = excerpt.protected_indexes
-    compaction_provider, compaction_model = _resolve_compaction_backend(host)
+    compaction_provider, compaction_model = _resolve_compaction_backend(
+        host, request=request
+    )
     compaction_result, summary = await run_full_llm_compaction(
         provider=compaction_provider,
         model=compaction_model,
