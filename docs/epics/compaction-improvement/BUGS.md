@@ -45,13 +45,25 @@ model id it **silently keeps 12000**. So BUG-2 is really "silent low fallback on
 unresolved models", and the fix is a robust resolution chain (live probe + modern
 floor), not merely bumping a literal.
 
-## BUG-3 — base char caps not single-sourced / undocumented rationale
+## BUG-3 — inconsistent pressure-threshold ratios across paths (needs a design decision)
 
-`ptl_retry_max_chars=4000`, `tool_arg_truncation_max_chars=2000`,
-`max_compaction_chars=4000` are scaled via `_scaled_context_char_cap`, but their base
-values + the scaling formula (and the 0.35/0.75/0.92 vs 0.75/0.90/0.98 ratio
-mismatch between `config_sections` and `run_budget`) lack a documented cost/quality
-rationale. Reconcile + document.
+Refined finding (2026-08-06): there are **three** threshold-ratio triples with
+**different bases**, so pressure/compaction fires at different points depending on
+which path a run takes:
+- `config_sections.for_context_window` (default path): `0.35 / 0.75 / 0.92 × WINDOW`
+  → warning/compact/blocking (config_sections.py:163-165).
+- `context/run_budget.resolve_run_context_budget` (typed path): `0.75 / 0.90 / 0.98 ×
+  INPUT_TOKENS` (run_budget.py:169-171).
+- `context/token_pressure` decision ratios: `early=0.35 / delegate=0.45 / blocking=0.92`
+  (token_pressure.py:24-26).
+Within one run it is self-consistent, but a host that sets a typed budget with
+`input_tokens ≈ window` warns at 0.75·window vs a default-path host at 0.35·window —
+very different behaviour, undocumented. **This is a design decision (what should the
+thresholds mean, off which base), not a mechanical fix** — do it as its own scoped
+increment with a documented rationale, not a blind number change.
+
+Also: the base char caps (`ptl_retry_max_chars=4000`, `tool_arg_truncation_max_chars=2000`)
+lack a documented cost/quality rationale for their absolute values.
 
 ## BUG-4 — retention-policy mismatch drops evidence-flagged messages (DATA LOSS)
 

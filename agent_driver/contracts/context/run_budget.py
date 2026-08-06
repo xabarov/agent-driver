@@ -13,6 +13,10 @@ MAX_RUN_CONTEXT_TOKENS = 2_000_000
 MAX_RUN_CONTEXT_ITEMS = 4096
 MAX_RUN_PREVIEW_CHARS = 8192
 MAX_RUN_COMPACTION_CHARS = 262_144
+# Fraction of the resolved window char budget that the compaction summariser input
+# may use (BUG-1). A window-relative cost cap, replacing the fixed 262144 clamp that
+# bound below the window on large-context models. Shared with the compaction stage.
+COMPACTION_WINDOW_CHAR_FRACTION = 0.8
 
 StrictPositiveTokens = Annotated[
     int, Field(strict=True, ge=1, le=MAX_RUN_CONTEXT_TOKENS)

@@ -28,8 +28,12 @@ change between minor versions.
     compaction excerpt to ~4000 chars regardless of the model window: the compaction
     char budget now derives from the resolved window (kept separate from the
     deterministic-trimming `max_chars`, which is unchanged), so "full" compaction
-    summarises history proportional to the real window. The typed-path contract
-    ceiling (`MAX_RUN_COMPACTION_CHARS`) and a real tokenizer (BUG-6) remain follow-ups.
+    summarises history proportional to the real window.
+  - **(follow-up)** The typed-budget path's compaction cap is now a fraction of the
+    window char budget too (`COMPACTION_WINDOW_CHAR_FRACTION`, single-sourced with the
+    compaction stage) instead of the fixed 262144 clamp — finishing BUG-1 on both
+    paths. A real tokenizer (BUG-6) and the pressure-threshold ratio reconciliation
+    (BUG-3) remain follow-ups (the latter needs a design decision — see the epic).
 
 ### Changed
 

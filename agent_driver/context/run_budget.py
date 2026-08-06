@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from agent_driver.contracts.context.run_budget import (
-    MAX_RUN_COMPACTION_CHARS,
+    COMPACTION_WINDOW_CHAR_FRACTION,
     MAX_RUN_CONTEXT_ITEMS,
     MAX_RUN_PREVIEW_CHARS,
     ContextBudgetDefaults,
@@ -88,20 +88,27 @@ def resolve_run_context_budget(
     input_tokens = declared.input_tokens
     output_tokens = declared.output_tokens
     baseline_tokens = max(1, defaults.context_window_estimate)
+    # BUG-1 (typed path): cap the summariser input at a FRACTION of the window char
+    # budget (input_tokens * chars/token), not a fixed 262144 that bound below the
+    # window on large-context models.
+    window_char_cap = max(
+        1,
+        int(
+            input_tokens
+            * _ESTIMATED_CHARS_PER_TOKEN
+            * COMPACTION_WINDOW_CHAR_FRACTION
+        ),
+    )
     max_compaction_chars = declared.max_compaction_chars
     if max_compaction_chars is None:
         max_compaction_chars = _scaled_cap(
             defaults.max_compaction_chars,
             input_tokens=input_tokens,
             baseline_tokens=baseline_tokens,
-            ceiling=MAX_RUN_COMPACTION_CHARS,
+            ceiling=window_char_cap,
         )
     assert max_compaction_chars is not None
-    max_compaction_chars = min(
-        max_compaction_chars,
-        input_tokens * _ESTIMATED_CHARS_PER_TOKEN,
-        MAX_RUN_COMPACTION_CHARS,
-    )
+    max_compaction_chars = min(max_compaction_chars, window_char_cap)
 
     return ResolvedRunContextBudget(
         source=source,

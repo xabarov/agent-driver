@@ -23,6 +23,9 @@ from agent_driver.context import (
     sanitize_compaction_text,
 )
 from agent_driver.contracts import CompactionDecision
+from agent_driver.contracts.context.run_budget import (
+    COMPACTION_WINDOW_CHAR_FRACTION as COMPACTION_INPUT_WINDOW_FRACTION,
+)
 from agent_driver.contracts.enums import RuntimeEventType
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.scaffolding import is_scaffolding
@@ -34,10 +37,6 @@ from agent_driver.runtime.single_agent.types import (
     RunnerDeps,
 )
 
-# Summariser-input cost cap, as a fraction of the resolved window's char budget
-# (BUG-1). Chosen to not bind for normal windows while still bounding aux cost on
-# very large-context models.
-COMPACTION_INPUT_WINDOW_FRACTION = 0.8
 # Rough char↔token ratio for turning the token window into a char budget. A single
 # constant here (BUG-6 will replace all such 4s with a real/provider tokenizer).
 _COMPACTION_CHARS_PER_TOKEN = 4
