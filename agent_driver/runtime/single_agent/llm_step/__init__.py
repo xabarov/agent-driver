@@ -349,6 +349,160 @@ def _apply_redirect_correction(
     return _narrow_request_tools_to_forced_choice(rebuilt)
 
 
+def _handle_provider_rejection(
+    host: LlmStepHost,
+    context: RunContext,
+    request: Any,
+    exc: httpx.HTTPStatusError,
+) -> None:
+    """Provider rejected the request (HTTP status error): emit LLM_REQUEST_REJECTED +
+    RUN_FAILED with diagnostics and re-raise as a terminal execution error. A 400 is
+    a protocol reason, everything else a model error."""
+    reason = (
+        TerminalReason.PROVIDER_PROTOCOL.value
+        if exc.response.status_code == 400
+        else TerminalReason.MODEL_ERROR.value
+    )
+    provider_message = _provider_error_message(exc.response)
+    diagnostics = _provider_failure_diagnostics(
+        host,
+        context,
+        request,
+        exc,
+        transition_reason=reason,
+    )
+    rejected_payload: dict[str, Any] = {
+        "reason": reason,
+        "status_code": exc.response.status_code,
+        "provider_diagnostics": diagnostics,
+    }
+    if provider_message:
+        rejected_payload["message"] = provider_message
+    if debug_llm_payload_enabled():
+        rejected_payload["request_stats"] = summarize_llm_request_payload(request)
+    host._emit(
+        EventSpec(
+            run_id=context.run_id,
+            attempt_id=context.attempt_id,
+            event_type=RuntimeEventType.LLM_REQUEST_REJECTED,
+            payload=rejected_payload,
+        )
+    )
+    host._emit(
+        EventSpec(
+            run_id=context.run_id,
+            attempt_id=context.attempt_id,
+            event_type=RuntimeEventType.RUN_FAILED,
+            payload={
+                "reason": reason,
+                "status_code": exc.response.status_code,
+                "message": provider_message,
+                "provider_diagnostics": diagnostics,
+            },
+        )
+    )
+    context.metadata["last_provider_error"] = reason
+    context.metadata["last_provider_diagnostics"] = diagnostics
+    raise RuntimeExecutionError("LLM completion failed") from exc
+
+
+def _recover_or_fail_stream(
+    host: LlmStepHost,
+    context: RunContext,
+    request: Any,
+    exc: Exception,
+    *,
+    transition_reason: str,
+) -> None:
+    """Stream/provider error mid-completion: try to salvage a forced-final response;
+    if none, tombstone the partial assistant turn, emit RUN_FAILED with diagnostics
+    and re-raise. On successful recovery the response is stashed and the caller
+    continues normally."""
+    recovered = _recover_force_final_stream_response(
+        host, context, reason=transition_reason
+    )
+    if recovered is not None:
+        context.llm_response = recovered
+        return
+    _emit_partial_assistant_tombstone(host, context, reason=transition_reason)
+    diagnostics = _provider_failure_diagnostics(
+        host,
+        context,
+        request,
+        exc,
+        transition_reason=transition_reason,
+    )
+    host._emit(
+        EventSpec(
+            run_id=context.run_id,
+            attempt_id=context.attempt_id,
+            event_type=RuntimeEventType.RUN_FAILED,
+            payload={
+                "reason": TerminalReason.MODEL_ERROR.value,
+                "transition_reason": transition_reason,
+                "stream_diagnostics": diagnostics,
+                "provider_diagnostics": diagnostics,
+            },
+        )
+    )
+    context.metadata["last_provider_error"] = transition_reason
+    context.metadata["last_provider_stream_error"] = diagnostics
+    raise RuntimeExecutionError("LLM completion failed") from exc
+
+
+def _build_llm_completed_payload(context: RunContext) -> dict[str, Any]:
+    """Assemble the LLM_CALL_COMPLETED event payload from the response + run metadata
+    (provider/model/finish reason, duration, usage, planned/parsed tool-call
+    forensics, provider/route profiles, effective tool names, planning snapshot)."""
+    completed_payload: dict[str, Any] = {
+        "provider": context.llm_response.provider,
+        "model": context.llm_response.model,
+        "finish_reason": context.llm_response.finish_reason.value,
+    }
+    started_at = context.metadata.get("llm_call_started_monotonic")
+    if isinstance(started_at, (int, float)):
+        completed_payload["duration_ms"] = round(
+            max(0.0, (time.monotonic() - float(started_at)) * 1000.0),
+            2,
+        )
+    if context.llm_response.usage is not None:
+        completed_payload["usage"] = context.llm_response.usage.model_dump(mode="json")
+    planned_tool_calls = context.llm_response.metadata.get("planned_tool_calls")
+    if isinstance(planned_tool_calls, list):
+        completed_payload["planned_tool_calls"] = planned_tool_calls
+    tool_call_parse_errors = context.llm_response.metadata.get("tool_call_parse_errors")
+    if isinstance(tool_call_parse_errors, list):
+        completed_payload["tool_call_parse_errors"] = tool_call_parse_errors
+    text_form_ranges = context.llm_response.metadata.get("text_form_tool_call_ranges")
+    if isinstance(text_form_ranges, list):
+        completed_payload["text_form_tool_call_ranges"] = text_form_ranges
+    for flag in ("text_form_tool_calls_parsed", "text_form_tool_calls_suppressed"):
+        if flag in context.llm_response.metadata:
+            completed_payload[flag] = context.llm_response.metadata[flag]
+    provider_profile = context.llm_response.metadata.get("provider_profile")
+    if isinstance(provider_profile, dict):
+        completed_payload["provider_profile"] = provider_profile
+    route_profile = context.llm_response.metadata.get("route_profile")
+    if isinstance(route_profile, dict):
+        completed_payload["route_profile"] = route_profile
+    provider_preflight = context.llm_response.metadata.get("provider_preflight")
+    if isinstance(provider_preflight, dict):
+        completed_payload["provider_preflight"] = provider_preflight
+    provider_request_id = context.llm_response.metadata.get("provider_request_id")
+    if isinstance(provider_request_id, str) and provider_request_id:
+        completed_payload["provider_request_id"] = provider_request_id
+    effective_tool_names = get_tool_loop_state(context).effective_tool_names()
+    if effective_tool_names is not None:
+        completed_payload["effective_tool_names"] = list(effective_tool_names)
+    prompt_fragments = context.metadata.get("prompt_fragments")
+    if isinstance(prompt_fragments, tuple):
+        completed_payload["prompt_fragments"] = list(prompt_fragments)
+    snapshot = build_planning_snapshot(context)
+    if snapshot is not None:
+        completed_payload["planning_snapshot"] = snapshot
+    return completed_payload
+
+
 async def execute_llm_call_step(
     host: LlmStepHost, context: RunContext
 ) -> RuntimeStepResult:
@@ -555,120 +709,20 @@ async def execute_llm_call_step(
                 host._deps.lifecycle_hooks, context, context.llm_response
             )
     except httpx.HTTPStatusError as exc:
-        reason = (
-            TerminalReason.PROVIDER_PROTOCOL.value
-            if exc.response.status_code == 400
-            else TerminalReason.MODEL_ERROR.value
-        )
-        provider_message = _provider_error_message(exc.response)
-        diagnostics = _provider_failure_diagnostics(
-            host,
-            context,
-            request,
-            exc,
-            transition_reason=reason,
-        )
-        rejected_payload: dict[str, Any] = {
-            "reason": reason,
-            "status_code": exc.response.status_code,
-            "provider_diagnostics": diagnostics,
-        }
-        if provider_message:
-            rejected_payload["message"] = provider_message
-        if debug_llm_payload_enabled():
-            rejected_payload["request_stats"] = summarize_llm_request_payload(request)
-        host._emit(
-            EventSpec(
-                run_id=context.run_id,
-                attempt_id=context.attempt_id,
-                event_type=RuntimeEventType.LLM_REQUEST_REJECTED,
-                payload=rejected_payload,
-            )
-        )
-        host._emit(
-            EventSpec(
-                run_id=context.run_id,
-                attempt_id=context.attempt_id,
-                event_type=RuntimeEventType.RUN_FAILED,
-                payload={
-                    "reason": reason,
-                    "status_code": exc.response.status_code,
-                    "message": provider_message,
-                    "provider_diagnostics": diagnostics,
-                },
-            )
-        )
-        context.metadata["last_provider_error"] = reason
-        context.metadata["last_provider_diagnostics"] = diagnostics
-        raise RuntimeExecutionError("LLM completion failed") from exc
+        _handle_provider_rejection(host, context, request, exc)
     except httpx.HTTPError as exc:
         transition_reason = (
             "stream_idle_timeout"
             if isinstance(exc, LlmStreamIdleTimeout)
             else TerminalReason.MODEL_ERROR.value
         )
-        recovered = _recover_force_final_stream_response(
-            host, context, reason=transition_reason
+        _recover_or_fail_stream(
+            host, context, request, exc, transition_reason=transition_reason
         )
-        if recovered is not None:
-            context.llm_response = recovered
-        else:
-            _emit_partial_assistant_tombstone(host, context, reason=transition_reason)
-            diagnostics = _provider_failure_diagnostics(
-                host,
-                context,
-                request,
-                exc,
-                transition_reason=transition_reason,
-            )
-            host._emit(
-                EventSpec(
-                    run_id=context.run_id,
-                    attempt_id=context.attempt_id,
-                    event_type=RuntimeEventType.RUN_FAILED,
-                    payload={
-                        "reason": TerminalReason.MODEL_ERROR.value,
-                        "transition_reason": transition_reason,
-                        "stream_diagnostics": diagnostics,
-                        "provider_diagnostics": diagnostics,
-                    },
-                )
-            )
-            context.metadata["last_provider_error"] = transition_reason
-            context.metadata["last_provider_stream_error"] = diagnostics
-            raise RuntimeExecutionError("LLM completion failed") from exc
     except (RuntimeError, ValueError) as exc:
-        transition_reason = "provider_stream_error"
-        recovered = _recover_force_final_stream_response(
-            host, context, reason=transition_reason
+        _recover_or_fail_stream(
+            host, context, request, exc, transition_reason="provider_stream_error"
         )
-        if recovered is not None:
-            context.llm_response = recovered
-        else:
-            _emit_partial_assistant_tombstone(host, context, reason=transition_reason)
-            diagnostics = _provider_failure_diagnostics(
-                host,
-                context,
-                request,
-                exc,
-                transition_reason=transition_reason,
-            )
-            host._emit(
-                EventSpec(
-                    run_id=context.run_id,
-                    attempt_id=context.attempt_id,
-                    event_type=RuntimeEventType.RUN_FAILED,
-                    payload={
-                        "reason": TerminalReason.MODEL_ERROR.value,
-                        "transition_reason": transition_reason,
-                        "stream_diagnostics": diagnostics,
-                        "provider_diagnostics": diagnostics,
-                    },
-                )
-            )
-            context.metadata["last_provider_error"] = transition_reason
-            context.metadata["last_provider_stream_error"] = diagnostics
-            raise RuntimeExecutionError("LLM completion failed") from exc
     token_chunks = context.llm_response.metadata.get("token_chunks")
     if isinstance(token_chunks, list) and not bool(
         context.llm_response.metadata.get("token_chunks_emitted")
@@ -678,52 +732,7 @@ async def execute_llm_call_step(
             context,
             [chunk for chunk in token_chunks if isinstance(chunk, str)],
         )
-    completed_payload: dict[str, Any] = {
-        "provider": context.llm_response.provider,
-        "model": context.llm_response.model,
-        "finish_reason": context.llm_response.finish_reason.value,
-    }
-    started_at = context.metadata.get("llm_call_started_monotonic")
-    if isinstance(started_at, (int, float)):
-        completed_payload["duration_ms"] = round(
-            max(0.0, (time.monotonic() - float(started_at)) * 1000.0),
-            2,
-        )
-    if context.llm_response.usage is not None:
-        completed_payload["usage"] = context.llm_response.usage.model_dump(mode="json")
-    planned_tool_calls = context.llm_response.metadata.get("planned_tool_calls")
-    if isinstance(planned_tool_calls, list):
-        completed_payload["planned_tool_calls"] = planned_tool_calls
-    tool_call_parse_errors = context.llm_response.metadata.get("tool_call_parse_errors")
-    if isinstance(tool_call_parse_errors, list):
-        completed_payload["tool_call_parse_errors"] = tool_call_parse_errors
-    text_form_ranges = context.llm_response.metadata.get("text_form_tool_call_ranges")
-    if isinstance(text_form_ranges, list):
-        completed_payload["text_form_tool_call_ranges"] = text_form_ranges
-    for flag in ("text_form_tool_calls_parsed", "text_form_tool_calls_suppressed"):
-        if flag in context.llm_response.metadata:
-            completed_payload[flag] = context.llm_response.metadata[flag]
-    provider_profile = context.llm_response.metadata.get("provider_profile")
-    if isinstance(provider_profile, dict):
-        completed_payload["provider_profile"] = provider_profile
-    route_profile = context.llm_response.metadata.get("route_profile")
-    if isinstance(route_profile, dict):
-        completed_payload["route_profile"] = route_profile
-    provider_preflight = context.llm_response.metadata.get("provider_preflight")
-    if isinstance(provider_preflight, dict):
-        completed_payload["provider_preflight"] = provider_preflight
-    provider_request_id = context.llm_response.metadata.get("provider_request_id")
-    if isinstance(provider_request_id, str) and provider_request_id:
-        completed_payload["provider_request_id"] = provider_request_id
-    effective_tool_names = get_tool_loop_state(context).effective_tool_names()
-    if effective_tool_names is not None:
-        completed_payload["effective_tool_names"] = list(effective_tool_names)
-    prompt_fragments = context.metadata.get("prompt_fragments")
-    if isinstance(prompt_fragments, tuple):
-        completed_payload["prompt_fragments"] = list(prompt_fragments)
-    snapshot = build_planning_snapshot(context)
-    if snapshot is not None:
-        completed_payload["planning_snapshot"] = snapshot
+    completed_payload = _build_llm_completed_payload(context)
     emit_step_event(
         host,
         context,
