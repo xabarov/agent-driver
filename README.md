@@ -10,7 +10,7 @@ contracts.
 policy: [docs/embedding.md](docs/embedding.md). Runnable recipes:
 [examples/cookbook](examples/cookbook/README.md).
 
-Current package version: `0.3.3`
+Current package version: `0.11.0`
 
 ## What is new in this iteration
 

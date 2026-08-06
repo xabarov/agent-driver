@@ -7,6 +7,8 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-06
+
 ### Added
 
 - **Compaction condenser pipeline foundation (compaction-improvement epic, Option B1a).**
@@ -136,6 +138,16 @@ change between minor versions.
   `_make_progress_recorder` / `_build_cancellation`; and deterministic trimming
   lifts the tool-stub builder and the protected-message reason logic to
   `_tool_trim_stub` / `_protected_keep_reason`. No control-flow or behavior change.
+- **Internal: decomposed the runtime hot-path god-functions** (behavior-preserving;
+  extract failure/success/dispatch segments into named helpers, leave shared-state
+  loops inline). Eleven functions: lifecycle `_execute_finalize` (222→80), executor
+  `_execute_one_call` (205→111) and `execute_allowed_path` (216→100); the compaction
+  stage `apply_compaction_if_eligible`, `_apply_llm_full_compaction`, and
+  `_apply_session_memory_compaction`; llm_step `execute_llm_call_step` (390→245),
+  `build_single_agent_llm_request` (266→119), `complete_request` (229→108, dropped the
+  `too-many-branches` disable), and `retry_forced_final_without_tools` (240→171); the
+  run-trace `summarize_run_trace` (308→202); and deterministic `_trim_messages_to_budget`
+  (safe subset only). No control-flow or behavior change; full suite unchanged (3249).
 
 ## [0.10.0] - 2026-08-05
 
