@@ -677,6 +677,144 @@ def _exception_chain(exc: BaseException) -> list[dict[str, str]]:
     return chain
 
 
+async def _recover_forced_final_via_fallback_providers(
+    host: LlmCompletionHost,
+    context: RunContext,
+    request: Any,
+    retry_response: LlmResponse,
+    *,
+    folded_request: Any,
+    unusable: Callable[[str | None], bool],
+) -> LlmResponse:
+    """Ladder step: while the retry is still unusable, try each configured fallback
+    provider once with the same (folded) request — the empty-final quirk is often
+    model/provider-specific, so a sibling provider given the SAME request frequently
+    answers. Reference: hermes ``_fallback_chain``. No-op when already usable."""
+    if not unusable(retry_response.message.content):
+        return retry_response
+    for fallback in getattr(host._deps, "fallback_providers", ()) or ():
+        fallback_name = str(getattr(fallback, "name", "") or "fallback")
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.WARNING,
+            payload={
+                "warning": (
+                    "Forced-final retries on the primary provider returned empty; "
+                    f"retrying once via fallback provider '{fallback_name}'."
+                ),
+                "signal_id": "provider_empty_forced_final_fallback_provider_retry",
+                "severity": "warning",
+                "fallback_provider": fallback_name,
+            },
+        )
+        context.metadata["empty_forced_final_retry"] = "fallback_provider"
+        try:
+            fallback_response = await fallback.complete(
+                folded_request if folded_request is not request else request
+            )
+        except Exception:  # pylint: disable=broad-except
+            # Ladder step must not turn a recoverable empty into a hard failure.
+            continue
+        if not unusable(fallback_response.message.content):
+            context.metadata["forced_final_fallback_provider"] = fallback_name
+            return fallback_response
+    return retry_response
+
+
+def _recover_forced_final_via_prior_turn(
+    host: LlmCompletionHost,
+    context: RunContext,
+    request: Any,
+    retry_response: LlmResponse,
+    *,
+    provider_name: str,
+    unusable: Callable[[str | None], bool],
+) -> LlmResponse:
+    """Ladder step: when the retry is still unusable but THIS run already produced a
+    substantive assistant text earlier in the loop, finalize with that rather than
+    with nothing (provenance-flagged). Reference: hermes ``fallback_prior_turn_content``."""
+    if not unusable(retry_response.message.content):
+        return retry_response
+    prior = _longest_prior_assistant_content(request)
+    if not prior:
+        return retry_response
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.WARNING,
+        payload={
+            "warning": (
+                "All forced-final retries returned empty; finalizing with the "
+                "run's own earlier substantive assistant message."
+            ),
+            "signal_id": "forced_final_recovered_prior_turn",
+            "severity": "warning",
+            "chars": len(prior),
+        },
+    )
+    context.metadata["forced_final_prior_turn_recovered"] = True
+    return LlmResponse(
+        message=ChatMessage(role=ChatRole.ASSISTANT, content=prior),
+        finish_reason=LlmFinishReason.UNKNOWN,
+        provider=provider_name,
+        model=str(getattr(request, "model", "") or ""),
+        metadata={"forced_final_prior_turn_recovered": True},
+    )
+
+
+async def _recover_forced_final_via_quarantine(
+    host: LlmCompletionHost,
+    context: RunContext,
+    request: Any,
+    retry_response: LlmResponse,
+    *,
+    provider_name: str,
+    unusable: Callable[[str | None], bool],
+) -> LlmResponse:
+    """Ladder step (epic 043 D): a persistent empty streak whose history still carries
+    an assistant turn exposing its own chain-of-thought is the transcript-poisoning
+    signature — a provider classifier reads the replayed CoT as a prefill injection and
+    blanks every call. Sanitize the suspect turn(s) and retry ONCE (bounded, mirrors
+    strip_reasoning_echo). No-op when already usable or already attempted."""
+    if not unusable(retry_response.message.content) or context.metadata.get(
+        "poisoned_prefix_quarantine_attempted"
+    ):
+        return retry_response
+    quarantined, suspect_count = quarantine_inline_reasoning(request)
+    if not suspect_count:
+        return retry_response
+    context.metadata["poisoned_prefix_quarantine_attempted"] = True
+    context.metadata["poisoned_prefix_suspect_turns"] = suspect_count
+    emit_step_event(
+        host,
+        context,
+        event_type=RuntimeEventType.WARNING,
+        payload={
+            "warning": (
+                "Empty-final ladder exhausted with inline reasoning present "
+                f"in {suspect_count} assistant turn(s) — suspected poisoned "
+                "prefix; sanitizing and retrying once."
+            ),
+            "signal_id": "poisoned_prefix_suspect",
+            "severity": "warning",
+            "suspect_turns": suspect_count,
+        },
+    )
+    quarantine_response = _mark_no_tool_text_form_suppression(
+        context,
+        request,
+        await host._deps.provider.complete(
+            request_without_tools(quarantined, provider_name=provider_name)
+        ),
+        suppress_native_planned=True,
+    )
+    if not unusable(quarantine_response.message.content):
+        context.metadata["poisoned_prefix_quarantine_recovered"] = True
+        return quarantine_response
+    return retry_response
+
+
 async def retry_forced_final_without_tools(
     host: LlmCompletionHost,
     context: RunContext,
@@ -799,105 +937,30 @@ async def retry_forced_final_without_tools(
                 alternate,
                 suppress_native_planned=True,
             )
-    if _unusable(retry_response.message.content):
-        # Fallback-provider step (reference: hermes _fallback_chain): the empty-final
-        # quirk is model/provider-specific — a sibling provider given the SAME folded
-        # request often answers normally. Tried before prior-turn recovery because a
-        # fresh full answer beats an earlier partial one.
-        for fallback in getattr(host._deps, "fallback_providers", ()) or ():
-            fallback_name = str(getattr(fallback, "name", "") or "fallback")
-            emit_step_event(
-                host,
-                context,
-                event_type=RuntimeEventType.WARNING,
-                payload={
-                    "warning": (
-                        "Forced-final retries on the primary provider returned empty; "
-                        f"retrying once via fallback provider '{fallback_name}'."
-                    ),
-                    "signal_id": "provider_empty_forced_final_fallback_provider_retry",
-                    "severity": "warning",
-                    "fallback_provider": fallback_name,
-                },
-            )
-            context.metadata["empty_forced_final_retry"] = "fallback_provider"
-            try:
-                fallback_response = await fallback.complete(
-                    folded_request if folded_request is not request else request
-                )
-            except Exception:  # pylint: disable=broad-except
-                # Ladder step must not turn a recoverable empty into a hard failure.
-                continue
-            if not _unusable(fallback_response.message.content):
-                context.metadata["forced_final_fallback_provider"] = fallback_name
-                retry_response = fallback_response
-                break
-    if _unusable(retry_response.message.content):
-        # Prior-turn substantive fallback (reference: hermes fallback_prior_turn_content):
-        # if THIS run already produced a substantive assistant text earlier in the loop,
-        # finalize with it rather than with nothing. Provenance-flagged so hosts can tell.
-        prior = _longest_prior_assistant_content(request)
-        if prior:
-            emit_step_event(
-                host,
-                context,
-                event_type=RuntimeEventType.WARNING,
-                payload={
-                    "warning": (
-                        "All forced-final retries returned empty; finalizing with the "
-                        "run's own earlier substantive assistant message."
-                    ),
-                    "signal_id": "forced_final_recovered_prior_turn",
-                    "severity": "warning",
-                    "chars": len(prior),
-                },
-            )
-            context.metadata["forced_final_prior_turn_recovered"] = True
-            retry_response = LlmResponse(
-                message=ChatMessage(role=ChatRole.ASSISTANT, content=prior),
-                finish_reason=LlmFinishReason.UNKNOWN,
-                provider=provider_name,
-                model=str(getattr(request, "model", "") or ""),
-                metadata={"forced_final_prior_turn_recovered": True},
-            )
-    if _unusable(retry_response.message.content) and not context.metadata.get(
-        "poisoned_prefix_quarantine_attempted"
-    ):
-        # Poisoned-prefix quarantine (epic 043 D): a persistent empty streak whose
-        # history still carries an assistant turn exposing its own chain-of-thought
-        # is the transcript-poisoning signature — a provider classifier reads the
-        # replayed CoT as a prefill injection and blanks every call. Sanitize the
-        # suspect turn(s) and retry ONCE (bounded, mirrors strip_reasoning_echo).
-        quarantined, suspect_count = quarantine_inline_reasoning(request)
-        if suspect_count:
-            context.metadata["poisoned_prefix_quarantine_attempted"] = True
-            context.metadata["poisoned_prefix_suspect_turns"] = suspect_count
-            emit_step_event(
-                host,
-                context,
-                event_type=RuntimeEventType.WARNING,
-                payload={
-                    "warning": (
-                        "Empty-final ladder exhausted with inline reasoning present "
-                        f"in {suspect_count} assistant turn(s) — suspected poisoned "
-                        "prefix; sanitizing and retrying once."
-                    ),
-                    "signal_id": "poisoned_prefix_suspect",
-                    "severity": "warning",
-                    "suspect_turns": suspect_count,
-                },
-            )
-            quarantine_response = _mark_no_tool_text_form_suppression(
-                context,
-                request,
-                await host._deps.provider.complete(
-                    request_without_tools(quarantined, provider_name=provider_name)
-                ),
-                suppress_native_planned=True,
-            )
-            if not _unusable(quarantine_response.message.content):
-                context.metadata["poisoned_prefix_quarantine_recovered"] = True
-                retry_response = quarantine_response
+    retry_response = await _recover_forced_final_via_fallback_providers(
+        host,
+        context,
+        request,
+        retry_response,
+        folded_request=folded_request,
+        unusable=_unusable,
+    )
+    retry_response = _recover_forced_final_via_prior_turn(
+        host,
+        context,
+        request,
+        retry_response,
+        provider_name=provider_name,
+        unusable=_unusable,
+    )
+    retry_response = await _recover_forced_final_via_quarantine(
+        host,
+        context,
+        request,
+        retry_response,
+        provider_name=provider_name,
+        unusable=_unusable,
+    )
     if _unusable(retry_response.message.content):
         # All recovery strategies exhausted: surface a distinct signal so hosts can
         # message the user honestly instead of rendering a silent empty bubble.
