@@ -181,3 +181,20 @@ def test_threshold_invariants_across_window_sizes():
             s.output_token_reserve, int(window * 0.08)
         )
         assert s.output_token_reserve >= 1500
+
+
+def test_token_pressure_reports_occupancy_against_compact_threshold() -> None:
+    """occupancy_pct is used_tokens / compact_threshold (the dormancy signal)."""
+    pressure = estimate_token_pressure(
+        TokenPressureInput(
+            prompt_messages=({"content": "x" * 3600},),
+            context_window_estimate=10000,
+            warning_threshold=1000,
+            compact_threshold=1200,
+            blocking_threshold=1500,
+            output_token_reserve=200,
+        )
+    )
+    # 3600 chars / 4 chars-per-token = 900 tokens; 900 / 1200 threshold = 0.75.
+    assert pressure["used_tokens_estimate"] == 900
+    assert pressure["occupancy_pct"] == 0.75

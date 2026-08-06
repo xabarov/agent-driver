@@ -98,6 +98,23 @@ def context_pressure_summary(
     latest = diagnostics[-1] if diagnostics else None
     delegated = "agent_tool" in tool_names
     compaction_attempted = int(compaction.get("attempts") or 0) > 0
+    # Occupancy telemetry (horizon-scan 047): every llm_call_completed carries this
+    # step's occupancy against the compaction trigger. Aggregating it answers the
+    # dormancy question — a plane whose occupancy never approaches 1.0 and that never
+    # attempted a compaction simply never engaged on this run.
+    occupancy_samples = [
+        value
+        for event in events
+        if event.get("event") == "llm_call_completed"
+        for value in (event_data(event).get("context_occupancy_pct"),)
+        if isinstance(value, (int, float))
+    ]
+    max_occupancy_pct = round(max(occupancy_samples), 4) if occupancy_samples else None
+    compaction_plane_dormant = bool(occupancy_samples) and (
+        max_occupancy_pct is not None
+        and max_occupancy_pct < 1.0
+        and not compaction_attempted
+    )
     ignored = False
     if latest is not None:
         latest_recommendation = latest.get("recommendation")
@@ -115,6 +132,9 @@ def context_pressure_summary(
             compaction_attempted if diagnostics else False
         ),
         "ignored_latest_recommendation": ignored,
+        "occupancy_samples": len(occupancy_samples),
+        "max_occupancy_pct": max_occupancy_pct,
+        "compaction_plane_dormant": compaction_plane_dormant,
     }
 
 

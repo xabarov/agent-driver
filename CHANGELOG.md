@@ -7,6 +7,20 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Context occupancy telemetry (compaction-improvement epic; horizon-scan 047).** The
+  token-pressure snapshot now reports `occupancy_pct` — the fraction of the compaction
+  *trigger* the post-trim prompt fills, from the already-resolved (cached) threshold, no
+  probe. It rides on every `llm_call_completed` as `context_occupancy_pct`, so a trace
+  captures occupancy even on runs that never cross a pressure warning; the run-trace
+  `context_pressure` summary aggregates it into `max_occupancy_pct` +
+  `compaction_plane_dormant` (occupancy never approaches 1.0 and no compaction attempted
+  ⇒ the LLM-compaction plane never engaged). This is the cheap, standalone first piece of
+  the deferred B2 rolling-summary work — it measures whether the plane is dormant (the
+  gating question) and reframes success off "tokens saved" toward flat occupancy. Additive
+  and content-free.
+
 ## [0.11.0] - 2026-08-06
 
 ### Added

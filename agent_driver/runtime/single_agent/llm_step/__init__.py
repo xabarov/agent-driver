@@ -467,6 +467,15 @@ def _build_llm_completed_payload(context: RunContext) -> dict[str, Any]:
         )
     if context.llm_response.usage is not None:
         completed_payload["usage"] = context.llm_response.usage.model_dump(mode="json")
+    # Context occupancy (this step's pre-call pressure snapshot): the fraction of the
+    # compaction trigger the prompt filled. Carried on every completion so a run trace
+    # can tell a dormant compaction plane (occupancy always low) from a firing one —
+    # even on runs that never crossed a pressure warning threshold.
+    pressure_snapshot = context.metadata.get("token_pressure")
+    if isinstance(pressure_snapshot, dict):
+        occupancy = pressure_snapshot.get("occupancy_pct")
+        if isinstance(occupancy, (int, float)):
+            completed_payload["context_occupancy_pct"] = occupancy
     planned_tool_calls = context.llm_response.metadata.get("planned_tool_calls")
     if isinstance(planned_tool_calls, list):
         completed_payload["planned_tool_calls"] = planned_tool_calls
