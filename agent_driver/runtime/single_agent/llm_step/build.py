@@ -371,10 +371,14 @@ def _inject_environment_brief(
     )
 
 
-def build_single_agent_llm_request(
+def _assemble_prompt_messages(
     ctx: LlmRequestBuildContext,
-) -> tuple[LlmRequest, dict[str, Any]]:
-    """Build normalized non-streaming request for single-agent step loop."""
+) -> tuple[list[dict[str, Any]], Any]:
+    """Resolve the request's prompt message list: seed from repaired protocol messages
+    or run_input, fold in clarification/planning text, render the code-agent prompt when
+    that profile is active, prepend the system instruction, and inject the per-request
+    ephemeral context (RAG/steering) + environment brief. Returns the assembled messages
+    and the code-agent prompt render (``None`` outside the code-agent profile)."""
     run_input = ctx.run_input
     prompt = run_input.input or (
         run_input.messages[-1].content if run_input.messages else ""
@@ -444,6 +448,143 @@ def build_single_agent_llm_request(
     # without ever becoming durable dialogue.
     prompt_messages = _inject_request_only_context(prompt_messages, run_input)
     prompt_messages = _inject_environment_brief(prompt_messages)
+    return prompt_messages, code_prompt_render
+
+
+def _resolve_request_tools_and_metadata(
+    ctx: LlmRequestBuildContext,
+    request_metadata: dict[str, Any],
+    *,
+    harness_profile: Any,
+    request_allowed: tuple[str, ...] | None,
+    request_denied: tuple[str, ...] | None,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Build the surfaced tool schemas (adaptive-defer surface + registry allow/deny
+    filter + profile overrides) and fold the defer + capability-selection diagnostics
+    into the request metadata. Returns ``(request_tools, request_metadata)``."""
+    # Epic 033 A: adaptive threshold decides whether ``should_defer`` candidates
+    # actually defer this step. Below the window fraction they are force-surfaced
+    # (cheaper inline than a tool_search round-trip); at/above it they defer.
+    adaptive_surface, defer_audit = adaptive_defer_surface(
+        ctx.registry,
+        allowed=request_allowed,
+        denied=request_denied,
+        already_surfaced=ctx.surface_deferred_tools,
+        context_window=ctx.context_window_estimate,
+        mode=ctx.tool_defer_mode,
+        threshold_pct=ctx.tool_defer_threshold_pct,
+    )
+    from agent_driver.tools.context import get_capability_snapshot
+
+    capability_snapshot = get_capability_snapshot()
+    request_tools = _request_tools_from_registry(
+        ctx.registry,
+        allowed=request_allowed,
+        denied=request_denied,
+        surface_deferred=ctx.surface_deferred_tools + adaptive_surface,
+        capability_snapshot=capability_snapshot,
+    )
+    if harness_profile is not None:
+        request_tools = apply_tool_overrides(request_tools, harness_profile)
+    if defer_audit.get("candidate_count"):
+        request_metadata = {**request_metadata, "tool_defer_audit": defer_audit}
+    # EPIC-02 WP-E: redaction-safe capability-selection diagnostics on request
+    # metadata (backend id, revision, supported/degraded, withheld tool names) —
+    # never snapshot metadata values or secrets.
+    if capability_snapshot is not None:
+        from agent_driver.execution.capabilities import (
+            capability_diagnostics,
+            derive_environment_brief,
+            tool_is_withheld,
+        )
+
+        _rows_fn = getattr(ctx.registry, "list_registered", None)
+        _withheld = (
+            tuple(
+                item.manifest.name
+                for item in _rows_fn()
+                if tool_is_withheld(item.manifest, capability_snapshot)
+            )
+            if callable(_rows_fn)
+            else ()
+        )
+        request_metadata = {
+            **request_metadata,
+            "capability_audit": capability_diagnostics(
+                capability_snapshot,
+                withheld_tools=_withheld,
+                brief=derive_environment_brief(capability_snapshot),
+            ),
+        }
+    return request_tools, request_metadata
+
+
+def _build_request_trim_payload(
+    ctx: LlmRequestBuildContext,
+    *,
+    trimmed: Any,
+    final_prompt_messages: list[dict[str, Any]],
+    request_tools: list[Any],
+    code_prompt_render: Any,
+    post_trim_protocol_repairs: tuple[str, ...],
+    post_trim_protocol_warnings: tuple[str, ...],
+) -> dict[str, Any]:
+    """Assemble the build's second return value: trim audit/metadata (+ post-trim
+    protocol repair/warning notes), the token-pressure estimate, the context
+    breakdown, and the code-agent prompt render."""
+    trim_metadata = trimmed.model_dump(mode="json").get("metadata", {})
+    if isinstance(trim_metadata, dict):
+        if post_trim_protocol_repairs:
+            trim_metadata["post_trim_protocol_repairs"] = list(
+                post_trim_protocol_repairs
+            )
+        if post_trim_protocol_warnings:
+            trim_metadata["post_trim_protocol_warnings"] = list(
+                post_trim_protocol_warnings
+            )
+    token_pressure = estimate_token_pressure(
+        TokenPressureInput(
+            prompt_messages=tuple(final_prompt_messages),
+            # Observation previews were injected into final_prompt_messages by
+            # trim_context, so counting them again here would make the pressure
+            # trigger disagree with the provider-facing context breakdown.
+            observations=(),
+            tool_schemas=tuple(request_tools),
+            retained_digest_ids=tuple(trimmed.retained_digest_ids),
+            retained_artifact_ids=tuple(trimmed.retained_artifact_ids),
+            context_window_estimate=ctx.context_window_estimate,
+            chars_per_token=ctx.chars_per_token,
+            warning_threshold=ctx.warning_threshold,
+            compact_threshold=ctx.compact_threshold,
+            blocking_threshold=ctx.blocking_threshold,
+            output_token_reserve=ctx.output_token_reserve,
+        )
+    )
+    context_breakdown = estimate_context_breakdown(
+        final_prompt_messages,
+        tools=request_tools,
+    )
+    return {
+        "trim_audit": [item.model_dump(mode="json") for item in trimmed.audit],
+        "trim_metadata": trim_metadata,
+        "retained_digest_ids": trimmed.retained_digest_ids,
+        "retained_artifact_ids": trimmed.retained_artifact_ids,
+        "token_pressure": token_pressure,
+        "context_breakdown": context_breakdown,
+        "prompt_render": (
+            code_prompt_render.model_dump(mode="json")
+            if code_prompt_render is not None
+            else None
+        ),
+    }
+
+
+def build_single_agent_llm_request(
+    ctx: LlmRequestBuildContext,
+) -> tuple[LlmRequest, dict[str, Any]]:
+    """Build normalized non-streaming request for single-agent step loop."""
+    run_input = ctx.run_input
+    prompt_messages, code_prompt_render = _assemble_prompt_messages(ctx)
     # Harness-profile system slots are applied before trimming so the budget
     # accounts for the prefix/suffix and they cannot be trimmed away.
     harness_profile = select_harness_profile(
@@ -515,60 +656,13 @@ def build_single_agent_llm_request(
     request_denied = profile_excluded_tools(
         harness_profile, tuple(policy_denied) if policy_denied else None
     )
-    # Epic 033 A: adaptive threshold decides whether ``should_defer`` candidates
-    # actually defer this step. Below the window fraction they are force-surfaced
-    # (cheaper inline than a tool_search round-trip); at/above it they defer.
-    adaptive_surface, defer_audit = adaptive_defer_surface(
-        ctx.registry,
-        allowed=request_allowed,
-        denied=request_denied,
-        already_surfaced=ctx.surface_deferred_tools,
-        context_window=ctx.context_window_estimate,
-        mode=ctx.tool_defer_mode,
-        threshold_pct=ctx.tool_defer_threshold_pct,
+    request_tools, request_metadata = _resolve_request_tools_and_metadata(
+        ctx,
+        request_metadata,
+        harness_profile=harness_profile,
+        request_allowed=request_allowed,
+        request_denied=request_denied,
     )
-    from agent_driver.tools.context import get_capability_snapshot
-
-    capability_snapshot = get_capability_snapshot()
-    request_tools = _request_tools_from_registry(
-        ctx.registry,
-        allowed=request_allowed,
-        denied=request_denied,
-        surface_deferred=ctx.surface_deferred_tools + adaptive_surface,
-        capability_snapshot=capability_snapshot,
-    )
-    if harness_profile is not None:
-        request_tools = apply_tool_overrides(request_tools, harness_profile)
-    if defer_audit.get("candidate_count"):
-        request_metadata = {**request_metadata, "tool_defer_audit": defer_audit}
-    # EPIC-02 WP-E: redaction-safe capability-selection diagnostics on request
-    # metadata (backend id, revision, supported/degraded, withheld tool names) —
-    # never snapshot metadata values or secrets.
-    if capability_snapshot is not None:
-        from agent_driver.execution.capabilities import (
-            capability_diagnostics,
-            derive_environment_brief,
-            tool_is_withheld,
-        )
-
-        _rows_fn = getattr(ctx.registry, "list_registered", None)
-        _withheld = (
-            tuple(
-                item.manifest.name
-                for item in _rows_fn()
-                if tool_is_withheld(item.manifest, capability_snapshot)
-            )
-            if callable(_rows_fn)
-            else ()
-        )
-        request_metadata = {
-            **request_metadata,
-            "capability_audit": capability_diagnostics(
-                capability_snapshot,
-                withheld_tools=_withheld,
-                brief=derive_environment_brief(capability_snapshot),
-            ),
-        }
     request = LlmRequest(
         # E8: strip lone surrogates / NUL so the request can encode to UTF-8.
         messages=sanitize_request_messages(
@@ -593,51 +687,15 @@ def build_single_agent_llm_request(
         enable_prompt_cache=ctx.enable_prompt_cache,
         metadata=request_metadata,
     )
-    trim_metadata = trimmed.model_dump(mode="json").get("metadata", {})
-    if isinstance(trim_metadata, dict):
-        if post_trim_protocol_repairs:
-            trim_metadata["post_trim_protocol_repairs"] = list(
-                post_trim_protocol_repairs
-            )
-        if post_trim_protocol_warnings:
-            trim_metadata["post_trim_protocol_warnings"] = list(
-                post_trim_protocol_warnings
-            )
-    token_pressure = estimate_token_pressure(
-        TokenPressureInput(
-            prompt_messages=tuple(final_prompt_messages),
-            # Observation previews were injected into final_prompt_messages by
-            # trim_context, so counting them again here would make the pressure
-            # trigger disagree with the provider-facing context breakdown.
-            observations=(),
-            tool_schemas=tuple(request_tools),
-            retained_digest_ids=tuple(trimmed.retained_digest_ids),
-            retained_artifact_ids=tuple(trimmed.retained_artifact_ids),
-            context_window_estimate=ctx.context_window_estimate,
-            chars_per_token=ctx.chars_per_token,
-            warning_threshold=ctx.warning_threshold,
-            compact_threshold=ctx.compact_threshold,
-            blocking_threshold=ctx.blocking_threshold,
-            output_token_reserve=ctx.output_token_reserve,
-        )
+    return request, _build_request_trim_payload(
+        ctx,
+        trimmed=trimmed,
+        final_prompt_messages=final_prompt_messages,
+        request_tools=request_tools,
+        code_prompt_render=code_prompt_render,
+        post_trim_protocol_repairs=post_trim_protocol_repairs,
+        post_trim_protocol_warnings=post_trim_protocol_warnings,
     )
-    context_breakdown = estimate_context_breakdown(
-        final_prompt_messages,
-        tools=request_tools,
-    )
-    return request, {
-        "trim_audit": [item.model_dump(mode="json") for item in trimmed.audit],
-        "trim_metadata": trim_metadata,
-        "retained_digest_ids": trimmed.retained_digest_ids,
-        "retained_artifact_ids": trimmed.retained_artifact_ids,
-        "token_pressure": token_pressure,
-        "context_breakdown": context_breakdown,
-        "prompt_render": (
-            code_prompt_render.model_dump(mode="json")
-            if code_prompt_render is not None
-            else None
-        ),
-    }
 
 
 def _intersect_allowed_tools(
