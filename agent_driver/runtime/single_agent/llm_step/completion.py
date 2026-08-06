@@ -218,7 +218,168 @@ def _emit_provider_retry_warning(
     )
 
 
-async def complete_request(  # pylint: disable=too-many-branches
+async def _attempt_completion(
+    host: LlmCompletionHost,
+    context: RunContext,
+    request: Any,
+    *,
+    abort_check: Callable[[], bool] | None,
+) -> LlmResponse:
+    """Run a single provider completion attempt (streaming or not) with the redirect
+    observer + no-tool text-form suppression marking, plus the empty-forced-final
+    one-shot non-streaming retry, and return the forced-final-normalised response."""
+    if not is_stream_enabled(context.run_input):
+        response = await _await_with_redirect(
+            host,
+            host._deps.provider.complete(request),
+            abort_check=abort_check,
+            context=context,
+        )
+        response = _mark_no_tool_text_form_suppression(context, request, response)
+        return await retry_forced_final_without_tools(
+            host,
+            context,
+            request=request,
+            response=response,
+        )
+    response = await _await_with_redirect(
+        host,
+        complete_streaming_request(host, context, request),
+        abort_check=abort_check,
+        context=context,
+    )
+    response = _mark_no_tool_text_form_suppression(context, request, response)
+    if should_retry_empty_forced_final_non_stream(context, response):
+        context.metadata["empty_forced_final_retry"] = "non_streaming"
+        _emit_provider_retry_warning(
+            host,
+            context,
+            warning=(
+                "Provider returned an empty forced final stream; "
+                "retrying once without streaming."
+            ),
+            signal_id="provider_empty_forced_final_non_stream_retry",
+        )
+        response = await host._deps.provider.complete(
+            request.model_copy(update={"stream": False})
+        )
+        return await retry_forced_final_without_tools(
+            host,
+            context,
+            request=request,
+            response=response,
+        )
+    return await retry_forced_final_without_tools(
+        host,
+        context,
+        request=request,
+        response=response,
+    )
+
+
+async def _handle_completion_status_error(
+    host: LlmCompletionHost,
+    context: RunContext,
+    request: Any,
+    exc: httpx.HTTPStatusError,
+    *,
+    attempt: int,
+    recover_context_overflow: Callable[[], Awaitable[Any]] | None,
+    overflow_recovered: bool,
+) -> tuple[Any, bool]:
+    """Apply the provider-status-error retry rules inside the completion loop, in
+    order: one-shot context-overflow compaction, stripped encrypted-reasoning echo
+    (attempt 0), removed forced tool_choice, reduced max_tokens (402 credit), and a
+    bounded transient-status backoff. Returns the ``(request, overflow_recovered)`` to
+    retry with; re-raises ``exc`` when no rule applies."""
+    if (
+        recover_context_overflow is not None
+        and not overflow_recovered
+        and classify(exc).reason is ProviderErrorReason.CONTEXT_OVERFLOW
+    ):
+        overflow_recovered = True
+        context.metadata["context_overflow_recovery"] = "compacted_and_retried"
+        _emit_provider_retry_warning(
+            host,
+            context,
+            warning=(
+                "Provider rejected the request as too long for the "
+                "context window; compacting and retrying once."
+            ),
+            signal_id="provider_context_overflow_compact_retry",
+            status_code=exc.response.status_code,
+        )
+        request = await recover_context_overflow()
+        return request, overflow_recovered
+    if attempt == 0 and is_invalid_encrypted_reasoning_error(exc):
+        stripped = strip_reasoning_echo(request)
+        if stripped is not request:
+            context.metadata["reasoning_echo_retry"] = (
+                "stripped_invalid_encrypted_content"
+            )
+            _emit_provider_retry_warning(
+                host,
+                context,
+                warning=(
+                    "Provider rejected echoed encrypted reasoning; "
+                    "retrying once without reasoning metadata."
+                ),
+                signal_id="provider_invalid_encrypted_reasoning_retry",
+            )
+            return stripped, overflow_recovered
+    if is_forced_tool_choice_provider_error(exc, request):
+        context.metadata["forced_tool_choice_retry"] = (
+            "removed_after_provider_rejection"
+        )
+        _emit_provider_retry_warning(
+            host,
+            context,
+            warning=(
+                "Provider rejected a forced tool_choice; retrying "
+                "once with the same tools and no forced tool_choice."
+            ),
+            signal_id="provider_forced_tool_choice_removed_retry",
+            status_code=exc.response.status_code,
+        )
+        return request_without_forced_tool_choice(request), overflow_recovered
+    if is_reduce_max_tokens_credit_error(exc):
+        affordable = affordable_max_tokens_from_error(exc)
+        reduced = request_with_reduced_max_tokens(request, affordable)
+        if reduced is not request:
+            context.metadata["max_tokens_retry"] = "reduced_after_provider_402"
+            _emit_provider_retry_warning(
+                host,
+                context,
+                warning=(
+                    "Provider rejected the requested output budget; "
+                    "retrying once with fewer max_tokens."
+                ),
+                signal_id="provider_max_tokens_reduced_retry",
+                max_tokens=reduced.max_tokens,
+            )
+            return reduced, overflow_recovered
+    if attempt < 2 and _is_transient_provider_status(exc):
+        delay = _transient_retry_delay(exc, attempt)
+        context.metadata["transient_provider_retries"] = attempt + 1
+        _emit_provider_retry_warning(
+            host,
+            context,
+            warning=(
+                "Provider returned a transient error "
+                f"(HTTP {exc.response.status_code}); retrying "
+                f"in {delay:g}s."
+            ),
+            signal_id="provider_transient_error_retry",
+            status_code=exc.response.status_code,
+            retry_attempt=attempt + 1,
+            retry_in_seconds=delay,
+        )
+        await asyncio.sleep(delay)
+        return request, overflow_recovered
+    raise exc
+
+
+async def complete_request(
     host: LlmCompletionHost,
     context: RunContext,
     request: Any,
@@ -250,144 +411,20 @@ async def complete_request(  # pylint: disable=too-many-branches
         # (each reassigns ``request`` then ``continue``s back through here).
         request = repair_empty_non_final_messages(request)
         try:
-            if not is_stream_enabled(context.run_input):
-                response = await _await_with_redirect(
-                    host,
-                    host._deps.provider.complete(request),
-                    abort_check=abort_check,
-                    context=context,
-                )
-                response = _mark_no_tool_text_form_suppression(
-                    context, request, response
-                )
-                return await retry_forced_final_without_tools(
-                    host,
-                    context,
-                    request=request,
-                    response=response,
-                )
-            response = await _await_with_redirect(
-                host,
-                complete_streaming_request(host, context, request),
-                abort_check=abort_check,
-                context=context,
-            )
-            response = _mark_no_tool_text_form_suppression(context, request, response)
-            if should_retry_empty_forced_final_non_stream(context, response):
-                context.metadata["empty_forced_final_retry"] = "non_streaming"
-                _emit_provider_retry_warning(
-                    host,
-                    context,
-                    warning=(
-                        "Provider returned an empty forced final stream; "
-                        "retrying once without streaming."
-                    ),
-                    signal_id="provider_empty_forced_final_non_stream_retry",
-                )
-                response = await host._deps.provider.complete(
-                    request.model_copy(update={"stream": False})
-                )
-                return await retry_forced_final_without_tools(
-                    host,
-                    context,
-                    request=request,
-                    response=response,
-                )
-            return await retry_forced_final_without_tools(
-                host,
-                context,
-                request=request,
-                response=response,
+            return await _attempt_completion(
+                host, context, request, abort_check=abort_check
             )
         except httpx.HTTPStatusError as exc:
-            if (
-                recover_context_overflow is not None
-                and not overflow_recovered
-                and classify(exc).reason is ProviderErrorReason.CONTEXT_OVERFLOW
-            ):
-                overflow_recovered = True
-                context.metadata["context_overflow_recovery"] = "compacted_and_retried"
-                _emit_provider_retry_warning(
-                    host,
-                    context,
-                    warning=(
-                        "Provider rejected the request as too long for the "
-                        "context window; compacting and retrying once."
-                    ),
-                    signal_id="provider_context_overflow_compact_retry",
-                    status_code=exc.response.status_code,
-                )
-                request = await recover_context_overflow()
-                continue
-            if attempt == 0 and is_invalid_encrypted_reasoning_error(exc):
-                stripped = strip_reasoning_echo(request)
-                if stripped is not request:
-                    context.metadata["reasoning_echo_retry"] = (
-                        "stripped_invalid_encrypted_content"
-                    )
-                    _emit_provider_retry_warning(
-                        host,
-                        context,
-                        warning=(
-                            "Provider rejected echoed encrypted reasoning; "
-                            "retrying once without reasoning metadata."
-                        ),
-                        signal_id="provider_invalid_encrypted_reasoning_retry",
-                    )
-                    request = stripped
-                    continue
-            if is_forced_tool_choice_provider_error(exc, request):
-                context.metadata["forced_tool_choice_retry"] = (
-                    "removed_after_provider_rejection"
-                )
-                _emit_provider_retry_warning(
-                    host,
-                    context,
-                    warning=(
-                        "Provider rejected a forced tool_choice; retrying "
-                        "once with the same tools and no forced tool_choice."
-                    ),
-                    signal_id="provider_forced_tool_choice_removed_retry",
-                    status_code=exc.response.status_code,
-                )
-                request = request_without_forced_tool_choice(request)
-                continue
-            if is_reduce_max_tokens_credit_error(exc):
-                affordable = affordable_max_tokens_from_error(exc)
-                reduced = request_with_reduced_max_tokens(request, affordable)
-                if reduced is not request:
-                    context.metadata["max_tokens_retry"] = "reduced_after_provider_402"
-                    _emit_provider_retry_warning(
-                        host,
-                        context,
-                        warning=(
-                            "Provider rejected the requested output budget; "
-                            "retrying once with fewer max_tokens."
-                        ),
-                        signal_id="provider_max_tokens_reduced_retry",
-                        max_tokens=reduced.max_tokens,
-                    )
-                    request = reduced
-                    continue
-            if attempt < 2 and _is_transient_provider_status(exc):
-                delay = _transient_retry_delay(exc, attempt)
-                context.metadata["transient_provider_retries"] = attempt + 1
-                _emit_provider_retry_warning(
-                    host,
-                    context,
-                    warning=(
-                        "Provider returned a transient error "
-                        f"(HTTP {exc.response.status_code}); retrying "
-                        f"in {delay:g}s."
-                    ),
-                    signal_id="provider_transient_error_retry",
-                    status_code=exc.response.status_code,
-                    retry_attempt=attempt + 1,
-                    retry_in_seconds=delay,
-                )
-                await asyncio.sleep(delay)
-                continue
-            raise
+            request, overflow_recovered = await _handle_completion_status_error(
+                host,
+                context,
+                request,
+                exc,
+                attempt=attempt,
+                recover_context_overflow=recover_context_overflow,
+                overflow_recovered=overflow_recovered,
+            )
+            continue
         except httpx.TimeoutException as exc:
             last_timeout = exc
             if (
