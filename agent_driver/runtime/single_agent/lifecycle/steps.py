@@ -441,21 +441,48 @@ class SingleAgentStepMixin:
     async def _maybe_execute_subagent_group(self, context: RunContext) -> None:
         await maybe_execute_subagent_group(self, context)
 
-    async def _execute_finalize(self, context: RunContext) -> RuntimeStepResult:
-        set_phase = getattr(self._deps.command_queue_store, "set_run_phase", None)
-        if callable(set_phase):
-            set_phase(
-                context.run_id,
-                LiveMessagePhase.FINALIZING,
-                thread_id=context.run_input.thread_id,
-                agent_id=context.run_input.agent_id,
-            )
-        if context.llm_response is None and isinstance(
-            context.metadata.get("last_llm_response"), dict
-        ):
-            context.llm_response = LlmResponse.model_validate(
-                context.metadata["last_llm_response"]
-            )
+    def _resume_after_finalize(
+        self, context: RunContext, transition: RuntimeStepResult
+    ) -> RuntimeStepResult:
+        """Common tail for a finalize path that resumes the loop (continuation /
+        node-contract reprompt / rubric revision) rather than finishing: advance the
+        step, route back to ``llm_call``, checkpoint, and honour failure injection."""
+        context.step_count += 1
+        get_loop_control_state(context).set_step_transition(
+            next_step="llm_call",
+            tool_calls=context.tool_calls,
+        )
+        self._save_checkpoint(context, latest_output=None, node_id="finalize")
+        self._maybe_fail_after_step("finalize")
+        return transition
+
+    def _finish_terminal(
+        self, context: RunContext, output: Any
+    ) -> RuntimeStepResult:
+        """Common tail for a terminal finalize path (completed / guardrail-blocked):
+        advance the step, route to ``done``, checkpoint the terminal output, honour
+        failure injection, and stash the terminal output for the loop driver."""
+        context.step_count += 1
+        get_loop_control_state(context).set_step_transition(
+            next_step="done",
+            tool_calls=context.tool_calls,
+        )
+        output.checkpoint = self._save_checkpoint(
+            context,
+            latest_output=output,
+            node_id="finalize",
+        )
+        self._maybe_fail_after_step("finalize")
+        get_loop_control_state(context).set_terminal_output(
+            output.model_dump(mode="json")
+        )
+        return RuntimeStepResult(next_step="done")
+
+    def _build_completed_payload(self, context: RunContext) -> dict[str, object]:
+        """Assemble the ``RUN_COMPLETED`` event payload from the finalize context
+        (finish reason, force-final / continuation reasons, deep-research artifacts,
+        token usage, planning snapshot), emitting the force-final decision as a
+        side effect when one is present."""
         finish_reason = (
             context.llm_response.finish_reason.value
             if context.llm_response
@@ -486,49 +513,14 @@ class SingleAgentStepMixin:
         snapshot = build_planning_snapshot(context)
         if snapshot is not None:
             completed_payload["planning_snapshot"] = snapshot
-        continuation = _maybe_build_continuation_transition(context)
-        if continuation is not None:
-            self._emit_runtime_decision(
-                context,
-                kind="force_final",
-                trigger="finalize",
-                action="continue",
-                reason=str(continuation_reason or "continuation_nudge"),
-                policy_id="continuation_detector",
-            )
-            context.step_count += 1
-            get_loop_control_state(context).set_step_transition(
-                next_step="llm_call",
-                tool_calls=context.tool_calls,
-            )
-            self._save_checkpoint(context, latest_output=None, node_id="finalize")
-            self._maybe_fail_after_step("finalize")
-            return continuation
-        node_contract_reprompt = self._maybe_node_contract_tool_use_reprompt(context)
-        if node_contract_reprompt is not None:
-            context.step_count += 1
-            get_loop_control_state(context).set_step_transition(
-                next_step="llm_call",
-                tool_calls=context.tool_calls,
-            )
-            self._save_checkpoint(context, latest_output=None, node_id="finalize")
-            self._maybe_fail_after_step("finalize")
-            return node_contract_reprompt
-        node_contract_reprompt = self._maybe_node_contract_required_tools_reprompt(
-            context
-        )
-        if node_contract_reprompt is not None:
-            context.step_count += 1
-            get_loop_control_state(context).set_step_transition(
-                next_step="llm_call",
-                tool_calls=context.tool_calls,
-            )
-            self._save_checkpoint(context, latest_output=None, node_id="finalize")
-            self._maybe_fail_after_step("finalize")
-            return node_contract_reprompt
-        terminal_answer = self._sanitize_terminal_answer(context)
-        if terminal_answer:
-            completed_payload["answer"] = terminal_answer
+        return completed_payload
+
+    def _maybe_finalize_required_evidence(
+        self, context: RunContext
+    ) -> RuntimeStepResult | None:
+        """When a required-evidence policy is unsatisfied at finalize, emit the
+        guardrail-blocked decision + RUN_FAILED event and return the terminal FAILED
+        step; otherwise return ``None`` so finalize continues normally."""
         evidence_block = _required_policy_evidence_block(
             context,
             events=[
@@ -543,58 +535,88 @@ class SingleAgentStepMixin:
                 for event in self._deps.event_log.list_for_run(context.run_id)
             ],
         )
-        if evidence_block is not None:
-            required_evidence = evidence_block.get("required_evidence", [])
+        if evidence_block is None:
+            return None
+        required_evidence = evidence_block.get("required_evidence", [])
+        self._emit_runtime_decision(
+            context,
+            kind="evidence",
+            trigger="finalize",
+            action=str(evidence_block["action"]),
+            reason=str(evidence_block["reason"]),
+            status="applied",
+            policy_id=str(evidence_block["policy_id"]),
+            required_evidence=[
+                item for item in required_evidence if isinstance(item, str)
+            ],
+            redacted_metadata=evidence_block,
+        )
+        self._emit(
+            EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType.RUN_FAILED,
+                payload={
+                    "reason": TerminalReason.GUARDRAIL_BLOCKED.value,
+                    "policy_id": evidence_block["policy_id"],
+                },
+            )
+        )
+        self._emit_observe_policy_decisions(
+            context,
+            trigger="finalize_required_evidence",
+        )
+        output = self._build_output(
+            context,
+            TerminalResult(
+                status=RunStatus.FAILED,
+                reason=TerminalReason.GUARDRAIL_BLOCKED,
+            ),
+        )
+        return self._finish_terminal(context, output)
+
+    async def _execute_finalize(self, context: RunContext) -> RuntimeStepResult:
+        set_phase = getattr(self._deps.command_queue_store, "set_run_phase", None)
+        if callable(set_phase):
+            set_phase(
+                context.run_id,
+                LiveMessagePhase.FINALIZING,
+                thread_id=context.run_input.thread_id,
+                agent_id=context.run_input.agent_id,
+            )
+        if context.llm_response is None and isinstance(
+            context.metadata.get("last_llm_response"), dict
+        ):
+            context.llm_response = LlmResponse.model_validate(
+                context.metadata["last_llm_response"]
+            )
+        completed_payload = self._build_completed_payload(context)
+        continuation_reason = context.metadata.get("continuation_nudge_reason")
+        continuation = _maybe_build_continuation_transition(context)
+        if continuation is not None:
             self._emit_runtime_decision(
                 context,
-                kind="evidence",
+                kind="force_final",
                 trigger="finalize",
-                action=str(evidence_block["action"]),
-                reason=str(evidence_block["reason"]),
-                status="applied",
-                policy_id=str(evidence_block["policy_id"]),
-                required_evidence=[
-                    item for item in required_evidence if isinstance(item, str)
-                ],
-                redacted_metadata=evidence_block,
+                action="continue",
+                reason=str(continuation_reason or "continuation_nudge"),
+                policy_id="continuation_detector",
             )
-            self._emit(
-                EventSpec(
-                    run_id=context.run_id,
-                    attempt_id=context.attempt_id,
-                    event_type=RuntimeEventType.RUN_FAILED,
-                    payload={
-                        "reason": TerminalReason.GUARDRAIL_BLOCKED.value,
-                        "policy_id": evidence_block["policy_id"],
-                    },
-                )
-            )
-            self._emit_observe_policy_decisions(
-                context,
-                trigger="finalize_required_evidence",
-            )
-            output = self._build_output(
-                context,
-                TerminalResult(
-                    status=RunStatus.FAILED,
-                    reason=TerminalReason.GUARDRAIL_BLOCKED,
-                ),
-            )
-            context.step_count += 1
-            get_loop_control_state(context).set_step_transition(
-                next_step="done",
-                tool_calls=context.tool_calls,
-            )
-            output.checkpoint = self._save_checkpoint(
-                context,
-                latest_output=output,
-                node_id="finalize",
-            )
-            self._maybe_fail_after_step("finalize")
-            get_loop_control_state(context).set_terminal_output(
-                output.model_dump(mode="json")
-            )
-            return RuntimeStepResult(next_step="done")
+            return self._resume_after_finalize(context, continuation)
+        node_contract_reprompt = self._maybe_node_contract_tool_use_reprompt(context)
+        if node_contract_reprompt is not None:
+            return self._resume_after_finalize(context, node_contract_reprompt)
+        node_contract_reprompt = self._maybe_node_contract_required_tools_reprompt(
+            context
+        )
+        if node_contract_reprompt is not None:
+            return self._resume_after_finalize(context, node_contract_reprompt)
+        terminal_answer = self._sanitize_terminal_answer(context)
+        if terminal_answer:
+            completed_payload["answer"] = terminal_answer
+        evidence_result = self._maybe_finalize_required_evidence(context)
+        if evidence_result is not None:
+            return evidence_result
         revision = await dispatch_finalize(
             self._deps.lifecycle_hooks,
             context,
@@ -615,14 +637,7 @@ class SingleAgentStepMixin:
                 reason="rubric_revision",
                 count_key="rubric_revision_count",
             )
-            context.step_count += 1
-            get_loop_control_state(context).set_step_transition(
-                next_step="llm_call",
-                tool_calls=context.tool_calls,
-            )
-            self._save_checkpoint(context, latest_output=None, node_id="finalize")
-            self._maybe_fail_after_step("finalize")
-            return revise
+            return self._resume_after_finalize(context, revise)
         # Terminal side effects (memory persistence etc.): fires exactly once,
         # with the answer the user actually received. Hooks must schedule, not
         # block — this sits right before the terminal event is emitted.
@@ -648,21 +663,7 @@ class SingleAgentStepMixin:
                 reason=TerminalReason.FINAL_ANSWER,
             ),
         )
-        context.step_count += 1
-        get_loop_control_state(context).set_step_transition(
-            next_step="done",
-            tool_calls=context.tool_calls,
-        )
-        output.checkpoint = self._save_checkpoint(
-            context,
-            latest_output=output,
-            node_id="finalize",
-        )
-        self._maybe_fail_after_step("finalize")
-        get_loop_control_state(context).set_terminal_output(
-            output.model_dump(mode="json")
-        )
-        return RuntimeStepResult(next_step="done")
+        return self._finish_terminal(context, output)
 
     def _maybe_node_contract_tool_use_reprompt(
         self, context: RunContext
