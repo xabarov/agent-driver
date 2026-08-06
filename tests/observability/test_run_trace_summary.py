@@ -2214,3 +2214,44 @@ def test_trace_summary_counts_hard_read_tools_as_fetch_progress() -> None:
     assert summary["research"]["fetch_count"] == 2
     assert summary["research_efficiency"]["fetch_attempt_count"] == 2
     assert summary["research_efficiency"]["phase_violation"] is False
+
+
+def _llm_completed_occupancy(occ: float) -> dict[str, object]:
+    return {
+        "event": "llm_call_completed",
+        "data": {
+            "provider": "p",
+            "model": "m",
+            "finish_reason": "final_answer",
+            "context_occupancy_pct": occ,
+        },
+    }
+
+
+def test_trace_summary_flags_dormant_compaction_plane() -> None:
+    """Low per-step occupancy + no compaction attempt => plane never engaged."""
+    events = [
+        {"event": "run_started", "data": {}},
+        _llm_completed_occupancy(0.2),
+        _llm_completed_occupancy(0.3),
+        {"event": "run_completed", "data": {}},
+    ]
+    summary = summarize_run_trace(run_id="r1", events=cast(Any, events))
+    cp = summary["context_pressure"]
+    assert cp["occupancy_samples"] == 2
+    assert cp["max_occupancy_pct"] == 0.3
+    assert cp["compaction_plane_dormant"] is True
+
+
+def test_trace_summary_not_dormant_when_occupancy_reaches_trigger() -> None:
+    """Occupancy that reaches the compaction trigger (>=1.0) is not dormant."""
+    events = [
+        {"event": "run_started", "data": {}},
+        _llm_completed_occupancy(0.4),
+        _llm_completed_occupancy(1.05),
+        {"event": "run_completed", "data": {}},
+    ]
+    summary = summarize_run_trace(run_id="r2", events=cast(Any, events))
+    cp = summary["context_pressure"]
+    assert cp["max_occupancy_pct"] == 1.05
+    assert cp["compaction_plane_dormant"] is False

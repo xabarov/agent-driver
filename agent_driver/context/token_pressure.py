@@ -73,10 +73,22 @@ def estimate_token_pressure(inp: TokenPressureInput) -> dict[str, Any]:
         if inp.context_window_estimate > 0
         else None
     )
+    # Occupancy against the compaction TRIGGER (not the window): the fraction of the
+    # compact threshold the post-trim prompt fills. The headline signal for whether the
+    # LLM-compaction plane engages at all — occupancy that stays well below 1.0 every
+    # step means the plane is dormant (never fires); occupancy that sawtooths to ~1.0
+    # and back means it is firing. Read from the already-resolved (cached) threshold,
+    # never a lazy probe. Ref: hermes occupancy telemetry (horizon-scan 047).
+    occupancy_pct = (
+        round(used_tokens_estimate / inp.compact_threshold, 4)
+        if inp.compact_threshold > 0
+        else None
+    )
     state = _pressure_state(inp, used_tokens_estimate, context_usage_ratio)
     return {
         "state": state,
         "used_tokens_estimate": used_tokens_estimate,
+        "occupancy_pct": occupancy_pct,
         "total_chars": total_chars,
         "prompt_content_chars": prompt_chars,
         "prompt_metadata_chars": prompt_metadata_chars,
