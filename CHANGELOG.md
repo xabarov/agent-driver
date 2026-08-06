@@ -7,6 +7,15 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Compaction condenser pipeline foundation (compaction-improvement epic, Option B1a).**
+  Internal `Condenser` / `CondenseContext` / `CondenseResult` / `CondenserPipeline`
+  (`agent_driver.context.compaction.condenser`): a cost-ordered pipeline that runs
+  reduction strategies cheapest-first and stops as soon as the request fits, with a
+  `minimum_progress` anti-thrash floor and an honest `exhausted` outcome. Additive
+  building blocks only — the live compaction dispatch is not yet wired onto them (B1b).
+
 ### Fixed
 
 - **Compaction budget correctness (compaction-improvement epic, Option A phase 1).**

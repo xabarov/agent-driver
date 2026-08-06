@@ -72,14 +72,20 @@ stay, now scoped to the pipeline run.
 
 ## Phasing within B1 (each test-gated)
 
-- **B1a — protocol + pipeline, behaviour-neutral.** Introduce `Condenser`/`CondenseResult`/
-  `CondenserPipeline`; wrap the existing modes; run them in the CURRENT order
-  (`session_memory → llm_full → partial`) with the current gating. No behaviour change —
-  pure structural refactor of `compaction_stage`. Full suite + eval-runner parity.
-- **B1b — cost-ordering + dead primitives + honest partial.** Reorder to cheap-first, wire
-  `tool_clear`/`span_collapse` in, make `partial` token-aware + honest (BUG-7), add
-  `minimum_progress`. Behaviour change behind flags; measured with the eval runner
-  (recall/hallucination/provenance/budget_efficiency + token/cost delta).
+- **B1a — protocol + pipeline FOUNDATION (DONE, 2026-08-06).** `Condenser` /
+  `CondenseContext` / `CondenseResult` / `CondenserPipeline` in
+  `context/compaction/condenser.py`, with unit tests
+  (`tests/context/test_condenser_pipeline.py`). Purely additive — **not yet wired into
+  the live dispatch**. Nuance discovered while implementing: the current
+  `apply_compaction_if_eligible` dispatch is a **mode-decision tree** (`orchestrator.decide`
+  picks one mode + specific `attempted_llm_full` fallthroughs), NOT a clean pipeline —
+  so re-encoding it behaviour-neutrally would just reproduce the tree with no gain. The
+  clean cost-ordered pipeline IS the behaviour change; hence the cutover moves to B1b.
+- **B1b — wire the pipeline in: cost-ordering + dead primitives + honest partial.** Port
+  each mode/primitive to a `Condenser`, replace the dispatch tree with the pipeline (cheap
+  tiers first), wire `tool_clear`/`span_collapse`, make `partial` token-aware + honest
+  (BUG-7), enable `minimum_progress`. Behaviour change behind flags; measured with the eval
+  runner (recall/hallucination/provenance/budget_efficiency + token/cost delta).
 
 ## Contract / SemVer
 
