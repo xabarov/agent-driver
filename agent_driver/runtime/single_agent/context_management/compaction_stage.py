@@ -417,6 +417,120 @@ def _finalize_ineligible_compaction(
     )
 
 
+async def _run_compaction_mode_dispatch(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    request: Any,
+    session_memory: Any,
+    orchestrator: CompactionOrchestrator,
+    decision: CompactionDecision,
+    compaction_id: str,
+    circuit_breaker_open_before: bool,
+) -> bool:
+    """Run the compaction mode decision tree (session_memory -> llm_full -> partial,
+    with the documented fallthroughs: a failed/absent session_memory attempt falls
+    through to llm_full when enabled, and partial runs for an explicit partial mode
+    or as the last resort when llm_full was not attempted). Return True when one mode
+    fully handled the attempt; False means no path applied (the caller then records
+    a ``path_not_implemented`` failure)."""
+    attempted_llm_full = False
+    if decision.mode.value == "session_memory" and session_memory is not None:
+        if await _apply_session_memory_compaction(
+            host,
+            context=context,
+            request=request,
+            session_memory=session_memory,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id=compaction_id,
+            circuit_breaker_open_before=circuit_breaker_open_before,
+        ):
+            return True
+        if host._config.enable_llm_compaction:
+            attempted_llm_full = True
+            if await _apply_llm_full_compaction(
+                host,
+                context=context,
+                request=request,
+                orchestrator=orchestrator,
+                decision=decision,
+                compaction_id=compaction_id,
+                circuit_breaker_open_before=circuit_breaker_open_before,
+            ):
+                return True
+    if decision.mode.value == "llm_full":
+        attempted_llm_full = True
+        if await _apply_llm_full_compaction(
+            host,
+            context=context,
+            request=request,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id=compaction_id,
+            circuit_breaker_open_before=circuit_breaker_open_before,
+        ):
+            return True
+    if host._config.enable_partial_compaction and (
+        decision.mode.value == "partial"
+        or (decision.mode.value != "partial" and not attempted_llm_full)
+    ):
+        if await _apply_partial_compaction(
+            host,
+            context=context,
+            request=request,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id=compaction_id,
+            circuit_breaker_open_before=circuit_breaker_open_before,
+        ):
+            return True
+    return False
+
+
+def _finalize_unimplemented_compaction_path(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    orchestrator: CompactionOrchestrator,
+    decision: CompactionDecision,
+    compaction_id: str,
+    circuit_breaker_open_before: bool,
+) -> None:
+    """No compaction mode applied (a disabled/misrouted path): record + emit a
+    ``path_not_implemented`` failed attempt so the circuit breaker still sees it."""
+    failure = {
+        "kind": "path_not_implemented",
+        "mode": decision.mode.value,
+        "message": "compaction path not implemented",
+    }
+    audit = orchestrator.complete_attempt(
+        decision=decision,
+        failures=[failure],
+    )
+    context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+    context.metadata[COMPACTION_RESULT_KEY] = None
+    context.metadata[COMPACTION_FAILURES_KEY] = [failure]
+    _emit_compaction_outcome(
+        host,
+        context=context,
+        outcome="failed",
+        payload_extras={
+            "mode": decision.mode.value,
+            "compaction_id": compaction_id,
+            "failure_kind": failure["kind"],
+            "failure_message": failure["message"],
+        },
+        orchestrator=orchestrator,
+    )
+    _maybe_emit_circuit_breaker_warning(
+        host,
+        context=context,
+        before_open=circuit_breaker_open_before,
+        orchestrator=orchestrator,
+    )
+
+
 async def apply_compaction_if_eligible(
     host: CompactionStageHost,
     *,
@@ -460,86 +574,25 @@ async def apply_compaction_if_eligible(
         token_pressure_state=token_pressure_state,
         orchestrator=orchestrator,
     )
-    attempted_llm_full = False
-    if decision.mode.value == "session_memory" and session_memory is not None:
-        if await _apply_session_memory_compaction(
-            host,
-            context=context,
-            request=request,
-            session_memory=session_memory,
-            orchestrator=orchestrator,
-            decision=decision,
-            compaction_id=compaction_id,
-            circuit_breaker_open_before=circuit_breaker_open_before,
-        ):
-            return
-        if host._config.enable_llm_compaction:
-            attempted_llm_full = True
-            if await _apply_llm_full_compaction(
-                host,
-                context=context,
-                request=request,
-                orchestrator=orchestrator,
-                decision=decision,
-                compaction_id=compaction_id,
-                circuit_breaker_open_before=circuit_breaker_open_before,
-            ):
-                return
-    if decision.mode.value == "llm_full":
-        attempted_llm_full = True
-        if await _apply_llm_full_compaction(
-            host,
-            context=context,
-            request=request,
-            orchestrator=orchestrator,
-            decision=decision,
-            compaction_id=compaction_id,
-            circuit_breaker_open_before=circuit_breaker_open_before,
-        ):
-            return
-    if host._config.enable_partial_compaction and (
-        decision.mode.value == "partial"
-        or (decision.mode.value != "partial" and not attempted_llm_full)
-    ):
-        if await _apply_partial_compaction(
-            host,
-            context=context,
-            request=request,
-            orchestrator=orchestrator,
-            decision=decision,
-            compaction_id=compaction_id,
-            circuit_breaker_open_before=circuit_breaker_open_before,
-        ):
-            return
-    failure = {
-        "kind": "path_not_implemented",
-        "mode": decision.mode.value,
-        "message": "compaction path not implemented",
-    }
-    audit = orchestrator.complete_attempt(
+    handled = await _run_compaction_mode_dispatch(
+        host,
+        context=context,
+        request=request,
+        session_memory=session_memory,
+        orchestrator=orchestrator,
         decision=decision,
-        failures=[failure],
+        compaction_id=compaction_id,
+        circuit_breaker_open_before=circuit_breaker_open_before,
     )
-    context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
-    context.metadata[COMPACTION_RESULT_KEY] = None
-    context.metadata[COMPACTION_FAILURES_KEY] = [failure]
-    _emit_compaction_outcome(
+    if handled:
+        return
+    _finalize_unimplemented_compaction_path(
         host,
         context=context,
-        outcome="failed",
-        payload_extras={
-            "mode": decision.mode.value,
-            "compaction_id": compaction_id,
-            "failure_kind": failure["kind"],
-            "failure_message": failure["message"],
-        },
         orchestrator=orchestrator,
-    )
-    _maybe_emit_circuit_breaker_warning(
-        host,
-        context=context,
-        before_open=circuit_breaker_open_before,
-        orchestrator=orchestrator,
+        decision=decision,
+        compaction_id=compaction_id,
+        circuit_breaker_open_before=circuit_breaker_open_before,
     )
 
 
