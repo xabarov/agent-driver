@@ -40,9 +40,9 @@ but carries:
      llm-full / session-memory / partial → post-compact cleanup → receipts).
    - Inventory every tunable + magic number and where it *should* come from
      (model window, config, runtime signal).
-   - Study reference projects (`reference/hermes-agent`, `reference/openclaude`)
-     and external prior art (context management / summarization / memory in
-     agent frameworks). Google + read, capture interesting ideas.
+   - Study reference projects (`reference/hermes-agent`, `reference/openclaude`,
+     `reference/openhands`) and external prior art (context management /
+     summarization / memory in agent frameworks). Google + read, capture ideas.
    - Produce a short design-options memo with a recommended direction.
 2. **Design decision.** Record the chosen approach (contracts/knobs/behavior delta,
    SemVer class, migration) before editing — see the execution-backend
