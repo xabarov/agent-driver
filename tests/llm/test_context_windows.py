@@ -64,10 +64,18 @@ class TestResolvedForModel:
         )
         assert s.context_window_estimate == 30_000
 
-    def test_unknown_model_keeps_defaults(self):
+    def test_unknown_model_falls_back_to_modern_window(self):
+        # BUG-2 fix: an unresolved model id no longer silently keeps the legacy 12k
+        # (which fires compaction/pressure absurdly early); it falls back to a modern
+        # window and flags the source so the runtime can warn.
         s = TrimmingSettings().resolved_for_model("nope")
-        assert s.context_window_estimate == 12_000
-        assert s.context_window_source == "default"
+        assert s.context_window_estimate == 128_000
+        assert s.context_window_source == "unresolved_fallback"
+
+    def test_explicit_window_is_authoritative_over_fallback(self):
+        s = TrimmingSettings.for_context_window(8_000).resolved_for_model("nope")
+        assert s.context_window_estimate == 8_000
+        assert s.context_window_source == "explicit"
 
 
 def test_provider_model_hint_prefers_explicit_protocol():

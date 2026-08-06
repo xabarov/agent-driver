@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from agent_driver.code_agent.contracts import CodeAgentLimits
 from agent_driver.llm.context_windows import (
+    UNRESOLVED_MODEL_CONTEXT_WINDOW,
     resolve_context_window as _resolve_context_window,
 )
 
@@ -114,8 +115,13 @@ class TrimmingSettings:
             return self
         if self.context_window_estimate != DEFAULT_CONTEXT_WINDOW_ESTIMATE:
             return self  # host set a bespoke window without the classmethod
-        window = _resolve_context_window(model)
-        if window is None or window == self.context_window_estimate:
+        resolved = _resolve_context_window(model)
+        # Unknown/renamed/proxied model id: fall back to a modern window rather than
+        # silently keeping the legacy 12k (which strangles compaction on large models).
+        # A runtime diagnostic fires at the call site when this fallback is used.
+        window = resolved if resolved is not None else UNRESOLVED_MODEL_CONTEXT_WINDOW
+        source = "model_catalog" if resolved is not None else "unresolved_fallback"
+        if window == self.context_window_estimate:
             return self
         return type(self).for_context_window(
             window,
@@ -125,7 +131,7 @@ class TrimmingSettings:
             trim_protect_recent_turns=self.trim_protect_recent_turns,
             microcompact_preserve_recent=self.microcompact_preserve_recent,
             microcompact_max_preview_chars=self.microcompact_max_preview_chars,
-            context_window_source="model_catalog",
+            context_window_source=source,
         )
 
     @classmethod

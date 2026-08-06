@@ -34,7 +34,14 @@ from agent_driver.runtime.single_agent.types import (
     RunnerDeps,
 )
 
-_MAX_SCALED_COMPACTION_CHARS = 262_144
+# Summariser-input cost cap, as a fraction of the resolved window's char budget
+# (BUG-1). Chosen to not bind for normal windows while still bounding aux cost on
+# very large-context models.
+COMPACTION_INPUT_WINDOW_FRACTION = 0.8
+# Absolute memory backstop only (not a window-relative cap): guards against a
+# pathologically-large configured window feeding an unbounded excerpt. Large enough
+# to never be the effective cap for a realistic model.
+_MAX_SCALED_COMPACTION_CHARS = 4_000_000
 
 
 def _message_material_unit_hashes(message: Any) -> set[str]:
@@ -83,23 +90,39 @@ def _material_unit_receipt(
     }
 
 
+def _is_protected_message(message: Any, *, is_last: bool) -> bool:
+    """A message the summariser must never drop or evict.
+
+    The single protection predicate shared by the compaction excerpt (which groups
+    it may not PTL-drop) and the post-summary retention set (which messages survive
+    the rewrite). Previously these two disagreed — the retention set omitted
+    ``compaction_evidence`` / ``material_unit_hashes``, so a message flagged solely
+    with those was fed to the summariser and then silently dropped (data loss).
+    """
+    if is_last:
+        return True
+    role = str(getattr(message.role, "value", message.role) or "").casefold()
+    if role == "system":
+        return True
+    metadata = message.metadata if isinstance(message.metadata, dict) else {}
+    return bool(
+        metadata.get("compaction_protected")
+        or metadata.get("compaction_evidence")
+        or metadata.get("material_fact_ids")
+        or _message_material_unit_hashes(message)
+    )
+
+
 def _retained_messages_after_full_compaction(messages: list[Any]) -> list[Any]:
     """Keep stable contracts and the live instruction after successful summary."""
     if not messages:
         return []
     last_index = len(messages) - 1
-    retained: list[Any] = []
-    for index, message in enumerate(messages):
-        role = str(getattr(message.role, "value", message.role) or "").casefold()
-        metadata = message.metadata if isinstance(message.metadata, dict) else {}
-        if (
-            role == "system"
-            or index == last_index
-            or bool(metadata.get("compaction_protected"))
-            or bool(metadata.get("material_fact_ids"))
-        ):
-            retained.append(message)
-    return retained
+    return [
+        message
+        for index, message in enumerate(messages)
+        if _is_protected_message(message, is_last=index == last_index)
+    ]
 
 
 def _scaled_context_char_cap(
@@ -121,9 +144,19 @@ def _scaled_context_char_cap(
     scaled = (
         base_max_chars * resolved_compaction + baseline - 1
     ) // baseline
+    window_chars = (
+        int(max_chars) if isinstance(max_chars, int) and max_chars > 0 else scaled
+    )
+    # BUG-1: cost-cap the summariser input at a FRACTION of the window's char budget,
+    # not a fixed 262144 (which bound below the window on large-context models — a
+    # 200K-token model's ~720K-char budget was clamped to 256K). The absolute
+    # backstop remains only as a memory guard, never the effective cap for a normal
+    # window.
+    input_cap = max(base_max_chars, int(window_chars * COMPACTION_INPUT_WINDOW_FRACTION))
     cap = min(
         max(base_max_chars, scaled),
-        int(max_chars) if isinstance(max_chars, int) and max_chars > 0 else scaled,
+        window_chars,
+        input_cap,
         _MAX_SCALED_COMPACTION_CHARS,
     )
     return cap, source
@@ -660,15 +693,8 @@ def _build_full_compaction_excerpt(
             continue
         group_index = len(raw_groups)
         raw_groups.append(content)
-        role = str(getattr(message.role, "value", message.role) or "").casefold()
-        metadata = message.metadata if isinstance(message.metadata, dict) else {}
-        if (
-            role == "system"
-            or message_index == last_message_index
-            or bool(metadata.get("compaction_protected"))
-            or bool(metadata.get("compaction_evidence"))
-            or bool(metadata.get("material_fact_ids"))
-            or bool(_message_material_unit_hashes(message))
+        if _is_protected_message(
+            message, is_last=message_index == last_message_index
         ):
             protected_indexes.add(group_index)
     kept_groups = list(raw_groups)

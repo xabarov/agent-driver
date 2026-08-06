@@ -47,6 +47,7 @@ retry is indistinguishable from a hang»), hermes `_emit_wait_notice` + gateway-
 | `provider_invalid_encrypted_reasoning_retry` | transient | провайдер отверг эхо reasoning-метаданных | generic retry |
 | `provider_max_tokens_reduced_retry` | transient | 402: снижаем max_tokens и повторяем | generic retry |
 | `provider_context_overflow_compact_retry` | transient | запрос не влез в окно; компакт + ретрай | «Сжимаю контекст и повторяю запрос» |
+| `context_window_unresolved_fallback` | durable | окно модели не резолвится и `context_window_estimate` не задан — принят современный fallback | «Не удалось определить окно модели — задайте `context_window_estimate`» |
 | `provider_stream_non_stream_fallback` | transient | стрим не открылся/умер до пользы; non-stream ретрай | generic retry |
 | `provider_stream_partial_final_recovered` | durable | финал восстановлен из частичного стрима | пометить ответ как восстановленный (сведения о запуске) |
 | `forced_final_recovered_prior_turn` | durable | финал взят из предыдущего содержательного хода | пометить ответ как восстановленный |

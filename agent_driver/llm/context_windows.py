@@ -27,6 +27,15 @@ from functools import lru_cache
 # rejects sessions; we merely clamp, hosts may run small local models).
 MIN_RESOLVED_CONTEXT_WINDOW = 16_000
 
+# Fallback window when a model id does not resolve to a catalog/family window AND
+# the host did not set ``context_window_estimate`` explicitly. A modern default
+# (not the legacy 12k) because an unresolved id is far more likely a large modern
+# model than a tiny one, and assuming a tiny window makes compaction/pressure fire
+# absurdly early ("compact every turn" — openclaude issue #635, which chose 128k
+# for the same reason). Hosts running small local models must set the window
+# explicitly (a runtime diagnostic fires when this fallback is used).
+UNRESOLVED_MODEL_CONTEXT_WINDOW = 128_000
+
 # Conservative family fallbacks, matched as substrings against the lowercased
 # model id (vendor prefixes like "deepseek/deepseek-v4-flash" match too). Ordered:
 # the FIRST match wins, so more specific families precede generic ones.

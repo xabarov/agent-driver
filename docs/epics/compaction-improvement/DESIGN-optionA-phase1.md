@@ -1,8 +1,32 @@
 # Design Decision — Option A, Phase 1
 
-Status: proposed (awaiting sign-off before implementation). Branch:
+Status: **decided + partially implemented** (2026-08-06). Branch:
 `epic/compaction-improvement`. Predecessor: research phase ([`RESEARCH.md`](RESEARCH.md),
 [`BUGS.md`](BUGS.md)).
+
+**Sign-off (user):** (1) `UNRESOLVED_MODEL_CONTEXT_WINDOW = 128_000`; (2) ceiling →
+window fraction (drop the fixed 262144); (3) default-on + loud diagnostic (no opt-in flag).
+
+**Implemented (this branch):**
+- Change 1 (BUG-2) — DONE. `UNRESOLVED_MODEL_CONTEXT_WINDOW = 128_000`; `resolved_for_model`
+  falls back to it with `context_window_source="unresolved_fallback"`; a once-per-run
+  `context_window_unresolved_fallback` WARNING fires at the request-build site (registered
+  in `docs/status-protocol.md`, metadata key documented).
+- Change 3 (BUG-4, data-loss) — DONE. One `_is_protected_message` predicate now used by both
+  the excerpt and `_retained_messages_after_full_compaction`; evidence/material-hash messages
+  survive. Regression: `tests/runtime/test_compaction_budget_correctness.py`.
+- Change 2 (BUG-1) — DONE (the isolated part). `_scaled_context_char_cap`'s fixed 262144
+  ceiling → `COMPACTION_INPUT_WINDOW_FRACTION` (0.8) of the window char budget; the absolute
+  constant is now a 4M memory backstop only.
+
+**Deferred to phase-1b (larger, needs measurement):**
+- BUG-5 — the `runner_defaults` path (no typed `RunContextBudget`) still derives `max_chars`
+  from `trim_max_chars` (6000) and `max_compaction_chars` from `ptl_retry_max_chars` (4000),
+  disconnected from the resolved window (and `input_tokens = max_chars//4 = 1500`). Making
+  these window-derived is a wide behaviour shift on every default-path run and touches the
+  budget contract (`contracts/context/run_budget.py::MAX_RUN_COMPACTION_CHARS`); it deserves
+  its own increment validated with `evals/context_compaction_runner.py`, not a rushed end-of-
+  turn change. BUG-3's scaling-formula reconciliation rides along with it.
 
 Option A is the **budget-correctness foundation**: most compaction defects are
 downstream of "the runtime doesn't know the real context window, so every char/token

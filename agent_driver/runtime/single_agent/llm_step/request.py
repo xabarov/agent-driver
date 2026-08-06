@@ -272,12 +272,33 @@ def build_trimmed_request(
     trimming = host._config.trimming.resolved_for_model(
         provider_model_hint(host._deps.provider)
     )
-    if trimming.context_window_source == "model_catalog":
+    if trimming.context_window_source in ("model_catalog", "unresolved_fallback"):
         context.metadata.setdefault(
             "context_window_resolved",
             {
                 "window": trimming.context_window_estimate,
-                "source": "model_catalog",
+                "source": trimming.context_window_source,
+            },
+        )
+    if trimming.context_window_source == "unresolved_fallback" and not context.metadata.get(
+        "context_window_unresolved_warned"
+    ):
+        context.metadata["context_window_unresolved_warned"] = True
+        emit_step_event(
+            host,
+            context,
+            event_type=RuntimeEventType.WARNING,
+            payload={
+                "warning": (
+                    "Model context window could not be resolved and no "
+                    "context_window_estimate was set; assuming a "
+                    f"{trimming.context_window_estimate}-token window. Set "
+                    "context_window_estimate explicitly for this model "
+                    "(especially small local models) to size compaction correctly."
+                ),
+                "signal_id": "context_window_unresolved_fallback",
+                "severity": "warning",
+                "assumed_window": trimming.context_window_estimate,
             },
         )
     context_budget = resolve_run_context_budget(

@@ -7,6 +7,24 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Compaction budget correctness (compaction-improvement epic, Option A phase 1).**
+  - An unresolved model id (unknown/renamed/proxied) no longer silently assumes a
+    12K context window — it falls back to a modern `UNRESOLVED_MODEL_CONTEXT_WINDOW`
+    (128K) and emits a once-per-run `context_window_unresolved_fallback` warning so
+    under-configuration is loud. A host-set `context_window_estimate` stays
+    authoritative (set it explicitly for small local models to reproduce the old
+    behaviour). *Minor* behaviour change for under-configured hosts.
+  - **Data-loss fix:** LLM-full compaction unified its two protection predicates —
+    a message flagged solely with `compaction_evidence` / `material_unit_hashes` was
+    fed to the summariser and then silently dropped from the kept set; it is now
+    retained verbatim (one `_is_protected_message` used by both the excerpt and the
+    post-summary retention).
+  - The summariser-input char cap is now a fraction of the resolved window's budget
+    instead of a fixed 262144 ceiling that bound below the window on large-context
+    models. (The default-path budget derivation, BUG-5, follows in a later phase.)
+
 ### Changed
 
 - **Internal: consolidated the secret-field redaction validators.** The

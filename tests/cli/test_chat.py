@@ -192,7 +192,10 @@ async def test_chat_session_basic_turn_and_runs_listing() -> None:
     text = "".join(io.output)
     assert "assistant> chat ok" in text
     assert "run> run_chat_" in text
-    assert "tools_used=" not in text
+    # The fake provider's model does not resolve to a context window and no
+    # context_window_estimate is set, so the run surfaces the one-per-run
+    # context_window_unresolved_fallback warning (Option A phase-1, BUG-2).
+    assert "tools_used=0 warnings=1" in text
     assert "chat> bye" in text
     assert "node_completed" not in text
 
@@ -496,7 +499,9 @@ async def test_chat_session_looping_tool_calls_stop_by_budget_with_named_tools()
     # A looping provider stopped by the tool-call budget now surfaces the honest
     # loop-guard / budget warning signals added by the loop-guards + force-final
     # planes (epics 015/019), so the count is 3, not the historical 1.
-    assert "tools_used=1 warnings=3" in text
+    # +1 warning vs before: the fake provider's model is unresolved so the run also
+    # surfaces the context_window_unresolved_fallback warning (Option A phase-1).
+    assert "tools_used=1 warnings=4" in text
     assert "hint> Check --max-tool-calls and tool policy." not in text
 
 
