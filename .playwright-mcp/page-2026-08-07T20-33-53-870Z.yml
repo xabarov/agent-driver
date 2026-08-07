@@ -1,0 +1,1052 @@
+- generic [ref=f1e2]:
+  - generic [ref=f1e4]:
+    - banner [ref=f1e5]:
+      - generic [ref=f1e7]:
+        - generic [ref=f1e8]:
+          - link "Excel AI" [ref=f1e9] [cursor=pointer]:
+            - /url: /
+          - navigation [ref=f1e16]:
+            - link "Загрузить" [ref=f1e17] [cursor=pointer]:
+              - /url: /workbooks/upload
+            - button "Последняя таблица" [ref=f1e21]
+            - button "Настройки" [ref=f1e25]
+            - link "Админка" [ref=f1e29] [cursor=pointer]:
+              - /url: /admin/login
+        - status "Бэкенд доступен" [ref=f1e40]
+    - main [ref=f1e37]:
+      - generic [ref=f1e41]:
+        - button "Открыть боковую панель" [ref=f1e42]
+        - generic [ref=f1e45]:
+          - generic [ref=f1e48]:
+            - heading "Просмотр листа" [level=1] [ref=f1e49]
+            - button "Обзор листа" [ref=f1e50]
+            - paragraph [ref=f1e53]: "Книга: sales_e2e.xlsx | Лист: Sales"
+          - generic [ref=f1e57]:
+            - generic [ref=f1e58]:
+              - grid "grid" [ref=f1e59]:
+                - row [ref=f1e60]:
+                  - gridcell [ref=f1e61]
+                  - gridcell "1" [ref=f1e62]
+              - grid "grid" [ref=f1e64]:
+                - row [ref=f1e65]:
+                  - gridcell "A" [ref=f1e66]
+                  - gridcell "B" [ref=f1e68]
+                  - gridcell "C" [ref=f1e70]
+                  - gridcell "D" [ref=f1e72]
+                  - gridcell "Region" [ref=f1e74] [cursor=pointer]
+                  - gridcell "Quarter" [ref=f1e75] [cursor=pointer]
+                  - gridcell "Revenue" [ref=f1e76] [cursor=pointer]
+                  - gridcell "Units" [ref=f1e77] [cursor=pointer]
+            - generic [ref=f1e78]:
+              - grid "grid" [ref=f1e79]:
+                - row [ref=f1e80]:
+                  - gridcell "2" [ref=f1e81]
+                  - gridcell "3" [ref=f1e83]
+                  - gridcell "4" [ref=f1e85]
+                  - gridcell "5" [ref=f1e87]
+                  - gridcell "6" [ref=f1e89]
+                  - gridcell "7" [ref=f1e91]
+                  - gridcell "8" [ref=f1e93]
+                  - gridcell "9" [ref=f1e95]
+              - grid "grid" [ref=f1e97]:
+                - row [ref=f1e98]:
+                  - gridcell "North" [ref=f1e99] [cursor=pointer]
+                  - gridcell "Q1" [ref=f1e100] [cursor=pointer]
+                  - gridcell "12000" [ref=f1e101] [cursor=pointer]
+                  - gridcell "120" [ref=f1e102] [cursor=pointer]
+                  - gridcell "North" [ref=f1e103] [cursor=pointer]
+                  - gridcell "Q2" [ref=f1e104] [cursor=pointer]
+                  - gridcell "15000" [ref=f1e105] [cursor=pointer]
+                  - gridcell "150" [ref=f1e106] [cursor=pointer]
+                  - gridcell "South" [ref=f1e107] [cursor=pointer]
+                  - gridcell "Q1" [ref=f1e108] [cursor=pointer]
+                  - gridcell "9000" [ref=f1e109] [cursor=pointer]
+                  - gridcell "90" [ref=f1e110] [cursor=pointer]
+                  - gridcell "South" [ref=f1e111] [cursor=pointer]
+                  - gridcell "Q2" [ref=f1e112] [cursor=pointer]
+                  - gridcell "11000" [ref=f1e113] [cursor=pointer]
+                  - gridcell "110" [ref=f1e114] [cursor=pointer]
+                  - gridcell "East" [ref=f1e115] [cursor=pointer]
+                  - gridcell "Q1" [ref=f1e116] [cursor=pointer]
+                  - gridcell "13000" [ref=f1e117] [cursor=pointer]
+                  - gridcell "130" [ref=f1e118] [cursor=pointer]
+                  - gridcell "East" [ref=f1e119] [cursor=pointer]
+                  - gridcell "Q2" [ref=f1e120] [cursor=pointer]
+                  - gridcell "17000" [ref=f1e121] [cursor=pointer]
+                  - gridcell "170" [ref=f1e122] [cursor=pointer]
+                  - gridcell "West" [ref=f1e123] [cursor=pointer]
+                  - gridcell "Q1" [ref=f1e124] [cursor=pointer]
+                  - gridcell "8000" [ref=f1e125] [cursor=pointer]
+                  - gridcell "80" [ref=f1e126] [cursor=pointer]
+        - separator "Изменить размер панели чата" [ref=f1e135]
+        - generic [ref=f1e137]:
+          - generic [ref=f1e138]:
+            - generic [ref=f1e139]:
+              - heading "Чат с агентом" [level=2] [ref=f1e140]
+              - generic [ref=f1e259]: Беседа активна
+            - generic [ref=f1e141]:
+              - generic [ref=f1e142]:
+                - generic "Агент видит данные и строит графики, но НЕ может править книгу. Безопасный режим по умолчанию." [ref=f1e143]: "Режим:"
+                - combobox "Выбор режима работы с инструментами" [ref=f1e144]:
+                  - option "Только чтение" [selected]
+                  - option "Правки с подтверждением"
+                  - option "Правки без подтверждения"
+              - button "Новая беседа" [ref=f1e260]
+              - button "Открыть историю" [ref=f1e145]:
+                - img "Открыть историю"
+          - generic [ref=f1e175]:
+            - generic [ref=f1e178]:
+              - toolbar "Действия с сообщением" [ref=f1e179]:
+                - button "Копировать сообщение" [ref=f1e180]
+                - button "Редактировать и переотправить" [ref=f1e184]
+                - button "Удалить сообщение" [ref=f1e188]
+              - generic [ref=f1e193]: "Сделай подробный пошаговый анализ: посчитай суммарную выручку (Revenue) по каждому региону, определи регион-лидер, посчитай средние Units по кварталам Q1 и Q2, найди самый прибыльный квартал, и составь развёрнутое резюме с несколькими выводами и рекомендациями."
+            - generic [ref=f1e200]:
+              - generic [ref=f1e203]:
+                - button "thought" [ref=f1e205]:
+                  - generic [ref=f1e206]: 💭
+                  - generic [ref=f1e207]: размышляет
+                - button "sandbox_execute_pandas" [ref=f1e209] [cursor=pointer]:
+                  - generic [ref=f1e210]: ⚡
+                  - generic [ref=f1e211]: Анализ pandas
+                  - generic [ref=f1e212]: Готово
+                - button "thought" [ref=f1e264] [cursor=pointer]:
+                  - generic [ref=f1e265]: 💭
+                  - generic [ref=f1e266]: размышляет
+                - button "chart_vegalite" [ref=f1e268] [cursor=pointer]:
+                  - generic [ref=f1e269]: 📊
+                  - generic [ref=f1e270]: Построение графика
+                  - generic [ref=f1e271]: Готово
+                - button "thought" [ref=f1e273] [cursor=pointer]:
+                  - generic [ref=f1e274]: 💭
+                  - generic [ref=f1e275]: размышляет
+              - generic [ref=f1e220]:
+                - toolbar "Действия с сообщением" [ref=f1e276]:
+                  - button "Копировать сообщение" [ref=f1e277]
+                  - button "Перегенерировать ответ" [ref=f1e281]
+                  - button "Удалить сообщение" [ref=f1e287]
+                - generic [ref=f1e292]:
+                  - heading "Подробный анализ продаж (лист Sales)" [level=1] [ref=f1e2611]
+                  - heading "Шаг 1. Суммарная выручка по регионам" [level=2] [ref=f1e2612]
+                  - table [ref=f1e2614]:
+                    - rowgroup [ref=f1e2615]:
+                      - row [ref=f1e2616]:
+                        - columnheader "Регион" [ref=f1e2617]
+                        - columnheader "Суммарная выручка (Revenue)" [ref=f1e2618]
+                    - rowgroup [ref=f1e2619]:
+                      - row [ref=f1e2620]:
+                        - cell "East" [ref=f1e2621]
+                        - cell [ref=f1e2622]:
+                          - strong [ref=f1e2623]: 30 000
+                      - row [ref=f1e2624]:
+                        - cell "North" [ref=f1e2625]
+                        - cell "27 000" [ref=f1e2626]
+                      - row [ref=f1e2627]:
+                        - cell "South" [ref=f1e2628]
+                        - cell "20 000" [ref=f1e2629]
+                      - row [ref=f1e2630]:
+                        - cell "West" [ref=f1e2631]
+                        - cell "17 500" [ref=f1e2632]
+                      - row [ref=f1e2633]:
+                        - cell [ref=f1e2634]:
+                          - strong [ref=f1e2635]: Итого
+                        - cell [ref=f1e2636]:
+                          - strong [ref=f1e2637]: 94 500
+                  - heading "Шаг 2. Регион-лидер" [level=2] [ref=f1e2638]
+                  - paragraph [ref=f1e2639]:
+                    - text: 🏆
+                    - strong [ref=f1e2640]: East
+                    - text: — суммарная выручка
+                    - strong [ref=f1e2641]: 30 000
+                    - text: ", что составляет ~31,7% от общего объёма. Это однозначный лидер, опережающий ближайшего преследователя (North, 27 000) на 3 000 (≈11%)."
+                  - heading "Шаг 3. Средние Units по кварталам" [level=2] [ref=f1e2642]
+                  - table [ref=f1e2644]:
+                    - rowgroup [ref=f1e2645]:
+                      - row [ref=f1e2646]:
+                        - columnheader "Квартал" [ref=f1e2647]
+                        - columnheader "Средние Units" [ref=f1e2648]
+                    - rowgroup [ref=f1e2649]:
+                      - row [ref=f1e2650]:
+                        - cell "Q1" [ref=f1e2651]
+                        - cell [ref=f1e2652]:
+                          - strong [ref=f1e2653]: 105,0
+                      - row [ref=f1e2654]:
+                        - cell "Q2" [ref=f1e2655]
+                        - cell [ref=f1e2656]:
+                          - strong [ref=f1e2657]: 131,25
+                  - paragraph [ref=f1e2658]: Средний объём продаж в штуках во втором квартале на ~25% выше, чем в первом (131,25 против 105) — это указывает на рост спроса или сезонный всплеск.
+                  - heading "Шаг 4. Самый прибыльный квартал" [level=2] [ref=f1e2659]
+                  - table [ref=f1e2661]:
+                    - rowgroup [ref=f1e2662]:
+                      - row [ref=f1e2663]:
+                        - columnheader "Квартал" [ref=f1e2664]
+                        - columnheader "Суммарная выручка" [ref=f1e2665]
+                    - rowgroup [ref=f1e2666]:
+                      - row [ref=f1e2667]:
+                        - cell "Q1" [ref=f1e2668]
+                        - cell "42 000" [ref=f1e2669]
+                      - row [ref=f1e2670]:
+                        - cell "Q2" [ref=f1e2671]
+                        - cell [ref=f1e2672]:
+                          - strong [ref=f1e2673]: 52 500
+                  - paragraph [ref=f1e2674]:
+                    - text: 💰
+                    - strong [ref=f1e2675]: Q2
+                    - text: — самый прибыльный квартал с выручкой
+                    - strong [ref=f1e2676]: 52 500
+                    - text: (≈55,6% от годовой суммы), что на 10 500 (25%) больше, чем в Q1.
+                  - separator [ref=f1e359]
+                  - heading "📋 Резюме и выводы" [level=2] [ref=f1e2677]
+                  - list [ref=f1e2678]:
+                    - listitem [ref=f1e2679]:
+                      - paragraph [ref=f1e2680]:
+                        - strong [ref=f1e2681]: Явная концентрация на Востоке.
+                        - text: Регион East генерирует почти треть всей выручки. Это ключевой драйвер бизнеса, за которым следует North. Оба региона вместе обеспечивают ~60% дохода.
+                    - listitem [ref=f1e2682]:
+                      - paragraph [ref=f1e2683]:
+                        - strong [ref=f1e2684]: Рост во втором квартале.
+                        - text: И по объёму (Units +25%), и по выручке (+25%) Q2 заметно сильнее Q1 — это устойчивая позитивная динамика, а не отдельная аномалия.
+                    - listitem [ref=f1e2685]:
+                      - paragraph [ref=f1e2686]:
+                        - strong [ref=f1e2687]: Запад — слабое звено.
+                        - text: West показывает минимальные результаты (17 500, ≈18,5%). Здесь наибольший потенциал для роста.
+                  - heading "Рекомендации" [level=3] [ref=f1e2688]
+                  - list [ref=f1e2689]:
+                    - listitem [ref=f1e2690]:
+                      - strong [ref=f1e2691]: East и North
+                      - text: — укреплять и защищать текущие позиции (лояльность, удержание ключевых клиентов), продолжать инвестировать в рост.
+                    - listitem [ref=f1e2692]:
+                      - strong [ref=f1e2693]: South и особенно West
+                      - text: — провести анализ причин отставания (ценообразование, ассортимент, маркетинговая активность) и запустить целевые программы продвижения.
+                    - listitem [ref=f1e2694]:
+                      - strong [ref=f1e2695]: Сезонность Q2
+                      - text: — изучить факторы успеха второго квартала и использовать этот паттерн для планирования запасов и промо-кампаний на будущие периоды.
+                  - paragraph [ref=f1e2696]: Для дальнейшего анализа могу подробнее разобрать динамику по кварталам в разрезе каждого региона (например, сводную матрицу «регион × квартал»).
+                - generic [ref=f1e380]:
+                  - generic [ref=f1e381]: 10 274 in · 706 out · 1м 8с
+                  - button "Подробности запуска" [ref=f1e383]
+              - generic [ref=f1e387]:
+                - generic [ref=f1e390]:
+                  - generic "Vega visualization" [ref=f1e391]:
+                    - img [ref=f1e392]:
+                      - generic [ref=f1e397]:
+                        - 'generic "X-axis titled ''Region'' for a discrete scale with 4 values: East, North, South, West" [ref=f1e401]':
+                          - generic [ref=f1e403]:
+                            - generic:
+                              - generic: East
+                              - generic: North
+                              - generic: South
+                              - generic: West
+                            - generic: Region
+                        - generic "Y-axis titled 'Revenue' for a linear scale with values from 0 to 30,000" [ref=f1e404]:
+                          - generic [ref=f1e406]:
+                            - generic:
+                              - generic: "0"
+                              - generic: 5,000
+                              - generic: 10,000
+                              - generic: 15,000
+                              - generic: 20,000
+                              - generic: 25,000
+                              - generic: 30,000
+                            - generic: Revenue
+                        - generic [ref=f1e407]:
+                          - 'generic "Region: East; Revenue: 30000" [ref=f1e415]'
+                          - 'generic "Region: North; Revenue: 27000" [ref=f1e423]'
+                          - 'generic "Region: South; Revenue: 20000" [ref=f1e431]'
+                          - 'generic "Region: West; Revenue: 17500" [ref=f1e439]'
+                        - generic [ref=f1e442]:
+                          - generic "Title text 'Суммарная выручка по регионам'": Суммарная выручка по регионам
+                  - group "Click to view actions":
+                    - generic [ref=f1e443] [cursor=pointer]
+                  - group "Click to view actions":
+                    - generic [ref=f1e448] [cursor=pointer]
+                - button "Открыть в полном размере" [ref=f1e453]
+            - generic [ref=f1e546]:
+              - toolbar "Действия с сообщением" [ref=f1e547]:
+                - button "Копировать сообщение" [ref=f1e548]
+                - button "Редактировать и переотправить" [ref=f1e552]
+                - button "Удалить сообщение" [ref=f1e556]
+              - generic [ref=f1e561]: Теперь построй сводную матрицу «регион × квартал» по выручке, посчитай доли каждого региона, отдельно разбери динамику Q1→Q2 для каждого региона, и напиши очень подробный многошаговый разбор с выводами по каждому пункту.
+            - generic [ref=f1e568]:
+              - generic [ref=f1e678]:
+                - button "thought" [ref=f1e680]:
+                  - generic [ref=f1e681]: 💭
+                  - generic [ref=f1e682]: размышляет
+                - button "skill_view" [ref=f1e684] [cursor=pointer]:
+                  - generic [ref=f1e685]: 🔧
+                  - generic [ref=f1e687]: Готово
+                - button "thought" [ref=f1e689] [cursor=pointer]:
+                  - generic [ref=f1e690]: 💭
+                  - generic [ref=f1e691]: размышляет
+                - button "chart_vegalite" [ref=f1e693] [cursor=pointer]:
+                  - generic [ref=f1e694]: 📊
+                  - generic [ref=f1e695]: Построение графика
+                  - generic [ref=f1e696]: Готово
+                - button "thought" [ref=f1e698] [cursor=pointer]:
+                  - generic [ref=f1e699]: 💭
+                  - generic [ref=f1e700]: размышляет
+                  - generic "всего 2" [ref=f1e701]: ×2
+                - button "sandbox_execute_pandas" [ref=f1e703] [cursor=pointer]:
+                  - generic [ref=f1e704]: ⚡
+                  - generic [ref=f1e705]: Анализ pandas
+                  - generic [ref=f1e706]: Готово
+                - button "thought" [ref=f1e708]:
+                  - generic [ref=f1e709]: 💭
+                  - generic [ref=f1e710]: размышляет
+                - button "sandbox_execute_pandas" [ref=f1e712] [cursor=pointer]:
+                  - generic [ref=f1e713]: ⚡
+                  - generic [ref=f1e714]: Анализ pandas
+                  - generic [ref=f1e715]: Готово
+                - button "thought" [ref=f1e717]:
+                  - generic [ref=f1e718]: 💭
+                  - generic [ref=f1e719]: размышляет
+                - button "sandbox_execute_pandas" [ref=f1e721] [cursor=pointer]:
+                  - generic [ref=f1e722]: ⚡
+                  - generic [ref=f1e723]: Анализ pandas
+                  - generic [ref=f1e724]: Готово
+                - button "thought" [ref=f1e726]:
+                  - generic [ref=f1e727]: 💭
+                  - generic [ref=f1e728]: размышляет
+                - button "excel_read_table_page" [ref=f1e730] [cursor=pointer]:
+                  - generic [ref=f1e731]: 📄
+                  - generic [ref=f1e732]: Чтение таблицы
+                  - generic [ref=f1e733]: Готово
+                - button "thought" [ref=f1e735]:
+                  - generic [ref=f1e736]: 💭
+                  - generic [ref=f1e737]: размышляет
+              - generic [ref=f1e576]:
+                - toolbar "Действия с сообщением" [ref=f1e824]:
+                  - button "Копировать сообщение" [ref=f1e825]
+                  - button "Перегенерировать ответ" [ref=f1e829]
+                  - button "Удалить сообщение" [ref=f1e835]
+                - generic [ref=f1e840]:
+                  - heading "Сводная матрица «регион × квартал» по выручке — подробный разбор" [level=1] [ref=f1e2697]
+                  - paragraph [ref=f1e2698]:
+                    - text: "Исходные данные: таблица"
+                    - button "Перейти к ячейке A1:D9" [ref=f1e2699] [cursor=pointer]: Sales
+                    - text: ", 8 строк, выручка по 4 регионам за два квартала. Все агрегаты выполнены через pandas по этой таблице."
+                  - separator [ref=f1e844]
+                  - heading "Шаг 1. Сводная матрица Revenue (регион × квартал)" [level=2] [ref=f1e2700]
+                  - table [ref=f1e2702]:
+                    - rowgroup [ref=f1e2703]:
+                      - row [ref=f1e2704]:
+                        - columnheader "Регион" [ref=f1e2705]
+                        - columnheader "Q1" [ref=f1e2706]
+                        - columnheader "Q2" [ref=f1e2707]
+                        - columnheader "Итого" [ref=f1e2708]
+                        - columnheader "Доля" [ref=f1e2709]
+                        - columnheader "Δ Q1→Q2" [ref=f1e2710]
+                    - rowgroup [ref=f1e2711]:
+                      - row [ref=f1e2712]:
+                        - cell [ref=f1e2713]:
+                          - strong [ref=f1e2714]: East
+                        - cell "13 000" [ref=f1e2715]
+                        - cell "17 000" [ref=f1e2716]
+                        - cell [ref=f1e2717]:
+                          - strong [ref=f1e2718]: 30 000
+                        - cell "31,7%" [ref=f1e2719]
+                        - cell "+30,8%" [ref=f1e2720]
+                      - row [ref=f1e2721]:
+                        - cell [ref=f1e2722]:
+                          - strong [ref=f1e2723]: North
+                        - cell "12 000" [ref=f1e2724]
+                        - cell "15 000" [ref=f1e2725]
+                        - cell [ref=f1e2726]:
+                          - strong [ref=f1e2727]: 27 000
+                        - cell "28,6%" [ref=f1e2728]
+                        - cell "+25,0%" [ref=f1e2729]
+                      - row [ref=f1e2730]:
+                        - cell [ref=f1e2731]:
+                          - strong [ref=f1e2732]: South
+                        - cell "9 000" [ref=f1e2733]
+                        - cell "11 000" [ref=f1e2734]
+                        - cell [ref=f1e2735]:
+                          - strong [ref=f1e2736]: 20 000
+                        - cell "21,2%" [ref=f1e2737]
+                        - cell "+22,2%" [ref=f1e2738]
+                      - row [ref=f1e2739]:
+                        - cell [ref=f1e2740]:
+                          - strong [ref=f1e2741]: West
+                        - cell "8 000" [ref=f1e2742]
+                        - cell "9 500" [ref=f1e2743]
+                        - cell [ref=f1e2744]:
+                          - strong [ref=f1e2745]: 17 500
+                        - cell "18,5%" [ref=f1e2746]
+                        - cell "+18,8%" [ref=f1e2747]
+                      - row [ref=f1e2748]:
+                        - cell [ref=f1e2749]:
+                          - strong [ref=f1e2750]: Итого
+                        - cell [ref=f1e2751]:
+                          - strong [ref=f1e2752]: 42 000
+                        - cell [ref=f1e2753]:
+                          - strong [ref=f1e2754]: 52 500
+                        - cell [ref=f1e2755]:
+                          - strong [ref=f1e2756]: 94 500
+                        - cell "100%" [ref=f1e2757]
+                        - cell "+25,0%" [ref=f1e2758]
+                  - paragraph [ref=f1e2759]:
+                    - text: Матрица построена через
+                    - code [ref=f1e2760]: pivot_table(index='Region', columns='Quarter', values='Revenue', aggfunc='sum')
+                    - text: по исходным строкам
+                    - button "Перейти к ячейке A1:D9" [ref=f1e2761] [cursor=pointer]: таблицы
+                    - text: .
+                  - paragraph [ref=f1e2762]:
+                    - strong [ref=f1e2763]: "Предварительное наблюдение:"
+                    - text: во всех четырёх регионах зафиксирован рост выручки в Q2, причём общий итог вырос с 42 000 до 52 500 (+25%). Ни один регион не показал падение — динамика однонаправленная и позитивная.
+                  - separator [ref=f1e909]
+                  - heading "Шаг 2. Доли каждого региона" [level=2] [ref=f1e2764]
+                  - paragraph [ref=f1e2765]: "Расчёт: доля = итог региона / общий итог (94 500)."
+                  - list [ref=f1e2766]:
+                    - listitem [ref=f1e2767]:
+                      - strong [ref=f1e2768]: East — 31,7%
+                      - text: "(30 000 / 94 500). Лидер: почти треть всей выручки компании приходится на этот регион."
+                    - listitem [ref=f1e2769]:
+                      - strong [ref=f1e2770]: North — 28,6%
+                      - text: (27 000 / 94 500). Уверенное второе место, отставание от лидера всего ~3 п.п.
+                    - listitem [ref=f1e2771]:
+                      - strong [ref=f1e2772]: South — 21,2%
+                      - text: (20 000 / 94 500). Середина списка, заметно отстаёт от топ-2.
+                    - listitem [ref=f1e2773]:
+                      - strong [ref=f1e2774]: West — 18,5%
+                      - text: (17 500 / 94 500). Минимальная доля — аутсайдер.
+                  - paragraph [ref=f1e2775]:
+                    - strong [ref=f1e2776]: "Вывод по структуре:"
+                    - text: распределение выручки неравномерно, но не «перекошено в одного игрока». Два лидера — East и North — вместе дают
+                    - strong [ref=f1e2777]: 60,3%
+                    - text: "выручки (57 000 из 94 500), оставшиеся 39,7% делят South и West. Это типичная ситуация «ядро + периферия»: концентрация на топ-2 регионах высокая, но не критическая. У West и South есть существенный потенциал роста — каждая дополнительная тысяча в этих регионах сильнее изменит их долю, чем аналогичный прирост у лидеров."
+                  - separator [ref=f1e924]
+                  - heading "Шаг 3. Динамика Q1→Q2 по каждому региону" [level=2] [ref=f1e2778]
+                  - paragraph [ref=f1e2779]: "Темп роста = (Q2 − Q1) / Q1 × 100:"
+                  - table [ref=f1e2781]:
+                    - rowgroup [ref=f1e2782]:
+                      - row [ref=f1e2783]:
+                        - columnheader "Регион" [ref=f1e2784]
+                        - columnheader "Абс. прирост" [ref=f1e2785]
+                        - columnheader "Темп роста" [ref=f1e2786]
+                    - rowgroup [ref=f1e2787]:
+                      - row [ref=f1e2788]:
+                        - cell "East" [ref=f1e2789]
+                        - cell "+4 000" [ref=f1e2790]
+                        - cell [ref=f1e2791]:
+                          - strong [ref=f1e2792]: +30,8%
+                      - row [ref=f1e2793]:
+                        - cell "North" [ref=f1e2794]
+                        - cell "+3 000" [ref=f1e2795]
+                        - cell "+25,0%" [ref=f1e2796]
+                      - row [ref=f1e2797]:
+                        - cell "South" [ref=f1e2798]
+                        - cell "+2 000" [ref=f1e2799]
+                        - cell "+22,2%" [ref=f1e2800]
+                      - row [ref=f1e2801]:
+                        - cell "West" [ref=f1e2802]
+                        - cell "+1 500" [ref=f1e2803]
+                        - cell "+18,8%" [ref=f1e2804]
+                  - paragraph [ref=f1e2805]:
+                    - strong [ref=f1e2806]: "Выводы по каждому региону:"
+                  - list [ref=f1e2807]:
+                    - listitem [ref=f1e2808]:
+                      - paragraph [ref=f1e2809]:
+                        - strong [ref=f1e2810]: East (+4 000; +30,8%)
+                        - text: "— абсолютный лидер по обоим критериям: и по приросту, и по темпу. Регион не только удерживает первое место по объёму, но и ускоряется быстрее остальных. Это указывает на сильную динамику спроса либо на успешные продажи/акции именно в этом регионе. Риск: дальнейшая концентрация выручки в East усиливает зависимость компании от одного рынка."
+                    - listitem [ref=f1e2811]:
+                      - paragraph [ref=f1e2812]:
+                        - strong [ref=f1e2813]: North (+3 000; +25,0%)
+                        - text: "— рост в точности равен среднему по компании (+25%). Регион движется «в ногу с рынком», сохраняя свою долю практически неизменной. Это стабильный, предсказуемый второй по значимости рынок: ни рывка, ни отставания."
+                    - listitem [ref=f1e2814]:
+                      - paragraph [ref=f1e2815]:
+                        - strong [ref=f1e2816]: South (+2 000; +22,2%)
+                        - text: — рост чуть ниже среднего. Регион немного теряет в доле, хотя абсолютно растёт. Причина может быть как в меньшей ёмкости рынка, так и в недостаточной активности продаж. Обращает на себя внимание, что у South абсолютный прирост равен приросту top-3 (+2 000), что говорит о сопоставимом абсолютном потенциале — вопрос к темпам.
+                    - listitem [ref=f1e2817]:
+                      - paragraph [ref=f1e2818]:
+                        - strong [ref=f1e2819]: West (+1 500; +18,8%)
+                        - text: "— самый медленный темп и минимальный абсолютный прирост. Регион дополнительно отстаёт: если в Q1 разрыв с South составлял 1 000, то в Q2 он вырос до 1 500. Динамика West — единственный тревожный сигнал в данных: регион стабильно растёт, но медленнее всех, и его доля в общей выручке сокращается."
+                  - separator [ref=f1e967]
+                  - heading "Сводные выводы" [level=2] [ref=f1e2820]
+                  - list [ref=f1e2821]:
+                    - listitem [ref=f1e2822]:
+                      - strong [ref=f1e2823]: "Общий тренд позитивный:"
+                      - text: выручка по компании выросла на
+                      - strong [ref=f1e2824]: 25%
+                      - text: (с 42 000 до 52 500), все регионы в плюсе — это устойчивый рост, а не перераспределение между регионами.
+                    - listitem [ref=f1e2825]:
+                      - strong [ref=f1e2826]: "Структура концентрации:"
+                      - text: East + North = 60,3% выручки; два региона обеспечивают почти две трети результата. Зависимость от топ-2 высокая, но не критичная.
+                    - listitem [ref=f1e2827]:
+                      - strong [ref=f1e2828]: "Ключевой драйвер роста — East:"
+                      - text: регион дал 4 000 из 10 500 прироста по компании (38% всего прироста). Именно на него приходится основной вклад в общую динамику.
+                    - listitem [ref=f1e2829]:
+                      - strong [ref=f1e2830]: "Зона внимания — West:"
+                      - text: минимальные темпы (+18,8%) и растущее отставание. Требуется разобрать причины (спрос, конкуренция, дистрибуция), иначе регион будет продолжать терять долю.
+                    - listitem [ref=f1e2831]:
+                      - strong [ref=f1e2832]: "Рекомендация по приоритетам:"
+                      - text: удерживать и усиливать East как драйвер, догонять темпы в South (у него хороший абсолютный потенциал) и адресно работать с отставанием West.
+                  - paragraph [ref=f1e2833]:
+                    - text: Все цифры рассчитаны агрегацией pandas по исходным строкам
+                    - button "Перейти к ячейке A1:D9" [ref=f1e2834] [cursor=pointer]: таблицы Sales
+                    - text: "и подтверждаются данными из инструментов: итоги регионов —"
+                    - button "Перейти к ячейке A6:B7" [ref=f1e2835] [cursor=pointer]: East
+                    - text: ","
+                    - button "Перейти к ячейке A2:B3" [ref=f1e2836] [cursor=pointer]: North
+                    - text: ","
+                    - button "Перейти к ячейке A4:B5" [ref=f1e2837] [cursor=pointer]: South
+                    - text: ","
+                    - button "Перейти к ячейке A8:B9" [ref=f1e2838] [cursor=pointer]: West
+                    - text: .
+                - generic [ref=f1e987]:
+                  - generic [ref=f1e988]: 8776 in · 3398 out · 2м 56с
+                  - button "Подробности запуска" [ref=f1e990]
+              - generic [ref=f1e993]:
+                - generic [ref=f1e994]:
+                  - generic [ref=f1e997]:
+                    - generic "Vega visualization" [ref=f1e998]:
+                      - img [ref=f1e999]:
+                        - generic [ref=f1e1004]:
+                          - 'generic "X-axis titled ''Region'' for a discrete scale with 4 values: East, North, South, West" [ref=f1e1008]':
+                            - generic [ref=f1e1010]:
+                              - generic:
+                                - generic: East
+                                - generic: North
+                                - generic: South
+                                - generic: West
+                              - generic: Region
+                          - generic "Y-axis titled 'Revenue' for a linear scale with values from 0 to 30,000" [ref=f1e1011]:
+                            - generic [ref=f1e1013]:
+                              - generic:
+                                - generic: "0"
+                                - generic: 5,000
+                                - generic: 10,000
+                                - generic: 15,000
+                                - generic: 20,000
+                                - generic: 25,000
+                                - generic: 30,000
+                              - generic: Revenue
+                          - generic [ref=f1e1014]:
+                            - generic [ref=f1e1021]:
+                              - 'generic "Region: East; Revenue: 13000" [ref=f1e1022]'
+                              - 'generic "Region: East; Revenue: 17000" [ref=f1e1023]'
+                            - generic [ref=f1e1030]:
+                              - 'generic "Region: North; Revenue: 12000" [ref=f1e1031]'
+                              - 'generic "Region: North; Revenue: 15000" [ref=f1e1032]'
+                            - generic [ref=f1e1039]:
+                              - 'generic "Region: South; Revenue: 9000" [ref=f1e1040]'
+                              - 'generic "Region: South; Revenue: 11000" [ref=f1e1041]'
+                            - generic [ref=f1e1048]:
+                              - 'generic "Region: West; Revenue: 8000" [ref=f1e1049]'
+                              - 'generic "Region: West; Revenue: 9500" [ref=f1e1050]'
+                          - generic [ref=f1e1053]:
+                            - 'generic "Title text ''Выручка по регионам: Q1 vs Q2''"': "Выручка по регионам: Q1 vs Q2"
+                    - group "Click to view actions":
+                      - generic [ref=f1e1054] [cursor=pointer]
+                    - group "Click to view actions":
+                      - generic [ref=f1e1059] [cursor=pointer]
+                  - button "Открыть в полном размере" [ref=f1e1064]
+                - generic [ref=f1e1068]:
+                  - generic [ref=f1e1071]:
+                    - generic "Vega visualization" [ref=f1e1072]:
+                      - img [ref=f1e1073]:
+                        - generic [ref=f1e1078]:
+                          - 'generic "X-axis titled ''Region'' for a discrete scale with 4 values: East, North, South, West" [ref=f1e1082]':
+                            - generic [ref=f1e1084]:
+                              - generic:
+                                - generic: East
+                                - generic: North
+                                - generic: South
+                                - generic: West
+                              - generic: Region
+                          - generic "Y-axis titled 'Total' for a linear scale with values from 0 to 30,000" [ref=f1e1085]:
+                            - generic [ref=f1e1087]:
+                              - generic:
+                                - generic: "0"
+                                - generic: 5,000
+                                - generic: 10,000
+                                - generic: 15,000
+                                - generic: 20,000
+                                - generic: 25,000
+                                - generic: 30,000
+                              - generic: Total
+                          - generic [ref=f1e1088]:
+                            - 'generic "Region: East; Total: 30000" [ref=f1e1096]'
+                            - 'generic "Region: North; Total: 27000" [ref=f1e1104]'
+                            - 'generic "Region: South; Total: 20000" [ref=f1e1112]'
+                            - 'generic "Region: West; Total: 17500" [ref=f1e1120]'
+                          - generic [ref=f1e1123]:
+                            - generic "Title text 'Суммарная выручка по регионам'": Суммарная выручка по регионам
+                    - group "Click to view actions":
+                      - generic [ref=f1e1124] [cursor=pointer]
+                    - group "Click to view actions":
+                      - generic [ref=f1e1129] [cursor=pointer]
+                  - button "Открыть в полном размере" [ref=f1e1134]
+            - generic [ref=f1e1369]:
+              - toolbar "Действия с сообщением" [ref=f1e1370]:
+                - button "Копировать сообщение" [ref=f1e1371]
+                - button "Редактировать и переотправить" [ref=f1e1375]
+                - button "Удалить сообщение" [ref=f1e1379]
+              - generic [ref=f1e1384]: "Проведи максимально подробный многошаговый разбор данных: для каждого региона отдельно посчитай выручку, доли, динамику, средние Units, ранги; построй несколько графиков; и напиши очень длинное развёрнутое резюме с рекомендациями по каждому региону и кварталу."
+            - generic [ref=f1e1391]:
+              - generic [ref=f1e1871]:
+                - button "thought" [ref=f1e1873] [cursor=pointer]:
+                  - generic [ref=f1e1874]: 💭
+                  - generic [ref=f1e1875]: размышляет
+                - button "sandbox_execute_pandas" [ref=f1e1877] [cursor=pointer]:
+                  - generic [ref=f1e1878]: ⚡
+                  - generic [ref=f1e1879]: Анализ pandas
+                  - generic [ref=f1e1880]: Готово
+                - button "thought" [ref=f1e2122] [cursor=pointer]:
+                  - generic [ref=f1e2123]: 💭
+                  - generic [ref=f1e2124]: размышляет
+                - button "chart_vegalite" [ref=f1e2126] [cursor=pointer]:
+                  - generic [ref=f1e2127]: 📊
+                  - generic [ref=f1e2128]: Построение графика
+                  - generic [ref=f1e2129]: Готово
+              - generic [ref=f1e1399]:
+                - toolbar "Действия с сообщением" [ref=f1e2839]:
+                  - button "Копировать сообщение" [ref=f1e2840]
+                  - button "Перегенерировать ответ" [ref=f1e2844]
+                  - button "Удалить сообщение" [ref=f1e2850]
+                - generic [ref=f1e2855]:
+                  - heading "📊 Максимально подробный разбор данных — лист Sales" [level=1] [ref=f1e2856]
+                  - paragraph [ref=f1e2857]:
+                    - text: "Исходник: таблица"
+                    - button "Перейти к ячейке A1:D9" [ref=f1e2858] [cursor=pointer]: Sales
+                    - text: ", 8 записей: 4 региона × 2 квартала. Все показатели посчитаны агрегацией pandas по исходным строкам таблицы."
+                  - separator [ref=f1e2859]
+                  - heading "Блок 1. Сводная матрица по каждому региону" [level=2] [ref=f1e2860]
+                  - table [ref=f1e2862]:
+                    - rowgroup [ref=f1e2863]:
+                      - row [ref=f1e2864]:
+                        - columnheader "Регион" [ref=f1e2865]
+                        - columnheader "Выручка" [ref=f1e2866]
+                        - columnheader "Доля" [ref=f1e2867]
+                        - columnheader "Ранг" [ref=f1e2868]
+                        - columnheader "Q1" [ref=f1e2869]
+                        - columnheader "Q2" [ref=f1e2870]
+                        - columnheader "Δ абс." [ref=f1e2871]
+                        - columnheader "Δ %" [ref=f1e2872]
+                        - columnheader "Ср. Units" [ref=f1e2873]
+                    - rowgroup [ref=f1e2874]:
+                      - row [ref=f1e2875]:
+                        - cell [ref=f1e2876]:
+                          - strong [ref=f1e2877]: East
+                        - cell "30 000" [ref=f1e2878]
+                        - cell "31,7%" [ref=f1e2879]
+                        - cell "🥇1" [ref=f1e2880]
+                        - cell "13 000" [ref=f1e2881]
+                        - cell "17 000" [ref=f1e2882]
+                        - cell "+4 000" [ref=f1e2883]
+                        - cell "+30,8%" [ref=f1e2884]
+                        - cell [ref=f1e2885]:
+                          - strong [ref=f1e2886]: 150,0
+                      - row [ref=f1e2887]:
+                        - cell [ref=f1e2888]:
+                          - strong [ref=f1e2889]: North
+                        - cell "27 000" [ref=f1e2890]
+                        - cell "28,6%" [ref=f1e2891]
+                        - cell "🥈2" [ref=f1e2892]
+                        - cell "12 000" [ref=f1e2893]
+                        - cell "15 000" [ref=f1e2894]
+                        - cell "+3 000" [ref=f1e2895]
+                        - cell "+25,0%" [ref=f1e2896]
+                        - cell "135,0" [ref=f1e2897]
+                      - row [ref=f1e2898]:
+                        - cell [ref=f1e2899]:
+                          - strong [ref=f1e2900]: South
+                        - cell "20 000" [ref=f1e2901]
+                        - cell "21,2%" [ref=f1e2902]
+                        - cell "🥉3" [ref=f1e2903]
+                        - cell "9 000" [ref=f1e2904]
+                        - cell "11 000" [ref=f1e2905]
+                        - cell "+2 000" [ref=f1e2906]
+                        - cell "+22,2%" [ref=f1e2907]
+                        - cell "100,0" [ref=f1e2908]
+                      - row [ref=f1e2909]:
+                        - cell [ref=f1e2910]:
+                          - strong [ref=f1e2911]: West
+                        - cell "17 500" [ref=f1e2912]
+                        - cell "18,5%" [ref=f1e2913]
+                        - cell "4" [ref=f1e2914]
+                        - cell "8 000" [ref=f1e2915]
+                        - cell "9 500" [ref=f1e2916]
+                        - cell "+1 500" [ref=f1e2917]
+                        - cell "+18,8%" [ref=f1e2918]
+                        - cell "87,5" [ref=f1e2919]
+                      - row [ref=f1e2920]:
+                        - cell [ref=f1e2921]:
+                          - strong [ref=f1e2922]: Итого
+                        - cell [ref=f1e2923]:
+                          - strong [ref=f1e2924]: 94 500
+                        - cell "100%" [ref=f1e2925]
+                        - cell "—" [ref=f1e2926]
+                        - cell [ref=f1e2927]:
+                          - strong [ref=f1e2928]: 42 000
+                        - cell [ref=f1e2929]:
+                          - strong [ref=f1e2930]: 52 500
+                        - cell [ref=f1e2931]:
+                          - strong [ref=f1e2932]: +10 500
+                        - cell [ref=f1e2933]:
+                          - strong [ref=f1e2934]: +25%
+                        - cell "—" [ref=f1e2935]
+                  - separator [ref=f1e2936]
+                  - heading "Блок 2. Разбор по каждому региону" [level=2] [ref=f1e2937]
+                  - heading "🥇 East — 30 000 ₽ (31,7%), ранг 1" [level=3] [ref=f1e2938]
+                  - list [ref=f1e2939]:
+                    - listitem [ref=f1e2940]:
+                      - strong [ref=f1e2941]: "Выручка:"
+                      - text: 30 000 — абсолютный лидер; треть всей выручки компании.
+                    - listitem [ref=f1e2942]:
+                      - strong [ref=f1e2943]: "Доля:"
+                      - text: 31,7%, отрыв от North (28,6%) всего ~3 п.п. — но лидерство удерживает с запасом.
+                    - listitem [ref=f1e2944]:
+                      - strong [ref=f1e2945]: "Динамика:"
+                      - text: Q1 13 000 → Q2 17 000,
+                      - strong [ref=f1e2946]: +4 000 (+30,8%)
+                      - text: — и самый большой абсолютный прирост, и самый высокий темп среди всех регионов.
+                    - listitem [ref=f1e2947]:
+                      - strong [ref=f1e2948]: "Средние Units:"
+                      - strong [ref=f1e2949]: 150,0
+                      - text: — максимальный показатель, регион продаёт больше всего штук в среднем за период.
+                    - listitem [ref=f1e2950]:
+                      - strong [ref=f1e2951]: "Вывод:"
+                      - text: "East — одновременно лидер по объёму, по темпу роста и по средней продаже в штуках. Это здоровый «драйвер роста»: не только большая база, но и ускоряющаяся динамика."
+                      - strong [ref=f1e2952]: "Рекомендация:"
+                      - text: закрепить успех — удерживать ключевых клиентов, расширять ассортимент в регионе; но остерегаться чрезмерной концентрации (1/3 бизнеса зависит от одного рынка).
+                  - heading "🥈 North — 27 000 ₽ (28,6%), ранг 2" [level=3] [ref=f1e2953]
+                  - list [ref=f1e2954]:
+                    - listitem [ref=f1e2955]:
+                      - strong [ref=f1e2956]: "Выручка:"
+                      - text: 27 000 — уверенное второе место.
+                    - listitem [ref=f1e2957]:
+                      - strong [ref=f1e2958]: "Доля:"
+                      - text: 28,6%.
+                    - listitem [ref=f1e2959]:
+                      - strong [ref=f1e2960]: "Динамика:"
+                      - text: Q1 12 000 → Q2 15 000,
+                      - strong [ref=f1e2961]: +3 000 (+25,0%)
+                      - text: — темп роста в точности равен среднему по компании, регион движется «в ногу с рынком».
+                    - listitem [ref=f1e2962]:
+                      - strong [ref=f1e2963]: "Средние Units:"
+                      - text: 135,0 — второй результат.
+                    - listitem [ref=f1e2964]:
+                      - strong [ref=f1e2965]: "Вывод:"
+                      - text: "Север — стабильный, предсказуемый крупный рынок: сохраняет долю, не отстаёт и не «выстреливает»."
+                      - strong [ref=f1e2966]: "Рекомендация:"
+                      - text: держать текущий уровень и искать точки ускорения (можно подтянуть темп до уровня East через целевую рекламу или расширение каналов).
+                  - heading "🥉 South — 20 000 ₽ (21,2%), ранг 3" [level=3] [ref=f1e2967]
+                  - list [ref=f1e2968]:
+                    - listitem [ref=f1e2969]:
+                      - strong [ref=f1e2970]: "Выручка:"
+                      - text: 20 000.
+                    - listitem [ref=f1e2971]:
+                      - strong [ref=f1e2972]: "Доля:"
+                      - text: 21,2%.
+                    - listitem [ref=f1e2973]:
+                      - strong [ref=f1e2974]: "Динамика:"
+                      - text: Q1 9 000 → Q2 11 000,
+                      - strong [ref=f1e2975]: +2 000 (+22,2%)
+                      - text: — чуть ниже среднего темпа, поэтому доля региона слегка сокращается.
+                    - listitem [ref=f1e2976]:
+                      - strong [ref=f1e2977]: "Средние Units:"
+                      - text: 100,0.
+                    - listitem [ref=f1e2978]:
+                      - strong [ref=f1e2979]: "Вывод:"
+                      - text: Юг — рынок с хорошим абсолютным потенциалом (прирост +2 000 равен top-3, но из меньшей базы темп отстаёт). Регион чуть «проседает» по динамике относительно рынка.
+                      - strong [ref=f1e2980]: "Рекомендация:"
+                      - text: выяснить, почему темп ниже среднего — ценообразование, конкуренция, покрытие дистрибуцией; при равном развитии есть потенциал приблизиться к топ-2.
+                  - heading "⚠️ West — 17 500 ₽ (18,5%), ранг 4" [level=3] [ref=f1e2981]
+                  - list [ref=f1e2982]:
+                    - listitem [ref=f1e2983]:
+                      - strong [ref=f1e2984]: "Выручка:"
+                      - text: 17 500 — минимальная.
+                    - listitem [ref=f1e2985]:
+                      - strong [ref=f1e2986]: "Доля:"
+                      - text: 18,5% — аутсайдер.
+                    - listitem [ref=f1e2987]:
+                      - strong [ref=f1e2988]: "Динамика:"
+                      - text: Q1 8 000 → Q2 9 500,
+                      - strong [ref=f1e2989]: +1 500 (+18,8%)
+                      - text: — самый низкий темп и минимальный абсолютный прирост. Разрыв с South в Q1 был 1 000, в Q2 вырос до 1 500 — отставание нарастает.
+                    - listitem [ref=f1e2990]:
+                      - strong [ref=f1e2991]: "Средние Units:"
+                      - text: 87,5 — наименьшие.
+                    - listitem [ref=f1e2992]:
+                      - strong [ref=f1e2993]: "Вывод:"
+                      - text: "Запад — единственный тревожный сигнал: стабильный (не падающий) рост, но медленнее всех, доля сокращается, средний чек в штуках минимальный."
+                      - strong [ref=f1e2994]: "Рекомендация:"
+                      - text: провести диагностику — спрос, присутствие конкурентов, ассортимент, активность продаж; адресная программа продвижения, иначе регион продолжит терять вес.
+                  - separator [ref=f1e2995]
+                  - heading "Блок 3. Разбор по кварталам" [level=2] [ref=f1e2996]
+                  - table [ref=f1e2998]:
+                    - rowgroup [ref=f1e2999]:
+                      - row [ref=f1e3000]:
+                        - columnheader "Квартал" [ref=f1e3001]
+                        - columnheader "Выручка" [ref=f1e3002]
+                        - columnheader "Δ vs Q1" [ref=f1e3003]
+                        - columnheader "Ср. Units" [ref=f1e3004]
+                    - rowgroup [ref=f1e3005]:
+                      - row [ref=f1e3006]:
+                        - cell "Q1" [ref=f1e3007]
+                        - cell "42 000" [ref=f1e3008]
+                        - cell "—" [ref=f1e3009]
+                        - cell "105,0" [ref=f1e3010]
+                      - row [ref=f1e3011]:
+                        - cell "Q2" [ref=f1e3012]
+                        - cell [ref=f1e3013]:
+                          - strong [ref=f1e3014]: 52 500
+                        - cell [ref=f1e3015]:
+                          - strong [ref=f1e3016]: +25%
+                        - cell [ref=f1e3017]:
+                          - strong [ref=f1e3018]: 131,25
+                  - list [ref=f1e3019]:
+                    - listitem [ref=f1e3020]:
+                      - strong [ref=f1e3021]: "Q1:"
+                      - text: 42 000, средние Units 105,0.
+                    - listitem [ref=f1e3022]:
+                      - strong [ref=f1e3023]: "Q2:"
+                      - text: 52 500, средние Units 131,25.
+                    - listitem [ref=f1e3024]:
+                      - strong [ref=f1e3025]: "Вывод:"
+                      - text: Q2 — самый прибыльный квартал (52 500, ~55,6% годовой выручки). Рост Q1→Q2 +25% прослеживается
+                      - strong [ref=f1e3026]: во всех четырёх регионах
+                      - text: — это не перераспределение, а устойчивый общий рост спроса (сезонность или расширение продаж). Средние Units также выросли на ~25% (105 → 131,25).
+                  - heading "Рекомендации по кварталу" [level=3] [ref=f1e3027]
+                  - list [ref=f1e3028]:
+                    - listitem [ref=f1e3029]:
+                      - strong [ref=f1e3030]: "Q2 как эталон:"
+                      - text: изучить факторы успеха второго квартала (сезонные акции, спрос, активность) и перенести успешные практики в Q1.
+                    - listitem [ref=f1e3031]:
+                      - strong [ref=f1e3032]: "Q1 как точка роста:"
+                      - text: стартовый квартал слабее — планировать там промо-активности заранее, чтобы сгладить просадку в начале года.
+                    - listitem [ref=f1e3033]:
+                      - strong [ref=f1e3034]: "Планирование запасов:"
+                      - text: рост Units в Q2 (+25%) требует закладывать больше товарных запасов именно ко второму кварталу.
+                  - separator [ref=f1e3035]
+                  - heading "Блок 4. Итоговые графики" [level=2] [ref=f1e3036]
+                  - paragraph [ref=f1e3037]:
+                    - text: Построены 4 графика по данным таблицы
+                    - button "Перейти к ячейке A1:D9" [ref=f1e3038] [cursor=pointer]: Sales
+                    - text: ":"
+                  - list [ref=f1e3039]:
+                    - listitem [ref=f1e3040]:
+                      - strong [ref=f1e3041]: Суммарная выручка по регионам
+                      - text: — наглядно видно лидерство East и отставание West.
+                    - listitem [ref=f1e3042]:
+                      - strong [ref=f1e3043]: Суммарная выручка по кварталам
+                      - text: — Q2 выше Q1 на 25%.
+                    - listitem [ref=f1e3044]:
+                      - strong [ref=f1e3045]: Выручка регион × квартал
+                      - text: — рост во всех комбинациях региона/квартала, максимальный у East.
+                    - listitem [ref=f1e3046]:
+                      - strong [ref=f1e3047]: Средние Units по регионам
+                      - text: — падение от East (150) к West (87,5).
+                  - separator [ref=f1e3048]
+                  - heading "📋 Глобальное резюме" [level=2] [ref=f1e3049]
+                  - list [ref=f1e3050]:
+                    - listitem [ref=f1e3051]:
+                      - strong [ref=f1e3052]: "Устойчивый общий рост:"
+                      - text: выручка компании +25% (42 000 → 52 500), все 4 региона и оба квартала в плюсе — это органический рост, а не перераспределение рынка.
+                    - listitem [ref=f1e3053]:
+                      - strong [ref=f1e3054]: "Концентрация на топ-2:"
+                      - text: East + North =
+                      - strong [ref=f1e3055]: 60,3%
+                      - text: всей выручки (57 000 из 94 500). Оставшиеся 39,7% делят South и West.
+                    - listitem [ref=f1e3056]:
+                      - strong [ref=f1e3057]: "Ключевой драйвер — East:"
+                      - text: дал 4 000 из 10 500 прироста (38% всего роста) и при этом растёт быстрее всех — сочетание мощи и скорости.
+                    - listitem [ref=f1e3058]:
+                      - strong [ref=f1e3059]: "Слабый сигнал — West:"
+                      - text: самый медленный темп (+18,8%), растущее отставание, минимальные средние Units. Требует внимания, чтобы не терял долю.
+                    - listitem [ref=f1e3060]:
+                      - strong [ref=f1e3061]: "Сезонная волна Q2:"
+                      - text: рост в Q2 однороден по всем регионам — закладывать запасы и кампании под второй квартал.
+                  - heading "Итоговые рекомендации" [level=3] [ref=f1e3062]
+                  - list [ref=f1e3063]:
+                    - listitem [ref=f1e3064]:
+                      - strong [ref=f1e3065]: East
+                      - text: — удерживать и усиливать как главный источник роста, но диверсифицировать, чтобы снизить зависимость от одного региона.
+                    - listitem [ref=f1e3066]:
+                      - strong [ref=f1e3067]: North
+                      - text: — поддерживать стабильность, искать точки ускорения до темпов East.
+                    - listitem [ref=f1e3068]:
+                      - strong [ref=f1e3069]: South
+                      - text: — работать над темпами (подтянуть к среднему), используя хороший абсолютный потенциал.
+                    - listitem [ref=f1e3070]:
+                      - strong [ref=f1e3071]: West
+                      - text: — приоритетная диагностика и адресная программа продвижения; цель — остановить падение доли.
+                    - listitem [ref=f1e3072]:
+                      - strong [ref=f1e3073]: Q1
+                      - text: — запускать промо-активности заранее, чтобы поднять слабый стартовый квартал до уровня Q2.
+                  - paragraph [ref=f1e3074]:
+                    - text: Все цифры рассчитаны агрегацией pandas по исходным строкам
+                    - button "Перейти к ячейке A1:D9" [ref=f1e3075] [cursor=pointer]: таблицы Sales
+                    - text: "; исходные значения:"
+                    - button "Перейти к ячейке A6:D7" [ref=f1e3076] [cursor=pointer]: East
+                    - text: ","
+                    - button "Перейти к ячейке A2:D3" [ref=f1e3077] [cursor=pointer]: North
+                    - text: ","
+                    - button "Перейти к ячейке A4:D5" [ref=f1e3078] [cursor=pointer]: South
+                    - text: ","
+                    - button "Перейти к ячейке A8:D9" [ref=f1e3079] [cursor=pointer]: West
+                    - text: .
+              - generic [ref=f1e3080]:
+                - generic [ref=f1e3081]:
+                  - generic [ref=f1e3084]:
+                    - generic "Vega visualization" [ref=f1e3085]:
+                      - img [ref=f1e3086]:
+                        - generic [ref=f1e3091]:
+                          - 'generic "X-axis titled ''Region'' for a discrete scale with 4 values: East, North, South, West" [ref=f1e3095]':
+                            - generic [ref=f1e3097]:
+                              - generic:
+                                - generic: East
+                                - generic: North
+                                - generic: South
+                                - generic: West
+                              - generic: Region
+                          - generic "Y-axis titled 'Revenue' for a linear scale with values from 0 to 30,000" [ref=f1e3098]:
+                            - generic [ref=f1e3100]:
+                              - generic:
+                                - generic: "0"
+                                - generic: 5,000
+                                - generic: 10,000
+                                - generic: 15,000
+                                - generic: 20,000
+                                - generic: 25,000
+                                - generic: 30,000
+                              - generic: Revenue
+                          - generic [ref=f1e3101]:
+                            - 'generic "Region: East; Revenue: 30000" [ref=f1e3109]'
+                            - 'generic "Region: North; Revenue: 27000" [ref=f1e3117]'
+                            - 'generic "Region: South; Revenue: 20000" [ref=f1e3125]'
+                            - 'generic "Region: West; Revenue: 17500" [ref=f1e3133]'
+                          - generic [ref=f1e3136]:
+                            - generic "Title text 'Суммарная выручка по регионам'": Суммарная выручка по регионам
+                    - group "Click to view actions":
+                      - generic [ref=f1e3137] [cursor=pointer]
+                    - group "Click to view actions":
+                      - generic [ref=f1e3142] [cursor=pointer]
+                  - button "Открыть в полном размере" [ref=f1e3147]
+                - generic [ref=f1e3151]:
+                  - generic [ref=f1e3154]:
+                    - generic "Vega visualization" [ref=f1e3155]:
+                      - img [ref=f1e3156]:
+                        - generic [ref=f1e3161]:
+                          - 'generic "X-axis titled ''Quarter'' for a discrete scale with 2 values: Q1, Q2" [ref=f1e3165]':
+                            - generic [ref=f1e3167]:
+                              - generic:
+                                - generic: Q1
+                                - generic: Q2
+                              - generic: Quarter
+                          - generic "Y-axis titled 'Revenue' for a linear scale with values from 0 to 55,000" [ref=f1e3168]:
+                            - generic [ref=f1e3170]:
+                              - generic:
+                                - generic: "0"
+                                - generic: 10,000
+                                - generic: 20,000
+                                - generic: 30,000
+                                - generic: 40,000
+                                - generic: 50,000
+                              - generic: Revenue
+                          - generic [ref=f1e3171]:
+                            - 'generic "Quarter: Q1; Revenue: 42000" [ref=f1e3179]'
+                            - 'generic "Quarter: Q2; Revenue: 52500" [ref=f1e3187]'
+                          - generic [ref=f1e3190]:
+                            - generic "Title text 'Суммарная выручка по кварталам'": Суммарная выручка по кварталам
+                    - group "Click to view actions":
+                      - generic [ref=f1e3191] [cursor=pointer]
+                    - group "Click to view actions":
+                      - generic [ref=f1e3196] [cursor=pointer]
+                  - button "Открыть в полном размере" [ref=f1e3201]
+                - generic [ref=f1e3205]:
+                  - generic [ref=f1e3208]:
+                    - generic "Vega visualization" [ref=f1e3209]:
+                      - img [ref=f1e3210]:
+                        - generic [ref=f1e3215]:
+                          - 'generic "X-axis titled ''Region'' for a discrete scale with 4 values: East, North, South, West" [ref=f1e3219]':
+                            - generic [ref=f1e3221]:
+                              - generic:
+                                - generic: East
+                                - generic: North
+                                - generic: South
+                                - generic: West
+                              - generic: Region
+                          - generic "Y-axis titled 'Revenue' for a linear scale with values from 0 to 30,000" [ref=f1e3222]:
+                            - generic [ref=f1e3224]:
+                              - generic:
+                                - generic: "0"
+                                - generic: 5,000
+                                - generic: 10,000
+                                - generic: 15,000
+                                - generic: 20,000
+                                - generic: 25,000
+                                - generic: 30,000
+                              - generic: Revenue
+                          - generic [ref=f1e3225]:
+                            - generic [ref=f1e3232]:
+                              - 'generic "Region: East; Revenue: 13000" [ref=f1e3233]'
+                              - 'generic "Region: East; Revenue: 17000" [ref=f1e3234]'
+                            - generic [ref=f1e3241]:
+                              - 'generic "Region: North; Revenue: 12000" [ref=f1e3242]'
+                              - 'generic "Region: North; Revenue: 15000" [ref=f1e3243]'
+                            - generic [ref=f1e3250]:
+                              - 'generic "Region: South; Revenue: 9000" [ref=f1e3251]'
+                              - 'generic "Region: South; Revenue: 11000" [ref=f1e3252]'
+                            - generic [ref=f1e3259]:
+                              - 'generic "Region: West; Revenue: 8000" [ref=f1e3260]'
+                              - 'generic "Region: West; Revenue: 9500" [ref=f1e3261]'
+                          - generic [ref=f1e3264]:
+                            - generic "Title text 'Выручка регион × квартал'": Выручка регион × квартал
+                    - group "Click to view actions":
+                      - generic [ref=f1e3265] [cursor=pointer]
+                    - group "Click to view actions":
+                      - generic [ref=f1e3270] [cursor=pointer]
+                  - button "Открыть в полном размере" [ref=f1e3275]
+                - generic [ref=f1e3279]:
+                  - generic [ref=f1e3282]:
+                    - generic "Vega visualization" [ref=f1e3283]:
+                      - img [ref=f1e3284]:
+                        - generic [ref=f1e3289]:
+                          - 'generic "X-axis titled ''Region'' for a discrete scale with 4 values: East, North, South, West" [ref=f1e3293]':
+                            - generic [ref=f1e3295]:
+                              - generic:
+                                - generic: East
+                                - generic: North
+                                - generic: South
+                                - generic: West
+                              - generic: Region
+                          - generic "Y-axis titled 'AvgUnits' for a linear scale with values from 0 to 160" [ref=f1e3296]:
+                            - generic [ref=f1e3298]:
+                              - generic:
+                                - generic: "0"
+                                - generic: "20"
+                                - generic: "40"
+                                - generic: "60"
+                                - generic: "80"
+                                - generic: "100"
+                                - generic: "120"
+                                - generic: "140"
+                                - generic: "160"
+                              - generic: AvgUnits
+                          - generic [ref=f1e3299]:
+                            - 'generic "Region: East; AvgUnits: 150" [ref=f1e3307]'
+                            - 'generic "Region: North; AvgUnits: 135" [ref=f1e3315]'
+                            - 'generic "Region: South; AvgUnits: 100" [ref=f1e3323]'
+                            - 'generic "Region: West; AvgUnits: 87.5" [ref=f1e3331]'
+                          - generic [ref=f1e3334]:
+                            - generic "Title text 'Средние Units по регионам'": Средние Units по регионам
+                    - group "Click to view actions":
+                      - generic [ref=f1e3335] [cursor=pointer]
+                    - group "Click to view actions":
+                      - generic [ref=f1e3340] [cursor=pointer]
+                  - button "Открыть в полном размере" [ref=f1e3345]
+          - button "Правки за этот запуск (0) ▸" [ref=f1e224]:
+            - generic [ref=f1e225]: Правки за этот запуск (0)
+            - generic [ref=f1e226]: ▸
+          - generic [ref=f1e230]:
+            - textbox "Задайте вопрос по текущему листу. Другие листы — через @." [ref=f1e3349]
+            - button "Авто" [ref=f1e233]
+            - generic [ref=f1e240]:
+              - group "Область анализа" [ref=f1e241]:
+                - button "Лист" [pressed] [ref=f1e242]
+                - button "Книга" [ref=f1e243]
+                - button "Проект" [disabled] [ref=f1e244]
+              - generic [ref=f1e245]: 13,544 / 10,000 токенов
+              - button "Очистить" [ref=f1e255]
+  - region "Notifications alt+T"

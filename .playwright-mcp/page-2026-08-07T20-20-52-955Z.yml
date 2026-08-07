@@ -1,0 +1,126 @@
+- generic [ref=f1e2]:
+  - generic [ref=f1e4]:
+    - banner [ref=f1e5]:
+      - generic [ref=f1e7]:
+        - generic [ref=f1e8]:
+          - link "Excel AI" [ref=f1e9] [cursor=pointer]:
+            - /url: /
+          - navigation [ref=f1e16]:
+            - link "Загрузить" [ref=f1e17] [cursor=pointer]:
+              - /url: /workbooks/upload
+            - button "Последняя таблица" [ref=f1e21]
+            - button "Настройки" [ref=f1e25]
+            - link "Админка" [ref=f1e29] [cursor=pointer]:
+              - /url: /admin/login
+        - status "Бэкенд доступен" [ref=f1e40]
+    - main [ref=f1e37]:
+      - generic [ref=f1e41]:
+        - button "Открыть боковую панель" [ref=f1e42]
+        - generic [ref=f1e45]:
+          - generic [ref=f1e48]:
+            - heading "Просмотр листа" [level=1] [ref=f1e49]
+            - button "Обзор листа" [ref=f1e50]
+            - paragraph [ref=f1e53]: "Книга: sales_e2e.xlsx | Лист: Sales"
+          - generic [ref=f1e57]:
+            - generic [ref=f1e58]:
+              - grid "grid" [ref=f1e59]:
+                - row [ref=f1e60]:
+                  - gridcell [ref=f1e61]
+                  - gridcell "1" [ref=f1e62]
+              - grid "grid" [ref=f1e64]:
+                - row [ref=f1e65]:
+                  - gridcell "A" [ref=f1e66]
+                  - gridcell "B" [ref=f1e68]
+                  - gridcell "C" [ref=f1e70]
+                  - gridcell "D" [ref=f1e72]
+                  - gridcell "Region" [ref=f1e74] [cursor=pointer]
+                  - gridcell "Quarter" [ref=f1e75] [cursor=pointer]
+                  - gridcell "Revenue" [ref=f1e76] [cursor=pointer]
+                  - gridcell "Units" [ref=f1e77] [cursor=pointer]
+            - generic [ref=f1e78]:
+              - grid "grid" [ref=f1e79]:
+                - row [ref=f1e80]:
+                  - gridcell "2" [ref=f1e81]
+                  - gridcell "3" [ref=f1e83]
+                  - gridcell "4" [ref=f1e85]
+                  - gridcell "5" [ref=f1e87]
+                  - gridcell "6" [ref=f1e89]
+                  - gridcell "7" [ref=f1e91]
+                  - gridcell "8" [ref=f1e93]
+                  - gridcell "9" [ref=f1e95]
+              - grid "grid" [ref=f1e97]:
+                - row [ref=f1e98]:
+                  - gridcell "North" [ref=f1e99] [cursor=pointer]
+                  - gridcell "Q1" [ref=f1e100] [cursor=pointer]
+                  - gridcell "12000" [ref=f1e101] [cursor=pointer]
+                  - gridcell "120" [ref=f1e102] [cursor=pointer]
+                  - gridcell "North" [ref=f1e103] [cursor=pointer]
+                  - gridcell "Q2" [ref=f1e104] [cursor=pointer]
+                  - gridcell "15000" [ref=f1e105] [cursor=pointer]
+                  - gridcell "150" [ref=f1e106] [cursor=pointer]
+                  - gridcell "South" [ref=f1e107] [cursor=pointer]
+                  - gridcell "Q1" [ref=f1e108] [cursor=pointer]
+                  - gridcell "9000" [ref=f1e109] [cursor=pointer]
+                  - gridcell "90" [ref=f1e110] [cursor=pointer]
+                  - gridcell "South" [ref=f1e111] [cursor=pointer]
+                  - gridcell "Q2" [ref=f1e112] [cursor=pointer]
+                  - gridcell "11000" [ref=f1e113] [cursor=pointer]
+                  - gridcell "110" [ref=f1e114] [cursor=pointer]
+                  - gridcell "East" [ref=f1e115] [cursor=pointer]
+                  - gridcell "Q1" [ref=f1e116] [cursor=pointer]
+                  - gridcell "13000" [ref=f1e117] [cursor=pointer]
+                  - gridcell "130" [ref=f1e118] [cursor=pointer]
+                  - gridcell "East" [ref=f1e119] [cursor=pointer]
+                  - gridcell "Q2" [ref=f1e120] [cursor=pointer]
+                  - gridcell "17000" [ref=f1e121] [cursor=pointer]
+                  - gridcell "170" [ref=f1e122] [cursor=pointer]
+                  - gridcell "West" [ref=f1e123] [cursor=pointer]
+                  - gridcell "Q1" [ref=f1e124] [cursor=pointer]
+                  - gridcell "8000" [ref=f1e125] [cursor=pointer]
+                  - gridcell "80" [ref=f1e126] [cursor=pointer]
+        - separator "Изменить размер панели чата" [ref=f1e135]
+        - generic [ref=f1e137]:
+          - generic [ref=f1e138]:
+            - heading "Чат с агентом" [level=2] [ref=f1e140]
+            - generic [ref=f1e141]:
+              - generic [ref=f1e142]:
+                - generic "Агент видит данные и строит графики, но НЕ может править книгу. Безопасный режим по умолчанию." [ref=f1e143]: "Режим:"
+                - combobox "Выбор режима работы с инструментами" [disabled] [ref=f1e144]:
+                  - option "Только чтение" [selected]
+                  - option "Правки с подтверждением"
+                  - option "Правки без подтверждения"
+              - button "Открыть историю" [ref=f1e145]:
+                - img "Открыть историю" [ref=f1e146]
+          - generic [ref=f1e175]:
+            - generic [ref=f1e178]:
+              - toolbar "Действия с сообщением" [ref=f1e179]:
+                - button "Копировать сообщение" [ref=f1e180]
+                - button "Редактировать и переотправить" [ref=f1e184]
+                - button "Удалить сообщение" [ref=f1e188]
+              - generic [ref=f1e193]: "Сделай подробный пошаговый анализ: посчитай суммарную выручку (Revenue) по каждому региону, определи регион-лидер, посчитай средние Units по кварталам Q1 и Q2, найди самый прибыльный квартал, и составь развёрнутое резюме с несколькими выводами и рекомендациями."
+            - generic [ref=f1e200]:
+              - generic [ref=f1e203]:
+                - button "thought" [ref=f1e205]:
+                  - generic [ref=f1e206]: 💭
+                  - generic [ref=f1e207]: размышляет
+                - button "sandbox_execute_pandas" [ref=f1e209] [cursor=pointer]:
+                  - generic [ref=f1e210]: ⚡
+                  - generic [ref=f1e211]: Анализ pandas
+                  - generic [ref=f1e212]: Выполняется
+              - generic [ref=f1e213]: Думаю… (отправляю запрос к модели)
+          - button "Правки за этот запуск (0) ▸" [ref=f1e224]:
+            - generic [ref=f1e225]: Правки за этот запуск (0)
+            - generic [ref=f1e226]: ▸
+          - generic [ref=f1e230]:
+            - textbox "Можно писать — сообщение будет отправлено после ответа агента…" [ref=f1e231]
+            - button "Авто" [ref=f1e233]
+            - generic [ref=f1e240]:
+              - group "Область анализа" [ref=f1e241]:
+                - button "Лист" [pressed] [ref=f1e242]
+                - button "Книга" [ref=f1e243]
+                - button "Проект" [disabled] [ref=f1e244]
+              - generic [ref=f1e245]: 9,517 / 10,000 токенов
+              - button "Приостановить агента" [ref=f1e250]
+              - button "Остановить выполнение" [ref=f1e252]
+              - button "Очистить" [ref=f1e255]
+  - region "Notifications alt+T"

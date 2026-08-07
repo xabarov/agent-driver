@@ -39,6 +39,16 @@ class CapabilitySettings:
     project_memory_sources: tuple[str, ...] = ()
     project_memory_max_file_chars: int = 8000
     project_memory_max_total_chars: int = 24000
+    # Skills S1: directories scanned for the tier-1 "available skills" catalog that
+    # is rendered into the ReAct system prompt (name + one-line summary + base_dir),
+    # so the model knows which skills exist and can load full bodies on demand via
+    # ``skill_view``. Empty = off (no catalog injected; skills still reachable only if
+    # the model is told a base_dir another way). ``max_chars`` bounds the block with
+    # graceful degradation to names-only; ``trusted_roots`` marks catalog sources as
+    # trusted for the eventual ``skill_view`` load.
+    skills_catalog_sources: tuple[str, ...] = ()
+    skills_catalog_max_chars: int = 2000
+    skills_catalog_trusted_roots: tuple[str, ...] = ()
     tool_concurrency_limit: int | None = None
     subagent_model_routing: dict[str, str] = field(default_factory=dict)
     # Epic 033 A: adaptive tool-deferral threshold. "auto" defers ``should_defer``
@@ -66,6 +76,14 @@ class CapabilitySettings:
         object.__setattr__(self, "harness_profiles", tuple(self.harness_profiles or ()))
         object.__setattr__(
             self, "project_memory_sources", tuple(self.project_memory_sources or ())
+        )
+        object.__setattr__(
+            self, "skills_catalog_sources", tuple(self.skills_catalog_sources or ())
+        )
+        object.__setattr__(
+            self,
+            "skills_catalog_trusted_roots",
+            tuple(self.skills_catalog_trusted_roots or ()),
         )
         object.__setattr__(
             self, "subagent_model_routing", dict(self.subagent_model_routing or {})

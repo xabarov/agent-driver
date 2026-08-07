@@ -182,7 +182,43 @@ def react_system_instruction(host: LlmPromptHost, context: RunContext) -> str | 
     project_memory = _project_memory_block(host, context)
     if project_memory:
         lines.append(project_memory)
+    skills_catalog = _skills_catalog_block(host, context, effective_tool_names)
+    if skills_catalog:
+        lines.append(skills_catalog)
     return "\n".join(lines)
+
+
+def _skills_catalog_block(
+    host: LlmPromptHost,
+    context: RunContext,
+    effective_tool_names: tuple[str, ...],
+) -> str:
+    """Render the tier-1 skills catalog once per run (Skills S1).
+
+    Gated on configured ``skills_catalog_sources`` AND the model actually having a
+    way to load a skill body (``skill_view``/``skill_tool`` in the effective surface);
+    otherwise listing skills the model cannot open is noise. Re-built into the system
+    prompt each request, so it survives compaction by construction. Cached per run.
+    """
+    sources = getattr(host._config, "skills_catalog_sources", ())
+    if not sources:
+        return ""
+    if "skill_view" not in effective_tool_names and "skill_tool" not in effective_tool_names:
+        return ""
+    cached = context.metadata.get("skills_catalog_block")
+    if isinstance(cached, str):
+        return cached
+    from agent_driver.skills import build_skills_catalog_block
+
+    block = build_skills_catalog_block(
+        tuple(sources),
+        max_chars=host._config.skills_catalog_max_chars,
+        trusted_roots=tuple(
+            getattr(host._config, "skills_catalog_trusted_roots", ()) or ()
+        ),
+    )
+    context.metadata["skills_catalog_block"] = block
+    return block
 
 
 def _project_memory_block(host: LlmPromptHost, context: RunContext) -> str:

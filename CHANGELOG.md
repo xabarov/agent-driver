@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Added
 
+- **Tier-1 "available skills" catalog in the system prompt (skills epic S1).** Progressive
+  disclosure's first tier — a compact catalog of `name + one-line summary + base_dir` — is
+  now injected into the ReAct system prompt so the model *knows which skills exist* and can
+  load a full body on demand via `skill_view`. Previously the renderer (`render_skill_entry`)
+  existed but was unwired, so a general (non-research) agent got no signal any skill existed.
+  Opt-in via new `RunnerConfig` knobs `skills_catalog_sources` (dirs to scan),
+  `skills_catalog_max_chars` (budget; default 2000), and `skills_catalog_trusted_roots`.
+  `build_skills_catalog_block(...)` (exported from `agent_driver.skills`) renders the block
+  with graceful degradation — full entries → names-only → truncated `+N more` pointing at
+  `skill_tool` — mirroring the reference frameworks' budget discipline. Gated on a skill-load
+  tool (`skill_view`/`skill_tool`) actually being available, and re-built into the system
+  prompt each request so it survives compaction by construction (`skills_catalog_block`
+  metadata is diagnostic only). Empty sources = off; historical behaviour unchanged.
 - **`SET_MAX_THINKING_TOKENS` control is now wired (steering epic A6).** Previously a
   recognized-but-unhandled `ControlKind` that hard-failed on drain, it now caps (or
   disables) the model's thinking/reasoning budget for subsequent LLM calls, mirroring
