@@ -9,6 +9,17 @@ change between minor versions.
 
 ### Added
 
+- **Partial-output preservation on hard redirect (steering epic A4).** When a
+  `REDIRECT_USER_MESSAGE` aborts an in-flight *streaming* LLM call, the text the model
+  had already streamed before the abort — mirrored per-chunk into
+  `assistant_stream_content` and surviving the task cancellation — is now folded into the
+  re-ask as an assistant checkpoint turn ahead of the correction, instead of being
+  replaced by a bare `[…прерван…]` placeholder. Text only (signed reasoning is streamed
+  separately and never replayed, so role alternation stays valid); guarded on
+  started-but-not-completed so a prior completed turn's content is never mis-attributed;
+  the buffer is consumed after folding so a second abort in the same step cannot re-attach
+  the same draft. The raw-free `steering_redirect_applied` signal now carries
+  `partial_output_preserved` and `partial_output_chars` (count only, never the text).
 - **Pause / resume — `PAUSE` steering control + `ResumeAction.CONTINUE` (steering epic A3).**
   A host can now park a running agent at the next step boundary without aborting it: the
   `PAUSE` control (`ControlKind.PAUSE`, resolving to the `pause_current` live-message

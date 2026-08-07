@@ -9,7 +9,11 @@ import pytest
 from agent_driver.contracts import AgentRunInput
 from agent_driver.contracts.control import ControlKind, ControlPriority, ControlRequest
 from agent_driver.contracts.enums import RunStatus
-from agent_driver.llm.contracts import LlmRequest, LlmResponse
+from agent_driver.llm.contracts import (
+    LlmRequest,
+    LlmResponse,
+    LlmStreamEvent,
+)
 from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.runtime.control.in_memory import InMemoryCommandQueueStore
 from agent_driver.runtime.single_agent.llm_step.completion import (
@@ -106,6 +110,86 @@ async def test_redirect_probe_aborts_and_reasks_with_correction() -> None:
     assert any(
         e.payload.get("signal_id") == "steering_redirect_applied" for e in out.events
     )
+
+
+class _StreamSlowThenFastProvider(FakeProvider):
+    """First stream emits partial deltas then blocks (aborted by a redirect); the
+    rest stream normally. Exercises A4 partial-output preservation."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="итоговый ответ по покупке офиса")
+        self.calls = 0
+        self.requests: list[LlmRequest] = []
+
+    async def stream(self, request: LlmRequest):  # type: ignore[override]
+        self.calls += 1
+        self.requests.append(request)
+        if self.calls == 1:
+            yield LlmStreamEvent(
+                event="delta", delta_text="Черновик про ", finish_reason=None
+            )
+            yield LlmStreamEvent(
+                event="delta", delta_text="аренду офиса", finish_reason=None
+            )
+            await asyncio.sleep(3.0)  # aborted mid-stream by the redirect probe
+            return
+        async for event in super().stream(request):
+            yield event
+
+
+def _streaming_run_input(run_id: str) -> AgentRunInput:
+    return AgentRunInput(
+        input="Какие решения по офису?",
+        run_id=run_id,
+        thread_id="t",
+        agent_id="agent",
+        graph_preset="single_react",
+        stream=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_redirect_preserves_partial_streamed_output() -> None:
+    """A4: text streamed before a mid-flight abort is folded into the re-ask as an
+    assistant checkpoint (not discarded), and the signal reports the preserved size."""
+    provider = _StreamSlowThenFastProvider()
+    fired = {"done": False}
+
+    def probe() -> str | None:
+        if not fired["done"]:
+            fired["done"] = True
+            return "поправка: только по покупке офиса"
+        return None
+
+    out = await asyncio.wait_for(
+        create_agent(
+            provider=provider,
+            tools=ToolSet.only(),
+            config=RunnerConfig(redirect_probe=probe),
+        ).run(_streaming_run_input("r-redirect-partial")),
+        timeout=10,
+    )
+
+    assert out.status == RunStatus.COMPLETED
+    assert provider.calls == 2
+    # The partial draft survives as an assistant turn in the re-asked request.
+    second = provider.requests[1]
+    assert any(
+        "аренду офиса" in (m.content or "") for m in second.messages
+    ), "partial streamed draft should be preserved in the re-ask"
+    # The correction still lands as its own user turn.
+    assert any(
+        "только по покупке офиса" in (m.content or "") for m in second.messages
+    )
+    # The raw-free signal reports the preservation (count only, never the text).
+    redirect_signals = [
+        e.payload
+        for e in out.events
+        if e.payload.get("signal_id") == "steering_redirect_applied"
+    ]
+    assert redirect_signals
+    assert redirect_signals[0]["partial_output_preserved"] is True
+    assert redirect_signals[0]["partial_output_chars"] > 0
 
 
 @pytest.mark.asyncio
