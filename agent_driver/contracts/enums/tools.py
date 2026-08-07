@@ -57,6 +57,10 @@ class ResumeAction(StrEnum):
     CLARIFY = "clarify"
     PATCH_STATE = "patch_state"
     CANCEL = "cancel"
+    # A3 steering pause: resume a MANUAL_PAUSE'd run by simply continuing — no approval
+    # grant, no decision. Kept distinct from APPROVE so the audit never conflates a pause
+    # resume with an approval.
+    CONTINUE = "continue"
 
 
 class ToolTraceStatus(StrEnum):

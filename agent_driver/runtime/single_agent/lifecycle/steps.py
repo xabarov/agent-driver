@@ -423,6 +423,10 @@ class SingleAgentStepMixin:
                     "priority": item.priority.value,
                 },
             )
+        # A3: a steering PAUSE drained just now parks the run as PAUSED (resumable)
+        # instead of calling the provider — boundary-only, non-destructive.
+        if context.metadata.get("steering_pause_requested"):
+            return self._park_steering_pause(context)
         set_phase = getattr(command_store, "set_run_phase", None)
         if callable(set_phase):
             live_state = set_phase(
@@ -433,6 +437,86 @@ class SingleAgentStepMixin:
             )
             context.metadata["llm_generation"] = live_state.llm_generation
         return await execute_llm_call_step(self, context)
+
+    def _park_steering_pause(self, context: RunContext) -> RuntimeStepResult:
+        """A3: park the run as PAUSED (resumable) at the step boundary in response to a
+        steering PAUSE control — a synthesized MANUAL_PAUSE interrupt, resumed with a
+        ResumeCommand(CONTINUE). Non-destructive: no provider call, no data loss."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        from agent_driver.contracts.enums import (  # noqa: PLC0415
+            InterruptReason,
+            ResumeAction,
+            ToolPolicyDecision,
+        )
+        from agent_driver.contracts.interrupts import InterruptRequest  # noqa: PLC0415
+        from agent_driver.contracts.tools import (  # noqa: PLC0415
+            ToolCall,
+            ToolResultEnvelope,
+        )
+        from agent_driver.runtime.single_agent.lifecycle.pending import (  # noqa: PLC0415
+            serialize_pending_interrupt,
+        )
+        from agent_driver.runtime.single_agent.types import (  # noqa: PLC0415
+            PendingInterruptState,
+        )
+
+        # Consume the marker so a resumed run does not immediately re-pause.
+        context.metadata.pop("steering_pause_requested", None)
+        interrupt = InterruptRequest(
+            interrupt_id=f"steering_pause_{context.run_id}_{context.step_count}",
+            run_id=context.run_id,
+            attempt_id=context.attempt_id,
+            checkpoint_id="checkpoint_pending",
+            reason=InterruptReason.MANUAL_PAUSE,
+            title="Run paused",
+            description="Run held at a step boundary by a steering PAUSE control.",
+            proposed_action={},
+            allowed_actions=[ResumeAction.CONTINUE, ResumeAction.CANCEL],
+            editable_fields=[],
+            metadata={"steering_pause": True},
+        )
+        # Persist the pending-interrupt state so resume can find it by interrupt_id and
+        # continue. The pause has no real tool call — a placeholder call/envelope satisfies
+        # the pending shape; the CONTINUE resume branch ignores them and re-drives.
+        pause_call = ToolCall(tool_name="__steering_pause__", args={})
+        pause_envelope = ToolResultEnvelope(
+            call=pause_call,
+            decision=ToolPolicyDecision.INTERRUPT,
+            summary="run paused",
+            interrupt=interrupt.model_dump(mode="json"),
+            metadata={"steering_pause": True},
+        )
+        context.metadata["interrupt_payload"] = interrupt.model_dump(mode="json")
+        context.metadata["pending_interrupt"] = serialize_pending_interrupt(
+            PendingInterruptState(
+                interrupt=interrupt, call=pause_call, envelope=pause_envelope
+            )
+        )
+        context.metadata["resume_target_step"] = "llm_call"
+        self._emit(
+            EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType.INTERRUPT_REQUESTED,
+                payload={"reason": interrupt.reason.value, "steering_pause": True},
+            )
+        )
+        set_phase = getattr(self._deps.command_queue_store, "set_run_phase", None)
+        if callable(set_phase):
+            set_phase(
+                context.run_id,
+                LiveMessagePhase.APPROVAL_PAUSE,
+                thread_id=context.run_input.thread_id,
+                agent_id=context.run_input.agent_id,
+            )
+        result = SimpleNamespace(interrupt=interrupt, traces=[])
+        paused_output = self._build_paused_output(context, result)
+        context.metadata["terminal_output"] = paused_output.model_dump(mode="json")
+        self._save_checkpoint(
+            context, latest_output=paused_output, node_id="steering_pause"
+        )
+        return RuntimeStepResult(next_step="done")
 
     async def _execute_tool_stage(self, context: RunContext) -> RuntimeStepResult:
         set_phase = getattr(self._deps.command_queue_store, "set_run_phase", None)

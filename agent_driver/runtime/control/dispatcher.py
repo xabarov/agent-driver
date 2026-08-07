@@ -205,6 +205,11 @@ def _apply_control_item(
             return _Result.INVALID
         _apply_soft_steer(context, message.strip(), queue_id=item.queue_id)
         return _Result.APPLIED
+    if kind == ControlKind.PAUSE:
+        # A3: request a boundary pause. The LLM step, right after this drain, parks the
+        # run as PAUSED (resumable) instead of calling the provider. Non-destructive.
+        context.metadata["steering_pause_requested"] = True
+        return _Result.APPLIED
     if kind == ControlKind.REDIRECT_USER_MESSAGE:
         # A REDIRECT that reaches the STEP BOUNDARY (not mid-LLM-await) means there
         # was nothing in-flight to abort — degrade to enqueue (hermes: redirect

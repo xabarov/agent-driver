@@ -165,3 +165,50 @@ async def test_leftover_controls_surfaced_in_terminal_metadata() -> None:
     assert leftover[0]["kind"] == "enqueue_user_message"
     assert len(leftover[0]["content_sha256"]) == 64
     assert "text_preview" not in leftover[0]
+
+
+# --- A3: steering pause / resume -----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pause_control_parks_run_as_resumable_paused() -> None:
+    """A PAUSE control drained at the step boundary parks the run as PAUSED
+    (MANUAL_PAUSE), and a ResumeCommand(CONTINUE) resumes it to completion."""
+    from agent_driver.contracts.enums import InterruptReason, ResumeAction
+
+    store = InMemoryCommandQueueStore()
+    store.enqueue(
+        ControlRequest(
+            kind=ControlKind.PAUSE,
+            run_id="r-pause",
+            priority=ControlPriority.NOW,
+        )
+    )
+    agent = create_agent(
+        provider=FakeProvider(response_text="готово"),
+        tools=ToolSet.only(),
+        command_queue_store=store,
+    )
+    paused = await agent.run(_run_input("r-pause"))
+    assert paused.status == RunStatus.PAUSED
+    assert paused.interrupt is not None
+    assert paused.interrupt.reason == InterruptReason.MANUAL_PAUSE
+    assert ResumeAction.CONTINUE in paused.interrupt.allowed_actions
+
+    resumed = await agent.resume(
+        run_id="r-pause",
+        interrupt_id=paused.interrupt.interrupt_id,
+        action=ResumeAction.CONTINUE,
+    )
+    assert resumed.status == RunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_run_without_pause_is_unaffected() -> None:
+    """No PAUSE control → the run completes normally (pause path is inert)."""
+    out = await create_agent(
+        provider=FakeProvider(response_text="готово"),
+        tools=ToolSet.only(),
+        command_queue_store=InMemoryCommandQueueStore(),
+    ).run(_run_input("r-nopause"))
+    assert out.status == RunStatus.COMPLETED

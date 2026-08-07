@@ -44,6 +44,11 @@ class ControlKind(StrEnum):
     # No abort tax and no redirect budget; degrades to ENQUEUE when there is no tool
     # message to fold into.
     STEER_USER_MESSAGE = "steer_user_message"
+    # A3: hold a live run at the next step boundary (non-destructive, resumable) — the
+    # openhands pause()/PAUSED/resume primitive. Parks the run as PAUSED via a synthesized
+    # MANUAL_PAUSE interrupt; resumed with a ResumeCommand(CONTINUE). Boundary-only; Stop
+    # remains the only mid-flight halt.
+    PAUSE = "pause"
 
 
 class ControlPriority(StrEnum):
@@ -89,6 +94,7 @@ class LiveMessageSemantic(StrEnum):
     QUEUE_NEXT = "queue_next"
     CANCEL_NEXT = "cancel_next"
     STOP = "stop"
+    PAUSE_CURRENT = "pause_current"
 
 
 class LiveMessagePhase(StrEnum):
@@ -337,6 +343,8 @@ def requested_semantic_for_request(
     if request.kind is ControlKind.STEER_USER_MESSAGE:
         # Soft steer always targets the current turn (fold into the last tool result).
         return LiveMessageSemantic.STEER_CURRENT
+    if request.kind is ControlKind.PAUSE:
+        return LiveMessageSemantic.PAUSE_CURRENT
     if (
         request.kind is ControlKind.REDIRECT_USER_MESSAGE
         and request.priority is ControlPriority.NOW
@@ -361,6 +369,8 @@ def applies_at_for_semantic(semantic: LiveMessageSemantic | None) -> str | None:
         return "before_next_handoff"
     if semantic is LiveMessageSemantic.STOP:
         return "run_abort_boundary"
+    if semantic is LiveMessageSemantic.PAUSE_CURRENT:
+        return "next_safe_boundary"
     return None
 
 

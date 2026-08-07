@@ -498,6 +498,16 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             self._apply_resume_reject(context=context)
             return
 
+        if resume.action == ResumeAction.CONTINUE:
+            # A3 steering-pause resume: the run was held BEFORE the provider call by a
+            # PAUSE control (MANUAL_PAUSE), not by a tool/approval. Simply continue the
+            # loop from the LLM step — no approval, no tool-call replay, no budget change.
+            context.metadata["next_step"] = "llm_call"
+            context.metadata["pending_interrupt"] = None
+            context.metadata["interrupt_payload"] = None
+            context.metadata.pop("steering_pause_requested", None)
+            return
+
         if resume.action in {ResumeAction.APPROVE, ResumeAction.EDIT}:
             _mark_force_planning_approved(context, pending=pending, resume=resume)
             plan_payload = _plan_lifecycle_payload(
