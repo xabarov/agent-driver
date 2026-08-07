@@ -111,5 +111,36 @@ Hard redirect proves local cancellation and generation fencing. It does not
 claim that a remote provider cancelled work already received, and it never
 cancels a running tool, child, job, or network socket.
 
+## Recognized-but-unwired kinds
+
+A drained control that the current execution context cannot act on is always
+resolved (never left `QUEUED` to re-drain), and the outcome is reported honestly
+so a host can distinguish three cases:
+
+- `control_payload_invalid` — the kind is wired but the payload is malformed.
+- `control_kind_not_implemented` — the kind is recognized but has no consumer in
+  this context. Today this covers `STOP_SUBAGENT` / `CONTINUE_SUBAGENT` on the
+  single-agent chat dispatcher, which holds only the command queue.
+- `control_kind_unsupported` — the kind is unknown to this build (version skew).
+
+All three mark the queued item `FAILED`.
+
+### Two cancellation seams
+
+`STOP_SUBAGENT` / `CONTINUE_SUBAGENT` would need one of the runtime's two
+cancellation seams, neither of which the boundary dispatcher can currently reach:
+
+1. **Run-level abort** — the `abort_handle` threaded into the drain (used by
+   `INTERRUPT`), backed by the durable `AbortLifecycleStore`
+   (`requested → observed → cancelled | completed_before_cancel`).
+2. **Child/subagent abort** — the parent→child abort-handle chain in the subagent
+   executor (`parent_abort_handle.child()` + `is_aborted` short-circuits), today
+   reachable only from the tool stage (via the `task_stop` / `send_message`
+   tools), not from the control dispatcher.
+
+Wiring the subagent controls means bridging the dispatcher to seam 2 (a subagent
+store / child-handle registry in drain scope) — a separate change, deliberately
+not faked here.
+
 See [live-message migration](live-message-migration.md) for additive rollout,
 mixed-version rejection, legacy quarantine, and rollback.

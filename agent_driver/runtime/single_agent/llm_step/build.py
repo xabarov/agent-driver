@@ -579,6 +579,22 @@ def _build_request_trim_payload(
     }
 
 
+def _reasoning_override(value: Any) -> dict[str, Any] | None:
+    """Map a SET_MAX_THINKING_TOKENS budget to the provider-neutral reasoning envelope.
+
+    A positive int caps the thinking budget (``{"max_tokens": n}``); ``0`` disables
+    thinking (``{"enabled": False}``). Anything else (unset/invalid) returns ``None`` so
+    ``reasoning`` stays omitted and non-thinking backends are unaffected (A6).
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value > 0:
+        return {"max_tokens": value}
+    if value == 0:
+        return {"enabled": False}
+    return None
+
+
 def build_single_agent_llm_request(
     ctx: LlmRequestBuildContext,
 ) -> tuple[LlmRequest, dict[str, Any]]:
@@ -627,6 +643,13 @@ def build_single_agent_llm_request(
         ]
     request_metadata = dict(run_input.tool_policy.metadata)
     forced_model = request_metadata.pop("forced_model", None)
+    # A6: a SET_MAX_THINKING_TOKENS control writes reasoning_max_tokens into
+    # tool_policy.metadata; consume it into the provider-neutral reasoning envelope
+    # (popped so it never leaks into request metadata). Unset → None → omitted, so
+    # non-thinking backends are unaffected.
+    reasoning_override = _reasoning_override(
+        request_metadata.pop("reasoning_max_tokens", None)
+    )
     # App-level provider passthrough (e.g. output-media ``modalities`` / ``audio``
     # from the OpenAI server) is merged into the request's ``provider_extra_body``
     # so it reaches the provider payload without a dedicated field per param.
@@ -685,6 +708,7 @@ def build_single_agent_llm_request(
         # routes are not guaranteed to honor this flag.
         parallel_tool_calls=(False if ctx.max_tool_calls_per_step == 1 else None),
         enable_prompt_cache=ctx.enable_prompt_cache,
+        reasoning=reasoning_override,
         metadata=request_metadata,
     )
     return request, _build_request_trim_payload(

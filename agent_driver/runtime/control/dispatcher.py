@@ -1,10 +1,13 @@
 """Step-boundary dispatcher for steering control commands.
 
 Epic 030: every declared :class:`ControlKind` now has a wired status — it either
-applies, or (for a kind not supported on this run path) emits a
-``control_kind_unsupported`` WARNING and is marked FAILED. A kind is NEVER
-silently dropped (the old ``return False`` for 7 of 11 kinds left them QUEUED,
-re-draining every step with no signal).
+applies, or is resolved to a WARNING and marked FAILED. A kind is NEVER silently
+dropped (the old ``return False`` for 7 of 11 kinds left them QUEUED, re-draining
+every step with no signal). The failure is reported honestly (A6):
+``control_payload_invalid`` (wired kind, bad payload),
+``control_kind_not_implemented`` (recognized kind with no consumer in this
+context — the subagent controls on the single-agent path), or
+``control_kind_unsupported`` (kind unknown to this build).
 """
 
 from __future__ import annotations
@@ -33,7 +36,12 @@ TransitionEmit = Callable[[CommandQueueItem], None]
 class _Result(Enum):
     APPLIED = "applied"
     INVALID = "invalid"  # malformed payload — mark FAILED
-    UNSUPPORTED = "unsupported"  # kind not wired on this path — signal + FAIL
+    # Recognized kind with no consumer in THIS execution context (e.g. subagent
+    # controls on the single-agent chat dispatcher) — honest signal + FAIL, kept
+    # distinct from a genuinely-unknown kind so a host can tell "feature gap" from
+    # "version mismatch / typo".
+    NOT_IMPLEMENTED = "not_implemented"
+    UNSUPPORTED = "unsupported"  # unknown kind — signal + FAIL
 
 
 def drain_step_boundary_controls(
@@ -51,8 +59,9 @@ def drain_step_boundary_controls(
 
     ``abort_handle`` bridges INTERRUPT into the run's cancellation seam so the
     control plane and the host ``/cancel`` path share one signal (epic 030 A).
-    ``emit`` (when set) surfaces ``control_kind_unsupported`` / invalid-payload
-    WARNINGs so the operator sees an unhandled command, not a silent no-op.
+    ``emit`` (when set) surfaces the unsupported / not-implemented /
+    invalid-payload WARNINGs so the operator sees an unhandled command, not a
+    silent no-op.
     """
     if store is None:
         return []
@@ -114,6 +123,13 @@ def drain_step_boundary_controls(
             if transition is not None and failed is not None:
                 transition(failed)
             _emit_control_warning(emit, item, signal_id="control_payload_invalid")
+        elif result is _Result.NOT_IMPLEMENTED:
+            failed = store.mark_failed(
+                item.queue_id, error="control_kind_not_implemented"
+            )
+            if transition is not None and failed is not None:
+                transition(failed)
+            _emit_control_warning(emit, item, signal_id="control_kind_not_implemented")
         else:  # UNSUPPORTED
             failed = store.mark_failed(item.queue_id, error="control_kind_unsupported")
             if transition is not None and failed is not None:
@@ -171,6 +187,20 @@ def _apply_control_item(
         policy = context.run_input.tool_policy
         metadata = dict(policy.metadata)
         metadata["forced_model"] = model.strip()
+        context.run_input = context.run_input.model_copy(
+            update={"tool_policy": policy.model_copy(update={"metadata": metadata})}
+        )
+        return _Result.APPLIED
+    if kind == ControlKind.SET_MAX_THINKING_TOKENS:
+        # A6: cap (or disable) the model's thinking/reasoning budget for subsequent
+        # LLM calls. Mirrors SET_MODEL — the value rides tool_policy.metadata and is
+        # consumed at request-build time into the provider-neutral reasoning envelope.
+        tokens = item.payload.get("max_thinking_tokens", item.payload.get("tokens"))
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0:
+            return _Result.INVALID
+        policy = context.run_input.tool_policy
+        metadata = dict(policy.metadata)
+        metadata["reasoning_max_tokens"] = tokens
         context.run_input = context.run_input.model_copy(
             update={"tool_policy": policy.model_copy(update={"metadata": metadata})}
         )
@@ -268,8 +298,13 @@ def _apply_control_item(
             return _Result.APPLIED
         except Exception:  # noqa: BLE001 - no mergeable planning state on this path
             return _Result.UNSUPPORTED
-    # SET_MAX_THINKING_TOKENS, STOP_SUBAGENT, CONTINUE_SUBAGENT: not wired on the
-    # single-agent chat path — honest signal instead of a silent drop.
+    if kind in (ControlKind.STOP_SUBAGENT, ControlKind.CONTINUE_SUBAGENT):
+        # Recognized, but the single-agent chat dispatcher holds only the command
+        # queue — it has no subagent store or child abort handle in scope (those live
+        # in the tool stage / subagent executor, seam 2 in docs/live-message-controls).
+        # Report a distinct not-implemented signal rather than a silent drop or a
+        # conflation with an unknown kind.
+        return _Result.NOT_IMPLEMENTED
     return _Result.UNSUPPORTED
 
 
