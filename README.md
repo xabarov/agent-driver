@@ -10,12 +10,12 @@ contracts.
 policy: [docs/embedding.md](docs/embedding.md). Runnable recipes:
 [examples/cookbook](examples/cookbook/README.md).
 
-Current package version: `0.12.0`
+Current package version: `0.12.1`
 
-**Release 0.12.0** (backward-compatible MINOR over `0.11.0`) adds bounded,
-synthesis-only final-answer revision gates with an optional fail-closed terminal.
-Existing lifecycle hooks keep their historical behavior because every new
-`RevisionRequest` option defaults off. See [CHANGELOG](CHANGELOG.md) `[0.12.0]`.
+**Release 0.12.1** is a backward-compatible fix for the bounded final-answer
+gate introduced in `0.12.0`: an accepted synthesis-only correction is now
+terminal and cannot be replaced by an extra draft from the generic continuation
+detector. See [CHANGELOG](CHANGELOG.md) `[0.12.1]`.
 
 ## What is new in this iteration
 

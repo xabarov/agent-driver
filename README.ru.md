@@ -10,12 +10,11 @@
 API и политики стабильности: [docs/embedding.md](docs/embedding.md). Готовые
 рецепты: [examples/cookbook](examples/cookbook/README.md).
 
-Текущая версия пакета: `0.12.0`
+Текущая версия пакета: `0.12.1`
 
-**Релиз 0.12.0** добавляет ограниченную ревизию финального ответа без
-инструментов и опциональный fail-closed исход для host-owned quality/safety
-гейтов. Старые lifecycle hooks сохраняют прежнее поведение: все новые параметры
-`RevisionRequest` по умолчанию выключены.
+**Релиз 0.12.1** совместимо исправляет bounded final-answer gate из `0.12.0`:
+принятая synthesis-only коррекция теперь терминальна и не заменяется лишним
+черновиком от generic continuation detector.
 
 ## Что нового в текущей итерации
 

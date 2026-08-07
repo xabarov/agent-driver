@@ -7,6 +7,21 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-08-07
+
+### Fixed
+
+- **Synthesis-only revisions now return directly to their owning finalize
+  gate.** A corrected answer that contained a recommendation heading such as
+  “Next step” could previously be intercepted by the generic continuation
+  detector before the host quality gate reviewed it. That produced an
+  unreviewed third model draft and could discard citations restored by the
+  bounded revision. A `disable_tools=True` revision now bypasses generic
+  continuation and node-contract reprompts on its return, is evaluated by the
+  finalize hook, and either becomes the terminal answer or follows the gate's
+  bounded fail-closed policy. The behavior of ordinary model turns and
+  revisions with tools enabled is unchanged.
+
 ## [0.12.0] - 2026-08-07
 
 ### Added

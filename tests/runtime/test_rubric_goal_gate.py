@@ -119,6 +119,47 @@ async def test_revision_can_disable_tools_and_then_accept() -> None:
 
 
 @pytest.mark.asyncio
+async def test_synthesis_revision_is_terminal() -> None:
+    """A gate-accepted correction cannot be replaced by an unreviewed third draft."""
+
+    class _AcceptCorrectedAnswer(BaseRunLifecycleHook):
+        name = "accept_corrected_answer"
+
+        async def on_finalize(self, context, *, answer):  # noqa: ANN001
+            if answer.startswith("corrected"):
+                return None
+            return RevisionRequest(
+                feedback="Produce the corrected terminal synthesis.",
+                disable_tools=True,
+                max_revisions=1,
+                fail_closed=True,
+                gate_id="answer_quality",
+            )
+
+    corrected = "corrected\n\nNext step: retain this recommendation for later."
+    provider = _RevisionSequenceProvider(["bad", corrected, "unreviewed third draft"])
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.all(),
+        lifecycle_hooks=(_AcceptCorrectedAnswer(),),
+    )
+
+    output = await agent.run(_run_input("r-quality-terminal-revision"))
+
+    assert output.status.value == "completed"
+    assert output.answer == corrected
+    assert provider.calls == 2
+    assert provider.request_tool_names[1] == []
+    continuation_decisions = [
+        event.payload
+        for event in output.events
+        if event.type.value == "runtime_decision"
+        and event.payload.get("policy_id") == "continuation_detector"
+    ]
+    assert continuation_decisions == []
+
+
+@pytest.mark.asyncio
 async def test_revision_can_fail_closed_after_budget() -> None:
     """A still-invalid revised answer cannot silently pass a fail-closed gate."""
     provider = _RevisionSequenceProvider(["bad", "bad"])

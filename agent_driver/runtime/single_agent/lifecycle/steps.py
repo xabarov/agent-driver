@@ -69,6 +69,12 @@ from agent_driver.runtime.tools import ToolExecutionResult
 # hook's own iteration budget — prevents an always-revising hook from looping.
 _MAX_RUBRIC_REVISIONS = 10
 
+# A synthesis-only finalize revision is already the bounded corrective pass
+# selected by a host-owned gate.  Its next answer must return to that gate
+# directly: generic continuation and node-contract heuristics must not insert
+# an unreviewed extra generation between the corrected draft and the gate.
+_SYNTHESIS_REVISION_PENDING_KEY = "_agent_driver_synthesis_revision_pending"
+
 
 def _hook_event_emitter(host, context: RunContext):
     """Emitter closure turning lifecycle-hook dispatch events into run events.
@@ -634,27 +640,40 @@ class SingleAgentStepMixin:
             context.llm_response = LlmResponse.model_validate(
                 context.metadata["last_llm_response"]
             )
-        completed_payload = self._build_completed_payload(context)
-        continuation_reason = context.metadata.get("continuation_nudge_reason")
-        continuation = _maybe_build_continuation_transition(context)
-        if continuation is not None:
-            self._emit_runtime_decision(
-                context,
-                kind="force_final",
-                trigger="finalize",
-                action="continue",
-                reason=str(continuation_reason or "continuation_nudge"),
-                policy_id="continuation_detector",
-            )
-            return self._resume_after_finalize(context, continuation)
-        node_contract_reprompt = self._maybe_node_contract_tool_use_reprompt(context)
-        if node_contract_reprompt is not None:
-            return self._resume_after_finalize(context, node_contract_reprompt)
-        node_contract_reprompt = self._maybe_node_contract_required_tools_reprompt(
-            context
+        synthesis_revision_pending = (
+            context.metadata.get(_SYNTHESIS_REVISION_PENDING_KEY) is True
         )
-        if node_contract_reprompt is not None:
-            return self._resume_after_finalize(context, node_contract_reprompt)
+        if synthesis_revision_pending:
+            # The corrective provider call may itself contain a section such as
+            # "Next step".  That is answer content for the owning finalize gate,
+            # not permission for the generic continuation detector to create a
+            # third, unreviewed answer.  Do not carry such a provisional signal
+            # into the terminal receipt when the gate accepts the revision.
+            context.metadata.pop("continuation_nudge_reason", None)
+        completed_payload = self._build_completed_payload(context)
+        if not synthesis_revision_pending:
+            continuation_reason = context.metadata.get("continuation_nudge_reason")
+            continuation = _maybe_build_continuation_transition(context)
+            if continuation is not None:
+                self._emit_runtime_decision(
+                    context,
+                    kind="force_final",
+                    trigger="finalize",
+                    action="continue",
+                    reason=str(continuation_reason or "continuation_nudge"),
+                    policy_id="continuation_detector",
+                )
+                return self._resume_after_finalize(context, continuation)
+            node_contract_reprompt = self._maybe_node_contract_tool_use_reprompt(
+                context
+            )
+            if node_contract_reprompt is not None:
+                return self._resume_after_finalize(context, node_contract_reprompt)
+            node_contract_reprompt = self._maybe_node_contract_required_tools_reprompt(
+                context
+            )
+            if node_contract_reprompt is not None:
+                return self._resume_after_finalize(context, node_contract_reprompt)
         terminal_answer = self._sanitize_terminal_answer(context)
         if terminal_answer:
             completed_payload["answer"] = terminal_answer
@@ -676,6 +695,7 @@ class SingleAgentStepMixin:
             # A goal-gate (rubric) hook is not satisfied: inject its feedback as
             # a user turn and resume instead of finishing.
             if revision.disable_tools:
+                context.metadata[_SYNTHESIS_REVISION_PENDING_KEY] = True
                 current_policy = context.run_input.tool_policy
                 context.run_input = context.run_input.model_copy(
                     update={
@@ -687,6 +707,8 @@ class SingleAgentStepMixin:
                         )
                     }
                 )
+            else:
+                context.metadata.pop(_SYNTHESIS_REVISION_PENDING_KEY, None)
             self._emit_runtime_decision(
                 context,
                 kind="final_answer",
@@ -710,11 +732,13 @@ class SingleAgentStepMixin:
             )
             return self._resume_after_finalize(context, revise)
         if revision is not None and revision.fail_closed:
+            context.metadata.pop(_SYNTHESIS_REVISION_PENDING_KEY, None)
             return self._fail_finalize_revision_gate(
                 context,
                 gate_id=revision.gate_id,
                 revision_count=revision_count,
             )
+        context.metadata.pop(_SYNTHESIS_REVISION_PENDING_KEY, None)
         # Terminal side effects (memory persistence etc.): fires exactly once,
         # with the answer the user actually received. Hooks must schedule, not
         # block — this sits right before the terminal event is emitted.
