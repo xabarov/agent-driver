@@ -21,6 +21,11 @@ change between minor versions.
   from hermes-agent's micro-compaction, simplified by our immutable-log/ephemeral-View
   split (no DB-sync/resume machinery). See
   `docs/epics/compaction-improvement/DESIGN-optionB2-rolling-summary.md`.
+  - **Phase 2:** `rolling_summary_every_n_turns` is now honored — with `> 1` the fold is
+    deferred on non-cadence firings (`rolling_cadence_deferred`) so the prompt-cache prefix
+    is rewritten every N firings instead of every one, never deferring under blocking
+    pressure. A superseding `session_memory` compaction resets the rolling cursor so a
+    stale rolling summary can't drop the richer session-memory content.
 
 ## [0.12.1] - 2026-08-07
 

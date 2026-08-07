@@ -531,6 +531,52 @@ def _finalize_unimplemented_compaction_path(
     )
 
 
+def _reset_rolling_summary_state(context: RunContext) -> None:
+    """Clear the B2 rolling-summary cursor + cadence counter — used when another
+    compaction plane (session_memory) supersedes the transcript and the rolling
+    offsets no longer line up."""
+    for key in (
+        "rolling_summary",
+        "rolling_summary_covers_upto",
+        "rolling_skip_count",
+    ):
+        context.metadata.pop(key, None)
+
+
+def _rolling_cadence_should_defer(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    decision: CompactionDecision,
+    token_pressure_state: str,
+) -> bool:
+    """Option B2 cadence: with ``rolling_summary_every_n_turns > 1``, defer the fold on
+    non-cadence firings so the prompt-cache prefix is rewritten every N eligible firings
+    instead of every one (fewer cache breaks, higher interim occupancy — the documented
+    trade). Never defers the first fold (no prior summary to reuse) and never under
+    blocking pressure (correctness over cache). Returns True to skip this firing."""
+    if not (
+        host._config.enable_compaction
+        and host._config.enable_llm_compaction
+        and host._config.enable_rolling_summary
+        and decision.eligible
+        and decision.mode.value == "llm_full"
+    ):
+        return False
+    every_n = int(host._config.rolling_summary_every_n_turns or 1)
+    if every_n <= 1 or not context.metadata.get("rolling_summary"):
+        return False
+    if token_pressure_state == "blocking":
+        context.metadata["rolling_skip_count"] = 0
+        return False
+    skip_count = int(context.metadata.get("rolling_skip_count", 0) or 0)
+    if skip_count + 1 < every_n:
+        context.metadata["rolling_skip_count"] = skip_count + 1
+        return True
+    context.metadata["rolling_skip_count"] = 0
+    return False
+
+
 async def apply_compaction_if_eligible(
     host: CompactionStageHost,
     *,
@@ -561,6 +607,17 @@ async def apply_compaction_if_eligible(
             host, context=context, decision=decision, orchestrator=orchestrator
         )
         return
+    if _rolling_cadence_should_defer(
+        host,
+        context=context,
+        decision=decision,
+        token_pressure_state=token_pressure_state,
+    ):
+        # Cadence defer: leave the prompt uncompacted this firing (no aux call, no
+        # prefix rewrite); the accumulated slice folds in on the next cadence firing.
+        context.metadata["rolling_cadence_deferred"] = True
+        return
+    context.metadata["rolling_cadence_deferred"] = False
     circuit_breaker_open_before = bool(
         orchestrator.state_snapshot().get("circuit_breaker_open")
     )
@@ -664,6 +721,11 @@ def _finalize_successful_session_memory_compaction(
     context.metadata[COMPACTION_RESULT_KEY] = result_payload
     context.metadata["retained_digest_ids"] = compacted.retained_digest_ids
     context.metadata["retained_artifact_ids"] = compacted.retained_artifact_ids
+    # B2 marker coexistence: session_memory rewrote the message set, so any rolling
+    # summary + cursor from a prior llm_full firing is now stale (its group offsets no
+    # longer line up). Reset the rolling state so the next llm_full fold starts fresh
+    # instead of folding onto a summary that misses this session-memory compaction.
+    _reset_rolling_summary_state(context)
     context.metadata[COMPACTION_AUDIT_KEY] = {
         "decision": context.metadata[COMPACTION_DECISION_KEY],
         "result": result_payload,
