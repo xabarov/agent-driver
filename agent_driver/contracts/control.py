@@ -374,6 +374,40 @@ def applies_at_for_semantic(semantic: LiveMessageSemantic | None) -> str | None:
     return None
 
 
+# Canonical priority-preemption order for draining queued controls at a step
+# boundary (steering A5). This is the SINGLE source of truth — every command-queue
+# store (in-memory / SQLite / Postgres) sorts `list_pending` by it, so drain order
+# is identical across backends. Lower rank drains first.
+#
+# Rank tiers:
+#   0  INTERRUPT              — a stop preempts everything; never waste work behind it.
+#   1  REDIRECT_CURRENT       — mid-flight hard redirect (abort + re-ask).
+#   2  STEER_CURRENT          — soft steer folded into the current turn.
+#   11 QUEUE_NEXT             — deferred to the next turn (not eligible mid-run anyway).
+#   10 + priority             — everything else (config/state controls), by NOW/NEXT/LATER.
+_PRIORITY_DISPATCH_RANK: dict[ControlPriority, int] = {
+    ControlPriority.NOW: 0,
+    ControlPriority.NEXT: 1,
+    ControlPriority.LATER: 2,
+}
+
+
+def dispatch_order(item: CommandQueueItem) -> int:
+    """Canonical priority-preemption rank for a queued control (lower drains first).
+
+    Single source of truth for step-boundary drain ordering across all stores (A5).
+    """
+    if item.kind is ControlKind.INTERRUPT:
+        return 0
+    if item.requested_semantic is LiveMessageSemantic.REDIRECT_CURRENT:
+        return 1
+    if item.requested_semantic is LiveMessageSemantic.STEER_CURRENT:
+        return 2
+    if item.requested_semantic is LiveMessageSemantic.QUEUE_NEXT:
+        return 11
+    return 10 + _PRIORITY_DISPATCH_RANK[item.priority]
+
+
 def control_request_sha256(request: ControlRequest) -> str:
     """Hash the complete semantic request for verbatim idempotency checks."""
     payload = {
@@ -408,6 +442,7 @@ __all__ = [
     "NextTurnHandoff",
     "applies_at_for_semantic",
     "control_request_sha256",
+    "dispatch_order",
     "requested_semantic_for_request",
     "utc_now_iso",
 ]

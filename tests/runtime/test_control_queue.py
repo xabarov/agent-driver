@@ -71,6 +71,49 @@ def test_command_queue_priority_order_and_fifo_within_priority(store) -> None:
     assert store.dequeue_next(run_id="run_control") == now_one
 
 
+def test_dispatch_order_canonical_and_identical_across_backends(tmp_path) -> None:
+    """A5: drain order follows the canonical preemption ranking and is IDENTICAL in
+    every backend (regression guard for the previously-triplicated `_dispatch_order`,
+    which had already drifted — the QUEUE_NEXT branch existed only in the memory copy).
+    """
+    # Deliberately enqueued out of priority order so ordering can't be an accident.
+    requests = [
+        _request(ControlKind.ENQUEUE_USER_MESSAGE, priority=ControlPriority.LATER),
+        _request(ControlKind.SET_MODEL, priority=ControlPriority.NEXT),
+        # ENQUEUE+NEXT resolves to the QUEUE_NEXT semantic — the drifted branch.
+        _request(ControlKind.ENQUEUE_USER_MESSAGE, priority=ControlPriority.NEXT),
+        _request(ControlKind.STEER_USER_MESSAGE, priority=ControlPriority.NOW),
+        _request(ControlKind.REDIRECT_USER_MESSAGE, priority=ControlPriority.NOW),
+        _request(ControlKind.INTERRUPT, priority=ControlPriority.NOW),
+        _request(ControlKind.SET_TOOL_POLICY, priority=ControlPriority.NOW),
+    ]
+
+    def _kind_order(store) -> list[ControlKind]:
+        for req in requests:
+            store.enqueue(req)
+        return [item.kind for item in store.list_pending(run_id="run_control")]
+
+    memory_order = _kind_order(InMemoryCommandQueueStore())
+    sqlite_order = _kind_order(
+        SqliteCommandQueueStore(path=str(tmp_path / "control.db"))
+    )
+
+    # Cross-backend parity — the whole point of consolidating dispatch_order.
+    assert memory_order == sqlite_order
+    # Canonical preemption ranks: INTERRUPT(0) < REDIRECT_CURRENT(1) < STEER_CURRENT(2)
+    # < everything-else(10 + priority); QUEUE_NEXT(11) ties SET_MODEL@NEXT(11), broken
+    # FIFO by sequence.
+    assert memory_order == [
+        ControlKind.INTERRUPT,
+        ControlKind.REDIRECT_USER_MESSAGE,
+        ControlKind.STEER_USER_MESSAGE,
+        ControlKind.SET_TOOL_POLICY,  # NOW → 10
+        ControlKind.SET_MODEL,  # NEXT → 11, enqueued before the QUEUE_NEXT item
+        ControlKind.ENQUEUE_USER_MESSAGE,  # QUEUE_NEXT → 11
+        ControlKind.ENQUEUE_USER_MESSAGE,  # LATER → 12
+    ]
+
+
 def test_command_queue_cancel_and_mark_applied_remove_from_pending(store) -> None:
     """Cancelled/applied items should no longer appear in pending results."""
     cancelled = store.enqueue(_request(ControlKind.ENQUEUE_USER_MESSAGE))

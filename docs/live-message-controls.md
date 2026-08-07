@@ -20,6 +20,21 @@ persisted control schema version is `1`.
 `LATER` and non-message control kinds remain legacy generic queue behavior and
 are not part of live-message contract v1.
 
+### Drain order (priority preemption)
+
+When several controls are eligible at one step boundary they drain in a single
+canonical order — `dispatch_order(item)` in `agent_driver.contracts.control`, the
+sole source of truth shared by every command-queue store (in-memory / SQLite /
+Postgres), so the order is identical across backends. Lower rank drains first:
+
+1. `INTERRUPT` — a stop preempts everything; never do work behind it.
+2. `REDIRECT_CURRENT` — mid-flight hard redirect.
+3. `STEER_CURRENT` — soft steer folded into the current turn.
+4. `QUEUE_NEXT` — deferred to the next turn (not eligible mid-run anyway).
+5. everything else (config/state controls) by `NOW` → `NEXT` → `LATER`.
+
+Ties within a rank break FIFO by enqueue sequence.
+
 ## Public surface
 
 The contracts facade exports `LiveMessageSemantic`, `LiveMessagePhase`,

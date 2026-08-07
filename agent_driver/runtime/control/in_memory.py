@@ -16,15 +16,10 @@ from agent_driver.contracts.control import (
     LiveMessageSemantic,
     LiveRunState,
     control_request_sha256,
+    dispatch_order,
     requested_semantic_for_request,
     utc_now_iso,
 )
-
-_PRIORITY_ORDER = {
-    ControlPriority.NOW: 0,
-    ControlPriority.NEXT: 1,
-    ControlPriority.LATER: 2,
-}
 
 
 class InMemoryCommandQueueStore:
@@ -149,7 +144,7 @@ class InMemoryCommandQueueStore:
                 agent_id=agent_id,
             )
         ]
-        pending.sort(key=lambda row: (_dispatch_order(row[1]), row[0]))
+        pending.sort(key=lambda row: (dispatch_order(row[1]), row[0]))
         return [item for _index, item in pending]
 
     def list_for_run(self, run_id: str) -> list[CommandQueueItem]:
@@ -179,7 +174,10 @@ class InMemoryCommandQueueStore:
     def cancel(self, queue_id: str) -> CommandQueueItem | None:
         """Mark a queued command as cancelled."""
         item = self.get(queue_id)
-        if item is not None and item.requested_semantic is LiveMessageSemantic.QUEUE_NEXT:
+        if (
+            item is not None
+            and item.requested_semantic is LiveMessageSemantic.QUEUE_NEXT
+        ):
             return self.cancel_next(queue_id)
         with self._lock:
             return self._cancel_unlocked(queue_id, reason_code="cancelled")
@@ -330,7 +328,11 @@ class InMemoryCommandQueueStore:
                     continue
                 now = utc_now_iso()
                 claimed = item.model_copy(
-                    update={"claimed_by": claimant_id, "claimed_at": now, "updated_at": now}
+                    update={
+                        "claimed_by": claimant_id,
+                        "claimed_at": now,
+                        "updated_at": now,
+                    }
                 )
                 self._items[item.queue_id] = claimed
                 return claimed
@@ -386,7 +388,11 @@ class InMemoryCommandQueueStore:
             if item.claimed_by != claimant_id:
                 return item
             updated = item.model_copy(
-                update={"claimed_by": None, "claimed_at": None, "updated_at": utc_now_iso()}
+                update={
+                    "claimed_by": None,
+                    "claimed_at": None,
+                    "updated_at": utc_now_iso(),
+                }
             )
             self._items[queue_id] = updated
             return updated
@@ -455,16 +461,18 @@ class InMemoryCommandQueueStore:
                 return item
             if item.resolved_semantic is not LiveMessageSemantic.QUEUE_NEXT:
                 return item
-            return self._cancel_unlocked(
-                queue_id, reason_code="cancelled_by_operator"
-            )
+            return self._cancel_unlocked(queue_id, reason_code="cancelled_by_operator")
 
     def claim_next_handoff(
         self, *, source_run_id: str, claimant_id: str
     ) -> CommandQueueItem | None:
         with self._lock:
             state = self._run_states.get(source_run_id)
-            if state is None or state.phase is not LiveMessagePhase.TERMINAL or state.stopped:
+            if (
+                state is None
+                or state.phase is not LiveMessagePhase.TERMINAL
+                or state.stopped
+            ):
                 return None
             for item in self.list_pending(run_id=source_run_id):
                 if (
@@ -530,7 +538,8 @@ class InMemoryCommandQueueStore:
                 if (
                     item.schema_version == 0
                     and item.status is CommandQueueStatus.QUEUED
-                    and item.kind in (
+                    and item.kind
+                    in (
                         ControlKind.ENQUEUE_USER_MESSAGE,
                         ControlKind.REDIRECT_USER_MESSAGE,
                     )
@@ -563,18 +572,6 @@ class InMemoryCommandQueueStore:
 
 def _handoff_id(queue_id: str) -> str:
     return f"handoff_{queue_id.removeprefix('cmd_')}"
-
-
-def _dispatch_order(item: CommandQueueItem) -> int:
-    if item.kind is ControlKind.INTERRUPT:
-        return 0
-    if item.requested_semantic is LiveMessageSemantic.REDIRECT_CURRENT:
-        return 1
-    if item.requested_semantic is LiveMessageSemantic.STEER_CURRENT:
-        return 2
-    if item.requested_semantic is LiveMessageSemantic.QUEUE_NEXT:
-        return 11
-    return 10 + _PRIORITY_ORDER[item.priority]
 
 
 def _matches_route(
