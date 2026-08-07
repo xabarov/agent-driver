@@ -66,3 +66,47 @@ def test_validate_plan_artifact_payload_raises_structured_failure() -> None:
     assert failure.error_kind == "validation_error"
     assert failure.as_observation()["kind"] == "structured_extraction_failure"
     assert failure.validation_errors
+
+
+def test_busy_policy_routes_message_to_the_right_kind() -> None:
+    from agent_driver.contracts import (
+        BusyPolicy,
+        ControlKind,
+        ControlPriority,
+        control_request_for_message,
+    )
+
+    interrupt = control_request_for_message("x", policy=BusyPolicy.INTERRUPT, run_id="r")
+    assert interrupt.kind is ControlKind.REDIRECT_USER_MESSAGE
+    assert interrupt.priority is ControlPriority.NOW
+
+    queue = control_request_for_message("x", policy=BusyPolicy.QUEUE, run_id="r")
+    assert queue.kind is ControlKind.ENQUEUE_USER_MESSAGE
+    assert queue.priority is ControlPriority.NEXT
+
+    steer = control_request_for_message("x", policy=BusyPolicy.STEER, run_id="r")
+    assert steer.kind is ControlKind.STEER_USER_MESSAGE
+    assert steer.priority is ControlPriority.NOW
+    assert steer.payload == {"message": "x"}
+
+
+def test_parse_steering_text_bare_message_respects_busy_policy() -> None:
+    from agent_driver.contracts import BusyPolicy, ControlKind
+
+    # default policy (QUEUE) preserves the legacy enqueue behavior
+    assert parse_steering_text("do the thing", run_id="r").kind is ControlKind.ENQUEUE_USER_MESSAGE
+    # steer policy -> soft steer
+    assert (
+        parse_steering_text("do the thing", run_id="r", busy_policy=BusyPolicy.STEER).kind
+        is ControlKind.STEER_USER_MESSAGE
+    )
+    # interrupt policy -> hard redirect
+    assert (
+        parse_steering_text("do the thing", run_id="r", busy_policy=BusyPolicy.INTERRUPT).kind
+        is ControlKind.REDIRECT_USER_MESSAGE
+    )
+    # explicit verbs still win over busy policy
+    assert (
+        parse_steering_text("stop", run_id="r", busy_policy=BusyPolicy.STEER).kind
+        is ControlKind.INTERRUPT
+    )

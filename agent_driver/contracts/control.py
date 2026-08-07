@@ -54,6 +54,24 @@ class ControlPriority(StrEnum):
     LATER = "later"
 
 
+class BusyPolicy(StrEnum):
+    """How a plain user message that arrives WHILE a run is executing is routed
+    (hermes ``busy_input_mode``). The host picks a per-session policy; the engine
+    already supports all three shapes.
+
+    - ``INTERRUPT`` — hard redirect: abort the in-flight model call and re-ask with the
+      correction (``REDIRECT_USER_MESSAGE`` + ``NOW``). Lowest latency, highest disruption.
+    - ``QUEUE`` — hold the message for a fresh next turn (``ENQUEUE_USER_MESSAGE`` +
+      ``NEXT``). No disruption; the current turn finishes first.
+    - ``STEER`` — soft steer: fold the guidance into the current turn without aborting
+      (``STEER_USER_MESSAGE``). No abort tax; lands at the next step boundary.
+    """
+
+    INTERRUPT = "interrupt"
+    QUEUE = "queue"
+    STEER = "steer"
+
+
 class CommandQueueStatus(StrEnum):
     """Durable command queue lifecycle status."""
 
@@ -276,6 +294,35 @@ class LiveMessageCapabilities(ContractModel):
     cancel_queued: bool = True
     durable_store: str
     contract_version: int = 1
+
+
+def control_request_for_message(
+    message: str,
+    *,
+    policy: BusyPolicy,
+    run_id: str | None = None,
+    thread_id: str | None = None,
+    agent_id: str | None = None,
+    source: str = "busy_policy",
+) -> ControlRequest:
+    """Build the ``ControlRequest`` for a plain user message that arrived during a run,
+    routed by the session's :class:`BusyPolicy`. One place to translate "user typed
+    while the agent was working" into the right steering kind + priority."""
+    if policy is BusyPolicy.INTERRUPT:
+        kind, priority = ControlKind.REDIRECT_USER_MESSAGE, ControlPriority.NOW
+    elif policy is BusyPolicy.QUEUE:
+        kind, priority = ControlKind.ENQUEUE_USER_MESSAGE, ControlPriority.NEXT
+    else:  # STEER
+        kind, priority = ControlKind.STEER_USER_MESSAGE, ControlPriority.NOW
+    return ControlRequest(
+        kind=kind,
+        run_id=run_id,
+        thread_id=thread_id,
+        agent_id=agent_id,
+        priority=priority,
+        payload={"message": message},
+        source=source,
+    )
 
 
 def requested_semantic_for_request(

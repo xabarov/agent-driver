@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from agent_driver.contracts import ControlKind, ControlPriority, ControlRequest
+from agent_driver.contracts.control import BusyPolicy, control_request_for_message
 
 
 _MODEL_PATTERNS = (
@@ -20,6 +21,7 @@ def parse_steering_text(
     thread_id: str | None = None,
     agent_id: str | None = None,
     priority: ControlPriority = ControlPriority.NEXT,
+    busy_policy: BusyPolicy = BusyPolicy.QUEUE,
 ) -> ControlRequest:
     """Parse a small natural-language steering command into ``ControlRequest``.
 
@@ -53,13 +55,14 @@ def parse_steering_text(
             payload={"reason": "user_requested_interrupt", "message": cleaned},
             source="structured_parser",
         )
-    return ControlRequest(
-        kind=ControlKind.ENQUEUE_USER_MESSAGE,
+    # A bare message (no explicit model/stop verb) is routed by the session's busy
+    # policy: interrupt (hard redirect) / queue (next turn) / steer (soft fold).
+    return control_request_for_message(
+        cleaned,
+        policy=busy_policy,
         run_id=run_id,
         thread_id=thread_id,
         agent_id=agent_id,
-        priority=priority,
-        payload={"message": cleaned},
         source="structured_parser",
     )
 

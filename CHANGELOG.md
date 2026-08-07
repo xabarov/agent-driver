@@ -9,6 +9,14 @@ change between minor versions.
 
 ### Added
 
+- **Busy policy — `interrupt | queue | steer` message routing (steering epic).** A host
+  now selects, per session, how a plain user message that arrives WHILE a run is executing
+  is routed: `BusyPolicy.INTERRUPT` → hard redirect (abort + re-ask), `QUEUE` → hold for a
+  fresh next turn, `STEER` → soft-steer fold into the current turn (no abort). One helper,
+  `control_request_for_message(message, *, policy, …)`, translates "user typed while the
+  agent was working" into the right `ControlKind` + priority; `parse_steering_text(…,
+  busy_policy=…)` routes a bare (verb-less) message the same way (explicit stop/model verbs
+  still win). All three shapes were already engine-supported; this names the choice.
 - **Soft steer — `STEER_USER_MESSAGE` (steering epic).** A new live-control kind that
   folds user guidance into the CURRENT turn WITHOUT a new user turn and WITHOUT aborting
   the in-flight call: at the next step boundary it appends the guidance to the last
