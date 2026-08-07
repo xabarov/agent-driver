@@ -72,3 +72,55 @@ async def test_full_llm_compaction_returns_failure_on_invalid_summary() -> None:
     )
     assert result.success is False
     assert summary == {}
+
+
+def test_compaction_prompt_rolling_merge_mode() -> None:
+    """With prior_summary (B2 rolling), the prompt folds the slice into the prior
+    summary instead of framing the excerpt as the whole history."""
+    plain = build_full_compaction_prompt(history_excerpt="H", user_request="u")
+    assert "History excerpt:" in plain
+    assert "Prior persisted summary" not in plain
+
+    rolling = build_full_compaction_prompt(
+        history_excerpt="NEW_SLICE", user_request="u", prior_summary="PRIOR_SUM"
+    )
+    assert "Prior persisted summary" in rolling
+    assert "PRIOR_SUM" in rolling
+    assert "New history slice to fold" in rolling
+    assert "NEW_SLICE" in rolling
+    assert "History excerpt:" not in rolling
+
+
+class _PromptCapturingProvider(FakeProvider):
+    def __init__(self, response_text: str) -> None:
+        super().__init__(response_text=response_text)
+        self.last_prompt: str = ""
+
+    async def complete(self, request):  # type: ignore[override]
+        msgs = getattr(request, "messages", None) or []
+        self.last_prompt = str(getattr(msgs[0], "content", "")) if msgs else ""
+        return await super().complete(request)
+
+
+@pytest.mark.asyncio
+async def test_full_llm_compaction_threads_prior_summary() -> None:
+    """run_full_llm_compaction forwards prior_summary into the prompt and flags the
+    rolling fold in its reduction metadata."""
+    fake_response = (
+        "<persisted_summary>{"
+        "\"request_intent\":\"i\",\"key_concepts\":[\"a\"],\"files_code\":[\"f\"],"
+        "\"errors_fixes\":[\"e\"],\"problems\":[\"p\"],\"user_messages\":[\"m\"],"
+        "\"pending_tasks\":[\"t\"],\"current_work\":\"w\",\"next_step\":\"n\""
+        "}</persisted_summary>"
+    )
+    provider = _PromptCapturingProvider(response_text=fake_response)
+    result, _summary = await run_full_llm_compaction(
+        provider=provider,
+        model="fake-model",
+        history_excerpt="ONLY_NEW",
+        user_request="u",
+        prior_summary="EARLIER_SUMMARY",
+    )
+    assert result.success is True
+    assert "EARLIER_SUMMARY" in provider.last_prompt
+    assert result.metadata.get("rolling_fold") is True

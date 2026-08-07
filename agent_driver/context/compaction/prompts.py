@@ -3,8 +3,24 @@
 from __future__ import annotations
 
 
-def build_full_compaction_prompt(*, history_excerpt: str, user_request: str) -> str:
-    """Build structured prompt with private draft and persisted summary sections."""
+def build_full_compaction_prompt(
+    *, history_excerpt: str, user_request: str, prior_summary: str | None = None
+) -> str:
+    """Build structured prompt with private draft and persisted summary sections.
+
+    Option B2 rolling mode: when ``prior_summary`` is given, ``history_excerpt`` is only
+    the NEW slice since that summary was produced; the model folds the slice into the
+    prior summary instead of re-summarising the whole history (amortization)."""
+    if prior_summary:
+        history_section = (
+            "Prior persisted summary (already covers the earlier history — keep all "
+            "still-relevant content from it):\n"
+            f"{prior_summary}\n\n"
+            "New history slice to fold into the summary above:\n"
+            f"{history_excerpt}\n\n"
+        )
+    else:
+        history_section = f"History excerpt:\n{history_excerpt}\n\n"
     return (
         "You are a context compactor. Produce two top-level XML blocks:\n"
         "<private_draft>...</private_draft>\n"
@@ -17,9 +33,8 @@ def build_full_compaction_prompt(*, history_excerpt: str, user_request: str) -> 
         "Write all summary VALUES in the same language the user was using in "
         "the conversation - do not translate them to English. Quote the "
         "user's request_intent and user_messages verbatim.\n\n"
-        "History excerpt:\n"
-        f"{history_excerpt}\n\n"
-        "Current user request:\n"
+        + history_section
+        + "Current user request:\n"
         f"{user_request}\n"
     )
 

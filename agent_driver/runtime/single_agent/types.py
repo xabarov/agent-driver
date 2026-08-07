@@ -351,6 +351,14 @@ class RunnerConfig:
         return self.compaction.enable_ptl_retry
 
     @property
+    def enable_rolling_summary(self) -> bool:
+        return self.compaction.enable_rolling_summary
+
+    @property
+    def rolling_summary_every_n_turns(self) -> int:
+        return self.compaction.rolling_summary_every_n_turns
+
+    @property
     def compaction_failure_limit(self) -> int:
         return self.compaction.compaction_failure_limit
 
