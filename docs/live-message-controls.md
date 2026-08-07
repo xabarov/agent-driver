@@ -9,7 +9,8 @@ persisted control schema version is `1`.
 
 | Intent | Request | Runtime meaning |
 | --- | --- | --- |
-| Soft steer | `ENQUEUE_USER_MESSAGE` + `NOW` | Append at the next safe active-turn boundary. Never abort the current LLM request or a tool. |
+| Steer (new user turn) | `ENQUEUE_USER_MESSAGE` + `NOW` | Append a new user turn at the next safe active-turn boundary. Never abort the current LLM request or a tool. |
+| Soft steer (fold, no new turn) | `STEER_USER_MESSAGE` | Fold the guidance into the CURRENT turn at the next safe boundary — appended to the last tool-result message so it rides the pending LLM call as guidance on the work in progress (alternation-safe, no abort tax, no redirect budget). Degrades to a new user turn when there is no tool message to fold into. |
 | Hard redirect | `REDIRECT_USER_MESSAGE` + `NOW` | Advance the LLM generation, close only the local in-flight model await, append the correction as a real user message, and request a continuation. During a tool or approval phase it resolves as soft steer. |
 | Separate next turn | `ENQUEUE_USER_MESSAGE` + `NEXT` | Remain pending until the source run is durably terminal, then cross the host-owned idempotent NEXT handoff. It is never drained by an active step boundary. |
 | Cancel next | `cancel_next(queue_id)` | Cancel only a queued NEXT item before handoff. Applied or claimed items are not deleted. |

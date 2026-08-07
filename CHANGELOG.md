@@ -9,6 +9,17 @@ change between minor versions.
 
 ### Added
 
+- **Soft steer — `STEER_USER_MESSAGE` (steering epic).** A new live-control kind that
+  folds user guidance into the CURRENT turn WITHOUT a new user turn and WITHOUT aborting
+  the in-flight call: at the next step boundary it appends the guidance to the last
+  tool-result message so it rides the pending LLM call as guidance on the work in progress
+  (alternation-safe, ported from hermes-agent). This fills the gap between the existing
+  `ENQUEUE_USER_MESSAGE` (new user turn at the boundary) and `REDIRECT_USER_MESSAGE` (hard
+  mid-flight abort + re-ask, capped 2/step) — soft steer carries no abort tax and no
+  redirect budget. Degrades to a normal user turn when there is no tool message to fold
+  into (guidance is never dropped); idempotent by `queue_id`. Resolves to the
+  `steer_current` semantic. See `docs/live-message-controls.md`.
+
 - **Amortized rolling summary — Option B2 (compaction-improvement epic; horizon-scan
   047), opt-in.** When `enable_rolling_summary` is set, `llm_full` compaction folds the
   persisted prior summary + only the newly-overflowed message groups each firing
