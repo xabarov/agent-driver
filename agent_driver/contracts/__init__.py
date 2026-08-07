@@ -53,6 +53,7 @@ from agent_driver.contracts.continuous_validation import (
     ValidationRunRecord,
 )
 from agent_driver.contracts.control import (
+    BusyPolicy,
     CommandQueueItem,
     CommandQueueStatus,
     ControlKind,
@@ -66,6 +67,7 @@ from agent_driver.contracts.control import (
     LiveMessageSemantic,
     LiveRunState,
     NextTurnHandoff,
+    control_request_for_message,
 )
 from agent_driver.contracts.durable_lifecycle import (
     AttachPlan,
@@ -315,8 +317,10 @@ __all__ = [
     "TrimAuditRecord",
     "TrimmedContext",
     "ContractModel",
+    "BusyPolicy",
     "ControlKind",
     "ControlPriority",
+    "control_request_for_message",
     "ControlRequest",
     "ControlResponse",
     "LiveMessageAdmissionError",
