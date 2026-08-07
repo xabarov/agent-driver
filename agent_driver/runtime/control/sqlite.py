@@ -7,20 +7,13 @@ from typing import Any
 from agent_driver.contracts.control import (
     CommandQueueItem,
     CommandQueueStatus,
-    ControlPriority,
     ControlRequest,
     LiveMessagePhase,
-    LiveMessageSemantic,
     LiveRunState,
+    dispatch_order,
 )
 from agent_driver.persistence import SqliteStoreBase
 from agent_driver.runtime.control.in_memory import InMemoryCommandQueueStore
-
-_PRIORITY_ORDER = {
-    ControlPriority.NOW: 0,
-    ControlPriority.NEXT: 1,
-    ControlPriority.LATER: 2,
-}
 
 
 class SqliteCommandQueueStore(SqliteStoreBase):
@@ -81,9 +74,7 @@ class SqliteCommandQueueStore(SqliteStoreBase):
         *,
         accepted_phase: LiveMessagePhase | None = None,
     ) -> CommandQueueItem:
-        return self._mutate(
-            "admit", request, accepted_phase=accepted_phase
-        )
+        return self._mutate("admit", request, accepted_phase=accepted_phase)
 
     def get(self, queue_id: str) -> CommandQueueItem | None:
         """Return one command by id."""
@@ -121,7 +112,9 @@ class SqliteCommandQueueStore(SqliteStoreBase):
                 agent_id=agent_id,
             )
         ]
-        items.sort(key=lambda item: (_dispatch_order(item), item.sequence, item.created_at))
+        items.sort(
+            key=lambda item: (dispatch_order(item), item.sequence, item.created_at)
+        )
         return items
 
     def list_for_run(self, run_id: str) -> list[CommandQueueItem]:
@@ -225,9 +218,7 @@ class SqliteCommandQueueStore(SqliteStoreBase):
     def release_claim(
         self, queue_id: str, *, claimant_id: str
     ) -> CommandQueueItem | None:
-        return self._mutate(
-            "release_claim", queue_id, claimant_id=claimant_id
-        )
+        return self._mutate("release_claim", queue_id, claimant_id=claimant_id)
 
     def commit_terminal(
         self, run_id: str, *, stopped: bool = False
@@ -302,9 +293,7 @@ class SqliteCommandQueueStore(SqliteStoreBase):
         memory._run_states = {state.run_id: state for state in states}  # noqa: SLF001
         return memory
 
-    def _persist_snapshot_unlocked(
-        self, memory: InMemoryCommandQueueStore
-    ) -> None:
+    def _persist_snapshot_unlocked(self, memory: InMemoryCommandQueueStore) -> None:
         for item in memory._items.values():  # noqa: SLF001
             self._conn.execute(
                 """
@@ -335,6 +324,7 @@ class SqliteCommandQueueStore(SqliteStoreBase):
             )
         self._conn.commit()
 
+
 def _matches_route(
     item: CommandQueueItem,
     *,
@@ -349,16 +339,6 @@ def _matches_route(
     if agent_id is not None and item.agent_id != agent_id:
         return False
     return True
-
-
-def _dispatch_order(item: CommandQueueItem) -> int:
-    if item.kind.value == "interrupt":
-        return 0
-    if item.requested_semantic is LiveMessageSemantic.REDIRECT_CURRENT:
-        return 1
-    if item.requested_semantic is LiveMessageSemantic.STEER_CURRENT:
-        return 2
-    return 10 + _PRIORITY_ORDER[item.priority]
 
 
 __all__ = ["SqliteCommandQueueStore"]

@@ -7,6 +7,20 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Priority-preemption drain — one canonical order across all backends (steering epic
+  A5).** The step-boundary drain ranking (`_dispatch_order`) had been copy-pasted into
+  the in-memory, SQLite, and Postgres command-queue stores and had already **drifted**:
+  the `QUEUE_NEXT` rank branch existed only in the in-memory copy (the others reached the
+  same number only by coincidence of NEXT-priority arithmetic), and INTERRUPT was matched
+  by enum identity in one copy and by string value in the others. Consolidated into a
+  single canonical `dispatch_order(item)` in `agent_driver.contracts.control` (now the one
+  source of truth for NOW/preempt ordering: INTERRUPT → redirect → soft-steer → queued-
+  next → everything-else-by-priority); all three stores import it. A cross-backend parity
+  test locks memory and SQLite to identical drain order for a diverse control set so the
+  copies can never silently diverge again.
+
 ### Added
 
 - **Partial-output preservation on hard redirect (steering epic A4).** When a
