@@ -31,6 +31,7 @@ from agent_driver.context.token_estimation import (
     calibrate_chars_per_token,
 )
 from agent_driver.runtime.metadata_state import (
+    StreamingRuntimeState,
     get_compaction_runtime_state,
     get_cost_runtime_state,
     get_loop_control_state,
@@ -263,6 +264,22 @@ def _overflow_recovery(
     return _recover
 
 
+def _preserved_partial_output(context: RunContext) -> str:
+    """Return the partial assistant text streamed before a mid-flight abort, if any.
+
+    On a hard-redirect abort the streaming task is cancelled (``_cancel_detached``),
+    but each chunk had been mirrored into ``assistant_stream_content`` and the stream
+    was never ``mark_completed``. That surviving buffer is the model's partial answer
+    (text only — signed reasoning is streamed separately and never replayed). Guard on
+    started-but-not-completed so a prior completed turn's content is never
+    mis-attributed to this interrupted one (A4 partial-output preservation).
+    """
+    stream = StreamingRuntimeState(context.metadata)
+    if not stream.started() or stream.completed():
+        return ""
+    return (stream.content() or "").strip()
+
+
 def _apply_redirect_correction(
     host: "LlmStepHost",
     context: RunContext,
@@ -294,10 +311,25 @@ def _apply_redirect_correction(
             host, context, observations, clarification
         )
         return _narrow_request_tools_to_forced_choice(rebuilt)
+    # A4: preserve whatever the model had already streamed before the abort, so the
+    # partial answer is not silently discarded — the model sees its own draft, then the
+    # correction. Text only (no signed reasoning is replayed), so alternation stays valid.
+    partial = _preserved_partial_output(context)
+    interrupted_metadata = scaffolding_metadata("redirect_interrupt_checkpoint")
+    if partial:
+        interrupted_content = f"{partial}\n\n[Ответ прерван поправкой пользователя.]"
+        interrupted_metadata = {
+            **interrupted_metadata,
+            "partial_output_preserved": True,
+        }
+        # Consume the buffer so a later abort in this step cannot re-attach the same draft.
+        StreamingRuntimeState(context.metadata).mark_completed(partial)
+    else:
+        interrupted_content = "[Предыдущий ответ прерван поправкой пользователя.]"
     interrupted = ChatMessage(
         role=ChatRole.ASSISTANT,
-        content="[Предыдущий ответ прерван поправкой пользователя.]",
-        metadata=scaffolding_metadata("redirect_interrupt_checkpoint"),
+        content=interrupted_content,
+        metadata=interrupted_metadata,
     )
     messages.append(interrupted)
     # The correction itself is a GENUINE user turn (epic 030) — never tagged.
@@ -342,6 +374,8 @@ def _apply_redirect_correction(
             "signal_id": "steering_redirect_applied",
             "severity": "info",
             "redirect_count_step": count,
+            "partial_output_preserved": bool(partial),
+            "partial_output_chars": len(partial),
             "raw_free": True,
         },
     )
