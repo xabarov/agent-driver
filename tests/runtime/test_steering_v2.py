@@ -34,16 +34,19 @@ def _run_input(run_id: str) -> AgentRunInput:
     )
 
 
-# --- Phase A: unsupported kind emits a signal, is not silently dropped ---------
+# --- Phase A: recognized-but-unwired kinds are honestly reported ---------------
 
 
 @pytest.mark.asyncio
-async def test_unsupported_control_kind_emits_signal_and_marks_failed() -> None:
+async def test_not_implemented_control_kind_emits_signal_and_marks_failed() -> None:
+    """A6: a recognized kind with no consumer in this context (subagent controls on
+    the single-agent dispatcher) reports a distinct `control_kind_not_implemented`
+    signal — not `control_kind_unsupported` (which means unknown kind) — and FAILs."""
     store = InMemoryCommandQueueStore()
     item = store.enqueue(
         ControlRequest(
             kind=ControlKind.STOP_SUBAGENT,
-            run_id="r-unsupported",
+            run_id="r-notimpl",
             priority=ControlPriority.NEXT,
         )
     )
@@ -51,14 +54,103 @@ async def test_unsupported_control_kind_emits_signal_and_marks_failed() -> None:
         provider=FakeProvider(response_text="готово"),
         tools=ToolSet.only(),
         command_queue_store=store,
-    ).run(_run_input("r-unsupported"))
+    ).run(_run_input("r-notimpl"))
 
     signals = [
         e.payload.get("signal_id") for e in out.events if e.payload.get("signal_id")
     ]
-    assert "control_kind_unsupported" in signals
+    assert "control_kind_not_implemented" in signals
+    assert "control_kind_unsupported" not in signals
     # The item is marked FAILED (not left QUEUED to re-drain every step).
     assert store.get(item.queue_id).status.value == "failed"
+
+
+class _RecordingProvider(FakeProvider):
+    """Captures every LlmRequest so a control's effect on the request is assertable."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="готово")
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        return await super().complete(request)
+
+
+@pytest.mark.asyncio
+async def test_set_max_thinking_tokens_wires_reasoning_into_request() -> None:
+    """A6: SET_MAX_THINKING_TOKENS is drained at the boundary and its budget reaches
+    the provider-neutral reasoning envelope on the next LLM request."""
+    store = InMemoryCommandQueueStore()
+    item = store.enqueue(
+        ControlRequest(
+            kind=ControlKind.SET_MAX_THINKING_TOKENS,
+            run_id="r-think",
+            priority=ControlPriority.NOW,
+            payload={"max_thinking_tokens": 4096},
+        )
+    )
+    provider = _RecordingProvider()
+    out = await create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        command_queue_store=store,
+    ).run(_run_input("r-think"))
+
+    assert out.status == RunStatus.COMPLETED
+    # Applied (not failed) and threaded into the first request's reasoning envelope.
+    assert store.get(item.queue_id).status.value == "applied"
+    assert provider.requests
+    assert provider.requests[0].reasoning == {"max_tokens": 4096}
+
+
+@pytest.mark.asyncio
+async def test_set_max_thinking_tokens_zero_disables_reasoning() -> None:
+    """A budget of 0 disables thinking rather than capping it."""
+    store = InMemoryCommandQueueStore()
+    store.enqueue(
+        ControlRequest(
+            kind=ControlKind.SET_MAX_THINKING_TOKENS,
+            run_id="r-think0",
+            priority=ControlPriority.NOW,
+            payload={"max_thinking_tokens": 0},
+        )
+    )
+    provider = _RecordingProvider()
+    await create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        command_queue_store=store,
+    ).run(_run_input("r-think0"))
+
+    assert provider.requests[0].reasoning == {"enabled": False}
+
+
+@pytest.mark.asyncio
+async def test_set_max_thinking_tokens_invalid_payload_marks_failed() -> None:
+    """A non-int / negative budget is a malformed payload → FAILED, no reasoning set."""
+    store = InMemoryCommandQueueStore()
+    item = store.enqueue(
+        ControlRequest(
+            kind=ControlKind.SET_MAX_THINKING_TOKENS,
+            run_id="r-thinkbad",
+            priority=ControlPriority.NOW,
+            payload={"max_thinking_tokens": "lots"},
+        )
+    )
+    provider = _RecordingProvider()
+    out = await create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        command_queue_store=store,
+    ).run(_run_input("r-thinkbad"))
+
+    signals = [
+        e.payload.get("signal_id") for e in out.events if e.payload.get("signal_id")
+    ]
+    assert "control_payload_invalid" in signals
+    assert store.get(item.queue_id).status.value == "failed"
+    assert provider.requests[0].reasoning is None
 
 
 # --- Phase B: hard redirect aborts the in-flight call + re-asks ----------------

@@ -7,6 +7,29 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **`SET_MAX_THINKING_TOKENS` control is now wired (steering epic A6).** Previously a
+  recognized-but-unhandled `ControlKind` that hard-failed on drain, it now caps (or
+  disables) the model's thinking/reasoning budget for subsequent LLM calls, mirroring
+  `SET_MODEL`: the dispatcher writes `reasoning_max_tokens` into `tool_policy.metadata`,
+  and request-build consumes it into the provider-neutral `LlmRequest.reasoning` envelope
+  (positive int → `{"max_tokens": n}`, `0` → `{"enabled": False}`, unset → omitted so
+  non-thinking backends are unaffected). Payload key `max_thinking_tokens` (alias
+  `tokens`); a non-int/negative budget is reported `control_payload_invalid`.
+
+### Changed
+
+- **Honest reporting for recognized-but-unwired control kinds (steering epic A6).** The
+  subagent controls `STOP_SUBAGENT` / `CONTINUE_SUBAGENT` — which the single-agent chat
+  dispatcher cannot act on (it holds only the command queue, not a subagent store or child
+  abort handle) — now drain to a distinct `control_kind_not_implemented` signal instead of
+  being conflated with a genuinely unknown kind under `control_kind_unsupported`. Both
+  still mark the item FAILED (never left QUEUED), but a host can now tell a feature gap
+  from a version-mismatch/typo. The two cancellation seams these would need (run-level
+  abort; child/subagent abort in the tool stage) are documented in
+  `docs/live-message-controls.md`.
+
 ### Fixed
 
 - **Priority-preemption drain — one canonical order across all backends (steering epic
