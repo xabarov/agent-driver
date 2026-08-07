@@ -38,6 +38,12 @@ class ControlKind(StrEnum):
     # children), keep completed messages, add the text as a real user turn and
     # re-request. Degrades to ENQUEUE at a step boundary / during the tool phase.
     REDIRECT_USER_MESSAGE = "redirect_user_message"
+    # Soft steer (steering epic) — fold user guidance into the CURRENT turn WITHOUT a
+    # new user turn and WITHOUT aborting the in-flight call: appended to the last
+    # tool-result message at the next step boundary (alternation-safe, hermes model).
+    # No abort tax and no redirect budget; degrades to ENQUEUE when there is no tool
+    # message to fold into.
+    STEER_USER_MESSAGE = "steer_user_message"
 
 
 class ControlPriority(StrEnum):
@@ -281,6 +287,9 @@ def requested_semantic_for_request(
             return LiveMessageSemantic.STEER_CURRENT
         if request.priority is ControlPriority.NEXT:
             return LiveMessageSemantic.QUEUE_NEXT
+    if request.kind is ControlKind.STEER_USER_MESSAGE:
+        # Soft steer always targets the current turn (fold into the last tool result).
+        return LiveMessageSemantic.STEER_CURRENT
     if (
         request.kind is ControlKind.REDIRECT_USER_MESSAGE
         and request.priority is ControlPriority.NOW

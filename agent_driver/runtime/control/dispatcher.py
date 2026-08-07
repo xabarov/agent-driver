@@ -199,6 +199,12 @@ def _apply_control_item(
             return _Result.INVALID
         _append_user_message(context, message.strip(), queue_id=item.queue_id)
         return _Result.APPLIED
+    if kind == ControlKind.STEER_USER_MESSAGE:
+        message = item.payload.get("message")
+        if not isinstance(message, str) or not message.strip():
+            return _Result.INVALID
+        _apply_soft_steer(context, message.strip(), queue_id=item.queue_id)
+        return _Result.APPLIED
     if kind == ControlKind.REDIRECT_USER_MESSAGE:
         # A REDIRECT that reaches the STEP BOUNDARY (not mid-LLM-await) means there
         # was nothing in-flight to abort — degrade to enqueue (hermes: redirect
@@ -293,6 +299,60 @@ def _append_user_message(
         if queue_id is not None
     ):
         protocol.append(appended.model_dump(mode="json"))
+        context.metadata["protocol_messages"] = protocol
+
+
+def _is_tool_role(role: Any) -> bool:
+    return str(getattr(role, "value", role) or "").casefold() == "tool"
+
+
+def _apply_soft_steer(
+    context: RunContext, message: str, *, queue_id: str | None = None
+) -> None:
+    """Soft steer: fold user guidance into the CURRENT turn without a new user turn and
+    without aborting — append it to the last tool-result message so it rides the next
+    LLM call as guidance on the work in progress (alternation-safe, hermes model). No
+    tool message to fold into (e.g. the model has not called a tool yet) degrades to a
+    normal user-turn enqueue so the guidance is never dropped."""
+    messages = list(context.run_input.messages)
+    if queue_id is not None and any(
+        item.metadata.get("live_message_queue_id") == queue_id for item in messages
+    ):
+        return  # idempotent: this steer already landed
+    last_tool = next(
+        (i for i in range(len(messages) - 1, -1, -1) if _is_tool_role(messages[i].role)),
+        None,
+    )
+    if last_tool is None:
+        _append_user_message(context, message, queue_id=queue_id)
+        return
+    note = f"\n\n[User steering: {message}]"
+    tool_msg = messages[last_tool]
+    metadata = dict(tool_msg.metadata or {})
+    if queue_id is not None:
+        metadata["live_message_queue_id"] = queue_id
+    folded = tool_msg.model_copy(
+        update={"content": str(tool_msg.content or "") + note, "metadata": metadata}
+    )
+    messages[last_tool] = folded
+    context.run_input = context.run_input.model_copy(update={"messages": messages})
+    # Mirror the fold into the durable protocol log so resume/compaction see it too.
+    protocol = context.metadata.get("protocol_messages")
+    if isinstance(protocol, list):
+        if queue_id is not None and any(
+            isinstance(row, dict)
+            and row.get("metadata", {}).get("live_message_queue_id") == queue_id
+            for row in protocol
+        ):
+            return
+        for row in reversed(protocol):
+            if isinstance(row, dict) and _is_tool_role(row.get("role")):
+                row["content"] = str(row.get("content") or "") + note
+                row_meta = dict(row.get("metadata") or {})
+                if queue_id is not None:
+                    row_meta["live_message_queue_id"] = queue_id
+                row["metadata"] = row_meta
+                break
         context.metadata["protocol_messages"] = protocol
 
 
