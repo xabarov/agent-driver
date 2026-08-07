@@ -7,7 +7,19 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-07
+
 ### Added
+
+- **Bounded fail-closed final-answer gates.** `RevisionRequest` can now request a
+  synthesis-only revision (`disable_tools=True`), lower the runtime revision
+  budget (`max_revisions`), and fail with typed `guardrail_blocked` semantics
+  when the revised answer still violates a host-owned quality or safety rule
+  (`fail_closed=True`). The no-tools boundary is enforced twice: tool schemas
+  are hidden from the provider and the executor policy becomes `NO_TOOLS`.
+  Runtime decisions expose `kind=final_answer`, `action=revise`, the gate id,
+  bounded counters, and whether tools were disabled. Defaults preserve the
+  historical fail-open rubric behavior.
 
 - **Context occupancy telemetry (compaction-improvement epic; horizon-scan 047).** The
   token-pressure snapshot now reports `occupancy_pct` — the fraction of the compaction

@@ -22,6 +22,7 @@ _VALID_KINDS = frozenset(
         "approval",
         "scope",
         "budget",
+        "final_answer",
     }
 )
 _VALID_ACTIONS = frozenset(
@@ -36,6 +37,7 @@ _VALID_ACTIONS = frozenset(
         "mark_blocked",
         "rollback",
         "warn",
+        "revise",
     }
 )
 _VALID_STATUSES = frozenset({"proposed", "applied", "skipped", "satisfied", "failed"})

@@ -10,15 +10,12 @@ contracts.
 policy: [docs/embedding.md](docs/embedding.md). Runnable recipes:
 [examples/cookbook](examples/cookbook/README.md).
 
-Current package version: `0.11.0`
+Current package version: `0.12.0`
 
-**Release 0.11.0** (backward-compatible MINOR over `0.10.0`) — the compaction-improvement
-epic (budget correctness, calibrated token accounting, condenser-pipeline foundation, and
-the `compaction_model` sentinel 400 fix) plus a large behavior-preserving refactor pass
-(god-module splits + a hot-path god-function sweep). No public surface change, no
-migration; hosts on `0.3.3`–`0.10.0` upgrade in place. See
-[CHANGELOG](CHANGELOG.md) `[0.11.0]` and the
-[release handoff](docs/backlog/agent-driver-harness-analysis/handoff-0.11.0-compaction-refactor.md).
+**Release 0.12.0** (backward-compatible MINOR over `0.11.0`) adds bounded,
+synthesis-only final-answer revision gates with an optional fail-closed terminal.
+Existing lifecycle hooks keep their historical behavior because every new
+`RevisionRequest` option defaults off. See [CHANGELOG](CHANGELOG.md) `[0.12.0]`.
 
 ## What is new in this iteration
 
