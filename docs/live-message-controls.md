@@ -14,6 +14,7 @@ persisted control schema version is `1`.
 | Hard redirect | `REDIRECT_USER_MESSAGE` + `NOW` | Advance the LLM generation, close only the local in-flight model await, append the correction as a real user message, and request a continuation. During a tool or approval phase it resolves as soft steer. |
 | Separate next turn | `ENQUEUE_USER_MESSAGE` + `NEXT` | Remain pending until the source run is durably terminal, then cross the host-owned idempotent NEXT handoff. It is never drained by an active step boundary. |
 | Cancel next | `cancel_next(queue_id)` | Cancel only a queued NEXT item before handoff. Applied or claimed items are not deleted. |
+| Pause (resumable) | `PAUSE` | Park the run at the next safe boundary as a `MANUAL_PAUSE` interrupt (`pause_current` semantic). An in-flight LLM/tool call finishes first (no mid-flight abort); the run returns a `PAUSED` output. Resume by delivering a `ResumeCommand` with `ResumeAction.CONTINUE` (or `CANCEL` to end it). Unlike Stop, a pause is fully resumable and leaves no `run_stopped` failure. |
 | Stop | `INTERRUPT` + `NOW`, or the host abort seam | Establish a durable preemption boundary. Pending messages become failed with `run_stopped`; no live message grants cancellation authority over a tool or socket. |
 
 `LATER` and non-message control kinds remain legacy generic queue behavior and

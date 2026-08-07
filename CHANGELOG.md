@@ -9,6 +9,18 @@ change between minor versions.
 
 ### Added
 
+- **Pause / resume — `PAUSE` steering control + `ResumeAction.CONTINUE` (steering epic A3).**
+  A host can now park a running agent at the next step boundary without aborting it: the
+  `PAUSE` control (`ControlKind.PAUSE`, resolving to the `pause_current` live-message
+  semantic, applied at the next safe boundary) sets a transient
+  `steering_pause_requested` marker that the LLM step consumes before its next call,
+  synthesizing a `MANUAL_PAUSE` interrupt so the run returns as a resumable `PAUSED`
+  output. Resume with a `ResumeCommand` carrying the new `ResumeAction.CONTINUE` — kept
+  distinct from `APPROVE` so an audit never conflates a pause-resume with an approval
+  grant — and the run continues from where it stopped (re-drives the pending LLM call).
+  Boundary-only: an in-flight LLM/tool call always finishes before the pause takes effect
+  (no mid-flight abort, unlike `REDIRECT_USER_MESSAGE`). See
+  `docs/live-message-controls.md` and `docs/epics/steering/DESIGN-A3-pause-resume.md`.
 - **Busy policy — `interrupt | queue | steer` message routing (steering epic).** A host
   now selects, per session, how a plain user message that arrives WHILE a run is executing
   is routed: `BusyPolicy.INTERRUPT` → hard redirect (abort + re-ask), `QUEUE` → hold for a
