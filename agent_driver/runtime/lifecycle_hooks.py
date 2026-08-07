@@ -38,9 +38,27 @@ class RevisionRequest:
 
     The runtime injects ``feedback`` as a user turn and resumes the run (bounded
     by a hard cap), letting a goal-gate / rubric drive iteration toward criteria.
+
+    ``disable_tools`` makes the revision a synthesis-only pass: the runtime hides
+    every tool schema *and* changes the execution policy to ``NO_TOOLS`` before
+    the next provider call. ``max_revisions`` optionally lowers the runtime's
+    global revision backstop for this request. When that budget is exhausted,
+    ``fail_closed`` turns the run into a typed ``guardrail_blocked`` failure
+    instead of accepting an answer the gate still rejects. All additions default
+    to the historical fail-open behavior for compatibility.
     """
 
     feedback: str
+    disable_tools: bool = False
+    max_revisions: int | None = None
+    fail_closed: bool = False
+    gate_id: str = "finalize_revision_gate"
+
+    def __post_init__(self) -> None:
+        if self.max_revisions is not None and self.max_revisions < 0:
+            raise ValueError("max_revisions must be >= 0")
+        if not self.gate_id.strip():
+            raise ValueError("gate_id must not be empty")
 
 
 @runtime_checkable

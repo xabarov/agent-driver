@@ -12,6 +12,7 @@ from agent_driver.contracts.enums import (
     RunStatus,
     RuntimeEventType,
     TerminalReason,
+    ToolPolicyMode,
 )
 from agent_driver.llm.contracts import LlmResponse
 from agent_driver.observability.provenance import build_provenance_summary
@@ -575,6 +576,49 @@ class SingleAgentStepMixin:
         )
         return self._finish_terminal(context, output)
 
+    def _fail_finalize_revision_gate(
+        self,
+        context: RunContext,
+        *,
+        gate_id: str,
+        revision_count: int,
+    ) -> RuntimeStepResult:
+        """Fail closed when a finalize gate still rejects the bounded revision."""
+        self._emit_runtime_decision(
+            context,
+            kind="final_answer",
+            trigger="finalize",
+            action="block",
+            reason="revision_budget_exhausted",
+            status="applied",
+            policy_id=gate_id,
+            budget={"revision_count": revision_count},
+        )
+        self._emit(
+            EventSpec(
+                run_id=context.run_id,
+                attempt_id=context.attempt_id,
+                event_type=RuntimeEventType.RUN_FAILED,
+                payload={
+                    "reason": TerminalReason.GUARDRAIL_BLOCKED.value,
+                    "policy_id": gate_id,
+                    "revision_count": revision_count,
+                },
+            )
+        )
+        self._emit_observe_policy_decisions(
+            context,
+            trigger="finalize_revision_gate",
+        )
+        output = self._build_output(
+            context,
+            TerminalResult(
+                status=RunStatus.FAILED,
+                reason=TerminalReason.GUARDRAIL_BLOCKED,
+            ),
+        )
+        return self._finish_terminal(context, output)
+
     async def _execute_finalize(self, context: RunContext) -> RuntimeStepResult:
         set_phase = getattr(self._deps.command_queue_store, "set_run_phase", None)
         if callable(set_phase):
@@ -624,12 +668,39 @@ class SingleAgentStepMixin:
             emit=_hook_event_emitter(self, context),
             timeout=getattr(self._config, "finalize_hook_timeout", None),
         )
-        if revision is not None and (
-            int(context.metadata.get("rubric_revision_count", 0))
-            < _MAX_RUBRIC_REVISIONS
-        ):
+        revision_count = int(context.metadata.get("rubric_revision_count", 0))
+        revision_limit = _MAX_RUBRIC_REVISIONS
+        if revision is not None and revision.max_revisions is not None:
+            revision_limit = min(revision_limit, revision.max_revisions)
+        if revision is not None and revision_count < revision_limit:
             # A goal-gate (rubric) hook is not satisfied: inject its feedback as
             # a user turn and resume instead of finishing.
+            if revision.disable_tools:
+                current_policy = context.run_input.tool_policy
+                context.run_input = context.run_input.model_copy(
+                    update={
+                        "tool_policy": current_policy.model_copy(
+                            update={
+                                "mode": ToolPolicyMode.NO_TOOLS,
+                                "allowed_tools": [],
+                            }
+                        )
+                    }
+                )
+            self._emit_runtime_decision(
+                context,
+                kind="final_answer",
+                trigger="finalize",
+                action="revise",
+                reason="revision_requested",
+                status="applied",
+                policy_id=revision.gate_id,
+                budget={
+                    "revision_count": revision_count + 1,
+                    "max_revisions": revision_limit,
+                },
+                product_tags=["tools_disabled"] if revision.disable_tools else None,
+            )
             revise = _build_continuation_transition(
                 context,
                 text=terminal_answer or "",
@@ -638,6 +709,12 @@ class SingleAgentStepMixin:
                 count_key="rubric_revision_count",
             )
             return self._resume_after_finalize(context, revise)
+        if revision is not None and revision.fail_closed:
+            return self._fail_finalize_revision_gate(
+                context,
+                gate_id=revision.gate_id,
+                revision_count=revision_count,
+            )
         # Terminal side effects (memory persistence etc.): fires exactly once,
         # with the answer the user actually received. Hooks must schedule, not
         # block — this sits right before the terminal event is emitted.

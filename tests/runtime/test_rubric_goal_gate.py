@@ -49,6 +49,110 @@ async def test_revision_request_loops_then_accepts() -> None:
     assert hook.finalizes == 2  # first revised, second accepted
 
 
+class _RevisionSequenceProvider(FakeProvider):
+    """Return bounded answers and record the tool surface of each request."""
+
+    def __init__(self, answers: list[str]) -> None:
+        super().__init__(response_text=answers[-1])
+        self._answers = list(answers)
+        self.calls = 0
+        self.request_tool_names: list[list[str]] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.request_tool_names.append(
+            [
+                str(tool.get("function", {}).get("name") or tool.get("name") or "")
+                for tool in request.tools
+            ]
+        )
+        index = min(self.calls, len(self._answers) - 1)
+        self._response_text = self._answers[index]
+        self.calls += 1
+        return await super().complete(request)
+
+
+class _RejectBadAnswer(BaseRunLifecycleHook):
+    name = "reject_bad_answer"
+
+    async def on_finalize(self, context, *, answer):  # noqa: ANN001
+        if answer == "good":
+            return None
+        return RevisionRequest(
+            feedback="Revise the final answer only.",
+            disable_tools=True,
+            max_revisions=1,
+            fail_closed=True,
+            gate_id="answer_quality",
+        )
+
+
+@pytest.mark.asyncio
+async def test_revision_can_disable_tools_and_then_accept() -> None:
+    """A synthesis-only revision hides tools and returns the corrected answer."""
+    provider = _RevisionSequenceProvider(["bad", "good"])
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.all(),
+        lifecycle_hooks=(_RejectBadAnswer(),),
+    )
+
+    output = await agent.run(_run_input("r-quality-revised"))
+
+    assert output.status.value == "completed"
+    assert output.answer == "good"
+    assert provider.request_tool_names[0]
+    assert provider.request_tool_names[1] == []
+    decisions = [
+        event.payload
+        for event in output.events
+        if event.type.value == "runtime_decision"
+        and event.payload.get("kind") == "final_answer"
+    ]
+    assert len(decisions) == 1
+    assert decisions[0]["trigger"] == "finalize"
+    assert decisions[0]["action"] == "revise"
+    assert decisions[0]["reason"] == "revision_requested"
+    assert decisions[0]["status"] == "applied"
+    assert decisions[0]["policy_id"] == "answer_quality"
+    assert decisions[0]["budget"] == {"revision_count": 1, "max_revisions": 1}
+    assert decisions[0]["product_tags"] == ["tools_disabled"]
+
+
+@pytest.mark.asyncio
+async def test_revision_can_fail_closed_after_budget() -> None:
+    """A still-invalid revised answer cannot silently pass a fail-closed gate."""
+    provider = _RevisionSequenceProvider(["bad", "bad"])
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.all(),
+        lifecycle_hooks=(_RejectBadAnswer(),),
+    )
+
+    output = await agent.run(_run_input("r-quality-blocked"))
+
+    assert output.status.value == "failed"
+    assert output.terminal_reason.value == "guardrail_blocked"
+    assert provider.calls == 2
+    assert provider.request_tool_names[1] == []
+    failed = [
+        event.payload
+        for event in output.events
+        if event.type.value == "run_failed"
+    ]
+    assert failed[-1] == {
+        "reason": "guardrail_blocked",
+        "policy_id": "answer_quality",
+        "revision_count": 1,
+    }
+
+
+def test_revision_request_rejects_invalid_limits_and_gate_ids() -> None:
+    with pytest.raises(ValueError, match="max_revisions"):
+        RevisionRequest(feedback="x", max_revisions=-1)
+    with pytest.raises(ValueError, match="gate_id"):
+        RevisionRequest(feedback="x", gate_id="  ")
+
+
 class _CapturingProvider(FakeProvider):
     """Records the concatenated user-message text of each request."""
 
