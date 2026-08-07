@@ -177,6 +177,15 @@ class CompactionSettings:
     enable_llm_compaction: bool = False
     enable_partial_compaction: bool = True
     enable_ptl_retry: bool = True
+    # Option B2 (amortized rolling summary): when enabled, llm_full folds the prior
+    # persisted summary + only the newly-overflowed slice each firing instead of
+    # re-summarising the full history from scratch (kills the ~12.5k redundant
+    # tokens/step measured in MEASUREMENT-optionB). Opt-in default OFF: a per-turn
+    # history rewrite breaks the provider prompt-cache prefix, so it is a trade, not a
+    # pure saving (see DESIGN-optionB2-rolling-summary.md). ``every_n_turns`` is the
+    # cadence dial that trades reclaim frequency for fewer cache breaks.
+    enable_rolling_summary: bool = False
+    rolling_summary_every_n_turns: int = 1
     compaction_failure_limit: int = 3
     session_memory_stale_after_turns: int = 4
     compaction_model: str = "default"

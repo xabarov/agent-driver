@@ -776,10 +776,18 @@ class _FullCompactionExcerpt:
     kept_groups: list[str]
     dropped_groups: list[str]
     protected_indexes: set[int]
+    #: Total non-scaffolding source groups in the full message list (before any
+    #: ``skip_leading_groups`` rolling cursor). The rolling summary advances its
+    #: ``rolling_summary_covers_upto`` cursor to this after folding a slice.
+    total_source_groups: int = 0
 
 
 def _build_full_compaction_excerpt(
-    host: CompactionStageHost, *, context: RunContext, request: Any
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    request: Any,
+    skip_leading_groups: int = 0,
 ) -> _FullCompactionExcerpt:
     """Flatten non-scaffolding, non-empty message content into groups, mark the
     protected ones, apply the PTL-retry oldest-drop within the scaled char budget,
@@ -788,9 +796,13 @@ def _build_full_compaction_excerpt(
     Epic 043 C: runtime scaffolding turns (nudges, recovery hints) are dropped —
     they are ephemeral and role is flattened away here, so the summary model would
     otherwise be free to read a nudge as user intent.
+
+    Option B2: ``skip_leading_groups`` drops the first N source groups the rolling
+    summary already absorbed, so only the newly-overflowed slice is summarised;
+    ``total_source_groups`` on the result is the cursor to persist after folding.
     """
-    raw_groups: list[str] = []
-    protected_indexes: set[int] = set()
+    source_groups: list[str] = []
+    source_protected: set[int] = set()
     last_message_index = len(request.messages) - 1
     for message_index, message in enumerate(request.messages):
         if is_scaffolding(message):
@@ -798,12 +810,18 @@ def _build_full_compaction_excerpt(
         content = str(message.content or "")
         if not content.strip():
             continue
-        group_index = len(raw_groups)
-        raw_groups.append(content)
+        group_index = len(source_groups)
+        source_groups.append(content)
         if _is_protected_message(
             message, is_last=message_index == last_message_index
         ):
-            protected_indexes.add(group_index)
+            source_protected.add(group_index)
+    total_source_groups = len(source_groups)
+    # Rolling cursor: keep only groups past what the prior summary already covers,
+    # re-indexing protection onto the remaining slice.
+    skip = max(0, min(skip_leading_groups, total_source_groups))
+    raw_groups = source_groups[skip:]
+    protected_indexes = {i - skip for i in source_protected if i >= skip}
     kept_groups = list(raw_groups)
     dropped_groups: list[str] = []
     effective_ptl_max_chars, budget_source = _scaled_context_char_cap(
@@ -825,6 +843,7 @@ def _build_full_compaction_excerpt(
         kept_groups=kept_groups,
         dropped_groups=dropped_groups,
         protected_indexes=protected_indexes,
+        total_source_groups=total_source_groups,
     )
 
 
@@ -1008,7 +1027,22 @@ async def _apply_llm_full_compaction(
     circuit_breaker_open_before: bool,
 ) -> bool:
     original_messages = list(request.messages)
-    excerpt = _build_full_compaction_excerpt(host, context=context, request=request)
+    # Option B2: in rolling mode, fold the persisted prior summary + only the groups
+    # past the cursor instead of re-summarising the full history each firing. The
+    # first firing (cursor 0, no prior summary) degrades to a normal full compaction.
+    rolling = bool(host._config.enable_rolling_summary)
+    prior_summary: str | None = None
+    covers_upto = 0
+    if rolling:
+        prior_raw = context.metadata.get("rolling_summary")
+        prior_summary = prior_raw if isinstance(prior_raw, str) and prior_raw else None
+        covers_upto = int(context.metadata.get("rolling_summary_covers_upto", 0) or 0)
+    excerpt = _build_full_compaction_excerpt(
+        host,
+        context=context,
+        request=request,
+        skip_leading_groups=covers_upto if rolling else 0,
+    )
     compaction_provider, compaction_model = _resolve_compaction_backend(
         host, request=request
     )
@@ -1020,6 +1054,7 @@ async def _apply_llm_full_compaction(
         idle_timeout_seconds=host._config.aux_idle_timeout_seconds,
         max_history_chars=excerpt.max_chars,
         history_is_bounded=True,
+        prior_summary=prior_summary,
     )
     _account_compaction_cost(context, compaction_result, provider=compaction_provider)
     if compaction_result is None or not compaction_result.success:
@@ -1035,6 +1070,13 @@ async def _apply_llm_full_compaction(
     compaction_result = compaction_result.model_copy(
         update={"compaction_id": compaction_id}
     )
+    if rolling:
+        # Persist the updated rolling summary + advance the cursor to the full source
+        # group count; the next firing folds only the groups that arrive after this.
+        context.metadata["rolling_summary"] = json.dumps(
+            summary, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        context.metadata["rolling_summary_covers_upto"] = excerpt.total_source_groups
     retained_messages = _retained_messages_after_full_compaction(original_messages)
     request.messages = _splice_summary_message(retained_messages, summary)
     unit_receipt = _material_unit_receipt(

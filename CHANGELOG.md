@@ -7,6 +7,21 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Amortized rolling summary — Option B2 (compaction-improvement epic; horizon-scan
+  047), opt-in.** When `enable_rolling_summary` is set, `llm_full` compaction folds the
+  persisted prior summary + only the newly-overflowed message groups each firing
+  (`rolling_summary` / `rolling_summary_covers_upto` cursor in run metadata) instead of
+  re-summarising the full growing history from scratch — killing the ~12.5k redundant
+  input tokens/step the Option-B measurement confirmed. The first firing degrades to a
+  normal full compaction; subsequent firings fold only the slice past the cursor. Default
+  **off**: a per-turn history rewrite breaks the provider prompt-cache prefix, so it is a
+  trade, not a pure saving; `rolling_summary_every_n_turns` is the cadence dial. Ported
+  from hermes-agent's micro-compaction, simplified by our immutable-log/ephemeral-View
+  split (no DB-sync/resume machinery). See
+  `docs/epics/compaction-improvement/DESIGN-optionB2-rolling-summary.md`.
+
 ## [0.12.1] - 2026-08-07
 
 ### Fixed

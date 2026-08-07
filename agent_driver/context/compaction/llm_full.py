@@ -58,6 +58,7 @@ async def run_full_llm_compaction(
     idle_timeout_seconds: float | None = None,
     max_history_chars: int = 5000,
     history_is_bounded: bool = False,
+    prior_summary: str | None = None,
 ) -> tuple[CompactionResult, dict[str, object]]:
     """Run full no-tool compaction with structured validation.
 
@@ -97,7 +98,9 @@ async def run_full_llm_compaction(
     prompt = build_full_compaction_prompt(
         history_excerpt=bounded_history,
         user_request=user_request,
+        prior_summary=prior_summary,
     )
+    reduction_metadata["rolling_fold"] = prior_summary is not None
     started = monotonic()
     try:
         response = await bounded_side_completion(
