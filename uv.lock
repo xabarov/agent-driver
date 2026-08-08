@@ -30,7 +30,7 @@ wheels = [
 
 [[package]]
 name = "agent-driver"
-version = "0.13.0"
+version = "0.13.1"
 source = { editable = "." }
 dependencies = [
     { name = "arize-phoenix-otel" },
@@ -38,6 +38,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "scipy" },
 ]
 
@@ -94,6 +95,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.6.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
     { name = "scipy", specifier = ">=1.11.0" },

@@ -7,6 +7,19 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-09
+
+### Fixed
+
+- **Embedded live streams remain progressive during buffered provider bursts.**
+  OpenAI-compatible transports can decode many SSE events from one network read, so
+  successive `anext()` calls may complete without suspending. Hosts using a synchronous
+  durable event store could therefore persist hundreds of `token_delta` events while the
+  concurrent `RunStream` consumer was starved, making a genuinely streamed answer appear
+  as one terminal UI batch. The streaming loop now yields fairly after each persisted
+  provider event. A regression test models synchronous durable-write latency and proves
+  that the first token reaches the consumer before the provider burst finishes.
+
 ## [0.13.0] - 2026-08-08
 
 ### Changed

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import httpx
 import pytest
@@ -17,14 +18,13 @@ from agent_driver.contracts import (
     ToolCall,
     ToolManifest,
 )
-from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.enums import (
     ApprovalMode,
     ResumeAction,
     SideEffectClass,
     ToolRisk,
 )
-from agent_driver.llm.providers_impl.fake import FakeProvider
+from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.contracts import (
     LlmFinishReason,
     LlmRequest,
@@ -32,7 +32,8 @@ from agent_driver.llm.contracts import (
     LlmStreamEvent,
     UsageSummary,
 )
-from agent_driver.runtime import RunnerConfig
+from agent_driver.llm.providers_impl.fake import FakeProvider
+from agent_driver.runtime import InMemoryEventLog, RunnerConfig
 from agent_driver.runtime.control import (
     InMemoryCommandQueueStore,
     SqliteCommandQueueStore,
@@ -300,6 +301,29 @@ class _SlowStreamingProvider(FakeProvider):
         await asyncio.sleep(0.2)
         yield LlmStreamEvent(event="delta", delta_text="slow")
         yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.STOP)
+
+
+class _BurstStreamingProvider(FakeProvider):
+    """Provider whose already-buffered chunks do not suspend between yields."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="ignored")
+        self.finished = False
+
+    async def stream(self, request: LlmRequest):
+        for _ in range(48):
+            yield LlmStreamEvent(event="delta", delta_text="x")
+        self.finished = True
+        yield LlmStreamEvent(event="done", finish_reason=LlmFinishReason.STOP)
+
+
+class _BlockingAppendEventLog(InMemoryEventLog):
+    """Model the synchronous durable-store cost paid by embedded hosts."""
+
+    def append(self, event):
+        super().append(event)
+        if event.type == RuntimeEventType.TOKEN_DELTA:
+            time.sleep(0.002)
 
 
 class _CaptureRequestProvider(FakeProvider):
@@ -572,6 +596,39 @@ async def test_sdk_stream_emits_incrementally_before_run_finishes() -> None:
     assert first.event == RuntimeEventType.RUN_STARTED.value
     rest = [item async for item in stream]
     assert any(item.event == RuntimeEventType.TOKEN_DELTA.value for item in rest)
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_keeps_live_consumer_fair_during_buffered_provider_burst() -> (
+    None
+):
+    """Durable token writes must not starve the concurrent RunStream consumer."""
+
+    provider = _BurstStreamingProvider()
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        event_log=_BlockingAppendEventLog(),
+    )
+    stream = agent.stream_run(
+        AgentRunInput(
+            input="incremental burst",
+            run_id="run_sdk_incremental_burst",
+            agent_id="agent",
+            graph_preset="single_react",
+            stream=True,
+        ),
+        stream_poll_interval_ms=5,
+    )
+    provider_finished_at_first_token: bool | None = None
+    async for event in stream.events():
+        if (
+            provider_finished_at_first_token is None
+            and event.event == RuntimeEventType.TOKEN_DELTA.value
+        ):
+            provider_finished_at_first_token = provider.finished
+
+    assert provider_finished_at_first_token is False
 
 
 @pytest.mark.asyncio

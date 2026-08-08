@@ -150,6 +150,15 @@ async def complete_streaming_request(
                 stream_metadata=stream_metadata,
                 audio_state=audio_state,
             )
+            # An HTTP transport may decode many provider events from one
+            # already-buffered network read.  ``anext(iterator)`` then
+            # completes synchronously for the whole burst, while durable
+            # event-log writes are synchronous too.  Explicitly hand control
+            # back to the loop after every persisted stream item so a
+            # concurrent RunStream/SSE consumer can observe deltas while the
+            # provider call is still active instead of receiving the answer
+            # as one terminal batch.
+            await asyncio.sleep(0)
             if _is_meaningful_stream_item(item):
                 last_meaningful_event_at = monotonic()
             if item.finish_reason is not None:
