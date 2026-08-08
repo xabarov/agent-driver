@@ -270,7 +270,10 @@ def build_trimmed_request(
             tool_choice = None
         else:
             tool_choice = context.run_input.tool_choice
-    request_allowed_tools = _deep_research_request_allowed_tools(context)
+    request_allowed_tools = _combine_request_allowlists(
+        _deep_research_request_allowed_tools(context),
+        _skill_scope_request_allowed_tools(host, context),
+    )
     if request_allowed_tools is not None:
         context.metadata["llm_request_allowed_tools"] = request_allowed_tools
     else:
@@ -406,6 +409,57 @@ def build_trimmed_request(
             tool_defer_threshold_pct=host._config.capabilities.tool_defer_threshold_pct,
         )
     )
+
+
+def _combine_request_allowlists(
+    first: tuple[str, ...] | None,
+    second: tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
+    """Combine two runtime tool-allowlist narrowings by intersection.
+
+    ``None`` means "no narrowing from this source". When both narrow, the effective
+    surface is their intersection (a tool must be allowed by every active narrowing). An
+    empty result means the two narrowings do not overlap — the surface is fully locked
+    down, which is the deterministic (host-configured) outcome of that combination.
+    """
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return tuple(sorted(set(first) & set(second)))
+
+
+def _skill_scope_request_allowed_tools(
+    host: "LlmRequestPrepHost", context: RunContext
+) -> tuple[str, ...] | None:
+    """Narrow the tool surface to a pinned skill's ``allowed_tools`` (Skills S6).
+
+    A host pins a run to a skill via ``tool_policy.metadata["skill_scope"] = "<name>"``.
+    The named skill is resolved from the configured ``skills_catalog_sources`` and the
+    model's visible tools are limited to that skill's declared set — plus the skill-load
+    tools themselves, so the model can still open the scoped skill. ``None`` (no narrowing)
+    when no scope is set, no sources are configured, or the skill declares no tools.
+    """
+    policy = context.run_input.tool_policy
+    scope = policy.metadata.get("skill_scope")
+    if not isinstance(scope, str) or not scope.strip():
+        return None
+    sources = getattr(host._config, "skills_catalog_sources", ())
+    if not sources:
+        return None
+    from agent_driver.skills import resolve_skill_allowed_tools  # noqa: PLC0415
+
+    tools = resolve_skill_allowed_tools(
+        tuple(sources),
+        scope,
+        trusted_roots=tuple(
+            getattr(host._config, "skills_catalog_trusted_roots", ()) or ()
+        ),
+    )
+    if not tools:
+        return None
+    # Keep the skill-load tools reachable so the model can still open the scoped skill.
+    return tuple(sorted(set(tools) | {"skill_view", "skill_tool"}))
 
 
 def _deep_research_request_allowed_tools(

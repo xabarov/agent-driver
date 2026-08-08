@@ -46,6 +46,18 @@ change between minor versions.
 
 ### Added
 
+- **Runtime tool-scoping by a pinned skill (skills epic S6).** A skill's `allowed_tools`
+  frontmatter was advisory only (safety warnings + a selection-time subset check). A host
+  can now pin a run to a skill via `tool_policy.metadata["skill_scope"] = "<name>"`: the
+  named skill is resolved from `skills_catalog_sources` and the model's visible tool surface
+  is narrowed to that skill's declared `allowed_tools` — plus the skill-load tools
+  (`skill_view`/`skill_tool`) so the model can still open the scoped skill. Enforced
+  deterministically at the schema layer through the existing `llm_request_allowed_tools`
+  narrowing (intersected with any deep-research narrowing, never expanding the surface), so
+  it is host-controlled and predictable — NOT triggered by the model merely reading a skill
+  (there is no "active skill" mode). No scope / unknown skill / a skill that declares no
+  tools all leave the surface unchanged. `resolve_skill_allowed_tools(...)` is exported from
+  `agent_driver.skills`.
 - **Keyword-triggered skill surfacing (skills epic S5).** A skill can declare `keywords` in
   its frontmatter; when the user's request mentions any (whole-word, case-insensitive), the
   runtime injects a targeted hint naming that skill and how to load it — a proactive middle
