@@ -43,6 +43,17 @@ def test_catalog_empty_sources_returns_empty() -> None:
     assert build_skills_catalog_block([]) == ""
 
 
+def test_catalog_header_override(tmp_path) -> None:
+    """A consumer (e.g. a localized product) can supply its own intro header."""
+    _write_skill(tmp_path, "chart-builder", "Build charts", "Use for a chart.")
+    block = build_skills_catalog_block(
+        [str(tmp_path)], header="### Доступные skills\nЗагрузи нужный через skill_view."
+    )
+    assert block.startswith("### Доступные skills")
+    assert "## Available skills" not in block
+    assert "chart-builder" in block
+
+
 def test_catalog_missing_dir_is_skipped(tmp_path) -> None:
     # A non-existent source must not raise — just yields no entries.
     assert build_skills_catalog_block([str(tmp_path / "nope")]) == ""

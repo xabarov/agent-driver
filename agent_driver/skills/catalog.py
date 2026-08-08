@@ -37,13 +37,17 @@ def build_skills_catalog_block(
     max_chars: int = 2000,
     trusted_roots: Sequence[str | Path] = (),
     max_skills: int = 50,
+    header: str | None = None,
 ) -> str:
     """Render the tier-1 skills catalog block, or ``""`` when no skills are found.
 
     Scans each source directory for ``SKILL.md`` manifests, dedupes by name (first
     source wins), and renders a Markdown block bounded by ``max_chars`` with graceful
-    degradation. Discovery errors on a source are skipped, not fatal.
+    degradation. Discovery errors on a source are skipped, not fatal. ``header`` overrides
+    the default intro (e.g. a localized one for a non-English consumer); the ``max_chars``
+    budget applies to the header + entries together.
     """
+    catalog_header = header if header is not None else _CATALOG_HEADER
     roots = tuple(Path(root).expanduser() for root in trusted_roots)
     entries: list[tuple[SkillManifest, str]] = []
     seen: set[str] = set()
@@ -70,7 +74,7 @@ def build_skills_catalog_block(
     full_lines = [
         render_skill_entry(manifest, base_dir=base_dir) for manifest, base_dir in entries
     ]
-    block = _CATALOG_HEADER + "\n" + "\n".join(full_lines)
+    block = catalog_header + "\n" + "\n".join(full_lines)
     if len(block) <= max_chars:
         return block
 
@@ -80,13 +84,13 @@ def build_skills_catalog_block(
         for manifest, base_dir in entries
     ]
     footer_1b = "\n(Summaries omitted to fit the prompt budget — use skill_tool for details.)"
-    block = _CATALOG_HEADER + "\n" + "\n".join(name_lines) + footer_1b
+    block = catalog_header + "\n" + "\n".join(name_lines) + footer_1b
     if len(block) <= max_chars:
         return block
 
     # Tier 1c: truncate the list, pointing at skill_tool for the rest.
     kept: list[str] = []
-    running = len(_CATALOG_HEADER) + 1
+    running = len(catalog_header) + 1
     for line in name_lines:
         if running + len(line) + 1 > max_chars:
             break
@@ -96,7 +100,7 @@ def build_skills_catalog_block(
     footer_1c = (
         f"\n(+{dropped} more — use skill_tool to list all skills.)" if dropped else ""
     )
-    return _CATALOG_HEADER + "\n" + "\n".join(kept) + footer_1c
+    return catalog_header + "\n" + "\n".join(kept) + footer_1c
 
 
 __all__ = ["build_skills_catalog_block"]
