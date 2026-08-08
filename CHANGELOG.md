@@ -55,6 +55,15 @@ change between minor versions.
 
 ### Added
 
+- **Approved plan connected to the todo checklist (planning epic P6).** `enter_plan_mode`/
+  `exit_plan_mode_v2` (approval-plan prose) and `todo_write` (the working checklist) were two
+  disconnected surfaces — after a plan was approved the model had prose but no todos and
+  could forget to lay out a checklist. The `planning_mode_exit` reminder now branches: when
+  a plan is approved but no todos exist yet and `todo_write` is available, it nudges the
+  model to lay the approved plan out as a `todo_write` checklist (3–7 steps, one
+  `in_progress`) and work through it; once a checklist exists it keeps the original "continue
+  execution" message. The model authored the plan, so it produces an accurate checklist —
+  no fragile prose parsing.
 - **Verification nudge before finalizing a completed plan (planning epic P5).** A model
   could declare a multi-step task done without ever checking its work. When a plain run is
   about to finalize a plan that is fully completed with 3+ steps and none of them was a
