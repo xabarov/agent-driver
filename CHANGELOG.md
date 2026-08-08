@@ -55,6 +55,15 @@ change between minor versions.
 
 ### Added
 
+- **Stuck-step escalation for a stalled in_progress todo (planning epic P4).** Nothing used
+  to flag a plan step that stayed `in_progress` across many tool loops — the model could
+  spin on the same step indefinitely under the same gentle periodic reminder. Once the
+  current step has survived `TODO_STALE_TOOL_LOOPS` (5) tool loops with no `todo_write`
+  update, the periodic plan reminder now escalates: it names the stuck step and tells the
+  model to finish it, split it into smaller `todo_write` steps, or — if blocked — cancel it
+  and move on. One mechanism (the existing reminder gains an escalation line), so no extra
+  nudge; escalates only when exactly one step is `in_progress` and stops as soon as a
+  `todo_write` resets the loop counter.
 - **Checklist-creation nudge for multi-step tasks (planning epic P2).** The adaptive
   planning hint used to nudge only toward `enter_plan_mode` (the read-only approval flow),
   so a run that carries the lightweight `todo_write` checklist tool — but no approval-plan
