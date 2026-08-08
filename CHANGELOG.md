@@ -7,6 +7,8 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-08
+
 ### Changed
 
 - **Periodic plan reminder re-lists ACTIVE todos only (planning epic P3).** The recurring
