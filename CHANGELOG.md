@@ -9,6 +9,15 @@ change between minor versions.
 
 ### Changed
 
+- **Periodic plan reminder re-lists ACTIVE todos only (planning epic P3).** The recurring
+  session-plan reminder used to re-list every todo with its status prefix, including
+  completed/cancelled ones. Re-listing finished steps is a known way to make a model re-do
+  work after a context compaction — the todo list persists in metadata while the message
+  history that recorded the work is summarized away, so a re-listed `[completed] step`
+  reads like a step still to do. The reminder now lists only pending/in_progress steps and
+  collapses the rest into a "N of M steps already completed/cancelled — do NOT redo them"
+  note; when all steps are done it tells the model to produce the final answer (hermes'
+  compaction rule). Progress stays visible without inviting rework.
 - **Real YAML parsing for `SKILL.md` frontmatter (skills epic S4).** The hand-rolled
   frontmatter parser only reached one level of nesting and silently mis-parsed block
   scalars, lists of maps, and deeper structures. `parse_frontmatter` now uses PyYAML's
