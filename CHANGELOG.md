@@ -7,6 +7,18 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Skill bodies stay recoverable in history (skills epic S2).** A `skill_view` result
+  carries the full `SKILL.md` body plus a `summary`, so the generic protocol compaction
+  truncated the body to a prefix and told the model to "use summary/artifacts" — wrong for
+  a skill, whose full instructions are recovered only by calling `skill_view` again. The
+  durable `skill_view` protocol message now keeps the prefix but swaps that marker for an
+  explicit **reload hint** carrying the skill `name` + `base_dir` (+ `relative_file`), so a
+  skill pruned from history stays recoverable across turns. Combined with the S1 catalog
+  (re-injected every turn), a skill stays discoverable and reloadable across compaction too.
+  The `skill_invocation` record is left untouched; other bulky tools keep the generic marker.
+
 ### Added
 
 - **Tier-1 "available skills" catalog in the system prompt (skills epic S1).** Progressive
