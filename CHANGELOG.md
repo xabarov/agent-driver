@@ -46,6 +46,19 @@ change between minor versions.
 
 ### Added
 
+- **Open-todos finalize gate (planning epic P1).** A planned run no longer quietly finishes
+  with unfinished work. When the model is about to emit a final answer but the session plan
+  still has `pending`/`in_progress` todos, the run re-prompts it (bounded, ≤3) with the
+  concrete list of open items and a "finish these, or cancel with `todo_write(merge=true)`;
+  do not give the final answer until every todo is completed or cancelled" instruction,
+  instead of finalizing. This wires the previously-implemented-but-unused
+  `has_unfinished_todos`; the re-prompt reminder is injected via the universal (non
+  chat-mode-gated) protocol path, and an `open_todos_finalize_blocked` signal is emitted.
+  Bounded so a model that insists on finishing (or genuinely cannot complete the plan) is
+  still allowed to finalize rather than deadlocking — a strong nudge, not a hard block.
+  Inert when there is no planning state, and defers to the existing research/deliverable
+  contract gate (which already re-prompts on unfinished todos) when a `task_contract` or
+  `deliverable_request` is engaged — P1 fills the gap only for plain runs.
 - **Runtime tool-scoping by a pinned skill (skills epic S6).** A skill's `allowed_tools`
   frontmatter was advisory only (safety warnings + a selection-time subset check). A host
   can now pin a run to a skill via `tool_policy.metadata["skill_scope"] = "<name>"`: the
