@@ -124,6 +124,59 @@ def format_todo_list_reminder(state: PlanningState) -> str:
     return "\n".join(lines)
 
 
+# P5: stems that mark a plan step as a verification/review step (EN + RU). Substring
+# match against the lowered content, so "verify", "verification", "double-check",
+# "проверка", "перепроверь" all count.
+_VERIFICATION_STEM = (
+    "verif",
+    "verify",
+    "check",
+    "test",
+    "review",
+    "validat",
+    "audit",
+    "провер",
+    "перепровер",
+    "тест",
+    "валидац",
+    "сверк",
+    "сверь",
+    "ревью",
+    "аудит",
+)
+
+
+def plan_all_done_without_verification(
+    state: PlanningState, *, min_steps: int = 3
+) -> bool:
+    """Return whether a substantial plan finished with no verification step (P5).
+
+    True only when the plan has ``>= min_steps`` todos, every one is
+    completed/cancelled, and none reads like a verification/review step — the case
+    where the model is about to declare a multi-step task done without checking its work.
+    """
+    if len(state.todos) < min_steps:
+        return False
+    if unfinished_todos(state):
+        return False
+    for item in state.todos:
+        lowered = item.content.lower()
+        if any(stem in lowered for stem in _VERIFICATION_STEM):
+            return False
+    return True
+
+
+def format_verify_before_final_reminder(state: PlanningState) -> str:
+    """Nudge to verify a completed multi-step plan before the final answer (P5)."""
+    return (
+        f"You completed a {len(state.todos)}-step plan, but none of the steps was a "
+        "verification step. Before the final answer, verify your work — re-check the key "
+        "results/outputs you produced (recompute a figure, re-open a source, re-read the "
+        "artifact). Do not declare the task done by only listing caveats. Once you have "
+        "verified, give the final answer."
+    )
+
+
 def format_stale_todo_escalation(state: PlanningState, loops: int) -> str:
     """Return an escalation for a step stuck in_progress too long, or "" (P4).
 
@@ -164,6 +217,21 @@ def maybe_append_todo_reminder_to_protocol(
                     metadata=scaffolding_metadata(
                         "open_todos_finalize_reminder",
                         base={"kind": "open_todos_finalize_reminder"},
+                    ),
+                ),
+            )
+    # P5: a finalize attempt was blocked because a completed multi-step plan had no
+    # verification step — inject the "verify your work first" nudge (one-shot marker).
+    if context.metadata.pop("verify_before_final_blocked", None):
+        state = planning_state_from_metadata(context)
+        if state is not None:
+            return protocol_messages + (
+                ChatMessage(
+                    role=ChatRole.USER,
+                    content=format_verify_before_final_reminder(state),
+                    metadata=scaffolding_metadata(
+                        "verify_before_final_reminder",
+                        base={"kind": "verify_before_final_reminder"},
                     ),
                 ),
             )
@@ -243,6 +311,8 @@ __all__ = [
     "format_open_todos_finalize_reminder",
     "format_stale_todo_escalation",
     "format_todo_list_reminder",
+    "format_verify_before_final_reminder",
+    "plan_all_done_without_verification",
     "increment_tool_loops_since_todo_write",
     "maybe_append_todo_reminder_to_protocol",
     "planning_state_from_metadata",

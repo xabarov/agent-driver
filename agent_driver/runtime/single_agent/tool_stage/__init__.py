@@ -45,6 +45,8 @@ from agent_driver.runtime.single_agent.context_management.todo_reminders import 
     append_todo_progress_hint_after_substantive_tool,
     has_unfinished_todos,
     increment_tool_loops_since_todo_write,
+    plan_all_done_without_verification,
+    planning_state_from_metadata,
 )
 from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.lifecycle.pending import (
@@ -530,6 +532,35 @@ async def _finalize_tool_stage_transition(
                     "signal_id": "open_todos_finalize_blocked",
                     "severity": "warning",
                     "reprompt_count": open_todos_reprompts + 1,
+                },
+            )
+    # Planning P5: a completed multi-step plan should be verified, not just declared done.
+    # If the model is about to finalize a plain run whose plan is fully completed with 3+
+    # steps and NONE of them was a verification step, re-prompt it ONCE to verify its work
+    # first. Mutually exclusive with P1 (which fires on OPEN todos); same plain-run gating
+    # (contract/deliverable runs run their own verify/review pass).
+    if (
+        not continue_with_llm
+        and context.llm_response is not None
+        and not _contract_active
+        and int(context.metadata.get("verify_before_final_reprompt_count", 0)) < 1
+    ):
+        _plan_state = planning_state_from_metadata(context)
+        if _plan_state is not None and plan_all_done_without_verification(_plan_state):
+            context.metadata["verify_before_final_reprompt_count"] = 1
+            context.metadata["verify_before_final_blocked"] = True
+            continue_with_llm = True
+            emit_step_event(
+                host,
+                context,
+                event_type=RuntimeEventType.WARNING,
+                payload={
+                    "warning": (
+                        "Run attempted to finalize a completed multi-step plan with no "
+                        "verification step; re-prompting to verify before the final answer."
+                    ),
+                    "signal_id": "plan_verification_nudge",
+                    "severity": "warning",
                 },
             )
     loop_iterations = int(context.metadata.get("tool_loop_iterations", 0))
