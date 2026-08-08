@@ -7,6 +7,23 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-08-08
+
+### Fixed — model-authored child roles and configured deadlines
+
+The native `agent_tool` runtime now preserves an explicit first-class
+`task_type` as the child `worker_type` when no role was supplied in metadata.
+This closes a gap where the public request schema accepted a logical child
+type but runtime materialization discarded it, causing host-enforced child
+tool-surface contracts to fail closed with an empty allow-list. Generic
+default task types remain unset, and explicit `metadata.worker_type` or
+`metadata.role` still wins.
+
+`SubagentSettings.default_child_deadline_seconds` is now applied to planned
+children that do not declare their own deadline. Previously the setting was
+exposed but the executor always fell back to its internal 90-second default;
+explicit per-task deadlines remain authoritative.
+
 ## [0.3.4] - 2026-08-06
 
 ### Added — host-enforced task-scoped child tool surfaces

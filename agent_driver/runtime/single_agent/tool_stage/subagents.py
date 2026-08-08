@@ -60,6 +60,20 @@ def apply_agent_tool_spawn_requests(
         idempotency_key = request.get("idempotency_key")
         metadata = request.get("metadata")
         task_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        task_type = str(request.get("task_type") or "").strip()
+        if (
+            task_type
+            and task_type not in {"general", "subagent_task"}
+            and not any(
+                str(task_metadata.get(key) or "").strip()
+                for key in ("worker_type", "role")
+            )
+        ):
+            # ``task_type`` is a first-class field in the public agent_tool
+            # schema. Preserve it as the worker role used by host-declared
+            # child tool surfaces instead of silently discarding it during
+            # runtime materialization. Explicit metadata remains authoritative.
+            task_metadata["worker_type"] = task_type
         task_text = task
         if _deep_research_mode(context):
             task_metadata.setdefault("worker_type", "researcher")

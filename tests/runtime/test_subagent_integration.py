@@ -474,6 +474,41 @@ def test_deep_research_agent_tool_children_default_to_researcher_notes() -> None
     assert "research/report.md" in task["task"]
 
 
+def test_agent_tool_task_type_becomes_worker_type_for_host_child_surface() -> None:
+    """The public task_type field must reach host-enforced child role policy."""
+    context = _subagent_context(
+        {
+            "task_contract": {
+                "max_subagent_requests": 2,
+                "child_tool_surfaces": {
+                    "hostname_verifier": ["dns_lookup", "httpx"],
+                },
+            },
+        }
+    )
+    result = _agent_tool_result(("subreq_hostnames", "Verify hostname shard"))
+    request = result.envelopes[0].structured_output["subagent_request"]
+    request["task_type"] = "hostname_verifier"
+
+    apply_agent_tool_spawn_requests(context, result)
+
+    task = context.metadata["planned_subagent_group"]["tasks"][0]
+    assert task["metadata"]["worker_type"] == "hostname_verifier"
+
+
+def test_agent_tool_explicit_worker_metadata_wins_over_task_type() -> None:
+    context = _subagent_context()
+    result = _agent_tool_result(("subreq_explicit", "Verify explicit shard"))
+    request = result.envelopes[0].structured_output["subagent_request"]
+    request["task_type"] = "hostname_verifier"
+    request["metadata"] = {"role": "network_service_verifier"}
+
+    apply_agent_tool_spawn_requests(context, result)
+
+    task = context.metadata["planned_subagent_group"]["tasks"][0]
+    assert task["metadata"] == {"role": "network_service_verifier"}
+
+
 def test_deep_research_agent_tool_respects_total_request_limit() -> None:
     """Medium Deep Research should not keep opening new child waves."""
     context = _subagent_context(
