@@ -55,6 +55,16 @@ change between minor versions.
 
 ### Added
 
+- **Verification nudge before finalizing a completed plan (planning epic P5).** A model
+  could declare a multi-step task done without ever checking its work. When a plain run is
+  about to finalize a plan that is fully completed with 3+ steps and none of them was a
+  verification step (matched against verify/check/test/review/validate/audit stems, EN+RU),
+  the run now re-prompts it once — "verify your work — re-check the key results you produced;
+  don't declare done by only listing caveats" — via a one-shot marker + a
+  `plan_verification_nudge` signal. Mutually exclusive with the P1 open-todos gate (that
+  fires on unfinished todos, this on completed-but-unverified ones) and gated the same way —
+  deferred on `task_contract`/`deliverable_request` runs, which run their own verify/review
+  pass. Bounded to a single re-prompt so the run still finishes.
 - **Stuck-step escalation for a stalled in_progress todo (planning epic P4).** Nothing used
   to flag a plan step that stayed `in_progress` across many tool loops — the model could
   spin on the same step indefinitely under the same gentle periodic reminder. Once the
