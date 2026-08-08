@@ -127,7 +127,31 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 
 def parse_frontmatter(raw: str) -> dict[str, Any]:
-    """Parse a conservative YAML subset used by Agent Skills metadata."""
+    """Parse ``SKILL.md`` YAML frontmatter into a dict (S4).
+
+    Prefer PyYAML's ``BaseLoader`` — it handles the full YAML grammar (deep nesting,
+    block scalars, lists of maps) that the previous hand-rolled subset silently
+    mis-parsed, while loading every scalar as a STRING. That string-first behaviour is
+    deliberate: it preserves the legacy semantics AND sidesteps YAML's implicit typing
+    footguns (``version: 1.0`` → ``"1.0"`` not ``1.0``; the Norway problem where
+    ``tags: [no, yes]`` would otherwise become ``[False, True]``). BaseLoader also cannot
+    construct arbitrary Python objects, so it is safe on untrusted skill files. Falls back
+    to the conservative hand-rolled parser when PyYAML is absent (it is only a transitive
+    dependency) or the frontmatter is not valid YAML.
+    """
+    try:
+        import yaml  # noqa: PLC0415 - optional/transitive; guarded fallback below
+    except ImportError:
+        return _parse_frontmatter_legacy(raw)
+    try:
+        loaded = yaml.load(raw, Loader=yaml.BaseLoader)
+    except yaml.YAMLError:
+        return _parse_frontmatter_legacy(raw)
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _parse_frontmatter_legacy(raw: str) -> dict[str, Any]:
+    """Conservative hand-rolled YAML-subset fallback (used only without PyYAML)."""
     result: dict[str, Any] = {}
     current_key: str | None = None
     for line in raw.splitlines():

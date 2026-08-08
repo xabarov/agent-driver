@@ -9,6 +9,17 @@ change between minor versions.
 
 ### Changed
 
+- **Real YAML parsing for `SKILL.md` frontmatter (skills epic S4).** The hand-rolled
+  frontmatter parser only reached one level of nesting and silently mis-parsed block
+  scalars, lists of maps, and deeper structures. `parse_frontmatter` now uses PyYAML's
+  `BaseLoader`, which handles the full YAML grammar while loading every scalar as a
+  **string** — deliberately string-first to preserve the legacy semantics and sidestep
+  YAML's implicit-typing footguns (`version: 1.0` → `"1.0"` not `1.0`; the Norway problem
+  where `tags: [no, yes]` would otherwise become `[False, True]`). BaseLoader cannot
+  construct arbitrary Python objects, so it stays safe on untrusted skill files. PyYAML is
+  now a declared dependency (it had been only transitive); the conservative hand-rolled
+  parser is retained as a fallback for when PyYAML is absent or the frontmatter is invalid
+  YAML.
 - **Memoized skill-manifest parsing (skills epic S3).** `list_skill_manifests` / `view_skill`
   each `rglob` the skill tree and re-`read_text`+parse every `SKILL.md` on every call — and
   `load_skill_manifest` `rglob`s a second time per skill for the supporting-file index — so
