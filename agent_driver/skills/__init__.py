@@ -5,6 +5,7 @@ from agent_driver.skills.curated import CURATED_RESEARCH_SKILL_NAMES, curated_sk
 from agent_driver.skills.models import SkillInvocation, SkillManifest
 from agent_driver.skills.parser import (
     SKILL_FILENAME,
+    clear_skill_manifest_cache,
     is_trusted_path,
     load_skill_manifest,
     parse_frontmatter,
@@ -47,6 +48,7 @@ from agent_driver.skills.render import render_skill_entry
 
 __all__ = [
     "SKILL_FILENAME",
+    "clear_skill_manifest_cache",
     "SkillInvocation",
     "SkillManifest",
     "SkillView",

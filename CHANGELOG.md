@@ -7,6 +7,20 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Changed
+
+- **Memoized skill-manifest parsing (skills epic S3).** `list_skill_manifests` / `view_skill`
+  each `rglob` the skill tree and re-`read_text`+parse every `SKILL.md` on every call — and
+  `load_skill_manifest` `rglob`s a second time per skill for the supporting-file index — so
+  discovery was O(tree) parse work per call (now repeated once per run by the S1 catalog and
+  again by each `skill_tool`/`skill_view`). `load_skill_manifest` now memoizes the parsed
+  manifest keyed on `(path, trusted_roots, base_dir, max_files)` and invalidates on the
+  `SKILL.md`'s `(mtime_ns, size)`, so an edited skill is re-parsed (hot-reload) while
+  unchanged skills are served from cache. Cache is process-wide, bounded (cleared past 1024
+  entries), and exposes `clear_skill_manifest_cache()` for tests/explicit invalidation.
+  Caveat: a change to a *supporting* file that leaves `SKILL.md` untouched isn't detected
+  until `SKILL.md` changes.
+
 ### Fixed
 
 - **Skill bodies stay recoverable in history (skills epic S2).** A `skill_view` result
