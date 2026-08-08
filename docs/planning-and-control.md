@@ -24,7 +24,8 @@ Chat-mode prompt assembly injects compact runtime reminders when relevant:
 - `planning_mode_active` - stay read-only and prepare an approval-ready plan;
 - `planning_mode_sparse` - follow existing todos without restating the full
   checklist;
-- `planning_mode_exit` - an approval plan has already been accepted;
+- `planning_mode_exit` - an approval plan has already been accepted (and, when no todos
+  exist yet, nudges laying the approved plan out as a `todo_write` checklist — P6);
 - `deliverable_request_active` - the user asked for the final draft/answer now.
 
 These reminders are deliberately lightweight. They make the current mode hard

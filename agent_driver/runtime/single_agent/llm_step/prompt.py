@@ -477,11 +477,27 @@ def chat_mode_runtime_reminders(context: RunContext) -> list[str]:
             "that full pages could not be verified."
         )
     if get_planning_runtime_state(context).approved_plan():
-        reminders.append(
-            "Runtime reminder: planning_mode_exit. An approval plan has already "
-            "been accepted for this run; continue execution instead of creating "
-            "another approval plan."
+        _has_todos = isinstance(planning_payload, dict) and bool(
+            planning_payload.get("todos")
         )
+        _todo_write_ok = "todo_write" not in policy_denied and (
+            policy_allowed is None or "todo_write" in policy_allowed
+        )
+        if not _has_todos and _todo_write_ok:
+            # P6: an approved plan is prose; connect it to the working todo surface so the
+            # plan and the checklist are the same thing and the model does not lose the
+            # steps. It authored the plan, so it can lay out an accurate checklist.
+            reminders.append(
+                "Runtime reminder: planning_mode_exit. Your plan has been approved. Lay "
+                "it out now as a todo_write checklist (3-7 concrete steps, exactly one "
+                "in_progress) and work through it — do not create another approval plan."
+            )
+        else:
+            reminders.append(
+                "Runtime reminder: planning_mode_exit. An approval plan has already "
+                "been accepted for this run; continue execution instead of creating "
+                "another approval plan."
+            )
     if not isinstance(planning_payload, dict):
         return reminders
     todos = planning_payload.get("todos")
