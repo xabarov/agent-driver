@@ -7,6 +7,18 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-08-08
+
+### Fixed — bounded parallel execution for joined subagent groups
+
+Synchronous joined subagent groups now execute their scheduled child runs
+concurrently while respecting `SubagentGroupSpec.max_parallel`. The setting is
+now a concurrency bound rather than an accidental cap that discarded queued
+tasks; `max_child_runs` remains the total fan-out limit, and result ordering is
+kept deterministic by fan-out slot. A host may set
+`task_contract.max_subagent_parallel` to apply this bound to groups created by
+the built-in `agent_tool`.
+
 ## [0.3.5] - 2026-08-08
 
 ### Fixed — model-authored child roles and configured deadlines

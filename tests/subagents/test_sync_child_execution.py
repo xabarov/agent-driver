@@ -75,6 +75,98 @@ async def test_sync_child_execution_records_group_and_runs() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sync_child_execution_runs_all_tasks_with_bounded_parallelism() -> None:
+    """max_parallel should bound concurrency without discarding queued tasks."""
+    store = InMemorySubagentStore()
+    release_children = asyncio.Event()
+    first_wave_started = asyncio.Event()
+    active = 0
+    peak_active = 0
+    started = 0
+
+    async def _runner(run_input):
+        nonlocal active, peak_active, started
+        active += 1
+        started += 1
+        peak_active = max(peak_active, active)
+        if started == 2:
+            first_wave_started.set()
+        await release_children.wait()
+        active -= 1
+        return await _ok_child_runner(run_input)
+
+    execution = asyncio.create_task(
+        execute_subagent_group_sync(
+            parent=default_parent_handoff(answer="parent summary"),
+            group_spec=SubagentGroupSpec(
+                group_id="grp_parallel",
+                purpose="bounded parallel analysis",
+                max_parallel=2,
+                tasks=tuple(
+                    SubagentTaskSpec(
+                        task_id=f"task_{idx}",
+                        task=f"investigate {idx}",
+                        description="desc",
+                    )
+                    for idx in range(4)
+                ),
+            ),
+            store=store,
+            child_runner=_runner,
+            max_child_runs=4,
+        )
+    )
+
+    await asyncio.wait_for(first_wave_started.wait(), timeout=1.0)
+    assert started == 2
+    assert peak_active == 2
+    release_children.set()
+    result = await asyncio.wait_for(execution, timeout=1.0)
+
+    assert [run.task_id for run in result.runs] == [
+        "task_0",
+        "task_1",
+        "task_2",
+        "task_3",
+    ]
+    assert peak_active == 2
+    assert result.group.metadata["scheduled_tasks"] == 4
+    assert result.group.metadata["max_parallel_effective"] == 2
+    assert result.group.metadata["backpressure_skipped_tasks"] == []
+
+
+@pytest.mark.asyncio
+async def test_sync_child_execution_caps_total_tasks_by_max_child_runs() -> None:
+    """max_child_runs remains the total fan-out limit."""
+    result = await execute_subagent_group_sync(
+        parent=default_parent_handoff(answer="parent summary"),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_total_limit",
+            purpose="bounded total analysis",
+            max_parallel=2,
+            tasks=tuple(
+                SubagentTaskSpec(
+                    task_id=f"task_{idx}",
+                    task=f"investigate {idx}",
+                    description="desc",
+                )
+                for idx in range(4)
+            ),
+        ),
+        store=InMemorySubagentStore(),
+        child_runner=_ok_child_runner,
+        max_child_runs=3,
+    )
+
+    assert [run.task_id for run in result.runs] == ["task_0", "task_1", "task_2"]
+    assert result.group.metadata["scheduled_tasks"] == 3
+    assert result.group.metadata["max_parallel_effective"] == 2
+    assert result.group.metadata["backpressure_skipped_tasks"] == [
+        {"task_id": "task_3", "reason": "child_run_limit"}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sync_child_execution_passes_abort_handle_to_child_runner() -> None:
     """Executor should pass a cascading child abort handle when supported."""
     store = InMemorySubagentStore()

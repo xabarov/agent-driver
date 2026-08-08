@@ -496,6 +496,28 @@ def test_agent_tool_task_type_becomes_worker_type_for_host_child_surface() -> No
     assert task["metadata"]["worker_type"] == "hostname_verifier"
 
 
+def test_agent_tool_uses_task_contract_parallel_limit() -> None:
+    """Host policy should bound joined agent_tool fan-out concurrency."""
+    context = _subagent_context(
+        {
+            "task_contract": {
+                "max_subagent_requests": 6,
+                "max_subagent_parallel": 3,
+            },
+        }
+    )
+
+    apply_agent_tool_spawn_requests(
+        context,
+        _agent_tool_result(
+            ("subreq_a", "Verify A"),
+            ("subreq_b", "Verify B"),
+        ),
+    )
+
+    assert context.metadata["planned_subagent_group"]["max_parallel"] == 3
+
+
 def test_agent_tool_explicit_worker_metadata_wins_over_task_type() -> None:
     context = _subagent_context()
     result = _agent_tool_result(("subreq_explicit", "Verify explicit shard"))
