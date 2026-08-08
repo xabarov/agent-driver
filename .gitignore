@@ -17,3 +17,4 @@ build/
 
 # Reference repos cloned for architecture analysis only — never committed
 reference/
+.playwright-mcp/
