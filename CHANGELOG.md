@@ -78,7 +78,8 @@ change between minor versions.
   `skills_catalog_max_chars` (budget; default 2000), and `skills_catalog_trusted_roots`.
   `build_skills_catalog_block(...)` (exported from `agent_driver.skills`) renders the block
   with graceful degradation — full entries → names-only → truncated `+N more` pointing at
-  `skill_tool` — mirroring the reference frameworks' budget discipline. Gated on a skill-load
+  `skill_tool` — mirroring the reference frameworks' budget discipline. Accepts a `header`
+  override so a localized consumer can supply its own intro. Gated on a skill-load
   tool (`skill_view`/`skill_tool`) actually being available, and re-built into the system
   prompt each request so it survives compaction by construction (`skills_catalog_block`
   metadata is diagnostic only). Empty sources = off; historical behaviour unchanged.
