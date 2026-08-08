@@ -12,6 +12,12 @@ from agent_driver.runtime.tools import ToolExecutionResult
 
 TODO_REMINDER_TOOL_LOOPS = 2
 
+# P4: once the in_progress step has survived this many tool loops with no todo_write
+# update, escalate the periodic reminder — the step is stuck and the model needs to
+# finish, split, or cancel it rather than keep spinning. Higher than the reminder
+# threshold so the escalation only kicks in after the normal nudge has been ignored.
+TODO_STALE_TOOL_LOOPS = 5
+
 SUBSTANTIVE_TODO_HINT_TOOLS = frozenset(
     {"web_search", "web_fetch", "read_file", "grep_search", "glob_search"}
 )
@@ -118,6 +124,24 @@ def format_todo_list_reminder(state: PlanningState) -> str:
     return "\n".join(lines)
 
 
+def format_stale_todo_escalation(state: PlanningState, loops: int) -> str:
+    """Return an escalation for a step stuck in_progress too long, or "" (P4).
+
+    Only escalates when exactly one step is in_progress (the invariant), naming it so the
+    model resolves that specific step instead of spinning.
+    """
+    active = active_in_progress_todo(state)
+    if active is None:
+        return ""
+    _todo_id, content = active
+    return (
+        f"Step '{content}' has been in progress for {loops} tool steps without "
+        "completing. Finish it now; if it is too large, split it into smaller "
+        "todo_write steps; if you are blocked, cancel it (todo_write merge=true, status "
+        "cancelled) and move on. Do not keep spinning on the same step."
+    )
+
+
 def maybe_append_todo_reminder_to_protocol(
     context: RunContext,
     protocol_messages: tuple[ChatMessage, ...] | None,
@@ -150,10 +174,16 @@ def maybe_append_todo_reminder_to_protocol(
     state = planning_state_from_metadata(context)
     if state is None:
         return protocol_messages
+    content = format_todo_list_reminder(state)
+    # P4: escalate when the current step has been stuck in_progress across many loops.
+    if loops >= TODO_STALE_TOOL_LOOPS:
+        escalation = format_stale_todo_escalation(state, loops)
+        if escalation:
+            content = content + "\n" + escalation
     return protocol_messages + (
         ChatMessage(
             role=ChatRole.USER,
-            content=format_todo_list_reminder(state),
+            content=content,
             metadata=scaffolding_metadata("todo_reminder", base={"kind": "todo_reminder"}),
         ),
     )
@@ -208,8 +238,10 @@ __all__ = [
     "SUBSTANTIVE_TODO_HINT_TOOLS",
     "TODO_REMINDER_TOOL_LOOPS",
     "active_in_progress_todo",
+    "TODO_STALE_TOOL_LOOPS",
     "append_todo_progress_hint_after_substantive_tool",
     "format_open_todos_finalize_reminder",
+    "format_stale_todo_escalation",
     "format_todo_list_reminder",
     "increment_tool_loops_since_todo_write",
     "maybe_append_todo_reminder_to_protocol",
