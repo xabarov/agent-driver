@@ -73,6 +73,21 @@ def has_unfinished_todos(context: RunContext) -> bool:
     return bool(unfinished_todos(state))
 
 
+def format_open_todos_finalize_reminder(state: PlanningState) -> str:
+    """Strong reminder injected when a finalize attempt was blocked by open todos (P1)."""
+    lines = [
+        "You attempted to give a final answer, but the session plan still has open work:"
+    ]
+    for _todo_id, content, status in unfinished_todos(state):
+        lines.append(f"[{status.value}] {content}")
+    lines.append(
+        "Finish these steps now. If a step is no longer needed, cancel it with "
+        "todo_write(merge=true) setting its status to cancelled. Do NOT give the final "
+        "answer until every todo is completed or cancelled."
+    )
+    return "\n".join(lines)
+
+
 def format_todo_list_reminder(state: PlanningState) -> str:
     lines = ["Reminder: active session plan (update via todo_write merge=true):"]
     for item in state.todos:
@@ -93,6 +108,23 @@ def maybe_append_todo_reminder_to_protocol(
     if protocol_messages is None:
         return None
     planning_state = get_planning_runtime_state(context)
+    # P1: a finalize attempt was just blocked because todos remain open — inject the
+    # concrete "finish or cancel" instruction with the open items, regardless of the
+    # periodic loop threshold. The marker is one-shot (cleared here) so it rides exactly
+    # the re-prompt turn it was set for.
+    if context.metadata.pop("open_todos_finalize_blocked", None):
+        state = planning_state_from_metadata(context)
+        if state is not None:
+            return protocol_messages + (
+                ChatMessage(
+                    role=ChatRole.USER,
+                    content=format_open_todos_finalize_reminder(state),
+                    metadata=scaffolding_metadata(
+                        "open_todos_finalize_reminder",
+                        base={"kind": "open_todos_finalize_reminder"},
+                    ),
+                ),
+            )
     threshold = planning_state.todo_reminder_tool_loops(TODO_REMINDER_TOOL_LOOPS)
     loops = planning_state.tool_loops_since_todo_write()
     if loops < threshold:
@@ -159,6 +191,7 @@ __all__ = [
     "TODO_REMINDER_TOOL_LOOPS",
     "active_in_progress_todo",
     "append_todo_progress_hint_after_substantive_tool",
+    "format_open_todos_finalize_reminder",
     "format_todo_list_reminder",
     "increment_tool_loops_since_todo_write",
     "maybe_append_todo_reminder_to_protocol",

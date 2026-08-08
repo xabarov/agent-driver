@@ -43,6 +43,7 @@ from agent_driver.runtime.research_session_contract import (
 )
 from agent_driver.runtime.single_agent.context_management.todo_reminders import (
     append_todo_progress_hint_after_substantive_tool,
+    has_unfinished_todos,
     increment_tool_loops_since_todo_write,
 )
 from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
@@ -141,6 +142,11 @@ _MAX_DEGENERATE_ANSWER_RETRIES = 3
 # re-prompted for the call, not finalized on its narration — otherwise an
 # unattended job "succeeds" at tool_turns=0. Bounded so a broken provider can't spin.
 _MAX_EMPTY_TOOL_CALLS_REPROMPTS = 3
+
+# Planning P1: bound the "you have open todos" re-prompt so a model that insists on
+# finishing (or genuinely cannot complete the plan) is still allowed to finalize rather
+# than deadlocking. A strong nudge, not a hard block.
+_MAX_OPEN_TODOS_FINALIZE_REPROMPTS = 3
 
 _force_web_fetch_for_source_verified_research = (
     force_web_fetch_for_source_verified_research
@@ -484,6 +490,48 @@ async def _finalize_tool_stage_transition(
     elif result.envelopes:
         # A real tool round happened — the model can make progress again.
         context.metadata.pop("empty_tool_calls_reprompt_count", None)
+    # Planning P1: don't let a planned run quietly finish with open todos. If the model
+    # is about to finalize but the session plan still has pending/in_progress todos,
+    # re-prompt it (bounded) to finish or explicitly cancel them — wiring the
+    # previously-unused has_unfinished_todos. The `open_todos_finalize_blocked` marker
+    # makes the next request inject the concrete list + a "finish or cancel" instruction.
+    # Only for PLAIN runs: when a task_contract or a deliverable_request is set, the
+    # research/deliverable contract gate already re-prompts on unfinished todos ("Contract
+    # repair required … todo/checklist"), so P1 would double-fire — defer to it there and
+    # fill the gap only for runs with no such contract engaged.
+    _policy_meta = context.run_input.tool_policy.metadata
+    _contract_active = bool(_policy_meta.get("task_contract")) or bool(
+        _policy_meta.get("deliverable_request")
+    )
+    if (
+        not continue_with_llm
+        and context.llm_response is not None
+        and not _contract_active
+        and has_unfinished_todos(context)
+    ):
+        open_todos_reprompts = int(
+            context.metadata.get("open_todos_finalize_reprompt_count", 0)
+        )
+        if open_todos_reprompts < _MAX_OPEN_TODOS_FINALIZE_REPROMPTS:
+            context.metadata["open_todos_finalize_reprompt_count"] = (
+                open_todos_reprompts + 1
+            )
+            context.metadata["open_todos_finalize_blocked"] = True
+            continue_with_llm = True
+            emit_step_event(
+                host,
+                context,
+                event_type=RuntimeEventType.WARNING,
+                payload={
+                    "warning": (
+                        "Run attempted to finalize while the session plan still has "
+                        "open todos; re-prompting to finish or cancel them."
+                    ),
+                    "signal_id": "open_todos_finalize_blocked",
+                    "severity": "warning",
+                    "reprompt_count": open_todos_reprompts + 1,
+                },
+            )
     loop_iterations = int(context.metadata.get("tool_loop_iterations", 0))
     if continue_with_llm:
         loop_iterations += 1

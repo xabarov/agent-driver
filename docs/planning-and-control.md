@@ -30,6 +30,18 @@ Chat-mode prompt assembly injects compact runtime reminders when relevant:
 These reminders are deliberately lightweight. They make the current mode hard
 to forget without adding a separate DAG engine.
 
+### Open-todos finalize gate (P1)
+
+Beyond the soft reminders above, a run is not allowed to *quietly* finish with
+planned work still open. When the model tries to emit a final answer while the
+session plan has `pending`/`in_progress` todos, the tool-stage finalize step
+re-prompts it (bounded, ≤3 times) with the concrete list of open items and an
+instruction to finish them or cancel with `todo_write(merge=true)` — injected via
+the universal protocol reminder path (not chat-mode gated), with an
+`open_todos_finalize_blocked` signal. The bound means a model that insists on
+finishing, or genuinely cannot complete the plan, is still allowed to finalize
+rather than deadlock — a strong nudge, not a hard block. Inert with no plan.
+
 ## Clarification
 
 `ask_user_question` is for genuinely blocking user-owned decisions. It is not
