@@ -43,9 +43,12 @@ class LlmPromptHost(Protocol):
 def append_runtime_attachment_messages(
     context: RunContext,
     protocol_messages: tuple[ChatMessage, ...] | None,
+    effective_tool_names: tuple[str, ...] | None = None,
 ) -> tuple[ChatMessage, ...] | None:
     """Append volatile model-facing reminders to protocol messages."""
-    attachments = runtime_attachment_messages(context)
+    attachments = runtime_attachment_messages(
+        context, effective_tool_names=effective_tool_names
+    )
     if not attachments:
         return protocol_messages
     if protocol_messages is not None:
@@ -58,7 +61,15 @@ def append_runtime_attachment_messages(
     return base_messages + attachments if base_messages else attachments
 
 
-def runtime_attachment_messages(context: RunContext) -> tuple[ChatMessage, ...]:
+def _has_existing_todos(context: RunContext) -> bool:
+    """Return whether the run already has a todo checklist (any items)."""
+    state = context.metadata.get("planning_state")
+    return isinstance(state, dict) and bool(state.get("todos"))
+
+
+def runtime_attachment_messages(
+    context: RunContext, effective_tool_names: tuple[str, ...] | None = None
+) -> tuple[ChatMessage, ...]:
     """Return volatile model-facing chat reminders as request attachments."""
     if context.run_input.app_metadata.get("chat_mode") is not True:
         return tuple()
@@ -73,11 +84,39 @@ def runtime_attachment_messages(context: RunContext) -> tuple[ChatMessage, ...]:
         level = str(planning_hint.get("level") or "")
         reason = str(planning_hint.get("reason") or "").strip()
         if level == "suggested":
-            lines.append(
-                "Planning hint: this request looks like non-trivial "
-                "implementation work; prefer enter_plan_mode before execution. "
-                f"Reason: {reason or 'adaptive planning suggested'}."
-            )
+            policy = context.run_input.tool_policy
+            denied = policy.denied_tools or []
+
+            def _available(name: str) -> bool:
+                # Prefer the effective tool surface (what the model actually sees this
+                # turn); fall back to the tool policy when it is not known (e.g. a caller
+                # that did not pass it). Policy alone over-reports — with no allowlist it
+                # says every tool is "available" — so the effective set is what makes the
+                # enter_plan_mode-vs-todo_write choice correct.
+                if effective_tool_names is not None:
+                    return name in effective_tool_names
+                return tool_available_by_policy(
+                    name=name, allowed=policy.allowed_tools, denied=denied
+                )
+
+            if _available("enter_plan_mode"):
+                lines.append(
+                    "Planning hint: this request looks like non-trivial "
+                    "implementation work; prefer enter_plan_mode before execution. "
+                    f"Reason: {reason or 'adaptive planning suggested'}."
+                )
+            elif _available("todo_write") and not _has_existing_todos(context):
+                # P2: no approval-plan tool available, but a checklist tool is — nudge a
+                # lightweight todo_write checklist for the multi-step task instead of
+                # nothing. Only when no checklist exists yet (otherwise the update
+                # reminders own it), so the model knows WHEN to first add one.
+                lines.append(
+                    "Planning hint: this looks like a multi-step task and no checklist "
+                    "exists yet. Create one with todo_write (3-7 concrete steps, exactly "
+                    "one in_progress) before diving in, and update it with merge=true as "
+                    "each step completes. "
+                    f"Reason: {reason or 'adaptive planning suggested'}."
+                )
         elif level == "required":
             lines.append(
                 "Planning hint: approved planning is required before "

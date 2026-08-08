@@ -53,6 +53,7 @@ from agent_driver.runtime.single_agent.llm_step.defer_primer import (
 from agent_driver.runtime.single_agent.llm_step.prompt import (
     append_runtime_attachment_messages,
     effective_code_agent_imports,
+    effective_request_tool_names,
     react_system_instruction,
 )
 from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
@@ -251,6 +252,7 @@ def build_trimmed_request(
     protocol_messages = append_runtime_attachment_messages(
         context,
         protocol_messages,
+        effective_tool_names=effective_request_tool_names(host, context),
     )
     protocol_messages = maybe_append_todo_reminder_to_protocol(
         context, protocol_messages

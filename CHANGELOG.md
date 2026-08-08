@@ -46,6 +46,17 @@ change between minor versions.
 
 ### Added
 
+- **Checklist-creation nudge for multi-step tasks (planning epic P2).** The adaptive
+  planning hint used to nudge only toward `enter_plan_mode` (the read-only approval flow),
+  so a run that carries the lightweight `todo_write` checklist tool — but no approval-plan
+  tool — got no signal to plan at all. The `suggested` planning hint now picks the right
+  tool from the *effective* surface: `enter_plan_mode` when it is available (unchanged), else
+  a "this looks like a multi-step task and no checklist exists yet — create one with
+  `todo_write` (3–7 steps, one `in_progress`)" nudge when `todo_write` is available and no
+  checklist exists yet. As a correctness fix along the way, the hint's tool check now uses
+  the effective tool surface (threaded into the runtime-attachment path) instead of the
+  tool policy alone, which over-reported availability (with no allowlist it treated every
+  tool as present).
 - **Open-todos finalize gate (planning epic P1).** A planned run no longer quietly finishes
   with unfinished work. When the model is about to emit a final answer but the session plan
   still has `pending`/`in_progress` todos, the run re-prompts it (bounded, ≤3) with the
