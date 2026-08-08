@@ -10,7 +10,7 @@ from agent_driver import sdk
 # time); fall back to the pyproject value for a source tree without dist
 # metadata. Kept in sync with ``pyproject.toml`` ``[project] version`` — a test
 # (``tests/test_version.py``) asserts they agree so they can never silently drift.
-_FALLBACK_VERSION = "0.12.2"
+_FALLBACK_VERSION = "0.13.0"
 try:
     __version__ = _pkg_version("agent-driver")
 except PackageNotFoundError:  # pragma: no cover - source tree without metadata

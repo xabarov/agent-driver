@@ -7,6 +7,17 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-08
+
+### Fixed
+
+- **Qualified report recommendation headings no longer trigger a spurious continuation.**
+  Headings such as `Recommended next step is to ...` and `Безопасный следующий шаг: ...`
+  describe recommendations in an otherwise complete report; they no longer cause the
+  runtime to discard that report and request another model turn. Explicit first-person
+  intent (`My next step is to ...`, `Мой следующий шаг — ...`) and immediate-action
+  phrases remain continuation signals.
+
 ### Added
 
 - **Busy policy — `interrupt | queue | steer` message routing (steering epic).** A host

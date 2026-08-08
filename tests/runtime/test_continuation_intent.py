@@ -49,6 +49,34 @@ def test_continuation_signal_preserved() -> None:
     )
 
 
+def test_first_person_next_step_is_still_continuation() -> None:
+    result = analyze_continuation_intent(
+        "Промежуточные данные собраны. Мой следующий шаг — запустить проверку TLS"
+    )
+    assert result.should_continue is True
+    assert result.reason == "continuation_signal"
+
+
+def test_report_next_step_heading_is_not_continuation() -> None:
+    text = (
+        "Проверка завершена. Подтверждена уязвимость обхода пути. "
+        "Ограничение покрытия: проверены только доступные HTTP-маршруты.\n\n"
+        "Безопасный следующий шаг: разработчикам нормализовать путь; "
+        "тестировщикам повторить негативный сценарий после исправления."
+    )
+    result = analyze_continuation_intent(text)
+    assert result.should_continue is False, result.reason
+
+
+def test_english_report_next_step_heading_is_not_continuation() -> None:
+    text = (
+        "Assessment complete. One path traversal issue was confirmed. "
+        "Recommended next step is to normalize the path and rerun the negative test."
+    )
+    result = analyze_continuation_intent(text)
+    assert result.should_continue is False, result.reason
+
+
 def test_plain_complete_answer_is_not_continuation() -> None:
     assert (
         analyze_continuation_intent(
