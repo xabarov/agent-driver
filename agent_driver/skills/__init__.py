@@ -1,5 +1,6 @@
 """Shared Agent Skills parsing, listing and viewing helpers."""
 
+from agent_driver.skills.catalog import build_skills_catalog_block
 from agent_driver.skills.curated import CURATED_RESEARCH_SKILL_NAMES, curated_skills_dir
 from agent_driver.skills.models import SkillInvocation, SkillManifest
 from agent_driver.skills.parser import (
@@ -50,6 +51,7 @@ __all__ = [
     "SkillManifest",
     "SkillView",
     "CURATED_RESEARCH_SKILL_NAMES",
+    "build_skills_catalog_block",
     "build_skill_lifecycle_evidence_index",
     "build_skill_inventory_snapshot",
     "build_skill_lifecycle_compatibility_report",

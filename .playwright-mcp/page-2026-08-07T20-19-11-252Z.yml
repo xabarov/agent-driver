@@ -1,0 +1,45 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - complementary "Главная навигация" [ref=e4]:
+      - generic [ref=e5]:
+        - link "Excel AI" [ref=e6] [cursor=pointer]:
+          - /url: /
+        - button "Свернуть меню" [ref=e13]
+      - button "Новая книга" [ref=e17]
+      - navigation [ref=e22]:
+        - link "Книги" [ref=e23] [cursor=pointer]:
+          - /url: /
+        - link "Проекты" [ref=e28] [cursor=pointer]:
+          - /url: /projects
+    - generic [ref=e32]:
+      - banner [ref=e33]:
+        - generic [ref=e35]:
+          - generic [ref=e36]:
+            - link "Excel AI" [ref=e37] [cursor=pointer]:
+              - /url: /
+            - navigation [ref=e44]:
+              - link "Загрузить" [ref=e45] [cursor=pointer]:
+                - /url: /workbooks/upload
+              - button "Настройки" [ref=e49]
+              - link "Админка" [ref=e53] [cursor=pointer]:
+                - /url: /admin/login
+          - status "Бэкенд доступен" [ref=e64]
+      - main [ref=e61]:
+        - generic [ref=e82]:
+          - generic [ref=e83]:
+            - heading "Загрузить книгу" [level=1] [ref=e84]
+            - paragraph [ref=e85]: Загрузите табличный файл (.xlsx, .csv, .tsv, .parquet) для начала работы
+          - generic [ref=e87] [cursor=pointer]:
+            - generic [ref=e91]:
+              - paragraph [ref=e92]: Перетащите табличный файл сюда
+              - paragraph [ref=e93]: или
+              - paragraph [ref=e94]: Нажмите для выбора
+            - paragraph [ref=e95]: Поддерживаются файлы .xlsx, .csv, .tsv, .parquet
+          - generic [ref=e96]:
+            - generic [ref=e97]: Импорт из Google Sheets
+            - generic [ref=e102]:
+              - textbox "https://docs.google.com/spreadsheets/d/..." [ref=e103]
+              - button "Импортировать" [disabled] [ref=e104]
+            - paragraph [ref=e105]: Таблица должна быть открыта по ссылке («Все, у кого есть ссылка»).
+          - button "На главную" [ref=e107]
+  - region "Notifications alt+T"

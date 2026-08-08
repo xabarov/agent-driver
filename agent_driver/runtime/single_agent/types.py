@@ -425,6 +425,18 @@ class RunnerConfig:
         return self.capabilities.project_memory_max_total_chars
 
     @property
+    def skills_catalog_sources(self) -> tuple[str, ...]:
+        return self.capabilities.skills_catalog_sources
+
+    @property
+    def skills_catalog_max_chars(self) -> int:
+        return self.capabilities.skills_catalog_max_chars
+
+    @property
+    def skills_catalog_trusted_roots(self) -> tuple[str, ...]:
+        return self.capabilities.skills_catalog_trusted_roots
+
+    @property
     def tool_concurrency_limit(self) -> int | None:
         return self.capabilities.tool_concurrency_limit
 

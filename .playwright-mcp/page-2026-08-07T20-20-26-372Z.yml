@@ -1,0 +1,18 @@
+- generic [ref=f1e2]:
+  - generic [ref=f1e4]:
+    - banner [ref=f1e5]:
+      - generic [ref=f1e7]:
+        - generic [ref=f1e8]:
+          - link "Excel AI" [ref=f1e9] [cursor=pointer]:
+            - /url: /
+          - navigation [ref=f1e16]:
+            - link "Загрузить" [ref=f1e17] [cursor=pointer]:
+              - /url: /workbooks/upload
+            - button "Последняя таблица" [ref=f1e21]
+            - button "Настройки" [ref=f1e25]
+            - link "Админка" [ref=f1e29] [cursor=pointer]:
+              - /url: /admin/login
+        - status "Проверяем доступность бэкенда…" [ref=f1e34]
+    - main [ref=f1e37]:
+      - generic [ref=f1e38]: Loading...
+  - region "Notifications alt+T"

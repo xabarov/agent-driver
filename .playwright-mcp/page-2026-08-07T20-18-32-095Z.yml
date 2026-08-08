@@ -1,0 +1,29 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - complementary "Главная навигация" [ref=e4]:
+      - generic [ref=e5]:
+        - link "Excel AI" [ref=e6] [cursor=pointer]:
+          - /url: /
+        - button "Свернуть меню" [ref=e13]
+      - button "Новая книга" [ref=e17]
+      - navigation [ref=e22]:
+        - link "Книги" [ref=e23] [cursor=pointer]:
+          - /url: /
+        - link "Проекты" [ref=e28] [cursor=pointer]:
+          - /url: /projects
+    - generic [ref=e32]:
+      - banner [ref=e33]:
+        - generic [ref=e35]:
+          - generic [ref=e36]:
+            - link "Excel AI" [ref=e37] [cursor=pointer]:
+              - /url: /
+            - navigation [ref=e44]:
+              - link "Загрузить" [ref=e45] [cursor=pointer]:
+                - /url: /workbooks/upload
+              - button "Настройки" [ref=e49]
+              - link "Админка" [ref=e53] [cursor=pointer]:
+                - /url: /admin/login
+          - status "Проверяем доступность бэкенда…" [ref=e58]
+      - main [ref=e61]:
+        - generic [ref=e62]: Loading...
+  - region "Notifications alt+T"
