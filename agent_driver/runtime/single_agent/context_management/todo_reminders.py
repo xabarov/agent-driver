@@ -89,14 +89,32 @@ def format_open_todos_finalize_reminder(state: PlanningState) -> str:
 
 
 def format_todo_list_reminder(state: PlanningState) -> str:
-    lines = ["Reminder: active session plan (update via todo_write merge=true):"]
-    for item in state.todos:
-        lines.append(f"[{item.status.value}] {item.content}")
-    lines.append(
-        "Mark each step completed immediately when done; keep exactly one "
-        "in_progress. Do not repeat the full checklist in chat — the plan "
-        "panel is the checklist."
-    )
+    """Render the periodic plan reminder — ACTIVE items only (P3).
+
+    Only pending/in_progress steps are listed. Re-listing completed/cancelled steps is a
+    known way to make a model re-do finished work after a context compaction (the todo
+    list persists in metadata while the message history that recorded the work is
+    summarized away), so those are collapsed into a "N already done — do NOT redo" note
+    instead of a re-executable line (hermes' compaction rule).
+    """
+    active = unfinished_todos(state)
+    done_count = len(state.todos) - len(active)
+    lines = ["Reminder: active session plan (update via todo_write merge=true)."]
+    if done_count:
+        lines.append(
+            f"{done_count} of {len(state.todos)} steps are already completed/cancelled "
+            "— do NOT redo them."
+        )
+    if active:
+        lines.append("Remaining steps:")
+        for _todo_id, content, status in active:
+            lines.append(f"[{status.value}] {content}")
+        lines.append(
+            "Mark each completed immediately when done; keep exactly one in_progress. "
+            "Do not repeat the full checklist in chat — the plan panel is the checklist."
+        )
+    else:
+        lines.append("All planned steps are done — produce the final answer now.")
     return "\n".join(lines)
 
 
