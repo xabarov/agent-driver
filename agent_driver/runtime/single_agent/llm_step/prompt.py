@@ -185,7 +185,42 @@ def react_system_instruction(host: LlmPromptHost, context: RunContext) -> str | 
     skills_catalog = _skills_catalog_block(host, context, effective_tool_names)
     if skills_catalog:
         lines.append(skills_catalog)
+    skills_keyword_hints = _skills_keyword_block(host, context, effective_tool_names)
+    if skills_keyword_hints:
+        lines.append(skills_keyword_hints)
     return "\n".join(lines)
+
+
+def _skills_keyword_block(
+    host: LlmPromptHost,
+    context: RunContext,
+    effective_tool_names: tuple[str, ...],
+) -> str:
+    """Render keyword-triggered skill hints for the current request (Skills S5).
+
+    Same gate/sources as the S1 catalog; matches each skill's declared ``keywords``
+    against the run input (stable per run, so cached once). Re-built into the system
+    prompt each request → compaction-safe.
+    """
+    sources = getattr(host._config, "skills_catalog_sources", ())
+    if not sources:
+        return ""
+    if "skill_view" not in effective_tool_names and "skill_tool" not in effective_tool_names:
+        return ""
+    cached = context.metadata.get("skills_keyword_hints_block")
+    if isinstance(cached, str):
+        return cached
+    from agent_driver.skills import build_skill_keyword_hints
+
+    block = build_skill_keyword_hints(
+        tuple(sources),
+        str(context.run_input.input or ""),
+        trusted_roots=tuple(
+            getattr(host._config, "skills_catalog_trusted_roots", ()) or ()
+        ),
+    )
+    context.metadata["skills_keyword_hints_block"] = block
+    return block
 
 
 def _skills_catalog_block(

@@ -97,6 +97,7 @@ def _load_skill_manifest_uncached(
         when_to_use=_clean_str(frontmatter.get("when_to_use")),
         version=_clean_str(frontmatter.get("version")),
         tags=_string_list(frontmatter.get("tags")),
+        keywords=_string_list(frontmatter.get("keywords")),
         allowed_tools=_string_list(frontmatter.get("allowed_tools")),
         context=_dict_value(frontmatter.get("context")),
         agent=_dict_value(frontmatter.get("agent")),
