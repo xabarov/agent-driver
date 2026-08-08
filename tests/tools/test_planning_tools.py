@@ -70,7 +70,7 @@ async def test_ask_user_question_validates_structured_questions() -> None:
     tool = registry.get("ask_user_question")
     assert tool is not None
     question_schema = tool.manifest.args_schema["properties"]["questions"]["items"]
-    assert question_schema["properties"]["header"]["maxLength"] == 12
+    assert question_schema["properties"]["header"]["maxLength"] == 32
     out = await tool.handler(
         {
             "prompt": "Pick report scope",
@@ -135,13 +135,13 @@ async def test_ask_user_question_rejects_long_headers() -> None:
     register_planning_tool(registry)
     tool = registry.get("ask_user_question")
     assert tool is not None
-    with pytest.raises(ValueError, match="12 characters or fewer"):
+    with pytest.raises(ValueError, match="32 characters or fewer"):
         await tool.handler(
             {
                 "prompt": "Pick one",
                 "questions": [
                     {
-                        "header": "Very long header",
+                        "header": "A header that is definitely too long",
                         "question": "Pick one",
                         "choices": [
                             {"id": "a", "label": "A"},
@@ -151,6 +151,34 @@ async def test_ask_user_question_rejects_long_headers() -> None:
                 ],
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_ask_user_question_accepts_compact_non_english_header() -> None:
+    """Compact localized labels should not fail an English-centric limit."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    tool = registry.get("ask_user_question")
+    assert tool is not None
+
+    out = await tool.handler(
+        {
+            "prompt": "Выберите режим",
+            "questions": [
+                {
+                    "id": "mode",
+                    "header": "Режим проверки",
+                    "question": "Какой режим использовать?",
+                    "choices": [
+                        {"id": "passive", "label": "Пассивный"},
+                        {"id": "active", "label": "Активный"},
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert out["questions"][0]["header"] == "Режим проверки"
 
 
 @pytest.mark.asyncio
