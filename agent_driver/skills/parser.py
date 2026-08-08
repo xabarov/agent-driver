@@ -10,6 +10,21 @@ from agent_driver.skills.models import SkillManifest
 
 SKILL_FILENAME = "SKILL.md"
 
+# S3: memoize parsed manifests so a repeated ``list_skill_manifests`` / ``view_skill``
+# (which each ``rglob`` the tree and re-``read_text``+parse every SKILL.md, and rglob a
+# second time per skill for the supporting-file index) doesn't re-do the O(tree) parse
+# work every call. Keyed on the file path + the trust/base inputs that change a manifest;
+# invalidated on the SKILL.md's (mtime_ns, size), so an edited skill is re-parsed
+# (hot-reload). Note: a change to a *supporting* file that leaves SKILL.md untouched is
+# not detected — the index size may go stale until SKILL.md changes.
+_MANIFEST_CACHE: dict[tuple[Any, ...], tuple[int, int, SkillManifest]] = {}
+_MANIFEST_CACHE_MAX = 1024
+
+
+def clear_skill_manifest_cache() -> None:
+    """Drop the memoized manifest cache (tests / explicit invalidation)."""
+    _MANIFEST_CACHE.clear()
+
 
 def load_skill_manifest(
     path: Path,
@@ -18,8 +33,47 @@ def load_skill_manifest(
     trusted_roots: tuple[Path, ...] = (),
     max_supporting_files: int = 200,
 ) -> SkillManifest:
-    """Parse one SKILL.md file into metadata plus supporting file index."""
+    """Parse one SKILL.md file into metadata plus supporting file index (cached)."""
     resolved = path.expanduser().resolve()
+    try:
+        stat = resolved.stat()
+    except OSError:
+        # Let the uncached read raise the canonical error (missing/unreadable file).
+        return _load_skill_manifest_uncached(
+            resolved,
+            base_dir=base_dir,
+            trusted_roots=trusted_roots,
+            max_supporting_files=max_supporting_files,
+        )
+    key: tuple[Any, ...] = (
+        str(resolved),
+        tuple(sorted(str(root.expanduser().resolve()) for root in trusted_roots)),
+        str(base_dir.resolve()) if base_dir is not None else "",
+        max_supporting_files,
+    )
+    cached = _MANIFEST_CACHE.get(key)
+    if cached is not None and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+        return cached[2]
+    manifest = _load_skill_manifest_uncached(
+        resolved,
+        base_dir=base_dir,
+        trusted_roots=trusted_roots,
+        max_supporting_files=max_supporting_files,
+    )
+    if len(_MANIFEST_CACHE) >= _MANIFEST_CACHE_MAX:
+        _MANIFEST_CACHE.clear()
+    _MANIFEST_CACHE[key] = (stat.st_mtime_ns, stat.st_size, manifest)
+    return manifest
+
+
+def _load_skill_manifest_uncached(
+    resolved: Path,
+    *,
+    base_dir: Path | None,
+    trusted_roots: tuple[Path, ...],
+    max_supporting_files: int,
+) -> SkillManifest:
+    """Parse a SKILL.md (already-resolved path) without consulting the cache."""
     text = resolved.read_text(encoding="utf-8")
     frontmatter, body = split_frontmatter(text)
     skill_dir = resolved.parent
@@ -213,6 +267,7 @@ def _first_heading(body: str) -> str | None:
 
 __all__ = [
     "SKILL_FILENAME",
+    "clear_skill_manifest_cache",
     "is_trusted_path",
     "load_skill_manifest",
     "parse_frontmatter",
