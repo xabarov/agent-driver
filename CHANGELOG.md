@@ -46,6 +46,17 @@ change between minor versions.
 
 ### Added
 
+- **Keyword-triggered skill surfacing (skills epic S5).** A skill can declare `keywords` in
+  its frontmatter; when the user's request mentions any (whole-word, case-insensitive), the
+  runtime injects a targeted hint naming that skill and how to load it — a proactive middle
+  ground between the passive S1 catalog and full auto-injection (the body still loads on
+  demand via `skill_view`, preserving progressive disclosure). This generalizes the
+  previously hardcoded curated-research reminder into a config-driven, per-skill trigger.
+  `build_skill_keyword_hints(...)` (exported from `agent_driver.skills`) scans the same
+  `skills_catalog_sources` as the catalog (cached per run), dedupes, and caps at 3 hints;
+  gated on a skill-load tool being available and re-injected into the system prompt each
+  request (`skills_keyword_hints_block` metadata is diagnostic only). Path-glob and
+  slash-command triggers are intentionally left to the consumer (repo-agent / UI concerns).
 - **Tier-1 "available skills" catalog in the system prompt (skills epic S1).** Progressive
   disclosure's first tier — a compact catalog of `name + one-line summary + base_dir` — is
   now injected into the ReAct system prompt so the model *knows which skills exist* and can

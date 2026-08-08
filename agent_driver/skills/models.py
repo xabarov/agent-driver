@@ -18,6 +18,10 @@ class SkillManifest(ContractModel):
     when_to_use: str | None = None
     version: str | None = None
     tags: list[str] = Field(default_factory=list)
+    # S5: whole-word trigger keywords. When the user's request mentions any of these,
+    # the runtime proactively surfaces this skill (a targeted nudge on top of the S1
+    # catalog). Opt-in per skill — absent = only model-invoked discovery.
+    keywords: list[str] = Field(default_factory=list)
     allowed_tools: list[str] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
     agent: dict[str, Any] = Field(default_factory=dict)
@@ -32,7 +36,7 @@ class SkillManifest(ContractModel):
     digest: str
     frontmatter: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("tags", "allowed_tools")
+    @field_validator("tags", "keywords", "allowed_tools")
     @classmethod
     def validate_string_lists(cls, value: list[str]) -> list[str]:
         """Normalize list fields to non-empty strings."""
