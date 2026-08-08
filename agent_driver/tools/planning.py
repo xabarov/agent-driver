@@ -23,6 +23,9 @@ from agent_driver.contracts.tools import ToolManifest
 from agent_driver.tools.registry import ToolRegistry
 
 
+ASK_USER_QUESTION_HEADER_MAX_LENGTH = 32
+
+
 def apply_planning_state_tool_update(
     state: PlanningState, args: dict[str, Any]
 ) -> PlanningState:
@@ -274,8 +277,11 @@ def _normalize_ask_user_questions(
             raise ValueError(
                 "question.id, question.header, and question.question are required"
             )
-        if len(header) > 12:
-            raise ValueError("question.header must be 12 characters or fewer")
+        if len(header) > ASK_USER_QUESTION_HEADER_MAX_LENGTH:
+            raise ValueError(
+                "question.header must be "
+                f"{ASK_USER_QUESTION_HEADER_MAX_LENGTH} characters or fewer"
+            )
         if question_id in seen_question_ids:
             raise ValueError("question ids must be unique")
         if header.lower() in seen_headers:
@@ -399,7 +405,7 @@ def _register_ask_user_question_tool(registry: ToolRegistry) -> None:
                 "Create a bounded clarification request for genuinely blocking "
                 "user-owned decisions. Prefer one focused question; use 1-4 "
                 "questions only when separate decisions are required. Each "
-                "structured question must have a short unique header (12 "
+                "structured question must have a short unique header (32 "
                 "characters or fewer) and 2-4 unique options. Keep option "
                 "labels short. Do not use this tool to ask whether a plan is "
                 "approved or to avoid producing a requested deliverable."
@@ -434,7 +440,10 @@ def _register_ask_user_question_tool(registry: ToolRegistry) -> None:
                             "type": "object",
                             "properties": {
                                 "id": {"type": "string"},
-                                "header": {"type": "string", "maxLength": 12},
+                                "header": {
+                                    "type": "string",
+                                    "maxLength": ASK_USER_QUESTION_HEADER_MAX_LENGTH,
+                                },
                                 "question": {"type": "string"},
                                 "preview": {"type": "string"},
                                 "choices": {

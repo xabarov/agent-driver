@@ -26,6 +26,11 @@ _CONTINUATION_PATTERNS = (
         re.IGNORECASE,
     ),
 )
+_RECOMMENDATION_QUALIFIER_RE = re.compile(
+    r"(?:safe|recommended|suggested|безопасн(?:ый|ым)|"
+    r"рекомендуем(?:ый|ым)|возможн(?:ый|ым))\s+$",
+    re.IGNORECASE,
+)
 _COMPLETION_MARKERS = re.compile(
     r"\b(done|finished|completed|complete|all set|that's all|готово|завершено|выполнено)\b",
     re.IGNORECASE,
@@ -89,6 +94,14 @@ def analyze_continuation_intent(text: str) -> ContinuationIntent:
     for pattern in _CONTINUATION_PATTERNS:
         match = pattern.search(late)
         if not match:
+            continue
+        # A complete report often ends with a recommendation section such as
+        # "Recommended next step" / "Безопасный следующий шаг".  The generic
+        # continuation phrase is a substring of that heading, but it does not
+        # express assistant intent.  Keep genuine unqualified progress text
+        # ("Следующим действием будет...") classified as continuation.
+        before = late[max(0, match.start() - 48) : match.start()]
+        if _RECOMMENDATION_QUALIFIER_RE.search(before):
             continue
         after = late[match.end() :]
         if not _COMPLETION_MARKERS.search(after):

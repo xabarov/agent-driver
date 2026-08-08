@@ -54,6 +54,12 @@ change between minor versions.
   skill pruned from history stays recoverable across turns. Combined with the S1 catalog
   (re-injected every turn), a skill stays discoverable and reloadable across compaction too.
   The `skill_invocation` record is left untouched; other bulky tools keep the generic marker.
+- **Qualified report recommendation headings no longer trigger a spurious continuation.**
+  Headings such as `Recommended next step is to ...` and `Безопасный следующий шаг: ...`
+  describe recommendations in an otherwise complete report; they no longer cause the
+  runtime to discard that report and request another model turn. Explicit first-person
+  intent (`My next step is to ...`, `Мой следующий шаг — ...`) and immediate-action
+  phrases remain continuation signals.
 
 ### Added
 
@@ -242,6 +248,16 @@ change between minor versions.
     is rewritten every N firings instead of every one, never deferring under blocking
     pressure. A superseding `session_memory` compaction resets the rolling cursor so a
     stale rolling summary can't drop the richer session-memory content.
+## [0.12.2] - 2026-08-08
+
+### Fixed
+
+- **Structured clarification headers support compact localized labels.** The
+  native `ask_user_question` contract now permits headers up to 32 Unicode
+  characters instead of the English-centric 12-character ceiling. This is a
+  backward-compatible validation expansion: existing payloads are unchanged,
+  while short labels such as `Режим проверки` no longer turn a durable HITL
+    request into a denied tool call.
 
 ## [0.12.1] - 2026-08-07
 
