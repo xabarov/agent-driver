@@ -6,6 +6,11 @@ from agent_driver.memory.extraction import (
     supersede_by_slot,
 )
 from agent_driver.memory.factory import build_memory_provider
+from agent_driver.memory.semantic import (
+    EmbeddingMemoryProvider,
+    MemoryEmbedder,
+    cosine_similarity,
+)
 from agent_driver.memory.provider import (
     MemoryKind,
     MemoryProvider,
@@ -22,8 +27,10 @@ from agent_driver.memory.provider import (
 from agent_driver.memory.stores import InMemoryMemoryStore, SqliteMemoryStore
 
 __all__ = [
+    "EmbeddingMemoryProvider",
     "FactExtractingMemoryProvider",
     "InMemoryMemoryStore",
+    "MemoryEmbedder",
     "MemoryKind",
     "MemoryProvider",
     "MemoryRecord",
@@ -35,6 +42,7 @@ __all__ = [
     "StoreBackedMemoryProvider",
     "apply_recall",
     "build_memory_provider",
+    "cosine_similarity",
     "match_query",
     "parse_extracted_facts",
     "render_recall_block",

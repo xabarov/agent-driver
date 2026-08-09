@@ -9,6 +9,18 @@ change between minor versions.
 
 ### Added
 
+- **Semantic (embedding) memory recall (memory epic M5).** Keyword recall degrades on
+  paraphrase — "where do we ship?" never matched a stored "the deploy target is eu-west-3"
+  because they share no tokens. The new `EmbeddingMemoryProvider` ranks recall by embedding
+  cosine similarity × temporal decay (with an abstain gate), so a semantically related memory
+  surfaces with zero lexical overlap. It honors the existing `MemoryStore` protocol — the
+  semantic logic lives in the provider, vectors ride in `MemoryRecord.metadata["embedding"]`
+  on the ordinary in-memory/SQLite store, and the lifecycle hook calls `prefetch`/`sync_turn`
+  unchanged. The embedder is a small caller-supplied async protocol (`MemoryEmbedder`), so the
+  SDK forces no embedding dependency; cosine is pure-Python (no numpy). Records stored by
+  another path (e.g. explicit `remember` facts) are embedded lazily on read, and recall fails
+  open to keyword ranking if the embedder errors. Enable via
+  `build_memory_provider(embedder=…)` (takes precedence over `extractor`).
 - **One-call `build_memory_provider` opt-in helper (memory epic M4).** Long-term memory was
   fully built but awkward to turn on: a caller had to know the store → provider → hook wiring,
   and the quality path (`FactExtractingMemoryProvider`) needs an aux LLM and extraction config
