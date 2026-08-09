@@ -9,6 +9,16 @@ change between minor versions.
 
 ### Added
 
+- **Role → model resolver: `model_role` now selects a model (R2).** The
+  `AgentRunInput.model_role` label was inert (telemetry only). A new
+  `RunnerConfig(model_role_map={role: model})` capability now maps roles to models for the
+  main step loop, resolved at request-build time with precedence `forced_model` (live
+  `SET_MODEL` control / subagent routing) → `model_role_map[model_role]` → `None`
+  (provider default). Lets a run pin, e.g., a strong reasoning model for a "planner" role
+  and a cheaper one for an "executor" role without a second provider. Empty map (default)
+  keeps the single-model path byte-for-byte unchanged. `CapabilitySettings.model_for_role`
+  / `RunnerConfig.model_for_role` expose the resolution. Foundational for per-role model +
+  effort (R-track); pairs with R1 (`reasoning_effort`).
 - **Reasoning-effort as a first-class, provider-correct axis (R1).** A single abstract effort
   tier — `none/minimal/low/medium/high/xhigh/max` (`agent_driver.contracts.reasoning`) — is now
   settable per run via `AgentRunInput.reasoning_effort` (validated/normalized at construction).

@@ -449,6 +449,14 @@ class RunnerConfig:
         return self.capabilities.subagent_model_routing
 
     @property
+    def model_role_map(self) -> dict[str, str]:
+        return self.capabilities.model_role_map
+
+    def model_for_role(self, role: str | None) -> str | None:
+        """Main-loop role → model resolution (R2)."""
+        return self.capabilities.model_for_role(role)
+
+    @property
     def enable_subagents(self) -> bool:
         return self.subagents.enable_subagents
 

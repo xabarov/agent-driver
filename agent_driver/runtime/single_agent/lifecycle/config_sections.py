@@ -51,6 +51,13 @@ class CapabilitySettings:
     skills_catalog_trusted_roots: tuple[str, ...] = ()
     tool_concurrency_limit: int | None = None
     subagent_model_routing: dict[str, str] = field(default_factory=dict)
+    # R2 (R-track): role → model map for the MAIN step loop. Activates the
+    # otherwise-inert ``AgentRunInput.model_role`` label so a run can pin a model by
+    # role — e.g. a strong reasoning model for a "planner" role and a cheaper one for
+    # an "executor" role. Resolved at request-build time with precedence
+    # ``forced_model`` (live SET_MODEL / subagent routing) → ``model_role_map[role]`` →
+    # None (provider default). Empty = off (model_role stays a pure telemetry label).
+    model_role_map: dict[str, str] = field(default_factory=dict)
     # Epic 033 A: adaptive tool-deferral threshold. "auto" defers ``should_defer``
     # candidates only when their schemas cross ``tool_defer_threshold_pct`` of the
     # model window (hermes should_activate); "on" always defers (historical); "off"
@@ -89,11 +96,20 @@ class CapabilitySettings:
             self, "subagent_model_routing", dict(self.subagent_model_routing or {})
         )
         object.__setattr__(self, "auxiliary_models", dict(self.auxiliary_models or {}))
+        object.__setattr__(self, "model_role_map", dict(self.model_role_map or {}))
 
     def aux_model_for(self, task: str) -> str | None:
         """Resolve the model for an aux ``task`` (epic 032): task registry →
         shared ``auxiliary_model`` → None (provider default)."""
         return self.auxiliary_models.get(task) or self.auxiliary_model
+
+    def model_for_role(self, role: str | None) -> str | None:
+        """Resolve the main-loop model for a run's ``model_role`` label (R2):
+        ``model_role_map[role]`` → None (provider default). ``None``/empty role or an
+        unmapped role returns None so the provider's own model applies."""
+        if not role:
+            return None
+        return self.model_role_map.get(role)
 
 
 # Class default for the window estimate. A module constant (not type(self).attr):
