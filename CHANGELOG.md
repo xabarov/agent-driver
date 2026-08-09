@@ -9,6 +9,14 @@ change between minor versions.
 
 ### Changed
 
+- **Recalled-memory staleness caveat is overridable per provider.** `render_recall_block` now
+  takes an optional `staleness_note`, and the memory hook reads it from the provider
+  (`recall_staleness_note`, default keeps the epic-M3 "verify before you state it as fact"
+  caveat). The fixed security frame (reference-only, not instructions, newest-wins) is always
+  preserved. Motivation: for a host whose recalled facts are reliable curated context — e.g.
+  facts learned about a specific document — the default drift caveat made a data-grounded model
+  *reject* a valid learned fact it couldn't re-confirm from the current data; such a host can now
+  supply a softer, trust-by-default note so the model actually uses the memory.
 - **Memory fact-extraction / embedding providers accept `defer_sync`.** `build_memory_provider`,
   `FactExtractingMemoryProvider`, and `EmbeddingMemoryProvider` now take a `defer_sync` flag
   (default `True`, unchanged behaviour). A host that runs each turn on its own short-lived event

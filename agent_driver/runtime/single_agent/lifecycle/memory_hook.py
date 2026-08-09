@@ -181,7 +181,11 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
         # recalled memory enters the system prompt (epic 021 phase C).
         max_chars = getattr(self._provider, "recall_max_chars", None)
         block = render_recall_block(
-            result, max_chars=int(max_chars) if max_chars else 2000
+            result,
+            max_chars=int(max_chars) if max_chars else 2000,
+            # A provider may soften the default staleness caveat when its recalled
+            # facts are reliable curated context (the security frame still holds).
+            staleness_note=getattr(self._provider, "recall_staleness_note", None),
         )
         if block:
             memory_state.set_recalled_block(block)
