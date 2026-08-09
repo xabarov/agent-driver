@@ -24,6 +24,7 @@ from agent_driver.contracts.enums import (
     ToolRisk,
 )
 from agent_driver.contracts.tools import ToolManifest
+from agent_driver.memory.guidance import MEMORY_WRITE_GATING
 from agent_driver.tools.registry import ToolRegistry
 
 _REMEMBER_DESCRIPTION = (
@@ -34,8 +35,9 @@ _REMEMBER_DESCRIPTION = (
     "waiting for automatic extraction. Write ONE self-contained fact per call, "
     "phrased so it is useful with no surrounding context. To update a fact you "
     "saved before, pass the same 'slot' — the newer write supersedes the older. "
-    "Do NOT save: secrets/credentials, ephemeral task state or progress, or "
-    "anything trivially re-derivable from the code/files."
+    # Epic M2: the shared write-gating discipline (same source of truth as the
+    # automatic fact extractor).
+    + MEMORY_WRITE_GATING
 )
 
 _REMEMBER_MAX_CHARS = 2000

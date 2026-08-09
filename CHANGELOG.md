@@ -7,6 +7,18 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Changed
+
+- **Shared memory write-gating discipline (memory epic M2).** Both memory write paths — the
+  `remember` tool and the automatic fact extractor — now reference one canonical
+  "what NOT to keep in memory" block (`agent_driver.memory.guidance.MEMORY_WRITE_GATING`)
+  instead of two hand-copied lists that could drift. It names the exclusions the three
+  reference harnesses converge on — secrets/credentials, ephemeral task state/progress, and
+  facts trivially re-derivable from the code/files/conversation — and carries openclaude's
+  key clause: the exclusions hold **even when the user explicitly says "remember this"** (keep
+  the durable intent behind the request, not the transient detail). The extractor previously
+  had only a thin "no one-off/episodic" negative; it now applies the full discipline.
+
 ### Added
 
 - **Model-callable `remember` memory tool (memory epic M1).** Long-term memory could only

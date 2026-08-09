@@ -25,6 +25,7 @@ from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.structured import structured_completion
 from agent_driver.memory.consolidation import consolidate_session
+from agent_driver.memory.guidance import MEMORY_WRITE_GATING
 from agent_driver.memory.provider import (
     ConsolidationResult,
     MemoryKind,
@@ -66,7 +67,10 @@ _EXTRACTION_SYSTEM_PROMPT = (
     "the same subject (e.g. team-codeword, preferred-answer-format). "
     # Epic 039: facts recalled later must read naturally in the user's language.
     "Write each fact text in the language of the conversation (do not translate). "
-    "Return [] when nothing is worth keeping."
+    "Return [] when nothing is worth keeping.\n"
+    # Epic M2: the shared write-gating discipline (same source of truth as the
+    # `remember` tool) so the extractor and the model apply identical exclusions.
+    + MEMORY_WRITE_GATING
 )
 
 _MAX_SOURCE_CHARS = 4000
