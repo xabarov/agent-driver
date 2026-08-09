@@ -414,6 +414,8 @@ class SingleAgentOutputMixin:
             messages=messages,
             events=run_events,
             tool_trace=tool_trace,
+            subagent_groups=self._deps.subagent_store.list_groups(context.run_id),
+            subagent_runs=self._deps.subagent_store.list_runs(context.run_id),
             usage=usage,
             interrupt=get_loop_control_state(context).interrupt_payload(),
             terminal_reason=terminal.reason,

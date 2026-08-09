@@ -246,8 +246,17 @@ async def test_runtime_with_subagents_executes_group_from_metadata() -> None:
     )
     assert output.metadata.get("subagent_groups")
     assert output.metadata.get("subagent_runs")
+    assert len(output.subagent_groups) == 1
+    assert len(output.subagent_runs) == 2
+    assert {row.task_id for row in output.subagent_runs} == {"t1", "t2"}
     verifier_run = store.list_runs("run_with_sub")[0]
     assert verifier_run.metadata["handoff"]["worker"]["type"] == "verifier"
+    output_verifier = next(
+        row
+        for row in output.subagent_runs
+        if row.subagent_run_id == verifier_run.subagent_run_id
+    )
+    assert output_verifier.metadata["summary"] == verifier_run.metadata["summary"]
 
 
 @pytest.mark.asyncio

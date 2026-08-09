@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-08-09
+
+### Fixed — terminal child-run contract projection
+
+Terminal `AgentRunOutput` envelopes now populate their declared
+`subagent_groups` and `subagent_runs` fields from the canonical subagent store.
+Previously only bounded summaries were retained in output metadata, so hosts
+could observe child lifecycle events but could not reconcile full terminal
+child metadata such as structured summaries and evidence receipts.
+
 ## [0.3.6] - 2026-08-08
 
 ### Fixed — bounded parallel execution for joined subagent groups
