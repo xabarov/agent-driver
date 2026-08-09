@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Added
 
+- **Per-subagent model, provider and reasoning-effort (R4).** A `SubagentSpec` can now
+  declare its own `model`, `model_role` and `reasoning_effort` (new `SubagentModelPolicy`
+  group) — the orchestrator-worker split (strong planner, cheap workers). The child's
+  `model` pins `forced_model` (precedence: `spec.model` non-`"inherit"` → app_metadata
+  `forced_model` → `subagent_model_routing[agent_type]` → parent default); its
+  `reasoning_effort` flows to the child `AgentRunInput` (R1); and its `model_role` defaults
+  to the child's `agent_type`, so the parent runner's role→model (R2 `model_role_map`) and
+  role→provider (R3 `role_providers`) registries route the child *by type* — e.g. bind
+  `role_providers={"researcher": anthropic}` and every `researcher` subagent runs on
+  Anthropic while the parent runs elsewhere. Child metrics stay isolated via the distinct
+  `sub_<hex>` run id. All fields default to inherit-from-parent, so existing subagents are
+  unchanged apart from a more descriptive `model_role` trace label. `SubagentModelPolicy` is
+  exported from `agent_driver.sdk`.
 - **Role → provider registry: cross-provider role distribution (R3).** A run's
   `model_role` can now route to a different *provider object* — e.g. native Anthropic for a
   "planner" role and an OpenRouter route for an "executor" role — not just a different model

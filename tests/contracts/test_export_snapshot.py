@@ -34,6 +34,7 @@ _SDK = {
     "SelfConsistencyResult",
     "Session",
     "SubagentLimits",
+    "SubagentModelPolicy",
     "SubagentOutputPolicy",
     "SubagentResult",
     "SubagentSpec",
