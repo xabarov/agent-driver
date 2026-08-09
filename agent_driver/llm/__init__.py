@@ -66,6 +66,8 @@ from agent_driver.llm.providers_impl import (
 from agent_driver.llm.model_router import (
     HeuristicDifficultyRouter,
     ModelRouter,
+    PlanExecuteRouter,
+    RouteContext,
     last_user_text,
 )
 from agent_driver.llm.router import HealthAwareRouter
@@ -95,6 +97,8 @@ __all__ = [
     "HealthAwareRouter",
     "HeuristicDifficultyRouter",
     "ModelRouter",
+    "PlanExecuteRouter",
+    "RouteContext",
     "last_user_text",
     "LlmFinishReason",
     "ProviderDescriptor",

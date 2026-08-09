@@ -8,17 +8,22 @@ from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.llm.model_router import (
     HeuristicDifficultyRouter,
     ModelRouter,
+    PlanExecuteRouter,
+    RouteContext,
     last_user_text,
 )
 
 _RUN = AgentRunInput(input="x", agent_id="a", graph_preset="single_react")
 
 
-def _route(router, text):
+def _route(router, text, *, step_index=0):
     return router.route(
-        messages=[{"role": "user", "content": text}],
-        run_input=_RUN,
-        default_role="default",
+        RouteContext(
+            messages=[{"role": "user", "content": text}],
+            run_input=_RUN,
+            default_role="default",
+            step_index=step_index,
+        )
     )
 
 
@@ -79,3 +84,37 @@ def test_custom_roles_and_thresholds():
     assert _route(router, "one two three") == "smart"  # over word threshold
     assert _route(router, "please wibble it") == "smart"  # custom keyword
     assert _route(router, "plan it") == "cheap"  # default keyword no longer strong
+
+
+# --- R5: PlanExecuteRouter (opusplan phase split) ----------------------------------
+
+
+def test_plan_execute_router_is_a_model_router():
+    assert isinstance(PlanExecuteRouter(), ModelRouter)
+
+
+def test_plan_execute_first_step_is_planner():
+    router = PlanExecuteRouter(planner_role="big", executor_role="cheap")
+    assert _route(router, "task", step_index=0) == "big"
+
+
+def test_plan_execute_later_steps_are_executor():
+    router = PlanExecuteRouter(planner_role="big", executor_role="cheap")
+    assert _route(router, "task", step_index=1) == "cheap"
+    assert _route(router, "task", step_index=9) == "cheap"
+
+
+def test_plan_execute_multi_step_planning_window():
+    router = PlanExecuteRouter(planner_role="big", executor_role="cheap", plan_steps=3)
+    assert [_route(router, "t", step_index=i) for i in range(5)] == [
+        "big",
+        "big",
+        "big",
+        "cheap",
+        "cheap",
+    ]
+
+
+def test_plan_execute_zero_plan_steps_is_all_executor():
+    router = PlanExecuteRouter(planner_role="big", executor_role="cheap", plan_steps=0)
+    assert _route(router, "t", step_index=0) == "cheap"
