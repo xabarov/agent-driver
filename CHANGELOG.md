@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Recalled memory now reaches TOOL_CALLING agents, not just REACT_TEXT.** The recalled-memory
+  block was injected only inside `react_system_instruction`, which returns early for any
+  non-REACT_TEXT profile — so a `TOOL_CALLING` host (which supplies its own system prompt) never
+  saw recalled memory: the write/retrieve pipeline worked but the model could not use it. Recall
+  is now also emitted as a system message on the request-attachment path (`append_runtime_attachment_messages`),
+  which runs for every profile; REACT_TEXT keeps its system-prompt injection and is skipped there
+  to avoid duplication. Cross-session memory recall now works for tool-calling agents.
+
 ### Changed
 
 - **Recalled-memory staleness caveat is overridable per provider.** `render_recall_block` now
