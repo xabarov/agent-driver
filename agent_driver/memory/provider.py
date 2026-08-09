@@ -456,6 +456,28 @@ class MemoryProvider(ABC):
         """Persist whatever is worth keeping from a finished turn."""
         raise NotImplementedError
 
+    async def record_explicit_writes(
+        self,
+        session_id: str,
+        writes: list[dict[str, Any]],
+        *,
+        run_id: str | None = None,
+    ) -> int | None:
+        """Persist model-authored explicit ``remember`` writes (epic M1).
+
+        Routed through the provider (not written to the store directly by the
+        lifecycle hook) so a provider that re-scopes session ids — e.g. a
+        workbook-scoped wrapper — can persist explicit facts under its own scope,
+        exactly as it does for ``sync_turn``/``prefetch``. The default appends to
+        the provider's own store if it has one and returns the count; a provider
+        without a local store returns ``None`` so the hook falls back to
+        ``sync_turn``.
+        """
+        store = getattr(self, "store", None)
+        if store is None:
+            return None
+        return sync_explicit_writes(store, session_id, writes, run_id=run_id)
+
     async def consolidate(
         self, session_id: str, *, cost_ledger: Any = None
     ) -> "ConsolidationResult | None":

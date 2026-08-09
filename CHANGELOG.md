@@ -7,6 +7,17 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Explicit `remember` writes route through the provider (memory epic M6 seam).** The M1
+  explicit-write flush wrote directly to the store under the run's `thread_id`, bypassing any
+  provider that re-scopes the session id. A workbook-scoped (or otherwise re-scoping) provider
+  would therefore persist `remember` facts under the raw conversation id and never recall them.
+  The lifecycle hook now records explicit writes via a new `MemoryProvider.record_explicit_writes`
+  method (default appends to the provider's own store; a storeless provider returns `None` and
+  the hook falls back to `sync_turn`), so a re-scoping wrapper persists explicit facts under its
+  own scope exactly as it does for `sync_turn`/`prefetch`.
+
 ### Added
 
 - **Semantic (embedding) memory recall (memory epic M5).** Keyword recall degrades on

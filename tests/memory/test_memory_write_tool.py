@@ -162,6 +162,40 @@ async def test_remember_persists_explicit_fact_and_skips_auto_sync() -> None:
 
 
 @pytest.mark.asyncio
+async def test_explicit_writes_route_through_a_rescoping_provider() -> None:
+    """Epic M6 seam: the hook records explicit writes via the provider method, so
+    a provider that rewrites the session id persists facts under ITS scope — not
+    the raw run thread_id. Without this, a workbook-scoped wrapper would store
+    `remember` facts under the conversation and never recall them."""
+    store = InMemoryMemoryStore()
+
+    class _RescopingProvider(StoreBackedMemoryProvider):
+        async def record_explicit_writes(self, session_id, writes, *, run_id=None):
+            return await super().record_explicit_writes(
+                "workbook-scope", writes, run_id=run_id
+            )
+
+    agent = create_agent(
+        provider=_CapturingProvider(),
+        tools=ToolSet.only("remember"),
+        memory_provider=_RescopingProvider(store),
+    )
+    await agent.run(
+        AgentRunInput(
+            input="note it",
+            run_id="r1",
+            agent_id="agent",
+            thread_id="conversation-42",
+            graph_preset="single_react",
+            tool_policy=_remember_call("Column F is net revenue in EUR.", slot="col-f"),
+        )
+    )
+    # Stored under the provider's scope, NOT the run thread_id.
+    assert store.list_for_session("workbook-scope")
+    assert not store.list_for_session("conversation-42")
+
+
+@pytest.mark.asyncio
 async def test_explicit_fact_recalled_in_later_run() -> None:
     provider = _CapturingProvider()
     store = InMemoryMemoryStore()
