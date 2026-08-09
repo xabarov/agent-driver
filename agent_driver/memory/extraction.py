@@ -169,8 +169,10 @@ def parse_extracted_facts(content: str, *, max_facts: int) -> list[dict[str, str
 class FactExtractingMemoryProvider(MemoryProvider):
     """LLM-distilled facts with append-only slot supersede at recall time."""
 
-    # sync_turn makes an LLM call; the runtime memory hook defers it off the
-    # run-completion critical path (flushed at shutdown / before next recall).
+    # sync_turn makes an LLM call; by default the runtime memory hook defers it
+    # off the run-completion critical path (flushed at shutdown / before next
+    # recall). Class default; the per-instance value (set in __init__) is what
+    # the hook reads, so a host can turn deferral OFF — see the __init__ note.
     defer_sync = True
 
     def __init__(
@@ -186,7 +188,17 @@ class FactExtractingMemoryProvider(MemoryProvider):
         recall_min_relevance: float = 0.0,
         recall_half_life_seconds: float | None = None,
         consolidation_max_records: int = 200,
+        defer_sync: bool = True,
     ) -> None:
+        # Deferral moves the extraction LLM call off the run's completion path so
+        # the run returns fast — correct when the runtime lives on a PERSISTENT
+        # event loop (the deferred task drains at shutdown / next recall). A host
+        # that runs each turn on its OWN short-lived loop (e.g. ``asyncio.run``
+        # per request) MUST pass ``defer_sync=False``: otherwise the deferred
+        # task is cancelled when that loop closes and nothing is ever persisted.
+        # With it False the hook awaits the sync inline at run completion — after
+        # the answer is finalized, so a streaming host adds no user-visible delay.
+        self.defer_sync = defer_sync
         self._store = store
         self._llm_provider = llm_provider
         self._recall_limit = recall_limit

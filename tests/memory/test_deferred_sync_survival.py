@@ -112,6 +112,32 @@ async def test_recall_awaits_prior_per_request_agents_write() -> None:
 
 
 @pytest.mark.asyncio
+async def test_defer_sync_false_persists_inline() -> None:
+    """A host that runs each turn on its own short-lived loop (asyncio.run per
+    request) sets defer_sync=False: the hook then awaits the sync INLINE at run
+    completion, so it lands before that loop closes — no background task to be
+    cancelled, nothing anchored. Regression for the excel-ai per-turn-loop case."""
+    store = InMemoryMemoryStore()
+    provider = _SlowDeferredProvider(store)
+    provider.defer_sync = False
+    hook = MemoryLifecycleHook(provider)
+    await hook.on_run_completed(_ctx("s1", "r1"), answer="deploy target is eu-west-3")
+    # Persisted synchronously within on_run_completed — no deferral in play.
+    assert any("eu-west-3" in r.text for r in store.list_for_session("s1"))
+    assert "s1" not in _LIVE_SESSION_SYNCS
+
+
+def test_build_memory_provider_defer_sync_passthrough() -> None:
+    from agent_driver.llm.providers_impl.fake import FakeProvider
+    from agent_driver.memory import build_memory_provider
+
+    deferred = build_memory_provider(extractor=FakeProvider())
+    assert deferred.defer_sync is True
+    inline = build_memory_provider(extractor=FakeProvider(), defer_sync=False)
+    assert inline.defer_sync is False
+
+
+@pytest.mark.asyncio
 async def test_anchor_is_per_session() -> None:
     store = InMemoryMemoryStore()
     hook = MemoryLifecycleHook(_SlowDeferredProvider(store))

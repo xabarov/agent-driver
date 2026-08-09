@@ -85,7 +85,8 @@ class EmbeddingMemoryProvider(MemoryProvider):
     lazily on read. Fails open to keyword recall if the embedder errors.
     """
 
-    # sync_turn makes an embed call; the hook defers it off the completion path.
+    # sync_turn makes an embed call; by default the hook defers it off the
+    # completion path. The per-instance value (set in __init__) is authoritative.
     defer_sync = True
 
     def __init__(
@@ -99,7 +100,12 @@ class EmbeddingMemoryProvider(MemoryProvider):
         recall_max_chars: int = 2000,
         recall_min_similarity: float = 0.0,
         recall_half_life_seconds: float | None = None,
+        defer_sync: bool = True,
     ) -> None:
+        # See FactExtractingMemoryProvider: a host that runs each turn on its own
+        # short-lived event loop (e.g. asyncio.run per request) must pass
+        # defer_sync=False, or the deferred embed task is cancelled at loop close.
+        self.defer_sync = defer_sync
         self._store = store
         self._embedder = embedder
         self._recall_limit = recall_limit

@@ -7,6 +7,18 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Changed
+
+- **Memory fact-extraction / embedding providers accept `defer_sync`.** `build_memory_provider`,
+  `FactExtractingMemoryProvider`, and `EmbeddingMemoryProvider` now take a `defer_sync` flag
+  (default `True`, unchanged behaviour). A host that runs each turn on its own short-lived event
+  loop — e.g. `asyncio.run(agent.run(...))` per request — must pass `defer_sync=False`, so the
+  sync's LLM/embed call is awaited inline at run completion (after the answer is finalized) rather
+  than scheduled as a background task that the closing loop would cancel. (Complements the anchor
+  fix below, which covers persistent-loop hosts. Note: a host whose request lifecycle is also torn
+  down *after* the answer — e.g. a streaming response that ends before post-answer work finishes —
+  should run extraction as a background job instead, as inline post-answer work can still be cut off.)
+
 ### Fixed
 
 - **Deferred memory sync survives the per-request agent lifecycle.** When long-term memory

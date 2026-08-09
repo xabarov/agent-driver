@@ -39,6 +39,7 @@ def build_memory_provider(
     recall_limit: int = 5,
     recall_min_relevance: float = 0.0,
     recall_half_life_seconds: float | None = None,
+    defer_sync: bool = True,
 ) -> MemoryProvider:
     """Build a ready-to-use long-term memory provider with sane defaults.
 
@@ -57,6 +58,12 @@ def build_memory_provider(
     tune how much is recalled, the abstain threshold (interpreted as the minimum
     cosine similarity when an ``embedder`` is given), and temporal decay. Pass
     the result to ``create_agent(memory_provider=...)``.
+
+    ``defer_sync`` (default True) keeps the extraction/embed LLM call off the
+    run-completion path — correct on a persistent event loop. A host that runs
+    each turn on its OWN short-lived loop (e.g. ``asyncio.run`` per request) must
+    pass ``defer_sync=False`` so the sync completes inline before that loop
+    closes; otherwise the deferred task is cancelled and nothing is persisted.
     """
     if path and path != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -68,6 +75,7 @@ def build_memory_provider(
             recall_limit=recall_limit,
             recall_min_similarity=recall_min_relevance,
             recall_half_life_seconds=recall_half_life_seconds,
+            defer_sync=defer_sync,
         )
     if extractor is not None:
         return FactExtractingMemoryProvider(
@@ -77,6 +85,7 @@ def build_memory_provider(
             model=model,
             recall_min_relevance=recall_min_relevance,
             recall_half_life_seconds=recall_half_life_seconds,
+            defer_sync=defer_sync,
         )
     return StoreBackedMemoryProvider(
         store,
