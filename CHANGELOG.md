@@ -9,6 +9,49 @@ change between minor versions.
 
 ### Fixed
 
+- **Recalled memory now reaches TOOL_CALLING agents, not just REACT_TEXT.** The recalled-memory
+  block was injected only inside `react_system_instruction`, which returns early for any
+  non-REACT_TEXT profile — so a `TOOL_CALLING` host (which supplies its own system prompt) never
+  saw recalled memory: the write/retrieve pipeline worked but the model could not use it. Recall
+  is now also emitted as a system message on the request-attachment path (`append_runtime_attachment_messages`),
+  which runs for every profile; REACT_TEXT keeps its system-prompt injection and is skipped there
+  to avoid duplication. Cross-session memory recall now works for tool-calling agents.
+
+### Changed
+
+- **Recalled-memory staleness caveat is overridable per provider.** `render_recall_block` now
+  takes an optional `staleness_note`, and the memory hook reads it from the provider
+  (`recall_staleness_note`, default keeps the epic-M3 "verify before you state it as fact"
+  caveat). The fixed security frame (reference-only, not instructions, newest-wins) is always
+  preserved. Motivation: for a host whose recalled facts are reliable curated context — e.g.
+  facts learned about a specific document — the default drift caveat made a data-grounded model
+  *reject* a valid learned fact it couldn't re-confirm from the current data; such a host can now
+  supply a softer, trust-by-default note so the model actually uses the memory.
+- **Memory fact-extraction / embedding providers accept `defer_sync`.** `build_memory_provider`,
+  `FactExtractingMemoryProvider`, and `EmbeddingMemoryProvider` now take a `defer_sync` flag
+  (default `True`, unchanged behaviour). A host that runs each turn on its own short-lived event
+  loop — e.g. `asyncio.run(agent.run(...))` per request — must pass `defer_sync=False`, so the
+  sync's LLM/embed call is awaited inline at run completion (after the answer is finalized) rather
+  than scheduled as a background task that the closing loop would cancel. (Complements the anchor
+  fix below, which covers persistent-loop hosts. Note: a host whose request lifecycle is also torn
+  down *after* the answer — e.g. a streaming response that ends before post-answer work finishes —
+  should run extraction as a background job instead, as inline post-answer work can still be cut off.)
+
+### Fixed
+
+- **Deferred memory sync survives the per-request agent lifecycle.** When long-term memory
+  used a deferred provider (fact extraction, `defer_sync=True`), the end-of-run background sync
+  task was anchored only on the hook's `_pending_syncs`. In a per-request server (a fresh agent
+  per request, discarded once the response returns) that is the task's only strong reference, and
+  the hook↔task reference cycle has no external owner — so asyncio (which keeps only weak refs to
+  tasks) could garbage-collect the task mid-flight, before its extraction call ran, and **nothing
+  was ever persisted**. The task is now also anchored in a process-global, session-keyed set that
+  outlives any single hook/agent, so it always runs to completion; run-start recall drains any
+  in-flight same-session sync (read-your-writes across per-request agents, whose hooks don't share
+  `_pending_syncs`). Found in live end-to-end testing — the SDK's own tests missed it because they
+  reuse one agent whose next `.run()` drained the pending sync. Inert unless a memory provider is
+  configured; the cheap inline (store-backed) path was never affected.
+
 - **Explicit `remember` writes route through the provider (memory epic M6 seam).** The M1
   explicit-write flush wrote directly to the store under the run's `thread_id`, bypassing any
   provider that re-scopes the session id. A workbook-scoped (or otherwise re-scoping) provider

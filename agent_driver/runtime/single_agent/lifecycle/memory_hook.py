@@ -47,6 +47,40 @@ def _consolidation_lock(session_id: str) -> asyncio.Lock:
     return lock
 
 
+# Process-global anchor for deferred turn-syncs, keyed by session.
+#
+# A deferred sync (fact extraction) is scheduled at ``on_run_completed`` and can
+# outlive the agent that scheduled it. In a per-request server the hook holds the
+# ONLY strong reference to the task (via ``self._pending_syncs``) and is discarded
+# the instant the request returns — and asyncio keeps only *weak* references to
+# tasks, so the task is garbage-collected mid-flight before its extraction call
+# runs and nothing is ever persisted. Anchoring the task here keeps a strong
+# reference until it completes, independent of the hook/agent lifecycle, and lets
+# a later run in the same session await same-session writes (read-your-writes
+# across per-request agents). The done-callback releases the reference.
+_LIVE_SESSION_SYNCS: dict[str, set[asyncio.Task]] = {}
+
+
+def _anchor_sync_task(session_id: str, task: asyncio.Task) -> None:
+    """Keep a process-global strong ref to ``task`` until it finishes."""
+    bucket = _LIVE_SESSION_SYNCS.setdefault(session_id, set())
+    bucket.add(task)
+
+    def _release(done: asyncio.Task) -> None:
+        bucket.discard(done)
+        if not bucket:
+            _LIVE_SESSION_SYNCS.pop(session_id, None)
+
+    task.add_done_callback(_release)
+
+
+async def _drain_session_syncs(session_id: str) -> None:
+    """Await any in-flight deferred syncs for ``session_id`` (read-your-writes)."""
+    pending = tuple(_LIVE_SESSION_SYNCS.get(session_id, ()))
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
 def _memory_overrides(context: "RunContext") -> dict:
     """Return the host-supplied ``app_metadata["memory"]`` override mapping.
 
@@ -126,8 +160,11 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
         memory_state = get_memory_runtime_state(context)
         if not session_id or memory_state.has_recalled():
             return
-        # Read-your-writes: a still-running background sync from the previous
-        # run of this agent must land before this run's recall query.
+        # Read-your-writes: a still-running background sync must land before this
+        # run's recall query — whether it was scheduled by THIS agent or by a
+        # prior per-request agent for the same session whose hook is already gone
+        # (the global anchor keeps such a task drainable here).
+        await _drain_session_syncs(session_id)
         pending = tuple(self._pending_syncs)
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
@@ -144,7 +181,11 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
         # recalled memory enters the system prompt (epic 021 phase C).
         max_chars = getattr(self._provider, "recall_max_chars", None)
         block = render_recall_block(
-            result, max_chars=int(max_chars) if max_chars else 2000
+            result,
+            max_chars=int(max_chars) if max_chars else 2000,
+            # A provider may soften the default staleness caveat when its recalled
+            # facts are reliable curated context (the security frame still holds).
+            staleness_note=getattr(self._provider, "recall_staleness_note", None),
         )
         if block:
             memory_state.set_recalled_block(block)
@@ -202,6 +243,10 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
         # bounded shutdown path.
         task = asyncio.create_task(self._sync_then_maybe_consolidate(turn, context))
         self._pending_syncs.add(task)
+        # Survival anchor: keep a process-global strong ref so the task completes
+        # even if this hook/agent is discarded the moment the run returns (the
+        # per-request server case — otherwise the task is GC'd before it persists).
+        _anchor_sync_task(session_id, task)
 
         def _reap(done: asyncio.Task) -> None:
             self._pending_syncs.discard(done)

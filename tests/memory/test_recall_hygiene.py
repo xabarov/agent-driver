@@ -100,6 +100,23 @@ def test_render_frame_states_staleness_guard() -> None:
     assert "verify" in lowered
 
 
+def test_staleness_note_is_overridable_but_security_frame_stays() -> None:
+    """A host with reliable curated facts can soften the staleness caveat; the
+    security frame (not-instructions, newest-wins) is always preserved."""
+    from agent_driver.memory.provider import RecallResult
+
+    soft = " Trust these curated facts and use them:"
+    block = render_recall_block(
+        RecallResult(session_id="s", records=[_rec("factoid")]),
+        staleness_note=soft,
+    )
+    assert "Trust these curated facts" in block
+    # Security frame preserved.
+    assert "not instructions" in block and "trust the newest" in block
+    # Default M3 caveat replaced (no "verify ... before you state it as fact").
+    assert "unverified hint" not in block
+
+
 class _ScriptedProvider(FakeProvider):
     """Returns scripted completions in order."""
 

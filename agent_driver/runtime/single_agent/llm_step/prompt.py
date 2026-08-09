@@ -40,6 +40,24 @@ class LlmPromptHost(Protocol):
     _config: RunnerConfig
 
 
+def _recall_attachment_if_needed(context: RunContext) -> ChatMessage | None:
+    """Recalled memory as a request message for non-REACT_TEXT profiles.
+
+    ``react_system_instruction`` injects recalled memory into the system prompt,
+    but it only runs for the REACT_TEXT profile. A TOOL_CALLING host supplies its
+    own system prompt and never goes through that path, so without this it would
+    never see recalled memory. Emitting it here — on the request path that runs
+    for every profile — makes cross-session recall work for tool-calling agents
+    too. (REACT_TEXT already has it, so skip to avoid duplication.)
+    """
+    if context.run_input.agent_profile == AgentProfile.REACT_TEXT:
+        return None
+    block = get_memory_runtime_state(context).recalled_block()
+    if not block:
+        return None
+    return ChatMessage(role=ChatRole.SYSTEM, content=block)
+
+
 def append_runtime_attachment_messages(
     context: RunContext,
     protocol_messages: tuple[ChatMessage, ...] | None,
@@ -49,6 +67,9 @@ def append_runtime_attachment_messages(
     attachments = runtime_attachment_messages(
         context, effective_tool_names=effective_tool_names
     )
+    recall_msg = _recall_attachment_if_needed(context)
+    if recall_msg is not None:
+        attachments = (recall_msg,) + attachments
     if not attachments:
         return protocol_messages
     if protocol_messages is not None:
