@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from agent_driver.code_agent.prompt import render_code_agent_prompt
@@ -82,6 +83,9 @@ class LlmRequestBuildContext:
     # "on" always defers (historical); "off" never defers.
     tool_defer_mode: str = "on"
     tool_defer_threshold_pct: float = 10.0
+    # R2: role → model map (from CapabilitySettings). Resolves ``run_input.model_role``
+    # to a model when no ``forced_model`` is set. Empty = model_role stays inert.
+    model_role_map: Mapping[str, str] = field(default_factory=dict)
 
 
 def _normalize_trimmed_messages(
@@ -644,6 +648,13 @@ def build_single_agent_llm_request(
         ]
     request_metadata = dict(run_input.tool_policy.metadata)
     forced_model = request_metadata.pop("forced_model", None)
+    # R2: resolve the request model. A live ``forced_model`` (SET_MODEL control /
+    # subagent routing) wins; otherwise the run's ``model_role`` label resolves through
+    # the role → model map (empty map / unmapped role → None → provider default, so the
+    # legacy single-model path is unchanged).
+    resolved_model = forced_model if isinstance(forced_model, str) else None
+    if resolved_model is None:
+        resolved_model = ctx.model_role_map.get(run_input.model_role or "default")
     # A6: a SET_MAX_THINKING_TOKENS control writes reasoning_max_tokens into
     # tool_policy.metadata; consume it into the provider-neutral reasoning envelope
     # (popped so it never leaks into request metadata). Unset → None → omitted, so
@@ -699,7 +710,7 @@ def build_single_agent_llm_request(
             _normalize_trimmed_messages(final_prompt_messages)
         ),
         model_role=run_input.model_role,
-        model=forced_model if isinstance(forced_model, str) else None,
+        model=resolved_model,
         stream=ctx.stream,
         tools=request_tools,
         tool_choice=ctx.tool_choice,
