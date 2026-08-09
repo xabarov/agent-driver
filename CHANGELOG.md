@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Fixed
 
+- **Deferred memory sync survives the per-request agent lifecycle.** When long-term memory
+  used a deferred provider (fact extraction, `defer_sync=True`), the end-of-run background sync
+  task was anchored only on the hook's `_pending_syncs`. In a per-request server (a fresh agent
+  per request, discarded once the response returns) that is the task's only strong reference, and
+  the hook↔task reference cycle has no external owner — so asyncio (which keeps only weak refs to
+  tasks) could garbage-collect the task mid-flight, before its extraction call ran, and **nothing
+  was ever persisted**. The task is now also anchored in a process-global, session-keyed set that
+  outlives any single hook/agent, so it always runs to completion; run-start recall drains any
+  in-flight same-session sync (read-your-writes across per-request agents, whose hooks don't share
+  `_pending_syncs`). Found in live end-to-end testing — the SDK's own tests missed it because they
+  reuse one agent whose next `.run()` drained the pending sync. Inert unless a memory provider is
+  configured; the cheap inline (store-backed) path was never affected.
+
 - **Explicit `remember` writes route through the provider (memory epic M6 seam).** The M1
   explicit-write flush wrote directly to the store under the run's `thread_id`, bypassing any
   provider that re-scopes the session id. A workbook-scoped (or otherwise re-scoping) provider
