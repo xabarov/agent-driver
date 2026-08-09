@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 
 from agent_driver.memory.extraction import FactExtractingMemoryProvider
 from agent_driver.memory.provider import MemoryProvider, StoreBackedMemoryProvider
+from agent_driver.memory.semantic import EmbeddingMemoryProvider, MemoryEmbedder
 from agent_driver.memory.stores import InMemoryMemoryStore, SqliteMemoryStore
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -33,6 +34,7 @@ def build_memory_provider(
     *,
     path: str | None = None,
     extractor: "LlmProvider | None" = None,
+    embedder: MemoryEmbedder | None = None,
     model: str | None = None,
     recall_limit: int = 5,
     recall_min_relevance: float = 0.0,
@@ -44,17 +46,29 @@ def build_memory_provider(
       demos, and single-process sessions).
     - ``path`` → a durable SQLite-backed store that survives process restarts
       (parent directories are created; ``":memory:"`` stays in-process).
+    - ``embedder`` (a ``MemoryEmbedder``) → semantic recall by embedding cosine
+      similarity, so a paraphrased query still recalls a related memory. Takes
+      precedence over ``extractor``.
     - ``extractor`` (an ``LlmProvider``) → LLM fact-extraction into slotted,
-      supersedable facts (recommended for recall quality). Without it, whole
-      turns are stored raw.
+      supersedable facts (recommended for recall quality). Without either, whole
+      turns are stored raw with keyword recall.
 
     ``recall_limit`` / ``recall_min_relevance`` / ``recall_half_life_seconds``
-    tune how much is recalled, the abstain threshold, and temporal decay. Pass
+    tune how much is recalled, the abstain threshold (interpreted as the minimum
+    cosine similarity when an ``embedder`` is given), and temporal decay. Pass
     the result to ``create_agent(memory_provider=...)``.
     """
     if path and path != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
     store = SqliteMemoryStore(path=path) if path else InMemoryMemoryStore()
+    if embedder is not None:
+        return EmbeddingMemoryProvider(
+            store,
+            embedder,
+            recall_limit=recall_limit,
+            recall_min_similarity=recall_min_relevance,
+            recall_half_life_seconds=recall_half_life_seconds,
+        )
     if extractor is not None:
         return FactExtractingMemoryProvider(
             store,
