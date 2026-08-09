@@ -23,6 +23,7 @@ from agent_driver.memory.provider import (
     MemoryTurn,
     RecallQuery,
     render_recall_block,
+    sync_explicit_writes,
 )
 from agent_driver.runtime.lifecycle_hooks import BaseRunLifecycleHook
 from agent_driver.runtime.metadata_state import get_memory_runtime_state
@@ -162,6 +163,24 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
         if _memory_overrides(context).get("sync") is False:
             return
         memory_state.mark_turn_synced()
+        # Epic M1 (openclaude mutual exclusion): the model curated memory itself
+        # this turn via the `remember` tool. Flush those explicit writes and SKIP
+        # the automatic turn-sync/extraction — no double-write, the extraction
+        # LLM call is saved, and the model's chosen facts are the higher-signal
+        # record. The extractor stays the safety net for turns the model didn't
+        # curate. Explicit writes are synchronous, so they are durable at
+        # completion and visible to the next run's recall with no drain.
+        explicit = memory_state.pending_writes()
+        if explicit:
+            store = getattr(self._provider, "store", None)
+            if store is not None:
+                written = sync_explicit_writes(
+                    store, session_id, explicit, run_id=context.run_id
+                )
+                context.metadata["memory_explicit_synced_count"] = written
+                return
+            # A storeless provider (e.g. a hosted vector backend) cannot take
+            # buffered writes here; fall through to its own sync_turn instead.
         turn = MemoryTurn(
             session_id=session_id,
             run_id=context.run_id,

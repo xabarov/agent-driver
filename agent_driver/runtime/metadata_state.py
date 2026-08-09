@@ -488,6 +488,21 @@ class MemoryRuntimeState(_MetadataView):
     def mark_turn_synced(self) -> None:
         self.metadata["memory_synced"] = True
 
+    # Epic M1: explicit model-authored memory writes (the `remember` tool),
+    # buffered here during the run and flushed to the durable store by the
+    # MemoryLifecycleHook at completion.
+    def pending_writes(self) -> list[dict]:
+        value = self.metadata.get("memory_pending_writes")
+        return list(value) if isinstance(value, list) else []
+
+    def add_pending_write(self, entry: dict) -> None:
+        writes = self.pending_writes()
+        writes.append(entry)
+        self.metadata["memory_pending_writes"] = writes
+
+    def has_explicit_writes(self) -> bool:
+        return bool(self.pending_writes())
+
 
 class CostRuntimeState(_MetadataView):
     """Running per-run cost ledger (tokens + USD) for budget enforcement."""

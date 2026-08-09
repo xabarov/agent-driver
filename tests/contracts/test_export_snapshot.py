@@ -192,6 +192,7 @@ _TOOLS = {
     "register_custom_function",
     "register_custom_tool",
     "register_mcp_tools",
+    "register_memory_tool",
     "register_planning_tool",
     "register_skill_tools",
     "render_tool_doc",

@@ -7,6 +7,23 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Model-callable `remember` memory tool (memory epic M1).** Long-term memory could only
+  be written automatically by the end-of-run extractor — the agent had no way to decide,
+  in the moment, that a fact was worth keeping. It now has a `remember(content, [slot])`
+  tool: the model saves a durable fact proactively (a stated preference, a correction, a
+  standing decision) and reuses a `slot` to update a fact it saved earlier. The call does
+  not touch the store directly — it returns an `applied_memory_write` envelope that the
+  tool stage buffers onto `MemoryRuntimeState`, and `MemoryLifecycleHook.on_run_completed`
+  flushes buffered writes to the durable store as `FACT` records. When the model wrote
+  memory itself this turn, the hook **skips** the automatic turn-sync/extraction for that
+  turn (openclaude-style mutual exclusion): no double-write, the extraction LLM call is
+  saved, and the extractor stays the safety net for turns the model didn't curate. The
+  tool is registered only when a memory provider is configured (off by default, on exactly
+  when long-term memory is wired), and `StoreBackedMemoryProvider` recall now supersedes
+  slotted records to the newest per slot so a re-`remember` actually updates in place.
+
 ## [0.13.1] - 2026-08-09
 
 ### Fixed

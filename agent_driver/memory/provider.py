@@ -387,6 +387,52 @@ def sync_raw_turn(
         )
 
 
+def sync_explicit_writes(
+    store: MemoryStore,
+    session_id: str,
+    writes: list[dict[str, Any]],
+    *,
+    run_id: str | None = None,
+    now_iso: str | None = None,
+) -> int:
+    """Persist model-authored explicit memory writes as FACT records (epic M1).
+
+    Each write is ``{"text": str, "slot": str | None}`` produced by the
+    ``remember`` tool and buffered on ``MemoryRuntimeState``. Text is
+    recall-block-sanitized like a raw turn; a ``slot`` lets a later write on the
+    same subject supersede this one at recall (``supersede_by_slot``). A
+    ``created_at`` stamp folds explicit facts into the same relevance×freshness
+    recall ranking as extracted ones. Returns the number of records appended.
+    """
+    from datetime import datetime, timezone
+
+    stamped = now_iso or datetime.now(tz=timezone.utc).isoformat()
+    count = 0
+    for write in writes:
+        text = sanitize_memory_text(str(write.get("text") or "").strip())
+        if not text:
+            continue
+        metadata: dict[str, Any] = {
+            "source": "model_explicit",
+            "created_at": stamped,
+        }
+        slot = write.get("slot")
+        if isinstance(slot, str) and slot.strip():
+            metadata["slot"] = slot.strip()
+        if run_id is not None:
+            metadata.setdefault("run_id", run_id)
+        store.append(
+            MemoryRecord(
+                session_id=session_id,
+                text=text,
+                kind=MemoryKind.FACT,
+                metadata=metadata,
+            )
+        )
+        count += 1
+    return count
+
+
 class MemoryProvider(ABC):
     """Async policy layer deciding what to remember and what to recall."""
 
@@ -458,14 +504,22 @@ class StoreBackedMemoryProvider(MemoryProvider):
         return self._store
 
     async def prefetch(self, query: RecallQuery) -> RecallResult:
-        """Return newest matching records for the session."""
+        """Return newest matching records for the session.
+
+        Slotted records (e.g. explicit ``remember`` writes reusing a slot to
+        update a fact, epic M1) are superseded to the newest per slot before
+        ranking — so re-remembering the same subject updates it. Raw turns carry
+        no slot and pass through untouched, keeping the historical behaviour.
+        """
         # Fetch a bounded window when there is no query; for a keyword query
         # pull the full session and filter in-process (sessions are small).
         if query.query:
-            candidates = self._store.list_for_session(query.session_id)
+            candidates = supersede_by_slot(
+                self._store.list_for_session(query.session_id)
+            )
         else:
-            candidates = self._store.list_for_session(
-                query.session_id, limit=query.limit
+            candidates = supersede_by_slot(
+                self._store.list_for_session(query.session_id, limit=query.limit)
             )
         records = apply_recall(
             candidates,
@@ -502,5 +556,6 @@ __all__ = [
     "sanitize_memory_text",
     "score_relevance",
     "supersede_by_slot",
+    "sync_explicit_writes",
     "sync_raw_turn",
 ]
