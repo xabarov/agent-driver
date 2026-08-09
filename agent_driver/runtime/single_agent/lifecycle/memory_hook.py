@@ -23,7 +23,6 @@ from agent_driver.memory.provider import (
     MemoryTurn,
     RecallQuery,
     render_recall_block,
-    sync_explicit_writes,
 )
 from agent_driver.runtime.lifecycle_hooks import BaseRunLifecycleHook
 from agent_driver.runtime.metadata_state import get_memory_runtime_state
@@ -172,15 +171,15 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
         # completion and visible to the next run's recall with no drain.
         explicit = memory_state.pending_writes()
         if explicit:
-            store = getattr(self._provider, "store", None)
-            if store is not None:
-                written = sync_explicit_writes(
-                    store, session_id, explicit, run_id=context.run_id
-                )
+            # Route through the provider so a re-scoping provider (e.g. a
+            # workbook-scoped wrapper) persists explicit facts under its own
+            # scope. A storeless provider returns None → fall through to sync_turn.
+            written = await self._provider.record_explicit_writes(
+                session_id, explicit, run_id=context.run_id
+            )
+            if written is not None:
                 context.metadata["memory_explicit_synced_count"] = written
                 return
-            # A storeless provider (e.g. a hosted vector backend) cannot take
-            # buffered writes here; fall through to its own sync_turn instead.
         turn = MemoryTurn(
             session_id=session_id,
             run_id=context.run_id,
