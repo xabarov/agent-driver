@@ -91,6 +91,33 @@ class SubagentLimits:
     max_cost_usd: float | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SubagentModelPolicy:
+    """Per-child model / reasoning-effort controls (R-track R4).
+
+    Lets one subagent run on a different model, provider and effort than its parent —
+    the orchestrator-worker split (strong planner, cheap workers).
+
+    ``model``:
+        Pin the child's model (rides ``forced_model`` so ``build.py`` picks it up).
+        ``None`` or the sentinel ``"inherit"`` falls through to the parent's
+        ``subagent_model_routing[agent_type]``, then the parent provider's default.
+    ``model_role``:
+        The child's ``AgentRunInput.model_role``. ``None`` defaults to the child's
+        ``agent_type`` so the parent runner's role→model (R2, ``model_role_map``) and
+        role→provider (R3, ``role_providers``) registries can route this child by type —
+        with empty registries (the default) this only changes the trace label.
+    ``reasoning_effort``:
+        The child's abstract effort tier (R1) — ``none/minimal/low/medium/high/xhigh/max``.
+        ``None`` = no thinking control for the child. Validated when the child input is
+        built.
+    """
+
+    model: str | None = None
+    model_role: str | None = None
+    reasoning_effort: str | None = None
+
+
 class SubagentSpec:
     """Declarative spec for one Python-driven child agent run.
 
@@ -147,11 +174,13 @@ class SubagentSpec:
         "_tool_policy",
         "_output_policy",
         "_limits",
+        "_model_policy",
         "_frozen",
     )
     _tool_policy: SubagentToolPolicy
     _output_policy: SubagentOutputPolicy
     _limits: SubagentLimits
+    _model_policy: SubagentModelPolicy
     agent_type: str
     prompt: str
     system_prompt: str | None
@@ -171,9 +200,13 @@ class SubagentSpec:
         agent_profile: AgentProfile = AgentProfile.TOOL_CALLING,
         app_metadata: dict[str, Any] | None = None,
         max_cost_usd: float | None = None,
+        model: str | None = None,
+        model_role: str | None = None,
+        reasoning_effort: str | None = None,
         tool_policy: SubagentToolPolicy | None = None,
         output_policy: SubagentOutputPolicy | None = None,
         limits: SubagentLimits | None = None,
+        model_policy: SubagentModelPolicy | None = None,
     ) -> None:
         object.__setattr__(self, "agent_type", agent_type)
         object.__setattr__(self, "prompt", prompt)
@@ -208,6 +241,16 @@ class SubagentSpec:
                 max_cost_usd=max_cost_usd,
             ),
         )
+        object.__setattr__(
+            self,
+            "_model_policy",
+            model_policy
+            or SubagentModelPolicy(
+                model=model,
+                model_role=model_role,
+                reasoning_effort=reasoning_effort,
+            ),
+        )
         object.__setattr__(self, "_frozen", True)
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -224,6 +267,7 @@ class SubagentSpec:
             tool_policy=self._tool_policy,
             output_policy=self._output_policy,
             limits=self._limits,
+            model_policy=self._model_policy,
         )
 
     @property
@@ -245,6 +289,21 @@ class SubagentSpec:
     def response_format(self) -> dict[str, Any] | None:
         """Provider-level response format for the child."""
         return self._output_policy.response_format
+
+    @property
+    def model(self) -> str | None:
+        """Explicit model pin for the child (``None``/``"inherit"`` = fall through)."""
+        return self._model_policy.model
+
+    @property
+    def model_role(self) -> str | None:
+        """The child's ``model_role`` (``None`` = default to ``agent_type``)."""
+        return self._model_policy.model_role
+
+    @property
+    def reasoning_effort(self) -> str | None:
+        """The child's abstract reasoning-effort tier (R1); ``None`` = no control."""
+        return self._model_policy.reasoning_effort
 
     @property
     def max_tool_calls(self) -> int | None:
@@ -476,14 +535,22 @@ async def run_subagent(
         **spec.app_metadata,
     }
 
-    # E6: resolve the child's model. Precedence: an explicit forced_model in the
-    # spec's app_metadata (caller override) wins; otherwise the parent's
-    # subagent_model_routing maps agent_type -> model; otherwise the parent
-    # provider's default. A resolved model rides forced_model so build.py picks
-    # it up (and any matching harness profile composes on top).
+    # E6 + R4: resolve the child's model. Precedence: the spec's explicit ``model``
+    # (R4; the ``"inherit"`` sentinel means "don't pin") → an explicit forced_model in
+    # the spec's app_metadata (caller override) → the parent's subagent_model_routing
+    # (agent_type -> model) → the parent provider's default. A resolved model rides
+    # forced_model so build.py picks it up (any matching harness profile composes on top).
     routing = getattr(parent.runner.config, "subagent_model_routing", {})
-    routed_model = spec.app_metadata.get("forced_model") or routing.get(spec.agent_type)
+    explicit_model = spec.model if spec.model and spec.model != "inherit" else None
+    routed_model = (
+        explicit_model
+        or spec.app_metadata.get("forced_model")
+        or routing.get(spec.agent_type)
+    )
     policy_metadata = {"forced_model": routed_model} if routed_model else {}
+    # R4: the child's model_role defaults to its agent_type so the parent runner's
+    # role→model (R2) and role→provider (R3) registries can route this child by type.
+    child_model_role = spec.model_role or spec.agent_type
 
     tool_policy = ToolPolicyInput(
         mode=ToolPolicyMode.ALLOW_TOOLS,
@@ -500,6 +567,8 @@ async def run_subagent(
         agent_id=f"{parent.defaults.agent_id}.{spec.agent_type}",
         graph_preset=parent.defaults.graph_preset,
         agent_profile=spec.agent_profile,
+        model_role=child_model_role,
+        reasoning_effort=spec.reasoning_effort,
         stream=False,
         max_tool_calls=spec.max_tool_calls,
         deadline_seconds=spec.deadline_seconds,

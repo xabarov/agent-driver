@@ -27,6 +27,7 @@ from agent_driver.sdk.async_subagent import AsyncSubagentManager, BackgroundSuba
 from agent_driver.sdk.fork import fork_subagent
 from agent_driver.sdk.subagent import (
     SubagentLimits,
+    SubagentModelPolicy,
     SubagentOutputPolicy,
     SubagentResult,
     SubagentSpec,
@@ -65,6 +66,7 @@ __all__ = [
     "SdkTransportConfig",
     "Session",
     "SubagentLimits",
+    "SubagentModelPolicy",
     "SubagentOutputPolicy",
     "SubagentResult",
     "SubagentSpec",
