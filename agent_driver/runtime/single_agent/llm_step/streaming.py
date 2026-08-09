@@ -17,6 +17,9 @@ from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.runtime.metadata_state import StreamingRuntimeState
 from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
+from agent_driver.runtime.single_agent.llm_step.provider_routing import (
+    resolve_request_provider,
+)
 from agent_driver.runtime.single_agent.types import RunContext, RunnerDeps
 
 
@@ -96,7 +99,9 @@ async def complete_streaming_request(
     audio_state: dict[str, Any] = {}
     usage = UsageSummary()
     finish_reason = LlmFinishReason.UNKNOWN
-    provider_name = host._deps.provider.name
+    # R3: route by the run's model_role (default registry → the primary provider).
+    provider = resolve_request_provider(host, request)
+    provider_name = provider.name
     model_name = request.model or "stream-model"
     stream_metadata: dict[str, Any] = {}
     idle_timeout = _stream_idle_timeout_seconds(context.run_input)
@@ -112,7 +117,7 @@ async def complete_streaming_request(
         event_type=RuntimeEventType.ASSISTANT_MESSAGE_STARTED,
         payload={"provider": provider_name, "model": model_name},
     )
-    iterator = host._deps.provider.stream(request).__aiter__()
+    iterator = provider.stream(request).__aiter__()
     try:
         while True:
             try:

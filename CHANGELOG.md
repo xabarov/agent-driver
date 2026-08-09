@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Added
 
+- **Role → provider registry: cross-provider role distribution (R3).** A run's
+  `model_role` can now route to a different *provider object* — e.g. native Anthropic for a
+  "planner" role and an OpenRouter route for an "executor" role — not just a different model
+  id on the one provider (that's R2). `RunnerConfig(role_providers={role: provider})` is
+  threaded to `RunnerDeps.role_providers`; `RunnerDeps.provider_for(model_role)` resolves the
+  provider (role registry → default `provider`). The step loop selects the provider per
+  request via a new `resolve_request_provider(host, request)` seam at every actual
+  `.complete`/`.stream` call site (which also tolerates the minimal duck-typed `_deps` fakes
+  used in tests). Empty registry (default) → every call uses the primary provider, unchanged.
+  The model chosen by R2 composes naturally (`request.model or provider._model`), so a role
+  can pin a provider and let that provider's own default model apply, or override it via
+  `model_role_map`. Note: deep-recovery telemetry (`stream_recovery`, step counters) still
+  labels events with the default provider name; the actual call routes correctly.
 - **Role → model resolver: `model_role` now selects a model (R2).** The
   `AgentRunInput.model_role` label was inert (telemetry only). A new
   `RunnerConfig(model_role_map={role: model})` capability now maps roles to models for the

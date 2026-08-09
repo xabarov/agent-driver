@@ -151,6 +151,7 @@ class SingleAgentRunner(
             fallback_providers=tuple(
                 getattr(self._config, "fallback_providers", ()) or ()
             ),
+            role_providers=dict(getattr(self._config, "role_providers", {}) or {}),
         )
 
     def _build_lifecycle_hooks(self) -> tuple:
