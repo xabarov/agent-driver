@@ -63,6 +63,11 @@ from agent_driver.llm.providers_impl import (
     OllamaProvider,
     OpenAICompatibleProvider,
 )
+from agent_driver.llm.model_router import (
+    HeuristicDifficultyRouter,
+    ModelRouter,
+    last_user_text,
+)
 from agent_driver.llm.router import HealthAwareRouter
 from agent_driver.llm.sanitize import sanitize_request_messages, strip_surrogates
 from agent_driver.llm.structured import (
@@ -88,6 +93,9 @@ __all__ = [
     "ClassifiedError",
     "FakeProvider",
     "HealthAwareRouter",
+    "HeuristicDifficultyRouter",
+    "ModelRouter",
+    "last_user_text",
     "LlmFinishReason",
     "ProviderDescriptor",
     "ProviderPreflightResult",

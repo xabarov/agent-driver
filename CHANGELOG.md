@@ -9,6 +9,20 @@ change between minor versions.
 
 ### Added
 
+- **Pluggable per-request model router (R6).** A `ModelRouter`
+  (`agent_driver.llm.model_router`) inspects each request and returns the `model_role` to
+  use, so the runtime picks a cheaper/stronger model per turn — the chosen role then
+  resolves through R2's `model_role_map` (role→model) and R3's `role_providers`
+  (role→provider), so a router *composes* with the registries instead of duplicating them.
+  Wired at request-build time (`RunnerConfig(model_router=...)`), consulted only when no
+  `forced_model` overrides it; a misbehaving router is caught and falls back to the run's
+  static role. Ships `HeuristicDifficultyRouter` — a per-turn simple-vs-strong classifier
+  (strong keywords, fenced code, length thresholds; reference: openclaude smartModelRouting)
+  with no extra LLM call. Opt-in: no router → the static `model_role` is used; an unmapped
+  routed role → provider default (shows in traces first, changes models once the registries
+  gain the roles). Exported: `ModelRouter`, `HeuristicDifficultyRouter`, `last_user_text`.
+  (Cost-aware cascade / draft-then-verify — which change the step loop's control flow — are
+  a separate follow-on.)
 - **Per-subagent model, provider and reasoning-effort (R4).** A `SubagentSpec` can now
   declare its own `model`, `model_role` and `reasoning_effort` (new `SubagentModelPolicy`
   group) — the orchestrator-worker split (strong planner, cheap workers). The child's

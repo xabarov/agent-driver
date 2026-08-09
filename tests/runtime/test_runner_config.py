@@ -70,6 +70,7 @@ def test_capability_settings_field_snapshot() -> None:
         "tool_concurrency_limit",
         "subagent_model_routing",
         "model_role_map",
+        "model_router",
         "tool_defer_mode",
         "tool_defer_threshold_pct",
         "per_turn_output_budget_chars",
