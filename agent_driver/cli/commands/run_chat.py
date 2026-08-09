@@ -14,7 +14,7 @@ from agent_driver.cli.commands.common import (
     build_provider_and_toolset,
     print_provider_health,
 )
-from agent_driver.memory import SqliteMemoryStore, StoreBackedMemoryProvider
+from agent_driver.memory import build_memory_provider
 from agent_driver.permissions import (
     PermissionMode,
     PermissionPolicy,
@@ -58,9 +58,7 @@ def _memory_provider_from_args(args: argparse.Namespace) -> object | None:
     if str(getattr(args, "memory", "none")) != "sqlite":
         return None
     path = str(getattr(args, "memory_path", None) or ".agent-driver/memory.db")
-    if path != ":memory:":
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-    return StoreBackedMemoryProvider(SqliteMemoryStore(path=path))
+    return build_memory_provider(path=path)
 
 
 def _permission_gate_from_args(args: argparse.Namespace) -> object | None:

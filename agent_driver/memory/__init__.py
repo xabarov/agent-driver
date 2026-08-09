@@ -5,6 +5,7 @@ from agent_driver.memory.extraction import (
     parse_extracted_facts,
     supersede_by_slot,
 )
+from agent_driver.memory.factory import build_memory_provider
 from agent_driver.memory.provider import (
     MemoryKind,
     MemoryProvider,
@@ -33,6 +34,7 @@ __all__ = [
     "SqliteMemoryStore",
     "StoreBackedMemoryProvider",
     "apply_recall",
+    "build_memory_provider",
     "match_query",
     "parse_extracted_facts",
     "render_recall_block",
