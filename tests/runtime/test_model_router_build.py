@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from types import SimpleNamespace
 
 from agent_driver.contracts import AgentRunInput, ToolPolicyInput
-from agent_driver.llm.model_router import HeuristicDifficultyRouter
+from agent_driver.llm.model_router import HeuristicDifficultyRouter, PlanExecuteRouter
 from agent_driver.runtime.single_agent.llm_step.build import (
     LlmRequestBuildContext,
     build_single_agent_llm_request,
@@ -23,12 +23,12 @@ class _FixedRouter:
     def __init__(self, role: str) -> None:
         self.role = role
 
-    def route(self, *, messages, run_input, default_role) -> str:
+    def route(self, ctx) -> str:
         return self.role
 
 
 class _BoomRouter:
-    def route(self, *, messages, run_input, default_role) -> str:
+    def route(self, ctx) -> str:
         raise RuntimeError("router blew up")
 
 
@@ -98,3 +98,17 @@ def test_heuristic_router_end_to_end():
         )
     )
     assert req.model == "big"
+
+
+def test_plan_execute_router_routes_by_step_index():
+    # R5 opusplan: the planning turn (step 0) → planner model, execution turns → executor.
+    router = PlanExecuteRouter()
+    role_map = {"planner": "PLAN", "executor": "EXEC"}
+    plan_req, _ = build_single_agent_llm_request(
+        _ctx(model_router=router, model_role_map=role_map, step_index=0)
+    )
+    exec_req, _ = build_single_agent_llm_request(
+        _ctx(model_router=router, model_role_map=role_map, step_index=1)
+    )
+    assert (plan_req.model_role, plan_req.model) == ("planner", "PLAN")
+    assert (exec_req.model_role, exec_req.model) == ("executor", "EXEC")

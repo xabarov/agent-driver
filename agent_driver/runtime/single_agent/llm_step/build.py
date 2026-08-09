@@ -22,6 +22,7 @@ from agent_driver.context.token_pressure import (
 from agent_driver.contracts.context import ContextBudget
 from agent_driver.contracts.enums import AgentProfile
 from agent_driver.contracts.reasoning import effort_to_reasoning_envelope
+from agent_driver.llm.model_router import RouteContext
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.profiles import HarnessProfile
 from agent_driver.contracts.runtime import AgentRunInput
@@ -89,6 +90,10 @@ class LlmRequestBuildContext:
     # R6: optional per-request model router that picks the ``model_role`` by
     # difficulty/content. None = use the run's static model_role.
     model_router: Any | None = None
+    # R5: completed LLM iterations so far (context.llm_step_count); 0 = first/planning
+    # turn. Passed to the router so a phase router (PlanExecuteRouter) can route
+    # planning turns to a strong role and execution turns to a cheap one.
+    step_index: int = 0
 
 
 def _normalize_trimmed_messages(
@@ -663,9 +668,12 @@ def build_single_agent_llm_request(
     if resolved_model is None and ctx.model_router is not None:
         try:
             routed_role = ctx.model_router.route(
-                messages=final_prompt_messages,
-                run_input=run_input,
-                default_role=effective_model_role,
+                RouteContext(
+                    messages=final_prompt_messages,
+                    run_input=run_input,
+                    default_role=effective_model_role,
+                    step_index=ctx.step_index,
+                )
             )
         except Exception:  # noqa: BLE001 — a misbehaving router must not break the run
             routed_role = None

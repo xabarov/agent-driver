@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Added
 
+- **Phase-aware model routing — opusplan within one run (R5).** `PlanExecuteRouter` (a
+  `ModelRouter`) routes the run's first `plan_steps` turns (planning / decomposition) to a
+  strong `planner_role` and every later turn to a cheaper `executor_role` — a strong model
+  reasons about *what* to do, then a cheap model carries it out, the single-run
+  orchestrator-worker split (reference: Claude Code `opusplan`, Anthropic's orchestrator-
+  worker research system). The router now receives an extensible `RouteContext` (messages,
+  run_input, default_role, `step_index` = completed LLM iterations so far), threaded from
+  `context.llm_step_count`, so phase routers work without a control-flow change. Exported:
+  `PlanExecuteRouter`, `RouteContext`. (The router protocol's `route(...)` takes a
+  `RouteContext` — a signature change from the R6 preview, which shipped in the same
+  unreleased cycle.) Composes with per-subagent models (R4) for the full orchestrator-
+  worker pattern. The architect/editor *two-pass* split (a separate reasoning call) is a
+  control-flow follow-on.
 - **Pluggable per-request model router (R6).** A `ModelRouter`
   (`agent_driver.llm.model_router`) inspects each request and returns the `model_role` to
   use, so the runtime picks a cheaper/stronger model per turn — the chosen role then
