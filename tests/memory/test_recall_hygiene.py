@@ -89,6 +89,17 @@ def test_render_frame_states_reference_and_trust_newest() -> None:
     assert "trust the newest" in block
 
 
+def test_render_frame_states_staleness_guard() -> None:
+    """Epic M3: the recall frame tells the model memory may be stale — verify
+    a recalled fact against the current situation before acting on it."""
+    from agent_driver.memory.provider import RecallResult
+
+    block = render_recall_block(RecallResult(session_id="s", records=[_rec("факт")]))
+    lowered = block.lower()
+    assert "unverified" in lowered or "out of date" in lowered
+    assert "verify" in lowered
+
+
 class _ScriptedProvider(FakeProvider):
     """Returns scripted completions in order."""
 

@@ -9,6 +9,14 @@ change between minor versions.
 
 ### Changed
 
+- **Recall-side staleness guard (memory epic M3).** The recalled-memory block already framed
+  memory as reference-only (not instructions, current dialogue wins, newest fact wins on
+  conflict). It now also carries openclaude's drift caveat: each recalled item is an
+  *unverified hint that may be out of date*, to be verified against the current situation
+  before the model relies on it or states it as fact. "Memory says X" is not "X is true now" —
+  so a remembered detail that has since changed no longer silently drives the turn. Costs
+  nothing when there is no recall (the frame renders only alongside recalled records).
+
 - **Shared memory write-gating discipline (memory epic M2).** Both memory write paths — the
   `remember` tool and the automatic fact extractor — now reference one canonical
   "what NOT to keep in memory" block (`agent_driver.memory.guidance.MEMORY_WRITE_GATING`)
