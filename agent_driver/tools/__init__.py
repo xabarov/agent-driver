@@ -17,6 +17,7 @@ from agent_driver.tools.custom import (
 )
 from agent_driver.tools.executor import GovernedToolExecutor
 from agent_driver.tools.guardrails import GuardrailPipeline, GuardrailResult
+from agent_driver.tools.memory import register_memory_tool
 from agent_driver.tools.planning import (
     apply_planning_state_tool_update,
     planning_state_update_tool,
@@ -67,6 +68,7 @@ __all__ = [
     "ToolRegistry",
     "planning_state_update_tool",
     "register_planning_tool",
+    "register_memory_tool",
     "register_builtin_tools",
     "register_mcp_tools",
     "register_skill_tools",

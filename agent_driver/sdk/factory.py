@@ -25,13 +25,15 @@ from agent_driver.tools import (
     ToolRegistry,
     ToolSet,
     register_builtin_tools,
+    register_memory_tool,
     register_planning_tool,
 )
 
 
 def build_default_registry(config: RunnerConfig | None = None) -> ToolRegistry:
     """Build default built-in registry for SDK agents."""
-    settings = (config or RunnerConfig()).python_tool
+    cfg = config or RunnerConfig()
+    settings = cfg.python_tool
     python_backend = None
     if settings.enabled:
         python_backend = create_python_backend(
@@ -45,6 +47,11 @@ def build_default_registry(config: RunnerConfig | None = None) -> ToolRegistry:
         python_settings=settings,
     )
     register_planning_tool(registry)
+    # Epic M1: expose the model-callable `remember` tool only when a memory
+    # provider is configured — without a store to flush to it would be a silent
+    # no-op. Off by default, on exactly when long-term memory is wired.
+    if getattr(cfg, "memory_provider", None) is not None:
+        register_memory_tool(registry)
     return registry
 
 

@@ -53,6 +53,9 @@ from agent_driver.runtime.single_agent.lifecycle.pending import (
     pending_interrupt_from_execution_result,
     serialize_pending_interrupt,
 )
+from agent_driver.runtime.single_agent.memory_writes import (
+    apply_memory_writes_from_envelopes,
+)
 from agent_driver.runtime.single_agent.planning.state import (
     apply_planning_updates_from_envelopes,
     build_planning_snapshot,
@@ -285,6 +288,7 @@ def _post_process_tool_result(
     host: ToolStageHost, context: RunContext, result: ToolExecutionResult
 ) -> None:
     planning_updated = apply_planning_updates_from_envelopes(context, result)
+    apply_memory_writes_from_envelopes(context, result)
     observations = build_observations_from_tool_result(
         result,
         observation_max_chars=host._config.observation_max_chars,
