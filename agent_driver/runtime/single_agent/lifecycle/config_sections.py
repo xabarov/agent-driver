@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from agent_driver.code_agent.contracts import CodeAgentLimits
 from agent_driver.llm.context_windows import (
@@ -58,6 +58,11 @@ class CapabilitySettings:
     # ``forced_model`` (live SET_MODEL / subagent routing) → ``model_role_map[role]`` →
     # None (provider default). Empty = off (model_role stays a pure telemetry label).
     model_role_map: dict[str, str] = field(default_factory=dict)
+    # R6 (R-track): optional per-request model router
+    # (agent_driver.llm.model_router.ModelRouter) that picks the ``model_role`` by
+    # difficulty/content each turn; the chosen role then resolves through model_role_map
+    # (R2) + role_providers (R3). None = off (the run's static model_role is used).
+    model_router: "Any | None" = None
     # Epic 033 A: adaptive tool-deferral threshold. "auto" defers ``should_defer``
     # candidates only when their schemas cross ``tool_defer_threshold_pct`` of the
     # model window (hermes should_activate); "on" always defers (historical); "off"

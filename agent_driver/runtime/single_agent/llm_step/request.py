@@ -410,6 +410,7 @@ def build_trimmed_request(
             tool_defer_mode=host._config.capabilities.tool_defer_mode,
             tool_defer_threshold_pct=host._config.capabilities.tool_defer_threshold_pct,
             model_role_map=host._config.capabilities.model_role_map,
+            model_router=host._config.capabilities.model_router,
         )
     )
 

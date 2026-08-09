@@ -460,6 +460,11 @@ class RunnerConfig:
         return self.capabilities.model_for_role(role)
 
     @property
+    def model_router(self) -> Any | None:
+        """Optional per-request model router (R6)."""
+        return self.capabilities.model_router
+
+    @property
     def enable_subagents(self) -> bool:
         return self.subagents.enable_subagents
 

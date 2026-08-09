@@ -86,6 +86,9 @@ class LlmRequestBuildContext:
     # R2: role → model map (from CapabilitySettings). Resolves ``run_input.model_role``
     # to a model when no ``forced_model`` is set. Empty = model_role stays inert.
     model_role_map: Mapping[str, str] = field(default_factory=dict)
+    # R6: optional per-request model router that picks the ``model_role`` by
+    # difficulty/content. None = use the run's static model_role.
+    model_router: Any | None = None
 
 
 def _normalize_trimmed_messages(
@@ -648,13 +651,28 @@ def build_single_agent_llm_request(
         ]
     request_metadata = dict(run_input.tool_policy.metadata)
     forced_model = request_metadata.pop("forced_model", None)
-    # R2: resolve the request model. A live ``forced_model`` (SET_MODEL control /
-    # subagent routing) wins; otherwise the run's ``model_role`` label resolves through
-    # the role → model map (empty map / unmapped role → None → provider default, so the
-    # legacy single-model path is unchanged).
+    # R2/R6: resolve the request model + effective role. A live ``forced_model``
+    # (SET_MODEL control / subagent routing) wins. Otherwise, when a model router is
+    # configured (R6), it may pick the ``model_role`` for this request by
+    # difficulty/content; the chosen role then resolves through the role → model map
+    # (R2) and, at call time, the role → provider registry (R3). The role also rides
+    # ``LlmRequest.model_role`` so provider routing + telemetry reflect the choice.
+    # Empty map / unmapped role / no router → provider default (legacy path unchanged).
     resolved_model = forced_model if isinstance(forced_model, str) else None
+    effective_model_role = run_input.model_role or "default"
+    if resolved_model is None and ctx.model_router is not None:
+        try:
+            routed_role = ctx.model_router.route(
+                messages=final_prompt_messages,
+                run_input=run_input,
+                default_role=effective_model_role,
+            )
+        except Exception:  # noqa: BLE001 — a misbehaving router must not break the run
+            routed_role = None
+        if isinstance(routed_role, str) and routed_role:
+            effective_model_role = routed_role
     if resolved_model is None:
-        resolved_model = ctx.model_role_map.get(run_input.model_role or "default")
+        resolved_model = ctx.model_role_map.get(effective_model_role)
     # A6: a SET_MAX_THINKING_TOKENS control writes reasoning_max_tokens into
     # tool_policy.metadata; consume it into the provider-neutral reasoning envelope
     # (popped so it never leaks into request metadata). Unset → None → omitted, so
@@ -709,7 +727,7 @@ def build_single_agent_llm_request(
         messages=sanitize_request_messages(
             _normalize_trimmed_messages(final_prompt_messages)
         ),
-        model_role=run_input.model_role,
+        model_role=effective_model_role,
         model=resolved_model,
         stream=ctx.stream,
         tools=request_tools,
