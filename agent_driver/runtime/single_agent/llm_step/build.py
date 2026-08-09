@@ -20,6 +20,7 @@ from agent_driver.context.token_pressure import (
 )
 from agent_driver.contracts.context import ContextBudget
 from agent_driver.contracts.enums import AgentProfile
+from agent_driver.contracts.reasoning import effort_to_reasoning_envelope
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.profiles import HarnessProfile
 from agent_driver.contracts.runtime import AgentRunInput
@@ -650,6 +651,12 @@ def build_single_agent_llm_request(
     reasoning_override = _reasoning_override(
         request_metadata.pop("reasoning_max_tokens", None)
     )
+    # R1: fall back to the run's abstract effort tier when no live
+    # SET_MAX_THINKING_TOKENS budget is set (the live control wins). Resolves to the
+    # provider-neutral reasoning envelope (`{"effort": tier}` / `{"enabled": False}`);
+    # unset → None → omitted, so non-thinking backends stay unaffected.
+    if reasoning_override is None and run_input.reasoning_effort:
+        reasoning_override = effort_to_reasoning_envelope(run_input.reasoning_effort)
     # App-level provider passthrough (e.g. output-media ``modalities`` / ``audio``
     # from the OpenAI server) is merged into the request's ``provider_extra_body``
     # so it reaches the provider payload without a dedicated field per param.

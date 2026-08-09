@@ -7,8 +7,29 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Reasoning-effort as a first-class, provider-correct axis (R1).** A single abstract effort
+  tier — `none/minimal/low/medium/high/xhigh/max` (`agent_driver.contracts.reasoning`) — is now
+  settable per run via `AgentRunInput.reasoning_effort` (validated/normalized at construction).
+  The runtime resolves it at request-build time into the provider-neutral `LlmRequest.reasoning`
+  envelope (`build.py`): the OpenAI-compatible provider forwards it verbatim (OpenRouter's unified
+  `reasoning` param), and a live `SET_MAX_THINKING_TOKENS` budget still takes precedence when set.
+  Default `None` → no envelope → existing runs are byte-for-byte unchanged. Foundational for
+  per-role / per-subagent effort (R-track).
+
 ### Fixed
 
+- **The Anthropic provider no longer silently drops reasoning/thinking control.** `_request_payload`
+  never read `request.reasoning`, so any thinking budget/effort was dropped on Anthropic native
+  (only OpenAI-compatible backends honored it) — effort control was provider-asymmetric. The
+  provider now translates the neutral reasoning envelope into Anthropic's native extended-thinking
+  control, gated by model generation: adaptive-era Claude (4.6+) emits
+  `thinking:{type:"adaptive",display:"summarized"}` + `output_config:{effort:tier}` (with `xhigh`
+  downgraded to `max` on the 4.6 family), while legacy Claude (≤4.5) emits
+  `thinking:{type:"enabled",budget_tokens:N}` with the API-mandated `temperature=1` and a
+  `max_tokens` floor above the budget. Detection is default-to-modern (new generations get the
+  adaptive path automatically); Haiku and an unset/`{"enabled":False}` envelope are strict no-ops.
 - **Recalled memory now reaches TOOL_CALLING agents, not just REACT_TEXT.** The recalled-memory
   block was injected only inside `react_system_instruction`, which returns early for any
   non-REACT_TEXT profile — so a `TOOL_CALLING` host (which supplies its own system prompt) never
