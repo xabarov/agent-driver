@@ -28,6 +28,7 @@ from agent_driver.subagents.child_helpers import (
     _child_budget_summary,
     _child_evidence_summary,
     _child_source_ledger_from_output,
+    _child_tool_results_receipt,
     _completed_child_run_from_output,
     _failed_child_run,
     _first_output_artifact,
@@ -155,6 +156,7 @@ async def _run_single_child_task(
         cleanup_child_workspace(workspace)
     run_status, terminal_state = _status_from_output(output)
     artifact_refs = _bounded_output_artifact_refs(output)
+    child_tool_results, child_tool_results_audit = _child_tool_results_receipt(output)
     merge_provenance = (
         MergeProvenance(
             strategy="child_output",
@@ -185,6 +187,8 @@ async def _run_single_child_task(
         metadata={
             **pending.metadata,
             "summary": output.answer or "",
+            "child_tool_results": child_tool_results,
+            "child_tool_results_audit": child_tool_results_audit,
             "child_artifact_refs": artifact_refs,
             "child_artifact_audit": _child_artifact_audit(output, artifact_refs),
             "child_source_ledger": _child_source_ledger_from_output(output),

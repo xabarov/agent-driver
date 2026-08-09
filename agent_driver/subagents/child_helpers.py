@@ -8,6 +8,7 @@ class. Re-exported from ``executor`` for the spine and for existing callers/test
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from inspect import signature
 from typing import Any, Callable
@@ -361,6 +362,55 @@ def _child_budget_summary(
     }
 
 
+def _child_tool_results_receipt(
+    output: AgentRunOutput,
+    *,
+    max_results: int = 64,
+    max_bytes: int = 256 * 1024,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    """Return bounded normalized child tool evidence for the parent receipt.
+
+    A child's terminal prose is useful synthesis but is not a reliable evidence
+    transport: the model can omit rows, wrap JSON in prose, or time out after
+    its tools already completed. ``AgentRunOutput.metadata["tool_results"]`` is
+    the runtime-normalized, spill-aware evidence channel. Preserve a bounded
+    JSON copy on the canonical ``SubagentRun`` so hosts can reconcile completed
+    child work without parsing model prose.
+    """
+
+    metadata = output.metadata if isinstance(output.metadata, dict) else {}
+    raw_rows = metadata.get("tool_results")
+    rows = (
+        [row for row in raw_rows if isinstance(row, dict)]
+        if isinstance(raw_rows, list)
+        else []
+    )
+    kept: list[dict[str, object]] = []
+    used_bytes = 0
+    for row in rows[: max(0, max_results)]:
+        try:
+            encoded = json.dumps(
+                row,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            continue
+        if used_bytes + len(encoded) > max(0, max_bytes):
+            break
+        parsed = json.loads(encoded)
+        if isinstance(parsed, dict):
+            kept.append(parsed)
+            used_bytes += len(encoded)
+    return kept, {
+        "total": len(rows),
+        "kept": len(kept),
+        "omitted": max(0, len(rows) - len(kept)),
+        "serialized_bytes": used_bytes,
+    }
+
+
 def _child_deadline_seconds(task: SubagentTaskSpec) -> float | None:
     if task.deadline_seconds is not None:
         return task.deadline_seconds
@@ -424,6 +474,7 @@ def _completed_child_run_from_output(
 ) -> SubagentRun:
     run_status, terminal_state = _status_from_output(output)
     artifact_refs = _bounded_output_artifact_refs(output)
+    child_tool_results, child_tool_results_audit = _child_tool_results_receipt(output)
     merge_provenance = (
         MergeProvenance(
             strategy="child_output",
@@ -454,6 +505,8 @@ def _completed_child_run_from_output(
         metadata={
             **pending.metadata,
             "summary": output.answer or "",
+            "child_tool_results": child_tool_results,
+            "child_tool_results_audit": child_tool_results_audit,
             "child_artifact_refs": artifact_refs,
             "child_artifact_audit": _child_artifact_audit(output, artifact_refs),
             "child_source_ledger": _child_source_ledger_from_output(output),
@@ -584,6 +637,7 @@ __all__ = [
     "_build_pending_child_run",
     "_build_child_input",
     "_child_budget_summary",
+    "_child_tool_results_receipt",
     "_child_deadline_seconds",
     "_child_max_steps",
     "_child_max_tool_calls",

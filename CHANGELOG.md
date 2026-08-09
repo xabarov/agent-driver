@@ -7,6 +7,17 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-08-09
+
+### Fixed — typed child tool-evidence handoff
+
+Canonical terminal `SubagentRun` rows now retain a bounded JSON copy of each
+child's runtime-normalized `tool_results` plus an explicit kept/omitted byte
+audit. Hosts no longer have to treat model-authored terminal prose as the sole
+evidence transport: completed tool facts survive malformed synthesis and child
+timeouts that occur after tool execution. The handoff is capped at 64 results
+and 256 KiB per child.
+
 ## [0.3.7] - 2026-08-09
 
 ### Fixed — terminal child-run contract projection

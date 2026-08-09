@@ -75,6 +75,89 @@ async def test_sync_child_execution_records_group_and_runs() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sync_child_receipt_preserves_normalized_tool_results() -> None:
+    """Canonical child rows retain bounded tool facts, not only model prose."""
+
+    async def _tool_child_runner(run_input):
+        return AgentRunOutput(
+            run_id=run_input.run_id or "child",
+            attempt_id="att_child",
+            status=RunStatus.COMPLETED,
+            terminal_reason=TerminalReason.FINAL_ANSWER,
+            answer="not a machine-readable receipt",
+            events=[
+                new_runtime_event(
+                    event_type=RuntimeEventType.RUN_COMPLETED,
+                    context={
+                        "run_id": run_input.run_id or "child",
+                        "attempt_id": "att_child",
+                        "seq": 1,
+                    },
+                )
+            ],
+            metadata={
+                "tool_results": [
+                    {
+                        "call": {
+                            "tool_name": "dns_lookup",
+                            "tool_call_id": "dns-1",
+                        },
+                        "decision": "allow",
+                        "structured_output": {
+                            "targets": ["example.test"],
+                            "findings": [
+                                {
+                                    "hostname": "example.test",
+                                    "ip_address": "192.0.2.10",
+                                }
+                            ],
+                        },
+                    }
+                ]
+            },
+        )
+
+    result = await execute_subagent_group_sync(
+        parent=default_parent_handoff(answer="parent summary"),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_tool_receipt",
+            purpose="evidence handoff",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="task_tool",
+                    task="verify example.test",
+                    description="DNS verifier",
+                ),
+            ),
+        ),
+        store=InMemorySubagentStore(),
+        child_runner=_tool_child_runner,
+        max_child_runs=1,
+    )
+
+    metadata = result.runs[0].metadata
+    assert metadata["summary"] == "not a machine-readable receipt"
+    assert metadata["child_tool_results"] == [
+        {
+            "call": {"tool_call_id": "dns-1", "tool_name": "dns_lookup"},
+            "decision": "allow",
+            "structured_output": {
+                "findings": [
+                    {
+                        "hostname": "example.test",
+                        "ip_address": "192.0.2.10",
+                    }
+                ],
+                "targets": ["example.test"],
+            },
+        }
+    ]
+    assert metadata["child_tool_results_audit"]["total"] == 1
+    assert metadata["child_tool_results_audit"]["kept"] == 1
+    assert metadata["child_tool_results_audit"]["omitted"] == 0
+
+
+@pytest.mark.asyncio
 async def test_sync_child_execution_runs_all_tasks_with_bounded_parallelism() -> None:
     """max_parallel should bound concurrency without discarding queued tasks."""
     store = InMemorySubagentStore()
