@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Added
 
+- **LLM-based difficulty router — a small model picks the model (R8).** `LlmDifficultyRouter`
+  is an async `ModelRouter` (`AsyncModelRouter` protocol) that asks a cheap, fast model to
+  classify the request as `simple`/`strong`; the verdict resolves through the usual
+  `model_role_map` (R2) / `role_providers` (R3). It is classified **once per run** (a run's
+  difficulty is set by its opening question) — the step loop drives the async router before
+  the first turn and caches `llm_routed_role` in run metadata, which the sync build path
+  reuses every turn (`pre_resolved_model_role`). So the "router tax" is a single small call
+  per run, not one per turn. Robust by construction: empty input → the run's default role;
+  any provider error or an unparseable verdict → a `HeuristicDifficultyRouter` fallback, so
+  routing never breaks a run. The async router is duck-typed on an `aroute` method, so the
+  sync build path skips it and existing sync/heuristic routers are unchanged. Exported:
+  `LlmDifficultyRouter`, `AsyncModelRouter`. Recommendation: point it at a tiny low-latency
+  classifier (a 3–4B / *-nano), not a mid model — it emits one word, so latency dominates.
 - **Phase-aware model routing — opusplan within one run (R5).** `PlanExecuteRouter` (a
   `ModelRouter`) routes the run's first `plan_steps` turns (planning / decomposition) to a
   strong `planner_role` and every later turn to a cheaper `executor_role` — a strong model

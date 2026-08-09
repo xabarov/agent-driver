@@ -412,6 +412,7 @@ def build_trimmed_request(
             model_role_map=host._config.capabilities.model_role_map,
             model_router=host._config.capabilities.model_router,
             step_index=context.llm_step_count,
+            pre_resolved_model_role=context.metadata.get("llm_routed_role"),
         )
     )
 

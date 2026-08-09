@@ -94,6 +94,9 @@ class LlmRequestBuildContext:
     # turn. Passed to the router so a phase router (PlanExecuteRouter) can route
     # planning turns to a strong role and execution turns to a cheap one.
     step_index: int = 0
+    # R8: a model_role pre-resolved by an ASYNC router (LlmDifficultyRouter) in the step
+    # loop, before this sync build runs. When set it wins over the sync router path.
+    pre_resolved_model_role: str | None = None
 
 
 def _normalize_trimmed_messages(
@@ -665,21 +668,29 @@ def build_single_agent_llm_request(
     # Empty map / unmapped role / no router → provider default (legacy path unchanged).
     resolved_model = forced_model if isinstance(forced_model, str) else None
     effective_model_role = run_input.model_role or "default"
-    if resolved_model is None and ctx.model_router is not None:
-        try:
-            routed_role = ctx.model_router.route(
-                RouteContext(
-                    messages=final_prompt_messages,
-                    run_input=run_input,
-                    default_role=effective_model_role,
-                    step_index=ctx.step_index,
-                )
-            )
-        except Exception:  # noqa: BLE001 — a misbehaving router must not break the run
-            routed_role = None
-        if isinstance(routed_role, str) and routed_role:
-            effective_model_role = routed_role
     if resolved_model is None:
+        if ctx.pre_resolved_model_role:
+            # R8: an async LLM router already picked the role for this run (step loop).
+            effective_model_role = ctx.pre_resolved_model_role
+        else:
+            # R6: a SYNC router (heuristic/phase) picks the role here. Duck-typed on
+            # ``route`` so an async-only router (LlmDifficultyRouter, no ``route``) is
+            # skipped — it is driven from the step loop instead.
+            route_fn = getattr(ctx.model_router, "route", None)
+            if callable(route_fn):
+                try:
+                    routed_role = route_fn(
+                        RouteContext(
+                            messages=final_prompt_messages,
+                            run_input=run_input,
+                            default_role=effective_model_role,
+                            step_index=ctx.step_index,
+                        )
+                    )
+                except Exception:  # noqa: BLE001 — a bad router must not break the run
+                    routed_role = None
+                if isinstance(routed_role, str) and routed_role:
+                    effective_model_role = routed_role
         resolved_model = ctx.model_role_map.get(effective_model_role)
     # A6: a SET_MAX_THINKING_TOKENS control writes reasoning_max_tokens into
     # tool_policy.metadata; consume it into the provider-neutral reasoning envelope
