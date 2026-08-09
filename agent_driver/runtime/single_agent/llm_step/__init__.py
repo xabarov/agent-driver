@@ -546,6 +546,56 @@ def _build_llm_completed_payload(context: RunContext) -> dict[str, Any]:
     return completed_payload
 
 
+def _run_user_text(run_input: Any) -> str:
+    """The user's opening question for this run (for the async difficulty router)."""
+    text = getattr(run_input, "input", None)
+    if isinstance(text, str) and text.strip():
+        return text
+    for message in reversed(list(getattr(run_input, "messages", []) or [])):
+        role = getattr(message, "role", None)
+        role = role.value if hasattr(role, "value") else role
+        if str(role) == "user":
+            content = getattr(message, "content", "")
+            if isinstance(content, str) and content.strip():
+                return content
+    return ""
+
+
+async def _maybe_llm_route(host: "LlmStepHost", context: RunContext) -> None:
+    """R8: drive an ASYNC model router (``aroute``) once per run and cache its verdict.
+
+    A no-op unless a router with an ``aroute`` method is configured and the run hasn't
+    been classified yet. The cached ``llm_routed_role`` is read by the sync build path
+    (``pre_resolved_model_role``) for every turn, so the small classifier model is called
+    exactly once per run. Any failure is swallowed — routing must never break a run.
+    """
+    if context.metadata.get("llm_routed_role"):
+        return
+    router = getattr(host._config, "model_router", None)
+    aroute = getattr(router, "aroute", None)
+    if aroute is None:
+        return
+    text = _run_user_text(context.run_input)
+    if not text.strip():
+        return
+    from agent_driver.llm.model_router import RouteContext
+
+    default_role = context.run_input.model_role or "default"
+    try:
+        role = await aroute(
+            RouteContext(
+                messages=[{"role": "user", "content": text}],
+                run_input=context.run_input,
+                default_role=default_role,
+                step_index=context.llm_step_count,
+            )
+        )
+    except Exception:  # noqa: BLE001 — routing must never break a run
+        return
+    if isinstance(role, str) and role:
+        context.metadata["llm_routed_role"] = role
+
+
 async def execute_llm_call_step(
     host: LlmStepHost, context: RunContext
 ) -> RuntimeStepResult:
@@ -555,6 +605,9 @@ async def execute_llm_call_step(
     clarification = get_planning_runtime_state(context).clarification()
     try:
         observations = _microcompact_context_observations(host, context)
+        # R8: async LLM router — classify the run's difficulty ONCE (first step) with a
+        # cheap model and cache the role; the sync build path then reuses it every turn.
+        await _maybe_llm_route(host, context)
         request, trim_payload = _build_trimmed_request(
             host, context, observations, clarification
         )

@@ -64,7 +64,9 @@ from agent_driver.llm.providers_impl import (
     OpenAICompatibleProvider,
 )
 from agent_driver.llm.model_router import (
+    AsyncModelRouter,
     HeuristicDifficultyRouter,
+    LlmDifficultyRouter,
     ModelRouter,
     PlanExecuteRouter,
     RouteContext,
@@ -95,7 +97,9 @@ __all__ = [
     "ClassifiedError",
     "FakeProvider",
     "HealthAwareRouter",
+    "AsyncModelRouter",
     "HeuristicDifficultyRouter",
+    "LlmDifficultyRouter",
     "ModelRouter",
     "PlanExecuteRouter",
     "RouteContext",
