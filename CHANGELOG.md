@@ -7,6 +7,19 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **One-call `build_memory_provider` opt-in helper (memory epic M4).** Long-term memory was
+  fully built but awkward to turn on: a caller had to know the store → provider → hook wiring,
+  and the quality path (`FactExtractingMemoryProvider`) needs an aux LLM and extraction config
+  that wasn't discoverable — even the CLI helper only built the raw-turn `StoreBacked`. Memory
+  now enables in one obvious line: `build_memory_provider()` (in-process, ephemeral),
+  `build_memory_provider(path="mem.sqlite")` (durable SQLite, parent dirs created), or
+  `build_memory_provider(path=…, extractor=llm)` (LLM fact-extraction — recommended). Pass the
+  result to `create_agent(memory_provider=…)`. Memory stays opt-in (privacy/cost are the
+  caller's call); this only makes the opt-in trivial and fact extraction discoverable. The CLI
+  `--memory sqlite` path now routes through the same helper.
+
 ### Changed
 
 - **Recall-side staleness guard (memory epic M3).** The recalled-memory block already framed
