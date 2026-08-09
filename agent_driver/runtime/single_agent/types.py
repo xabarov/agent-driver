@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields
 from time import monotonic
 from typing import TYPE_CHECKING, Any
@@ -219,6 +219,9 @@ class RunnerConfig:
         # Epic 016: providers tried (in order) by the forced-final ladder when the primary
         # keeps returning empty finals. Hosts pass configured LlmProvider instances.
         self.fallback_providers = tuple(kwargs.pop("fallback_providers", ()) or ())
+        # R3: role → provider registry (cross-provider role distribution). Injected
+        # LlmProvider objects, threaded to RunnerDeps.role_providers. Empty = off.
+        self.role_providers = dict(kwargs.pop("role_providers", {}) or {})
         # Epic 024: per-hook budget (seconds) for finalize-stage lifecycle hooks
         # (goal-gate graders etc.). On expiry the hook fails open — the answer is
         # accepted and lifecycle_hook_timed_out is emitted. None disables. 15s fits
@@ -662,6 +665,25 @@ class RunnerDeps:
     # primary provider keeps returning empty finals (deepseek-class quirk). Epic 016;
     # reference: hermes _fallback_chain. Empty tuple = step skipped.
     fallback_providers: tuple[LlmProvider, ...] = ()
+    # R3 (R-track): role → provider registry. Lets a run's ``model_role`` route to a
+    # DIFFERENT provider object (e.g. native Anthropic for a "planner" role, an
+    # OpenRouter route for an "executor" role) — cross-provider role distribution, not
+    # just a different model id on the one provider (that's R2's ``model_role_map``).
+    # Empty (default) → every call uses ``provider``, so the single-provider path is
+    # unchanged. Provider objects are injected (like ``provider``/``fallback_providers``),
+    # not string-configured.
+    role_providers: Mapping[str, LlmProvider] = field(default_factory=dict)
+
+    def provider_for(self, model_role: str | None) -> LlmProvider:
+        """Resolve the provider for a run's ``model_role`` (R3): role registry →
+        default ``provider``. Unmapped role / empty registry → the default provider,
+        so the model chosen by R2 still runs on the primary provider unless a role is
+        explicitly bound to another one."""
+        if model_role and self.role_providers:
+            provider = self.role_providers.get(model_role)
+            if provider is not None:
+                return provider
+        return self.provider
 
 
 @dataclass(slots=True)

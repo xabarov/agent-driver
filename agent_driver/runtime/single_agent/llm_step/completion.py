@@ -35,6 +35,9 @@ from agent_driver.runtime.single_agent.llm_step.provider_requests import (
     request_without_tools,
     strip_reasoning_echo,
 )
+from agent_driver.runtime.single_agent.llm_step.provider_routing import (
+    resolve_request_provider,
+)
 from agent_driver.runtime.single_agent.llm_step.stream_recovery import (
     emit_non_stream_retry_assistant_message,
     forced_final_no_tools_retry_reason,
@@ -231,7 +234,8 @@ async def _attempt_completion(
     if not is_stream_enabled(context.run_input):
         response = await _await_with_redirect(
             host,
-            host._deps.provider.complete(request),
+            # R3: route by the run's model_role (default → primary provider).
+            resolve_request_provider(host, request).complete(request),
             abort_check=abort_check,
             context=context,
         )
@@ -260,7 +264,7 @@ async def _attempt_completion(
             ),
             signal_id="provider_empty_forced_final_non_stream_retry",
         )
-        response = await host._deps.provider.complete(
+        response = await resolve_request_provider(host, request).complete(
             request.model_copy(update={"stream": False})
         )
         return await retry_forced_final_without_tools(
@@ -571,11 +575,12 @@ async def _retry_stream_failure_without_streaming(
     exc: BaseException,
     transition_reason: str,
 ) -> LlmResponse:
+    provider = resolve_request_provider(host, request)  # R3: route by model_role
     diagnostics = _stream_failure_retry_diagnostics(
         context,
         request,
         exc,
-        provider_name=host._deps.provider.name,
+        provider_name=provider.name,
         transition_reason=transition_reason,
     )
     context.metadata["provider_stream_non_stream_fallback"] = True
@@ -594,7 +599,7 @@ async def _retry_stream_failure_without_streaming(
             "provider_diagnostics": diagnostics,
         },
     )
-    fallback_response = await host._deps.provider.complete(
+    fallback_response = await provider.complete(
         request.model_copy(update={"stream": False})
     )
     fallback_response = _mark_no_tool_text_form_suppression(
@@ -804,7 +809,7 @@ async def _recover_forced_final_via_quarantine(
     quarantine_response = _mark_no_tool_text_form_suppression(
         context,
         request,
-        await host._deps.provider.complete(
+        await resolve_request_provider(host, request).complete(
             request_without_tools(quarantined, provider_name=provider_name)
         ),
         suppress_native_planned=True,
@@ -848,8 +853,9 @@ async def retry_forced_final_without_tools(
             "with tools disabled for a clean final response."
         )
     )
-    provider_name = str(getattr(host._deps.provider, "name", "") or "")
-    model_hint = provider_model_hint(host._deps.provider) or str(
+    provider = resolve_request_provider(host, request)  # R3: route by model_role
+    provider_name = str(getattr(provider, "name", "") or "")
+    model_hint = provider_model_hint(provider) or str(
         getattr(request, "model", "") or ""
     )
     folded_request = request_with_folded_tool_history(
@@ -877,7 +883,7 @@ async def retry_forced_final_without_tools(
         context.metadata["forced_final_retry"] = f"{retry_reason}_no_tools"
         if retry_reason == "empty":
             context.metadata["empty_forced_final_retry"] = "no_tools"
-        return await host._deps.provider.complete(
+        return await provider.complete(
             request_without_tools(request, provider_name=provider_name)
         )
 
@@ -903,7 +909,7 @@ async def retry_forced_final_without_tools(
             },
         )
         context.metadata["empty_forced_final_retry"] = "history_fold"
-        return await host._deps.provider.complete(folded_request)
+        return await provider.complete(folded_request)
 
     def _unusable(content: str | None) -> bool:
         """Ladder-step failure predicate — the shared engine-wide definition."""
