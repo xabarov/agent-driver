@@ -13,6 +13,7 @@ from agent_driver.contracts.enums import AgentProfile, RunStatus, TerminalReason
 from agent_driver.contracts.events import RuntimeEvent
 from agent_driver.contracts.interrupts import InterruptRequest, ResumeCommand
 from agent_driver.contracts.memory import MemoryProjection
+from agent_driver.contracts.reasoning import normalize_reasoning_effort
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.node_contract import NodeContract
 from agent_driver.contracts.profiles import PromptRenderResult
@@ -78,6 +79,14 @@ class AgentRunInput(ContractModel):
     each model call. ``None`` leaves the provider/runtime default (the runtime
     may still reduce it on provider credit errors). Mirrors OpenAI
     ``max_tokens``."""
+    reasoning_effort: str | None = None
+    """Abstract reasoning-effort tier for the run — one of
+    ``agent_driver.contracts.reasoning.REASONING_EFFORT_TIERS``
+    (``none/minimal/low/medium/high/xhigh/max``) or ``None`` (provider default: no
+    thinking control). Resolved at build time to the provider-neutral
+    ``LlmRequest.reasoning`` envelope, which the OpenAI-compatible provider forwards
+    verbatim and the Anthropic provider translates to a native ``thinking`` block. A
+    live ``SET_MAX_THINKING_TOKENS`` control takes precedence when set (R1)."""
     user_id: str | None = None
     tenant_id: str | None = None
     workspace_id: str | None = None
@@ -173,6 +182,12 @@ class AgentRunInput(ContractModel):
     def validate_cost_budget(cls, value: float | None) -> float | None:
         """Validate a positive USD cost budget when provided."""
         return ensure_positive_float(value, field_name="cost_budget_usd")
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def validate_reasoning_effort(cls, value: str | None) -> str | None:
+        """Normalize/validate the abstract reasoning-effort tier when provided."""
+        return normalize_reasoning_effort(value)
 
     @field_validator("app_metadata")
     @classmethod

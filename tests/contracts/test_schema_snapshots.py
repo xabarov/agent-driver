@@ -63,6 +63,7 @@ PUBLIC_CONTRACT_FIELD_SNAPSHOTS: dict[str, tuple[str, ...]] = {
         "cost_budget_usd",
         "temperature",
         "max_tokens",
+        "reasoning_effort",
         "user_id",
         "tenant_id",
         "workspace_id",

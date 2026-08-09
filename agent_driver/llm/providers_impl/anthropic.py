@@ -56,6 +56,134 @@ from agent_driver.llm.contracts import (
 _DEFAULT_BASE_URL = "https://api.anthropic.com"
 _DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 
+# --- R1: native thinking / reasoning-effort translation -----------------------------
+#
+# The runtime hands every provider the same neutral ``reasoning`` envelope
+# (``{"effort": tier}`` / ``{"max_tokens": n}`` / ``{"enabled": False}``). Anthropic has
+# no ``reasoning`` body field, so we translate that envelope to its native extended-
+# thinking control. Two wire formats exist, gated by model generation:
+#
+#   * Legacy (Claude 3.x / 4.0–4.5): ``thinking: {type:"enabled", budget_tokens: N}``.
+#     Anthropic requires ``temperature=1`` and ``max_tokens > budget_tokens`` here.
+#   * Adaptive (Claude 4.6+): ``thinking: {type:"adaptive", display:"summarized"}`` plus a
+#     top-level ``output_config: {effort: tier}`` (no explicit budget; the model sizes it).
+#
+# Detection is default-to-modern: any Claude model NOT on the legacy denylist below is
+# treated as adaptive, so future models get the adaptive path automatically. All of this
+# is opt-in — a ``None`` envelope emits nothing, leaving legacy runs untouched.
+_THINKING_BUDGET_BY_TIER: dict[str, int] = {
+    "minimal": 4000,
+    "low": 4000,
+    "medium": 8000,
+    "high": 16000,
+    "xhigh": 32000,
+    "max": 32000,
+}
+_ADAPTIVE_EFFORT_BY_TIER: dict[str, str] = {
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "xhigh": "xhigh",
+    "max": "max",
+}
+# Claude generations that use the legacy manual ``budget_tokens`` thinking control.
+_LEGACY_THINKING_CLAUDE_SUBSTRINGS: tuple[str, ...] = (
+    "claude-3",
+    "claude-opus-4-0",
+    "claude-opus-4.0",
+    "claude-opus-4-1",
+    "claude-opus-4.1",
+    "claude-sonnet-4-0",
+    "claude-sonnet-4.0",
+    "claude-opus-4-2025",
+    "claude-sonnet-4-2025",
+    "claude-opus-4-5",
+    "claude-opus-4.5",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4.5",
+    "claude-haiku-4-5",
+    "claude-haiku-4.5",
+)
+# Adaptive-era Claude models that do NOT yet list ``xhigh`` as a level (4.6 family);
+# an ``xhigh`` request is downgraded to ``max`` for these.
+_NO_XHIGH_CLAUDE_SUBSTRINGS: tuple[str, ...] = (
+    "claude-opus-4-6",
+    "claude-opus-4.6",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4.6",
+)
+_ANTHROPIC_THINKING_MIN_MAX_TOKENS = 4096  # headroom above budget_tokens on the legacy path
+
+
+def _supports_adaptive_thinking(model_l: str) -> bool:
+    """Adaptive thinking (Claude 4.6+). Default-to-modern: any Claude model not on the
+    legacy denylist is adaptive, so new generations get the adaptive path unprompted."""
+    if "claude" not in model_l:
+        return False
+    return not any(sub in model_l for sub in _LEGACY_THINKING_CLAUDE_SUBSTRINGS)
+
+
+def _budget_to_tier(budget: int) -> str:
+    """Map a raw thinking-token budget (SET_MAX_THINKING_TOKENS) to an effort tier."""
+    if budget >= 32000:
+        return "max"
+    if budget >= 16000:
+        return "high"
+    if budget >= 8000:
+        return "medium"
+    return "low"
+
+
+def _resolve_thinking_tier(reasoning: dict[str, Any]) -> str | None:
+    """Pull an effort tier out of the neutral envelope, or None to emit no thinking."""
+    if reasoning.get("enabled") is False:
+        return None
+    effort = reasoning.get("effort")
+    if isinstance(effort, str) and effort.strip():
+        return effort.strip().lower()
+    budget = reasoning.get("max_tokens")
+    if isinstance(budget, int) and not isinstance(budget, bool) and budget > 0:
+        return _budget_to_tier(budget)
+    if reasoning.get("enabled") is True:
+        return "medium"  # thinking on, no tier specified → sensible default
+    return None
+
+
+def _apply_anthropic_thinking(
+    payload: dict[str, Any], reasoning: dict[str, Any] | None
+) -> None:
+    """Translate the neutral reasoning envelope into Anthropic's native thinking control.
+
+    Mutates ``payload`` in place. No-op when ``reasoning`` is None/empty or the model is a
+    non-thinking one (Haiku), so the default request is unchanged.
+    """
+    if not isinstance(reasoning, dict) or not reasoning:
+        return
+    model_l = str(payload.get("model") or "").lower()
+    if "haiku" in model_l:
+        return  # Haiku has no extended-thinking mode
+    tier = _resolve_thinking_tier(reasoning)
+    if tier is None:
+        return
+    if _supports_adaptive_thinking(model_l):
+        adaptive = _ADAPTIVE_EFFORT_BY_TIER.get(tier, "medium")
+        if adaptive == "xhigh" and any(
+            sub in model_l for sub in _NO_XHIGH_CLAUDE_SUBSTRINGS
+        ):
+            adaptive = "max"
+        payload["thinking"] = {"type": "adaptive", "display": "summarized"}
+        payload["output_config"] = {"effort": adaptive}
+    else:
+        budget = _THINKING_BUDGET_BY_TIER.get(tier, 8000)
+        payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
+        # Anthropic mandates temperature=1 and max_tokens > budget when thinking is on.
+        payload["temperature"] = 1
+        payload["max_tokens"] = max(
+            int(payload.get("max_tokens") or 0),
+            budget + _ANTHROPIC_THINKING_MIN_MAX_TOKENS,
+        )
+
 
 def _map_stop_reason(reason: str | None) -> LlmFinishReason:
     """Map an Anthropic stop reason to the provider-neutral finish enum."""
@@ -368,6 +496,10 @@ class AnthropicProvider(ProviderBase):
             payload["tools"] = tools_list
         if request.tool_choice is not None:
             payload["tool_choice"] = request.tool_choice
+        # R1: translate the provider-neutral reasoning envelope into Anthropic's
+        # native thinking control. No-op when reasoning is unset (the default), so
+        # existing runs are byte-for-byte unchanged.
+        _apply_anthropic_thinking(payload, request.reasoning)
         return payload
 
     async def healthcheck(self) -> ProviderStatus:
