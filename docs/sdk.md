@@ -22,7 +22,11 @@ Core entrypoints:
 - `query(...)` is a one-shot helper for simple integrations.
 - `run_self_consistent(...)` runs the same input multiple times and returns the
   plurality-vote consensus plus the vote distribution.
-- `Agent.query(...)` and `Agent.run_text(...)` accept plain text.
+- `Agent.query(...)` and `Agent.run_text(...)` accept plain text, plus optional
+  `reasoning_effort=` (thinking tier — `none/minimal/low/medium/high/xhigh/max`)
+  and `model_role=` (role→model / difficulty-routing key). The same two kwargs are
+  on `Session.send` / `Session.stream` / `Session.start`. Both default to `None`
+  (inert); for full per-run control use `Agent.run(AgentRunInput(...))`.
 - `Agent.run(...)` accepts a full `AgentRunInput` for advanced control.
 - `Agent.session(...)` returns a thread-scoped `Session`.
 - `Agent.start(...)`, `Agent.stream_run(...)` and `Agent.stream(...)` expose
