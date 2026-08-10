@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Added
 
+- **Model-diverse self-consistency + documented answer-quality judging (SDK S4).**
+  Two loose ends from the R-track/quality work: (1) `run_self_consistent(...)` gains
+  an optional `vary_run_input(run_input, index) -> run_input` hook so the vote can be
+  **model-diverse, not just seed-diverse** — a caller can route samples across
+  roles/models/effort (e.g. alternate a cheap and a strong `model_role`) and vote
+  across them; omitting it keeps the identical-input behavior, and a hook that raises
+  abstains that one sample. No new exported name (a kwarg, like S1). (2) The
+  answer-quality judge (`AnswerRubric` / `evaluate_answer_rubric`, `LlmJudge` /
+  `JudgeVerdict` / `AnswerJudge`, `judge_trajectories`) is now documented as a
+  first-class `agent_driver.evals` primitive (it was already exported there but
+  absent from the facade docs), with a test pinning it as an intentional public
+  export. It stays on `agent_driver.evals` — the evaluation/quality facade — rather
+  than `agent_driver.sdk`, keeping facade boundaries clean.
 - **Public homes for three previously-internal seams (SDK S3).** Closes the last
   places an embedder had to import `agent_driver.runtime.single_agent.*` /
   `agent_driver.runtime.metadata_state` (unsupported internals) or reimplement a

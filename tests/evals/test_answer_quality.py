@@ -238,3 +238,20 @@ def test_no_judge_hides_quality_row() -> None:
     report = compare_aggregates(agg, agg)
     assert report.quality_score_median_delta == 0.0
     assert "quality (med)" not in render_comparison(report)
+
+
+def test_answer_quality_primitives_are_public_evals_exports() -> None:
+    """SDK S4: the judge/rubric primitives are intentional `agent_driver.evals`
+    exports (a supported facade per docs/embedding.md), not private helpers."""
+    import agent_driver.evals as evals
+
+    for name in (
+        "AnswerRubric",
+        "evaluate_answer_rubric",
+        "AnswerJudge",
+        "JudgeVerdict",
+        "LlmJudge",
+        "judge_trajectories",
+    ):
+        assert name in evals.__all__, f"{name} missing from agent_driver.evals.__all__"
+        assert hasattr(evals, name)

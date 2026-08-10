@@ -76,6 +76,7 @@ async def run_self_consistent(
     key: Callable[[AgentRunOutput], Hashable | None] = _default_key,
     concurrency: int | None = None,
     completed_only: bool = True,
+    vary_run_input: Callable[[AgentRunInput, int], AgentRunInput] | None = None,
     **run_kwargs: Any,
 ) -> SelfConsistencyResult:
     """Run ``agent`` on ``run_input`` ``samples`` times and plurality-vote.
@@ -89,6 +90,16 @@ async def run_self_consistent(
 
     ``concurrency`` bounds how many samples run at once (default: all).
     ``run_kwargs`` (e.g. ``tool_gate``) are forwarded to every ``agent.run``.
+
+    ``vary_run_input`` makes the vote **model-diverse**, not just seed-diverse:
+    it receives the per-sample input (already stamped with a distinct run_id) and
+    its 0-based index, and returns the input to actually run — so a caller can
+    route samples across roles/models/effort and vote across them (R-track). E.g.
+    ``lambda ri, i: ri.model_copy(update={"model_role": ("simple", "strong")[i % 2]})``
+    alternates a cheap and a strong model (map the roles in the agent's
+    ``model_role_map``). When ``None`` every sample runs the identical input
+    (plain seed-diversity). A ``vary_run_input`` that raises makes that one sample
+    abstain, exactly like a failed run.
     """
     if samples < 1:
         raise ValueError("samples must be >= 1")
@@ -97,8 +108,10 @@ async def run_self_consistent(
     sem = asyncio.Semaphore(concurrency) if concurrency and concurrency > 0 else None
 
     async def _one(i: int) -> AgentRunOutput | BaseException:
-        sample_input = _clone_with_run_id(run_input, f"{base_id}__sc{i}")
         try:
+            sample_input = _clone_with_run_id(run_input, f"{base_id}__sc{i}")
+            if vary_run_input is not None:
+                sample_input = vary_run_input(sample_input, i)
             if sem is not None:
                 async with sem:
                     return await agent.run(sample_input, **run_kwargs)

@@ -121,3 +121,53 @@ async def test_concurrency_bound_still_votes() -> None:
 async def test_samples_must_be_positive() -> None:
     with pytest.raises(ValueError, match="samples must be"):
         await run_self_consistent(_ScriptedAgent([]), _input(), samples=0)
+
+
+class _RoleRecordingAgent:
+    """Records the model_role each sample ran with; votes the role's own name."""
+
+    def __init__(self) -> None:
+        self.roles_by_run_id: dict[str, str] = {}
+
+    async def run(self, run_input: AgentRunInput, **_kw):
+        self.roles_by_run_id[run_input.run_id] = run_input.model_role
+        return _Out(run_input.model_role)
+
+
+@pytest.mark.asyncio
+async def test_vary_run_input_routes_samples_across_roles() -> None:
+    """SDK S4: vary_run_input diversifies samples across roles (model-diverse vote)."""
+    agent = _RoleRecordingAgent()
+    roles = ("simple", "strong")
+
+    def _vary(run_input: AgentRunInput, i: int) -> AgentRunInput:
+        return run_input.model_copy(update={"model_role": roles[i % len(roles)]})
+
+    res = await run_self_consistent(agent, _input(), samples=4, vary_run_input=_vary)
+    # Each sample ran with the alternated role...
+    assert sorted(agent.roles_by_run_id.values()) == ["simple", "simple", "strong", "strong"]
+    # ...and the vote is taken across the varied outputs.
+    assert res.votes == {"simple": 2, "strong": 2}
+
+
+@pytest.mark.asyncio
+async def test_vary_run_input_default_is_identical_input() -> None:
+    """Omitting vary_run_input keeps the default role on every sample (inert)."""
+    agent = _RoleRecordingAgent()
+    await run_self_consistent(agent, _input(), samples=3)
+    assert set(agent.roles_by_run_id.values()) == {"default"}
+
+
+@pytest.mark.asyncio
+async def test_vary_run_input_raising_makes_that_sample_abstain() -> None:
+    """A vary_run_input that raises abstains that one sample, not the whole run."""
+    agent = _RoleRecordingAgent()
+
+    def _vary(run_input: AgentRunInput, i: int) -> AgentRunInput:
+        if i == 1:
+            raise ValueError("boom")
+        return run_input
+
+    res = await run_self_consistent(agent, _input(), samples=3, vary_run_input=_vary)
+    assert res.valid_count == 2  # sample 1 abstained
+    assert len(res.errors) == 1
