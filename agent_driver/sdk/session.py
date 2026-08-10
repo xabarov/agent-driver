@@ -31,14 +31,23 @@ class Session:
         run_id: str | None = None,
         app_metadata: dict[str, object] | None = None,
         tool_gate: ToolGate | None = None,
+        reasoning_effort: str | None = None,
+        model_role: str | None = None,
     ) -> AgentRunOutput:
-        """Send one user turn and await the final output."""
+        """Send one user turn and await the final output.
+
+        ``reasoning_effort`` (R1) / ``model_role`` (R2/R3) tag this turn for
+        thinking-tier and role→model / difficulty routing; ``None`` leaves the
+        provider default / ``"default"`` role.
+        """
         return await self._agent.run(
             self._run_input(
                 text,
                 run_id=run_id,
                 stream=False,
                 app_metadata=app_metadata,
+                reasoning_effort=reasoning_effort,
+                model_role=model_role,
             ),
             tool_gate=tool_gate,
         )
@@ -50,14 +59,22 @@ class Session:
         run_id: str | None = None,
         app_metadata: dict[str, object] | None = None,
         tool_gate: ToolGate | None = None,
+        reasoning_effort: str | None = None,
+        model_role: str | None = None,
     ) -> RunStream:
-        """Start one streamed user turn and return a stream helper."""
+        """Start one streamed user turn and return a stream helper.
+
+        ``reasoning_effort`` (R1) / ``model_role`` (R2/R3) tag this turn (same as
+        :meth:`send`).
+        """
         return self._agent.stream_run(
             self._run_input(
                 text,
                 run_id=run_id,
                 stream=True,
                 app_metadata=app_metadata,
+                reasoning_effort=reasoning_effort,
+                model_role=model_role,
             ),
             tool_gate=tool_gate,
         )
@@ -109,14 +126,22 @@ class Session:
         run_id: str | None = None,
         app_metadata: dict[str, object] | None = None,
         tool_gate: ToolGate | None = None,
+        reasoning_effort: str | None = None,
+        model_role: str | None = None,
     ) -> RunHandle:
-        """Start one user turn in the background and return a handle."""
+        """Start one user turn in the background and return a handle.
+
+        ``reasoning_effort`` (R1) / ``model_role`` (R2/R3) tag this turn (same as
+        :meth:`send`).
+        """
         return self._agent.start(
             self._run_input(
                 text,
                 run_id=run_id,
                 stream=False,
                 app_metadata=app_metadata,
+                reasoning_effort=reasoning_effort,
+                model_role=model_role,
             ),
             tool_gate=tool_gate,
         )
@@ -147,7 +172,14 @@ class Session:
         run_id: str | None,
         stream: bool,
         app_metadata: dict[str, object] | None,
+        reasoning_effort: str | None = None,
+        model_role: str | None = None,
     ) -> AgentRunInput:
+        # ``model_role`` is a non-optional field (default ``"default"``); only
+        # override it when the caller actually asked, so None is a true no-op.
+        extra: dict[str, object] = {}
+        if model_role is not None:
+            extra["model_role"] = model_role
         return AgentRunInput(
             input=text,
             run_id=run_id or f"run_{uuid4().hex[:12]}",
@@ -156,6 +188,8 @@ class Session:
             graph_preset=self._agent.defaults.graph_preset,
             stream=stream,
             app_metadata=app_metadata or {},
+            reasoning_effort=reasoning_effort,
+            **extra,
         )
 
 

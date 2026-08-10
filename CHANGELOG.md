@@ -7,6 +7,21 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Run-path sugar for `reasoning_effort` + `model_role` (SDK S1).** The R-track
+  landed these as `AgentRunInput` fields, but the ergonomic entrypoints didn't
+  forward them, so an embedder had to hand-build an `AgentRunInput` and call the
+  low-level `Agent.run()` to pick a thinking tier or a routing role. Now
+  `Agent.query`, `Agent.run_text`, and `Session.send` / `Session.stream` /
+  `Session.start` accept optional `reasoning_effort=` (R1) and `model_role=`
+  (R2/R3) and thread them straight onto the run input. Both default to `None` and
+  are fully inert when omitted (`model_role` is only overridden when supplied, so
+  the `"default"` role is preserved) — a purely additive change, no new exported
+  names (the public export snapshot is unchanged). This closes the largest
+  R-track ergonomics gap: per-run effort/role are now reachable from the
+  quick-start surface without touching contracts or `RunnerConfig`.
+
 ## [0.14.0] - 2026-08-10
 
 ### Added

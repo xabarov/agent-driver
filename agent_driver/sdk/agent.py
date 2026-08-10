@@ -426,8 +426,21 @@ class Agent:  # pylint: disable=too-many-public-methods
         run_id: str | None = None,
         stream: bool = False,
         app_metadata: dict[str, object] | None = None,
+        reasoning_effort: str | None = None,
+        model_role: str | None = None,
     ) -> AgentRunOutput:
-        """Execute one run from plain user text with SDK defaults."""
+        """Execute one run from plain user text with SDK defaults.
+
+        ``reasoning_effort`` (R1) sets the run's abstract thinking tier — one of
+        ``none/minimal/low/medium/high/xhigh/max`` (``None`` leaves the provider
+        default). ``model_role`` (R2/R3) tags the run for role→model /
+        role→provider resolution and difficulty routing; ``None`` keeps the
+        ``"default"`` role. Both thread straight onto the run's
+        :class:`AgentRunInput` — the sugar the quick-start path was missing.
+        """
+        extra: dict[str, object] = {}
+        if model_role is not None:
+            extra["model_role"] = model_role
         return await self.run(
             AgentRunInput(
                 input=text,
@@ -436,6 +449,8 @@ class Agent:  # pylint: disable=too-many-public-methods
                 graph_preset=self._defaults.graph_preset,
                 stream=stream,
                 app_metadata=app_metadata or {},
+                reasoning_effort=reasoning_effort,
+                **extra,
             )
         )
 
@@ -446,13 +461,20 @@ class Agent:  # pylint: disable=too-many-public-methods
         run_id: str | None = None,
         stream: bool = False,
         app_metadata: dict[str, object] | None = None,
+        reasoning_effort: str | None = None,
+        model_role: str | None = None,
     ) -> AgentRunOutput:
-        """One-shot query helper for quick-start SDK callers."""
+        """One-shot query helper for quick-start SDK callers.
+
+        ``reasoning_effort`` / ``model_role`` forward to :meth:`run_text` (R1/R2).
+        """
         return await self.run_text(
             text,
             run_id=run_id,
             stream=stream,
             app_metadata=app_metadata,
+            reasoning_effort=reasoning_effort,
+            model_role=model_role,
         )
 
     def start(

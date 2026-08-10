@@ -1024,3 +1024,80 @@ async def test_sdk_output_context_and_trace_summary_contract() -> None:
     assert summary.run_id == "run_sdk_trace_summary"
     assert agent.summarize(output).run_id == summary.run_id
     assert agent.support_bundle(output)["trace_summary"]["run_id"] == summary.run_id
+
+
+def _capture_run_inputs(agent: Agent) -> list[AgentRunInput]:
+    """Spy on ``Agent.run`` and record every AgentRunInput it receives."""
+    captured: list[AgentRunInput] = []
+    original = agent.run
+
+    async def _spy(run_input: AgentRunInput, **kwargs: object) -> object:
+        captured.append(run_input)
+        return await original(run_input, **kwargs)
+
+    agent.run = _spy  # type: ignore[method-assign]
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_sdk_query_and_run_text_thread_effort_and_role() -> None:
+    """S1: query/run_text forward reasoning_effort + model_role onto the run input."""
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only()
+    )
+    seen = _capture_run_inputs(agent)
+
+    await agent.query(
+        "hi", run_id="s1_query", reasoning_effort="high", model_role="strong"
+    )
+    assert seen[-1].reasoning_effort == "high"
+    assert seen[-1].model_role == "strong"
+
+    await agent.run_text(
+        "hi", run_id="s1_runtext", reasoning_effort="low", model_role="simple"
+    )
+    assert seen[-1].reasoning_effort == "low"
+    assert seen[-1].model_role == "simple"
+
+
+@pytest.mark.asyncio
+async def test_sdk_run_path_defaults_are_inert() -> None:
+    """Omitting the S1 kwargs leaves effort=None and the default role untouched."""
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only()
+    )
+    seen = _capture_run_inputs(agent)
+
+    await agent.query("hi", run_id="s1_default")
+    assert seen[-1].reasoning_effort is None
+    assert seen[-1].model_role == "default"
+
+
+@pytest.mark.asyncio
+async def test_sdk_session_send_stream_start_thread_effort_and_role() -> None:
+    """S1: Session.send/stream/start forward reasoning_effort + model_role."""
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only()
+    )
+    seen = _capture_run_inputs(agent)
+    session = agent.session("s1_session")
+
+    await session.send(
+        "hi", run_id="s1_send", reasoning_effort="medium", model_role="strong"
+    )
+    assert seen[-1].reasoning_effort == "medium"
+    assert seen[-1].model_role == "strong"
+
+    await session.stream(
+        "hi", run_id="s1_stream", reasoning_effort="xhigh", model_role="simple"
+    ).final_output()
+    assert seen[-1].reasoning_effort == "xhigh"
+    assert seen[-1].model_role == "simple"
+
+    session.start(
+        "hi", run_id="s1_start", reasoning_effort="minimal", model_role="strong"
+    )
+    # start() schedules the run on the event loop; yield so the spy records it.
+    await asyncio.sleep(0.05)
+    assert seen[-1].reasoning_effort == "minimal"
+    assert seen[-1].model_role == "strong"
