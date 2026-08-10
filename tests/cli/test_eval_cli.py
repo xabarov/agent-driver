@@ -392,6 +392,7 @@ def test_eval_compare_offline_runs_and_reports(capsys) -> None:
         ("prompt_cache", ("prompt_cache_off", "prompt_cache_on")),
         ("tool_arg_truncation", ("arg_trunc_off", "arg_trunc_on")),
         ("tool_concurrency", ("serial", "parallel")),
+        ("model_router", ("single_model", "difficulty_routed")),
     ],
 )
 def test_eval_compare_treatment_axes(

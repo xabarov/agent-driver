@@ -86,11 +86,13 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
     """
     from agent_driver.batch import BatchRunner
     from agent_driver.evals import (
+        OPENWEIGHT_MODELS,
         general_task_suite,
         openweight_provider_spec,
         render_comparison,
         run_comparison,
     )
+    from agent_driver.llm import HeuristicDifficultyRouter
     from agent_driver.llm.providers_impl.fake import FakeProvider
     from agent_driver.runtime import RunnerConfig
     from agent_driver.sdk import create_agent
@@ -100,9 +102,13 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
     axis = str(getattr(args, "treatment", "prompt_cache"))
 
     # Each axis maps to (config builder over a treatment flag, baseline label,
-    # treatment label). Only axes that flip cleanly off/on over the general
-    # suite are offered; per-model auxiliary routing and subagent routing need a
-    # richer suite/second provider, so they stay SDK-only.
+    # treatment label). Only axes that flip cleanly off/on over the general suite
+    # are offered. ``model_router`` (R-track) is single-model vs difficulty-routed
+    # (a HeuristicDifficultyRouter picks small vs large per turn) — it composes over
+    # the one open-weight provider because model_role_map sets ``request.model`` and
+    # OpenRouter is model-agnostic. reasoning-effort (per-run, not a RunnerConfig flag),
+    # per-model auxiliary routing and subagent routing need a richer suite / run-input
+    # hook / second provider, so they stay SDK-only for now.
     axes = {
         "prompt_cache": (
             lambda t: RunnerConfig(enable_prompt_cache=t),
@@ -123,6 +129,21 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
             lambda t: RunnerConfig(budget_grace_enabled=t),
             "grace_off",
             "grace_on",
+        ),
+        "model_router": (
+            lambda t: (
+                RunnerConfig(
+                    model_role_map={
+                        "simple": OPENWEIGHT_MODELS["small"],
+                        "strong": OPENWEIGHT_MODELS["large"],
+                    },
+                    model_router=HeuristicDifficultyRouter(),
+                )
+                if t
+                else RunnerConfig()
+            ),
+            "single_model",
+            "difficulty_routed",
         ),
     }
     if axis not in axes:

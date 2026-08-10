@@ -9,6 +9,15 @@ change between minor versions.
 
 ### Added
 
+- **`eval compare --treatment model_router` — benchmark difficulty routing (R-track).** The
+  A/B harness gains a fifth axis: baseline `single_model` vs `difficulty_routed`, where the
+  treatment adds `RunnerConfig(model_role_map={simple: small, strong: large},
+  model_router=HeuristicDifficultyRouter())` over the one open-weight provider (it composes
+  because `model_role_map` sets `request.model` and OpenRouter is model-agnostic). The
+  harness already reports success-rate + cost/latency/token median deltas, so this measures
+  the routing cost/quality trade-off directly. reasoning-effort (per-run, not a
+  RunnerConfig flag) and per-model aux / subagent routing still need a run-input hook /
+  second provider and stay SDK-only for now.
 - **LLM-based difficulty router — a small model picks the model (R8).** `LlmDifficultyRouter`
   is an async `ModelRouter` (`AsyncModelRouter` protocol) that asks a cheap, fast model to
   classify the request as `simple`/`strong`; the verdict resolves through the usual
