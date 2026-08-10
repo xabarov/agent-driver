@@ -73,6 +73,8 @@ from agent_driver.runtime.postgres_store import (
 from agent_driver.runtime.runner import FakeSingleStepRunner, SingleAgentRunner
 from agent_driver.runtime.single_agent.lifecycle.config_sections import (  # noqa: F401  pylint: disable=useless-import-alias
     CapabilitySettings as CapabilitySettings,
+    CompactionSettings as CompactionSettings,
+    TrimmingSettings as TrimmingSettings,
 )
 from agent_driver.runtime.single_agent.lifecycle.hook_chain_hook import (
     HookChainLifecycleHook,
@@ -81,6 +83,10 @@ from agent_driver.runtime.single_agent.lifecycle.rubric_hook import (
     GraderVerdict,
     RubricGradeInput,
     RubricLifecycleHook,
+)
+from agent_driver.runtime.metadata_state import (
+    RubricRuntimeState,
+    get_rubric_runtime_state,
 )
 from agent_driver.runtime.single_agent.llm_step.defer_primer import (
     DeferPrimer,
@@ -117,6 +123,7 @@ from agent_driver.runtime.stream import (
     project_run_timeline,
     project_runtime_events,
     summarize_run_lifecycle,
+    tool_name_from_event,
 )
 from agent_driver.runtime.tool_gate import (
     GateProvenance,
@@ -140,6 +147,8 @@ __all__ = [
     "RunAbortHandle",
     "SingleAgentRunner",
     "CapabilitySettings",
+    "CompactionSettings",
+    "TrimmingSettings",
     "RunnerConfig",
     "runner_config_parameter_names",
     "RuntimeStepResult",
@@ -184,6 +193,7 @@ __all__ = [
     "BaseRunLifecycleHook",
     "RevisionRequest",
     "project_runtime_events",
+    "tool_name_from_event",
     "project_run_timeline",
     "backfill_stream_events",
     "summarize_run_lifecycle",
@@ -204,6 +214,8 @@ __all__ = [
     "HookChainLifecycleHook",
     "RubricGradeInput",
     "RubricLifecycleHook",
+    "RubricRuntimeState",
+    "get_rubric_runtime_state",
     "placeholders_for_event",
     "requires_guardrails_after_transform",
     "result_from_existing_hook_output",
