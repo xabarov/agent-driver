@@ -31,6 +31,14 @@ from agent_driver.llm.base import (
 from agent_driver.llm.contracts import LlmProviderKind
 
 
+@pytest.fixture(autouse=True)
+def _no_backoff_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin retry-backoff jitter off (F1) so exact schedule assertions are stable."""
+    from agent_driver.llm import backoff
+
+    monkeypatch.setattr(backoff, "_rand", lambda: 0.0)
+
+
 # ---------------------------------------------------------------------------
 # Pure-function tests for the retry-after parser.
 # ---------------------------------------------------------------------------

@@ -7,6 +7,20 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Changed
+
+- **Decorrelated jitter on every retry backoff (resilience F1).** All transient-error
+  backoff schedules were fixed powers of two, so concurrent clients that hit the same
+  429/5xx (worst: parallel batch items sharing one rate limit) waited the *identical*
+  delay and retried in lockstep — a correlated spike that keeps re-tripping the provider.
+  A new `agent_driver.llm.backoff.jittered_delay` adds **additive-only** jitter
+  (`delay + rand·0.25·delay`, never below `delay`), applied at all five backoff sites
+  (provider status/stream-open retries in `llm/base.py`, the completion loop's transient
+  status + transport blind-retry in `llm_step/completion.py`, and `batch/runner.py`).
+  Additive-only so a server-directed `Retry-After` is still honored — we only ever wait
+  *longer* — while same-delay clients de-correlate across a 25% window. RNG is a
+  patchable module seam for deterministic tests.
+
 ## [0.15.0] - 2026-08-10
 
 ### Added

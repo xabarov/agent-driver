@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from agent_driver.batch.contracts import BatchItem, BatchReport, Trajectory
 from agent_driver.batch.store import TrajectoryStore
+from agent_driver.llm.backoff import jittered_delay
 
 if TYPE_CHECKING:
     from agent_driver.sdk.agent import Agent
@@ -141,7 +142,9 @@ class BatchRunner:
                 # (rate-limit/429, overload, timeout, server, transport).
                 if attempt >= self._retries or not _is_transient(exc):
                     break
-                await self._sleep(self._retry_backoff_s * (2**attempt))
+                await self._sleep(
+                    jittered_delay(self._retry_backoff_s * (2**attempt))
+                )
         if last_exc is not None:
             # One bad item must not abort the batch.
             return Trajectory.from_error(
