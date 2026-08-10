@@ -1,5 +1,11 @@
 """App-facing SDK facade for run/stream/resume ergonomics."""
 
+# Identity re-exports (SDK S2): the primary build path is `create_agent` (here) +
+# a `RunnerConfig`, and per-run control is `agent.run(..., abort_handle=...)` with a
+# `RunAbortHandle`. Both used to live only on `agent_driver.runtime`, forcing the
+# two halves of one operation across two facades; re-export them so the build/run
+# path is a single import. Same objects as `agent_driver.runtime.*` (no drift).
+from agent_driver.runtime import RunAbortHandle, RunnerConfig
 from agent_driver.sdk.agent import Agent, AgentDefaults
 from agent_driver.sdk.config import SdkConfig, SdkTransportConfig
 from agent_driver.sdk.errors import (
@@ -50,6 +56,8 @@ from agent_driver.tools import (
 __all__ = [
     "Agent",
     "AgentDefaults",
+    "RunAbortHandle",
+    "RunnerConfig",
     "SelfConsistencyResult",
     "run_self_consistent",
     "AsyncSubagentManager",

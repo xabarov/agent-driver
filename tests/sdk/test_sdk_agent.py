@@ -1101,3 +1101,56 @@ async def test_sdk_session_send_stream_start_thread_effort_and_role() -> None:
     await asyncio.sleep(0.05)
     assert seen[-1].reasoning_effort == "minimal"
     assert seen[-1].model_role == "strong"
+
+
+def test_sdk_reexports_runnerconfig_and_abort_handle_identity() -> None:
+    """SDK S2: RunnerConfig + RunAbortHandle are importable from the sdk facade."""
+    import agent_driver.runtime as runtime
+    import agent_driver.sdk as sdk
+
+    assert sdk.RunnerConfig is runtime.RunnerConfig
+    assert sdk.RunAbortHandle is runtime.RunAbortHandle
+
+
+def test_sdk_create_agent_routing_params_populate_config() -> None:
+    """SDK S2: model_role_map / model_router / role_providers reach the config."""
+    from agent_driver.llm import HeuristicDifficultyRouter
+
+    provider = FakeProvider(response_text="ok")
+    router = HeuristicDifficultyRouter()
+    agent = create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        model_role_map={"simple": "m-small", "strong": "m-large"},
+        model_router=router,
+        role_providers={"strong": provider},
+    )
+    config = agent.runner.config
+    assert config.model_role_map == {"simple": "m-small", "strong": "m-large"}
+    assert config.model_router is router
+    assert list(config.role_providers) == ["strong"]
+
+
+def test_sdk_create_agent_routing_params_do_not_mutate_shared_config() -> None:
+    """SDK S2: routing overrides replace capabilities, never mutate caller's config."""
+    from agent_driver.runtime import RunnerConfig
+
+    base = RunnerConfig()
+    provider = FakeProvider(response_text="ok")
+    create_agent(
+        provider=provider,
+        tools=ToolSet.only(),
+        config=base,
+        model_role_map={"simple": "x"},
+    )
+    assert base.model_role_map == {}  # caller's shared config untouched
+
+
+def test_sdk_create_agent_routing_params_default_inert() -> None:
+    """SDK S2: omitting the routing params leaves an empty role map / no router."""
+    agent = create_agent(
+        provider=FakeProvider(response_text="ok"), tools=ToolSet.only()
+    )
+    assert agent.runner.config.model_role_map == {}
+    assert agent.runner.config.model_router is None
+    assert agent.runner.config.role_providers == {}

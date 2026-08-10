@@ -18,7 +18,10 @@ print(output.answer)
 Core entrypoints:
 
 - `create_agent(...)` builds an `Agent` facade with stores, tool registry and
-  governed execution wired.
+  governed execution wired. It also accepts `model_role_map` / `model_router` /
+  `role_providers` (R-track routing) as build-path sugar — pass them instead of
+  hand-building a `RunnerConfig`. `RunnerConfig` and `RunAbortHandle` are
+  re-exported from `agent_driver.sdk`, so the whole build/run path is one import.
 - `query(...)` is a one-shot helper for simple integrations.
 - `run_self_consistent(...)` runs the same input multiple times and returns the
   plurality-vote consensus plus the vote distribution.
