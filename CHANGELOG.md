@@ -7,6 +7,8 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-10
+
 ### Added
 
 - **Cookbook examples for the new SDK surfaces + refreshed index (SDK S5).** The
