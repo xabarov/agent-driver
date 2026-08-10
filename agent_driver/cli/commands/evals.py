@@ -184,11 +184,14 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
     # Answer-quality judge (opt-in). Skipped offline — the fake provider emits a
     # canned answer, so a quality score would be meaningless. Reuses the same
     # open-weight provider; --judge-model can point at a smaller/faster judge.
+    # The judge model MUST be explicit: OpenRouter rejects a completion with no
+    # model, so default to the tier's open-weight model rather than None (a None
+    # would make every judge call error out to a conservative 0.0).
     judge = None
     if bool(getattr(args, "judge", False)) and not offline:
         judge = LlmJudge(
             provider=_provider(),
-            model=(getattr(args, "judge_model", None) or None),
+            model=(getattr(args, "judge_model", None) or OPENWEIGHT_MODELS[tier]),
         )
 
     report = await run_comparison(
