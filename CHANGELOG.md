@@ -220,6 +220,19 @@ change between minor versions.
   when long-term memory is wired), and `StoreBackedMemoryProvider` recall now supersedes
   slotted records to the newest per slot so a re-`remember` actually updates in place.
 
+## [0.13.2] - 2026-08-10
+
+### Fixed
+
+- **`max_tool_calls=N` now permits exactly N useful calls before synthesis.**
+  The soft force-final guard previously disabled tools at N-1 even though the
+  final synthesis request consumes no tool-call budget. It now enters
+  tools-disabled synthesis after N calls, and the tool stage clamps parallel
+  provider batches to the remaining global allowance before any approval or
+  execution. This preserves the public maximum for sequential runs and prevents
+  an ignored parallel-call hint from contacting more tools than the declared
+  run budget.
+
 ## [0.13.1] - 2026-08-09
 
 ### Fixed

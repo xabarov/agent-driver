@@ -129,6 +129,46 @@ async def test_unset_step_limit_preserves_parallel_batch_behavior() -> None:
     assert provider.requests[0].parallel_tool_calls is None
 
 
+@pytest.mark.asyncio
+async def test_remaining_global_budget_clamps_parallel_batch_before_execution() -> None:
+    provider = _BatchProvider()
+    agent = create_agent(provider=provider, tools=ToolSet.only("web_search"))
+
+    output = await agent.run(
+        AgentRunInput(
+            input="use only the globally allowed prefix",
+            run_id="run_global_batch_limit",
+            agent_id="agent",
+            graph_preset="single_react",
+            max_steps=6,
+            max_tool_calls=2,
+        )
+    )
+
+    assert output.answer == "done"
+    assert output.metadata["tool_calls"] == 2
+    signals = [
+        event.payload
+        for event in output.events
+        if event.type == RuntimeEventType.WARNING
+        and event.payload.get("signal_id")
+        == "planned_tool_call_budget_limit_applied"
+    ]
+    assert signals == [
+        {
+            "signal_id": "planned_tool_call_budget_limit_applied",
+            "severity": "info",
+            "limit": 2,
+            "planned_count": 3,
+            "accepted_count": 2,
+            "suppressed_count": 1,
+            "suppressed_tools": ["web_search"],
+            "max_tool_calls": 2,
+            "remaining_before_step": 2,
+        }
+    ]
+
+
 def test_step_limit_must_be_positive() -> None:
     with pytest.raises(ValueError, match="run limit must be > 0"):
         AgentRunInput(

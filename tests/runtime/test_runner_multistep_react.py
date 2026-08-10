@@ -1230,7 +1230,9 @@ async def test_empty_final_ladder_e2e_completes_without_scaffolding_leak() -> No
             agent_id="agent",
             graph_preset="single_react",
             max_steps=8,
-            max_tool_calls=2,
+            # One completed tool call exhausts this fixture's tool budget and
+            # enters the forced-final empty-answer recovery ladder.
+            max_tool_calls=1,
         )
     )
 

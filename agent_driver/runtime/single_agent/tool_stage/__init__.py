@@ -84,9 +84,9 @@ from agent_driver.runtime.single_agent.tool_stage.recovery import (
     _append_unknown_tool_recovery_message,
 )
 from agent_driver.runtime.single_agent.tool_stage.protocol_messages import (
-    _compact_generic_tool_payload_for_protocol,
+    _compact_generic_tool_payload_for_protocol,  # noqa: F401 - compatibility re-export
     _compact_tool_payload_for_protocol,
-    _is_drop_candidate_assistant_message,
+    _is_drop_candidate_assistant_message,  # noqa: F401 - compatibility re-export
     _load_protocol_messages,
     _normalize_protocol_messages,
 )
@@ -240,7 +240,7 @@ async def execute_tool_stage_step(
 
 
 def _apply_tool_call_step_limit(host: ToolStageHost, context: RunContext) -> None:
-    """Clamp one provider response before any tool approval or execution.
+    """Clamp one provider response to per-step and remaining global budgets.
 
     Provider-side ``parallel_tool_calls=False`` is only a request hint. Some
     compatible routes ignore it or synthesize multiple calls from text, so the
@@ -248,11 +248,28 @@ def _apply_tool_call_step_limit(host: ToolStageHost, context: RunContext) -> Non
     replayed automatically: after the accepted prefix finishes, the next model
     step observes real results and may propose the still-relevant work again.
     """
-    limit = (
+    step_limit = (
         context.run_input.max_tool_calls_per_step
         if context.run_input.max_tool_calls_per_step is not None
         else host._config.default_max_tool_calls_per_step
     )
+    global_limit = (
+        context.run_input.max_tool_calls
+        if context.run_input.max_tool_calls is not None
+        else host._config.default_max_tool_calls
+    )
+    remaining_global: int | None = None
+    if global_limit is not None:
+        effective_tool_calls = max(
+            0,
+            context.tool_calls
+            - int(context.metadata.get("refunded_tool_calls", 0) or 0),
+        )
+        remaining_global = max(0, int(global_limit) - effective_tool_calls)
+    limits = [
+        value for value in (step_limit, remaining_global) if value is not None
+    ]
+    limit = min(limits) if limits else None
     response = context.llm_response
     if limit is None or response is None:
         return
@@ -268,18 +285,36 @@ def _apply_tool_call_step_limit(host: ToolStageHost, context: RunContext) -> Non
     response.metadata["step_limited_planned_tool_calls"] = [
         call.model_dump(mode="json") for call in suppressed
     ]
+    global_budget_limited = bool(
+        remaining_global is not None
+        and remaining_global == limit
+        and (step_limit is None or remaining_global < step_limit)
+    )
+    signal_id = "planned_tool_call_step_limit_applied"
+    if global_budget_limited:
+        signal_id = "planned_tool_call_budget_limit_applied"
     emit_step_event(
         host,
         context,
         event_type=RuntimeEventType.WARNING,
         payload={
-            "signal_id": "planned_tool_call_step_limit_applied",
+            "signal_id": signal_id,
             "severity": "info",
             "limit": limit,
             "planned_count": len(planned),
             "accepted_count": len(accepted),
             "suppressed_count": len(suppressed),
             "suppressed_tools": [call.tool_name for call in suppressed],
+            **(
+                {
+                    "max_tool_calls": int(global_limit),
+                    "remaining_before_step": int(remaining_global),
+                }
+                if global_budget_limited
+                and global_limit is not None
+                and remaining_global is not None
+                else {}
+            ),
         },
     )
 

@@ -687,7 +687,7 @@ async def test_sdk_tool_loop_honors_max_tool_calls_limit() -> None:
     assert output.status.value == "completed"
     assert output.terminal_reason is not None
     assert output.terminal_reason.value == "final_answer"
-    assert len(output.tool_trace) <= 2
+    assert len(output.tool_trace) == 2
     assert provider.complete_calls >= 2
 
 

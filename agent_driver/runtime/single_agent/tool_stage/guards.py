@@ -310,7 +310,13 @@ def _force_final_reason(context: RunContext) -> str | None:
         0,
         context.tool_calls - int(context.metadata.get("refunded_tool_calls", 0) or 0),
     )
-    near_tool_budget = effective_tool_calls >= max(1, max_tool_calls - 1)
+    # Tool calls and synthesis calls are separate budgets.  Forcing synthesis
+    # at ``max_tool_calls - 1`` made a public limit of N expose only N-1 useful
+    # calls even though the final LLM request executes no tool.  Enter forced
+    # final mode when the complete tool budget has actually been consumed;
+    # the tool stage independently clamps provider batches to the remaining
+    # global allowance before execution.
+    near_tool_budget = effective_tool_calls >= max_tool_calls
     near_step_budget = context.llm_step_count >= max(1, max_steps - 1)
     loop_detected = _has_repeated_recent_tool_call(context)
     zero_streak = int(context.metadata.get("web_search_zero_streak", 0))

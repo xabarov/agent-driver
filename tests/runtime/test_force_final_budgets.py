@@ -44,6 +44,8 @@ def test_no_forced_final_after_first_tool_call_without_budgets():
 
 def test_forced_final_near_backstop_budgets():
     context = _context(tool_calls=DEFAULT_MAX_TOOL_CALLS_BACKSTOP - 1)
+    assert _force_final_reason(context) is None
+    context = _context(tool_calls=DEFAULT_MAX_TOOL_CALLS_BACKSTOP)
     assert _force_final_reason(context) == "near_tool_budget"
     context = _context(tool_calls=0, llm_steps=DEFAULT_MAX_STEPS_BACKSTOP - 1)
     assert _force_final_reason(context) == "near_step_budget"
@@ -51,6 +53,8 @@ def test_forced_final_near_backstop_budgets():
 
 def test_forced_final_honors_stamped_runner_defaults():
     context = _context(tool_calls=5, metadata={"max_tool_calls": 6, "max_steps": 12})
+    assert _force_final_reason(context) is None
+    context = _context(tool_calls=6, metadata={"max_tool_calls": 6, "max_steps": 12})
     assert _force_final_reason(context) == "near_tool_budget"
     context = _context(tool_calls=2, metadata={"max_tool_calls": 6, "max_steps": 12})
     assert _force_final_reason(context) is None
