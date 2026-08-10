@@ -9,6 +9,20 @@ change between minor versions.
 
 ### Added
 
+- **Public homes for three previously-internal seams (SDK S3).** Closes the last
+  places an embedder had to import `agent_driver.runtime.single_agent.*` /
+  `agent_driver.runtime.metadata_state` (unsupported internals) or reimplement a
+  private helper. All additive re-exports on `agent_driver.runtime` (pinned export
+  snapshot updated): (1) `CompactionSettings` + `TrimmingSettings` — the
+  context-management config `RunnerConfig(trimming=…, compaction=…)` consumes,
+  previously only reachable via `runtime.single_agent.lifecycle.config_sections`;
+  (2) `get_rubric_runtime_state` + `RubricRuntimeState` — read rubric runtime state
+  from a lifecycle hook / gate without importing `runtime.metadata_state` (joins
+  the already-public `RubricLifecycleHook` / `RubricGradeInput`); (3) new
+  `tool_name_from_event(event)` — canonical tool-name extraction from a
+  `TOOL_CALL_*` runtime event (tools-list or flat `tool_name` shape), so a host
+  projecting events for its own timeline/gating doesn't reimplement and drift from
+  the payload contract.
 - **Build-path routing sugar + single-import build path (SDK S2).** The R-track
   routing knobs lived only on `RunnerConfig` — which itself was on
   `agent_driver.runtime`, not `agent_driver.sdk` — so an embedder had to import

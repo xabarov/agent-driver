@@ -12,6 +12,7 @@ from agent_driver.runtime.stream.projection import (
     project_runtime_events,
     summarize_run_lifecycle,
     summarize_runtime_session_diagnostics,
+    tool_name_from_event,
 )
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "project_runtime_events",
     "summarize_run_lifecycle",
     "summarize_runtime_session_diagnostics",
+    "tool_name_from_event",
 ]

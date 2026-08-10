@@ -527,6 +527,33 @@ def _event_tools(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [dict(data)]
 
 
+def tool_name_from_event(event: RuntimeEvent) -> str | None:
+    """Return the tool name a tool-call runtime event carries, or ``None``.
+
+    Reads the canonical ``TOOL_CALL_*`` payload shape — the first entry of
+    ``payload["tools"]`` (``tool_name``/``name``) or a flat ``payload["tool_name"]``
+    — so a host projecting events for its own timeline/gating doesn't reimplement
+    (and drift from) the extraction. Returns ``None`` for non-tool events.
+
+    Accepts a :class:`RuntimeEvent` (``.payload``) or a stream-envelope wrapper
+    exposing ``.data``.
+    """
+    data = getattr(event, "payload", None)
+    if not isinstance(data, dict):
+        data = getattr(event, "data", None)
+    if not isinstance(data, dict):
+        return None
+    tools = data.get("tools")
+    if isinstance(tools, list):
+        for item in tools:
+            if isinstance(item, dict):
+                name = item.get("tool_name") or item.get("name")
+                if isinstance(name, str) and name:
+                    return name
+    direct = data.get("tool_name")
+    return direct if isinstance(direct, str) and direct else None
+
+
 def _has_usage(data: dict[str, Any]) -> bool:
     usage = data.get("usage")
     if isinstance(usage, dict) and usage:
