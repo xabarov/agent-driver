@@ -7,6 +7,8 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-10
+
 ### Added
 
 - **Answer-quality judging for the eval harness — quality, not just success-status (#5).**
