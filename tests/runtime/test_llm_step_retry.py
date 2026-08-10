@@ -21,6 +21,14 @@ from agent_driver.runtime.single_agent.llm_step import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_backoff_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin retry-backoff jitter off (F1) so exact schedule assertions are stable."""
+    from agent_driver.llm import backoff
+
+    monkeypatch.setattr(backoff, "_rand", lambda: 0.0)
+
+
 @pytest.mark.asyncio
 async def test_complete_request_retries_once_on_read_timeout() -> None:
     provider = SimpleNamespace(name="retry-test", calls=0)

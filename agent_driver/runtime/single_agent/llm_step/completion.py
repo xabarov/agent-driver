@@ -11,6 +11,7 @@ import httpx
 from agent_driver.contracts.enums import ChatRole, RuntimeEventType
 from agent_driver.contracts.control import CommandQueueItem
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.llm.backoff import jittered_delay
 from agent_driver.llm.context_windows import (
     preferred_history_view,
     provider_model_hint,
@@ -378,7 +379,7 @@ async def _handle_completion_status_error(
             retry_attempt=attempt + 1,
             retry_in_seconds=delay,
         )
-        await asyncio.sleep(delay)
+        await asyncio.sleep(jittered_delay(delay))
         return request, overflow_recovered
     raise exc
 
@@ -483,7 +484,7 @@ async def complete_request(
                     error=str(exc)[:200],
                     attempt=attempt + 1,
                 )
-                await asyncio.sleep(delay)
+                await asyncio.sleep(jittered_delay(delay))
                 continue
             raise
     if last_timeout is not None:

@@ -11,6 +11,7 @@ from typing import Any, TypeVar
 
 import httpx
 
+from agent_driver.llm.backoff import jittered_delay
 from agent_driver.llm.contracts import LlmProviderKind, ProviderStatus
 
 T = TypeVar("T")
@@ -283,7 +284,9 @@ class ProviderBase:
                                     str(exc) or exc.__class__.__name__
                                 ) from exc
                             await asyncio.sleep(
-                                _STREAM_OPEN_RETRY_BACKOFF_SECONDS * (attempt + 1)
+                                jittered_delay(
+                                    _STREAM_OPEN_RETRY_BACKOFF_SECONDS * (attempt + 1)
+                                )
                             )
                             continue
                         # Phase 13 H25 — check status before raise_for_status so
@@ -311,7 +314,7 @@ class ProviderBase:
                                 yield iter([])
                                 return
                             delay = _status_retry_delay(status_attempt, retry_after)
-                            await asyncio.sleep(delay)
+                            await asyncio.sleep(jittered_delay(delay))
                             # Continue outer status loop after transient retry.
                             break
                         try:

@@ -9,6 +9,14 @@ from agent_driver.llm.providers_impl.fake import FakeProvider
 from agent_driver.sdk import ToolSet, create_agent
 
 
+@pytest.fixture(autouse=True)
+def _no_backoff_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin retry-backoff jitter off (F1) so exact schedule assertions are stable."""
+    from agent_driver.llm import backoff
+
+    monkeypatch.setattr(backoff, "_rand", lambda: 0.0)
+
+
 class _FlakyAgent:
     """Wraps a real agent; raises ``fail_times`` then delegates to query."""
 
