@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 
 from agent_driver.code_agent.backends import create_python_backend
 from agent_driver.contracts.runtime import AgentRunOutput
+from agent_driver.llm.model_router import ModelRouter
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.memory.provider import MemoryProvider
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
@@ -68,17 +70,42 @@ def create_agent(
     tool_gate: ToolGate | None = None,
     agent_id: str = "agent",
     graph_preset: str = "single_react",
+    model_role_map: dict[str, str] | None = None,
+    model_router: ModelRouter | None = None,
+    role_providers: dict[str, LlmProvider] | None = None,
 ) -> Agent:
     """Create SDK Agent facade with filtered tool registry.
 
     ``tool_gate`` becomes the agent's construction-time default gate: every
     run/stream/session turn uses it unless that call passes its own gate, so a
     permission gate is wired once instead of on every call.
+
+    ``model_role_map`` (R2, role→model), ``model_router`` (R5/R6, a
+    :class:`~agent_driver.llm.model_router.ModelRouter` that picks the role per
+    turn) and ``role_providers`` (R3, role→provider) are build-path sugar for the
+    R-track: pass them here instead of hand-constructing a ``RunnerConfig``. Each
+    is applied only when non-``None`` and overrides the same field on ``config``
+    (the capabilities object is replaced, never mutated, so a caller's shared
+    ``config`` is untouched).
     """
     # Shallow override-copy (not deepcopy): keeps the caller's config intact
     # while letting us attach stateful deps (memory provider, registries) that
     # are not safe to deep-copy.
     config_copy = (config or RunnerConfig()).with_overrides()
+    # R-track routing sugar. capabilities is a frozen dataclass shared by the
+    # shallow copy, so we reassign a replaced instance (a safe top-level override)
+    # rather than mutate it; role_providers is a plain top-level attribute.
+    capability_overrides: dict[str, object] = {}
+    if model_role_map is not None:
+        capability_overrides["model_role_map"] = dict(model_role_map)
+    if model_router is not None:
+        capability_overrides["model_router"] = model_router
+    if capability_overrides:
+        config_copy.capabilities = dataclasses.replace(
+            config_copy.capabilities, **capability_overrides
+        )
+    if role_providers is not None:
+        config_copy.role_providers = dict(role_providers)
     effective_memory = memory_provider
     if effective_memory is None and config is not None:
         effective_memory = getattr(config, "memory_provider", None)

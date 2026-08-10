@@ -9,6 +9,20 @@ change between minor versions.
 
 ### Added
 
+- **Build-path routing sugar + single-import build path (SDK S2).** The R-track
+  routing knobs lived only on `RunnerConfig` — which itself was on
+  `agent_driver.runtime`, not `agent_driver.sdk` — so an embedder had to import
+  `create_agent` from `sdk` and `RunnerConfig` from `runtime` (two facades for one
+  operation) and hand-build the config to route. Two additive changes: (1)
+  `create_agent(...)` now takes optional `model_role_map` (R2, role→model),
+  `model_router` (R5/R6, a `ModelRouter` picking the role per turn) and
+  `role_providers` (R3, role→provider); each is applied only when non-`None` and
+  overrides the same field on `config` by *replacing* the frozen capabilities
+  object (a caller's shared `config` is never mutated). (2) `RunnerConfig` and
+  `RunAbortHandle` are re-exported from `agent_driver.sdk` (identity re-exports of
+  the `runtime` objects — no drift), so the build/run path is a single import.
+  These two names are additions to the pinned SDK export snapshot; the routing
+  params add no exported names.
 - **Run-path sugar for `reasoning_effort` + `model_role` (SDK S1).** The R-track
   landed these as `AgentRunInput` fields, but the ergonomic entrypoints didn't
   forward them, so an embedder had to hand-build an `AgentRunInput` and call the
