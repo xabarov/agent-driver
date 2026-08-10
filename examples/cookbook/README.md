@@ -30,6 +30,12 @@ python examples/cookbook/01_quickstart.py
 | `16_acp_adapter.py` | Serve an agent over the Agent Client Protocol (stdio) | `AgentAcpServer`, `serve_acp`, `request_permission` round-trip |
 | `17_openai_server.py` | Serve an agent over an OpenAI-compatible HTTP API | `server.create_app`, `/v1/chat/completions` (stream + non-stream), `/v1/models` |
 | `18_mcp_http_server.py` | Serve an agent over MCP Streamable-HTTP (`/mcp`) | `mcp_server.http.create_mcp_app`, JSON-RPC over HTTP, session id |
+| `19_embedded_e2e.py` | Full durable embedding from the public facades (stores + custom tool + hook + gate + pause/resume + abort) | supported `agent_driver.*` surface only |
+| `20_execution_backend.py` | Run built-in bash/read/write in a host-injected environment | `agent_driver.execution` backend seam, per-run `execution_backend=` |
+| `21_backend_compliance.py` | Implement + qualify an execution backend (author kit) | `run_compliance`, `ComplianceReport` (public `agent_driver.execution`) |
+| `22_model_routing.py` | Route the model per run — explicit role/effort or by difficulty (R-track) | `create_agent(model_role_map=…, model_router=…)`, `query(model_role=…, reasoning_effort=…)`, `HeuristicDifficultyRouter` |
+| `23_answer_quality_judge.py` | Score the answer, not just success — rubric + LLM judge | `AnswerRubric`, `evaluate_answer_rubric`, `LlmJudge` |
+| `24_self_consistency.py` | Plurality-vote across samples — model-diverse, not just seed | `run_self_consistent`, `vary_run_input` |
 
 To use a real model, swap `FakeProvider(...)` for a descriptor-resolved
 provider (see `08_providers.py`) — e.g. `resolve_provider(ProviderSpec(

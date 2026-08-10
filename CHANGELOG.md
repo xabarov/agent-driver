@@ -9,6 +9,16 @@ change between minor versions.
 
 ### Added
 
+- **Cookbook examples for the new SDK surfaces + refreshed index (SDK S5).** The
+  R-track routing, answer-quality judging and model-diverse self-consistency added
+  this cycle had no runnable example. Three new offline (`FakeProvider`) cookbook
+  scripts, auto-covered by `tests/examples/test_cookbook.py`: `22_model_routing`
+  (explicit `model_role`/`reasoning_effort` sugar + `create_agent(model_role_map=…,
+  model_router=…)` auto-routing), `23_answer_quality_judge` (`AnswerRubric` +
+  `LlmJudge`), `24_self_consistency` (`run_self_consistent` with `vary_run_input`).
+  The cookbook `README.md` index — stale at `01–18` — now lists every script
+  through `24` (the previously-undocumented `19_embedded_e2e` /
+  `20_execution_backend` / `21_backend_compliance` included).
 - **Model-diverse self-consistency + documented answer-quality judging (SDK S4).**
   Two loose ends from the R-track/quality work: (1) `run_self_consistent(...)` gains
   an optional `vary_run_input(run_input, index) -> run_input` hook so the vote can be
