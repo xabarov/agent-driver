@@ -39,6 +39,7 @@ from agent_driver.evals.context_compaction_runner import (
     run_context_compaction_strategy_comparison,
 )
 from agent_driver.evals.contracts import (
+    AnswerRubric,
     BudgetLimits,
     CaseEvaluation,
     DatasetCase,
@@ -48,11 +49,18 @@ from agent_driver.evals.contracts import (
 )
 from agent_driver.evals.evaluators import (
     default_evaluators,
+    evaluate_answer_rubric,
     evaluate_checkpoint_replay,
     evaluate_cost_latency_budget,
     evaluate_event_schema,
     evaluate_terminal_state,
     evaluate_tool_policy,
+)
+from agent_driver.evals.judge import (
+    AnswerJudge,
+    JudgeVerdict,
+    LlmJudge,
+    judge_trajectories,
 )
 from agent_driver.evals.persisted_replay import (
     graph_profile_tool_summary,
@@ -67,6 +75,8 @@ from agent_driver.evals.replay import (
 from agent_driver.evals.runner import run_dataset
 
 __all__ = [
+    "AnswerJudge",
+    "AnswerRubric",
     "BudgetLimits",
     "CaseEvaluation",
     "DatasetCase",
@@ -94,6 +104,10 @@ __all__ = [
     "compaction_default_gate",
     "compare_reports",
     "default_evaluators",
+    "evaluate_answer_rubric",
+    "JudgeVerdict",
+    "LlmJudge",
+    "judge_trajectories",
     "evaluate_checkpoint_replay",
     "evaluate_cost_latency_budget",
     "evaluate_event_schema",

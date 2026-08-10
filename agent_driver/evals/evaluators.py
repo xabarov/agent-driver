@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Callable
 
 from agent_driver.contracts.enums import RunStatus
 from agent_driver.contracts.runtime import AgentRunOutput
-from agent_driver.evals.contracts import BudgetLimits, EvaluatorResult
+from agent_driver.evals.contracts import AnswerRubric, BudgetLimits, EvaluatorResult
 from agent_driver.observability import build_trace_export
 
 
@@ -154,6 +155,66 @@ def evaluate_cost_latency_budget(
             "cost_usd_estimate": cost,
             "latency_ms": latency_ms,
             "violations": failures,
+        },
+    )
+
+
+def evaluate_answer_rubric(
+    output: AgentRunOutput, *, rubric: AnswerRubric
+) -> EvaluatorResult:
+    """Score the run's final ``answer`` against a deterministic rubric.
+
+    Domain-neutral and free (no LLM): all ``must_contain`` literals present, all
+    ``must_not_contain`` absent, and ``regex`` (if set) matches. ``score`` is the
+    fraction of individual checks that passed; ``passed`` requires all of them.
+    With an empty rubric the check degrades to "answer is non-empty" so a case
+    that carries a rubric object but no clauses still asserts *something*.
+    """
+    answer = output.answer or ""
+    hay = answer if rubric.case_sensitive else answer.lower()
+
+    def _norm(needle: str) -> str:
+        return needle if rubric.case_sensitive else needle.lower()
+
+    checks: list[bool] = []
+    missing: list[str] = []
+    for needle in rubric.must_contain:
+        present = _norm(needle) in hay
+        checks.append(present)
+        if not present:
+            missing.append(needle)
+    forbidden_hit: list[str] = []
+    for needle in rubric.must_not_contain:
+        absent = _norm(needle) not in hay
+        checks.append(absent)
+        if not absent:
+            forbidden_hit.append(needle)
+    regex_ok: bool | None = None
+    if rubric.regex is not None:
+        flags = 0 if rubric.case_sensitive else re.IGNORECASE
+        try:
+            regex_ok = re.search(rubric.regex, answer, flags) is not None
+        except re.error:
+            regex_ok = False
+        checks.append(regex_ok)
+
+    if checks:
+        passed = all(checks)
+        score = sum(1 for item in checks if item) / len(checks)
+    else:
+        passed = bool(answer.strip())
+        score = 1.0 if passed else 0.0
+
+    return EvaluatorResult(
+        evaluator="answer_rubric",
+        passed=passed,
+        score=score,
+        details={
+            "answer_len": len(answer),
+            "missing_required": missing,
+            "forbidden_present": forbidden_hit,
+            "regex_matched": regex_ok,
+            "checks": len(checks),
         },
     )
 

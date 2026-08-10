@@ -9,6 +9,26 @@ change between minor versions.
 
 ### Added
 
+- **Answer-quality judging for the eval harness — quality, not just success-status (#5).**
+  The deterministic evaluators score *runtime invariants* and terminal status; nothing scored
+  the answer itself, so a routing change that keeps success/economics identical while quietly
+  lowering answer quality was invisible in an A/B. Two domain-neutral additions close that (the
+  SDK provides the *mechanism*; any domain rubric stays in the case data / consumer):
+  - **Deterministic rubric (free, CI-able).** `AnswerRubric` (`must_contain` / `must_not_contain`
+    / `regex` / `case_sensitive`) + `evaluate_answer_rubric(output, rubric=…)` check the run's
+    final `answer` text; `score` is the fraction of clauses that passed so partial quality shows
+    even on a fail. `DatasetCase` gains an optional `rubric` field and `run_dataset` folds the
+    rubric check into each case's pass/fail. An invalid regex is a failed check, never a crash.
+  - **Generic LLM judge (opt-in).** `LlmJudge` scores an `(prompt, answer)` pair on a 0–10 rubric
+    via one cache-safe `aux_completion` call (mirrors the R8 router pattern), normalized to
+    `[0, 1]`; robust JSON/number parse, and any provider error → a conservative `0.0` verdict
+    tagged in the rationale (a judge outage never crashes an A/B). `run_comparison(judge=…)` scores
+    each side's answers after the runs; `RunAggregate.quality_score` + `ComparisonReport.
+    quality_score_median_delta` carry the result, and `render_comparison` shows a `quality (med)`
+    row **only** when a judge actually ran (so an empty summary never reads as "0 quality").
+    Answerless runs stay unscored rather than contributing a misleading zero. Exposed on the CLI as
+    `eval compare --judge [--judge-model …]` (no-op under `--offline`). Exported: `AnswerRubric`,
+    `evaluate_answer_rubric`, `AnswerJudge`, `JudgeVerdict`, `LlmJudge`, `judge_trajectories`.
 - **`eval compare --treatment model_router` — benchmark difficulty routing (R-track).** The
   A/B harness gains a fifth axis: baseline `single_model` vs `difficulty_routed`, where the
   treatment adds `RunnerConfig(model_role_map={simple: small, strong: large},

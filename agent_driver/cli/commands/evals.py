@@ -87,6 +87,7 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
     from agent_driver.batch import BatchRunner
     from agent_driver.evals import (
         OPENWEIGHT_MODELS,
+        LlmJudge,
         general_task_suite,
         openweight_provider_spec,
         render_comparison,
@@ -180,6 +181,16 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
             provider=_provider(), tools=toolset, config=config_for(treatment)
         )
 
+    # Answer-quality judge (opt-in). Skipped offline — the fake provider emits a
+    # canned answer, so a quality score would be meaningless. Reuses the same
+    # open-weight provider; --judge-model can point at a smaller/faster judge.
+    judge = None
+    if bool(getattr(args, "judge", False)) and not offline:
+        judge = LlmJudge(
+            provider=_provider(),
+            model=(getattr(args, "judge_model", None) or None),
+        )
+
     report = await run_comparison(
         BatchRunner(_agent(treatment=False), concurrency=int(args.concurrency)),
         BatchRunner(_agent(treatment=True), concurrency=int(args.concurrency)),
@@ -190,6 +201,7 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
         max_total_cost_usd=(
             float(args.max_cost_usd) if args.max_cost_usd is not None else None
         ),
+        judge=judge,
     )
     print(render_comparison(report))
     print(
@@ -202,6 +214,7 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
                 "success_rate_delta": report.success_rate_delta,
                 "cost_usd_median_delta": report.cost_usd_median_delta,
                 "latency_ms_median_delta": report.latency_ms_median_delta,
+                "quality_score_median_delta": report.quality_score_median_delta,
             },
             ensure_ascii=True,
         )

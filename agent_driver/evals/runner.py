@@ -12,7 +12,7 @@ from agent_driver.evals.contracts import (
     DatasetCase,
     EvalReport,
 )
-from agent_driver.evals.evaluators import default_evaluators
+from agent_driver.evals.evaluators import default_evaluators, evaluate_answer_rubric
 
 RunExecutor = Callable[[DatasetCase], Awaitable[AgentRunOutput]]
 
@@ -35,6 +35,8 @@ async def run_dataset(
     for case in cases:
         output = await run_executor(case)
         results = [evaluator(output) for evaluator in evaluators]
+        if case.rubric is not None:
+            results.append(evaluate_answer_rubric(output, rubric=case.rubric))
         case_checks: list[bool] = [item.passed for item in results]
         if case.expected_status is not None:
             case_checks.append(output.status == case.expected_status)
