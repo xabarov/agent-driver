@@ -72,7 +72,9 @@ class RunAggregate(ContractModel):
 
     ``cost_usd`` / ``latency_ms`` summarize only the runs that reported them
     (errored runs may lack cost); ``total_tokens`` covers all runs (0 for
-    errors). ``success_rate`` is over every run.
+    errors). ``success_rate`` is over every run. ``quality_score`` summarizes
+    only runs an answer-quality judge scored (``metadata['quality_score']``);
+    it stays empty (all zeros, ``n=0``) when no judge ran.
     """
 
     total_runs: int = 0
@@ -83,6 +85,7 @@ class RunAggregate(ContractModel):
     total_tokens: MetricSummary = Field(default_factory=MetricSummary)
     policy_decision_count: MetricSummary = Field(default_factory=MetricSummary)
     trace_violation_count: MetricSummary = Field(default_factory=MetricSummary)
+    quality_score: MetricSummary = Field(default_factory=MetricSummary)
 
 
 def aggregate_trajectories(
@@ -115,6 +118,13 @@ def aggregate_trajectories(
         ),
         trace_violation_count=MetricSummary.of(
             [_trace_violation_count(t.metadata) for t in runs]
+        ),
+        quality_score=MetricSummary.of(
+            [
+                score
+                for t in runs
+                if isinstance((score := t.metadata.get("quality_score")), (int, float))
+            ]
         ),
     )
 

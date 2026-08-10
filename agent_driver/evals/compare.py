@@ -21,6 +21,7 @@ from agent_driver.batch.runner import BatchRunner
 from agent_driver.batch.store import InMemoryTrajectoryStore
 from agent_driver.contracts.base import ContractModel
 from agent_driver.evals.aggregate import RunAggregate, aggregate_trajectories
+from agent_driver.evals.judge import AnswerJudge, judge_trajectories
 
 
 class ComparisonReport(ContractModel):
@@ -42,6 +43,7 @@ class ComparisonReport(ContractModel):
     total_tokens_median_delta: float = 0.0
     policy_decisions_median_delta: float = 0.0
     trace_violations_median_delta: float = 0.0
+    quality_score_median_delta: float = 0.0
 
 
 def compare_aggregates(
@@ -69,6 +71,8 @@ def compare_aggregates(
         - baseline.policy_decision_count.median,
         trace_violations_median_delta=treatment.trace_violation_count.median
         - baseline.trace_violation_count.median,
+        quality_score_median_delta=treatment.quality_score.median
+        - baseline.quality_score.median,
     )
 
 
@@ -82,13 +86,20 @@ async def run_comparison(
     treatment_label: str = "treatment",
     success_statuses: tuple[str, ...] = ("completed",),
     max_total_cost_usd: float | None = None,
+    judge: AnswerJudge | None = None,
 ) -> ComparisonReport:
     """Run both configurations over ``items`` ``repeats`` times and compare.
 
     ``max_total_cost_usd`` caps each side's spend independently (so the whole
-    comparison is bounded by ~2× the ceiling).
+    comparison is bounded by ~2× the ceiling). When ``judge`` is supplied, each
+    side's answers are scored for quality after the runs and the report carries a
+    ``quality_score_median_delta`` — so an axis that trades answer quality for
+    cost (e.g. routing a turn to a cheaper model) is visible, not just its
+    success-rate/economics. Without a judge the quality columns stay empty and
+    the delta is 0.0.
     """
     item_list = list(items)
+    prompt_by_item = {item.item_id: item.input for item in item_list}
     baseline_store = InMemoryTrajectoryStore()
     treatment_store = InMemoryTrajectoryStore()
     await baseline_runner.run(
@@ -103,11 +114,16 @@ async def run_comparison(
         repeats=repeats,
         max_total_cost_usd=max_total_cost_usd,
     )
+    baseline_runs = list(baseline_store.trajectories())
+    treatment_runs = list(treatment_store.trajectories())
+    if judge is not None:
+        await judge_trajectories(baseline_runs, judge, prompt_by_item=prompt_by_item)
+        await judge_trajectories(treatment_runs, judge, prompt_by_item=prompt_by_item)
     baseline_agg = aggregate_trajectories(
-        baseline_store.trajectories(), success_statuses=success_statuses
+        baseline_runs, success_statuses=success_statuses
     )
     treatment_agg = aggregate_trajectories(
-        treatment_store.trajectories(), success_statuses=success_statuses
+        treatment_runs, success_statuses=success_statuses
     )
     return compare_aggregates(
         baseline_agg,
@@ -176,6 +192,19 @@ def render_comparison(report: ComparisonReport) -> str:
             ".0f",
         ),
     ]
+    # Only surface the quality row when a judge actually scored answers; without
+    # one both sides are an empty MetricSummary and the zeros would read as a
+    # real "0 quality" signal rather than "not measured".
+    if b.quality_score.n or t.quality_score.n:
+        lines.append(
+            _row(
+                "quality (med)",
+                b.quality_score.median,
+                t.quality_score.median,
+                report.quality_score_median_delta,
+                ".3f",
+            )
+        )
     return "\n".join(lines)
 
 

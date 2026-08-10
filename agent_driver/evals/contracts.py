@@ -37,6 +37,24 @@ class BudgetLimits(ContractModel):
         return ensure_non_negative_float(value, field_name="max_cost_usd")
 
 
+class AnswerRubric(ContractModel):
+    """Deterministic answer-quality rubric for one dataset case.
+
+    Domain-neutral: the SDK only checks the run's final ``answer`` text against
+    caller-supplied literals/pattern — the *what to expect* stays in the case
+    data (consumer), the *how to check* stays here (harness). A case passes the
+    rubric when every ``must_contain`` literal is present, every
+    ``must_not_contain`` literal is absent, and ``regex`` (when set) matches.
+    ``score`` is the fraction of individual checks that passed, so partial
+    quality is visible even when the case fails.
+    """
+
+    must_contain: tuple[str, ...] = ()
+    must_not_contain: tuple[str, ...] = ()
+    regex: str | None = None
+    case_sensitive: bool = False
+
+
 class DatasetCase(ContractModel):
     """One runnable evaluation case for local dataset runner."""
 
@@ -45,6 +63,7 @@ class DatasetCase(ContractModel):
     run_input: AgentRunInput
     expected_status: RunStatus | None = None
     expected_terminal_reason: TerminalReason | None = None
+    rubric: AnswerRubric | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("metadata")

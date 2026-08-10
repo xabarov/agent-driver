@@ -755,6 +755,21 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Deterministic dry run with the fake provider (no network).",
     )
+    eval_compare.add_argument(
+        "--judge",
+        action="store_true",
+        help=(
+            "Score each side's answers with an LLM answer-quality judge and add a "
+            "quality-delta row (measures whether the axis trades quality for cost). "
+            "Uses the same open-weight provider; add --judge-model to pick a smaller "
+            "judge. No-op under --offline (the fake provider has no real answers)."
+        ),
+    )
+    eval_compare.add_argument(
+        "--judge-model",
+        default=None,
+        help="Model id for --judge (default: the --tier open-weight model).",
+    )
     add_tool_options(eval_compare)
 
     eval_inspect = eval_sub.add_parser(
