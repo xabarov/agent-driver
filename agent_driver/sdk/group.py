@@ -17,14 +17,23 @@ never aborts the group; results and errors come back aligned to the input specs.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from agent_driver.contracts.enums import RunStatus, SubagentJoinPolicy
+from agent_driver.llm.backoff import abort_aware_sleep, jittered_delay
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.sdk.agent import Agent
 from agent_driver.sdk.subagent import SubagentResult, SubagentSpec, run_subagent
+
+# Default retry predicate: retry a child that raised, or that ended non-COMPLETED.
+def _default_retry_on(
+    result: SubagentResult | None, error: BaseException | None
+) -> bool:
+    return error is not None or (
+        result is not None and result.status != RunStatus.COMPLETED
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +88,9 @@ async def run_subagent_group(
     concurrency: int | None = None,
     k: int | None = None,
     deadline_seconds: float | None = None,
+    retries: int = 0,
+    retry_on: Callable[[SubagentResult | None, BaseException | None], bool] | None = None,
+    retry_backoff_seconds: float = 0.0,
     parent_run_id: str | None = None,
     parent_abort_handle: RunAbortHandle | None = None,
     tool_gate: ToolGate | None = None,
@@ -92,6 +104,11 @@ async def run_subagent_group(
     forward to every ``run_subagent``. Never raises for a child failure — inspect
     ``.errors`` / ``.completed``. ``MANUAL_REVIEW`` behaves like ``WAIT_ALL`` (the
     review step is the caller's).
+
+    ``retries`` re-runs a child that fails (per ``retry_on``, default: it raised or
+    ended non-``COMPLETED``), up to ``retries`` times, with a ``retry_backoff_seconds``
+    exponential+jittered wait **outside** the concurrency slot — a backing-off child
+    frees its slot for the next queued one. The backoff is abort-aware.
     """
     spec_list = list(specs)
     count = len(spec_list)
@@ -103,31 +120,55 @@ async def run_subagent_group(
         return SubagentGroupResult((), (), join_policy, satisfied=True)
 
     sem = asyncio.Semaphore(concurrency) if concurrency and concurrency > 0 else None
+    should_retry = retry_on or _default_retry_on
+    abort_check = (
+        (lambda: bool(getattr(parent_abort_handle, "is_aborted", False)))
+        if parent_abort_handle is not None
+        else None
+    )
 
-    async def _one(index: int) -> tuple[int, SubagentResult | None, BaseException | None]:
+    async def _attempt(index: int) -> tuple[SubagentResult | None, BaseException | None]:
         try:
             if sem is not None:
                 async with sem:
-                    child = await run_subagent(
-                        parent,
-                        spec_list[index],
-                        parent_run_id=parent_run_id,
-                        parent_abort_handle=parent_abort_handle,
-                        tool_gate=tool_gate,
+                    return (
+                        await run_subagent(
+                            parent,
+                            spec_list[index],
+                            parent_run_id=parent_run_id,
+                            parent_abort_handle=parent_abort_handle,
+                            tool_gate=tool_gate,
+                        ),
+                        None,
                     )
-            else:
-                child = await run_subagent(
+            return (
+                await run_subagent(
                     parent,
                     spec_list[index],
                     parent_run_id=parent_run_id,
                     parent_abort_handle=parent_abort_handle,
                     tool_gate=tool_gate,
-                )
-            return index, child, None
+                ),
+                None,
+            )
         except asyncio.CancelledError:
             raise
         except BaseException as exc:  # noqa: BLE001 - one child's failure abstains
-            return index, None, exc
+            return None, exc
+
+    async def _one(index: int) -> tuple[int, SubagentResult | None, BaseException | None]:
+        attempt = 0
+        while True:
+            child, error = await _attempt(index)
+            if attempt >= retries or not should_retry(child, error):
+                return index, child, error
+            attempt += 1
+            if retry_backoff_seconds > 0:
+                # Backoff OUTSIDE the semaphore so it doesn't hold a concurrency slot.
+                await abort_aware_sleep(
+                    jittered_delay(retry_backoff_seconds * (2 ** (attempt - 1))),
+                    abort_check=abort_check,
+                )
 
     tasks = {asyncio.create_task(_one(i)) for i in range(count)}
     target = k or 1 if join_policy == SubagentJoinPolicy.K_OF_N else 1

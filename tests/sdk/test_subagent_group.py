@@ -11,8 +11,9 @@ from agent_driver.contracts.enums import RunStatus, SubagentJoinPolicy
 from agent_driver.sdk import SubagentSpec, run_subagent_group
 from agent_driver.sdk.subagent import SubagentResult
 
-# agent_type -> (delay_seconds, RunStatus | Exception)
-_SCRIPT: dict[str, tuple[float, object]] = {}
+# agent_type -> (delay_seconds, RunStatus | Exception), or a list of those per attempt.
+_SCRIPT: dict[str, object] = {}
+_ATTEMPTS: dict[str, int] = {}
 _LIVE = {"now": 0, "max": 0}
 
 
@@ -35,7 +36,13 @@ async def _fake_run_subagent(parent, spec, **_kw):  # noqa: ANN001, ANN201
     _LIVE["now"] += 1
     _LIVE["max"] = max(_LIVE["max"], _LIVE["now"])
     try:
-        delay, outcome = _SCRIPT[spec.agent_type]
+        script = _SCRIPT[spec.agent_type]
+        prior = _ATTEMPTS.get(spec.agent_type, 0)
+        _ATTEMPTS[spec.agent_type] = prior + 1
+        if isinstance(script, list):  # per-attempt outcomes
+            delay, outcome = script[min(prior, len(script) - 1)]
+        else:
+            delay, outcome = script
         await asyncio.sleep(delay)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -47,6 +54,7 @@ async def _fake_run_subagent(parent, spec, **_kw):  # noqa: ANN001, ANN201
 @pytest.fixture(autouse=True)
 def _patch(monkeypatch: pytest.MonkeyPatch) -> None:
     _SCRIPT.clear()
+    _ATTEMPTS.clear()
     _LIVE.update(now=0, max=0)
     monkeypatch.setattr(group, "run_subagent", _fake_run_subagent)
 
@@ -167,3 +175,40 @@ async def test_concurrency_cap_limits_simultaneous_children() -> None:
 async def test_empty_group_is_trivially_satisfied() -> None:
     res = await run_subagent_group(None, [], join_policy=SubagentJoinPolicy.WAIT_ALL)
     assert res.satisfied and res.succeeded == 0 and res.results == ()
+
+
+@pytest.mark.asyncio
+async def test_retries_recover_a_transiently_failing_child() -> None:
+    # a fails twice (FAILED) then succeeds; retries=2 recovers it.
+    _SCRIPT["a"] = [
+        (0.001, RunStatus.FAILED),
+        (0.001, RunStatus.FAILED),
+        (0.001, RunStatus.COMPLETED),
+    ]
+    res = await run_subagent_group(None, _specs("a"), retries=2)
+    assert res.satisfied and res.succeeded == 1
+    assert res.results[0].status == RunStatus.COMPLETED
+    assert _ATTEMPTS["a"] == 3  # 1 initial + 2 retries
+
+
+@pytest.mark.asyncio
+async def test_retries_exhausted_returns_the_last_failure() -> None:
+    _SCRIPT["a"] = (0.001, RunStatus.FAILED)  # always fails
+    res = await run_subagent_group(None, _specs("a"), retries=2)
+    assert not res.satisfied and res.failed == 1
+    assert _ATTEMPTS["a"] == 3  # initial + 2 retries, then give up
+
+
+@pytest.mark.asyncio
+async def test_retries_default_zero_does_not_retry() -> None:
+    _SCRIPT["a"] = (0.001, RunStatus.FAILED)
+    await run_subagent_group(None, _specs("a"))
+    assert _ATTEMPTS["a"] == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_on_predicate_gates_retries() -> None:
+    _SCRIPT["a"] = (0.001, RunStatus.FAILED)
+    # Predicate says "never retry" → one attempt despite retries=3.
+    await run_subagent_group(None, _specs("a"), retries=3, retry_on=lambda r, e: False)
+    assert _ATTEMPTS["a"] == 1
