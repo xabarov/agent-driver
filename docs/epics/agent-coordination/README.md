@@ -81,10 +81,15 @@ the runtime's merge vocabulary (`SubagentMergeMode`) to the SDK and fixes the
 concat-degradation. Tests: `tests/sdk/test_subagent_merge.py`; example 26 now shows
 fan-out → join → merge/synthesize.
 
+**Step 3 — DONE (2026-08-11):** retired the runtime executor's *sequential* sync-group
+loop — `execute_subagent_group_sync` now runs its (parallel-budget-limited) children
+concurrently via `asyncio.gather` (order-preserving, orphan-free), aligning it with the
+already-concurrent background path. A fan-out of N no longer costs N× wall-clock. Test:
+`tests/subagents/test_sync_child_execution.py::test_sync_group_runs_children_concurrently`.
+
 **Remaining:** expose the subagent mailbox + worktree isolation through the SDK
-surface; retire the runtime executor's *sequential* "sync group" runner in favor of the
-concurrent primitive; migrate excel-ai off its bespoke fan-out. Foundational for
-C3/C4/C5.
+surface; migrate excel-ai off its bespoke fan-out onto `run_subagent_group`. Foundational
+for C3/C4/C5.
 
 ### C3 — Mailbox fix + live subagent steering
 

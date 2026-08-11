@@ -324,14 +324,20 @@ async def execute_subagent_group_sync(
             },
         )
     )
-    child_runs: list[SubagentRun] = []
-    for idx, task in enumerate(limited_tasks, start=1):
+    # C1: the selected tasks are already within the parallel budget
+    # (``_select_schedulable_tasks`` caps them at ``min(max_child_runs, max_parallel)``),
+    # so run them CONCURRENTLY instead of one-at-a-time — the background executor already
+    # runs children concurrently, so concurrent child store-writes are proven safe.
+    # ``gather(return_exceptions=True)`` waits for all (no orphaned tasks) and preserves
+    # order; a catastrophic child exception (rare — failures normally come back as a
+    # FAILED ``SubagentRun``) is re-raised after all settle, matching the old behaviour.
+    async def _run_child(index: int, task: SubagentTaskSpec) -> SubagentRun:
         _safe_emit(
             on_event,
             "subagent_started",
             {
                 "group_id": group_spec.group_id,
-                "index": idx,
+                "index": index,
                 "task_id": task.task_id,
                 "role": _task_role(task),
             },
@@ -340,19 +346,18 @@ async def execute_subagent_group_sync(
             parent=parent,
             group=group,
             task=task,
-            idx=idx,
+            idx=index,
             store=store,
             child_runner=child_runner,
             child_app_metadata=child_app_metadata,
             parent_abort_handle=parent_abort_handle,
         )
-        child_runs.append(completed)
         _safe_emit(
             on_event,
             "subagent_completed",
             {
                 "group_id": group_spec.group_id,
-                "index": idx,
+                "index": index,
                 "task_id": task.task_id,
                 "role": _task_role(task),
                 "subagent_run_id": completed.subagent_run_id,
@@ -365,6 +370,19 @@ async def execute_subagent_group_sync(
                 "child_evidence": _child_evidence_summary(completed.metadata),
             },
         )
+        return completed
+
+    _settled = await asyncio.gather(
+        *(
+            _run_child(idx, task)
+            for idx, task in enumerate(limited_tasks, start=1)
+        ),
+        return_exceptions=True,
+    )
+    for _outcome in _settled:
+        if isinstance(_outcome, BaseException):
+            raise _outcome
+    child_runs: list[SubagentRun] = list(_settled)
     join_decision = evaluate_join_policy(
         join_policy=group_spec.join_policy,
         runs=child_runs,
