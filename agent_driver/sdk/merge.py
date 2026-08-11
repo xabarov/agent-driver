@@ -32,17 +32,27 @@ _SYNTHESIS_SYSTEM = (
 )
 
 
-def _completed_answers(
-    results: Sequence[SubagentResult | None],
+def _contributing(
+    results: Sequence[SubagentResult | None], *, include_partial: bool
 ) -> list[tuple[str, str]]:
-    """Return ``(agent_type, answer)`` for each completed child with a non-empty answer."""
+    """Return ``(label, answer)`` for children that contribute to the merge.
+
+    Always includes ``COMPLETED`` children with a non-empty answer. When
+    ``include_partial`` is set, also includes non-``COMPLETED`` children that still
+    produced a non-empty answer, with the label marked ``(partial: <status>)`` so a
+    salvaged answer is never mistaken for a finished one (C3).
+    """
     pairs: list[tuple[str, str]] = []
     for item in results:
-        if item is None or item.status != RunStatus.COMPLETED:
+        if item is None:
             continue
         answer = (item.answer or "").strip()
-        if answer:
+        if not answer:
+            continue
+        if item.status == RunStatus.COMPLETED:
             pairs.append((item.agent_type, answer))
+        elif include_partial:
+            pairs.append((f"{item.agent_type} (partial: {item.status.value})", answer))
     return pairs
 
 
@@ -59,6 +69,7 @@ def merge_subagent_results(
     max_items: int | None = None,
     max_chars: int | None = None,
     label: bool = True,
+    include_partial: bool = False,
 ) -> str:
     """Deterministically merge completed child answers into one string.
 
@@ -73,7 +84,7 @@ def merge_subagent_results(
         raise ValueError(
             "SYNTHESIZE needs a model — use synthesize_subagent_results(...)"
         )
-    pairs = _completed_answers(results)
+    pairs = _contributing(results, include_partial=include_partial)
     if mode == SubagentMergeMode.VOTE:
         if not pairs:
             return ""
@@ -87,7 +98,7 @@ def merge_subagent_results(
     if max_items is not None and max_items >= 0:
         pairs = pairs[:max_items]
     parts = [
-        f"[{agent_type}] {answer}" if label else answer for agent_type, answer in pairs
+        f"[{label_text}] {answer}" if label else answer for label_text, answer in pairs
     ]
     return _bounded("\n\n".join(parts), max_chars)
 
@@ -98,6 +109,7 @@ async def synthesize_subagent_results(
     provider: Any,
     model: str | None = None,
     instruction: str | None = None,
+    include_partial: bool = False,
     max_input_chars: int = 8000,
 ) -> str:
     """LLM-synthesize completed child answers into one answer (the real ``SYNTHESIZE``).
@@ -108,13 +120,13 @@ async def synthesize_subagent_results(
     model call. On any provider error it degrades to :func:`merge_subagent_results`
     (``APPEND``) rather than raising.
     """
-    pairs = _completed_answers(results)
+    pairs = _contributing(results, include_partial=include_partial)
     if not pairs:
         return ""
     if len(pairs) == 1:
         return pairs[0][1]
     body = "\n\n".join(
-        f"--- {agent_type} ---\n{answer[:max_input_chars]}" for agent_type, answer in pairs
+        f"--- {label_text} ---\n{answer[:max_input_chars]}" for label_text, answer in pairs
     )
     try:
         from agent_driver.llm.aux import aux_completion
@@ -130,9 +142,9 @@ async def synthesize_subagent_results(
             ],
         )
     except Exception:  # noqa: BLE001 - synthesis must not break the group merge
-        return merge_subagent_results(results, mode=SubagentMergeMode.APPEND)
+        return merge_subagent_results(results, mode=SubagentMergeMode.APPEND, include_partial=include_partial)
     text = (response.message.content or "").strip()
-    return text or merge_subagent_results(results, mode=SubagentMergeMode.APPEND)
+    return text or merge_subagent_results(results, mode=SubagentMergeMode.APPEND, include_partial=include_partial)
 
 
 __all__ = ["merge_subagent_results", "synthesize_subagent_results"]

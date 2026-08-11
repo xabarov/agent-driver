@@ -61,6 +61,21 @@ class SubagentGroupResult:
         ]
 
     @property
+    def partial(self) -> list[SubagentResult]:
+        """Non-``COMPLETED`` children that still produced a non-empty answer (C3).
+
+        Salvageable partial work — a child that timed out / hit its budget but got
+        far enough to be worth keeping, rather than discarding on the non-final stop.
+        """
+        return [
+            item
+            for item in self.results
+            if item is not None
+            and item.status != RunStatus.COMPLETED
+            and (item.answer or "").strip()
+        ]
+
+    @property
     def succeeded(self) -> int:
         """How many children completed successfully."""
         return len(self.completed)

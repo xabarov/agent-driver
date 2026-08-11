@@ -36,7 +36,7 @@ mode. This track closes those gaps, keeping the runtime domain-neutral.
 | --- | --- | --- | --- | --- | --- |
 | **C2** | Markdown-defined agent registry | static code roles, no hot-loadable agent types | openclaude `.claude/agents`, OpenHands `.md` | S | **DONE** |
 | **C1** | Unify the two subagent stacks | SDK primitives ≠ runtime executor; join/merge unused | — (internal) | L | IN PROGRESS |
-| **C3** | Mailbox fix + live subagent steering | parent→child continuation dead-ended; no mid-flight steer | openclaude `SendMessage`; MAST coordination | M | PROPOSED |
+| **C3** | Mailbox fix + live subagent steering | parent→child continuation dead-ended; no mid-flight steer | openclaude `SendMessage`; MAST coordination | M | IN PROGRESS |
 | **C4** | Supervisor/coordinator in the SDK | orchestrator-worker only hand-wired in excel-ai; sync group is sequential | openclaude coordinator mode, Anthropic | M | PROPOSED |
 | **C5** | Deep/ultra-agent mode | planner + subagents + FS + context-mgmt not composed | LangChain Deep Agents, Anthropic | L | PROPOSED |
 | **C6** | Handoffs / agents-as-tools | no control transfer to a peer | OpenAI Agents SDK | M | PROPOSED |
@@ -98,15 +98,23 @@ surface; migrate excel-ai's `explorer_coordinator` off its bespoke `asyncio.gath
 semaphore + retry onto `run_subagent_group` + `merge_subagent_results` (now unblocked).
 Foundational for C3/C4/C5.
 
-### C3 — Mailbox fix + live subagent steering
+### C3 — Mailbox fix + live subagent steering — IN PROGRESS
 
-The `subagent_mailbox` parent→child continuation is enqueued but never consumed by a
-running child (dead-end). Wire a running child to read pending PARENT_TO_CHILD items
-mid-flight (live steering, like openclaude `SendMessage` continuing a running
-subagent by id), and add the honest result contract: **never fabricate a pending
-subagent's result** (openclaude prompt rule) + **partial output on non-final stop**
-(OpenHands) so the orchestrator can retry/salvage. Directly targets the MAST
-coordination + verification gaps.
+**Step 1 — DONE (2026-08-11):** partial-output salvage — `SubagentResult` already keeps
+its `answer` on a non-`COMPLETED` stop, but the group merge dropped it. Added
+`SubagentGroupResult.partial` and an `include_partial=` option on
+`merge_subagent_results` / `synthesize_subagent_results` (partial answers labeled
+`(partial: <status>)`), so an orchestrator can salvage a timed-out child's work instead
+of discarding it (OpenHands "partial output on non-final stop"; MAST verification-gap).
+Tests: `tests/sdk/test_subagent_merge.py`, `tests/sdk/test_subagent_group.py`.
+
+**Remaining:** the `subagent_mailbox` parent→child continuation is enqueued but never
+consumed by a running child (dead-end). Wire a running child to read pending
+PARENT_TO_CHILD items **mid-flight** (live steering, like openclaude `SendMessage`
+continuing a running subagent by id) — this needs giving the child run a per-child
+`redirect_probe`/steering queue (surgery to `run_subagent`, which today runs the child
+on the parent's shared runner config). Plus the honest **never-fabricate-a-pending-
+result** orchestrator prompt rule. Targets the MAST coordination gap.
 
 ### C4 — Supervisor / coordinator in the SDK
 

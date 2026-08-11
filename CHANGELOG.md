@@ -7,8 +7,6 @@ change between minor versions.
 
 ## [Unreleased]
 
-### Added
-
 ### Changed
 
 - **Runtime subagent group runs children concurrently (coordination C1, step 3).** The
@@ -21,6 +19,17 @@ change between minor versions.
 
 ### Added
 
+- **Salvage partial output from non-completed children (coordination C3, step 1).** A
+  child that times out or hits its budget often got far enough for its partial answer to
+  be worth keeping — but the group merge dropped everything non-`COMPLETED`, discarding
+  salvageable work (the OpenHands "partial output on non-final stop so the orchestrator
+  can retry/salvage" pattern; a MAST verification-gap fix). `SubagentGroupResult` gains a
+  `.partial` property (non-`COMPLETED` children that still produced a non-empty answer),
+  and `merge_subagent_results` / `synthesize_subagent_results` gain `include_partial=` —
+  when set, those partial answers contribute too, labeled `(partial: <status>)` so a
+  salvaged answer is never mistaken for a finished one. First step of C3 (mailbox fix +
+  live steering); live mid-flight subagent steering — which needs a per-child runner
+  redirect seam — is the larger remaining piece.
 - **Merge / synthesize subagent-group results (coordination C1, step 2).** After a
   fan-out joins, the parent has N child answers to combine — the runtime carried the
   merge vocabulary (`SubagentMergeMode`) but only on the model-planner path, and its

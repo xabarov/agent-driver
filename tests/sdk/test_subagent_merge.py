@@ -121,3 +121,38 @@ async def test_synthesize_degrades_to_append_on_provider_error() -> None:
         [_r("a", "alpha"), _r("b", "beta")], provider=_BoomProvider()
     )
     assert out == "[a] alpha\n\n[b] beta"  # fell back to APPEND, did not raise
+
+
+# --- partial-output salvage (C3) -------------------------------------------- #
+
+
+def test_default_merge_excludes_partial_non_completed_answers() -> None:
+    out = merge_subagent_results(
+        [_r("a", "done"), _r("b", "partial", RunStatus.TIMED_OUT)]
+    )
+    assert out == "[a] done"  # timed-out child dropped by default
+
+
+def test_include_partial_salvages_non_completed_answers_labeled() -> None:
+    out = merge_subagent_results(
+        [_r("a", "done"), _r("b", "partial", RunStatus.TIMED_OUT)],
+        include_partial=True,
+    )
+    assert out == "[a] done\n\n[b (partial: timed_out)] partial"
+
+
+def test_include_partial_still_skips_empty_answers() -> None:
+    out = merge_subagent_results(
+        [_r("a", "done"), _r("b", None, RunStatus.FAILED)], include_partial=True
+    )
+    assert out == "[a] done"  # failed child had no answer to salvage
+
+
+@pytest.mark.asyncio
+async def test_synthesize_can_include_partial() -> None:
+    out = await synthesize_subagent_results(
+        [_r("a", "done"), _r("b", "partial", RunStatus.TIMED_OUT)],
+        provider=FakeProvider(response_text="combined"),
+        include_partial=True,
+    )
+    assert out == "combined"  # two contributors (1 completed + 1 partial) → synthesized
