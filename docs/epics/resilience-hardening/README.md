@@ -26,7 +26,7 @@ benchmark-fitting, harness-layer only.
 | **F1** | Decorrelated backoff jitter | fixed 2^n → lockstep retries / thundering herd | hermes, openclaude | S | **DONE** |
 | **F2** | Per-provider circuit breaker | health has no cooldown/half-open/threshold/persistence | hermes | M | **DONE** |
 | **F3** | Honor more server directives | only `Retry-After`; ignore `x-should-retry` + rate-limit-reset | openclaude, hermes | M | PROPOSED |
-| **F4** | Ordered fallback-model list | only provider-swap + forced-final fallback, no model-tier list | all 3 refs | M | PROPOSED |
+| **F4** | Ordered fallback-model list | only provider-swap + forced-final fallback, no model-tier list | all 3 refs | M | **DONE** |
 | **F5** | Small correctness wins | abort-blind backoff sleeps; no nudge-before-kill | openclaude, openhands | S | PROPOSED |
 | **F6** | Shared retry budget | 3 retry layers can compound (base 4× × completion 3×) | — (internal) | M | PROPOSED |
 
@@ -70,15 +70,19 @@ until** the `*-ratelimit-*-reset` header instead of fixed backoff (openclaude
 `:1065`); optionally provider-aware adaptive-backoff tiers (hermes
 `adaptive_rate_limit_backoff`). Composes with F1's jitter.
 
-### F4 — Ordered fallback-model list
+### F4 — Ordered fallback-model list — DONE (2026-08-11)
 
-Today: router provider-swap + forced-final `fallback_providers` + 402 token
-reduction — but no ordered **model** fallback on the main completion path. Add an
-optional ordered fallback-model list, tried after in-place retries are exhausted,
-gated to the transient error set, merging fallback cost/metrics back into the
-primary (OpenHands `FallbackStrategy`, hermes `get_fallback_chain`, openclaude
-`FallbackTriggeredError`). Distinct from F2 (which swaps *providers* proactively);
-this swaps *models* reactively.
+`complete_request` now wraps the per-error retry loop (`_complete_request_attempts`)
+in an ordered model-fallback loop: after the primary model's in-place retries are
+exhausted, a non-fatal failure retries the whole attempt on each id in
+`RunnerConfig(fallback_models=(…,))` (threaded to `RunnerDeps` alongside
+`fallback_providers`), rewriting `request.model`, until one succeeds. Gated by the
+same `is_fatal` rule as provider-fallback (auth / content-policy / context-overflow
+don't fall back); cost/events accumulate on the shared host; a `model_fallback`
+warning names the failed and next model. Distinct from F2 (proactive *provider*
+circuit-breaker) — this is a reactive *model* swap. Tests:
+`tests/runtime/test_model_fallback.py`. (Refs: OpenHands `FallbackStrategy`, hermes
+`get_fallback_chain`, openclaude `FallbackTriggeredError`.)
 
 ### F5 — Small correctness wins
 
@@ -102,5 +106,5 @@ bounded end-to-end. Internal cleanup; lower user-visible impact.
 
 ## Recommended order
 
-F1 (done) → F2 (done) → **F4** (only axis where all three refs beat us) → F3 → F5 →
-F6 · plus F2b (stale-streak give-up).
+F1 (done) → F2 (done) → F4 (done) → **F3** → F5 → F6 · plus F2b (stale-streak
+give-up).

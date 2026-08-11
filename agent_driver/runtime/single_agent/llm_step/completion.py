@@ -391,6 +391,70 @@ async def complete_request(
     *,
     recover_context_overflow: Callable[[], Awaitable[Any]] | None = None,
 ) -> LlmResponse:
+    """Complete a provider request, with an optional ordered model-fallback (F4).
+
+    Runs :func:`_complete_request_attempts` (bounded per-error retry on the primary
+    model) and, when a run configures ``fallback_models``, retries the *whole*
+    attempt on each fallback model in turn if the primary fails with a non-fatal
+    error — a model unavailable / rate-limited / overloaded gives way to the next
+    one, gated by the same ``is_fatal`` rule the provider-fallback uses (auth,
+    content-policy and context-overflow never fall back to another model). Cost and
+    events accumulate on the shared host, so fallback spend rolls into the run.
+    """
+    fallback_models = tuple(
+        getattr(getattr(host, "_deps", None), "fallback_models", ()) or ()
+    )
+    if not fallback_models:
+        return await _complete_request_attempts(
+            host, context, request, recover_context_overflow=recover_context_overflow
+        )
+
+    models = [getattr(request, "model", None), *fallback_models]
+    last_exc: BaseException | None = None
+    for index, model in enumerate(models):
+        attempt_request = (
+            request if index == 0 else request.model_copy(update={"model": model})
+        )
+        try:
+            return await _complete_request_attempts(
+                host,
+                context,
+                attempt_request,
+                recover_context_overflow=recover_context_overflow,
+            )
+        except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+            last_exc = exc
+            classified = classify(exc)
+            # Fatal-to-rotation (auth / content-policy / context-overflow) or the
+            # last model in the chain → give up; a different model won't help.
+            if classified.is_fatal or index >= len(models) - 1:
+                raise
+            next_model = models[index + 1]
+            context.metadata["model_fallbacks"] = index + 1
+            _emit_provider_retry_warning(
+                host,
+                context,
+                warning=(
+                    f"Model '{model}' failed ({classified.reason.value}); "
+                    f"falling back to '{next_model}'."
+                ),
+                signal_id="model_fallback",
+                failed_model=str(model),
+                next_model=str(next_model),
+                fallback_index=index + 1,
+            )
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("unreachable")
+
+
+async def _complete_request_attempts(
+    host: LlmCompletionHost,
+    context: RunContext,
+    request: Any,
+    *,
+    recover_context_overflow: Callable[[], Awaitable[Any]] | None = None,
+) -> LlmResponse:
     """Complete a provider request with bounded transport/retry handling.
 
     ``recover_context_overflow`` (optional) is invoked once when the provider

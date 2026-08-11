@@ -40,6 +40,7 @@ retry is indistinguishable from a hang»), hermes `_emit_wait_notice` + gateway-
 | `prompt_cache_broken` | transient (severity=info) | cache_read упал >5% и >2000 токенов при НЕизменном префиксе (TTL/провайдер); эпик 028 | не для статус-строки; диагностика стоимости |
 | `provider_transient_error_retry` | transient | 408/429/5xx от провайдера, bounded-ретрай через `retry_in_seconds` | «Провайдер временно недоступен — повторяю запрос» |
 | `provider_transient_transport_retry` | transient | обрыв соединения/транспорта (ConnectError/RemoteProtocolError/ReadError/ProviderTransportError), bounded blind-retry до 2 раз | «Провайдер временно недоступен — повторяю запрос» |
+| `model_fallback` | transient | основная модель упала с нефатальной ошибкой (rate-limit/overload/5xx/timeout); пробуем следующую из `fallback_models` (F4) | «Модель недоступна — пробую резервную модель» |
 | `provider_empty_forced_final_non_stream_retry` | transient | пустой forced-final стрим, ретрай без стриминга | «Модель вернула пустой ответ — повторяю запрос» |
 | `provider_empty_forced_final_history_fold_retry` | transient | пустые финалы, ретрай со свёрнутой историей | «Повторяю запрос (упрощаю историю)» |
 | `provider_empty_forced_final_fallback_provider_retry` | durable | основной провайдер исчерпан, пробуем fallback-провайдер | «Переключаюсь на резервную модель» |

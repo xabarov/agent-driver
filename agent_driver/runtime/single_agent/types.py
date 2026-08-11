@@ -66,6 +66,7 @@ _RUNNER_CONFIG_EXTRA_FIELDS = {
     "default_hard_max_seconds",
     "default_idle_timeout_seconds",
     "default_max_tool_calls",
+    "fallback_models",
     "fallback_providers",
     "finalize_hook_timeout",
     "stage_heartbeat_seconds",
@@ -219,6 +220,8 @@ class RunnerConfig:
         # Epic 016: providers tried (in order) by the forced-final ladder when the primary
         # keeps returning empty finals. Hosts pass configured LlmProvider instances.
         self.fallback_providers = tuple(kwargs.pop("fallback_providers", ()) or ())
+        # F4: ordered fallback model ids (same provider) — see RunnerDeps.fallback_models.
+        self.fallback_models = tuple(kwargs.pop("fallback_models", ()) or ())
         # R3: role → provider registry (cross-provider role distribution). Injected
         # LlmProvider objects, threaded to RunnerDeps.role_providers. Empty = off.
         self.role_providers = dict(kwargs.pop("role_providers", {}) or {})
@@ -670,6 +673,12 @@ class RunnerDeps:
     # primary provider keeps returning empty finals (deepseek-class quirk). Epic 016;
     # reference: hermes _fallback_chain. Empty tuple = step skipped.
     fallback_providers: tuple[LlmProvider, ...] = ()
+    # F4 (resilience): ordered fallback MODEL ids retried on the SAME provider when a
+    # completion fails with a non-fatal error (rate-limit / overload / server / timeout /
+    # transport) after its in-place retries are exhausted. Distinct from
+    # ``fallback_providers`` (which swaps provider objects) — this only rewrites
+    # ``request.model``. Empty tuple = no model fallback.
+    fallback_models: tuple[str, ...] = ()
     # R3 (R-track): role → provider registry. Lets a run's ``model_role`` route to a
     # DIFFERENT provider object (e.g. native Anthropic for a "planner" role, an
     # OpenRouter route for an "executor" role) — cross-provider role distribution, not

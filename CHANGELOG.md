@@ -9,6 +9,18 @@ change between minor versions.
 
 ### Added
 
+- **Ordered fallback-model list on the completion path (resilience F2 → F4).** After a
+  completion's in-place per-error retries are exhausted, the primary model failing with a
+  non-fatal error (rate-limit / overload / server / timeout / transport) now retries the
+  *whole* attempt on the next model in `RunnerConfig(fallback_models=(…,))`, in order,
+  until one succeeds — the reactive **model** swap that complements F2's proactive
+  *provider* circuit-breaker and the router's provider failover. Gated by the same
+  `is_fatal` rule provider-fallback uses, so auth / content-policy / context-overflow never
+  fall back to another model (a different model won't help). `request.model` is rewritten
+  per attempt; cost/events accumulate on the shared host, so fallback spend rolls into the
+  run; a `model_fallback` warning event names the failed and next model. `fallback_models`
+  threads `RunnerConfig` → `RunnerDeps` alongside `fallback_providers`; empty (default) is a
+  no-op single-model path.
 - **Per-provider circuit breaker in the router (resilience F2).** `HealthAwareRouter`
   failed over on errors but had no sticky state: it marked a provider unhealthy on
   failure, yet `refresh_health()` re-ran the provider's healthcheck every call and
