@@ -212,3 +212,16 @@ async def test_retry_on_predicate_gates_retries() -> None:
     # Predicate says "never retry" → one attempt despite retries=3.
     await run_subagent_group(None, _specs("a"), retries=3, retry_on=lambda r, e: False)
     assert _ATTEMPTS["a"] == 1
+
+
+@pytest.mark.asyncio
+async def test_group_result_exposes_salvageable_partial_children() -> None:
+    _SCRIPT.update(
+        ok=(0.001, RunStatus.COMPLETED),
+        timed=(0.001, RunStatus.TIMED_OUT),
+        failed=(0.001, RunStatus.FAILED),
+    )
+    res = await run_subagent_group(None, _specs("ok", "timed", "failed"))
+    # completed = only ok; partial = every non-COMPLETED child with a (non-empty) answer.
+    assert [r.agent_type for r in res.completed] == ["ok"]
+    assert {r.agent_type for r in res.partial} == {"timed", "failed"}
