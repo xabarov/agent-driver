@@ -1178,3 +1178,33 @@ async def test_complete_request_gives_up_after_transient_retry_budget(monkeypatc
     with pytest.raises(httpx.HTTPStatusError):
         await _complete_request(host, context, request)
     assert provider.calls == 3  # initial + two bounded retries
+
+
+@pytest.mark.asyncio
+async def test_x_should_retry_false_skips_transient_retry() -> None:
+    """F3: a server ``x-should-retry: false`` on a 503 fails fast (no retry)."""
+    provider = SimpleNamespace(name="retry-test", calls=0)
+
+    async def complete(request: LlmRequest) -> LlmResponse:
+        provider.calls += 1
+        resp = httpx.Response(
+            503,
+            headers={"x-should-retry": "false"},
+            text="server error",
+            request=httpx.Request("POST", "https://p.test/chat"),
+        )
+        raise httpx.HTTPStatusError("boom", request=resp.request, response=resp)
+
+    provider.complete = complete
+    host = SimpleNamespace(_deps=SimpleNamespace(provider=provider), _emit=[].append)
+    context = SimpleNamespace(
+        run_input=SimpleNamespace(stream=False, app_metadata={}),
+        metadata={},
+        run_id="r",
+        attempt_id="a",
+    )
+    request = LlmRequest(messages=[ChatMessage(role="user", content="hi")])
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await _complete_request(host, context, request)
+    assert provider.calls == 1  # 503 is transient, but the server said don't retry

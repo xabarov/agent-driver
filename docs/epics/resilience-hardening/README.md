@@ -25,7 +25,7 @@ benchmark-fitting, harness-layer only.
 | --- | --- | --- | --- | --- | --- |
 | **F1** | Decorrelated backoff jitter | fixed 2^n → lockstep retries / thundering herd | hermes, openclaude | S | **DONE** |
 | **F2** | Per-provider circuit breaker | health has no cooldown/half-open/threshold/persistence | hermes | M | **DONE** |
-| **F3** | Honor more server directives | only `Retry-After`; ignore `x-should-retry` + rate-limit-reset | openclaude, hermes | M | PROPOSED |
+| **F3** | Honor more server directives | only `Retry-After`; ignore `x-should-retry` + rate-limit-reset | openclaude, hermes | M | **DONE** |
 | **F4** | Ordered fallback-model list | only provider-swap + forced-final fallback, no model-tier list | all 3 refs | M | **DONE** |
 | **F5** | Small correctness wins | abort-blind backoff sleeps; no nudge-before-kill | openclaude, openhands | S | PROPOSED |
 | **F6** | Shared retry budget | 3 retry layers can compound (base 4× × completion 3×) | — (internal) | M | PROPOSED |
@@ -62,13 +62,18 @@ cooldown `nous_rate_guard.py`) — count consecutive unresponsive streams across
 and jump straight to fallback without another network wait; complements the breaker for
 the "wedged on a dead provider, looping for hours" mode.
 
-### F3 — Honor more server directives
+### F3 — Honor more server directives — DONE (2026-08-11)
 
-We honor `Retry-After` (ahead of OpenHands). Add: obey an `x-should-retry` response
-header (openclaude `withRetry.ts:854`), and in a long-wait/persistent mode **sleep
-until** the `*-ratelimit-*-reset` header instead of fixed backoff (openclaude
-`:1065`); optionally provider-aware adaptive-backoff tiers (hermes
-`adaptive_rate_limit_backoff`). Composes with F1's jitter.
+New `llm/retry_directives.py`: `parse_should_retry` (obey `x-should-retry` — `false`
+fails fast, wired into `llm/base.py`'s status loop + the completion loop's transient
+retry) and `rate_limit_reset_seconds` (parse any `*ratelimit*reset*` header —
+relative-seconds / epoch / ISO-8601 — and fold it into the backoff via
+`strongest_retry_delay`, waiting the longer of base / `Retry-After` / reset, capped so
+a large reset can't wedge a bounded loop). Injectable epoch clock. Composes with F1
+jitter. Tests: `tests/llm/test_retry_directives.py` + the completion integration in
+`tests/runtime/test_llm_step_retry.py`. (Refs: openclaude `withRetry.ts:854,1065`;
+hermes `adaptive_rate_limit_backoff`.) Deferred (F3b): provider-aware adaptive-backoff
+tiers and duration-string reset formats (`"6m0s"`) — provider-adapter territory.
 
 ### F4 — Ordered fallback-model list — DONE (2026-08-11)
 
@@ -106,5 +111,5 @@ bounded end-to-end. Internal cleanup; lower user-visible impact.
 
 ## Recommended order
 
-F1 (done) → F2 (done) → F4 (done) → **F3** → F5 → F6 · plus F2b (stale-streak
+F1 (done) → F2 (done) → F4 (done) → F3 (done) → **F5** → F6 · plus F2b (stale-streak
 give-up).

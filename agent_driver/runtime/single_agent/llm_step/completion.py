@@ -22,6 +22,10 @@ from agent_driver.llm.error_classifier import (
     ProviderTransportError,
     classify,
 )
+from agent_driver.llm.retry_directives import (
+    parse_should_retry,
+    rate_limit_reset_seconds,
+)
 from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
 from agent_driver.runtime.single_agent.llm_step.provider_requests import (
     affordable_max_tokens_from_error,
@@ -363,7 +367,13 @@ async def _handle_completion_status_error(
                 max_tokens=reduced.max_tokens,
             )
             return reduced, overflow_recovered
-    if attempt < 2 and _is_transient_provider_status(exc):
+    # F3: a server ``x-should-retry: false`` means retrying won't clear the error —
+    # skip the transient retry and let it raise instead of burning an attempt.
+    if (
+        attempt < 2
+        and _is_transient_provider_status(exc)
+        and parse_should_retry(exc.response.headers) is not False
+    ):
         delay = _transient_retry_delay(exc, attempt)
         context.metadata["transient_provider_retries"] = attempt + 1
         _emit_provider_retry_warning(
@@ -585,7 +595,12 @@ def _is_transient_provider_status(exc: httpx.HTTPStatusError) -> bool:
 
 
 def _transient_retry_delay(exc: httpx.HTTPStatusError, attempt: int) -> float:
-    """Backoff for a transient provider error, honoring a sane Retry-After."""
+    """Backoff for a transient provider error, honoring server wait directives.
+
+    Waits the longer of the exponential base, a ``Retry-After``, and any
+    ``*ratelimit*reset*`` header (F3), capped at 10s so a bounded retry stays
+    bounded — the loop re-reads the header on the next attempt.
+    """
     delay = 2.0 * (attempt + 1)
     retry_after = exc.response.headers.get("retry-after")
     if retry_after:
@@ -593,6 +608,9 @@ def _transient_retry_delay(exc: httpx.HTTPStatusError, attempt: int) -> float:
             delay = max(delay, float(retry_after))
         except ValueError:
             pass
+    reset = rate_limit_reset_seconds(exc.response.headers)
+    if reset is not None:
+        delay = max(delay, reset)
     return min(delay, 10.0)
 
 
