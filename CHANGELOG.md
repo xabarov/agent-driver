@@ -7,6 +7,8 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-08-12
+
 ### Changed
 
 - **Configurable subagent depth budget replaces the blunt one-level cap (coordination
