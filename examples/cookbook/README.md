@@ -36,6 +36,7 @@ python examples/cookbook/01_quickstart.py
 | `22_model_routing.py` | Route the model per run — explicit role/effort or by difficulty (R-track) | `create_agent(model_role_map=…, model_router=…)`, `query(model_role=…, reasoning_effort=…)`, `HeuristicDifficultyRouter` |
 | `23_answer_quality_judge.py` | Score the answer, not just success — rubric + LLM judge | `AnswerRubric`, `evaluate_answer_rubric`, `LlmJudge` |
 | `24_self_consistency.py` | Plurality-vote across samples — model-diverse, not just seed | `run_self_consistent`, `vary_run_input` |
+| `25_agent_registry.py` | Define specialized agents as Markdown + run them | `AgentRegistry`, `parse_agent_markdown`, `agent_definition_to_spec` |
 
 To use a real model, swap `FakeProvider(...)` for a descriptor-resolved
 provider (see `08_providers.py`) — e.g. `resolve_provider(ProviderSpec(

@@ -44,6 +44,7 @@ redirect, NEXT, cancellation, Stop, events, and Postgres migration rules.
 | `agent_driver.gateway` | `AgentGateway` (headless session/approval core; bring your own transport) |
 | `agent_driver.mcp_server` | `AgentMcpServer` (expose the agent over MCP) |
 | `agent_driver.skills` | skill manifest/registry, curated packs |
+| `agent_driver.agents` | Markdown-defined agent types (`AgentDefinition` + frontmatter), `parse_agent_markdown` / `load_agent_definitions`, an `AgentRegistry` (layered-precedence name→definition), and `agent_definition_to_spec` to bridge a definition to a `sdk.SubagentSpec` for `run_subagent` |
 | `agent_driver.observability.cost_ledger` | `CostLedger`, `Pricing`, `register_pricing`, `estimate_cost_usd` |
 | `agent_driver.security` | `scan_context_text` (ingestion injection scanner) |
 

@@ -1,0 +1,122 @@
+# Agent coordination (C-track)
+
+Multi-agent / subagent / coordination epics, seeded by a 2026-08-11 survey of
+`agent-driver` + excel-ai against the reference runtimes in `reference/{hermes-agent,
+openclaude, openhands-sdk}` and the 2025–2026 multi-agent literature (Anthropic's
+multi-agent research system, LangChain Deep Agents, OpenAI Agents SDK handoffs, the
+MAST failure taxonomy).
+
+## Where we stand
+
+We have **more low-level primitives** than most references — formal join policies
+(`WAIT_ALL/ANY/K_OF_N/RACE/BEST_EFFORT`), merge modes, a per-child cost watchdog +
+budget isolation, a durable subagent mailbox contract, worktree isolation,
+schema-enforced tool allowlists — but they are **fragmented across two disjoint
+stacks** and several are **dead-ended**:
+
+- **(A) SDK primitives** (`sdk/subagent.py`, `async_subagent.py`, `fork.py`) —
+  in-process, no persistence. The only stack excel-ai uses.
+- **(B) Runtime executor** (`subagents/executor.py`, `runtime/single_agent/
+  tool_stage/subagent_execution.py`) — model-planner-driven, persisted, with join/
+  merge/mailbox/worktree. Rich, but **excel-ai never touches it**.
+
+Concrete dead-ends: the mailbox parent→child continuation is written but **no running
+child ever reads it** (only child→parent notification is live); the `SYNTHESIZE` merge
+mode degrades to string concatenation; the SDK's own "sync group" is a **sequential
+for-loop** (real concurrency only comes from the consumer); and model-driven fan-out is
+**hard-capped at one level** (`subagent_origin==child` guard) with no depth budget.
+
+The references are simpler on primitives but **more coherent**, and have things we
+lack: a Markdown agent registry, live subagent steering, a deep-agent long-horizon
+mode. This track closes those gaps, keeping the runtime domain-neutral.
+
+## Epics
+
+| ID | Epic | Gap | Proven by | Effort | Status |
+| --- | --- | --- | --- | --- | --- |
+| **C2** | Markdown-defined agent registry | static code roles, no hot-loadable agent types | openclaude `.claude/agents`, OpenHands `.md` | S | **DONE** |
+| **C1** | Unify the two subagent stacks | SDK primitives ≠ runtime executor; join/merge unused | — (internal) | L | PROPOSED |
+| **C3** | Mailbox fix + live subagent steering | parent→child continuation dead-ended; no mid-flight steer | openclaude `SendMessage`; MAST coordination | M | PROPOSED |
+| **C4** | Supervisor/coordinator in the SDK | orchestrator-worker only hand-wired in excel-ai; sync group is sequential | openclaude coordinator mode, Anthropic | M | PROPOSED |
+| **C5** | Deep/ultra-agent mode | planner + subagents + FS + context-mgmt not composed | LangChain Deep Agents, Anthropic | L | PROPOSED |
+| **C6** | Handoffs / agents-as-tools | no control transfer to a peer | OpenAI Agents SDK | M | PROPOSED |
+| **C7** | Governed recursion / depth budget | blunt 1-level cap, no depth budget | hermes `MAX_DEPTH` | S | PROPOSED |
+| **C8** | Verifier/critic primitive | no independent validation of subagent output | MAST verification-gap | S | PROPOSED |
+
+Guiding principle (Anthropic): multi-agent wins **only when the task decomposes into
+independent parallel threads**, at ~15× the tokens — so the supervisor/orchestrator-
+worker topology and honest budget/verification governance matter more than exotic
+swarm topologies. Cross-cutting: design against the **MAST** failure modes
+(specification ambiguity, coordination breakdown, verification gap).
+
+---
+
+### C2 — Markdown-defined agent registry — DONE (2026-08-11)
+
+New `agent_driver.agents` facade: `AgentDefinition` (from Markdown + YAML
+frontmatter), `parse_agent_markdown` / `load_agent_definitions`, `AgentRegistry`
+(layered precedence, higher priority overrides a name clash, first-wins within a
+priority), and `agent_definition_to_spec` bridging to `sdk.SubagentSpec`. Agents are
+data, hot-loadable, domain-neutral. Tests: `tests/agents/test_agent_registry.py`;
+example `examples/cookbook/25_agent_registry.py`. This becomes the config layer C4
+(coordinator) and C5 (deep-agent) build on.
+
+### C1 — Unify the two subagent stacks
+
+Collapse the SDK primitives (A) and the runtime planner-driven executor (B) so the
+SDK can drive fan-out + join (`join.py`) + merge (`merge.py`) + mailbox + worktree
+without a consumer re-implementing concurrency. Today excel-ai re-writes parallel
+fan-out with its own `asyncio.gather` + semaphore because the SDK's group runner is
+sequential. Foundational for C3/C4/C5; largest effort.
+
+### C3 — Mailbox fix + live subagent steering
+
+The `subagent_mailbox` parent→child continuation is enqueued but never consumed by a
+running child (dead-end). Wire a running child to read pending PARENT_TO_CHILD items
+mid-flight (live steering, like openclaude `SendMessage` continuing a running
+subagent by id), and add the honest result contract: **never fabricate a pending
+subagent's result** (openclaude prompt rule) + **partial output on non-final stop**
+(OpenHands) so the orchestrator can retry/salvage. Directly targets the MAST
+coordination + verification gaps.
+
+### C4 — Supervisor / coordinator in the SDK
+
+Promote excel-ai's hand-wired orchestrator-worker (intent-route → fan-out →
+aggregate) into a reusable SDK coordinator: declarative phases (e.g.
+research → synthesize → verify), **real** parallel fan-out + join (fix the sequential
+sync group), and an LLM-based synthesis step (the `SYNTHESIZE` merge mode currently
+degrades to string concat). Agents resolved from the C2 registry.
+
+### C5 — Deep / ultra-agent mode
+
+Compose what we already have — planning (P-track todos), subagents, a filesystem
+(execution-backend), and context management/compaction — into one long-horizon
+"deep agent" mode, plus the **artifact pattern**: a subagent writes findings to the
+shared workspace and returns a lightweight reference instead of a long lossy chat
+return (Anthropic; LangChain Deep Agents' planner + subagents + filesystem + context
+engineering). This is the "ultra agents" ask; highest ceiling.
+
+### C6 — Handoffs / agents-as-tools
+
+Decentralized delegation: a `transfer_to_<agent>` handoff where the chosen specialist
+owns the remainder of the turn, and specialist-as-tool for narrow subtasks (OpenAI
+Agents SDK). Lower priority than the supervisor track — supervisor is the safer 2026
+default and less MAST-prone (circular handoffs), so this is opt-in decentralization.
+
+### C7 — Governed recursion / depth budget
+
+Replace the blunt `subagent_origin==child` one-level guard with a configurable depth
+budget + per-node independent iteration/cost budgets (hermes: `MAX_DEPTH=1` default,
+per-subagent `IterationBudget=50` separate from the parent's 500). Lets deep trees
+exist while preventing self-granted recursion / fork-bombs.
+
+### C8 — Verifier / critic primitive
+
+A first-class independent verifier that validates a subagent's output before the
+parent trusts it — the MAST verification-gap fix. Composes with C4 (a verify phase)
+and the eval-layer `LlmJudge` (#5).
+
+## Recommended order
+
+C2 (done) → **C1** (foundational unify) → **C3** (fix dead-end + MAST) → **C4**
+(supervisor) → **C5** (deep-agent) → C7 → C8 → C6.
