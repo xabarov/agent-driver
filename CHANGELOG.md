@@ -7,6 +7,8 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-08-11
+
 ### Added
 
 - **Shared per-completion retry budget (resilience F6).** `base.py` (per provider
