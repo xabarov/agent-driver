@@ -35,7 +35,7 @@ mode. This track closes those gaps, keeping the runtime domain-neutral.
 | ID | Epic | Gap | Proven by | Effort | Status |
 | --- | --- | --- | --- | --- | --- |
 | **C2** | Markdown-defined agent registry | static code roles, no hot-loadable agent types | openclaude `.claude/agents`, OpenHands `.md` | S | **DONE** |
-| **C1** | Unify the two subagent stacks | SDK primitives ≠ runtime executor; join/merge unused | — (internal) | L | PROPOSED |
+| **C1** | Unify the two subagent stacks | SDK primitives ≠ runtime executor; join/merge unused | — (internal) | L | IN PROGRESS |
 | **C3** | Mailbox fix + live subagent steering | parent→child continuation dead-ended; no mid-flight steer | openclaude `SendMessage`; MAST coordination | M | PROPOSED |
 | **C4** | Supervisor/coordinator in the SDK | orchestrator-worker only hand-wired in excel-ai; sync group is sequential | openclaude coordinator mode, Anthropic | M | PROPOSED |
 | **C5** | Deep/ultra-agent mode | planner + subagents + FS + context-mgmt not composed | LangChain Deep Agents, Anthropic | L | PROPOSED |
@@ -61,13 +61,24 @@ data, hot-loadable, domain-neutral. Tests: `tests/agents/test_agent_registry.py`
 example `examples/cookbook/25_agent_registry.py`. This becomes the config layer C4
 (coordinator) and C5 (deep-agent) build on.
 
-### C1 — Unify the two subagent stacks
+### C1 — Unify the two subagent stacks — IN PROGRESS
 
 Collapse the SDK primitives (A) and the runtime planner-driven executor (B) so the
 SDK can drive fan-out + join (`join.py`) + merge (`merge.py`) + mailbox + worktree
-without a consumer re-implementing concurrency. Today excel-ai re-writes parallel
-fan-out with its own `asyncio.gather` + semaphore because the SDK's group runner is
-sequential. Foundational for C3/C4/C5; largest effort.
+without a consumer re-implementing concurrency.
+
+**Step 1 — DONE (2026-08-11):** `sdk.run_subagent_group` (`sdk/group.py`) — real
+concurrent fan-out under a concurrency cap that *executes* the shared
+`SubagentJoinPolicy` vocabulary (WAIT_ALL / WAIT_ANY / K_OF_N / RACE /
+BEST_EFFORT_UNTIL_DEADLINE) with asyncio, returning a `SubagentGroupResult`. This
+brings the runtime's join vocabulary to the SDK primitive layer and replaces the
+consumer's hand-rolled `gather` + semaphore. Tests: `tests/sdk/test_subagent_group.py`.
+
+**Remaining:** expose the runtime's merge modes (`merge.py` — and give `SYNTHESIZE` a
+real LLM synthesis, today it degrades to string-concat) + the subagent mailbox +
+worktree isolation through the same SDK surface; retire the runtime executor's
+*sequential* "sync group" runner in favor of the concurrent primitive; migrate excel-ai
+off its bespoke fan-out. Foundational for C3/C4/C5.
 
 ### C3 — Mailbox fix + live subagent steering
 
