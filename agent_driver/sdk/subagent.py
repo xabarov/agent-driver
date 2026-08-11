@@ -147,6 +147,14 @@ class SubagentSpec:
         ``denied_tools`` (see the schema-filter pattern landed in
         commit 55f3dae). The child physically cannot see — and
         therefore cannot call — tools outside the allowlist.
+        ``allowed_tools=None`` (the default) means **no allowlist** — the
+        child inherits the parent's full tool registry. To scope a child
+        down, pass an explicit tuple; only those names are advertised to
+        the model. (A common gotcha: leaving this ``None`` and expecting a
+        *narrower* set — ``None`` widens to everything, it does not
+        restrict.) Tip: :func:`agent_driver.sdk.describe` renders which
+        tools a finished child actually called, so a mis-scoped allowlist
+        is visible at a glance.
     tool_choice:
         Provider-level tool forcing (``"auto"`` / ``"required"`` /
         ``"none"`` / ``{"type": "tool", "name": "X"}``). See

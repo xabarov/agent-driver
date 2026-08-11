@@ -229,3 +229,22 @@ C2 (done) → C1 (done, unify) → C3 (done, fix dead-end + MAST) → C4 (done, 
 C5 (done, deep-agent) → C7 (done, depth budget) → C8 (done, verifier) → C6 (done, handoffs).
 
 **The C-track is complete — every epic (C1–C8) is shipped.**
+
+## Observing a coordination run
+
+Coordination is only as debuggable as it is legible. `sdk.describe(result)` renders any
+coordination result — a `SubagentResult`, `SubagentGroupResult`, `CoordinatorResult`, or
+`DeepAgentResult` — as a compact per-child trace (status, terminal reason, tools called,
+answer size, cost), flagging the failure modes that otherwise stay buried: an `⚠empty`
+answer, a non-completed terminal reason, a `⚠tool-*` failed/denied call. Reach for it the
+moment a fan-out doesn't do what you expected:
+
+```python
+result = await run_coordinator(parent, phases)
+print(sdk.describe(result))
+```
+
+`digest_subagent(result)` returns the same facts as a `SubagentDigest` for assertions in
+tests. This came directly out of a live benchmark where a consumer had to hand-roll
+per-subagent logging to discover an edit worker was reading but never reaching a write tool
+— exactly the "is the process obvious?" gap this closes.
