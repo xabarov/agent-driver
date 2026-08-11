@@ -74,11 +74,17 @@ BEST_EFFORT_UNTIL_DEADLINE) with asyncio, returning a `SubagentGroupResult`. Thi
 brings the runtime's join vocabulary to the SDK primitive layer and replaces the
 consumer's hand-rolled `gather` + semaphore. Tests: `tests/sdk/test_subagent_group.py`.
 
-**Remaining:** expose the runtime's merge modes (`merge.py` — and give `SYNTHESIZE` a
-real LLM synthesis, today it degrades to string-concat) + the subagent mailbox +
-worktree isolation through the same SDK surface; retire the runtime executor's
-*sequential* "sync group" runner in favor of the concurrent primitive; migrate excel-ai
-off its bespoke fan-out. Foundational for C3/C4/C5.
+**Step 2 — DONE (2026-08-11):** `sdk.merge_subagent_results` (deterministic
+`APPEND`/`RANK`/`VOTE`/`MANUAL` over `SubagentResult`) + `sdk.synthesize_subagent_results`
+(a **real** LLM `SYNTHESIZE` via one aux call, degrading to `APPEND` on error) — brings
+the runtime's merge vocabulary (`SubagentMergeMode`) to the SDK and fixes the
+concat-degradation. Tests: `tests/sdk/test_subagent_merge.py`; example 26 now shows
+fan-out → join → merge/synthesize.
+
+**Remaining:** expose the subagent mailbox + worktree isolation through the SDK
+surface; retire the runtime executor's *sequential* "sync group" runner in favor of the
+concurrent primitive; migrate excel-ai off its bespoke fan-out. Foundational for
+C3/C4/C5.
 
 ### C3 — Mailbox fix + live subagent steering
 

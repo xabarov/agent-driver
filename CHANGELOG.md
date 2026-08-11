@@ -9,6 +9,18 @@ change between minor versions.
 
 ### Added
 
+- **Merge / synthesize subagent-group results (coordination C1, step 2).** After a
+  fan-out joins, the parent has N child answers to combine — the runtime carried the
+  merge vocabulary (`SubagentMergeMode`) but only on the model-planner path, and its
+  `SYNTHESIZE` mode degraded to string concatenation. New on the `agent_driver.sdk`
+  facade over the SDK's own `SubagentResult`: `merge_subagent_results(results, *, mode)`
+  — deterministic `APPEND` (labeled concat) / `RANK` (longest-first) / `VOTE` (plurality
+  answer) / `MANUAL` (review stub), bounded by `max_items` / `max_chars`, contributing
+  only `COMPLETED` children — and `synthesize_subagent_results(results, *, provider)`, a
+  **real** LLM synthesis of the child answers via one cache-safe aux call (the honest
+  `SYNTHESIZE`), shortcutting zero/one answer and degrading to `APPEND` on a provider
+  error. `SubagentMergeMode` re-exported. Example `26_subagent_group.py` now shows the
+  full fan-out → join → merge/synthesize flow.
 - **Concurrent subagent fan-out with a join policy (coordination C1, step 1).** The SDK
   could spawn one child (`run_subagent`) or background handles (`AsyncSubagentManager`),
   but had no "run these N specs concurrently, capped, and join under a policy" primitive
