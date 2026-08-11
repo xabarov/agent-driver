@@ -27,7 +27,7 @@ benchmark-fitting, harness-layer only.
 | **F2** | Per-provider circuit breaker | health has no cooldown/half-open/threshold/persistence | hermes | M | **DONE** |
 | **F3** | Honor more server directives | only `Retry-After`; ignore `x-should-retry` + rate-limit-reset | openclaude, hermes | M | **DONE** |
 | **F4** | Ordered fallback-model list | only provider-swap + forced-final fallback, no model-tier list | all 3 refs | M | **DONE** |
-| **F5** | Small correctness wins | abort-blind backoff sleeps; no nudge-before-kill | openclaude, openhands | S | PROPOSED |
+| **F5** | Small correctness wins | abort-blind backoff sleeps; no nudge-before-kill | openclaude, openhands | S | **DONE** |
 | **F6** | Shared retry budget | 3 retry layers can compound (base 4× × completion 3×) | — (internal) | M | PROPOSED |
 
 Deprioritized: **cost-cascade / draft-then-verify** (our documented future,
@@ -89,18 +89,20 @@ circuit-breaker) — this is a reactive *model* swap. Tests:
 `tests/runtime/test_model_fallback.py`. (Refs: OpenHands `FallbackStrategy`, hermes
 `get_fallback_chain`, openclaude `FallbackTriggeredError`.)
 
-### F5 — Small correctness wins
+### F5 — Small correctness wins — DONE (2026-08-11)
 
-Two cheap, independent fixes: (a) **abort-responsive backoff sleeps** — our
-`asyncio.sleep` in the retry paths is not abort-checked, so a cooperative abort set
-during a backoff wait isn't noticed until it elapses (openclaude `utils/sleep.ts`
-throwOnAbort). (b) **Nudge-before-kill on the tool-failure streak** — we have nudge
-machinery (`tool_stage/research.py`, plan-verification) but the same-signature
-failure streak goes straight to force-final; inject a one-time self-correction
-message ("this call keeps failing, change approach") before hard-stopping (OpenHands
-`stuck_detector.py:218`). (Note: orphaned-tool-call backfill is NOT needed — we
-already insert `missing_tool_result_stubs` + fold orphans in
-`context_management/protocol_validate.py`.)
+(a) **Abort-responsive backoff sleeps** — `llm/backoff.abort_aware_sleep` polls a
+cooperative abort in `poll_seconds` slices; the completion loop's transient-status
+and transport backoffs use it (abort_check derived from `context.abort_handle`), so a
+Stop during a backoff is honored within a slice instead of after the full wait.
+(b) **Nudge-before-kill on the tool-failure streak** — `_update_tool_failure_guard`
+sets `tool_failure_nudge_due` at the streak-warning point (one below the force-final
+threshold), and `recovery._append_tool_failure_streak_nudge` appends a one-time
+model-facing self-correction message before the next identical failure hard-forces
+the final. Tests: `tests/llm/test_backoff_jitter.py` (abort-sleep),
+`tests/runtime/test_tool_failure_nudge.py`. (Orphaned-tool-call backfill was NOT
+needed — `context_management/protocol_validate.py` already inserts
+`missing_tool_result_stubs` + folds orphans.)
 
 ### F6 — Shared retry budget across layers
 
@@ -111,5 +113,5 @@ bounded end-to-end. Internal cleanup; lower user-visible impact.
 
 ## Recommended order
 
-F1 (done) → F2 (done) → F4 (done) → F3 (done) → **F5** → F6 · plus F2b (stale-streak
-give-up).
+F1 (done) → F2 (done) → F4 (done) → F3 (done) → F5 (done) → **F6** · plus F2b
+(stale-streak give-up).

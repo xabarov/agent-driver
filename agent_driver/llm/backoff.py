@@ -14,7 +14,9 @@ openclaude ship. ``ratio`` 0.25 → up to +25%.
 
 from __future__ import annotations
 
+import asyncio
 import random
+from typing import Callable
 
 DEFAULT_JITTER_RATIO = 0.25
 
@@ -36,4 +38,33 @@ def jittered_delay(delay: float, *, ratio: float = DEFAULT_JITTER_RATIO) -> floa
     return delay + max(0.0, ratio) * delay * _rand()
 
 
-__all__ = ["DEFAULT_JITTER_RATIO", "jittered_delay"]
+async def abort_aware_sleep(
+    seconds: float,
+    *,
+    abort_check: Callable[[], bool] | None = None,
+    poll_seconds: float = 0.1,
+) -> None:
+    """Sleep ``seconds``, returning early if ``abort_check`` becomes true (F5).
+
+    A plain ``asyncio.sleep`` in a retry backoff ignores a cooperative abort until
+    the whole wait elapses — a Stop during a 10s backoff waits the full 10s. Polling
+    in ``poll_seconds`` slices honors the abort within one slice instead; the
+    caller's next attempt then raises ``AbortRequested`` promptly. ``abort_check``
+    ``None`` (or ``seconds <= 0``) degrades to a single ``asyncio.sleep``.
+    """
+    if seconds <= 0:
+        return
+    if abort_check is None:
+        await asyncio.sleep(seconds)
+        return
+    remaining = seconds
+    step = max(0.0, poll_seconds)
+    while remaining > 0:
+        if abort_check():
+            return
+        slice_seconds = min(step, remaining) if step > 0 else remaining
+        await asyncio.sleep(slice_seconds)
+        remaining -= slice_seconds
+
+
+__all__ = ["DEFAULT_JITTER_RATIO", "abort_aware_sleep", "jittered_delay"]

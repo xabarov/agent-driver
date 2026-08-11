@@ -81,6 +81,7 @@ from agent_driver.runtime.single_agent.tool_stage.recovery import (
     _append_disallowed_management_tool_recovery_hint,
     _append_python_policy_recovery_hint,
     _append_tool_call_parse_error_feedback,
+    _append_tool_failure_streak_nudge,
     _append_unknown_tool_recovery_message,
 )
 from agent_driver.runtime.single_agent.tool_stage.protocol_messages import (
@@ -1104,6 +1105,7 @@ def _update_tool_protocol_messages(
     _append_unknown_tool_recovery_message(context, result, messages)
     _append_disallowed_management_tool_recovery_hint(context, result, messages)
     _append_python_policy_recovery_hint(context, result, messages)
+    _append_tool_failure_streak_nudge(context, result, messages)
     _append_tool_call_parse_error_feedback(context, result, messages)
     append_todo_progress_hint_after_substantive_tool(context, result, messages)
     append_web_fetch_verification_hint(context, result, messages)

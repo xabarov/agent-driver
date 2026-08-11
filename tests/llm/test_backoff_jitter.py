@@ -45,3 +45,46 @@ def test_default_rand_produces_value_in_window() -> None:
     for _ in range(50):
         out = jittered_delay(8.0)
         assert 8.0 <= out <= 8.0 * (1 + DEFAULT_JITTER_RATIO)
+
+
+# --- abort-aware sleep (F5) ------------------------------------------------- #
+
+import asyncio
+import time
+
+from agent_driver.llm.backoff import abort_aware_sleep
+
+
+@pytest.mark.asyncio
+async def test_abort_aware_sleep_returns_early_when_aborted() -> None:
+    t0 = time.monotonic()
+    await abort_aware_sleep(5.0, abort_check=lambda: True, poll_seconds=0.01)
+    assert time.monotonic() - t0 < 0.5  # did not wait the full 5s
+
+
+@pytest.mark.asyncio
+async def test_abort_aware_sleep_waits_when_not_aborted() -> None:
+    t0 = time.monotonic()
+    await abort_aware_sleep(0.15, abort_check=lambda: False, poll_seconds=0.01)
+    assert time.monotonic() - t0 >= 0.14
+
+
+@pytest.mark.asyncio
+async def test_abort_aware_sleep_honors_abort_mid_wait() -> None:
+    ticks = {"n": 0}
+
+    def _check() -> bool:
+        ticks["n"] += 1
+        return ticks["n"] >= 3  # aborts after a couple of poll slices
+
+    t0 = time.monotonic()
+    await abort_aware_sleep(5.0, abort_check=_check, poll_seconds=0.01)
+    assert time.monotonic() - t0 < 0.5
+
+
+@pytest.mark.asyncio
+async def test_abort_aware_sleep_none_check_is_plain_sleep() -> None:
+    await abort_aware_sleep(0.0, abort_check=None)  # no-op
+    t0 = time.monotonic()
+    await abort_aware_sleep(0.1, abort_check=None)
+    assert time.monotonic() - t0 >= 0.09
