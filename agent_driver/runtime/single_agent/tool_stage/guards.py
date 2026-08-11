@@ -98,6 +98,11 @@ def _update_tool_failure_guard(
                 "threshold": _TOOL_FAILURE_GUARD_THRESHOLD,
             },
         )
+        # F5: mark a model-facing self-correction nudge due for this signature — the
+        # recovery stage appends a message telling the model to change approach BEFORE
+        # the next identical failure hard-forces the final answer. (The event above is
+        # operator-facing; this is what the model actually reads.)
+        context.metadata["tool_failure_nudge_due"] = signature
     elif count >= _TOOL_FAILURE_GUARD_THRESHOLD:
         emit_step_event(
             host,

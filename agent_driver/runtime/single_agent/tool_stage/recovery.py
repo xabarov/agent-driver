@@ -444,10 +444,45 @@ def _append_unknown_tool_recovery_message(
     )
 
 
+def _append_tool_failure_streak_nudge(
+    context: RunContext,
+    _result: ToolExecutionResult,
+    messages: list[ChatMessage],
+) -> None:
+    """Nudge the model to change approach before a repeat failure forces the final (F5).
+
+    When the tool-failure guard flags a nudge due (the streak reached one below the
+    force-final threshold), append a one-time model-facing self-correction message so
+    the model breaks the loop itself instead of being hard-stopped. Deduped per
+    signature via ``tool_failure_nudge_sent``; the due flag is consumed either way.
+    """
+    signature = context.metadata.pop("tool_failure_nudge_due", None)
+    if not isinstance(signature, str) or not signature:
+        return
+    if context.metadata.get("tool_failure_nudge_sent") == signature:
+        return
+    tool_name, _, error_code = signature.partition(":")
+    messages.append(
+        ChatMessage(
+            role=ChatRole.USER,
+            content=(
+                f"The tool '{tool_name}' has failed repeatedly with the same error "
+                f"('{error_code or 'unspecified'}'). Repeating the same call will fail "
+                "again. Change approach now: adjust the arguments, use a different tool, "
+                "or answer with the evidence you already have — one more identical "
+                "failure will force a final answer."
+            ),
+            metadata=scaffolding_metadata("tool_failure_streak_nudge"),
+        )
+    )
+    context.metadata["tool_failure_nudge_sent"] = signature
+
+
 __all__ = [
     "_append_tool_call_parse_error_feedback",
     "_append_disallowed_management_tool_recovery_hint",
     "_append_python_policy_recovery_hint",
     "_append_denial_recovery_message",
     "_append_unknown_tool_recovery_message",
+    "_append_tool_failure_streak_nudge",
 ]

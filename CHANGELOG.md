@@ -7,6 +7,19 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Abort-responsive backoff + nudge-before-kill (resilience F5).** Two small
+  correctness wins: (1) the completion loop's retry backoffs now use a new
+  `agent_driver.llm.backoff.abort_aware_sleep` that polls a cooperative abort in
+  short slices — a Stop during a 10s backoff is honored within a slice instead of
+  after the whole wait (the next attempt then raises `AbortRequested` promptly);
+  (2) the tool-failure-streak guard now injects a **model-facing** self-correction
+  message one turn before it hard-forces the final answer — "this tool keeps failing
+  with the same error, change approach" — so the model can break the loop itself
+  before being stopped (the existing streak event stays operator-facing). The nudge
+  is one-time per failure signature (`tool_failure_nudge_due` / `_sent`).
+
 ## [0.16.0] - 2026-08-11
 
 ### Added

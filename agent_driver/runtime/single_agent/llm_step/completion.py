@@ -11,7 +11,7 @@ import httpx
 from agent_driver.contracts.enums import ChatRole, RuntimeEventType
 from agent_driver.contracts.control import CommandQueueItem
 from agent_driver.contracts.messages import ChatMessage
-from agent_driver.llm.backoff import jittered_delay
+from agent_driver.llm.backoff import abort_aware_sleep, jittered_delay
 from agent_driver.llm.context_windows import (
     preferred_history_view,
     provider_model_hint,
@@ -389,9 +389,19 @@ async def _handle_completion_status_error(
             retry_attempt=attempt + 1,
             retry_in_seconds=delay,
         )
-        await asyncio.sleep(jittered_delay(delay))
+        await abort_aware_sleep(
+            jittered_delay(delay), abort_check=_context_abort_check(context)
+        )
         return request, overflow_recovered
     raise exc
+
+
+def _context_abort_check(context: RunContext) -> Callable[[], bool] | None:
+    """A cooperative-abort probe for the run, or ``None`` when no handle is set."""
+    handle = getattr(context, "abort_handle", None)
+    if handle is None:
+        return None
+    return lambda: bool(getattr(handle, "is_aborted", False))
 
 
 async def complete_request(
@@ -477,12 +487,7 @@ async def _complete_request_attempts(
     overflow_recovered = False
     # U4 — observe the run's abort while the provider call is in flight so a stop
     # cancels it promptly (instead of waiting for the next step boundary).
-    _abort_handle = getattr(context, "abort_handle", None)
-    abort_check = (
-        (lambda: bool(getattr(_abort_handle, "is_aborted", False)))
-        if _abort_handle is not None
-        else None
-    )
+    abort_check = _context_abort_check(context)
     for attempt in range(3):
         # Single pre-send owner (epic 043 B): pad empty non-final turns so a
         # degenerate/interrupted turn can't make a strict provider reject the
@@ -558,7 +563,9 @@ async def _complete_request_attempts(
                     error=str(exc)[:200],
                     attempt=attempt + 1,
                 )
-                await asyncio.sleep(jittered_delay(delay))
+                await abort_aware_sleep(
+                    jittered_delay(delay), abort_check=abort_check
+                )
                 continue
             raise
     if last_timeout is not None:
