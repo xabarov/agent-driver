@@ -13,6 +13,11 @@ import httpx
 
 from agent_driver.llm.backoff import jittered_delay
 from agent_driver.llm.contracts import LlmProviderKind, ProviderStatus
+from agent_driver.llm.retry_directives import (
+    parse_should_retry,
+    rate_limit_reset_seconds,
+    strongest_retry_delay,
+)
 
 T = TypeVar("T")
 _STREAM_OPEN_RETRIES = 1
@@ -292,11 +297,22 @@ class ProviderBase:
                         # Phase 13 H25 — check status before raise_for_status so
                         # we can retry on transient server errors.
                         if response.status_code in _STATUS_RETRY_STATUSES:
-                            retry_after = _parse_retry_after(
-                                response.headers.get("retry-after")
+                            # F3: obey server directives — combine Retry-After with
+                            # any rate-limit-reset header (wait the longer), and let
+                            # ``x-should-retry: false`` fail fast instead of burning
+                            # the retry budget on something the server says won't clear.
+                            retry_after = strongest_retry_delay(
+                                _parse_retry_after(
+                                    response.headers.get("retry-after")
+                                ),
+                                rate_limit_reset_seconds(response.headers),
                             )
+                            should_retry = parse_should_retry(response.headers)
                             await stream_context.__aexit__(None, None, None)
-                            if status_attempt >= _STATUS_RETRY_MAX_ATTEMPTS:
+                            if (
+                                should_retry is False
+                                or status_attempt >= _STATUS_RETRY_MAX_ATTEMPTS
+                            ):
                                 # Out of retries — re-raise as HTTPStatusError
                                 # by opening a fresh request and calling
                                 # raise_for_status. Cleaner than synthesizing

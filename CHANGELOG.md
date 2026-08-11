@@ -9,6 +9,16 @@ change between minor versions.
 
 ### Added
 
+- **Honor `x-should-retry` + rate-limit-reset headers (resilience F3).** Beyond
+  `Retry-After` (already honored), the retry paths now obey two more provider-neutral
+  directives via a new `agent_driver.llm.retry_directives`: an explicit
+  `x-should-retry: false` **fails fast** instead of burning the retry budget on a
+  transient status the server says won't clear (wired into `llm/base.py`'s status
+  loop and the completion loop's transient-status retry), and any `*ratelimit*reset*`
+  header is parsed (relative-seconds, epoch, or ISO-8601) and folded into the backoff
+  — the retry waits the **longer** of the exponential base, `Retry-After`, and the
+  reset, capped so a large reset can't wedge a bounded loop. Composes with F1's jitter.
+  Injectable epoch clock for deterministic tests.
 - **Ordered fallback-model list on the completion path (resilience F2 → F4).** After a
   completion's in-place per-error retries are exhausted, the primary model failing with a
   non-fatal error (rate-limit / overload / server / timeout / transport) now retries the
