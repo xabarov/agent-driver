@@ -38,7 +38,7 @@ mode. This track closes those gaps, keeping the runtime domain-neutral.
 | **C1** | Unify the two subagent stacks | SDK primitives ≠ runtime executor; join/merge unused | — (internal) | L | IN PROGRESS |
 | **C3** | Mailbox fix + live subagent steering | parent→child continuation dead-ended; no mid-flight steer | openclaude `SendMessage`; MAST coordination | M | IN PROGRESS |
 | **C4** | Supervisor/coordinator in the SDK | orchestrator-worker only hand-wired in excel-ai; sync group is sequential | openclaude coordinator mode, Anthropic | M | **DONE** |
-| **C5** | Deep/ultra-agent mode | planner + subagents + FS + context-mgmt not composed | LangChain Deep Agents, Anthropic | L | IN PROGRESS |
+| **C5** | Deep/ultra-agent mode | planner + subagents + FS + context-mgmt not composed | LangChain Deep Agents, Anthropic | L | **DONE** |
 | **C6** | Handoffs / agents-as-tools | no control transfer to a peer | OpenAI Agents SDK | M | PROPOSED |
 | **C7** | Governed recursion / depth budget | blunt 1-level cap, no depth budget | hermes `MAX_DEPTH` | S | PROPOSED |
 | **C8** | Verifier/critic primitive | no independent validation of subagent output | MAST verification-gap | S | PROPOSED |
@@ -135,7 +135,7 @@ marks the `CoordinatorResult` `stopped_early` — the MAST coordination-breakdow
 Real parallelism, real synthesis, honest partial-failure semantics. Tests:
 `tests/sdk/test_coordinator.py`; example `examples/cookbook/27_coordinator.py`.
 
-### C5 — Deep / ultra-agent mode — IN PROGRESS
+### C5 — Deep / ultra-agent mode — DONE (2026-08-11)
 
 Compose what we already have — planning (P-track todos), subagents, a filesystem
 (execution-backend), and context management/compaction — into one long-horizon
@@ -157,13 +157,24 @@ into each child's `app_metadata`, so a later phase can read earlier artifacts;
 (capture a phase's group → thread the refs into the next phase's `build_specs`). Tests:
 `tests/sdk/test_artifacts.py`; example `examples/cookbook/28_deep_agent_artifacts.py`.
 
-**Remaining:** a `DeepAgent` driver that adds a planning phase (decompose the task into
-subtasks/todos, reusing the P-track `todo_write` state) and a verify phase (C8) around the
-capture→synthesize loop, plus optional backend-routed writes (the `WorkspaceCapableBackend`
-seam) so artifacts land through an injected/remote backend rather than only local pathlib.
-The reactive token-pressure compaction already applies for free inside each child's run
-loop; a long-horizon mode may later want to drive `CompactionOrchestrator.decide` on a
-per-plan-step cadence.
+**Step 2 — DONE (2026-08-11):** the `run_deep_agent` driver (`sdk/deep_agent.py`) — the
+long-horizon "ultra agent" as one domain-neutral function. It decomposes a task into
+independent subtasks (an LLM planner via `planner_provider`, or a supplied `planner`
+callable), writes the plan to `<workspace>/plan.md`, fans out one worker per subtask via
+`run_subagent_group` on a shared workspace (`share_workspace`), captures each worker's
+findings as an artifact (step 1), and hands a synthesizer child the compact references —
+not the concatenated findings — to produce the final answer (`include_partial` salvages
+non-completed workers). Returns a `DeepAgentResult` (plan + group + artifacts + answer +
+`satisfied`); an empty plan returns early, unsatisfied. Composes the whole C-track (C1
+fan-out/join, C4 coordinator semantics, C5 artifacts); compaction applies for free inside
+each child's run loop. Tests: `tests/sdk/test_deep_agent.py`; example
+`examples/cookbook/29_deep_agent.py`.
+
+**Remaining (folded into C7/C8, not C5):** a verify phase (C8) around the
+capture→synthesize loop; optional backend-routed artifact writes (the
+`WorkspaceCapableBackend` seam) rather than local pathlib; reusing the P-track
+`todo_write` ledger for the plan; and driving `CompactionOrchestrator.decide` on a
+per-plan-step cadence for very long horizons.
 
 ### C6 — Handoffs / agents-as-tools
 
@@ -187,5 +198,5 @@ and the eval-layer `LlmJudge` (#5).
 
 ## Recommended order
 
-C2 (done) → **C1** (foundational unify) → **C3** (fix dead-end + MAST) → C4 (done,
-supervisor) → **C5** (deep-agent, step 1 done — artifact pattern) → C7 → C8 → C6.
+C2 (done) → C1 (done, unify) → C3 (done, fix dead-end + MAST) → C4 (done, supervisor) →
+C5 (done, deep-agent) → **C7** → **C8** → **C6**.

@@ -19,6 +19,19 @@ change between minor versions.
 
 ### Added
 
+- **Deep/ultra-agent driver — plan → fan out → artifacts → synthesize (coordination C5,
+  step 2).** `sdk.run_deep_agent` is the long-horizon "ultra agent" as one domain-neutral
+  function. It decomposes a task into independent subtasks (an LLM planner via
+  `planner_provider`, or a supplied `planner` callable), writes the plan to
+  `<workspace>/plan.md`, fans out one worker per subtask via `run_subagent_group` on a
+  shared workspace (`share_workspace`), captures each worker's findings as an artifact
+  (step 1), and hands a synthesizer child the compact references — not the concatenated
+  findings — to produce the final answer (`include_partial` salvages non-completed
+  workers). Returns a `DeepAgentResult` (plan + group + artifacts + answer + `satisfied`);
+  an empty plan returns early. Composes the whole C-track; compaction applies for free
+  inside each child's run loop. New SDK exports: `run_deep_agent`, `DeepAgentPlan`,
+  `DeepAgentResult`. Tests: `tests/sdk/test_deep_agent.py`; example
+  `examples/cookbook/29_deep_agent.py`.
 - **Artifact pattern for subagent fan-out — the deep-agent kernel (coordination C5,
   step 1).** On a wide fan-out, returning every worker's full findings up the chat
   multiplies the parent's context (~15× on Anthropic's multi-agent research). New

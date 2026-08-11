@@ -59,6 +59,11 @@ from agent_driver.sdk.artifacts import (
     capture_subagent_artifact,
     share_workspace,
 )
+from agent_driver.sdk.deep_agent import (
+    DeepAgentPlan,
+    DeepAgentResult,
+    run_deep_agent,
+)
 from agent_driver.sdk.self_consistency import (
     SelfConsistencyResult,
     run_self_consistent,
@@ -83,6 +88,9 @@ __all__ = [
     "BackgroundSubagent",
     "CoordinatorPhase",
     "CoordinatorResult",
+    "DeepAgentPlan",
+    "DeepAgentResult",
+    "run_deep_agent",
     "PhaseResult",
     "run_coordinator",
     "SubagentArtifact",
