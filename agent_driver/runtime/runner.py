@@ -154,6 +154,9 @@ class SingleAgentRunner(
             fallback_models=tuple(
                 getattr(self._config, "fallback_models", ()) or ()
             ),
+            completion_retry_budget_seconds=getattr(
+                self._config, "completion_retry_budget_seconds", None
+            ),
             role_providers=dict(getattr(self._config, "role_providers", {}) or {}),
         )
 

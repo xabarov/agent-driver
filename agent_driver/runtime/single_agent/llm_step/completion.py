@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 import httpx
+
+# F6: monotonic-clock seam so the shared retry-budget deadline is patchable in tests.
+_monotonic = time.monotonic
 
 from agent_driver.contracts.enums import ChatRole, RuntimeEventType
 from agent_driver.contracts.control import CommandQueueItem
@@ -484,11 +488,31 @@ async def _complete_request_attempts(
     circuit breaker prevent retry storms.
     """
     last_timeout: httpx.TimeoutException | None = None
+    last_exc: BaseException | None = None
     overflow_recovered = False
     # U4 — observe the run's abort while the provider call is in flight so a stop
     # cancels it promptly (instead of waiting for the next step boundary).
     abort_check = _context_abort_check(context)
+    # F6: a single shared wall-clock retry budget bounds this loop end-to-end.
+    # base.py (per provider call) and this loop each retry transient errors, so on a
+    # persistently-failing provider the two multiply (base ~4 × this ~3). Once the
+    # cumulative time here passes the budget we stop re-entering the provider instead
+    # of compounding. ``None`` (default) preserves the plain 3-attempt behavior.
+    retry_budget = getattr(
+        getattr(host, "_deps", None), "completion_retry_budget_seconds", None
+    )
+    started = _monotonic()
     for attempt in range(3):
+        if (
+            attempt > 0
+            and retry_budget is not None
+            and _monotonic() - started >= retry_budget
+        ):
+            # Shared retry budget exhausted — surface the last error rather than
+            # starting another (base-multiplying) attempt.
+            if last_exc is not None:
+                raise last_exc
+            break
         # Single pre-send owner (epic 043 B): pad empty non-final turns so a
         # degenerate/interrupted turn can't make a strict provider reject the
         # whole request. Covers the initial send and every retry rebuild below
@@ -499,6 +523,7 @@ async def _complete_request_attempts(
                 host, context, request, abort_check=abort_check
             )
         except httpx.HTTPStatusError as exc:
+            last_exc = exc
             request, overflow_recovered = await _handle_completion_status_error(
                 host,
                 context,
@@ -511,6 +536,7 @@ async def _complete_request_attempts(
             continue
         except httpx.TimeoutException as exc:
             last_timeout = exc
+            last_exc = exc
             if (
                 isinstance(exc, LlmStreamIdleTimeout)
                 and getattr(exc, "emitted_chunks", 0) > 0
@@ -532,6 +558,7 @@ async def _complete_request_attempts(
                 continue
             raise
         except (httpx.HTTPError, RuntimeError, ValueError) as exc:
+            last_exc = exc
             if _should_retry_stream_failure_without_streaming(
                 context, request, attempt
             ):

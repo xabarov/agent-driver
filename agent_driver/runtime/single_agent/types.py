@@ -65,6 +65,7 @@ _CAPABILITY_FIELDS = {item.name for item in fields(CapabilitySettings)}
 _RUNNER_CONFIG_EXTRA_FIELDS = {
     "default_hard_max_seconds",
     "default_idle_timeout_seconds",
+    "completion_retry_budget_seconds",
     "default_max_tool_calls",
     "fallback_models",
     "fallback_providers",
@@ -222,6 +223,10 @@ class RunnerConfig:
         self.fallback_providers = tuple(kwargs.pop("fallback_providers", ()) or ())
         # F4: ordered fallback model ids (same provider) — see RunnerDeps.fallback_models.
         self.fallback_models = tuple(kwargs.pop("fallback_models", ()) or ())
+        # F6: shared per-completion retry-time budget (seconds); None = unbounded.
+        self.completion_retry_budget_seconds = kwargs.pop(
+            "completion_retry_budget_seconds", None
+        )
         # R3: role → provider registry (cross-provider role distribution). Injected
         # LlmProvider objects, threaded to RunnerDeps.role_providers. Empty = off.
         self.role_providers = dict(kwargs.pop("role_providers", {}) or {})
@@ -679,6 +684,12 @@ class RunnerDeps:
     # ``fallback_providers`` (which swaps provider objects) — this only rewrites
     # ``request.model``. Empty tuple = no model fallback.
     fallback_models: tuple[str, ...] = ()
+    # F6 (resilience): a single wall-clock budget (seconds) bounding one completion's
+    # retry loop end-to-end. base.py and the completion loop each retry transient errors,
+    # so they multiply on a persistently-failing provider; once the loop's cumulative time
+    # passes this budget it stops re-entering the provider. ``None`` = unbounded (the plain
+    # 3-attempt behavior).
+    completion_retry_budget_seconds: float | None = None
     # R3 (R-track): role → provider registry. Lets a run's ``model_role`` route to a
     # DIFFERENT provider object (e.g. native Anthropic for a "planner" role, an
     # OpenRouter route for an "executor" role) — cross-provider role distribution, not
