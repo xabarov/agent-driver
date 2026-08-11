@@ -271,6 +271,23 @@ class SubagentSpec:
             model_policy=self._model_policy,
         )
 
+    def with_prompt(self, prompt: str) -> "SubagentSpec":
+        """Return a copy with a different prompt, keeping all other policies.
+
+        Used by the agents-as-tools / handoff pattern (C6): a specialist spec is a
+        reusable template and each tool call rebinds the parent-supplied input as the
+        child's prompt.
+        """
+        return SubagentSpec(
+            agent_type=self.agent_type,
+            prompt=prompt,
+            system_prompt=self.system_prompt,
+            tool_policy=self._tool_policy,
+            output_policy=self._output_policy,
+            limits=self._limits,
+            model_policy=self._model_policy,
+        )
+
     def with_app_metadata(self, **extra: Any) -> "SubagentSpec":
         """Return a copy with extra ``app_metadata`` merged in (new keys win).
 

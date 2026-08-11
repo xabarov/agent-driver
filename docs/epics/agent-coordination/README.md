@@ -39,7 +39,7 @@ mode. This track closes those gaps, keeping the runtime domain-neutral.
 | **C3** | Mailbox fix + live subagent steering | parent→child continuation dead-ended; no mid-flight steer | openclaude `SendMessage`; MAST coordination | M | IN PROGRESS |
 | **C4** | Supervisor/coordinator in the SDK | orchestrator-worker only hand-wired in excel-ai; sync group is sequential | openclaude coordinator mode, Anthropic | M | **DONE** |
 | **C5** | Deep/ultra-agent mode | planner + subagents + FS + context-mgmt not composed | LangChain Deep Agents, Anthropic | L | **DONE** |
-| **C6** | Handoffs / agents-as-tools | no control transfer to a peer | OpenAI Agents SDK | M | PROPOSED |
+| **C6** | Handoffs / agents-as-tools | no control transfer to a peer | OpenAI Agents SDK | M | **DONE** |
 | **C7** | Governed recursion / depth budget | blunt 1-level cap, no depth budget | hermes `MAX_DEPTH` | S | **DONE** |
 | **C8** | Verifier/critic primitive | no independent validation of subagent output | MAST verification-gap | S | **DONE** |
 
@@ -176,12 +176,20 @@ capture→synthesize loop; optional backend-routed artifact writes (the
 `todo_write` ledger for the plan; and driving `CompactionOrchestrator.decide` on a
 per-plan-step cadence for very long horizons.
 
-### C6 — Handoffs / agents-as-tools
+### C6 — Handoffs / agents-as-tools — DONE (2026-08-11)
 
-Decentralized delegation: a `transfer_to_<agent>` handoff where the chosen specialist
-owns the remainder of the turn, and specialist-as-tool for narrow subtasks (OpenAI
-Agents SDK). Lower priority than the supervisor track — supervisor is the safer 2026
-default and less MAST-prone (circular handoffs), so this is opt-in decentralization.
+`sdk/agent_tool.py` — decentralized delegation as tools the lead's model can call, built
+on a C2 `AgentDefinition` (or a hand-built `SubagentSpec`) plus `run_subagent`: the spec is
+a reusable template and each call rebinds the model-supplied input as the child's prompt
+(`SubagentSpec.with_prompt`). `agent_as_tool` builds an ``ask_<agent>`` tool that runs a
+narrow subtask and returns `{agent, status, answer, handoff}` to the caller, who keeps
+driving; `handoff_tool` builds a ``transfer_to_<agent>`` tool whose description instructs
+the caller to relay the specialist's answer as its *final* answer — a cooperative control
+transfer kept at the SDK layer (no runtime driver swap), so the runtime stays domain-neutral.
+Both return a `CustomToolDefinition` that registers like any custom tool. Opt-in by design:
+the supervisor track is the safer 2026 default and less MAST circular-delegation prone. New
+SDK exports: `agent_as_tool`, `handoff_tool`. Tests: `tests/sdk/test_agent_tool.py`; example
+`examples/cookbook/31_agents_as_tools.py`.
 
 ### C7 — Governed recursion / depth budget — DONE (2026-08-11)
 
@@ -218,4 +226,6 @@ deterministically without a model call. New SDK exports: `VerifierVerdict`, `ver
 ## Recommended order
 
 C2 (done) → C1 (done, unify) → C3 (done, fix dead-end + MAST) → C4 (done, supervisor) →
-C5 (done, deep-agent) → C7 (done, depth budget) → C8 (done, verifier) → **C6**.
+C5 (done, deep-agent) → C7 (done, depth budget) → C8 (done, verifier) → C6 (done, handoffs).
+
+**The C-track is complete — every epic (C1–C8) is shipped.**
