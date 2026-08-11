@@ -7,6 +7,8 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-11
+
 ### Added
 
 - **Honor `x-should-retry` + rate-limit-reset headers (resilience F3).** Beyond
