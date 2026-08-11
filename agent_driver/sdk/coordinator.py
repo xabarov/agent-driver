@@ -33,6 +33,7 @@ from agent_driver.contracts.enums import SubagentJoinPolicy, SubagentMergeMode
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.sdk.agent import Agent
+from agent_driver.sdk.coordination_events import CoordinationObserver, emit_event
 from agent_driver.sdk.group import SubagentGroupResult, run_subagent_group
 from agent_driver.sdk.merge import merge_subagent_results, synthesize_subagent_results
 from agent_driver.sdk.subagent import SubagentSpec
@@ -121,6 +122,7 @@ async def run_coordinator(
     tool_gate: ToolGate | None = None,
     parent_run_id: str | None = None,
     parent_abort_handle: RunAbortHandle | None = None,
+    on_event: CoordinationObserver | None = None,
 ) -> CoordinatorResult:
     """Run an ordered list of supervisor phases, threading each phase's merged output.
 
@@ -145,6 +147,7 @@ async def run_coordinator(
     ordered: list[PhaseResult] = []
     stopped_early = False
     for phase in phases:
+        emit_event(on_event, "phase_started", phase=phase.name)
         built = phase.build_specs(prior)
         specs = list(await built if inspect.isawaitable(built) else built)
         group = await run_subagent_group(
@@ -157,6 +160,8 @@ async def run_coordinator(
             tool_gate=tool_gate,
             parent_run_id=parent_run_id,
             parent_abort_handle=parent_abort_handle,
+            on_event=on_event,
+            phase=phase.name,
         )
         merged = await _merge_phase(
             phase, group, synthesizer_provider=synthesizer_provider
@@ -164,6 +169,10 @@ async def run_coordinator(
         result = PhaseResult(name=phase.name, group=group, merged=merged)
         ordered.append(result)
         prior[phase.name] = result
+        emit_event(
+            on_event, "phase_completed",
+            phase=phase.name, detail=f"satisfied={group.satisfied}, merged={len(merged)}c",
+        )
         if stop_on_unsatisfied and not group.satisfied:
             stopped_early = True
             break

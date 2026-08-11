@@ -45,8 +45,18 @@ async def main() -> int:
         CoordinatorPhase("write", lambda prior: [SubagentSpec(agent_type="writer", prompt="compose")]),
     ]
     result = await run_coordinator(parent, phases)
-    print("\n=== coordinator ===")
+    print("\n=== coordinator (post-hoc) ===")
     print(describe(result))
+
+    # Live: stream progress as it happens via on_event (here a print observer; in
+    # production pass log_coordination_events() to log each phase/child boundary).
+    print("\n=== coordinator (live on_event) ===")
+
+    def show(e):  # noqa: ANN001, ANN202
+        label = e.agent_type or e.phase or ""
+        print(f"  live: {e.kind:18} {label}".rstrip())
+
+    await run_coordinator(parent, phases, on_event=show)
     return 0
 
 

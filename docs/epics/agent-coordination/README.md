@@ -248,3 +248,20 @@ print(sdk.describe(result))
 tests. This came directly out of a live benchmark where a consumer had to hand-roll
 per-subagent logging to discover an edit worker was reading but never reaching a write tool
 — exactly the "is the process obvious?" gap this closes.
+
+For *live* progress (not just the post-hoc result), pass an `on_event` observer — the fan-out
+streams a `CoordinationEvent` as it unfolds (`phase_started`, `child_started`,
+`child_completed`, …), so a long run is legible while it runs, not only after:
+
+```python
+from agent_driver.sdk import log_coordination_events
+await run_coordinator(parent, phases, on_event=log_coordination_events())
+# [coord] ┌ phase 'research'
+# [coord] ▶ researcher #0 starting (research)
+# [coord] ✓ researcher  completed  4 tools […]  answer=412c
+# [coord] └ phase 'research' satisfied=True, merged=…c
+```
+
+`on_event` is accepted by `run_subagent_group` / `run_coordinator` / `run_deep_agent`; write
+your own observer for a UI or metrics, or use `log_coordination_events()` for a logger. An
+observer that raises never breaks the run.

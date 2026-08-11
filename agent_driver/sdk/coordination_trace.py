@@ -24,10 +24,12 @@ programmatic checks, `digest_subagent` returns the same facts as a `SubagentDige
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from dataclasses import dataclass
 
 from agent_driver.contracts.enums import RunStatus, ToolTraceStatus
+from agent_driver.sdk.coordination_events import CoordinationEvent, CoordinationObserver
 from agent_driver.sdk.coordinator import CoordinatorResult
 from agent_driver.sdk.deep_agent import DeepAgentResult
 from agent_driver.sdk.group import SubagentGroupResult
@@ -188,6 +190,40 @@ def describe_deep_agent(result: DeepAgentResult) -> str:
     return "\n".join(lines)
 
 
+def log_coordination_events(
+    logger: logging.Logger | None = None, *, level: int = logging.INFO
+) -> CoordinationObserver:
+    """A ready-made ``on_event`` observer that logs a coordination run as it unfolds.
+
+    Pass it to ``run_coordinator`` / ``run_deep_agent`` / ``run_subagent_group`` to stream
+    live progress — each phase boundary, each worker start, and each worker completion
+    (rendered with :func:`describe_subagent`, so empty answers / failed tools are flagged):
+
+        await run_coordinator(parent, phases, on_event=log_coordination_events())
+    """
+    log = logger or logging.getLogger("agent_driver.coordination")
+
+    def _observe(e: CoordinationEvent) -> None:
+        if e.kind in ("child_completed", "synthesis_completed"):
+            log.log(level, "[coord] %s", describe_subagent(e.result))
+        elif e.kind == "child_started":
+            where = f" ({e.phase})" if e.phase else ""
+            log.log(level, "[coord] ▶ %s #%s starting%s", e.agent_type, e.index, where)
+        elif e.kind == "child_retrying":
+            log.log(level, "[coord] ↻ %s #%s %s", e.agent_type, e.index, e.detail or "")
+        elif e.kind == "phase_started":
+            log.log(level, "[coord] ┌ phase '%s'", e.phase)
+        elif e.kind == "phase_completed":
+            log.log(level, "[coord] └ phase '%s' %s", e.phase, e.detail or "")
+        elif e.kind == "plan_ready":
+            log.log(level, "[coord] plan ready — %s", e.detail or f"{e.total} subtasks")
+        elif e.kind == "synthesis_started":
+            log.log(level, "[coord] synthesizing (%s)…", e.agent_type)
+        # group_started / group_completed stay quiet — the phase/child lines carry it.
+
+    return _observe
+
+
 def describe(result: object) -> str:
     """Render any coordination result as a compact, human-readable trace.
 
@@ -214,4 +250,5 @@ __all__ = [
     "describe_group",
     "describe_subagent",
     "digest_subagent",
+    "log_coordination_events",
 ]
