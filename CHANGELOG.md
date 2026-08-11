@@ -30,6 +30,20 @@ change between minor versions.
 
 ### Added
 
+- **Agents-as-tools and handoffs (coordination C6).** Decentralized delegation as tools the
+  lead's model can call, the complement to the supervisor track. Built on a C2
+  `AgentDefinition` (or a `SubagentSpec`) plus `run_subagent`: the spec is a reusable template
+  and each call rebinds the model-supplied input as the child's prompt (new
+  `SubagentSpec.with_prompt`). `sdk.agent_as_tool` builds an ``ask_<agent>`` tool that runs a
+  narrow subtask and returns `{agent, status, answer, handoff}`, with the caller still
+  driving; `sdk.handoff_tool` builds a ``transfer_to_<agent>`` tool whose description
+  instructs the caller to relay the specialist's answer as its final answer — a cooperative
+  control transfer kept at the SDK layer (no runtime driver swap). Both return a
+  `CustomToolDefinition` that registers like any custom tool. Opt-in by design (the supervisor
+  track is the safer default, less MAST circular-delegation prone). New SDK exports:
+  `agent_as_tool`, `handoff_tool`. Tests: `tests/sdk/test_agent_tool.py`; example
+  `examples/cookbook/31_agents_as_tools.py`. **This completes the agent-coordination C-track
+  (C1–C8).**
 - **Independent verifier / critic primitive (coordination C8).** The MAST verification-gap
   fix — a first-class, skeptical verifier that validates an answer before the parent trusts
   it. Where the eval-layer `LlmJudge` scores answer *quality*, `sdk.verify_answer` decides

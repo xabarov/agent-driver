@@ -70,6 +70,7 @@ from agent_driver.sdk.verify import (
     verify_subagent_group,
     verify_subagent_result,
 )
+from agent_driver.sdk.agent_tool import agent_as_tool, handoff_tool
 from agent_driver.sdk.self_consistency import (
     SelfConsistencyResult,
     run_self_consistent,
@@ -108,6 +109,8 @@ __all__ = [
     "verify_answer",
     "verify_subagent_group",
     "verify_subagent_result",
+    "agent_as_tool",
+    "handoff_tool",
     "AgentDriverSDKError",
     "ProviderError",
     "ProviderErrorDetails",
