@@ -30,6 +30,20 @@ change between minor versions.
 
 ### Added
 
+- **Coordination observability — `describe()` a fan-out (coordination).** A fan-out returns
+  rich result objects, but answering "what did each worker do, and why did one come back
+  empty?" meant hand-walking nested `tool_trace` / `status` / `terminal_reason` fields —
+  opaque enough that a consumer debugging a coordinator had to hand-roll its own per-subagent
+  logging. New `sdk/coordination_trace.py`: `describe(result)` renders any coordination
+  result (`SubagentResult` / `SubagentGroupResult` / `CoordinatorResult` / `DeepAgentResult`)
+  as a compact, human-readable trace — per child: status, terminal reason, the tools it
+  called (repeats collapsed as `name ×N`), answer size, and cost — explicitly flagging the
+  usual failure modes (`⚠empty` answer, a non-completed terminal reason, a `⚠tool-*`
+  failed/denied call). `digest_subagent` returns the same facts as a `SubagentDigest` for
+  programmatic checks. Also clarified `SubagentSpec.allowed_tools` (the `None`-means-inherit-
+  everything gotcha). New SDK exports: `describe`, `describe_group`, `describe_coordinator`,
+  `describe_deep_agent`, `describe_subagent`, `digest_subagent`, `SubagentDigest`. Tests:
+  `tests/sdk/test_coordination_trace.py`; example `examples/cookbook/32_coordination_trace.py`.
 - **Agents-as-tools and handoffs (coordination C6).** Decentralized delegation as tools the
   lead's model can call, the complement to the supervisor track. Built on a C2
   `AgentDefinition` (or a `SubagentSpec`) plus `run_subagent`: the spec is a reusable template
