@@ -44,6 +44,18 @@ change between minor versions.
   everything gotcha). New SDK exports: `describe`, `describe_group`, `describe_coordinator`,
   `describe_deep_agent`, `describe_subagent`, `digest_subagent`, `SubagentDigest`. Tests:
   `tests/sdk/test_coordination_trace.py`; example `examples/cookbook/32_coordination_trace.py`.
+- **Live coordination events — watch a fan-out unfold (coordination observability).**
+  `describe()` explains a run *after* it finishes; for a long fan-out you also want progress
+  *while* it runs. `run_subagent_group` / `run_coordinator` / `run_deep_agent` now take an
+  optional `on_event` observer that receives a `CoordinationEvent` at each lifecycle point —
+  `group_started`, per-child `child_started` / `child_retrying` / `child_completed` (carrying
+  the raw result), `group_completed`, plus `phase_started` / `phase_completed` (coordinator)
+  and `plan_ready` / `synthesis_started` / `synthesis_completed` (deep-agent). Events carry a
+  `phase` label so a coordinator's per-child events attribute to their phase. A ready-made
+  `log_coordination_events()` observer streams it to a logger (each completion rendered with
+  `describe_subagent`, so failures are flagged); an observer that raises is swallowed and
+  never breaks the run. New SDK exports: `CoordinationEvent`, `log_coordination_events`. Tests:
+  `tests/sdk/test_coordination_events.py`; example `examples/cookbook/32_coordination_trace.py`.
 - **Agents-as-tools and handoffs (coordination C6).** Decentralized delegation as tools the
   lead's model can call, the complement to the supervisor track. Built on a C2
   `AgentDefinition` (or a `SubagentSpec`) plus `run_subagent`: the spec is a reusable template

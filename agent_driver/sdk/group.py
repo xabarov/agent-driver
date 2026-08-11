@@ -25,6 +25,7 @@ from agent_driver.llm.backoff import abort_aware_sleep, jittered_delay
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.sdk.agent import Agent
+from agent_driver.sdk.coordination_events import CoordinationObserver, emit_event
 from agent_driver.sdk.subagent import SubagentResult, SubagentSpec, run_subagent
 
 # Default retry predicate: retry a child that raised, or that ended non-COMPLETED.
@@ -109,6 +110,8 @@ async def run_subagent_group(
     parent_run_id: str | None = None,
     parent_abort_handle: RunAbortHandle | None = None,
     tool_gate: ToolGate | None = None,
+    on_event: CoordinationObserver | None = None,
+    phase: str | None = None,
 ) -> SubagentGroupResult:
     """Run ``specs`` concurrently and join under ``join_policy``.
 
@@ -124,6 +127,10 @@ async def run_subagent_group(
     ended non-``COMPLETED``), up to ``retries`` times, with a ``retry_backoff_seconds``
     exponential+jittered wait **outside** the concurrency slot — a backing-off child
     frees its slot for the next queued one. The backoff is abort-aware.
+
+    ``on_event`` (with an optional ``phase`` label) receives a live
+    :class:`CoordinationEvent` as the fan-out unfolds — ``group_started``, each child's
+    ``child_started`` / ``child_retrying`` / ``child_completed``, and ``group_completed``.
     """
     spec_list = list(specs)
     count = len(spec_list)
@@ -131,7 +138,9 @@ async def run_subagent_group(
         raise ValueError("K_OF_N join policy requires k >= 1")
     results: list[SubagentResult | None] = [None] * count
     errors: list[BaseException | None] = [None] * count
+    emit_event(on_event, "group_started", phase=phase, total=count)
     if count == 0:
+        emit_event(on_event, "group_completed", phase=phase, total=0, detail="satisfied=True")
         return SubagentGroupResult((), (), join_policy, satisfied=True)
 
     sem = asyncio.Semaphore(concurrency) if concurrency and concurrency > 0 else None
@@ -172,12 +181,28 @@ async def run_subagent_group(
             return None, exc
 
     async def _one(index: int) -> tuple[int, SubagentResult | None, BaseException | None]:
+        agent_type = spec_list[index].agent_type
+        emit_event(
+            on_event, "child_started",
+            phase=phase, agent_type=agent_type, index=index, total=count,
+        )
         attempt = 0
         while True:
             child, error = await _attempt(index)
             if attempt >= retries or not should_retry(child, error):
+                emit_event(
+                    on_event, "child_completed",
+                    phase=phase, agent_type=agent_type, index=index,
+                    status=(child.status.value if child is not None else "error"),
+                    result=child,
+                )
                 return index, child, error
             attempt += 1
+            emit_event(
+                on_event, "child_retrying",
+                phase=phase, agent_type=agent_type, index=index,
+                detail=f"attempt {attempt}",
+            )
             if retry_backoff_seconds > 0:
                 # Backoff OUTSIDE the semaphore so it doesn't hold a concurrency slot.
                 await abort_aware_sleep(
@@ -230,6 +255,10 @@ async def run_subagent_group(
     else:  # WAIT_ANY, BEST_EFFORT_UNTIL_DEADLINE
         satisfied = successes >= 1
 
+    emit_event(
+        on_event, "group_completed",
+        phase=phase, total=count, detail=f"satisfied={satisfied}",
+    )
     return SubagentGroupResult(
         results=tuple(results),
         errors=tuple(errors),

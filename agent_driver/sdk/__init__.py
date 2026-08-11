@@ -71,6 +71,7 @@ from agent_driver.sdk.verify import (
     verify_subagent_result,
 )
 from agent_driver.sdk.agent_tool import agent_as_tool, handoff_tool
+from agent_driver.sdk.coordination_events import CoordinationEvent
 from agent_driver.sdk.coordination_trace import (
     SubagentDigest,
     describe,
@@ -79,6 +80,7 @@ from agent_driver.sdk.coordination_trace import (
     describe_group,
     describe_subagent,
     digest_subagent,
+    log_coordination_events,
 )
 from agent_driver.sdk.self_consistency import (
     SelfConsistencyResult,
@@ -120,6 +122,7 @@ __all__ = [
     "verify_subagent_result",
     "agent_as_tool",
     "handoff_tool",
+    "CoordinationEvent",
     "SubagentDigest",
     "describe",
     "describe_coordinator",
@@ -127,6 +130,7 @@ __all__ = [
     "describe_group",
     "describe_subagent",
     "digest_subagent",
+    "log_coordination_events",
     "AgentDriverSDKError",
     "ProviderError",
     "ProviderErrorDetails",

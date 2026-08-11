@@ -29,6 +29,7 @@ from agent_driver.contracts.enums import SubagentJoinPolicy
 from agent_driver.runtime.abort import RunAbortHandle
 from agent_driver.runtime.tool_gate import ToolGate
 from agent_driver.sdk.agent import Agent
+from agent_driver.sdk.coordination_events import CoordinationObserver, emit_event
 from agent_driver.sdk.artifacts import (
     SubagentArtifact,
     artifact_references,
@@ -145,6 +146,7 @@ async def run_deep_agent(
     parent_run_id: str | None = None,
     parent_abort_handle: RunAbortHandle | None = None,
     tool_gate: ToolGate | None = None,
+    on_event: CoordinationObserver | None = None,
 ) -> DeepAgentResult:
     """Run one deep-agent pass over ``task``: plan → fan out → artifacts → synthesize.
 
@@ -166,6 +168,10 @@ async def run_deep_agent(
     )
     plan = DeepAgentPlan(task=task, subtasks=tuple(subtasks))
     _write_plan_doc(workspace_cwd, plan)
+    emit_event(
+        on_event, "plan_ready",
+        total=len(subtasks), detail=f"{len(subtasks)} subtasks",
+    )
     if not subtasks:
         return DeepAgentResult(task=task, plan=plan, group=_empty_group())
 
@@ -184,6 +190,8 @@ async def run_deep_agent(
         parent_run_id=parent_run_id,
         parent_abort_handle=parent_abort_handle,
         tool_gate=tool_gate,
+        on_event=on_event,
+        phase="workers",
     )
     artifacts = capture_group_artifacts(
         group,
@@ -201,12 +209,17 @@ async def run_deep_agent(
         [SubagentSpec(agent_type=synthesizer_agent_type, prompt=synth_prompt)],
         workspace_cwd,
     )[0]
+    emit_event(on_event, "synthesis_started", agent_type=synthesizer_agent_type)
     synth = await run_subagent(
         parent,
         synth_spec,
         parent_run_id=parent_run_id,
         parent_abort_handle=parent_abort_handle,
         tool_gate=tool_gate,
+    )
+    emit_event(
+        on_event, "synthesis_completed",
+        agent_type=synthesizer_agent_type, status=synth.status.value, result=synth,
     )
     answer = synth.answer or ""
     return DeepAgentResult(
