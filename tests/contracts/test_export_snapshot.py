@@ -50,6 +50,7 @@ _SDK = {
     "SubagentResult",
     "SubagentSpec",
     "SubagentToolPolicy",
+    "VerifierVerdict",
     "ToolRegistry",
     "ToolSet",
     "TraceSummary",
@@ -76,6 +77,9 @@ _SDK = {
     "summarize_output",
     "support_bundle",
     "tool",
+    "verify_answer",
+    "verify_subagent_group",
+    "verify_subagent_result",
 }
 
 _RUNTIME = {

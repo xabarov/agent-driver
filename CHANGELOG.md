@@ -30,6 +30,19 @@ change between minor versions.
 
 ### Added
 
+- **Independent verifier / critic primitive (coordination C8).** The MAST verification-gap
+  fix — a first-class, skeptical verifier that validates an answer before the parent trusts
+  it. Where the eval-layer `LlmJudge` scores answer *quality*, `sdk.verify_answer` decides
+  *trust*: a `VerifierVerdict` (accept/reject + confidence + the concrete `issues` found),
+  with an adversarial multi-vote quorum via `votes=` (strict majority, unioned issues) so a
+  single flaky verifier can't wave a bad answer through. `verify_subagent_result` /
+  `verify_subagent_group` apply it to fan-out output — the verify step for a C4 coordinator
+  phase or a C5 deep-agent fan-out. One cache-safe `aux_completion` per vote, a tolerant JSON
+  parse, and a graceful fallback: a verifier outage yields `accepted=True, confidence=0.0`
+  (an explicit "no signal", never a silent approval), and an empty/missing answer is rejected
+  deterministically without a model call. New SDK exports: `VerifierVerdict`, `verify_answer`,
+  `verify_subagent_result`, `verify_subagent_group`. Tests: `tests/sdk/test_verify.py`;
+  example `examples/cookbook/30_verifier.py`.
 - **Deep/ultra-agent driver — plan → fan out → artifacts → synthesize (coordination C5,
   step 2).** `sdk.run_deep_agent` is the long-horizon "ultra agent" as one domain-neutral
   function. It decomposes a task into independent subtasks (an LLM planner via
