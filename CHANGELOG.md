@@ -9,6 +9,18 @@ change between minor versions.
 
 ### Added
 
+### Changed
+
+- **Runtime subagent group runs children concurrently (coordination C1, step 3).** The
+  model-planner-driven `execute_subagent_group_sync` ran its selected children in a
+  **sequential `for`-loop** despite the group's `max_parallel` — so a fan-out of N sheets
+  cost N× the wall-clock. It now runs the (already parallel-budget-limited) children
+  **concurrently** via `asyncio.gather`, order-preserving and orphan-free, re-raising a
+  rare catastrophic child exception after all settle. The background executor already ran
+  children concurrently, so this just aligns the two paths. No API change.
+
+### Added
+
 - **Merge / synthesize subagent-group results (coordination C1, step 2).** After a
   fan-out joins, the parent has N child answers to combine — the runtime carried the
   merge vocabulary (`SubagentMergeMode`) but only on the model-planner path, and its

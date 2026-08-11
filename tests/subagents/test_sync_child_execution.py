@@ -696,3 +696,38 @@ def _init_git_repo(path: Path) -> None:
             stderr=subprocess.PIPE,
             text=True,
         )
+
+
+@pytest.mark.asyncio
+async def test_sync_group_runs_children_concurrently() -> None:
+    """C1: the sync executor runs the selected children concurrently, not one-at-a-time."""
+    live = {"now": 0, "max": 0}
+
+    async def _tracking_runner(run_input):
+        live["now"] += 1
+        live["max"] = max(live["max"], live["now"])
+        try:
+            await asyncio.sleep(0.03)
+            return await _ok_child_runner(run_input)
+        finally:
+            live["now"] -= 1
+
+    store = InMemorySubagentStore()
+    result = await execute_subagent_group_sync(
+        parent=default_parent_handoff(answer="parent summary"),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_concurrent",
+            purpose="analysis",
+            max_parallel=3,
+            tasks=tuple(
+                SubagentTaskSpec(task_id=f"task_{i}", task="go", description="d")
+                for i in range(3)
+            ),
+        ),
+        store=store,
+        child_runner=_tracking_runner,
+        max_child_runs=4,
+    )
+    assert len(result.runs) == 3
+    assert all(run.status.value == "completed" for run in result.runs)
+    assert live["max"] >= 2  # ran concurrently (a sequential loop would peak at 1)
