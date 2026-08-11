@@ -7,6 +7,23 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-provider circuit breaker in the router (resilience F2).** `HealthAwareRouter`
+  failed over on errors but had no sticky state: it marked a provider unhealthy on
+  failure, yet `refresh_health()` re-ran the provider's healthcheck every call and
+  could flip it straight back — so a provider whose *completions* keep failing while
+  its *healthcheck* passes was re-selected on every request. The router now keeps a
+  circuit-breaker state machine per provider: N consecutive unhealthy-marking failures
+  (`circuit_failure_threshold`, default 3) **open** the circuit and exclude the provider
+  for a cooldown (`circuit_cooldown_seconds`, default 30s) regardless of `status.healthy`;
+  when the cooldown elapses the circuit goes **half-open** and the next attempt is a single
+  probe — a success closes it, a failure re-opens it with an exponentially escalated
+  cooldown (capped at `circuit_cooldown_max_seconds`, default 300s). Failures that don't
+  mark the provider unhealthy (auth / content-policy — the request was bad, not the
+  provider) never trip it. Opt-out via `circuit_breaker_enabled=False`; the clock is an
+  injectable `now` seam for deterministic tests.
+
 ### Changed
 
 - **Decorrelated jitter on every retry backoff (resilience F1).** All transient-error

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from time import monotonic
 
@@ -35,6 +35,24 @@ class _ScoredProvider:
     score: float
 
 
+@dataclass
+class _BreakerState:
+    """Per-provider circuit-breaker state (F2).
+
+    ``opened_at is None`` ⇒ CLOSED. A set ``opened_at`` with the cooldown not yet
+    elapsed ⇒ OPEN (provider excluded from selection regardless of its own
+    ``status.healthy``, which a passing healthcheck could otherwise flip back on).
+    Once the cooldown elapses the circuit goes HALF-OPEN and the next attempt on
+    the provider is a single probe; a probe success closes it, a probe failure
+    re-opens it with an escalated cooldown (``open_count`` drives the backoff).
+    """
+
+    consecutive_failures: int = 0
+    opened_at: float | None = None
+    open_count: int = 0
+    half_open: bool = False
+
+
 class HealthAwareRouter:
     """Select provider by health and strategy, then fallback on failure."""
 
@@ -57,6 +75,11 @@ class HealthAwareRouter:
         single_provider_retry_max: int = 2,
         single_provider_retry_base_seconds: float = 1.0,
         single_provider_retry_cap_seconds: float = 8.0,
+        circuit_breaker_enabled: bool = True,
+        circuit_failure_threshold: int = 3,
+        circuit_cooldown_seconds: float = 30.0,
+        circuit_cooldown_max_seconds: float = 300.0,
+        now: Callable[[], float] = monotonic,
     ) -> None:
         self._providers = list(providers)
         self._strategy = strategy
@@ -68,6 +91,18 @@ class HealthAwareRouter:
         self._single_provider_retry_max = max(0, single_provider_retry_max)
         self._single_provider_retry_base_seconds = single_provider_retry_base_seconds
         self._single_provider_retry_cap_seconds = single_provider_retry_cap_seconds
+        # F2 circuit breaker: sticky per-provider open/half-open state that survives
+        # a passing healthcheck, so a provider whose completions keep failing is
+        # skipped for a cooldown instead of being re-selected every call. ``now`` is
+        # an injectable monotonic clock for deterministic tests.
+        self._circuit_breaker_enabled = circuit_breaker_enabled
+        self._circuit_failure_threshold = max(1, circuit_failure_threshold)
+        self._circuit_cooldown_seconds = max(0.0, circuit_cooldown_seconds)
+        self._circuit_cooldown_max_seconds = max(
+            self._circuit_cooldown_seconds, circuit_cooldown_max_seconds
+        )
+        self._now = now
+        self._breaker: dict[str, _BreakerState] = {}
 
     @property
     def providers(self) -> list[LlmProvider]:
@@ -101,7 +136,13 @@ class HealthAwareRouter:
     def _ranked_candidates(
         self, *, exclude_names: set[str] | None = None
     ) -> list[_ScoredProvider]:
-        exclude = exclude_names or set()
+        exclude = set(exclude_names or set())
+        # F2: a provider whose circuit is OPEN (and still in cooldown) is skipped
+        # even if its healthcheck reports healthy. This also flips a cooled-down
+        # circuit to half-open so the next attempt on it is a probe.
+        for provider in self._providers:
+            if self._breaker_open(provider):
+                exclude.add(provider.name)
         ranked: list[_ScoredProvider] = []
         for provider in self._providers:
             if provider.name in exclude:
@@ -111,6 +152,30 @@ class HealthAwareRouter:
             )
         ranked.sort(key=lambda item: item.score)
         return [item for item in ranked if item.score != float("inf")]
+
+    def _cooldown_for(self, open_count: int) -> float:
+        """Cooldown seconds for the Nth consecutive open — exponential, capped."""
+        exponent = max(0, open_count - 1)
+        return min(
+            self._circuit_cooldown_seconds * (2**exponent),
+            self._circuit_cooldown_max_seconds,
+        )
+
+    def _breaker_open(self, provider: LlmProvider) -> bool:
+        """True when the provider's circuit is OPEN and its cooldown has not elapsed.
+
+        When the cooldown HAS elapsed, transitions the circuit to half-open
+        (returns ``False``) so exactly the next attempt on the provider is a probe.
+        """
+        if not self._circuit_breaker_enabled:
+            return False
+        state = self._breaker.get(provider.name)
+        if state is None or state.opened_at is None:
+            return False
+        if self._now() - state.opened_at >= self._cooldown_for(state.open_count):
+            state.half_open = True  # cooldown elapsed → allow one probe through
+            return False
+        return True
 
     def _should_retry_single_provider(
         self,
@@ -258,3 +323,40 @@ class HealthAwareRouter:
         else:
             status.avg_latency_ms = (status.avg_latency_ms * 0.7) + (elapsed_ms * 0.3)
         status.latency_ms = elapsed_ms
+        self._record_breaker(provider, success=success, mark_unhealthy=mark_unhealthy)
+
+    def _record_breaker(
+        self, provider: LlmProvider, *, success: bool, mark_unhealthy: bool
+    ) -> None:
+        """Advance the provider's circuit-breaker state after one attempt (F2).
+
+        A success closes the circuit and resets the failure streak. An
+        unhealthy-marking failure increments the streak: a probe (half-open)
+        failure re-opens immediately with an escalated cooldown, otherwise the
+        circuit opens once the streak reaches the threshold. A failure that does
+        NOT mark the provider unhealthy (auth / content-policy — the request was
+        bad, not the provider) leaves the breaker untouched.
+        """
+        if not self._circuit_breaker_enabled:
+            return
+        state = self._breaker.setdefault(provider.name, _BreakerState())
+        if success:
+            state.consecutive_failures = 0
+            state.opened_at = None
+            state.open_count = 0
+            state.half_open = False
+            return
+        if not mark_unhealthy:
+            return
+        state.consecutive_failures += 1
+        if state.half_open:
+            # Probe failed → re-open with a longer cooldown.
+            state.opened_at = self._now()
+            state.open_count += 1
+            state.half_open = False
+        elif (
+            state.opened_at is None
+            and state.consecutive_failures >= self._circuit_failure_threshold
+        ):
+            state.opened_at = self._now()
+            state.open_count += 1
