@@ -9,6 +9,21 @@ change between minor versions.
 
 ### Added
 
+- **Concurrent subagent fan-out with a join policy (coordination C1, step 1).** The SDK
+  could spawn one child (`run_subagent`) or background handles (`AsyncSubagentManager`),
+  but had no "run these N specs concurrently, capped, and join under a policy" primitive
+  — so a consumer re-implemented parallel fan-out with its own `asyncio.gather` + a
+  semaphore, and the runtime's formal join policies were reachable only from the
+  model-planner path. New `sdk.run_subagent_group(parent, specs, *, join_policy,
+  concurrency, k, deadline_seconds)` runs the specs concurrently under a cap and
+  *executes* the shared `SubagentJoinPolicy` vocabulary — `WAIT_ALL`, `WAIT_ANY` (first
+  success wins, cancel the rest), `K_OF_N`, `RACE` (first to finish), and
+  `BEST_EFFORT_UNTIL_DEADLINE` — returning a `SubagentGroupResult` (results + errors
+  aligned to the input specs, `.completed` / `.succeeded` / `.failed` / `.satisfied`). A
+  failed child never aborts the group. Exposed on the `agent_driver.sdk` facade with
+  `SubagentGroupResult` + a re-exported `SubagentJoinPolicy`. Example:
+  `examples/cookbook/26_subagent_group.py`. First step of C1 (unify the two subagent
+  stacks); remaining: expose merge/mailbox/worktree, retire the sequential runtime group.
 - **Markdown-defined agent types + registry (coordination C2).** New
   `agent_driver.agents` facade: define a reusable specialized agent as *data* — a
   Markdown file with YAML frontmatter (`name`, `description`/`when_to_use`, `tools`,

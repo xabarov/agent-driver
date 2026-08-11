@@ -40,6 +40,8 @@ from agent_driver.sdk.subagent import (
     SubagentToolPolicy,
     run_subagent,
 )
+from agent_driver.contracts.enums import SubagentJoinPolicy
+from agent_driver.sdk.group import SubagentGroupResult, run_subagent_group
 from agent_driver.sdk.self_consistency import (
     SelfConsistencyResult,
     run_self_consistent,
@@ -73,12 +75,15 @@ __all__ = [
     "SdkConfig",
     "SdkTransportConfig",
     "Session",
+    "SubagentGroupResult",
+    "SubagentJoinPolicy",
     "SubagentLimits",
     "SubagentModelPolicy",
     "SubagentOutputPolicy",
     "SubagentResult",
     "SubagentSpec",
     "SubagentToolPolicy",
+    "run_subagent_group",
     "TraceSummary",
     "ToolSet",
     "ToolRegistry",
