@@ -37,7 +37,7 @@ mode. This track closes those gaps, keeping the runtime domain-neutral.
 | **C2** | Markdown-defined agent registry | static code roles, no hot-loadable agent types | openclaude `.claude/agents`, OpenHands `.md` | S | **DONE** |
 | **C1** | Unify the two subagent stacks | SDK primitives ≠ runtime executor; join/merge unused | — (internal) | L | IN PROGRESS |
 | **C3** | Mailbox fix + live subagent steering | parent→child continuation dead-ended; no mid-flight steer | openclaude `SendMessage`; MAST coordination | M | IN PROGRESS |
-| **C4** | Supervisor/coordinator in the SDK | orchestrator-worker only hand-wired in excel-ai; sync group is sequential | openclaude coordinator mode, Anthropic | M | PROPOSED |
+| **C4** | Supervisor/coordinator in the SDK | orchestrator-worker only hand-wired in excel-ai; sync group is sequential | openclaude coordinator mode, Anthropic | M | **DONE** |
 | **C5** | Deep/ultra-agent mode | planner + subagents + FS + context-mgmt not composed | LangChain Deep Agents, Anthropic | L | PROPOSED |
 | **C6** | Handoffs / agents-as-tools | no control transfer to a peer | OpenAI Agents SDK | M | PROPOSED |
 | **C7** | Governed recursion / depth budget | blunt 1-level cap, no depth budget | hermes `MAX_DEPTH` | S | PROPOSED |
@@ -120,13 +120,20 @@ path without per-child runner surgery. Tests: `tests/sdk/test_subagent_steering.
 redirect probe (so the model-planner path also steers running children), and the honest
 **never-fabricate-a-pending-result** orchestrator prompt rule (a consumer-prompt concern).
 
-### C4 — Supervisor / coordinator in the SDK
+### C4 — Supervisor / coordinator in the SDK — DONE (2026-08-11)
 
-Promote excel-ai's hand-wired orchestrator-worker (intent-route → fan-out →
-aggregate) into a reusable SDK coordinator: declarative phases (e.g.
-research → synthesize → verify), **real** parallel fan-out + join (fix the sequential
-sync group), and an LLM-based synthesis step (the `SYNTHESIZE` merge mode currently
-degrades to string concat). Agents resolved from the C2 registry.
+`sdk.run_coordinator` (`sdk/coordinator.py`) promotes the hand-wired
+orchestrator-worker into a reusable, domain-neutral primitive: an ordered list of
+`CoordinatorPhase`s, each of which builds its worker specs from the prior phases'
+results (`build_specs(prior)`, sync or async), fans them out concurrently via
+`run_subagent_group` under a join policy, and merges the outcome (`APPEND`/`RANK`/`VOTE`,
+or a real LLM `SYNTHESIZE`). The merged string threads into the next phase's
+`build_specs`, so `research → synthesize → verify` composes with no consumer glue;
+agents are resolvable from the C2 registry (`agent_definition_to_spec`). A phase whose
+join policy isn't satisfied halts the pipeline (`stop_on_unsatisfied`, default on) and
+marks the `CoordinatorResult` `stopped_early` — the MAST coordination-breakdown guard.
+Real parallelism, real synthesis, honest partial-failure semantics. Tests:
+`tests/sdk/test_coordinator.py`; example `examples/cookbook/27_coordinator.py`.
 
 ### C5 — Deep / ultra-agent mode
 
@@ -159,5 +166,5 @@ and the eval-layer `LlmJudge` (#5).
 
 ## Recommended order
 
-C2 (done) → **C1** (foundational unify) → **C3** (fix dead-end + MAST) → **C4**
-(supervisor) → **C5** (deep-agent) → C7 → C8 → C6.
+C2 (done) → **C1** (foundational unify) → **C3** (fix dead-end + MAST) → C4 (done,
+supervisor) → **C5** (deep-agent) → C7 → C8 → C6.
