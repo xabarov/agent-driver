@@ -19,6 +19,22 @@ change between minor versions.
 
 ### Added
 
+- **Artifact pattern for subagent fan-out — the deep-agent kernel (coordination C5,
+  step 1).** On a wide fan-out, returning every worker's full findings up the chat
+  multiplies the parent's context (~15× on Anthropic's multi-agent research). New
+  `sdk/artifacts.py`: `capture_subagent_artifact` / `capture_group_artifacts` write a
+  child's answer to the shared workspace and return a `SubagentArtifact` (workspace-relative
+  path + one-line summary + char count), skipping empty or non-`COMPLETED` children unless
+  `include_partial`; `artifact_references` renders them as a compact block a downstream
+  phase feeds the model **instead of** the concatenated findings — so a synthesis/verify
+  phase reads a file only when it needs the detail. `share_workspace` closes the companion
+  gap — an SDK child does not inherit the parent's `workspace_cwd` by default, so it injects
+  a shared workspace into each child's `app_metadata` (backed by the new
+  `SubagentSpec.with_app_metadata`), letting a later phase read earlier artifacts. Composes
+  directly with the C4 coordinator. New SDK exports: `SubagentArtifact`,
+  `capture_subagent_artifact`, `capture_group_artifacts`, `artifact_references`,
+  `share_workspace`. Tests: `tests/sdk/test_artifacts.py`; example
+  `examples/cookbook/28_deep_agent_artifacts.py`.
 - **Phased supervisor/coordinator in the SDK (coordination C4).** `sdk.run_coordinator`
   promotes the hand-wired orchestrator-worker topology into a reusable, domain-neutral
   primitive: an ordered list of `CoordinatorPhase`s, each building its worker specs from

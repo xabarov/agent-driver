@@ -52,6 +52,13 @@ from agent_driver.sdk.coordinator import (
     PhaseResult,
     run_coordinator,
 )
+from agent_driver.sdk.artifacts import (
+    SubagentArtifact,
+    artifact_references,
+    capture_group_artifacts,
+    capture_subagent_artifact,
+    share_workspace,
+)
 from agent_driver.sdk.self_consistency import (
     SelfConsistencyResult,
     run_self_consistent,
@@ -78,6 +85,11 @@ __all__ = [
     "CoordinatorResult",
     "PhaseResult",
     "run_coordinator",
+    "SubagentArtifact",
+    "artifact_references",
+    "capture_group_artifacts",
+    "capture_subagent_artifact",
+    "share_workspace",
     "AgentDriverSDKError",
     "ProviderError",
     "ProviderErrorDetails",
