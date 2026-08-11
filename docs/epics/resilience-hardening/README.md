@@ -28,7 +28,7 @@ benchmark-fitting, harness-layer only.
 | **F3** | Honor more server directives | only `Retry-After`; ignore `x-should-retry` + rate-limit-reset | openclaude, hermes | M | **DONE** |
 | **F4** | Ordered fallback-model list | only provider-swap + forced-final fallback, no model-tier list | all 3 refs | M | **DONE** |
 | **F5** | Small correctness wins | abort-blind backoff sleeps; no nudge-before-kill | openclaude, openhands | S | **DONE** |
-| **F6** | Shared retry budget | 3 retry layers can compound (base 4× × completion 3×) | — (internal) | M | PROPOSED |
+| **F6** | Shared retry budget | 3 retry layers can compound (base 4× × completion 3×) | — (internal) | M | **DONE** |
 
 Deprioritized: **cost-cascade / draft-then-verify** (our documented future,
 `llm/model_router.py:19-23`) — no reference implements a true cost-cascade, so it is
@@ -104,14 +104,21 @@ the final. Tests: `tests/llm/test_backoff_jitter.py` (abort-sleep),
 needed — `context_management/protocol_validate.py` already inserts
 `missing_tool_result_stubs` + folds orphans.)
 
-### F6 — Shared retry budget across layers
+### F6 — Shared retry budget across layers — DONE (2026-08-11)
 
-Base-layer status retries (up to 4) × completion-layer (3) × batch-layer can
-multiply into long compounding stalls on a persistently failing provider, each layer
-unaware of the others. Thread a shared attempt/time budget so total retry work is
-bounded end-to-end. Internal cleanup; lower user-visible impact.
+`RunnerConfig(completion_retry_budget_seconds=…)` (threaded to `RunnerDeps` alongside
+`fallback_models`) is a single wall-clock budget the completion retry loop
+(`_complete_request_attempts`) checks at the top of each attempt: once cumulative
+time passes it, the loop raises the last error instead of re-entering the provider —
+bounding the base(~4)×completion(~3) multiplication end-to-end. `None` (default)
+keeps the plain 3-attempt behavior; `_monotonic` is a patchable clock seam. Tests:
+`tests/runtime/test_completion_retry_budget.py`.
 
-## Recommended order
+## Status
 
-F1 (done) → F2 (done) → F4 (done) → F3 (done) → F5 (done) → **F6** · plus F2b
-(stale-streak give-up).
+**F1–F6 all DONE (2026-08-11).** agent-driver's harness resilience — already
+top-of-pack in the reference survey — is now hardened across every gap the survey
+found: backoff jitter, provider circuit breaker, server directives, model fallback,
+abort-responsive backoff + nudge-before-kill, and a shared retry budget. Remaining
+optional follow-on: **F2b** (stale-streak give-up-before-network-call, hermes
+`_check_stale_giveup`).

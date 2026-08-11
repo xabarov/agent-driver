@@ -9,6 +9,15 @@ change between minor versions.
 
 ### Added
 
+- **Shared per-completion retry budget (resilience F6).** `base.py` (per provider
+  call) and the completion loop each retry transient errors, so on a persistently
+  failing provider they multiply (~4 × ~3) into a long compounding stall, each layer
+  unaware of the other. A new `RunnerConfig(completion_retry_budget_seconds=…)`
+  (threaded to `RunnerDeps` alongside `fallback_models`) is a single wall-clock
+  budget the completion retry loop consults at each attempt: once cumulative time in
+  the loop passes it, the loop surfaces the last error instead of re-entering the
+  provider — bounding the base×completion multiplication end-to-end. `None` (default)
+  preserves the plain 3-attempt behavior; the clock is a patchable seam for tests.
 - **Abort-responsive backoff + nudge-before-kill (resilience F5).** Two small
   correctness wins: (1) the completion loop's retry backoffs now use a new
   `agent_driver.llm.backoff.abort_aware_sleep` that polls a cooperative abort in
