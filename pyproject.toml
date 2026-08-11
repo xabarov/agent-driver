@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-driver"
-version = "0.17.0"
+version = "0.18.0"
 description = "Domain-neutral runtime contracts for agentic applications."
 readme = "docs/README.md"
 license = "LicenseRef-NOASSERTION"
