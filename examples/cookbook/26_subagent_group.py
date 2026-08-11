@@ -16,10 +16,13 @@ import asyncio
 from agent_driver.llm import FakeProvider
 from agent_driver.sdk import (
     SubagentJoinPolicy,
+    SubagentMergeMode,
     SubagentSpec,
     ToolSet,
     create_agent,
+    merge_subagent_results,
     run_subagent_group,
+    synthesize_subagent_results,
 )
 
 
@@ -41,7 +44,15 @@ async def main() -> int:
     )
     print("satisfied:", result.satisfied)
     print("succeeded:", result.succeeded, "failed:", result.failed)
-    print("answers:", [child.answer for child in result.completed])
+
+    # Merge the joined results — deterministically (APPEND/RANK/VOTE)...
+    print("append:", merge_subagent_results(result.results, mode=SubagentMergeMode.APPEND))
+    # ...or synthesize them into one answer with a model (the real SYNTHESIZE).
+    synthesized = await synthesize_subagent_results(
+        result.results,
+        provider=FakeProvider(response_text="All four slices agree: complete."),
+    )
+    print("synthesized:", synthesized)
     return result.succeeded
 
 

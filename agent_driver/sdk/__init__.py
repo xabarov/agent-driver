@@ -40,8 +40,12 @@ from agent_driver.sdk.subagent import (
     SubagentToolPolicy,
     run_subagent,
 )
-from agent_driver.contracts.enums import SubagentJoinPolicy
+from agent_driver.contracts.enums import SubagentJoinPolicy, SubagentMergeMode
 from agent_driver.sdk.group import SubagentGroupResult, run_subagent_group
+from agent_driver.sdk.merge import (
+    merge_subagent_results,
+    synthesize_subagent_results,
+)
 from agent_driver.sdk.self_consistency import (
     SelfConsistencyResult,
     run_self_consistent,
@@ -77,6 +81,7 @@ __all__ = [
     "Session",
     "SubagentGroupResult",
     "SubagentJoinPolicy",
+    "SubagentMergeMode",
     "SubagentLimits",
     "SubagentModelPolicy",
     "SubagentOutputPolicy",
@@ -95,7 +100,9 @@ __all__ = [
     "create_agent",
     "fork_subagent",
     "interrupt_to_stream_event",
+    "merge_subagent_results",
     "query",
+    "synthesize_subagent_results",
     "resume_command_from_payload",
     "run_subagent",
     "sdk_config_from_env",
