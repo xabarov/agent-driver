@@ -7,6 +7,23 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Markdown-defined agent types + registry (coordination C2).** New
+  `agent_driver.agents` facade: define a reusable specialized agent as *data* — a
+  Markdown file with YAML frontmatter (`name`, `description`/`when_to_use`, `tools`,
+  `denied_tools`, `model`/`model_role`/`reasoning_effort`, `max_tool_calls`/
+  `deadline_seconds`/`max_cost_usd`) whose body is the child's system prompt, the
+  same shape Claude Code's `.claude/agents` and OpenHands' subagent registry use.
+  `parse_agent_markdown` / `load_agent_definitions` load them (frontmatter values are
+  string-coerced; unknown keys preserved on `metadata`; a bad file is skipped, not
+  fatal); `AgentRegistry` resolves an `agent_type` name to an `AgentDefinition` with
+  **layered precedence** (register built-ins low, project files high; higher priority
+  overrides a name clash, first-wins within a priority); and `agent_definition_to_spec`
+  bridges a definition + a task prompt to a `sdk.SubagentSpec` for `run_subagent`.
+  Domain-neutral, hot-loadable, no code. Example: `examples/cookbook/25_agent_registry.py`.
+  First epic of the coordination C-track (`docs/epics/agent-coordination/`).
+
 ## [0.17.0] - 2026-08-11
 
 ### Added
