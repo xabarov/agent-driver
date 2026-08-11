@@ -87,9 +87,16 @@ concurrently via `asyncio.gather` (order-preserving, orphan-free), aligning it w
 already-concurrent background path. A fan-out of N no longer costs N× wall-clock. Test:
 `tests/subagents/test_sync_child_execution.py::test_sync_group_runs_children_concurrently`.
 
+**Step 4 — DONE (2026-08-11):** `run_subagent_group` gained per-child retry
+(`retries` / `retry_on` / `retry_backoff_seconds`) — a failed child re-runs with an
+exponential+jittered, abort-aware backoff taken *outside* the concurrency slot (matching
+excel-ai's explorer coordinator), so the primitive now fully covers a real consumer's
+hand-rolled fan-out+retry. Tests in `tests/sdk/test_subagent_group.py`.
+
 **Remaining:** expose the subagent mailbox + worktree isolation through the SDK
-surface; migrate excel-ai off its bespoke fan-out onto `run_subagent_group`. Foundational
-for C3/C4/C5.
+surface; migrate excel-ai's `explorer_coordinator` off its bespoke `asyncio.gather` +
+semaphore + retry onto `run_subagent_group` + `merge_subagent_results` (now unblocked).
+Foundational for C3/C4/C5.
 
 ### C3 — Mailbox fix + live subagent steering
 

@@ -46,8 +46,12 @@ change between minor versions.
   aligned to the input specs, `.completed` / `.succeeded` / `.failed` / `.satisfied`). A
   failed child never aborts the group. Exposed on the `agent_driver.sdk` facade with
   `SubagentGroupResult` + a re-exported `SubagentJoinPolicy`. Example:
-  `examples/cookbook/26_subagent_group.py`. First step of C1 (unify the two subagent
-  stacks); remaining: expose merge/mailbox/worktree, retire the sequential runtime group.
+  `examples/cookbook/26_subagent_group.py`. It also takes `retries` / `retry_on` /
+  `retry_backoff_seconds` — a failed child (default: raised or non-`COMPLETED`) re-runs up
+  to `retries` times with an exponential+jittered, abort-aware backoff taken **outside**
+  the concurrency slot (so a backing-off child frees its slot), making it a complete
+  replacement for a consumer's hand-rolled fan-out+retry. First steps of C1 (unify the
+  two subagent stacks); remaining: expose mailbox/worktree, migrate excel-ai.
 - **Markdown-defined agent types + registry (coordination C2).** New
   `agent_driver.agents` facade: define a reusable specialized agent as *data* — a
   Markdown file with YAML frontmatter (`name`, `description`/`when_to_use`, `tools`,
