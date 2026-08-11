@@ -24,7 +24,7 @@ benchmark-fitting, harness-layer only.
 | ID | Epic | Gap | Proven by | Effort | Status |
 | --- | --- | --- | --- | --- | --- |
 | **F1** | Decorrelated backoff jitter | fixed 2^n → lockstep retries / thundering herd | hermes, openclaude | S | **DONE** |
-| **F2** | Per-provider circuit breaker | health has no cooldown/half-open/threshold/persistence | hermes | M | PROPOSED |
+| **F2** | Per-provider circuit breaker | health has no cooldown/half-open/threshold/persistence | hermes | M | **DONE** |
 | **F3** | Honor more server directives | only `Retry-After`; ignore `x-should-retry` + rate-limit-reset | openclaude, hermes | M | PROPOSED |
 | **F4** | Ordered fallback-model list | only provider-swap + forced-final fallback, no model-tier list | all 3 refs | M | PROPOSED |
 | **F5** | Small correctness wins | abort-blind backoff sleeps; no nudge-before-kill | openclaude, openhands | S | PROPOSED |
@@ -43,17 +43,24 @@ never below `delay` so a server `Retry-After` stays honored) at all five backoff
 sites (`llm/base.py` status + stream-open, `llm_step/completion.py` transient-status
 + transport blind-retry, `batch/runner.py`). RNG is a patchable module seam.
 
-### F2 — Per-provider circuit breaker
+### F2 — Per-provider circuit breaker — DONE (2026-08-11)
 
-`HealthAwareRouter` (`llm/router.py`) fails over on classified errors but has no
-sticky state: an unhealthy provider is re-marked healthy on the next success, health
-is recomputed per-call only — under a sustained partial outage it rediscovers the
-same dead provider every call. Add: consecutive-failure threshold → **open** state,
-a cooldown timer, a **half-open** probe, and optional persistence. Also add a
-**stale-streak give-up that fires before the network call** (hermes
-`_check_stale_giveup`, `chat_completion_helpers.py:334`; per-provider cooldown
-`nous_rate_guard.py`) — the defense against "wedged on a dead provider, looping for
-hours" that per-call timeouts never escape. This is the #1 gap.
+`HealthAwareRouter` (`llm/router.py`) now keeps a sticky per-provider circuit-breaker
+state machine (`_BreakerState`): `circuit_failure_threshold` (default 3) consecutive
+unhealthy-marking failures **open** the circuit; `_ranked_candidates` excludes an open
+provider for `circuit_cooldown_seconds` (default 30s) **regardless of `status.healthy`**
+— closing the flap where `refresh_health()` re-marked a completions-failing provider
+healthy every call; after the cooldown the circuit goes **half-open** and the next
+attempt is a single probe (success closes, failure re-opens with an exponentially
+escalated cooldown capped at `circuit_cooldown_max_seconds`, default 300s).
+Request-level failures (auth / content-policy) never trip it. `circuit_breaker_enabled`
+opt-out; `now` clock seam for tests. Tests: `tests/llm/test_router_circuit_breaker.py`.
+
+Follow-on (F2b, PROPOSED): the **stale-streak give-up that fires before the network
+call** (hermes `_check_stale_giveup`, `chat_completion_helpers.py:334`; per-provider
+cooldown `nous_rate_guard.py`) — count consecutive unresponsive streams across turns
+and jump straight to fallback without another network wait; complements the breaker for
+the "wedged on a dead provider, looping for hours" mode.
 
 ### F3 — Honor more server directives
 
@@ -95,5 +102,5 @@ bounded end-to-end. Internal cleanup; lower user-visible impact.
 
 ## Recommended order
 
-F1 (done) → **F2** (the #1 gap) → **F4** (only axis where all three refs beat us) →
-F3 → F5 → F6.
+F1 (done) → F2 (done) → **F4** (only axis where all three refs beat us) → F3 → F5 →
+F6 · plus F2b (stale-streak give-up).
