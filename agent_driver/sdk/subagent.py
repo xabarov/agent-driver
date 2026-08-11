@@ -271,6 +271,26 @@ class SubagentSpec:
             model_policy=self._model_policy,
         )
 
+    def with_app_metadata(self, **extra: Any) -> "SubagentSpec":
+        """Return a copy with extra ``app_metadata`` merged in (new keys win).
+
+        Used by the deep-agent artifact pattern to inject a shared ``workspace_cwd``
+        into a child that would not otherwise inherit the parent's workspace.
+        """
+        return SubagentSpec(
+            agent_type=self.agent_type,
+            prompt=self.prompt,
+            system_prompt=self.system_prompt,
+            tool_policy=self._tool_policy,
+            output_policy=SubagentOutputPolicy(
+                response_format=self._output_policy.response_format,
+                agent_profile=self._output_policy.agent_profile,
+                app_metadata={**self._output_policy.app_metadata, **extra},
+            ),
+            limits=self._limits,
+            model_policy=self._model_policy,
+        )
+
     @property
     def allowed_tools(self) -> tuple[str, ...] | None:
         """Optional allowed tool names for the child."""

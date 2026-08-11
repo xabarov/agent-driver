@@ -38,7 +38,7 @@ mode. This track closes those gaps, keeping the runtime domain-neutral.
 | **C1** | Unify the two subagent stacks | SDK primitives ≠ runtime executor; join/merge unused | — (internal) | L | IN PROGRESS |
 | **C3** | Mailbox fix + live subagent steering | parent→child continuation dead-ended; no mid-flight steer | openclaude `SendMessage`; MAST coordination | M | IN PROGRESS |
 | **C4** | Supervisor/coordinator in the SDK | orchestrator-worker only hand-wired in excel-ai; sync group is sequential | openclaude coordinator mode, Anthropic | M | **DONE** |
-| **C5** | Deep/ultra-agent mode | planner + subagents + FS + context-mgmt not composed | LangChain Deep Agents, Anthropic | L | PROPOSED |
+| **C5** | Deep/ultra-agent mode | planner + subagents + FS + context-mgmt not composed | LangChain Deep Agents, Anthropic | L | IN PROGRESS |
 | **C6** | Handoffs / agents-as-tools | no control transfer to a peer | OpenAI Agents SDK | M | PROPOSED |
 | **C7** | Governed recursion / depth budget | blunt 1-level cap, no depth budget | hermes `MAX_DEPTH` | S | PROPOSED |
 | **C8** | Verifier/critic primitive | no independent validation of subagent output | MAST verification-gap | S | PROPOSED |
@@ -135,7 +135,7 @@ marks the `CoordinatorResult` `stopped_early` — the MAST coordination-breakdow
 Real parallelism, real synthesis, honest partial-failure semantics. Tests:
 `tests/sdk/test_coordinator.py`; example `examples/cookbook/27_coordinator.py`.
 
-### C5 — Deep / ultra-agent mode
+### C5 — Deep / ultra-agent mode — IN PROGRESS
 
 Compose what we already have — planning (P-track todos), subagents, a filesystem
 (execution-backend), and context management/compaction — into one long-horizon
@@ -143,6 +143,27 @@ Compose what we already have — planning (P-track todos), subagents, a filesyst
 shared workspace and returns a lightweight reference instead of a long lossy chat
 return (Anthropic; LangChain Deep Agents' planner + subagents + filesystem + context
 engineering). This is the "ultra agents" ask; highest ceiling.
+
+**Step 1 — DONE (2026-08-11):** the artifact pattern for the SDK subagent path
+(`sdk/artifacts.py`) — the deep-agent kernel. `capture_subagent_artifact` /
+`capture_group_artifacts` write a child's answer to the shared workspace and return a
+`SubagentArtifact` (workspace-relative path + one-line summary + char count), skipping
+empty/non-`COMPLETED` children (unless `include_partial`); `artifact_references` renders
+them as a compact block a downstream phase feeds the model instead of the full
+concatenated findings — the ~15× token fix. `share_workspace` closes the companion gap
+(an SDK child doesn't inherit `workspace_cwd` by default) by injecting a shared workspace
+into each child's `app_metadata`, so a later phase can read earlier artifacts;
+`SubagentSpec.with_app_metadata` backs it. Composes directly with the C4 coordinator
+(capture a phase's group → thread the refs into the next phase's `build_specs`). Tests:
+`tests/sdk/test_artifacts.py`; example `examples/cookbook/28_deep_agent_artifacts.py`.
+
+**Remaining:** a `DeepAgent` driver that adds a planning phase (decompose the task into
+subtasks/todos, reusing the P-track `todo_write` state) and a verify phase (C8) around the
+capture→synthesize loop, plus optional backend-routed writes (the `WorkspaceCapableBackend`
+seam) so artifacts land through an injected/remote backend rather than only local pathlib.
+The reactive token-pressure compaction already applies for free inside each child's run
+loop; a long-horizon mode may later want to drive `CompactionOrchestrator.decide` on a
+per-plan-step cadence.
 
 ### C6 — Handoffs / agents-as-tools
 
@@ -167,4 +188,4 @@ and the eval-layer `LlmJudge` (#5).
 ## Recommended order
 
 C2 (done) → **C1** (foundational unify) → **C3** (fix dead-end + MAST) → C4 (done,
-supervisor) → **C5** (deep-agent) → C7 → C8 → C6.
+supervisor) → **C5** (deep-agent, step 1 done — artifact pattern) → C7 → C8 → C6.
