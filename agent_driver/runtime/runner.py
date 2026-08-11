@@ -151,6 +151,9 @@ class SingleAgentRunner(
             fallback_providers=tuple(
                 getattr(self._config, "fallback_providers", ()) or ()
             ),
+            fallback_models=tuple(
+                getattr(self._config, "fallback_models", ()) or ()
+            ),
             role_providers=dict(getattr(self._config, "role_providers", {}) or {}),
         )
 
