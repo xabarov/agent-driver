@@ -64,6 +64,12 @@ from agent_driver.sdk.deep_agent import (
     DeepAgentResult,
     run_deep_agent,
 )
+from agent_driver.sdk.verify import (
+    VerifierVerdict,
+    verify_answer,
+    verify_subagent_group,
+    verify_subagent_result,
+)
 from agent_driver.sdk.self_consistency import (
     SelfConsistencyResult,
     run_self_consistent,
@@ -98,6 +104,10 @@ __all__ = [
     "capture_group_artifacts",
     "capture_subagent_artifact",
     "share_workspace",
+    "VerifierVerdict",
+    "verify_answer",
+    "verify_subagent_group",
+    "verify_subagent_result",
     "AgentDriverSDKError",
     "ProviderError",
     "ProviderErrorDetails",

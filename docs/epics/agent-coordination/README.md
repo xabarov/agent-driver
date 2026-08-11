@@ -41,7 +41,7 @@ mode. This track closes those gaps, keeping the runtime domain-neutral.
 | **C5** | Deep/ultra-agent mode | planner + subagents + FS + context-mgmt not composed | LangChain Deep Agents, Anthropic | L | **DONE** |
 | **C6** | Handoffs / agents-as-tools | no control transfer to a peer | OpenAI Agents SDK | M | PROPOSED |
 | **C7** | Governed recursion / depth budget | blunt 1-level cap, no depth budget | hermes `MAX_DEPTH` | S | **DONE** |
-| **C8** | Verifier/critic primitive | no independent validation of subagent output | MAST verification-gap | S | PROPOSED |
+| **C8** | Verifier/critic primitive | no independent validation of subagent output | MAST verification-gap | S | **DONE** |
 
 Guiding principle (Anthropic): multi-agent wins **only when the task decomposes into
 independent parallel threads**, at ~15× the tokens — so the supervisor/orchestrator-
@@ -199,13 +199,23 @@ each independent of the parent) already existed. Guard + `_current_subagent_dept
 `tests/runtime/test_subagent_integration.py` (depth-budget cases); metadata inventory doc
 updated with `subagent_depth`.
 
-### C8 — Verifier / critic primitive
+### C8 — Verifier / critic primitive — DONE (2026-08-11)
 
-A first-class independent verifier that validates a subagent's output before the
-parent trusts it — the MAST verification-gap fix. Composes with C4 (a verify phase)
-and the eval-layer `LlmJudge` (#5).
+`sdk/verify.py` — a first-class, skeptical verifier that validates an answer before the
+parent trusts it (the MAST verification-gap fix). Where the eval-layer `LlmJudge` scores
+answer *quality* on a continuous rubric, this decides *trust*: `verify_answer` returns a
+`VerifierVerdict` (accept/reject + confidence + the concrete `issues` found), with an
+adversarial multi-vote quorum via `votes=` (strict majority, unioned issues) so one flaky
+verifier can't wave a bad answer through. `verify_subagent_result` / `verify_subagent_group`
+apply it to fan-out output — the verify step for a C4 coordinator phase or a C5 deep-agent
+fan-out. Mirrors the judge's mechanics: one cache-safe `aux_completion` per vote, a tolerant
+JSON parse, and a graceful fallback — a verifier outage yields `accepted=True, confidence=0.0`
+(an explicit "no signal", never a silent approval), and an empty/missing answer is rejected
+deterministically without a model call. New SDK exports: `VerifierVerdict`, `verify_answer`,
+`verify_subagent_result`, `verify_subagent_group`. Tests: `tests/sdk/test_verify.py`; example
+`examples/cookbook/30_verifier.py`.
 
 ## Recommended order
 
 C2 (done) → C1 (done, unify) → C3 (done, fix dead-end + MAST) → C4 (done, supervisor) →
-C5 (done, deep-agent) → C7 (done, depth budget) → **C8** → **C6**.
+C5 (done, deep-agent) → C7 (done, depth budget) → C8 (done, verifier) → **C6**.
