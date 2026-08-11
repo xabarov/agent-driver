@@ -108,13 +108,17 @@ its `answer` on a non-`COMPLETED` stop, but the group merge dropped it. Added
 of discarding it (OpenHands "partial output on non-final stop"; MAST verification-gap).
 Tests: `tests/sdk/test_subagent_merge.py`, `tests/sdk/test_subagent_group.py`.
 
-**Remaining:** the `subagent_mailbox` parent→child continuation is enqueued but never
-consumed by a running child (dead-end). Wire a running child to read pending
-PARENT_TO_CHILD items **mid-flight** (live steering, like openclaude `SendMessage`
-continuing a running subagent by id) — this needs giving the child run a per-child
-`redirect_probe`/steering queue (surgery to `run_subagent`, which today runs the child
-on the parent's shared runner config). Plus the honest **never-fabricate-a-pending-
-result** orchestrator prompt rule. Targets the MAST coordination gap.
+**Step 2 — DONE (2026-08-11):** live steering. `run_subagent(redirect_probe=…)` binds a
+per-run probe via a per-asyncio-task `ContextVar` (`active_redirect_probe`), so the
+completion loop's redirect racer steers *this* child (concurrent fan-out children stay
+isolated), and `BackgroundSubagent.send(message)` course-corrects a running background
+child mid-flight — its next in-flight LLM turn is re-asked with the message folded in as
+a user turn (openclaude `SendMessage`). This closes the mailbox dead-end for the SDK
+path without per-child runner surgery. Tests: `tests/sdk/test_subagent_steering.py`.
+
+**Remaining:** wire the *stack-B* `subagent_mailbox` PARENT_TO_CHILD items into the same
+redirect probe (so the model-planner path also steers running children), and the honest
+**never-fabricate-a-pending-result** orchestrator prompt rule (a consumer-prompt concern).
 
 ### C4 — Supervisor / coordinator in the SDK
 

@@ -36,6 +36,19 @@ class BackgroundSubagent:
     agent_type: str
     _task: "asyncio.Task[SubagentResult]"
     _abort: RunAbortHandle
+    _steer: list[str] = field(default_factory=list)
+
+    def send(self, message: str) -> None:
+        """Steer the running child (C3): deliver ``message`` as a live redirect.
+
+        On the child's next in-flight LLM turn the current request is cancelled and
+        re-asked with ``message`` folded in as a real user turn (the redirect-probe
+        mechanism), so a parent can course-correct a running subagent instead of
+        cancelling it. Queued if the child is between turns; empty messages are ignored.
+        """
+        text = str(message or "").strip()
+        if text:
+            self._steer.append(text)
 
     def status(self) -> str:
         """One of pending / running / done / failed / cancelled."""
@@ -90,6 +103,7 @@ class AsyncSubagentManager:
         """Spawn ``spec`` as a background task; return its handle."""
         task_id = f"async_{uuid4().hex[:12]}"
         abort = RunAbortHandle()
+        steer: list[str] = []
         task: asyncio.Task[SubagentResult] = asyncio.create_task(
             run_subagent(
                 self.parent,
@@ -97,11 +111,16 @@ class AsyncSubagentManager:
                 parent_run_id=parent_run_id,
                 parent_abort_handle=abort,
                 tool_gate=tool_gate,
+                redirect_probe=lambda: steer.pop(0) if steer else None,
             ),
             name=task_id,
         )
         handle = BackgroundSubagent(
-            task_id=task_id, agent_type=spec.agent_type, _task=task, _abort=abort
+            task_id=task_id,
+            agent_type=spec.agent_type,
+            _task=task,
+            _abort=abort,
+            _steer=steer,
         )
         self._tasks[task_id] = handle
         return handle
