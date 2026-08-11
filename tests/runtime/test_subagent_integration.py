@@ -250,6 +250,108 @@ async def test_runtime_with_subagents_executes_group_from_metadata() -> None:
     assert verifier_run.metadata["handoff"]["worker"]["type"] == "verifier"
 
 
+# --- Governed recursion / depth budget (coordination C7) ---------------------
+
+
+def _planned_depth_group() -> dict[str, object]:
+    return {
+        "group_id": "grp_depth",
+        "purpose": "fanout",
+        "join_policy": "wait_all",
+        "merge_mode": "append",
+        "tasks": [
+            {"task_id": "t1", "task": "a", "description": "d1"},
+            {"task_id": "t2", "task": "b", "description": "d2"},
+        ],
+    }
+
+
+def _depth_runner(max_depth: int, store: InMemorySubagentStore) -> FakeSingleStepRunner:
+    return FakeSingleStepRunner(
+        provider=FakeProvider(response_text="parent"),
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            enable_subagents=True,
+            max_child_runs=2,
+            max_subagent_depth=max_depth,
+            subagent_store=store,
+        ),
+    )
+
+
+async def _run_with_depth_metadata(
+    max_depth: int, app_metadata: dict[str, object] | None, run_id: str
+):
+    store = InMemorySubagentStore()
+    runner = _depth_runner(max_depth, store)
+    return await runner.run(
+        AgentRunInput(
+            input="hello",
+            run_id=run_id,
+            agent_id="agent",
+            graph_preset="single_react",
+            app_metadata=app_metadata or {},
+            tool_policy={"metadata": {"planned_subagent_group": _planned_depth_group()}},
+        )
+    )
+
+
+def test_current_subagent_depth_reads_explicit_and_legacy_tags() -> None:
+    from agent_driver.runtime.single_agent.tool_stage.subagent_execution import (
+        _current_subagent_depth as depth,
+    )
+
+    assert depth({}) == 0
+    assert depth({"subagent_origin": "child"}) == 1  # legacy tag → one level deep
+    assert depth({"subagent_depth": 3}) == 3
+    assert depth({"subagent_depth": "2"}) == 2  # coerced
+    # explicit-but-empty depth falls back to the legacy tag
+    assert depth({"subagent_depth": None, "subagent_origin": "child"}) == 1
+    assert depth({"subagent_depth": "bad"}) == 0  # unparseable → 0
+    assert depth({"subagent_depth": -5}) == 0  # clamped
+
+
+@pytest.mark.asyncio
+async def test_top_level_run_fans_out_at_default_depth_budget() -> None:
+    output = await _run_with_depth_metadata(1, None, "depth_top")
+    assert output.metadata.get("subagent_groups")
+
+
+@pytest.mark.asyncio
+async def test_child_run_does_not_fan_out_at_default_depth_budget() -> None:
+    # A child (legacy subagent_origin tag) is at depth 1 == the default budget, so it
+    # must not spawn a further group — preserves the historical single-level cap.
+    output = await _run_with_depth_metadata(
+        1, {"subagent_origin": "child"}, "depth_child"
+    )
+    assert not output.metadata.get("subagent_groups")
+
+
+@pytest.mark.asyncio
+async def test_raised_depth_budget_lets_a_child_fan_out() -> None:
+    # With the budget raised to 2, a depth-1 child may fan out one more level.
+    output = await _run_with_depth_metadata(
+        2, {"subagent_depth": 1}, "depth_child_ok"
+    )
+    assert output.metadata.get("subagent_groups")
+
+
+@pytest.mark.asyncio
+async def test_depth_budget_still_caps_the_deepest_level() -> None:
+    # A run already at the budget (depth 2, budget 2) does not fan out further.
+    output = await _run_with_depth_metadata(
+        2, {"subagent_depth": 2}, "depth_grandchild"
+    )
+    assert not output.metadata.get("subagent_groups")
+
+
+@pytest.mark.asyncio
+async def test_zero_depth_budget_forbids_all_fan_out() -> None:
+    output = await _run_with_depth_metadata(0, None, "depth_zero")
+    assert not output.metadata.get("subagent_groups")
+
+
 @pytest.mark.asyncio
 async def test_runtime_with_background_subagents_returns_before_join() -> None:
     """Background subagent backend should let parent complete before child join."""

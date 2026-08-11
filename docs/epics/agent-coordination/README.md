@@ -40,7 +40,7 @@ mode. This track closes those gaps, keeping the runtime domain-neutral.
 | **C4** | Supervisor/coordinator in the SDK | orchestrator-worker only hand-wired in excel-ai; sync group is sequential | openclaude coordinator mode, Anthropic | M | **DONE** |
 | **C5** | Deep/ultra-agent mode | planner + subagents + FS + context-mgmt not composed | LangChain Deep Agents, Anthropic | L | **DONE** |
 | **C6** | Handoffs / agents-as-tools | no control transfer to a peer | OpenAI Agents SDK | M | PROPOSED |
-| **C7** | Governed recursion / depth budget | blunt 1-level cap, no depth budget | hermes `MAX_DEPTH` | S | PROPOSED |
+| **C7** | Governed recursion / depth budget | blunt 1-level cap, no depth budget | hermes `MAX_DEPTH` | S | **DONE** |
 | **C8** | Verifier/critic primitive | no independent validation of subagent output | MAST verification-gap | S | PROPOSED |
 
 Guiding principle (Anthropic): multi-agent wins **only when the task decomposes into
@@ -183,12 +183,21 @@ owns the remainder of the turn, and specialist-as-tool for narrow subtasks (Open
 Agents SDK). Lower priority than the supervisor track — supervisor is the safer 2026
 default and less MAST-prone (circular handoffs), so this is opt-in decentralization.
 
-### C7 — Governed recursion / depth budget
+### C7 — Governed recursion / depth budget — DONE (2026-08-11)
 
-Replace the blunt `subagent_origin==child` one-level guard with a configurable depth
-budget + per-node independent iteration/cost budgets (hermes: `MAX_DEPTH=1` default,
-per-subagent `IterationBudget=50` separate from the parent's 500). Lets deep trees
-exist while preventing self-granted recursion / fork-bombs.
+Replaced the blunt binary `subagent_origin == "child"` one-level guard with a configurable
+numeric **depth budget**. New `RunnerConfig.max_subagent_depth` (default 1, preserving the
+historical single-level cap): the model-planned fan-out stamps each child with a
+`subagent_depth` (top-level run = 0, its children = 1, …) and refuses to spawn once a run's
+depth reaches the budget — so bounded deeper trees are now possible (`max_subagent_depth=3`)
+while self-granted recursion / fork-bombs stay blocked, and `0` forbids all fan-out. A
+legacy fallback treats a child carrying only the old `subagent_origin` tag as depth 1, so an
+SDK-spawned child never regresses the cap. The per-node iteration/cost budgets hermes calls
+out (`default_child_max_steps` / `default_child_max_tool_calls` / `default_child_deadline_seconds`,
+each independent of the parent) already existed. Guard + `_current_subagent_depth` in
+`runtime/single_agent/tool_stage/subagent_execution.py`; config in `SubagentSettings`. Tests:
+`tests/runtime/test_subagent_integration.py` (depth-budget cases); metadata inventory doc
+updated with `subagent_depth`.
 
 ### C8 — Verifier / critic primitive
 
@@ -199,4 +208,4 @@ and the eval-layer `LlmJudge` (#5).
 ## Recommended order
 
 C2 (done) → C1 (done, unify) → C3 (done, fix dead-end + MAST) → C4 (done, supervisor) →
-C5 (done, deep-agent) → **C7** → **C8** → **C6**.
+C5 (done, deep-agent) → C7 (done, depth budget) → **C8** → **C6**.

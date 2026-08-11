@@ -9,6 +9,17 @@ change between minor versions.
 
 ### Changed
 
+- **Configurable subagent depth budget replaces the blunt one-level cap (coordination
+  C7).** Model-planned subagent fan-out was hard-capped at a single level by a binary
+  `subagent_origin == "child"` guard — a child could never spawn a group, and there was no
+  way to allow a deeper tree. It is now a numeric **depth budget**: each child is stamped
+  with a `subagent_depth` (top-level run = 0, its children = 1, …) and a run refuses to fan
+  out once its depth reaches the new `RunnerConfig.max_subagent_depth`. The default is 1, so
+  behavior is unchanged out of the box; raise it (`max_subagent_depth=3`) for bounded deeper
+  trees, or set 0 to forbid all fan-out. A legacy fallback treats a child carrying only the
+  old `subagent_origin` tag as depth 1, so SDK-spawned children never regress the cap. The
+  per-node step/tool-call/deadline budgets (each independent of the parent) already existed.
+  Tests: `tests/runtime/test_subagent_integration.py`.
 - **Runtime subagent group runs children concurrently (coordination C1, step 3).** The
   model-planner-driven `execute_subagent_group_sync` ran its selected children in a
   **sequential `for`-loop** despite the group's `max_parallel` — so a fan-out of N sheets

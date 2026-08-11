@@ -481,6 +481,10 @@ class RunnerConfig:
         return self.subagents.max_child_runs
 
     @property
+    def max_subagent_depth(self) -> int:
+        return self.subagents.max_subagent_depth
+
+    @property
     def default_child_deadline_seconds(self) -> float | None:
         return self.subagents.default_child_deadline_seconds
 

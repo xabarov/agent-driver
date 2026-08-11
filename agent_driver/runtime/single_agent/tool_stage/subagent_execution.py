@@ -61,6 +61,23 @@ def _host_config(host: SubagentStageHost) -> RunnerConfig:
     return cast(RunnerConfig, getattr(host, "_config"))
 
 
+def _current_subagent_depth(metadata: dict[str, object]) -> int:
+    """Depth of the run owning ``metadata`` in the subagent tree (top-level = 0).
+
+    Reads the explicit ``subagent_depth`` stamped on a child, falling back to the
+    legacy ``subagent_origin == "child"`` tag (which predates the numeric depth) as
+    depth 1 — so an SDK-spawned child, which carries only the legacy tag, still counts
+    as one level deep and the depth budget never regresses the historical cap.
+    """
+    raw = metadata.get("subagent_depth")
+    if raw is not None:
+        try:
+            return max(0, int(raw))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0
+    return 1 if metadata.get("subagent_origin") == "child" else 0
+
+
 async def maybe_execute_subagent_group(
     host: SubagentStageHost, context: RunContext
 ) -> None:
@@ -69,8 +86,13 @@ async def maybe_execute_subagent_group(
     deps = _host_deps(host)
     if not config.enable_subagents:
         return
-    if context.metadata.get("subagent_origin") == "child":
+    current_depth = _current_subagent_depth(context.metadata)
+    if current_depth >= config.max_subagent_depth:
+        # Depth budget exhausted (governed recursion, C7) — this run is already as
+        # deep as the configured subagent tree may go, so it does not fan out further.
         return
+    child_depth = current_depth + 1
+    child_metadata = {"subagent_origin": "child", "subagent_depth": child_depth}
     policy_metadata = context.run_input.tool_policy.metadata
     planned = None
     if isinstance(policy_metadata, dict):
@@ -115,7 +137,7 @@ async def maybe_execute_subagent_group(
             store=deps.subagent_store,
             child_runner=host.run,
             max_child_runs=config.max_child_runs,
-            child_app_metadata={"subagent_origin": "child"},
+            child_app_metadata=dict(child_metadata),
             on_event=on_event,
             parent_abort_handle=context.abort_handle,
         )
@@ -126,7 +148,7 @@ async def maybe_execute_subagent_group(
             store=deps.subagent_store,
             child_runner=host.run,
             max_child_runs=config.max_child_runs,
-            child_app_metadata={"subagent_origin": "child"},
+            child_app_metadata=dict(child_metadata),
             on_event=on_event,
             parent_abort_handle=context.abort_handle,
         )
