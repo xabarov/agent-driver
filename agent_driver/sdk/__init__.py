@@ -46,6 +46,12 @@ from agent_driver.sdk.merge import (
     merge_subagent_results,
     synthesize_subagent_results,
 )
+from agent_driver.sdk.coordinator import (
+    CoordinatorPhase,
+    CoordinatorResult,
+    PhaseResult,
+    run_coordinator,
+)
 from agent_driver.sdk.self_consistency import (
     SelfConsistencyResult,
     run_self_consistent,
@@ -68,6 +74,10 @@ __all__ = [
     "run_self_consistent",
     "AsyncSubagentManager",
     "BackgroundSubagent",
+    "CoordinatorPhase",
+    "CoordinatorResult",
+    "PhaseResult",
+    "run_coordinator",
     "AgentDriverSDKError",
     "ProviderError",
     "ProviderErrorDetails",

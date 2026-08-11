@@ -19,6 +19,18 @@ change between minor versions.
 
 ### Added
 
+- **Phased supervisor/coordinator in the SDK (coordination C4).** `sdk.run_coordinator`
+  promotes the hand-wired orchestrator-worker topology into a reusable, domain-neutral
+  primitive: an ordered list of `CoordinatorPhase`s, each building its worker specs from
+  the prior phases' results (`build_specs(prior)`, sync or async), fanning them out
+  concurrently via `run_subagent_group` under a join policy, then merging the outcome
+  (`APPEND`/`RANK`/`VOTE`, or a real LLM `SYNTHESIZE`). The merged string threads into the
+  next phase, so `research → synthesize → verify` composes with no consumer glue, and
+  agents resolve from the C2 registry. A phase whose join policy isn't satisfied halts the
+  pipeline (`stop_on_unsatisfied`, default on) and marks the `CoordinatorResult`
+  `stopped_early` — the MAST coordination-breakdown guard. New SDK exports:
+  `run_coordinator`, `CoordinatorPhase`, `PhaseResult`, `CoordinatorResult`. Tests:
+  `tests/sdk/test_coordinator.py`; example `examples/cookbook/27_coordinator.py`.
 - **Live subagent steering — course-correct a running child (coordination C3, step 2).**
   `run_subagent` gains an optional `redirect_probe`, bound for that child's run via a
   per-asyncio-task `ContextVar` (so concurrent fan-out children each get their own
