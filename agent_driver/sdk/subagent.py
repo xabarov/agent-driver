@@ -42,6 +42,7 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -489,6 +490,7 @@ async def run_subagent(
     parent_run_id: str | None = None,
     parent_abort_handle: RunAbortHandle | None = None,
     tool_gate: ToolGate | None = None,
+    redirect_probe: Callable[[], str | None] | None = None,
 ) -> SubagentResult:
     """Spawn one child agent and await its result.
 
@@ -603,9 +605,15 @@ async def run_subagent(
         )
 
     try:
-        output = await parent.run(
-            child_input, abort_handle=child_abort, tool_gate=tool_gate
+        # C3: bind a per-run redirect probe (live steering) for this child only.
+        from agent_driver.runtime.single_agent.llm_step.completion import (
+            active_redirect_probe,
         )
+
+        with active_redirect_probe(redirect_probe):
+            output = await parent.run(
+                child_input, abort_handle=child_abort, tool_gate=tool_gate
+            )
     finally:
         if watchdog_task is not None and not watchdog_task.done():
             watchdog_task.cancel()

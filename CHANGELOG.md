@@ -19,6 +19,16 @@ change between minor versions.
 
 ### Added
 
+- **Live subagent steering — course-correct a running child (coordination C3, step 2).**
+  `run_subagent` gains an optional `redirect_probe`, bound for that child's run via a
+  per-asyncio-task `ContextVar` (so concurrent fan-out children each get their own
+  steering channel, never a shared one) and read by the completion loop's redirect racer
+  in preference to the shared config probe. On top of it, `BackgroundSubagent.send(message)`
+  steers a running background child: on its next in-flight LLM turn the current request is
+  re-asked with the message folded in as a user turn (the existing redirect mechanism) —
+  so a parent can redirect a subagent mid-flight instead of cancelling it, the pattern
+  openclaude's `SendMessage` uses. This closes the C3 mailbox dead-end for the SDK path.
+  (`active_redirect_probe` context manager exposes the binding.) No export change.
 - **Salvage partial output from non-completed children (coordination C3, step 1).** A
   child that times out or hits its budget often got far enough for its partial answer to
   be worth keeping — but the group merge dropped everything non-`COMPLETED`, discarding

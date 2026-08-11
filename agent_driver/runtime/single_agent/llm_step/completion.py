@@ -3,14 +3,42 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, Protocol
 
 import httpx
 
 # F6: monotonic-clock seam so the shared retry-budget deadline is patchable in tests.
 _monotonic = time.monotonic
+
+# C3: a per-run redirect probe, isolated per asyncio task (so concurrent subagents each
+# have their own steering channel). Set by ``run_subagent(redirect_probe=…)`` around the
+# child's run; read by ``_await_with_redirect`` in preference to the shared config probe.
+_run_redirect_probe: contextvars.ContextVar[Callable[[], str | None] | None] = (
+    contextvars.ContextVar("run_redirect_probe", default=None)
+)
+
+
+@contextlib.contextmanager
+def active_redirect_probe(
+    probe: Callable[[], str | None] | None,
+) -> Iterator[None]:
+    """Bind ``probe`` as this run's live redirect probe for the duration of the block.
+
+    Isolated to the current asyncio task's context, so concurrent runs don't share it.
+    A ``None`` probe is a no-op (the run falls back to any config-level probe).
+    """
+    if probe is None:
+        yield
+        return
+    token = _run_redirect_probe.set(probe)
+    try:
+        yield
+    finally:
+        _run_redirect_probe.reset(token)
 
 from agent_driver.contracts.enums import ChatRole, RuntimeEventType
 from agent_driver.contracts.control import CommandQueueItem
@@ -116,7 +144,11 @@ async def _await_with_redirect(
     result cancels the task and raises :class:`RedirectRequested`. Only this
     request is cancelled — never tools/children.
     """
-    probe = getattr(getattr(host, "_config", None), "redirect_probe", None)
+    # C3: prefer this run's per-run probe (set by run_subagent for live steering) over
+    # the shared config-level probe.
+    probe = _run_redirect_probe.get() or getattr(
+        getattr(host, "_config", None), "redirect_probe", None
+    )
     durable_store = (
         getattr(getattr(host, "_deps", None), "command_queue_store", None)
         if context is not None
