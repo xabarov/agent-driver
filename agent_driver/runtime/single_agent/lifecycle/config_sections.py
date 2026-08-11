@@ -244,6 +244,13 @@ class SubagentSettings:
 
     enable_subagents: bool = True
     max_child_runs: int = 8
+    # Governed recursion (coordination C7). Maximum subagent-tree depth the
+    # model-planned fan-out may reach: the top-level run is depth 0, its children
+    # depth 1, and so on. Default 1 preserves the historical single-level cap (a
+    # child cannot itself spawn a group); raise it to allow bounded deeper trees,
+    # set 0 to forbid all fan-out. A per-node budget (steps/tool-calls/deadline
+    # below) still governs each individual child independent of the parent.
+    max_subagent_depth: int = 1
     default_child_deadline_seconds: float | None = 90.0
     # Epic 019 phase C: config-level child step/tool budgets. None keeps the
     # executor's built-in defaults (8 steps / 6 tool calls); a planned task's own
