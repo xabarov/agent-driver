@@ -7,6 +7,8 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-12
+
 ### Fixed
 
 - **Host-governed child execution retains every admitted task and its typed
