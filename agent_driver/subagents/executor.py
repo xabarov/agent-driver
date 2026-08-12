@@ -28,6 +28,7 @@ from agent_driver.subagents.child_helpers import (
     _child_budget_summary,
     _child_evidence_summary,
     _child_source_ledger_from_output,
+    _child_tool_results_receipt,
     _completed_child_run_from_output,
     _failed_child_run,
     _first_output_artifact,
@@ -155,6 +156,7 @@ async def _run_single_child_task(
         cleanup_child_workspace(workspace)
     run_status, terminal_state = _status_from_output(output)
     artifact_refs = _bounded_output_artifact_refs(output)
+    child_tool_results, child_tool_results_audit = _child_tool_results_receipt(output)
     merge_provenance = (
         MergeProvenance(
             strategy="child_output",
@@ -185,6 +187,8 @@ async def _run_single_child_task(
         metadata={
             **pending.metadata,
             "summary": output.answer or "",
+            "child_tool_results": child_tool_results,
+            "child_tool_results_audit": child_tool_results_audit,
             "child_artifact_refs": artifact_refs,
             "child_artifact_audit": _child_artifact_audit(output, artifact_refs),
             "child_source_ledger": _child_source_ledger_from_output(output),
@@ -210,19 +214,21 @@ def _select_schedulable_tasks(
     max_child_runs: int,
 ) -> tuple[list[SubagentTaskSpec], dict[str, object]]:
     """Apply deterministic group scheduling limits before child execution."""
-    max_parallel = (
-        max(0, group_spec.max_parallel)
-        if group_spec.max_parallel is not None
-        else max_child_runs
+    child_run_limit = max(0, max_child_runs)
+    max_parallel = _effective_max_parallel(
+        group_spec=group_spec,
+        max_child_runs=max_child_runs,
     )
-    slot_limit = max(0, min(max_child_runs, max_parallel))
     token_remaining = group_spec.token_budget
     cost_remaining = group_spec.cost_budget_usd
     scheduled: list[SubagentTaskSpec] = []
     skipped: list[dict[str, object]] = []
     for task in group_spec.tasks:
-        if len(scheduled) >= slot_limit:
+        if max_parallel == 0:
             skipped.append({"task_id": task.task_id, "reason": "parallel_limit"})
+            continue
+        if len(scheduled) >= child_run_limit:
+            skipped.append({"task_id": task.task_id, "reason": "child_run_limit"})
             continue
         task_tokens = task.token_budget or 0
         if token_remaining is not None and task_tokens > token_remaining:
@@ -239,10 +245,31 @@ def _select_schedulable_tasks(
             cost_remaining -= task_cost
     return scheduled, {
         "scheduled_tasks": len(scheduled),
+        "max_parallel_effective": max_parallel,
         "backpressure_skipped_tasks": skipped,
         "token_budget_remaining": token_remaining,
         "cost_budget_usd_remaining": cost_remaining,
     }
+
+
+def _effective_max_parallel(
+    *,
+    group_spec: SubagentGroupSpec,
+    max_child_runs: int,
+) -> int:
+    """Return the bounded concurrency for a child group.
+
+    ``max_parallel`` limits how many scheduled tasks run at once; it must not
+    also truncate the task list.  ``max_child_runs`` remains the independent
+    cap on how many children the group may execute in total.
+    """
+
+    requested = (
+        group_spec.max_parallel
+        if group_spec.max_parallel is not None
+        else max_child_runs
+    )
+    return max(0, min(max_child_runs, requested))
 
 
 def _task_role(task: SubagentTaskSpec) -> str:
@@ -324,59 +351,62 @@ async def execute_subagent_group_sync(
             },
         )
     )
-    # C1: the selected tasks are already within the parallel budget
-    # (``_select_schedulable_tasks`` caps them at ``min(max_child_runs, max_parallel)``),
-    # so run them CONCURRENTLY instead of one-at-a-time — the background executor already
-    # runs children concurrently, so concurrent child store-writes are proven safe.
+
+    # C1: schedule every task admitted by max_child_runs and the aggregate
+    # token/cost budgets, while a semaphore applies the independent
+    # max_parallel concurrency bound.  Concurrent child store-writes are
+    # already used by the background executor and are safe.
     # ``gather(return_exceptions=True)`` waits for all (no orphaned tasks) and preserves
     # order; a catastrophic child exception (rare — failures normally come back as a
     # FAILED ``SubagentRun``) is re-raised after all settle, matching the old behaviour.
     async def _run_child(index: int, task: SubagentTaskSpec) -> SubagentRun:
-        _safe_emit(
-            on_event,
-            "subagent_started",
-            {
-                "group_id": group_spec.group_id,
-                "index": index,
-                "task_id": task.task_id,
-                "role": _task_role(task),
-            },
-        )
-        completed = await _run_single_child_task(
-            parent=parent,
-            group=group,
-            task=task,
-            idx=index,
-            store=store,
-            child_runner=child_runner,
-            child_app_metadata=child_app_metadata,
-            parent_abort_handle=parent_abort_handle,
-        )
-        _safe_emit(
-            on_event,
-            "subagent_completed",
-            {
-                "group_id": group_spec.group_id,
-                "index": index,
-                "task_id": task.task_id,
-                "role": _task_role(task),
-                "subagent_run_id": completed.subagent_run_id,
-                "child_run_id": completed.child_run_id,
-                "status": (
-                    completed.status.value
-                    if hasattr(completed.status, "value")
-                    else str(completed.status)
-                ),
-                "child_evidence": _child_evidence_summary(completed.metadata),
-            },
-        )
-        return completed
+        async with semaphore:
+            _safe_emit(
+                on_event,
+                "subagent_started",
+                {
+                    "group_id": group_spec.group_id,
+                    "index": index,
+                    "task_id": task.task_id,
+                    "role": _task_role(task),
+                },
+            )
+            completed = await _run_single_child_task(
+                parent=parent,
+                group=group,
+                task=task,
+                idx=index,
+                store=store,
+                child_runner=child_runner,
+                child_app_metadata=child_app_metadata,
+                parent_abort_handle=parent_abort_handle,
+            )
+            _safe_emit(
+                on_event,
+                "subagent_completed",
+                {
+                    "group_id": group_spec.group_id,
+                    "index": index,
+                    "task_id": task.task_id,
+                    "role": _task_role(task),
+                    "subagent_run_id": completed.subagent_run_id,
+                    "child_run_id": completed.child_run_id,
+                    "status": (
+                        completed.status.value
+                        if hasattr(completed.status, "value")
+                        else str(completed.status)
+                    ),
+                    "child_evidence": _child_evidence_summary(completed.metadata),
+                },
+            )
+            return completed
+
+    semaphore = asyncio.Semaphore(
+        int(group.metadata.get("max_parallel_effective") or 1)
+    )
 
     _settled = await asyncio.gather(
-        *(
-            _run_child(idx, task)
-            for idx, task in enumerate(limited_tasks, start=1)
-        ),
+        *(_run_child(idx, task) for idx, task in enumerate(limited_tasks, start=1)),
         return_exceptions=True,
     )
     for _outcome in _settled:
@@ -488,6 +518,8 @@ async def execute_subagent_group_background(
             },
         )
     )
+    max_parallel = int(group.metadata.get("max_parallel_effective") or 1)
+    semaphore = asyncio.Semaphore(max_parallel)
     pending_runs: list[SubagentRun] = []
     for idx, task in enumerate(limited_tasks, start=1):
         child_run_id = f"child_{uuid4().hex[:12]}"
@@ -544,6 +576,7 @@ async def execute_subagent_group_background(
                 idempotency_key=task.idempotency_key,
                 on_event=on_event,
                 workspace=workspace,
+                semaphore=semaphore,
             )
         )
     group = store.upsert_group(
@@ -582,44 +615,48 @@ async def _complete_background_child_task(
     idempotency_key: str | None,
     on_event: SubagentEventCallback | None,
     workspace: ChildWorkspace,
+    semaphore: asyncio.Semaphore,
 ) -> None:
     try:
-        if bool(getattr(child_abort_handle, "is_aborted", False)):
-            completed = _cancelled_child_run(
-                pending=pending,
-                task=task,
-                idx=idx,
-                reason=str(
-                    getattr(child_abort_handle, "reason", None) or "parent_aborted"
-                ),
-            )
-        else:
-            try:
-                output_any = _call_child_runner(
-                    child_runner,
-                    child_input,
-                    child_abort_handle=child_abort_handle,
-                )
-                output = (
-                    await output_any if hasattr(output_any, "__await__") else output_any
-                )
-                if not isinstance(output, AgentRunOutput):
-                    raise RuntimeError("child_runner must return AgentRunOutput")
-                completed = _completed_child_run_from_output(
-                    parent=parent,
+        async with semaphore:
+            if bool(getattr(child_abort_handle, "is_aborted", False)):
+                completed = _cancelled_child_run(
                     pending=pending,
                     task=task,
                     idx=idx,
-                    output=output,
-                    execution_mode=SubagentExecutionMode.BACKGROUND,
+                    reason=str(
+                        getattr(child_abort_handle, "reason", None) or "parent_aborted"
+                    ),
                 )
-            except Exception as exc:  # pragma: no cover - defensive task boundary
-                completed = _failed_child_run(
-                    pending=pending,
-                    task=task,
-                    idx=idx,
-                    reason=type(exc).__name__,
-                )
+            else:
+                try:
+                    output_any = _call_child_runner(
+                        child_runner,
+                        child_input,
+                        child_abort_handle=child_abort_handle,
+                    )
+                    output = (
+                        await output_any
+                        if hasattr(output_any, "__await__")
+                        else output_any
+                    )
+                    if not isinstance(output, AgentRunOutput):
+                        raise RuntimeError("child_runner must return AgentRunOutput")
+                    completed = _completed_child_run_from_output(
+                        parent=parent,
+                        pending=pending,
+                        task=task,
+                        idx=idx,
+                        output=output,
+                        execution_mode=SubagentExecutionMode.BACKGROUND,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive task boundary
+                    completed = _failed_child_run(
+                        pending=pending,
+                        task=task,
+                        idx=idx,
+                        reason=type(exc).__name__,
+                    )
     finally:
         cleanup_child_workspace(workspace)
     store.upsert_run(completed, idempotency_key=idempotency_key)

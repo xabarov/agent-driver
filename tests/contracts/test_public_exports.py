@@ -113,6 +113,7 @@ def test_tools_public_exports_cover_governance_surface() -> None:
         "custom_tool",
         "register_custom_function",
         "register_custom_tool",
+        "register_agent_tools",
         "register_mcp_tools",
         "register_skill_tools",
     }

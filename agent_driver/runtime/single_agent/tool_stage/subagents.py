@@ -60,6 +60,19 @@ def apply_agent_tool_spawn_requests(
         idempotency_key = request.get("idempotency_key")
         metadata = request.get("metadata")
         task_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        task_type = str(request.get("task_type") or "").strip()
+        if (
+            task_type
+            and task_type not in {"general", "subagent_task"}
+            and not any(
+                str(task_metadata.get(key) or "").strip()
+                for key in ("worker_type", "role")
+            )
+        ):
+            # task_type is a public agent_tool field.  Preserve it as the
+            # worker role for host-defined child surfaces unless explicit
+            # metadata already selected a role.
+            task_metadata["worker_type"] = task_type
         task_text = task
         if _deep_research_mode(context):
             task_metadata.setdefault("worker_type", "researcher")
@@ -94,6 +107,9 @@ def apply_agent_tool_spawn_requests(
         "tasks": tasks,
         "source": "agent_tool",
     }
+    max_parallel = _max_subagent_parallel(context)
+    if max_parallel is not None:
+        context.metadata["planned_subagent_group"]["max_parallel"] = max_parallel
 
 
 def _deep_research_mode(context: RunContext) -> bool:
@@ -137,6 +153,17 @@ def _max_subagent_requests(context: RunContext) -> int:
     if profile == "hard":
         return 4
     return 1
+
+
+def _max_subagent_parallel(context: RunContext) -> int | None:
+    metadata = context.run_input.tool_policy.metadata
+    task_contract = metadata.get("task_contract")
+    if not isinstance(task_contract, dict):
+        return None
+    raw = task_contract.get("max_subagent_parallel")
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return None
+    return max(0, raw)
 
 
 def _planned_or_started_subagent_count(context: RunContext) -> int:

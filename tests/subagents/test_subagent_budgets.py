@@ -29,10 +29,13 @@ def _planned(task_metadata: dict | None = None) -> dict:
 
 def test_stamp_child_budget_defaults_applies_config():
     settings = SubagentSettings(
-        default_child_max_steps=10, default_child_max_tool_calls=4
+        default_child_deadline_seconds=600,
+        default_child_max_steps=10,
+        default_child_max_tool_calls=4,
     )
     group = _group_spec_from_planned(_planned(), max_child_runs=4)
     stamped = _stamp_child_budget_defaults(group, settings)
+    assert stamped.tasks[0].deadline_seconds == 600
     metadata = stamped.tasks[0].metadata
     assert metadata["max_steps"] == 10
     assert metadata["max_tool_calls"] == 4
@@ -40,12 +43,15 @@ def test_stamp_child_budget_defaults_applies_config():
 
 def test_stamp_respects_explicit_task_budgets():
     settings = SubagentSettings(
-        default_child_max_steps=10, default_child_max_tool_calls=4
+        default_child_deadline_seconds=600,
+        default_child_max_steps=10,
+        default_child_max_tool_calls=4,
     )
-    group = _group_spec_from_planned(
-        _planned({"max_steps": 3, "max_tool_calls": 2}), max_child_runs=4
-    )
+    planned = _planned({"max_steps": 3, "max_tool_calls": 2})
+    planned["tasks"][0]["deadline_seconds"] = 45
+    group = _group_spec_from_planned(planned, max_child_runs=4)
     stamped = _stamp_child_budget_defaults(group, settings)
+    assert stamped.tasks[0].deadline_seconds == 45
     metadata = stamped.tasks[0].metadata
     assert metadata["max_steps"] == 3  # planner's own value wins
     assert metadata["max_tool_calls"] == 2
@@ -53,7 +59,8 @@ def test_stamp_respects_explicit_task_budgets():
 
 def test_stamp_noop_without_config_defaults():
     group = _group_spec_from_planned(_planned(), max_child_runs=4)
-    assert _stamp_child_budget_defaults(group, SubagentSettings()) is group
+    settings = SubagentSettings(default_child_deadline_seconds=None)
+    assert _stamp_child_budget_defaults(group, settings) is group
 
 
 def test_child_budget_summary_marks_exhaustion():

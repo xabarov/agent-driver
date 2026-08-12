@@ -75,6 +75,164 @@ async def test_sync_child_execution_records_group_and_runs() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sync_child_receipt_preserves_normalized_tool_results() -> None:
+    """Canonical child rows retain bounded tool facts, not only model prose."""
+
+    async def _tool_child_runner(run_input):
+        return AgentRunOutput(
+            run_id=run_input.run_id or "child",
+            attempt_id="att_child",
+            status=RunStatus.COMPLETED,
+            terminal_reason=TerminalReason.FINAL_ANSWER,
+            answer="not a machine-readable receipt",
+            events=[
+                new_runtime_event(
+                    event_type=RuntimeEventType.RUN_COMPLETED,
+                    context={
+                        "run_id": run_input.run_id or "child",
+                        "attempt_id": "att_child",
+                        "seq": 1,
+                    },
+                )
+            ],
+            metadata={
+                "tool_results": [
+                    {
+                        "call": {
+                            "tool_name": "lookup",
+                            "tool_call_id": "lookup-1",
+                        },
+                        "decision": "allow",
+                        "structured_output": {"items": ["verified-item"]},
+                    }
+                ]
+            },
+        )
+
+    result = await execute_subagent_group_sync(
+        parent=default_parent_handoff(answer="parent summary"),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_tool_receipt",
+            purpose="evidence handoff",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="task_tool",
+                    task="verify one item",
+                    description="Verifier",
+                ),
+            ),
+        ),
+        store=InMemorySubagentStore(),
+        child_runner=_tool_child_runner,
+        max_child_runs=1,
+    )
+
+    metadata = result.runs[0].metadata
+    assert metadata["summary"] == "not a machine-readable receipt"
+    assert metadata["child_tool_results"] == [
+        {
+            "call": {"tool_call_id": "lookup-1", "tool_name": "lookup"},
+            "decision": "allow",
+            "structured_output": {"items": ["verified-item"]},
+        }
+    ]
+    assert metadata["child_tool_results_audit"]["total"] == 1
+    assert metadata["child_tool_results_audit"]["kept"] == 1
+    assert metadata["child_tool_results_audit"]["omitted"] == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_child_execution_runs_all_tasks_with_bounded_parallelism() -> None:
+    """max_parallel bounds concurrency without discarding queued tasks."""
+    release_children = asyncio.Event()
+    first_wave_started = asyncio.Event()
+    active = 0
+    peak_active = 0
+    started = 0
+
+    async def _runner(run_input):
+        nonlocal active, peak_active, started
+        active += 1
+        started += 1
+        peak_active = max(peak_active, active)
+        if started == 2:
+            first_wave_started.set()
+        await release_children.wait()
+        active -= 1
+        return await _ok_child_runner(run_input)
+
+    execution = asyncio.create_task(
+        execute_subagent_group_sync(
+            parent=default_parent_handoff(answer="parent summary"),
+            group_spec=SubagentGroupSpec(
+                group_id="grp_parallel",
+                purpose="bounded parallel analysis",
+                max_parallel=2,
+                tasks=tuple(
+                    SubagentTaskSpec(
+                        task_id=f"task_{idx}",
+                        task=f"investigate {idx}",
+                        description="desc",
+                    )
+                    for idx in range(4)
+                ),
+            ),
+            store=InMemorySubagentStore(),
+            child_runner=_runner,
+            max_child_runs=4,
+        )
+    )
+
+    await asyncio.wait_for(first_wave_started.wait(), timeout=1.0)
+    assert started == 2
+    assert peak_active == 2
+    release_children.set()
+    result = await asyncio.wait_for(execution, timeout=1.0)
+
+    assert [run.task_id for run in result.runs] == [
+        "task_0",
+        "task_1",
+        "task_2",
+        "task_3",
+    ]
+    assert peak_active == 2
+    assert result.group.metadata["scheduled_tasks"] == 4
+    assert result.group.metadata["max_parallel_effective"] == 2
+    assert result.group.metadata["backpressure_skipped_tasks"] == []
+
+
+@pytest.mark.asyncio
+async def test_sync_child_execution_caps_total_tasks_by_max_child_runs() -> None:
+    """max_child_runs remains the independent total fan-out limit."""
+    result = await execute_subagent_group_sync(
+        parent=default_parent_handoff(answer="parent summary"),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_total_limit",
+            purpose="bounded total analysis",
+            max_parallel=2,
+            tasks=tuple(
+                SubagentTaskSpec(
+                    task_id=f"task_{idx}",
+                    task=f"investigate {idx}",
+                    description="desc",
+                )
+                for idx in range(4)
+            ),
+        ),
+        store=InMemorySubagentStore(),
+        child_runner=_ok_child_runner,
+        max_child_runs=3,
+    )
+
+    assert [run.task_id for run in result.runs] == ["task_0", "task_1", "task_2"]
+    assert result.group.metadata["scheduled_tasks"] == 3
+    assert result.group.metadata["max_parallel_effective"] == 2
+    assert result.group.metadata["backpressure_skipped_tasks"] == [
+        {"task_id": "task_3", "reason": "child_run_limit"}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sync_child_execution_passes_abort_handle_to_child_runner() -> None:
     """Executor should pass a cascading child abort handle when supported."""
     store = InMemorySubagentStore()
@@ -153,6 +311,100 @@ async def test_sync_child_execution_restricts_worker_tool_surface() -> None:
     ]
     assert seen["tool_policy"].metadata["worker_type"] == "verifier"
     assert seen["tool_policy"].metadata["worker_tool_surface"] == "role_restricted"
+
+
+@pytest.mark.asyncio
+async def test_sync_child_execution_enforces_host_declared_custom_role_surface() -> (
+    None
+):
+    """Unknown application roles receive a host policy and cannot widen it."""
+    seen = {}
+
+    async def _runner(run_input):
+        seen["tool_policy"] = run_input.tool_policy
+        return await _ok_child_runner(run_input)
+
+    await execute_subagent_group_sync(
+        parent=default_parent_handoff(
+            answer="parent summary",
+            tool_policy={
+                "allowed_tools": ["lookup", "fetch", "shell", "agent_tool"],
+                "metadata": {
+                    "task_contract": {
+                        "child_tool_surfaces": {
+                            "application_verifier": ["lookup", "fetch"]
+                        },
+                        "child_denied_tools": ["agent_tool"],
+                    }
+                },
+            },
+        ),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_custom_role",
+            purpose="verification",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="verify_1",
+                    task="verify assigned items",
+                    description="bounded verifier",
+                    metadata={
+                        "worker_type": "application_verifier",
+                        "allowed_tools": ["fetch", "shell"],
+                    },
+                ),
+            ),
+        ),
+        store=InMemorySubagentStore(),
+        child_runner=_runner,
+        max_child_runs=4,
+    )
+
+    policy = seen["tool_policy"]
+    assert policy.allowed_tools == ["fetch"]
+    assert policy.denied_tools == ["agent_tool"]
+    assert policy.metadata["task_tool_surface"] == "narrowed"
+    assert policy.metadata["task_worker_type"] == "application_verifier"
+
+
+@pytest.mark.asyncio
+async def test_sync_child_execution_denies_unknown_host_declared_role_surface() -> None:
+    """An exhaustive host role map fails closed for an invented role."""
+    seen = {}
+
+    async def _runner(run_input):
+        seen["tool_policy"] = run_input.tool_policy
+        return await _ok_child_runner(run_input)
+
+    await execute_subagent_group_sync(
+        parent=default_parent_handoff(
+            answer="parent summary",
+            tool_policy={
+                "allowed_tools": ["lookup", "fetch", "shell"],
+                "metadata": {
+                    "task_contract": {
+                        "child_tool_surfaces": {"verifier": ["lookup", "fetch"]}
+                    }
+                },
+            },
+        ),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_unknown_role",
+            purpose="unknown role must not inherit tools",
+            tasks=(
+                SubagentTaskSpec(
+                    task_id="invented_1",
+                    task="do everything",
+                    description="invented role",
+                    metadata={"worker_type": "invented", "allowed_tools": ["shell"]},
+                ),
+            ),
+        ),
+        store=InMemorySubagentStore(),
+        child_runner=_runner,
+        max_child_runs=1,
+    )
+
+    assert seen["tool_policy"].allowed_tools == []
 
 
 @pytest.mark.asyncio
@@ -627,6 +879,60 @@ async def test_background_child_execution_returns_before_child_completes() -> No
         "background_completed"
     )
     assert events[-1][0] == "subagent_completed"
+
+
+@pytest.mark.asyncio
+async def test_background_child_execution_honors_parallel_limit() -> None:
+    """Background groups queue admitted tasks behind the same concurrency cap."""
+    release_children = asyncio.Event()
+    first_wave_started = asyncio.Event()
+    active = 0
+    peak_active = 0
+    started = 0
+
+    async def _runner(run_input):
+        nonlocal active, peak_active, started
+        active += 1
+        started += 1
+        peak_active = max(peak_active, active)
+        if started == 2:
+            first_wave_started.set()
+        await release_children.wait()
+        active -= 1
+        return await _ok_child_runner(run_input)
+
+    result = await execute_subagent_group_background(
+        parent=default_parent_handoff(answer="parent summary"),
+        group_spec=SubagentGroupSpec(
+            group_id="grp_background_parallel",
+            purpose="bounded background analysis",
+            max_parallel=2,
+            tasks=tuple(
+                SubagentTaskSpec(
+                    task_id=f"task_{idx}",
+                    task=f"investigate {idx}",
+                    description="desc",
+                )
+                for idx in range(4)
+            ),
+        ),
+        store=InMemorySubagentStore(),
+        child_runner=_runner,
+        max_child_runs=4,
+    )
+
+    await asyncio.wait_for(first_wave_started.wait(), timeout=1.0)
+    assert len(result.runs) == 4
+    assert started == 2
+    assert peak_active == 2
+    release_children.set()
+    for _ in range(50):
+        # Yield until the queued second wave has started and completed.
+        if started == 4 and active == 0:
+            break
+        await asyncio.sleep(0.01)
+    assert started == 4
+    assert peak_active == 2
 
 
 @pytest.mark.asyncio

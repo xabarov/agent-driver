@@ -7,6 +7,25 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Host-governed child execution retains every admitted task and its typed
+  evidence.** Runtime fan-out now treats `max_parallel` as a concurrency bound
+  rather than a second total-task limit on both sync and background paths;
+  `max_child_runs` remains the independent fan-out cap. Host-defined child
+  role surfaces are intersected with parent/task allow-lists and fail closed
+  for unknown roles, `agent_tool.task_type` reaches that role policy, and
+  configured child deadlines are stamped when a task does not override them.
+  Completed child receipts retain a bounded, audited copy of normalized tool
+  results, while terminal `AgentRunOutput` exposes the canonical typed
+  subagent groups/runs instead of only lossy metadata summaries.
+
+### Added
+
+- **Narrow-registry agent-tool registration.** `register_agent_tools` is now
+  exported from `agent_driver.tools` and `agent_driver.tools.builtin`, matching
+  the existing narrow-registry helpers for skills and MCP tools.
+
 ## [0.18.0] - 2026-08-12
 
 ### Changed
