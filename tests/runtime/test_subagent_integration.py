@@ -183,6 +183,61 @@ def _agent_tool_result(
     return ToolExecutionResult(envelopes=envelopes)
 
 
+def test_agent_tool_task_type_becomes_worker_type_for_host_child_surface() -> None:
+    """The public task_type field reaches host-enforced child role policy."""
+    context = _subagent_context(
+        {
+            "task_contract": {
+                "max_subagent_requests": 2,
+                "child_tool_surfaces": {"application_verifier": ["lookup", "fetch"]},
+            },
+        }
+    )
+    result = _agent_tool_result(("subreq_verify", "Verify an item"))
+    request = result.envelopes[0].structured_output["subagent_request"]
+    request["task_type"] = "application_verifier"
+
+    apply_agent_tool_spawn_requests(context, result)
+
+    task = context.metadata["planned_subagent_group"]["tasks"][0]
+    assert task["metadata"]["worker_type"] == "application_verifier"
+
+
+def test_agent_tool_uses_task_contract_parallel_limit() -> None:
+    """Host policy controls joined agent_tool fan-out concurrency."""
+    context = _subagent_context(
+        {
+            "task_contract": {
+                "max_subagent_requests": 6,
+                "max_subagent_parallel": 3,
+            },
+        }
+    )
+
+    apply_agent_tool_spawn_requests(
+        context,
+        _agent_tool_result(
+            ("subreq_a", "Verify A"),
+            ("subreq_b", "Verify B"),
+        ),
+    )
+
+    assert context.metadata["planned_subagent_group"]["max_parallel"] == 3
+
+
+def test_agent_tool_explicit_worker_metadata_wins_over_task_type() -> None:
+    context = _subagent_context()
+    result = _agent_tool_result(("subreq_explicit", "Verify explicit item"))
+    request = result.envelopes[0].structured_output["subagent_request"]
+    request["task_type"] = "verifier"
+    request["metadata"] = {"role": "specialist"}
+
+    apply_agent_tool_spawn_requests(context, result)
+
+    task = context.metadata["planned_subagent_group"]["tasks"][0]
+    assert task["metadata"] == {"role": "specialist"}
+
+
 @pytest.mark.asyncio
 async def test_runtime_without_subagents_keeps_default_flow() -> None:
     """Default runner should not create subagent rows."""
@@ -246,8 +301,17 @@ async def test_runtime_with_subagents_executes_group_from_metadata() -> None:
     )
     assert output.metadata.get("subagent_groups")
     assert output.metadata.get("subagent_runs")
+    assert len(output.subagent_groups) == 1
+    assert len(output.subagent_runs) == 2
+    assert {row.task_id for row in output.subagent_runs} == {"t1", "t2"}
     verifier_run = store.list_runs("run_with_sub")[0]
     assert verifier_run.metadata["handoff"]["worker"]["type"] == "verifier"
+    output_verifier = next(
+        row
+        for row in output.subagent_runs
+        if row.subagent_run_id == verifier_run.subagent_run_id
+    )
+    assert output_verifier.metadata["summary"] == verifier_run.metadata["summary"]
 
 
 # --- Governed recursion / depth budget (coordination C7) ---------------------
@@ -292,7 +356,9 @@ async def _run_with_depth_metadata(
             agent_id="agent",
             graph_preset="single_react",
             app_metadata=app_metadata or {},
-            tool_policy={"metadata": {"planned_subagent_group": _planned_depth_group()}},
+            tool_policy={
+                "metadata": {"planned_subagent_group": _planned_depth_group()}
+            },
         )
     )
 
@@ -331,9 +397,7 @@ async def test_child_run_does_not_fan_out_at_default_depth_budget() -> None:
 @pytest.mark.asyncio
 async def test_raised_depth_budget_lets_a_child_fan_out() -> None:
     # With the budget raised to 2, a depth-1 child may fan out one more level.
-    output = await _run_with_depth_metadata(
-        2, {"subagent_depth": 1}, "depth_child_ok"
-    )
+    output = await _run_with_depth_metadata(2, {"subagent_depth": 1}, "depth_child_ok")
     assert output.metadata.get("subagent_groups")
 
 

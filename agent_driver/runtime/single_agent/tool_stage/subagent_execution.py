@@ -376,14 +376,16 @@ def _deep_research_mode(context: RunContext) -> bool:
 def _stamp_child_budget_defaults(group_spec, config):
     """Apply SubagentSettings default child budgets to tasks that did not set their own.
 
-    The executor reads ``task.metadata["max_steps"/"max_tool_calls"]``; explicit values
-    from the planner always win (epic 019 phase C).
+    The executor reads ``task.metadata["max_steps"/"max_tool_calls"]`` and the
+    task's ``deadline_seconds`` field; explicit values from the planner always
+    win (epic 019 phase C).
     """
     if group_spec is None:
         return None
+    default_deadline = getattr(config, "default_child_deadline_seconds", None)
     default_steps = getattr(config, "default_child_max_steps", None)
     default_calls = getattr(config, "default_child_max_tool_calls", None)
-    if default_steps is None and default_calls is None:
+    if default_deadline is None and default_steps is None and default_calls is None:
         return group_spec
     stamped = []
     for task in group_spec.tasks:
@@ -392,7 +394,16 @@ def _stamp_child_budget_defaults(group_spec, config):
             metadata.setdefault("max_steps", int(default_steps))
         if default_calls is not None:
             metadata.setdefault("max_tool_calls", int(default_calls))
-        stamped.append(dataclasses.replace(task, metadata=metadata))
+        deadline_seconds = task.deadline_seconds
+        if deadline_seconds is None and default_deadline is not None:
+            deadline_seconds = float(default_deadline)
+        stamped.append(
+            dataclasses.replace(
+                task,
+                deadline_seconds=deadline_seconds,
+                metadata=metadata,
+            )
+        )
     return dataclasses.replace(group_spec, tasks=tuple(stamped))
 
 

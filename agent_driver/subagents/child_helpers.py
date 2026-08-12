@@ -8,6 +8,7 @@ class. Re-exported from ``executor`` for the spine and for existing callers/test
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from inspect import signature
 from typing import Any, Callable
@@ -118,9 +119,100 @@ def _child_tool_policy(
         parent_tool_policy=parent.tool_policy,
         worker_type=str(worker_type) if worker_type is not None else None,
     )
+    policy = _apply_task_tool_surface(
+        policy=policy,
+        parent=parent,
+        task=task,
+        worker_type=str(worker_type) if worker_type is not None else None,
+    )
     if task.metadata.get("deep_research_child_notes_only") is True:
         policy = _strip_parent_research_contract(policy)
     return policy
+
+
+def _apply_task_tool_surface(
+    *,
+    policy: dict[str, object],
+    parent: SubagentParentHandoff,
+    task: SubagentTaskSpec,
+    worker_type: str | None,
+) -> dict[str, object]:
+    """Narrow a child policy by host- and task-declared tool surfaces.
+
+    Hosts may define domain-specific worker roles without teaching Agent Driver
+    those role names.  Once a host supplies an exhaustive
+    ``task_contract.child_tool_surfaces`` mapping, an unknown role is denied by
+    default instead of inheriting the broader parent surface.  Every requested
+    surface is intersected with the current allow-list and can never widen it.
+    """
+
+    parent_metadata = parent.tool_policy.get("metadata")
+    task_contract = (
+        parent_metadata.get("task_contract")
+        if isinstance(parent_metadata, dict)
+        else None
+    )
+    contract_allowed: object = None
+    contract_denied: object = None
+    if isinstance(task_contract, dict):
+        surfaces = task_contract.get("child_tool_surfaces")
+        if isinstance(surfaces, dict):
+            contract_allowed = surfaces.get(worker_type, []) if worker_type else []
+        contract_denied = task_contract.get("child_denied_tools")
+
+    requested_surfaces = [
+        value
+        for value in (contract_allowed, task.metadata.get("allowed_tools"))
+        if isinstance(value, list)
+    ]
+    current_allowed = policy.get("allowed_tools")
+    allowed = (
+        [str(value) for value in current_allowed]
+        if isinstance(current_allowed, list)
+        else None
+    )
+    for requested in requested_surfaces:
+        requested_set = {str(value) for value in requested}
+        if allowed is None:
+            allowed = [str(value) for value in requested]
+        else:
+            allowed = [value for value in allowed if value in requested_set]
+
+    denied: list[str] = []
+    for source in (
+        policy.get("denied_tools"),
+        contract_denied,
+        task.metadata.get("denied_tools"),
+    ):
+        if not isinstance(source, list):
+            continue
+        for value in source:
+            normalized = str(value)
+            if normalized not in denied:
+                denied.append(normalized)
+    if allowed is not None and denied:
+        denied_set = set(denied)
+        allowed = [value for value in allowed if value not in denied_set]
+
+    if not requested_surfaces and not denied:
+        return policy
+    metadata = dict(policy.get("metadata") or {})
+    metadata.update(
+        {
+            "task_tool_surface": "narrowed",
+            "task_worker_type": worker_type,
+            "task_requested_allowed_tools": [
+                [str(value) for value in source] for source in requested_surfaces
+            ],
+            "task_denied_tools": denied,
+        }
+    )
+    result = {**policy, "metadata": metadata}
+    if allowed is not None:
+        result["allowed_tools"] = allowed
+    if denied:
+        result["denied_tools"] = denied
+    return result
 
 
 def _strip_parent_research_contract(policy: dict[str, object]) -> dict[str, object]:
@@ -265,6 +357,53 @@ def _child_budget_summary(
     }
 
 
+def _child_tool_results_receipt(
+    output: AgentRunOutput,
+    *,
+    max_results: int = 64,
+    max_bytes: int = 256 * 1024,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    """Return a bounded JSON copy of normalized child tool evidence.
+
+    Child prose is not a reliable evidence transport: a model may omit rows or
+    time out after its tools completed.  The runtime-normalized ``tool_results``
+    metadata is therefore retained on the canonical child receipt, with both a
+    row and serialized-byte bound plus an explicit audit.
+    """
+
+    metadata = output.metadata if isinstance(output.metadata, dict) else {}
+    raw_rows = metadata.get("tool_results")
+    rows = (
+        [row for row in raw_rows if isinstance(row, dict)]
+        if isinstance(raw_rows, list)
+        else []
+    )
+    kept: list[dict[str, object]] = []
+    used_bytes = 0
+    for row in rows[: max(0, max_results)]:
+        try:
+            encoded = json.dumps(
+                row,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            continue
+        if used_bytes + len(encoded) > max(0, max_bytes):
+            break
+        parsed = json.loads(encoded)
+        if isinstance(parsed, dict):
+            kept.append(parsed)
+            used_bytes += len(encoded)
+    return kept, {
+        "total": len(rows),
+        "kept": len(kept),
+        "omitted": max(0, len(rows) - len(kept)),
+        "serialized_bytes": used_bytes,
+    }
+
+
 def _child_deadline_seconds(task: SubagentTaskSpec) -> float | None:
     if task.deadline_seconds is not None:
         return task.deadline_seconds
@@ -328,6 +467,7 @@ def _completed_child_run_from_output(
 ) -> SubagentRun:
     run_status, terminal_state = _status_from_output(output)
     artifact_refs = _bounded_output_artifact_refs(output)
+    child_tool_results, child_tool_results_audit = _child_tool_results_receipt(output)
     merge_provenance = (
         MergeProvenance(
             strategy="child_output",
@@ -358,6 +498,8 @@ def _completed_child_run_from_output(
         metadata={
             **pending.metadata,
             "summary": output.answer or "",
+            "child_tool_results": child_tool_results,
+            "child_tool_results_audit": child_tool_results_audit,
             "child_artifact_refs": artifact_refs,
             "child_artifact_audit": _child_artifact_audit(output, artifact_refs),
             "child_source_ledger": _child_source_ledger_from_output(output),
@@ -488,6 +630,7 @@ __all__ = [
     "_build_pending_child_run",
     "_build_child_input",
     "_child_budget_summary",
+    "_child_tool_results_receipt",
     "_child_deadline_seconds",
     "_child_max_steps",
     "_child_max_tool_calls",
