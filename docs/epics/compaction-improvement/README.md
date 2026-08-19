@@ -57,8 +57,12 @@ but carries:
      - **C1** (M) — journaled non-destructive compaction (shadow-not-mutate log events);
        fixes BUG-7 (lossy partial reports success), adds audit/replay + orphaned-lock
        crash detection.
-     - **C2** (M) — wire the already-built-but-dormant `condenser.py` pipeline as the
-       compaction seam (Option-B1b cutover), behind an opt-in flag, emitting C1's facts.
+     - **C2** (M, DONE 2026-08-20, flag default OFF) — wired the built-but-dormant
+       `condenser.py` pipeline as the compaction seam (Option-B1b) behind
+       `use_condenser_pipeline`: model-free tiers cheapest-first
+       (`condenser_tiers.py`), skipping the LLM summary when clearing already fits,
+       delegating to the mature `llm_full` path otherwise. A/B quality-per-dollar
+       gate before flipping the default is the remaining step.
 
 ## Documents
 

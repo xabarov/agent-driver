@@ -155,6 +155,36 @@ already compact becomes *more* correct (audit + honest exhaustion), no API break
 
 ## C2 — wire the `Condenser` pipeline as the compaction seam (B1b) (effort M)
 
+### Status: DONE (2026-08-20, flag default OFF — A/B gate pending)
+
+Landed behind `CompactionSettings.use_condenser_pipeline` (default **False**;
+`RunnerConfig.use_condenser_pipeline` proxy). When on, `_run_compaction_mode_dispatch`
+routes transcript compaction to `_run_condenser_pipeline_dispatch`, which runs a
+`CondenserPipeline` of the **model-free** tiers cheapest-first
+(`agent_driver/context/compaction/condenser_tiers.py`: `ToolResultPruner` →
+`ToolHistoryCondenser` → `PartialCondenser`) and:
+
+- **fits under target from the model-free tiers → success with NO LLM call** (the
+  novel win — verified by a test that fails if `_apply_llm_full_compaction` runs);
+- **does not fit + `enable_llm_compaction` → delegates to the mature
+  `_apply_llm_full_compaction`** path (request still original — no double-compaction),
+  rather than re-implementing excerpt/provider/rolling-summary inside a condenser;
+- **does not fit + no LLM tier → applies the model-free progress honestly
+  (`fit=False`)**, or a neutral `skipped` when nothing was freed (same honest-outcome
+  discipline as C1 — no false breaker reset).
+
+`session_memory` compaction is unaffected (stays on the legacy plane). `span_collapse`
+and `llm_full` were deliberately NOT wrapped as condensers — both need a provider, so
+`span_collapse` stays unused and `llm_full` is reached by delegation. Tests:
+`tests/context/test_condenser_tiers.py`, `tests/runtime/test_compaction_condenser_pipeline.py`;
+flag-off path proven byte-identical by the existing suite (1439 green).
+
+**Remaining gate (not done here):** the A/B on quality-per-dollar before flipping the
+default. Run `eval compare` and the excel-ai SSB A/B (this epic's `MEASUREMENT-*.md`
+harness) with `EXCEL_*`/`RunnerConfig(compaction=CompactionSettings(use_condenser_pipeline=True))`
+as the treatment arm; only flip the default if it is neutral-or-better. Do NOT
+benchmark-fit — the lever is structure + honesty.
+
 ### Idea
 `agent_driver/context/compaction/condenser.py` already ships the cost-ordered
 `CondenserPipeline` with `minimum_progress` (anti-thrash) and honest `exhausted` — but its

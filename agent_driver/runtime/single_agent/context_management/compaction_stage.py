@@ -27,7 +27,12 @@ from agent_driver.contracts.context.run_budget import (
     COMPACTION_WINDOW_CHAR_FRACTION as COMPACTION_INPUT_WINDOW_FRACTION,
 )
 from agent_driver.contracts.enums import RuntimeEventType
-from agent_driver.context.compaction.condenser import message_chars
+from agent_driver.context.compaction.condenser import (
+    CondenseContext,
+    CondenserPipeline,
+    message_chars,
+)
+from agent_driver.context.compaction.condenser_tiers import default_condenser_tiers
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.scaffolding import is_scaffolding
 from agent_driver.runtime.metadata_state import get_cost_runtime_state
@@ -435,6 +440,22 @@ async def _run_compaction_mode_dispatch(
     or as the last resort when llm_full was not attempted). Return True when one mode
     fully handled the attempt; False means no path applied (the caller then records
     a ``path_not_implemented`` failure)."""
+    # Option B1b (C2): route transcript compaction through the cost-ordered
+    # CondenserPipeline when opted in. session_memory stays on the legacy plane
+    # (its side-channel persistence + freshness are orthogonal to transcript trim).
+    if (
+        getattr(host._config, "use_condenser_pipeline", False)
+        and decision.mode.value != "session_memory"
+    ):
+        return await _run_condenser_pipeline_dispatch(
+            host,
+            context=context,
+            request=request,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id=compaction_id,
+            circuit_breaker_open_before=circuit_breaker_open_before,
+        )
     attempted_llm_full = False
     if decision.mode.value == "session_memory" and session_memory is not None:
         if await _apply_session_memory_compaction(
@@ -487,6 +508,210 @@ async def _run_compaction_mode_dispatch(
         ):
             return True
     return False
+
+
+def _pipeline_target_chars(host: CompactionStageHost, *, context: RunContext) -> int:
+    """Char budget the compacted View should fit under — the model-window fraction."""
+    cap, _source = _scaled_context_char_cap(
+        host, context=context, base_max_chars=int(host._config.ptl_retry_max_chars)
+    )
+    return max(1, cap)
+
+
+def _effective_window_tokens(context: RunContext) -> int:
+    """Resolved model window in tokens for tier sizing (fallback 128k)."""
+    raw = context.metadata.get("effective_context_budget")
+    if isinstance(raw, dict):
+        window = raw.get("context_window_estimate")
+        if isinstance(window, int) and window > 0:
+            return window
+    return 128_000
+
+
+def _applied_tier_names(applied: list[dict[str, Any]]) -> list[str]:
+    return [
+        str(entry["condenser"])
+        for entry in applied
+        if isinstance(entry, dict) and entry.get("condenser") and "rejected" not in entry
+    ]
+
+
+async def _run_condenser_pipeline_dispatch(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    request: Any,
+    orchestrator: CompactionOrchestrator,
+    decision: CompactionDecision,
+    compaction_id: str,
+    circuit_breaker_open_before: bool,
+) -> bool:
+    """Option-B1b transcript compaction: run the model-free CondenserPipeline
+    cheapest-first, and only when it does not reach the target delegate to the
+    mature ``_apply_llm_full_compaction`` path. The novel win is skipping the LLM
+    summary entirely whenever clearing/truncating old tool bulk already fits."""
+    original_view = list(request.messages)
+    before_chars = message_chars(original_view)
+    ctx = CondenseContext(
+        target_chars=_pipeline_target_chars(host, context=context),
+        chars_per_token=_COMPACTION_CHARS_PER_TOKEN,
+        extras={"effective_window_tokens": _effective_window_tokens(context)},
+    )
+    pipeline = CondenserPipeline(default_condenser_tiers())
+    result = await pipeline.run(original_view, ctx=ctx)
+    freed_chars = before_chars - message_chars(result.messages)
+
+    if result.fit and freed_chars > 0:
+        request.messages = result.messages
+        return _finalize_pipeline_outcome(
+            host,
+            context=context,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id=compaction_id,
+            freed_chars=freed_chars,
+            applied=result.applied,
+            fit=True,
+            circuit_breaker_open_before=circuit_breaker_open_before,
+        )
+    # Model-free tiers did not fit. The request is still the original here, so the
+    # mature llm_full path can re-summarize from scratch when the LLM tier is on.
+    if host._config.enable_llm_compaction:
+        return await _apply_llm_full_compaction(
+            host,
+            context=context,
+            request=request,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id=compaction_id,
+            circuit_breaker_open_before=circuit_breaker_open_before,
+        )
+    # No LLM tier: keep whatever real progress the model-free tiers made (honest
+    # ``fit=False``), else record a neutral skip that leaves the View untouched.
+    if freed_chars > 0:
+        request.messages = result.messages
+        return _finalize_pipeline_outcome(
+            host,
+            context=context,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id=compaction_id,
+            freed_chars=freed_chars,
+            applied=result.applied,
+            fit=False,
+            circuit_breaker_open_before=circuit_breaker_open_before,
+        )
+    return _finalize_pipeline_no_progress(
+        host,
+        context=context,
+        orchestrator=orchestrator,
+        decision=decision,
+        compaction_id=compaction_id,
+        circuit_breaker_open_before=circuit_breaker_open_before,
+    )
+
+
+def _finalize_pipeline_outcome(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    orchestrator: CompactionOrchestrator,
+    decision: CompactionDecision,
+    compaction_id: str,
+    freed_chars: int,
+    applied: list[dict[str, Any]],
+    fit: bool,
+    circuit_breaker_open_before: bool,
+) -> bool:
+    """Record a successful condenser-pipeline compaction (model-free tiers only)."""
+    tiers = _applied_tier_names(applied)
+    result_payload = {
+        "compaction_id": compaction_id,
+        "mode": "partial",
+        "success": True,
+        "metadata": {
+            "strategy": "condenser_pipeline",
+            "chars_freed": freed_chars,
+            "fit": fit,
+            "tiers": tiers,
+        },
+    }
+    context.metadata[COMPACTION_RESULT_KEY] = result_payload
+    context.metadata[COMPACTION_FAILURES_KEY] = []
+    cleanup = apply_post_compact_cleanup(
+        metadata=context.metadata,
+        max_reinjected_artifact_refs=host._config.post_compact_max_reinjected_artifact_refs,
+    )
+    context.metadata["post_compact_cleanup"] = {
+        "cleaned_keys": list(cleanup.cleaned_keys),
+        "reinjected_keys": list(cleanup.reinjected_keys),
+    }
+    audit = orchestrator.complete_attempt(
+        decision=decision, result=_result_from_payload(result_payload)
+    )
+    context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+    _emit_compaction_outcome(
+        host,
+        context=context,
+        outcome="successful",
+        payload_extras={
+            "mode": "condenser_pipeline",
+            "compaction_id": compaction_id,
+            "chars_freed": freed_chars,
+            "fit": fit,
+            "tiers": tiers,
+        },
+        orchestrator=orchestrator,
+    )
+    _maybe_emit_circuit_breaker_warning(
+        host,
+        context=context,
+        before_open=circuit_breaker_open_before,
+        orchestrator=orchestrator,
+    )
+    return True
+
+
+def _finalize_pipeline_no_progress(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    orchestrator: CompactionOrchestrator,
+    decision: CompactionDecision,
+    compaction_id: str,
+    circuit_breaker_open_before: bool,
+) -> bool:
+    """Neutral ``skipped`` when the model-free tiers freed nothing and no LLM tier is
+    available — like the partial no-progress path, it neither resets the breaker nor
+    counts as a failure, and leaves the request View untouched."""
+    context.metadata[COMPACTION_RESULT_KEY] = {
+        "compaction_id": compaction_id,
+        "mode": "partial",
+        "success": False,
+        "metadata": {"strategy": "condenser_pipeline", "chars_freed": 0},
+    }
+    context.metadata[COMPACTION_FAILURES_KEY] = []
+    audit = orchestrator.complete_attempt(decision=decision, result=None)
+    context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+    _emit_compaction_outcome(
+        host,
+        context=context,
+        outcome="skipped",
+        payload_extras={
+            "mode": "condenser_pipeline",
+            "compaction_id": compaction_id,
+            "skip_reason": "insufficient_progress",
+            "chars_freed": 0,
+        },
+        orchestrator=orchestrator,
+    )
+    _maybe_emit_circuit_breaker_warning(
+        host,
+        context=context,
+        before_open=circuit_breaker_open_before,
+        orchestrator=orchestrator,
+    )
+    return True
 
 
 def _finalize_unimplemented_compaction_path(

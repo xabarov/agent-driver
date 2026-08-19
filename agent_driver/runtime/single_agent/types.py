@@ -358,6 +358,10 @@ class RunnerConfig:
         return self.compaction.enable_partial_compaction
 
     @property
+    def use_condenser_pipeline(self) -> bool:
+        return self.compaction.use_condenser_pipeline
+
+    @property
     def enable_ptl_retry(self) -> bool:
         return self.compaction.enable_ptl_retry
 

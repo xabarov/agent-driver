@@ -7,6 +7,23 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in Condenser-pipeline compaction seam (compaction hardening C2 /
+  Option-B1b).** New `CompactionSettings.use_condenser_pipeline` (default **off**,
+  `RunnerConfig.use_condenser_pipeline` proxy) routes transcript compaction through
+  the previously built-but-dormant cost-ordered `CondenserPipeline`, running the
+  model-free tiers cheapest-first — tool-result clear → tiered tool-history
+  truncation → deterministic partial summary
+  (`agent_driver/context/compaction/condenser_tiers.py`). When clearing old tool
+  bulk already brings the request under budget the expensive LLM summary is skipped
+  entirely; only when the model-free tiers fall short does the stage delegate to the
+  mature `llm_full` path (from the still-original request, so no double-compaction).
+  A no-progress attempt with no LLM tier is an honest neutral `skipped` (same
+  discipline as the C1 partial fix — no false circuit-breaker reset). `session_memory`
+  compaction is unaffected. Default behaviour is byte-identical until the flag is
+  enabled; flipping the default awaits an A/B quality-per-dollar gate.
+
 ## [0.19.1] - 2026-08-20
 
 ### Fixed
