@@ -49,8 +49,21 @@ but carries:
    `EPIC_STANDARD.md` conventions for the bar.
 3. **Implementation.** Land in small, test-gated increments; keep default behavior
    green unless a documented, opt-in change is agreed.
+   - **Active slice — compaction hardening C1–C3** (2026-08-19), informed by the
+     `reference/deepseek-harness` survey (memory `deepseek-harness-survey`). See
+     [`DESIGN-deepseek-C1-C3.md`](DESIGN-deepseek-C1-C3.md). Sequenced **C3 → C1 → C2**:
+     - **C3** (S) — cached derived-View + O(1) next-seq; fixes the `_next_seq` O(n²)
+       RAM/CPU blowup *root* that `CLAUDE.md` currently only backstops.
+     - **C1** (M) — journaled non-destructive compaction (shadow-not-mutate log events);
+       fixes BUG-7 (lossy partial reports success), adds audit/replay + orphaned-lock
+       crash detection.
+     - **C2** (M) — wire the already-built-but-dormant `condenser.py` pipeline as the
+       compaction seam (Option-B1b cutover), behind an opt-in flag, emitting C1's facts.
 
 ## Documents
 
 - [`BUGS.md`](BUGS.md) — concrete defects/smells found (seed: the magic numbers).
 - [`RESEARCH.md`](RESEARCH.md) — the research log + findings + design options.
+- [`DESIGN-deepseek-C1-C3.md`](DESIGN-deepseek-C1-C3.md) — active implementation slice
+  (C3 cached fold + O(1) seq, C1 journaled shadow compaction, C2 Condenser-pipeline
+  cutover), grounded in the deepseek-harness comparison.
