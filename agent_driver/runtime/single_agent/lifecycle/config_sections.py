@@ -216,6 +216,14 @@ class CompactionSettings:
     enable_llm_compaction: bool = False
     enable_partial_compaction: bool = True
     enable_ptl_retry: bool = True
+    # Option B1b (compaction hardening C2): route transcript compaction through the
+    # cost-ordered CondenserPipeline (model-free tiers cheapest-first: tool-clear →
+    # tool-history → partial), so an LLM summary is skipped whenever deterministic
+    # clearing already fits the budget; the mature llm_full path is delegated to only
+    # when the model-free tiers do not reach the target. Opt-in default OFF and
+    # behaviour-neutral until an A/B (eval compare / excel-ai SSB) proves it neutral
+    # on quality-per-dollar; session_memory compaction is unaffected by this flag.
+    use_condenser_pipeline: bool = False
     # Option B2 (amortized rolling summary): when enabled, llm_full folds the prior
     # persisted summary + only the newly-overflowed slice each firing instead of
     # re-summarising the full history from scratch (kills the ~12.5k redundant
