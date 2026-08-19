@@ -7,7 +7,20 @@ change between minor versions.
 
 ## [Unreleased]
 
-## [0.19.0] - 2026-08-12
+### Fixed
+
+- **Event-log sequence allocation is O(1), fixing the runaway-run RAM/CPU root
+  (compaction hardening C3).** `journal._next_seq` computed the next event sequence
+  as `max(seq) + 1` over the *entire* run log on every emit — O(n) per event, O(n²)
+  per run, materializing the whole (unboundedly growing) log each time; a run that
+  never reached `final_answer` drove RAM into GBs, previously only *backstopped* by
+  `default_max_steps`. Sequence allocation now belongs to the event-log store as a
+  collision-safe **peek** (`RuntimeEventLog.next_seq`): O(1) via a maintained
+  high-water mark for the in-memory and JSONL backends, and an indexed `MAX(seq)`
+  for SQLite (new `(run_id, seq)` index) and Postgres — no log materialization. All
+  seq consumers (runner emit, finalization planning events, SDK control-event
+  injection) route through a `next_event_seq` helper that keeps the fast path while
+  falling back to the scan for external/legacy event logs without the method.
 
 ### Fixed
 

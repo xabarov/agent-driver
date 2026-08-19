@@ -46,6 +46,14 @@ class SqliteRuntimeStore(SqliteStoreBase):
                 payload TEXT NOT NULL
             )
             """)
+        # Index (run_id, seq) so ``next_seq``'s MAX(seq) and ``list_for_run``'s
+        # ordered/after-seq reads are indexed lookups, not full-table scans.
+        self._execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_run_events_run_seq
+            ON run_events (run_id, seq)
+            """
+        )
         self._execute("""
             CREATE TABLE IF NOT EXISTS runtime_schema_meta (
                 key TEXT PRIMARY KEY,
@@ -181,6 +189,14 @@ class SqliteRuntimeStore(SqliteStoreBase):
             """,
             (event.event_id, event.run_id, event.seq, event.model_dump_json()),
         )
+
+    def next_seq(self, run_id: str) -> int:
+        """Peek the next seq via an indexed ``MAX(seq)`` (no log materialization)."""
+        rows = self._query(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM run_events WHERE run_id = ?",
+            (run_id,),
+        )
+        return int(rows[0][0]) if rows else 1
 
     def list_for_run(
         self, run_id: str, *, after_seq: int | None = None

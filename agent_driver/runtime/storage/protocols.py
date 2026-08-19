@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from agent_driver.contracts.checkpoints import CheckpointRef
 from agent_driver.contracts.events import RuntimeEvent
@@ -74,6 +74,37 @@ class RuntimeEventLog(Protocol):
         """Return run events, optionally filtering by sequence number."""
         raise NotImplementedError
 
+    def next_seq(self, run_id: str) -> int:
+        """Return the sequence number the next appended event should carry.
+
+        This is a *peek*: repeated calls return the same value until an event is
+        actually appended, so a caller may read it once for an event's payload and
+        again when stamping the event without producing a gap. The store is the
+        single serialization point for a run's log, so this is collision-safe
+        across every appender (runner emit, finalization, SDK control injection).
+
+        The default is a full-log scan; in-tree backends override it with an O(1)
+        counter (in-memory) or an indexed ``MAX(seq)`` (SQL) so a long run never
+        pays the O(n)-per-emit cost that materialized the whole log each time.
+        """
+        events = self.list_for_run(run_id)
+        return (max(event.seq for event in events) + 1) if events else 1
+
     def capabilities(self) -> StorageCapabilities:
         """Return backend capability flags for operators/tests."""
         raise NotImplementedError
+
+
+def next_event_seq(event_log: "RuntimeEventLog", run_id: str) -> int:
+    """Peek the next event sequence, tolerating event logs without ``next_seq``.
+
+    In-tree backends implement an O(1)/indexed ``next_seq``; external or test
+    doubles that predate it (bare ``append``/``list_for_run`` duck types) fall back
+    to the scan. Every seq consumer routes through here so the fast path is used
+    whenever the backend offers it, with no hard dependency on the method existing.
+    """
+    peek = getattr(event_log, "next_seq", None)
+    if callable(peek):
+        return cast(int, peek(run_id))
+    events = event_log.list_for_run(run_id)
+    return (max(event.seq for event in events) + 1) if events else 1
