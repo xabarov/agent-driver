@@ -22,6 +22,7 @@ from agent_driver.runtime.storage.payloads import (
     runtime_event_from_payload,
 )
 from agent_driver.runtime.storage.postgres_sql import (
+    max_seq_sql,
     prune_checkpoints_before_sql,
     prune_events_before_sql,
     schema_migrations,
@@ -273,6 +274,17 @@ class PostgresRuntimeStore:
                     (event.event_id, event.run_id, event.seq, payload_json),
                 )
             conn.commit()
+
+    def next_seq(self, run_id: str) -> int:
+        """Peek the next seq via an indexed MAX(seq) (no log materialization)."""
+        connect, _ = _pg_dependencies()
+        with connect(
+            self._config.dsn, autocommit=True, **self._connect_kwargs()
+        ) as conn:
+            with conn.cursor() as cur:
+                cur.execute(max_seq_sql(events_table=self._events_table), (run_id,))
+                row = cur.fetchone()
+        return int(row[0]) if row else 1
 
     def list_for_run(
         self, run_id: str, *, after_seq: int | None = None

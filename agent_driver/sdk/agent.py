@@ -36,6 +36,7 @@ from agent_driver.runtime.control import (
 )
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.tool_gate import ToolGate
+from agent_driver.runtime.storage import next_event_seq
 from agent_driver.runtime.stream import project_runtime_events
 from agent_driver.sdk.errors import sdk_provider_error_from_runtime
 from agent_driver.sdk.handle import RunHandle, RunStream
@@ -356,8 +357,11 @@ class Agent:  # pylint: disable=too-many-public-methods
     ) -> None:
         if not run_id:
             return
-        events = self._runner.deps.event_log.list_for_run(run_id)
-        next_seq = (max(event.seq for event in events) + 1) if events else 1
+        # Peek the next seq through the store (O(1) / collision-safe) rather than
+        # re-scanning the whole run log; the control plane shares the runner's
+        # event-log instance, so the store's counter stays consistent with runner
+        # emits interleaved with this injection.
+        next_seq = next_event_seq(self._runner.deps.event_log, run_id)
         self._runner.deps.event_log.append(
             new_runtime_event(
                 event_type=event_type,

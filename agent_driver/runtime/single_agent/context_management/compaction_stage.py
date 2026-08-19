@@ -27,6 +27,7 @@ from agent_driver.contracts.context.run_budget import (
     COMPACTION_WINDOW_CHAR_FRACTION as COMPACTION_INPUT_WINDOW_FRACTION,
 )
 from agent_driver.contracts.enums import RuntimeEventType
+from agent_driver.context.compaction.condenser import message_chars
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.scaffolding import is_scaffolding
 from agent_driver.runtime.metadata_state import get_cost_runtime_state
@@ -1200,14 +1201,37 @@ async def _apply_partial_compaction(
     compaction_id: str,
     circuit_breaker_open_before: bool,
 ) -> bool:
+    original_view = list(request.messages)
+    before_chars = message_chars(original_view)
     compacted = build_partial_compaction(
-        messages=[msg.model_dump(mode="json") for msg in request.messages],
+        messages=[msg.model_dump(mode="json") for msg in original_view],
         retain_recent_messages=6,
         prefix_mode=True,
     )
-    request.messages = [
+    compacted_view = [
         ChatMessage.model_validate(item) for item in compacted.prompt_messages
     ]
+    # BUG-7 (compaction hardening C1): partial used to report ``success=True``
+    # unconditionally, resetting the circuit breaker even for an explicit no-op or
+    # a rewrite that freed no space. Report success only on real token progress;
+    # otherwise leave the view untouched and record an honest ``skipped`` outcome
+    # that neither resets the breaker (false clear) nor increments it (unfair
+    # failure) — a no-op means nothing was eligible, not that compaction failed.
+    strategy = str(compacted.metadata.get("strategy", ""))
+    freed_chars = before_chars - message_chars(compacted_view)
+    made_progress = strategy != "no_op" and freed_chars > 0
+    if not made_progress:
+        return _finalize_partial_no_progress(
+            host,
+            context=context,
+            orchestrator=orchestrator,
+            decision=decision,
+            compaction_id=compaction_id,
+            strategy=strategy,
+            freed_chars=freed_chars,
+            circuit_breaker_open_before=circuit_breaker_open_before,
+        )
+    request.messages = compacted_view
     result_payload = {
         "compaction_id": compaction_id,
         "mode": "partial",
@@ -1240,6 +1264,57 @@ async def _apply_partial_compaction(
             "summarized_message_count": compacted.metadata.get(
                 "summarized_message_count"
             ),
+            "chars_freed": freed_chars,
+        },
+        orchestrator=orchestrator,
+    )
+    _maybe_emit_circuit_breaker_warning(
+        host,
+        context=context,
+        before_open=circuit_breaker_open_before,
+        orchestrator=orchestrator,
+    )
+    return True
+
+
+def _finalize_partial_no_progress(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    orchestrator: CompactionOrchestrator,
+    decision: CompactionDecision,
+    compaction_id: str,
+    strategy: str,
+    freed_chars: int,
+    circuit_breaker_open_before: bool,
+) -> bool:
+    """Record a partial attempt that freed no space as an honest ``skipped``.
+
+    The request View is left untouched. ``complete_attempt`` is called with
+    ``result=None`` so the outcome is neutral: it does not reset the circuit
+    breaker (the old ``success=True`` bug) and does not count as a failure (a
+    no-op means nothing was eligible to compact, not that compaction broke).
+    """
+    reason = "no_op" if strategy == "no_op" else "insufficient_progress"
+    result_payload = {
+        "compaction_id": compaction_id,
+        "mode": "partial",
+        "success": False,
+        "metadata": {"strategy": strategy, "chars_freed": freed_chars},
+    }
+    context.metadata[COMPACTION_RESULT_KEY] = result_payload
+    context.metadata[COMPACTION_FAILURES_KEY] = []
+    audit = orchestrator.complete_attempt(decision=decision, result=None)
+    context.metadata[COMPACTION_AUDIT_KEY] = audit.model_dump(mode="json")
+    _emit_compaction_outcome(
+        host,
+        context=context,
+        outcome="skipped",
+        payload_extras={
+            "mode": "partial",
+            "compaction_id": compaction_id,
+            "skip_reason": reason,
+            "chars_freed": freed_chars,
         },
         orchestrator=orchestrator,
     )

@@ -33,6 +33,7 @@ from agent_driver.runtime.single_agent.types import (
     TerminalResult,
 )
 from agent_driver.runtime.state import RuntimeState
+from agent_driver.runtime.storage import next_event_seq
 
 # How many extra LLM steps the forced-final synthesis window may take after a
 # soft-budget grace is granted before the run is hard-terminated. One step is
@@ -53,8 +54,12 @@ class SingleAgentJournalMixin:  # pylint: disable=too-few-public-methods
         return self._config.graph_id
 
     def _next_seq(self, run_id: str) -> int:
-        events = cast(list[RuntimeEvent], self._deps.event_log.list_for_run(run_id))
-        return (max(event.seq for event in events) + 1) if events else 1
+        # The store owns seq allocation as a peek (see ``next_event_seq``): O(1)
+        # for in-tree backends, and collision-safe across every appender because
+        # the event log is the single serialization point for a run. Repeated
+        # calls before an append return the same value, so reading it once for a
+        # payload and again when stamping the event never opens a gap.
+        return next_event_seq(self._deps.event_log, run_id)
 
     def _emit(self, spec: EventSpec) -> RuntimeEvent:
         # Epic 037 phase B: stamp the deterministic trace id on every event so it

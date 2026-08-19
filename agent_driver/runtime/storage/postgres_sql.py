@@ -155,6 +155,15 @@ def select_events_sql(*, events_table: str, with_after_seq: bool) -> str:
     """
 
 
+def max_seq_sql(*, events_table: str) -> str:
+    """Peek the next event seq for a run via an indexed MAX(seq)."""
+    return f"""
+    SELECT COALESCE(MAX(seq), 0) + 1
+    FROM {events_table}
+    WHERE run_id = %s
+    """
+
+
 def prune_events_before_sql(*, events_table: str) -> str:
     """Delete old runtime events by created_at timestamp."""
     return f"""
@@ -175,6 +184,7 @@ __all__ = [
     "schema_migrations",
     "prune_checkpoints_before_sql",
     "prune_events_before_sql",
+    "max_seq_sql",
     "schema_ddl",
     "select_checkpoint_by_id_sql",
     "select_checkpoints_sql",

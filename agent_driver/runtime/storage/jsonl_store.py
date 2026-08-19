@@ -124,6 +124,9 @@ class _JsonlFile:
         self._path = path
         self._lock = threading.Lock()
         self._seen_event_ids: set[str] = set()
+        # High-water event seq, primed from disk and advanced on append, so
+        # ``next_seq`` is a counter read instead of a full-file re-scan per emit.
+        self._max_seq = 0
         if self._path.exists():
             self._prime_seen_event_ids()
 
@@ -147,9 +150,14 @@ class _JsonlFile:
                     if payload.get("_kind") != KIND_EVENT:
                         continue
                     raw = payload.get("event") or {}
-                    event_id = raw.get("event_id") if isinstance(raw, dict) else None
+                    if not isinstance(raw, dict):
+                        continue
+                    event_id = raw.get("event_id")
                     if isinstance(event_id, str) and event_id:
                         self._seen_event_ids.add(event_id)
+                    seq = raw.get("seq")
+                    if isinstance(seq, int) and seq > self._max_seq:
+                        self._max_seq = seq
         except OSError as exc:
             logger.warning(
                 "jsonl_store: failed to prime event_id index from %s: %s",
@@ -169,7 +177,14 @@ class _JsonlFile:
                 f.write("\n")
             if event.event_id:
                 self._seen_event_ids.add(event.event_id)
+            if event.seq > self._max_seq:
+                self._max_seq = event.seq
             return True
+
+    def next_seq(self) -> int:
+        """Peek the next event seq from the maintained high-water mark."""
+        with self._lock:
+            return self._max_seq + 1
 
     def append_checkpoint(self, record: CheckpointRecord) -> None:
         with self._lock:
@@ -246,6 +261,10 @@ class JsonlEventLog(RuntimeEventLog):
 
     def append(self, event: RuntimeEvent) -> None:
         self._file_for_run(event.run_id).append_event(event)
+
+    def next_seq(self, run_id: str) -> int:
+        """Peek the next seq from the file's maintained high-water mark."""
+        return self._file_for_run(run_id).next_seq()
 
     def list_for_run(
         self, run_id: str, *, after_seq: int | None = None

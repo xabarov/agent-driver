@@ -7,7 +7,34 @@ change between minor versions.
 
 ## [Unreleased]
 
-## [0.19.0] - 2026-08-12
+### Fixed
+
+- **Partial compaction reports an honest outcome instead of masking no progress
+  (compaction hardening C1, BUG-7).** `_apply_partial_compaction` returned
+  `success=True` unconditionally — even for an explicit no-op or a rewrite that
+  freed no characters — which *reset* the compaction circuit breaker and hid that
+  no progress was made, so a run under sustained context pressure could thrash
+  indefinitely without the breaker ever tripping. It now measures `chars_freed`
+  (`message_chars` before/after) and reports `successful` only on real token
+  progress; a no-progress attempt leaves the request View untouched and records an
+  honest `skipped` outcome (`skip_reason: no_op | insufficient_progress`) through
+  `complete_attempt(result=None)` — neutral, so the breaker is neither falsely
+  reset nor unfairly advanced. `chars_freed` now rides on the durable
+  `MEMORY_COMPACTED` payload for both outcomes. (Compaction was already
+  non-destructive to the durable `protocol_messages` log; the reduction only ever
+  lands in a throwaway per-step request View.)
+- **Event-log sequence allocation is O(1), fixing the runaway-run RAM/CPU root
+  (compaction hardening C3).** `journal._next_seq` computed the next event sequence
+  as `max(seq) + 1` over the *entire* run log on every emit — O(n) per event, O(n²)
+  per run, materializing the whole (unboundedly growing) log each time; a run that
+  never reached `final_answer` drove RAM into GBs, previously only *backstopped* by
+  `default_max_steps`. Sequence allocation now belongs to the event-log store as a
+  collision-safe **peek** (`RuntimeEventLog.next_seq`): O(1) via a maintained
+  high-water mark for the in-memory and JSONL backends, and an indexed `MAX(seq)`
+  for SQLite (new `(run_id, seq)` index) and Postgres — no log materialization. All
+  seq consumers (runner emit, finalization planning events, SDK control-event
+  injection) route through a `next_event_seq` helper that keeps the fast path while
+  falling back to the scan for external/legacy event logs without the method.
 
 ### Fixed
 

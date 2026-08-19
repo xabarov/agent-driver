@@ -12,6 +12,7 @@ from agent_driver.runtime.storage.protocols import (
     CheckpointStore,
     RuntimeEventLog,
     StorageCapabilities,
+    next_event_seq,
 )
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "CheckpointStore",
     "RuntimeEventLog",
     "StorageCapabilities",
+    "next_event_seq",
     "checkpoint_record_from_state",
     "checkpoint_record_from_json",
     "checkpoint_record_from_payload",

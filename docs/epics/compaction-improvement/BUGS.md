@@ -104,6 +104,18 @@ lack a documented cost/quality rationale for their absolute values.
 
 ## BUG-7 — partial compaction is lossy, not token-aware, and reports success
 
+- **Status: FIXED (2026-08-19, compaction hardening C1).** `_apply_partial_compaction`
+  now measures `chars_freed` and reports `successful` only on real progress;
+  a no-op or no-shrink attempt leaves the View untouched and records an honest
+  `skipped` (`skip_reason: no_op | insufficient_progress`) via
+  `complete_attempt(result=None)` — neutral, so the circuit breaker is neither
+  falsely reset nor unfairly advanced. `chars_freed` is now on the durable
+  `MEMORY_COMPACTED` payload. Note: the tracing done for this fix established that
+  compaction is **non-destructive** — the reduction lands only in a throwaway
+  per-step `request.messages`; the raw log survives in `protocol_messages` — so the
+  original "context destroyed" framing overstated the loss; the real residual bug
+  was the false breaker reset. Deeper token-aware budgeting lands with the Condenser
+  pipeline cutover (C2). Tests: `tests/runtime/test_compaction_partial_honesty.py`.
 - **Where:** `partial.py:91-92` (`content[:160]`, ≤10 rows).
 - **What:** the ultimate fallback (used after llm_full failures too) can replace a
   large prefix with a few hundred chars of bullet stubs with **no size accounting**,
