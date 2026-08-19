@@ -22,6 +22,7 @@ from agent_driver.runtime.control.live_messages import (
     live_message_receipt,
     live_message_transition_event,
 )
+from agent_driver.runtime.control.steering_framing import redirect_correction_frame
 from agent_driver.runtime.lifecycle_hooks import (
     dispatch_after_llm,
     dispatch_before_llm,
@@ -341,13 +342,7 @@ def _apply_redirect_correction(
         ),
     )
     messages.append(corrected)
-    frame = ChatMessage(
-        role=ChatRole.USER,
-        content=(
-            "[Пользователь поправил ход. Учти поправку как приоритетную "
-            "инструкцию для этого ответа.]"
-        ),
-    )
+    frame = redirect_correction_frame()
     context.run_input = run_input.model_copy(
         update={
             "input": correction,

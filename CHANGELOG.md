@@ -7,8 +7,17 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-08-20
+
 ### Fixed
 
+- **Hard redirect corrections carry an explicit model-visible operator frame on
+  every path.** A `REDIRECT_USER_MESSAGE` that reached a step/tool boundary
+  previously degraded into a plain user message, while the mid-LLM interrupt
+  path framed the correction as a priority operator update. Both paths now use
+  one shared framing helper, so the next LLM request sees the correction as an
+  urgent active-run operator update without expanding scope, permissions,
+  safety policy, or existing budgets.
 - **Partial compaction reports an honest outcome instead of masking no progress
   (compaction hardening C1, BUG-7).** `_apply_partial_compaction` returned
   `success=True` unconditionally — even for an explicit no-op or a rewrite that

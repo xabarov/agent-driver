@@ -25,6 +25,7 @@ from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.tools import ToolPolicyInput
 from agent_driver.runtime.control.protocols import CommandQueueStore
+from agent_driver.runtime.control.steering_framing import framed_redirect_correction
 from agent_driver.runtime.metadata_state import get_planning_runtime_state
 from agent_driver.runtime.single_agent.types import RunContext
 
@@ -248,7 +249,9 @@ def _apply_control_item(
         message = item.payload.get("message") or item.payload.get("text")
         if not isinstance(message, str) or not message.strip():
             return _Result.INVALID
-        _append_user_message(context, message.strip(), queue_id=item.queue_id)
+        _append_user_message(
+            context, framed_redirect_correction(message), queue_id=item.queue_id
+        )
         return _Result.APPLIED
     if kind == ControlKind.INTERRUPT:
         if abort_handle is not None and hasattr(abort_handle, "abort"):

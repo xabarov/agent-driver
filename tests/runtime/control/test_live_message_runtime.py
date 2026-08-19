@@ -150,10 +150,11 @@ async def test_durable_hard_redirect_cancels_only_llm_and_reasks() -> None:
 
     assert provider.cancelled is True
     assert len(provider.requests) == 2
-    assert any(
-        message.content == "urgent correction"
-        for message in provider.requests[1].messages
-    )
+    request_messages = [message.content for message in provider.requests[1].messages]
+    correction_index = request_messages.index("urgent correction")
+    assert "Оператор отправил срочную поправку" in request_messages[
+        correction_index - 1
+    ]
     assert receipt is not None
     assert receipt.status is CommandQueueStatus.APPLIED
     assert receipt.resolved_semantic is LiveMessageSemantic.REDIRECT_CURRENT
@@ -223,7 +224,9 @@ async def test_redirect_during_tool_degrades_without_cancelling_tool() -> None:
     assert receipt.resolved_semantic is LiveMessageSemantic.STEER_CURRENT
     assert receipt.reason_code == "redirect_degraded_tool_phase"
     assert any(
-        message.content == "degrade me" for message in provider.requests[1].messages
+        "Оператор отправил срочную поправку" in message.content
+        and "degrade me" in message.content
+        for message in provider.requests[1].messages
     )
     assert any(
         event.type is RuntimeEventType.COMMAND_APPLIED
