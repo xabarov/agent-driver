@@ -73,7 +73,42 @@ Patch/minor — pure internal correctness, no public-surface or behaviour change
 
 ## C1 — journaled non-destructive compaction (shadow-not-mutate) (effort M)
 
-### Idea
+### Update (2026-08-19) — scope narrowed after tracing the real data flow
+
+Before building the shadow machinery we traced how compaction actually mutates
+messages. **Finding: our compaction is already non-destructive.** The durable log
+`context.metadata["protocol_messages"]` is append-only and grown only by five
+writers (tool-stage, steering redirect, research-gating, two control-dispatcher
+paths); compaction reads a *fresh copy* of it into a throwaway per-step
+`request.messages` and trims only that copy (`compaction_stage.py` assigns
+`request.messages = …` at 229/259/817/1143/1208 and never writes back to
+metadata). The reduction does not even persist across steps — the next step
+re-reads the full log and re-trims. So the "shadow raw events instead of deleting
+them" half of this WP is **already satisfied for free**; there is no destructive
+mutation to fix.
+
+That collapses C1 to the **honest-outcome** half, which is the concrete, named
+bug:
+
+- **BUG-7 (partial reports success on no progress) — DONE.** `_apply_partial_compaction`
+  returned `success=True` unconditionally, even for an explicit `no_op` from
+  `build_partial_compaction` or a rewrite that freed no chars, which *reset* the
+  circuit breaker and masked the non-progress. It now measures `chars_freed`
+  (`message_chars` before/after), reports `successful` only on real progress, and
+  otherwise leaves the View untouched and records an honest `skipped`
+  (`skip_reason: no_op | insufficient_progress`) via `complete_attempt(result=None)`
+  — **neutral**: no false breaker reset, no unfair failure. `chars_freed` is now
+  on both the successful and skipped `MEMORY_COMPACTED` payloads (durable audit).
+  Tests: `tests/runtime/test_compaction_partial_honesty.py`.
+
+Deferred (not built — would be speculative without a consumer): a
+`find_orphaned_compactions(events)` helper (the START/terminal pairing that makes a
+crash mid-compaction detectable already holds — `MEMORY_COMPACTION_STARTED` with no
+`MEMORY_COMPACTED`); and enriching the `llm_full` outcome event with its
+material-unit receipt (currently in `context.metadata` only). Pick these up when a
+resume-preflight / audit consumer actually needs them.
+
+### Idea (original plan, retained for context)
 Today the compaction stage rewrites the ephemeral View and **never journals the operation
 as a first-class fact**. A crash mid-compaction is invisible; a lossy partial that frees
 nothing can still return "compacted" (BUG-7); the run's compaction history is not
