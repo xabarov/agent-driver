@@ -59,16 +59,18 @@ def begin_plan_refinement(
     )
     planning_runtime.set_planning_state(planning_state.model_dump(mode="json"))
 
+    current_policy = context.run_input.tool_policy
     payload = plan_payload or {}
+    previous_allowed_tools = current_policy.allowed_tools
     planning_runtime.require_plan_refinement(
         {
             "interrupt_id": interrupt_id,
             "plan_id": payload.get("plan_id"),
             "content_hash": payload.get("content_hash"),
+            "previous_allowed_tools": previous_allowed_tools,
         }
     )
 
-    current_policy = context.run_input.tool_policy
     policy_metadata = dict(current_policy.metadata)
     force_planning = policy_metadata.get("force_planning")
     if isinstance(force_planning, dict):
@@ -82,6 +84,7 @@ def begin_plan_refinement(
             "tool_policy": current_policy.model_copy(
                 update={
                     "metadata": policy_metadata,
+                    "allowed_tools": [PLAN_REFINEMENT_EXIT_TOOL],
                     "denied_tools": denied_tools,
                 }
             )
@@ -203,6 +206,17 @@ def apply_planning_updates_from_envelopes(
         if envelope.call.tool_name == PLAN_REFINEMENT_EXIT_TOOL and isinstance(
             structured.get("plan_approval"), dict
         ):
+            refinement = planning_runtime.plan_refinement() or {}
+            current_policy = context.run_input.tool_policy
+            context.run_input = context.run_input.model_copy(
+                update={
+                    "tool_policy": current_policy.model_copy(
+                        update={
+                            "allowed_tools": refinement.get("previous_allowed_tools")
+                        }
+                    )
+                }
+            )
             planning_runtime.clear_plan_refinement()
         if envelope.call.tool_name == "continue_without_plan":
             force_planning = context.run_input.tool_policy.metadata.get(
