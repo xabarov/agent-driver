@@ -100,8 +100,10 @@ class _PlanRefinementProvider(FakeProvider):
         super().__init__(response_text="done")
         self.calls = 0
         self.always_prose = always_prose
+        self.requests: list[LlmRequest] = []
 
     async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
         self.calls += 1
         usage = UsageSummary(model_provider="fake", model_name="test")
         if self.calls == 1:
@@ -713,6 +715,15 @@ async def test_plan_clarify_requires_revised_approval_artifact() -> None:
     )
 
     assert provider.calls == 3
+    revised_exit = next(
+        tool
+        for tool in provider.requests[1].tools
+        if tool.get("function", {}).get("name") == "exit_plan_mode_v2"
+    )
+    assert set(revised_exit["function"]["parameters"]["required"]) >= {
+        "requested_tools",
+        "target_urls",
+    }
     assert revised.status.value == "paused"
     assert revised.interrupt is not None
     plan = revised.interrupt.proposed_action["plan_approval"]

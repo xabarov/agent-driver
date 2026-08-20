@@ -7,6 +7,15 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-08-20
+
+### Fixed
+
+- **Executable plan refinement requires an explicit execution boundary.** While
+  a pending executable plan is being revised, the provider-facing
+  `exit_plan_mode_v2` schema requires `requested_tools` and `target_urls`.
+  Plan-only turns retain the ordinary optional boundary schema.
+
 ## [0.21.1] - 2026-08-20
 
 ### Fixed

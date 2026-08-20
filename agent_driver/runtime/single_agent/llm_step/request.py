@@ -103,18 +103,14 @@ def _run_context_budget_defaults(
         max_chars=int(getattr(settings, "trim_max_chars")),
         max_messages=getattr(settings, "trim_max_messages", None),
         max_observations=getattr(settings, "trim_max_observations", None),
-        protect_recent_messages=getattr(
-            settings, "trim_protect_recent_turns", None
-        ),
+        protect_recent_messages=getattr(settings, "trim_protect_recent_turns", None),
         preserve_recent_observations=getattr(
             settings, "microcompact_preserve_recent", None
         ),
         max_observation_preview_chars=getattr(
             settings, "microcompact_max_preview_chars", None
         ),
-        context_window_estimate=int(
-            getattr(settings, "context_window_estimate")
-        ),
+        context_window_estimate=int(getattr(settings, "context_window_estimate")),
         warning_threshold=int(getattr(settings, "token_warning_threshold")),
         compact_threshold=int(getattr(settings, "token_compact_threshold")),
         blocking_threshold=int(getattr(settings, "token_blocking_threshold")),
@@ -310,8 +306,9 @@ def build_trimmed_request(
                 "source": trimming.context_window_source,
             },
         )
-    if trimming.context_window_source == "unresolved_fallback" and not context.metadata.get(
-        "context_window_unresolved_warned"
+    if (
+        trimming.context_window_source == "unresolved_fallback"
+        and not context.metadata.get("context_window_unresolved_warned")
     ):
         context.metadata["context_window_unresolved_warned"] = True
         emit_step_event(
@@ -350,7 +347,7 @@ def build_trimmed_request(
             request_max_tokens = context_budget.output_tokens
             max_tokens_source = f"{context_budget.source}.output_tokens"
     context.metadata["provider_max_tokens_source"] = max_tokens_source
-    return build_single_agent_llm_request(
+    request, trim_payload = build_single_agent_llm_request(
         LlmRequestBuildContext(
             run_input=context.run_input,
             clarification=clarification if isinstance(clarification, str) else None,
@@ -415,6 +412,26 @@ def build_trimmed_request(
             pre_resolved_model_role=context.metadata.get("llm_routed_role"),
         )
     )
+    if get_planning_runtime_state(context).plan_refinement() is None:
+        return request, trim_payload
+    tools: list[dict[str, Any]] = []
+    for tool in request.tools:
+        next_tool = dict(tool)
+        function = next_tool.get("function")
+        if isinstance(function, dict) and function.get("name") == "exit_plan_mode_v2":
+            next_function = dict(function)
+            parameters = next_function.get("parameters")
+            if isinstance(parameters, dict):
+                next_parameters = dict(parameters)
+                required = list(next_parameters.get("required") or [])
+                for field in ("requested_tools", "target_urls"):
+                    if field not in required:
+                        required.append(field)
+                next_parameters["required"] = required
+                next_function["parameters"] = next_parameters
+                next_tool["function"] = next_function
+        tools.append(next_tool)
+    return request.model_copy(update={"tools": tools}), trim_payload
 
 
 def _combine_request_allowlists(
