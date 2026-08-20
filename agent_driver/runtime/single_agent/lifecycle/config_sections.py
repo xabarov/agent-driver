@@ -236,9 +236,21 @@ class CompactionSettings:
     compaction_failure_limit: int = 3
     session_memory_stale_after_turns: int = 4
     compaction_model: str = "default"
+    # Static char FLOOR for the compaction / PTL-retry budget — NOT the effective
+    # cap. ``_scaled_context_char_cap`` scales UP from this toward the model-window
+    # fraction (BUG-1/BUG-5) and only uses this absolute value when the window is
+    # unknown. 4000 chars ≈ 1000 tokens: a conservative floor that keeps a usable
+    # summariser input on window-blind runs without clamping known-window ones.
+    # Deployment-tunable; the window-relative pressure ratios (BUG-3) are the
+    # authoritative trigger, this is a secondary backstop.
     ptl_retry_max_chars: int = 4000
     post_compact_max_reinjected_artifact_refs: int = 5
     enable_tool_arg_truncation: bool = False
+    # Base cap on the echoed size of ONE tool call's arguments before the model
+    # re-reads them (window-scaled from this base via ``_scaled_context_char_cap``,
+    # same floor semantics as ``ptl_retry_max_chars``). 2000 chars ≈ 500 tokens:
+    # preserves the meaningful head of typical args while bounding pathological
+    # large-arg echoes. Deployment-tunable.
     tool_arg_truncation_max_chars: int = 2000
     # Epic 035 A: tiered compression of OLD tool-result bulk (stub/truncate by tier)
     # for stateless/no-cache providers. LLM-free, idempotent, structure-preserving.
