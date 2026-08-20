@@ -7,6 +7,14 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.21.3] - 2026-08-20
+
+### Fixed
+
+- **Plan refinement uses one canonical content field.** The refinement-only
+  provider schema removes the legacy `plan` alias and requires `content`,
+  preventing ambiguous calls where both fields carry different text.
+
 ## [0.21.2] - 2026-08-20
 
 ### Fixed

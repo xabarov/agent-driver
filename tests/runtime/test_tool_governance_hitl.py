@@ -721,9 +721,11 @@ async def test_plan_clarify_requires_revised_approval_artifact() -> None:
         if tool.get("function", {}).get("name") == "exit_plan_mode_v2"
     )
     assert set(revised_exit["function"]["parameters"]["required"]) >= {
+        "content",
         "requested_tools",
         "target_urls",
     }
+    assert "plan" not in revised_exit["function"]["parameters"]["properties"]
     assert revised.status.value == "paused"
     assert revised.interrupt is not None
     plan = revised.interrupt.proposed_action["plan_approval"]

@@ -423,8 +423,13 @@ def build_trimmed_request(
             parameters = next_function.get("parameters")
             if isinstance(parameters, dict):
                 next_parameters = dict(parameters)
+                properties = next_parameters.get("properties")
+                if isinstance(properties, dict):
+                    next_properties = dict(properties)
+                    next_properties.pop("plan", None)
+                    next_parameters["properties"] = next_properties
                 required = list(next_parameters.get("required") or [])
-                for field in ("requested_tools", "target_urls"):
+                for field in ("content", "requested_tools", "target_urls"):
                     if field not in required:
                         required.append(field)
                 next_parameters["required"] = required
