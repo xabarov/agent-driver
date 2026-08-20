@@ -725,6 +725,7 @@ def build_parser() -> argparse.ArgumentParser:
             "tool_concurrency",
             "budget_grace",
             "model_router",
+            "condenser_pipeline",
         ),
         default="prompt_cache",
         help="Harness axis to flip off vs on (one axis at a time).",

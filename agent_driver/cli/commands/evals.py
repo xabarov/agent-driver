@@ -96,7 +96,34 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
     from agent_driver.llm import HeuristicDifficultyRouter
     from agent_driver.llm.providers_impl.fake import FakeProvider
     from agent_driver.runtime import RunnerConfig
+    from agent_driver.runtime.single_agent.lifecycle.config_sections import (
+        CompactionSettings,
+        TrimmingSettings,
+    )
     from agent_driver.sdk import create_agent
+
+    # A forced-pressure window so compaction actually fires on the short general
+    # suite: tool-use tasks accumulate tool output that crosses the compact/blocking
+    # thresholds after a couple of calls. BOTH arms share this window and enable
+    # compaction; only ``use_condenser_pipeline`` differs, so the delta isolates the
+    # seam. Hardcoded because this is a benchmark axis, not a prod default.
+    def _forced_pressure_compaction(*, use_pipeline: bool) -> RunnerConfig:
+        return RunnerConfig(
+            trimming=TrimmingSettings(
+                context_window_estimate=4000,
+                token_warning_threshold=1500,
+                token_compact_threshold=2400,
+                token_blocking_threshold=3200,
+                output_token_reserve=400,
+                context_window_source="explicit",
+            ),
+            compaction=CompactionSettings(
+                enable_compaction=True,
+                enable_llm_compaction=True,
+                enable_partial_compaction=True,
+                use_condenser_pipeline=use_pipeline,
+            ),
+        )
 
     offline = bool(getattr(args, "offline", False))
     tier = str(getattr(args, "tier", "mid"))
@@ -145,6 +172,11 @@ async def eval_compare_command(  # pylint: disable=import-outside-toplevel
             ),
             "single_model",
             "difficulty_routed",
+        ),
+        "condenser_pipeline": (
+            lambda t: _forced_pressure_compaction(use_pipeline=t),
+            "mode_tree",
+            "condenser_pipeline",
         ),
     }
     if axis not in axes:
