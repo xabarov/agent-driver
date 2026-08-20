@@ -88,6 +88,10 @@ class AllowedSpec:
     registered: RegisteredTool | None
     input_guard_decision: GuardrailDecision = GuardrailDecision.ALLOW
     run_metadata: dict[str, str | int | None] = field(default_factory=dict)
+    # Host-configured plain-text terms that may not appear in approval-plan
+    # content for this run. This keeps plan rendering aligned with a narrowed
+    # executable contract without asking the model to police itself.
+    plan_content_forbidden_terms: tuple[str, ...] = ()
     # U4 — cooperative-cancellation predicate for the running handler (see
     # ExecSpec.cancelled_check). None when no abort handle was plumbed in.
     cancelled_check: Callable[[], bool] | None = None

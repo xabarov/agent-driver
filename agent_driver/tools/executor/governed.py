@@ -165,6 +165,29 @@ def _management_tool_denial_remediation(
     )
 
 
+def _plan_content_forbidden_terms(run_input: AgentRunInput) -> tuple[str, ...]:
+    """Host-provided approval-plan text terms that must not be surfaced."""
+
+    raw = (
+        run_input.tool_policy.metadata.get("plan_content_forbidden_terms")
+        if run_input.tool_policy and isinstance(run_input.tool_policy.metadata, dict)
+        else None
+    )
+    if isinstance(raw, dict):
+        raw = raw.get("terms")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple, set)):
+        return ()
+    terms: list[str] = []
+    for item in raw:
+        value = item.get("term") if isinstance(item, dict) else item
+        term = str(value or "").strip()
+        if term and term not in terms:
+            terms.append(term)
+    return tuple(terms)
+
+
 class GovernedToolExecutor:
     """Execute deterministic planned tool calls with policy and guardrails.
 
@@ -1077,6 +1100,7 @@ class GovernedToolExecutor:
                 registered=registered,
                 input_guard_decision=input_guard.decision,
                 run_metadata=run_metadata,
+                plan_content_forbidden_terms=_plan_content_forbidden_terms(run_input),
                 cancelled_check=spec.cancelled_check,
                 cancellation_deadline=getattr(spec.run_input, "deadline_seconds", None),
                 # Phase 12 H18 — pass the executor-scoped artifact store

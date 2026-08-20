@@ -244,6 +244,58 @@ async def test_exit_plan_mode_blocks_plan_text_that_mentions_unavailable_tools()
 
 
 @pytest.mark.asyncio
+async def test_exit_plan_mode_blocks_host_forbidden_plan_text_terms() -> None:
+    """Hosts may reject approval-plan text that exceeds narrowed run contracts."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+
+    async def _ok(_args):
+        return {"summary": "ok"}
+
+    registry.register(ToolManifest(name="web_request_analyze", description="HTTP"), _ok)
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="approve plan",
+        run_id="run_planning_exit_forbidden_text",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            allowed_tools=["exit_plan_mode_v2", "web_request_analyze"],
+            metadata={"plan_content_forbidden_terms": ["OPTIONS", "POST"]},
+        ),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[
+                ToolCall(
+                    tool_name="exit_plan_mode_v2",
+                    args={
+                        "reason": "ready",
+                        "content": "Use web_request_analyze for GET/HEAD/OPTIONS checks.",
+                        "requested_tools": ["web_request_analyze"],
+                        "target_urls": ["https://lab.example/"],
+                    },
+                    tool_call_id="call_forbidden_plan_text",
+                )
+            ]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert result.interrupt is None
+    assert result.envelopes[0].decision.value == "deny"
+    assert result.envelopes[0].error is not None
+    assert result.envelopes[0].error.code == "plan_content_forbidden_terms"
+    structured = result.envelopes[0].structured_output
+    assert isinstance(structured, dict)
+    assert structured["forbidden_terms"] == ["OPTIONS"]
+    assert structured["retry_expected"] is True
+
+
+@pytest.mark.asyncio
 async def test_exit_plan_mode_keeps_valid_requested_tools_and_metadata() -> None:
     """A valid plan approval carries the current execution-tool truth."""
     registry = ToolRegistry()

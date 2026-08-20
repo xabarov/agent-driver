@@ -741,6 +741,59 @@ def _append_plan_content_tools_block(
     )
 
 
+def _mentioned_forbidden_plan_terms(
+    content: str,
+    *,
+    forbidden_terms: tuple[str, ...],
+) -> list[str]:
+    candidates = [
+        term
+        for term in dict.fromkeys(str(value).strip() for value in forbidden_terms)
+        if term
+    ]
+    if not candidates:
+        return []
+    matches: list[tuple[int, str]] = []
+    for term in sorted(candidates, key=lambda item: (-len(item), item)):
+        escaped = re.escape(term)
+        if re.match(r"^[A-Za-z0-9_-]+$", term):
+            escaped = rf"(?<![A-Za-z0-9_-]){escaped}(?![A-Za-z0-9_-])"
+        pattern = re.compile(escaped, re.IGNORECASE)
+        match = pattern.search(content)
+        if match is not None:
+            matches.append((match.start(), term))
+    return [term for _, term in sorted(matches, key=lambda item: (item[0], item[1]))]
+
+
+def _append_plan_content_forbidden_terms_block(
+    *,
+    spec: AllowedSpec,
+    forbidden_terms: list[str],
+) -> None:
+    terms_text = ", ".join(forbidden_terms) if forbidden_terms else "none"
+    append_blocked_call(
+        result=spec.result,
+        spec=BlockSpec(
+            index=spec.index,
+            call=spec.call,
+            manifest=spec.manifest,
+            code="plan_content_forbidden_terms",
+            reason=f"plan content mentioned forbidden terms: {terms_text}",
+            structured_output={
+                "error_kind": "plan_content_forbidden_terms",
+                "forbidden_terms": forbidden_terms,
+                "retry_expected": True,
+                "remediation": (
+                    "Approval-plan content must match the host-selected "
+                    "execution contract for this run. Remove the forbidden "
+                    "terms from the plan body, or answer that the requested "
+                    "work cannot be run under the current constraints."
+                ),
+            },
+        ),
+    )
+
+
 def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
     """Append plan approval interrupt when approval-exit tool has plan content."""
     if not isinstance(raw, dict):
@@ -776,6 +829,16 @@ def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
             spec=spec,
             mentioned_tools=mentioned_unavailable_tools,
             current_tools=current_tools,
+        )
+        return True
+    mentioned_forbidden_terms = _mentioned_forbidden_plan_terms(
+        content,
+        forbidden_terms=spec.plan_content_forbidden_terms,
+    )
+    if mentioned_forbidden_terms:
+        _append_plan_content_forbidden_terms_block(
+            spec=spec,
+            forbidden_terms=mentioned_forbidden_terms,
         )
         return True
     run_id, attempt_id = _interrupt_identifiers(spec)

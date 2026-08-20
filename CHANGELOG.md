@@ -22,6 +22,16 @@ change between minor versions.
   documented opt-in seam to inject an exact token counter (tiktoken/HF/provider
   count-tokens); the default stays the dependency-free calibrated estimator.
 
+## [0.21.11] - 2026-08-21
+
+### Fixed
+
+- **Approval-plan bodies can be checked against host-forbidden terms.**
+  `exit_plan_mode_v2` now honors optional
+  `ToolPolicyInput.metadata["plan_content_forbidden_terms"]`, returning a
+  repairable denial when approval-plan text mentions host-forbidden terms
+  instead of presenting an unexecutable plan to the operator.
+
 ## [0.21.10] - 2026-08-20
 
 ### Fixed
