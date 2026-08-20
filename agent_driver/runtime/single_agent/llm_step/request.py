@@ -258,10 +258,18 @@ def build_trimmed_request(
         and isinstance(clarification, str)
         and clarification.strip()
     ):
+        clarification_prompt = f"Operator clarification:\n{clarification.strip()}"
+        if get_planning_runtime_state(context).plan_refinement() is not None:
+            clarification_prompt = (
+                "Revise the pending approval plan now. Apply the operator's exact "
+                "feedback and call exit_plan_mode_v2 with the full revised plan "
+                "itself, not commentary about the requested changes.\n\n"
+                f"Operator feedback:\n{clarification.strip()}"
+            )
         protocol_messages = protocol_messages + (
             ChatMessage(
                 role=ChatRole.USER,
-                content=f"Operator clarification:\n{clarification.strip()}",
+                content=clarification_prompt,
             ),
         )
     # Inner-loop overrides (e.g. ``"none"`` to force a final answer after a

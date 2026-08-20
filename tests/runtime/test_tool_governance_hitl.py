@@ -798,6 +798,7 @@ async def test_plan_clarify_requires_revised_approval_artifact() -> None:
     }
     assert any(
         message.role.value == "user"
+        and "full revised plan itself" in (message.content or "")
         and "Do passive checks before active checks" in (message.content or "")
         for message in provider.requests[1].messages
     )
