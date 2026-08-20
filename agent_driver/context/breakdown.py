@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable
 
+from agent_driver.context.token_estimation import estimate_tokens
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.scaffolding import is_scaffolding
 
@@ -30,8 +31,6 @@ CONTEXT_BREAKDOWN_CATEGORIES = (
     "conversation",
     "message_metadata",
 )
-
-_CHARS_PER_TOKEN = 4
 
 
 def _message_chars(message: Any) -> int:
@@ -110,14 +109,15 @@ def estimate_context_breakdown(
 
     total_chars = sum(chars.values())
     categories = {
-        cat: {"chars": chars[cat], "tokens": chars[cat] // _CHARS_PER_TOKEN}
+        cat: {"chars": chars[cat], "tokens": estimate_tokens(chars[cat])}
         for cat in CONTEXT_BREAKDOWN_CATEGORIES
     }
     return {
         "categories": categories,
         "total_chars": total_chars,
-        # Authoritative: matches estimate_token_pressure's (chars // 4) — UI == trigger.
-        "total_tokens": total_chars // _CHARS_PER_TOKEN,
+        # Authoritative: shares the single estimator with estimate_token_pressure, so
+        # the UI number equals the number the compaction trigger sees (BUG-6).
+        "total_tokens": estimate_tokens(total_chars),
     }
 
 

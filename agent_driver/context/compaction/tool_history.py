@@ -26,10 +26,10 @@ from typing import Any
 
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.context.token_estimation import estimate_tokens
 from agent_driver.context.tool_content_shrink import shrink_json_tool_content
 
 MID_MAX_CHARS = 2000
-_CHARS_PER_TOKEN = 4.0
 
 _TRUNCATION_MARKER_RE = re.compile(r"\n\[…truncated (\d+) chars from tool history\]$")
 _STUB_MARKER_RE = re.compile(r"^\[tool result → \d+ chars omitted\]$")
@@ -150,7 +150,7 @@ def compress_tool_history(
         "truncated": truncated,
         "stubbed": stubbed,
         "chars_saved": chars_saved,
-        "estimated_tokens_saved": int(chars_saved / _CHARS_PER_TOKEN),
+        "estimated_tokens_saved": estimate_tokens(chars_saved),
     }
 
 

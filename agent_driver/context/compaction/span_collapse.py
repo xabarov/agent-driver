@@ -20,17 +20,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from agent_driver.context.token_estimation import estimate_tokens
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
 
 COLLAPSE_TARGET_RATIO = 0.7
 PROTECTED_TAIL_RATIO = 0.3
 MIN_COLLAPSE_TOKENS = 2000
-_CHARS_PER_TOKEN = 4.0
 
 
 def _msg_tokens(msg: ChatMessage) -> int:
-    return int(len(msg.content or "") / _CHARS_PER_TOKEN)
+    return estimate_tokens(len(msg.content or ""))
 
 
 def is_turn_start(msg: ChatMessage) -> bool:

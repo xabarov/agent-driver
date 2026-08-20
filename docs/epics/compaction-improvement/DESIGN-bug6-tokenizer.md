@@ -1,6 +1,7 @@
 # Design Decision — BUG-6: real token counting (kill hardcoded chars/token=4)
 
-Status: **decided + phase-1 implemented** (2026-08-06). Branch: `epic/compaction-bug6`.
+Status: **decided + phase-1 & phase-2 implemented** (phase-1 2026-08-06; phase-2
+2026-08-20 — see BUGS.md BUG-6). Branch: `epic/compaction-bug6`.
 Predecessor: Option A phase-1/1b + typed-ceiling + BUG-3 (all merged).
 
 **Sign-off (user):** bounded EMA (0.7 prior / 0.3 observed, clamp [2, 8]); phase 1 =
