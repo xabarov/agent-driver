@@ -47,6 +47,23 @@ floor), not merely bumping a literal.
 
 ## BUG-3 — inconsistent pressure-threshold ratios across paths (needs a design decision)
 
+- **Status: FIXED (design decided + implemented, commit `888ba6b`; char-cap rationale
+  documented 2026-08-20).** Decision (see
+  [`DESIGN-bug3-pressure-ratios.md`](DESIGN-bug3-pressure-ratios.md), user sign-off
+  `compact_ratio = 0.75`): give `compact_recommended` a window-relative safety-net so
+  compaction fires at a consistent window point regardless of path, WITHOUT unifying
+  the absolute-threshold formulas (the ratio nets are authoritative). `TokenPressureInput`
+  gained `compact_ratio: float = 0.75` (slotted between delegate 0.45 and blocking 0.92);
+  `_pressure_state`'s compact branch is now `used ≥ compact_threshold OR ratio ≥
+  compact_ratio`; the snapshot carries `compact_ratio`. Default path unchanged
+  (0.75·window); typed-budget path now compacts at ~0.75·window instead of ~0.90.
+  Regression tests: `tests/context/test_token_pressure.py` —
+  `test_compact_ratio_net_triggers_compaction_below_absolute_threshold`,
+  `test_pressure_ratio_ladder_is_ordered`. The "Also:" note below (base char caps lacked
+  a rationale) is closed: `ptl_retry_max_chars` / `tool_arg_truncation_max_chars` now
+  document that they are conservative static FLOORS the window-relative cap scales up
+  from (BUG-1/BUG-5), binding only when the window is unknown.
+
 Refined finding (2026-08-06): there are **three** threshold-ratio triples with
 **different bases**, so pressure/compaction fires at different points depending on
 which path a run takes:
