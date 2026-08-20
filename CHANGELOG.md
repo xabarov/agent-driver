@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.20.3] - 2026-08-20
+
+### Fixed
+
+- **Plan approval is always a real harness decision.** When the model decides
+  that work needs plan approval, it must use the planning lifecycle so the host
+  can render an actionable review. It may no longer present a prose-only plan
+  and claim that approval is pending when there is nothing for the operator to
+  approve.
+
 ## [0.20.2] - 2026-08-20
 
 ### Fixed
