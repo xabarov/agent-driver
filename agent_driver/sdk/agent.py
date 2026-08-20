@@ -596,6 +596,11 @@ class Agent:  # pylint: disable=too-many-public-methods
         edited_tool_args: dict[str, object] | None = None,
         message: str | None = None,
         approved_prompts: list[AllowedPrompt] | None = None,
+        approved_by: str | None = None,
+        idempotency_key: str | None = None,
+        expected_checkpoint_id: str | None = None,
+        expected_revision: int | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> AgentRunOutput:
         """Resume an interrupted run via normalized resume command.
 
@@ -614,6 +619,11 @@ class Agent:  # pylint: disable=too-many-public-methods
                     edited_tool_args=edited_tool_args,
                     message=message,
                     approved_prompts=list(approved_prompts or []),
+                    approved_by=approved_by,
+                    idempotency_key=idempotency_key,
+                    expected_checkpoint_id=expected_checkpoint_id,
+                    expected_revision=expected_revision,
+                    metadata=dict(metadata or {}),
                 ),
             )
         )

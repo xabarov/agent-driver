@@ -60,6 +60,8 @@ class _PlanApprovalThenWriteProvider(FakeProvider):
                             args={
                                 "plan_id": "plan_force_1",
                                 "content": "1. Inspect\n2. Write\n3. Verify",
+                                "requested_tools": ["file_write"],
+                                "target_urls": ["file:///workspace"],
                             },
                         ).model_dump(mode="json")
                     ]
@@ -187,7 +189,11 @@ async def test_runner_pauses_for_exit_plan_mode_approval_and_resumes() -> None:
     )
     plan_call = ToolCall(
         tool_name="exit_plan_mode_v2",
-        args={"content": "1. Inspect\n2. Implement\n3. Verify"},
+        args={
+            "content": "1. Inspect\n2. Implement\n3. Verify",
+            "requested_tools": ["file_write"],
+            "target_urls": ["file:///workspace"],
+        },
         tool_call_id="plan_call",
     )
     paused = await runner.run(
@@ -246,7 +252,11 @@ async def test_runner_plan_approval_survives_sqlite_store_reload(tmp_path) -> No
     )
     plan_call = ToolCall(
         tool_name="exit_plan_mode_v2",
-        args={"content": "1. Inspect\n2. Implement\n3. Verify"},
+        args={
+            "content": "1. Inspect\n2. Implement\n3. Verify",
+            "requested_tools": ["file_write"],
+            "target_urls": ["file:///workspace"],
+        },
         tool_call_id="plan_call",
     )
 
@@ -356,6 +366,72 @@ async def test_runner_plan_approval_marks_force_planning_approved() -> None:
     assert resumed.status.value == "completed"
     assert writes == [{"path": "x.txt", "content": "ok"}]
     assert resumed.metadata["approved_plan"]["plan_id"] == "plan_force_1"
+
+
+@pytest.mark.asyncio
+async def test_plan_approval_can_end_at_external_execution_handoff() -> None:
+    """A host-owned continuation must not execute the source run a second time."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    writes: list[dict[str, object]] = []
+
+    async def _file_write(args):
+        writes.append(dict(args))
+        return {"summary": "wrote"}
+
+    registry.register(
+        danger_tool_manifest().model_copy(update={"name": "file_write"}),
+        _file_write,
+    )
+    provider = _PlanApprovalThenWriteProvider()
+    checkpoints = InMemoryCheckpointStore()
+    runner = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=checkpoints,
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            )
+        ),
+    )
+    policy = ToolPolicyInput(
+        mode=ToolPolicyMode.ALLOW_TOOLS,
+        metadata={"force_planning": {"enabled": True}},
+    )
+    paused = await runner.run(
+        AgentRunInput(
+            input="write with a host-owned continuation",
+            run_id="run_plan_external_handoff",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=policy,
+        )
+    )
+    assert paused.interrupt is not None
+
+    resumed = await runner.run(
+        AgentRunInput(
+            run_id="run_plan_external_handoff",
+            resume=ResumeCommand(
+                interrupt_id=paused.interrupt.interrupt_id,
+                action=ResumeAction.APPROVE,
+                approved_prompts=list(paused.interrupt.proposed_prompts),
+                metadata={"plan_execution_handoff": "external"},
+            ),
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=policy,
+        )
+    )
+
+    assert resumed.status.value == "completed"
+    assert resumed.terminal_reason.value == "external_execution_handoff"
+    assert provider.calls == 1
+    assert writes == []
+    latest = checkpoints.latest("run_plan_external_handoff")
+    assert latest is not None
+    assert latest.state.metadata["approved_prompts"][0]["tool_name"] == "file_write"
 
 
 @pytest.mark.asyncio

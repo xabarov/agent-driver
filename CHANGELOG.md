@@ -7,8 +7,23 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-08-20
+
 ### Added
 
+- **Model-authored plans can declare an executable permission boundary.**
+  `exit_plan_mode_v2` now returns a durable plan payload on every successful
+  exit and accepts an objective, up to twelve exact requested tool names, and
+  up to eight exact target URLs. An executable plan proposes one runtime-owned
+  `AllowedPrompt` per requested tool; a plan-only response omits requested
+  tools and completes without an approval interrupt.
+- **Hosts can close an approved planning run at an external execution
+  handoff.** `Agent.resume` accepts host attribution, idempotency, checkpoint,
+  and metadata fields. A plan approval carrying
+  `plan_execution_handoff=external` durably records the approved categories
+  and policy binding, emits a terminal event, and returns
+  `external_execution_handoff` without a second provider call or tool
+  execution in the source run.
 - **Opt-in Condenser-pipeline compaction seam (compaction hardening C2 /
   Option-B1b).** New `CompactionSettings.use_condenser_pipeline` (default **off**,
   `RunnerConfig.use_condenser_pipeline` proxy) routes transcript compaction through
@@ -23,6 +38,14 @@ change between minor versions.
   discipline as the C1 partial fix — no false circuit-breaker reset). `session_memory`
   compaction is unaffected. Default behaviour is byte-identical until the flag is
   enabled; flipping the default awaits an A/B quality-per-dollar gate.
+
+### Changed
+
+- `exit_plan_mode_v2` no longer treats plan text alone as permission to
+  execute. Hosts that expect an approval interrupt must provide both
+  `requested_tools` and `target_urls`; callers requesting only a plan should
+  omit them. Plan approval interrupts now also allow free-form `clarify` so a
+  model can author a revised plan before any execution permission is granted.
 
 ## [0.19.1] - 2026-08-20
 

@@ -120,6 +120,8 @@ async def test_governed_executor_interrupts_for_exit_plan_mode_approval() -> Non
                         "reason": "ready",
                         "content": "1. Inspect\n2. Implement\n3. Verify",
                         "path": "/tmp/plan.md",
+                        "requested_tools": ["file_write"],
+                        "target_urls": ["file:///tmp"],
                     },
                     tool_call_id="call_plan",
                 )
@@ -133,3 +135,36 @@ async def test_governed_executor_interrupts_for_exit_plan_mode_approval() -> Non
     proposed = result.interrupt.proposed_action["plan_approval"]
     assert proposed["content_hash"]
     assert proposed["path"] == "/tmp/plan.md"
+    assert result.interrupt.proposed_prompts[0].tool_name == "file_write"
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_does_not_interrupt_for_plan_only_content() -> None:
+    """A plan-only result has no execution permission to approve."""
+    registry = ToolRegistry()
+    register_builtin_tools(registry)
+    register_planning_tool(registry)
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="write a plan only",
+        run_id="run_planning_exit_plan_only",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[
+                ToolCall(
+                    tool_name="exit_plan_mode_v2",
+                    args={"content": "1. Inspect\n2. Design\n3. Verify"},
+                    tool_call_id="call_plan_only",
+                )
+            ]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert result.interrupt is None

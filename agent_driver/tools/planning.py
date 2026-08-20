@@ -528,24 +528,58 @@ async def _exit_plan_mode_v2_tool(args: dict[str, Any]) -> dict[str, Any]:
     content = str(args.get("content") or args.get("plan") or "").strip()
     path = str(args.get("path") or "").strip() or None
     plan_id = str(args.get("plan_id") or f"plan_{uuid4().hex[:12]}").strip()
+    objective = str(args.get("objective") or "").strip() or None
+    requested_tools = list(
+        dict.fromkeys(
+            str(value).strip()
+            for value in (args.get("requested_tools") or [])
+            if str(value).strip()
+        )
+    )
+    target_urls = list(
+        dict.fromkeys(
+            str(value).strip()
+            for value in (args.get("target_urls") or [])
+            if str(value).strip()
+        )
+    )
+    if requested_tools and not target_urls:
+        raise ValueError(
+            "target_urls must contain the exact approved boundary when "
+            "requested_tools is non-empty"
+        )
     summary = "exited plan mode"
     if reason:
         summary = f"exited plan mode: {reason}"
     approval_payload = None
-    if content:
+    if content and requested_tools:
         approval_payload = {
             "plan_id": plan_id,
             "content": content,
             "content_hash": plan_content_hash(content),
             "path": path,
+            "objective": objective,
+            "requested_tools": requested_tools,
+            "target_urls": target_urls,
         }
     return {
         "summary": summary,
         "applied_args": {"planning_mode": "agent", "plan_id": plan_id},
         "planning_state": {"mode": "agent"},
+        "plan": {
+            "plan_id": plan_id,
+            "content": content,
+            "content_hash": plan_content_hash(content) if content else None,
+            "path": path,
+            "objective": objective,
+            "requested_tools": requested_tools,
+            "target_urls": target_urls,
+        },
         "plan_approval": approval_payload,
         "interrupt_reason": (
-            InterruptReason.PLAN_APPROVAL_REQUIRED.value if content else None
+            InterruptReason.PLAN_APPROVAL_REQUIRED.value
+            if approval_payload is not None
+            else None
         ),
     }
 
@@ -596,8 +630,10 @@ def _register_exit_plan_mode_v2_tool(registry: ToolRegistry) -> None:
         ToolManifest(
             name="exit_plan_mode_v2",
             description=(
-                "Present a concrete plan for approval and switch planning state "
-                "back to agent mode."
+                "Finish plan mode with concrete plan content. Declare exact "
+                "requested_tools and target_urls only when proposing immediate "
+                "material execution after approval; omit requested_tools for a "
+                "plan-only response."
             ),
             risk=ToolRisk.LOW,
             side_effect=SideEffectClass.NONE,
@@ -618,6 +654,30 @@ def _register_exit_plan_mode_v2_tool(registry: ToolRegistry) -> None:
                     "path": {
                         "type": "string",
                         "description": "Optional plan artifact path.",
+                    },
+                    "objective": {
+                        "type": "string",
+                        "description": "Short outcome this plan is intended to achieve.",
+                    },
+                    "requested_tools": {
+                        "type": "array",
+                        "description": (
+                            "Exact material tool names needed for immediate execution "
+                            "after approval. Omit for a plan-only response."
+                        ),
+                        "items": {"type": "string"},
+                        "maxItems": 12,
+                        "uniqueItems": True,
+                    },
+                    "target_urls": {
+                        "type": "array",
+                        "description": (
+                            "Exact authorized target boundaries covered by the plan. "
+                            "Required when requested_tools is non-empty."
+                        ),
+                        "items": {"type": "string"},
+                        "maxItems": 8,
+                        "uniqueItems": True,
                     },
                 },
                 "additionalProperties": False,

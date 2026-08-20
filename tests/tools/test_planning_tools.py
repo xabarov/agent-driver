@@ -192,7 +192,12 @@ async def test_enter_and_exit_plan_mode_tools_return_applied_args() -> None:
     assert exit_v2 is not None
     entered = await enter.handler({"reason": "need architecture pass"})
     exited = await exit_v2.handler(
-        {"reason": "ready to implement", "content": "1. Inspect\n2. Change"}
+        {
+            "reason": "ready to implement",
+            "content": "1. Inspect\n2. Change",
+            "requested_tools": ["file_write"],
+            "target_urls": ["file:///workspace"],
+        }
     )
     assert entered["applied_args"]["planning_mode"] == "plan"
     assert entered["planning_state"]["mode"] == "plan"
@@ -200,6 +205,36 @@ async def test_enter_and_exit_plan_mode_tools_return_applied_args() -> None:
     assert exited["planning_state"]["mode"] == "agent"
     assert exited["interrupt_reason"] == "plan_approval_required"
     assert exited["plan_approval"]["content_hash"]
+
+
+@pytest.mark.asyncio
+async def test_exit_plan_mode_plan_only_has_no_approval_interrupt() -> None:
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    exit_v2 = registry.get("exit_plan_mode_v2")
+    assert exit_v2 is not None
+
+    exited = await exit_v2.handler({"content": "1. Inspect\n2. Design"})
+
+    assert exited["interrupt_reason"] is None
+    assert exited["plan_approval"] is None
+    assert exited["plan"]["content"] == "1. Inspect\n2. Design"
+
+
+@pytest.mark.asyncio
+async def test_exit_plan_mode_requires_target_boundary_for_executable_plan() -> None:
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    exit_v2 = registry.get("exit_plan_mode_v2")
+    assert exit_v2 is not None
+
+    with pytest.raises(ValueError, match="target_urls"):
+        await exit_v2.handler(
+            {
+                "content": "1. Inspect\n2. Verify",
+                "requested_tools": ["file_write"],
+            }
+        )
 
 
 def test_apply_planning_state_tool_update_applies_todo_items_and_mode() -> None:

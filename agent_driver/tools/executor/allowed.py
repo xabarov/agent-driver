@@ -13,7 +13,7 @@ from agent_driver.contracts.enums import (
     ResumeAction,
     ToolPolicyDecision,
 )
-from agent_driver.contracts.interrupts import InterruptRequest
+from agent_driver.contracts.interrupts import AllowedPrompt, InterruptRequest
 from agent_driver.contracts.tools import (
     ToolError,
     ToolManifest,
@@ -651,10 +651,28 @@ def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
         content_hash=str(plan_raw.get("content_hash") or ""),
         path=(str(plan_raw.get("path")) if plan_raw.get("path") is not None else None),
         metadata={
-            "source_tool": spec.call.tool_name,
             **spec.run_metadata,
+            "source_tool": spec.call.tool_name,
+            "objective": plan_raw.get("objective"),
+            "requested_tools": list(plan_raw.get("requested_tools") or []),
+            "target_urls": list(plan_raw.get("target_urls") or []),
         },
     )
+    requested_tools = list(
+        dict.fromkeys(
+            str(value).strip()
+            for value in (plan_raw.get("requested_tools") or [])
+            if str(value).strip()
+        )
+    )
+    proposed_prompts = [
+        AllowedPrompt(
+            category_id=f"plan:{plan_payload.plan_id}:{index}:{tool_name}",
+            description=f"Use {tool_name} within the approved plan and host policy.",
+            tool_name=tool_name,
+        )
+        for index, tool_name in enumerate(requested_tools, start=1)
+    ]
     interrupt = InterruptRequest(
         interrupt_id=build_interrupt_id(
             run_id=run_id, tool_call_id=spec.call.tool_call_id, index=spec.index
@@ -675,13 +693,18 @@ def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
             ResumeAction.APPROVE,
             ResumeAction.REJECT,
             ResumeAction.EDIT,
+            ResumeAction.CLARIFY,
             ResumeAction.CANCEL,
         ],
         editable_fields=["content", "path"],
+        proposed_prompts=proposed_prompts,
         metadata={
+            **spec.run_metadata,
             "plan_id": plan_payload.plan_id,
             "content_hash": plan_payload.content_hash,
-            **spec.run_metadata,
+            "objective": plan_raw.get("objective"),
+            "requested_tools": requested_tools,
+            "target_urls": list(plan_raw.get("target_urls") or []),
         },
     )
     envelope = ToolResultEnvelope(

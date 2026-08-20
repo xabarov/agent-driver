@@ -339,6 +339,11 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
         )
         context.metadata["terminal_output"] = terminal.model_dump(mode="json")
         context.metadata["pending_interrupt"] = None
+        self._save_checkpoint(
+            context,
+            latest_output=terminal,
+            node_id="resume_terminal",
+        )
 
     def _apply_resume_cancel(self, *, context: RunContext) -> None:
         """Apply CANCEL action for pending interrupt."""
@@ -475,6 +480,19 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
         )
         context.metadata["resume_action"] = resume.action.value
         context.metadata["pending_interrupt"] = serialize_pending_interrupt(pending)
+        if resume.approved_prompts:
+            approved_prompts = [
+                item.model_dump(mode="json") for item in resume.approved_prompts
+            ]
+            context.metadata["approved_prompts"] = approved_prompts
+            context.run_input = context.run_input.model_copy(
+                update={
+                    "app_metadata": {
+                        **dict(context.run_input.app_metadata),
+                        "approved_prompts": approved_prompts,
+                    }
+                }
+            )
         if resume.message:
             context.metadata["resume_message"] = resume.message
 
@@ -522,6 +540,29 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
                         payload=plan_payload,
                     )
                 )
+            if (
+                pending.interrupt.reason == InterruptReason.PLAN_APPROVAL_REQUIRED
+                and resume.metadata.get("plan_execution_handoff") == "external"
+            ):
+                self._emit(
+                    EventSpec(
+                        run_id=context.run_id,
+                        attempt_id=context.attempt_id,
+                        event_type=RuntimeEventType.RUN_COMPLETED,
+                        payload={
+                            "finish_reason": "external_execution_handoff",
+                            "terminal_reason": (
+                                TerminalReason.EXTERNAL_EXECUTION_HANDOFF.value
+                            ),
+                        },
+                    )
+                )
+                self._set_terminal_output(
+                    context=context,
+                    status=RunStatus.COMPLETED,
+                    reason=TerminalReason.EXTERNAL_EXECUTION_HANDOFF,
+                )
+                return
             if (
                 resume.action == ResumeAction.APPROVE
                 and pending.interrupt.reason == InterruptReason.PLAN_APPROVAL_REQUIRED

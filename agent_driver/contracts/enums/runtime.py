@@ -40,6 +40,7 @@ class TerminalReason(StrEnum):
     MODEL_ERROR = "model_error"
     PROVIDER_PROTOCOL = "provider_protocol"
     CHECKPOINT_ERROR = "checkpoint_error"
+    EXTERNAL_EXECUTION_HANDOFF = "external_execution_handoff"
 
 
 class RuntimeEventType(StrEnum):
