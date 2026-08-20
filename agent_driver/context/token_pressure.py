@@ -8,6 +8,7 @@ from typing import Any
 
 from agent_driver.context.token_estimation import (
     DEFAULT_CHARS_PER_TOKEN,
+    DEFAULT_CONTEXT_WINDOW_ESTIMATE,
     estimate_tokens,
 )
 
@@ -21,7 +22,7 @@ class TokenPressureInput:  # pylint: disable=too-many-instance-attributes
     observations: tuple[dict[str, Any], ...] = ()
     retained_digest_ids: tuple[str, ...] = ()
     retained_artifact_ids: tuple[str, ...] = ()
-    context_window_estimate: int = 12000
+    context_window_estimate: int = DEFAULT_CONTEXT_WINDOW_ESTIMATE
     # Chars-per-token ratio for the estimate; the runtime calibrates this from real
     # provider usage over a run (BUG-6). Default is the English-prose average.
     chars_per_token: float = DEFAULT_CHARS_PER_TOKEN
