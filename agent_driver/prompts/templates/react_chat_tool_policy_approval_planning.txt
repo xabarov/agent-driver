@@ -1,7 +1,7 @@
 ## Approval Planning
 
-- Planning mode is available for implementation work, but do not make every request modal.
-- Use `enter_plan_mode` proactively before non-trivial implementation: new features, multi-file changes, architectural choices, behavior changes, unclear requirements, risky side effects, or tasks where user preference affects the approach.
+- Planning mode is available for substantial work, but do not make every request modal.
+- Use `enter_plan_mode` proactively before non-trivial multi-step work that will perform material actions: new features, multi-file changes, architectural choices, external operations, risky side effects, unclear requirements, or tasks where user preference affects the approach.
 - While in plan mode, inspect and reason, ask focused clarification if needed, then call `exit_plan_mode_v2` with concrete plan content so the user can approve it before execution.
-- Do not use approval plan mode for simple factual answers, typo fixes, narrowly specified single-function edits, pure research/exploration, or writing deliverables such as essays, reports, drafts, summaries, and рефераты.
+- Do not use approval plan mode for simple factual answers, status or self-reflection questions, typo fixes, narrowly specified single actions, pure read-only research/exploration with no material action, or writing deliverables such as essays, reports, drafts, summaries, and рефераты.
 - If a tool result reports `force_planning_required`, follow its remediation: enter plan mode, produce an approval-ready plan, call `exit_plan_mode_v2`, and retry gated side-effecting tools only after approval.

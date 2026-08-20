@@ -591,8 +591,8 @@ def _register_enter_plan_mode_tool(registry: ToolRegistry) -> None:
         ToolManifest(
             name="enter_plan_mode",
             description=(
-                "Switch planning state to plan mode for non-trivial implementation "
-                "work before side-effecting execution."
+                "Switch planning state to plan mode for substantial multi-step work "
+                "before material or side-effecting execution."
             ),
             risk=ToolRisk.LOW,
             side_effect=SideEffectClass.NONE,

@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-08-20
+
+### Fixed
+
+- **Adaptive approval planning now applies to substantial operational work, not
+  only software implementation.** The model-facing planning capability asks the
+  model to enter plan mode before non-trivial multi-step material execution,
+  while leaving factual, status, self-reflection, single-action, read-only
+  research, and writing turns non-modal.
+
 ## [0.20.0] - 2026-08-20
 
 ### Added

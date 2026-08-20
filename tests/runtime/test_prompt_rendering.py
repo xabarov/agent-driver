@@ -148,9 +148,11 @@ def test_react_chat_policy_guides_adaptive_plan_mode() -> None:
     """Chat policy should mirror Claude Code-like voluntary plan mode behavior."""
     policy = react_chat_tool_policy()
     assert (
-        "Use `enter_plan_mode` proactively before non-trivial implementation" in policy
+        "Use `enter_plan_mode` proactively before non-trivial multi-step work" in policy
     )
     assert "Do not use approval plan mode for simple factual answers" in policy
+    assert "status or self-reflection questions" in policy
+    assert "external operations" in policy
     assert "writing deliverables such as essays, reports, drafts" in policy
     assert "напиши" in policy
     assert "Do not use `ask_user_question` as a way to avoid producing" in policy
