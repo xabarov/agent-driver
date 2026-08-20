@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from agent_driver.runtime.single_agent.context_management.compaction_stage import (
     _is_protected_message,
+    _material_unit_receipt,
     _retained_messages_after_full_compaction,
     _scaled_context_char_cap,
 )
@@ -55,6 +56,42 @@ def test_retention_keeps_evidence_and_material_hash_messages():
     # system + evidence + material-hash + protected + last = 5; the bare middle drops.
     assert len(kept) == 5
     assert messages[1] in kept and messages[2] in kept  # the previously-lost ones
+
+
+def test_receipt_labels_protected_material_hash_as_retained_not_compacted():
+    # The second half of BUG-4: because a material-unit-hash message is now retained
+    # (shared protection predicate), its hash must be reported under
+    # ``retained_unit_hashes`` — never mislabelled as ``compacted``/``omitted``.
+    messages = [
+        _msg(role="system"),
+        _msg(material_unit_hashes=["keep-me"]),
+        _msg(),  # a droppable bare turn
+        _msg(),  # last -> kept
+    ]
+    retained = _retained_messages_after_full_compaction(messages)
+    receipt = _material_unit_receipt(
+        original_messages=messages,
+        retained_messages=retained,
+        pre_summary_groups_dropped=False,
+    )
+    assert "keep-me" in receipt["retained_unit_hashes"]
+    assert "keep-me" not in receipt["compacted_unit_hashes"]
+    assert "keep-me" not in receipt["omitted_unit_hashes"]
+
+
+def test_receipt_omits_dropped_hashes_when_leading_groups_pre_dropped():
+    # A hash that is genuinely unresolved (its message was neither retained nor fed to
+    # the summary because leading groups were pre-dropped) is reported as omitted,
+    # not falsely credited to the summary — the honest-labelling side of the receipt.
+    original = [_msg(material_unit_hashes=["gone"]), _msg(role="system")]
+    retained = [_msg(role="system")]  # the hash-bearing message is not retained
+    receipt = _material_unit_receipt(
+        original_messages=original,
+        retained_messages=retained,
+        pre_summary_groups_dropped=True,
+    )
+    assert receipt["omitted_unit_hashes"] == ["gone"]
+    assert receipt["compacted_unit_hashes"] == []
 
 
 # --------------------------------------------------------------------------- #

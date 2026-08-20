@@ -67,6 +67,19 @@ lack a documented cost/quality rationale for their absolute values.
 
 ## BUG-4 — retention-policy mismatch drops evidence-flagged messages (DATA LOSS)
 
+- **Status: FIXED (Option A phase-1, commit `c19ddff`; receipt half locked
+  2026-08-20).** The excerpt protection and the post-summary retention set now share
+  **one** predicate, `_is_protected_message`, which honours all four host flags
+  (`compaction_protected`, `compaction_evidence`, `material_fact_ids`,
+  `material_unit_hashes`) plus system/last-message — so a message flagged *solely*
+  with evidence/unit-hashes is retained, not dropped. Because it is retained, its
+  hashes land in the receipt's `retained_unit_hashes`, never mislabelled
+  `compacted`. Regression tests: `tests/runtime/test_compaction_budget_correctness.py`
+  — `test_evidence_only_message_is_protected`,
+  `test_material_unit_hashes_only_message_is_protected`,
+  `test_retention_keeps_evidence_and_material_hash_messages`, and (receipt half, new)
+  `test_receipt_labels_protected_material_hash_as_retained_not_compacted` +
+  `test_receipt_omits_dropped_hashes_when_leading_groups_pre_dropped`.
 - **Where:** `compaction_stage.py` — LLM-full *excerpt protection* (`~:665-673`) vs
   *post-summary retention* `_retained_messages_after_full_compaction` (`~:86-102`).
 - **What:** excerpt protection honours `compaction_evidence` and
