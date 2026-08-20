@@ -22,6 +22,16 @@ change between minor versions.
   documented opt-in seam to inject an exact token counter (tiktoken/HF/provider
   count-tokens); the default stays the dependency-free calibrated estimator.
 
+## [0.21.9] - 2026-08-20
+
+### Fixed
+
+- **Approval plans must request executable tools.** `exit_plan_mode_v2` now
+  rejects `requested_tools` that are outside the current run's executable tool
+  surface, records a repair hint instead of raising an operator approval
+  interrupt, and preserves the original executable surface during plan
+  refinement.
+
 ## [0.21.3] - 2026-08-20
 
 ### Fixed

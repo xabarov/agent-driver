@@ -35,6 +35,16 @@ from agent_driver.runtime.errors import MissingCheckpointError, RuntimeExecution
 from tests.runtime.conftest import danger_tool_manifest, planned_danger_tool_policy
 
 
+def _register_noop_tool(registry: ToolRegistry, name: str) -> None:
+    async def _noop(_args):
+        return {"summary": f"{name} ok"}
+
+    registry.register(
+        danger_tool_manifest().model_copy(update={"name": name}),
+        _noop,
+    )
+
+
 class _PlanApprovalThenWriteProvider(FakeProvider):
     """Provider that requests plan approval, then a write, then stops."""
 
@@ -332,6 +342,7 @@ async def test_runner_pauses_for_exit_plan_mode_approval_and_resumes() -> None:
     """Plan exit should pause for approval, then resume through existing HITL path."""
     registry = ToolRegistry()
     register_planning_tool(registry)
+    _register_noop_tool(registry, "file_write")
     runner = FakeSingleStepRunner(
         provider=FakeProvider(response_text="ok"),
         checkpoint_store=InMemoryCheckpointStore(),
@@ -395,6 +406,7 @@ async def test_runner_plan_approval_survives_sqlite_store_reload(tmp_path) -> No
     path = tmp_path / "runtime.sqlite3"
     registry = ToolRegistry()
     register_planning_tool(registry)
+    _register_noop_tool(registry, "file_write")
     config = RunnerConfig(
         tool_executor=wrap_governed_executor(GovernedToolExecutor(registry=registry))
     )
@@ -763,6 +775,7 @@ async def test_plan_clarify_requires_revised_approval_artifact() -> None:
     """A prose restatement cannot terminally satisfy plan refinement."""
     registry = ToolRegistry()
     register_planning_tool(registry)
+    _register_noop_tool(registry, "web_request")
     provider = _PlanRefinementProvider()
     runner = FakeSingleStepRunner(
         provider=provider,
@@ -841,6 +854,7 @@ async def test_plan_clarify_fails_closed_after_bounded_prose_retries() -> None:
     """Repeated prose cannot turn a pending plan refinement into success."""
     registry = ToolRegistry()
     register_planning_tool(registry)
+    _register_noop_tool(registry, "web_request")
     provider = _PlanRefinementProvider(always_prose=True)
     runner = FakeSingleStepRunner(
         provider=provider,

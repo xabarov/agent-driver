@@ -106,6 +106,11 @@ class AllowedSpec:
     # next turn. Empty/None — default, fall back to the legacy short
     # "tool is not registered" reason without suggestions.
     available_tool_names: tuple[str, ...] = ()
+    # Names of tools the current request can actually execute. When a host
+    # narrows ``ToolPolicyInput.allowed_tools`` for this run, approval-plan
+    # ``requested_tools`` must be a subset of this executable surface rather
+    # than the whole registry.
+    effective_tool_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

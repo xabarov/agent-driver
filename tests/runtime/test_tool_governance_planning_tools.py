@@ -7,6 +7,7 @@ import pytest
 from agent_driver.contracts import (
     AgentRunInput,
     ToolCall,
+    ToolManifest,
     ToolPolicyInput,
     ToolPolicyMode,
 )
@@ -136,6 +137,106 @@ async def test_governed_executor_interrupts_for_exit_plan_mode_approval() -> Non
     assert proposed["content_hash"]
     assert proposed["path"] == "/tmp/plan.md"
     assert result.interrupt.proposed_prompts[0].tool_name == "file_write"
+
+
+@pytest.mark.asyncio
+async def test_exit_plan_mode_blocks_requested_tools_outside_current_allowlist() -> None:
+    """Approval plans may only request tools executable in this run."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+
+    async def _ok(_args):
+        return {"summary": "ok"}
+
+    registry.register(ToolManifest(name="lookup", description="Lookup"), _ok)
+    registry.register(ToolManifest(name="nmap", description="Nmap"), _ok)
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="approve plan",
+        run_id="run_planning_exit_invalid_tool",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            allowed_tools=["exit_plan_mode_v2", "lookup"],
+        ),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[
+                ToolCall(
+                    tool_name="exit_plan_mode_v2",
+                    args={
+                        "reason": "ready",
+                        "content": "1. Scan\n2. Report",
+                        "requested_tools": ["nmap"],
+                        "target_urls": ["https://lab.example/"],
+                    },
+                    tool_call_id="call_invalid_plan",
+                )
+            ]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert result.interrupt is None
+    assert result.envelopes[0].decision.value == "deny"
+    assert result.envelopes[0].error is not None
+    assert result.envelopes[0].error.code == "plan_requested_tools_unavailable"
+    structured = result.envelopes[0].structured_output
+    assert isinstance(structured, dict)
+    assert structured["invalid_requested_tools"] == ["nmap"]
+    assert structured["current_executable_tools"] == ["lookup"]
+
+
+@pytest.mark.asyncio
+async def test_exit_plan_mode_keeps_valid_requested_tools_and_metadata() -> None:
+    """A valid plan approval carries the current execution-tool truth."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+
+    async def _ok(_args):
+        return {"summary": "ok"}
+
+    registry.register(ToolManifest(name="lookup", description="Lookup"), _ok)
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="approve plan",
+        run_id="run_planning_exit_valid_tool",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            allowed_tools=["exit_plan_mode_v2", "lookup"],
+        ),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[
+                ToolCall(
+                    tool_name="exit_plan_mode_v2",
+                    args={
+                        "reason": "ready",
+                        "content": "1. Lookup\n2. Report",
+                        "requested_tools": ["lookup"],
+                        "target_urls": ["https://lab.example/"],
+                    },
+                    tool_call_id="call_valid_plan",
+                )
+            ]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert result.interrupt is not None
+    assert result.interrupt.proposed_prompts[0].tool_name == "lookup"
+    assert result.interrupt.metadata["tool_ids"] == ["lookup"]
+    approval = result.interrupt.proposed_action["plan_approval"]
+    assert approval["metadata"]["tool_ids"] == ["lookup"]
 
 
 @pytest.mark.asyncio

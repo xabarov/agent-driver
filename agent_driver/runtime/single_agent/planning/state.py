@@ -62,16 +62,16 @@ def begin_plan_refinement(
     current_policy = context.run_input.tool_policy
     payload = plan_payload or {}
     previous_allowed_tools = current_policy.allowed_tools
-    planning_runtime.require_plan_refinement(
-        {
-            "interrupt_id": interrupt_id,
-            "plan_id": payload.get("plan_id"),
-            "content_hash": payload.get("content_hash"),
-            "previous_allowed_tools": previous_allowed_tools,
-        }
-    )
+    refinement_payload = {
+        "interrupt_id": interrupt_id,
+        "plan_id": payload.get("plan_id"),
+        "content_hash": payload.get("content_hash"),
+        "previous_allowed_tools": previous_allowed_tools,
+    }
+    planning_runtime.require_plan_refinement(refinement_payload)
 
     policy_metadata = dict(current_policy.metadata)
+    policy_metadata["plan_refinement_required"] = refinement_payload
     force_planning = policy_metadata.get("force_planning")
     if isinstance(force_planning, dict):
         force_planning = {**force_planning, "continue_without_plan": False}
@@ -208,11 +208,14 @@ def apply_planning_updates_from_envelopes(
         ):
             refinement = planning_runtime.plan_refinement() or {}
             current_policy = context.run_input.tool_policy
+            policy_metadata = dict(current_policy.metadata)
+            policy_metadata.pop("plan_refinement_required", None)
             context.run_input = context.run_input.model_copy(
                 update={
                     "tool_policy": current_policy.model_copy(
                         update={
-                            "allowed_tools": refinement.get("previous_allowed_tools")
+                            "allowed_tools": refinement.get("previous_allowed_tools"),
+                            "metadata": policy_metadata,
                         }
                     )
                 }

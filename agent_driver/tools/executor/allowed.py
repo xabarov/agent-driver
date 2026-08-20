@@ -15,6 +15,7 @@ from agent_driver.contracts.enums import (
 )
 from agent_driver.contracts.interrupts import AllowedPrompt, InterruptRequest
 from agent_driver.contracts.tools import (
+    MANAGEMENT_TOOL_NAMES,
     ToolError,
     ToolManifest,
     ToolResultEnvelope,
@@ -630,6 +631,54 @@ def _append_wait_for_event_interrupt(*, spec: AllowedSpec, raw: dict[str, Any]) 
     return True
 
 
+def _current_execution_tools(spec: AllowedSpec) -> tuple[str, ...]:
+    names = spec.effective_tool_names or spec.available_tool_names
+    return tuple(
+        dict.fromkeys(
+            name
+            for name in (str(value).strip() for value in names)
+            if name and name not in MANAGEMENT_TOOL_NAMES
+        )
+    )
+
+
+def _append_plan_requested_tools_block(
+    *,
+    spec: AllowedSpec,
+    requested_tools: list[str],
+    current_tools: tuple[str, ...],
+) -> None:
+    invalid = [tool for tool in requested_tools if tool not in set(current_tools)]
+    current_text = ", ".join(current_tools) if current_tools else "none"
+    invalid_text = ", ".join(invalid) if invalid else "none"
+    append_blocked_call(
+        result=spec.result,
+        spec=BlockSpec(
+            index=spec.index,
+            call=spec.call,
+            manifest=spec.manifest,
+            code="plan_requested_tools_unavailable",
+            reason=(
+                "plan requested unavailable tools: "
+                f"{invalid_text}; current executable tools: {current_text}"
+            ),
+            structured_output={
+                "error_kind": "plan_requested_tools_unavailable",
+                "invalid_requested_tools": invalid,
+                "requested_tools": requested_tools,
+                "current_executable_tools": list(current_tools),
+                "retry_expected": True,
+                "remediation": (
+                    "Do not request approval for tools that are not executable "
+                    "in this run. Revise the plan so requested_tools is a "
+                    "subset of current_executable_tools, or answer that the "
+                    "requested work cannot be run with the current tool surface."
+                ),
+            },
+        ),
+    )
+
+
 def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
     """Append plan approval interrupt when approval-exit tool has plan content."""
     if not isinstance(raw, dict):
@@ -640,6 +689,21 @@ def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
     content = str(plan_raw.get("content") or "").strip()
     if not content:
         return False
+    requested_tools = list(
+        dict.fromkeys(
+            str(value).strip()
+            for value in (plan_raw.get("requested_tools") or [])
+            if str(value).strip()
+        )
+    )
+    current_tools = _current_execution_tools(spec)
+    if any(tool_name not in set(current_tools) for tool_name in requested_tools):
+        _append_plan_requested_tools_block(
+            spec=spec,
+            requested_tools=requested_tools,
+            current_tools=current_tools,
+        )
+        return True
     run_id, attempt_id = _interrupt_identifiers(spec)
     plan_payload = PlanApprovalPayload(
         plan_id=str(
@@ -656,14 +720,8 @@ def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
             "objective": plan_raw.get("objective"),
             "requested_tools": list(plan_raw.get("requested_tools") or []),
             "target_urls": list(plan_raw.get("target_urls") or []),
+            "tool_ids": list(current_tools),
         },
-    )
-    requested_tools = list(
-        dict.fromkeys(
-            str(value).strip()
-            for value in (plan_raw.get("requested_tools") or [])
-            if str(value).strip()
-        )
     )
     proposed_prompts = [
         AllowedPrompt(
@@ -705,6 +763,7 @@ def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
             "objective": plan_raw.get("objective"),
             "requested_tools": requested_tools,
             "target_urls": list(plan_raw.get("target_urls") or []),
+            "tool_ids": list(current_tools),
         },
     )
     envelope = ToolResultEnvelope(

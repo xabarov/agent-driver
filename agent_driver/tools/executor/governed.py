@@ -315,6 +315,24 @@ class GovernedToolExecutor:
         registered = self._registry.get(tool_name)
         return registered.manifest if registered is not None else None
 
+    def _effective_tool_names(self, run_input: AgentRunInput) -> tuple[str, ...]:
+        registry_names = tuple(self._registry.list_names())
+        allowed = run_input.tool_policy.allowed_tools
+        refinement = run_input.tool_policy.metadata.get("plan_refinement_required")
+        if isinstance(refinement, dict) and "previous_allowed_tools" in refinement:
+            previous = refinement.get("previous_allowed_tools")
+            allowed = previous if isinstance(previous, list) else None
+        if allowed is None:
+            return registry_names
+        registered = set(registry_names)
+        return tuple(
+            dict.fromkeys(
+                str(tool_name).strip()
+                for tool_name in allowed
+                if str(tool_name).strip() and str(tool_name).strip() in registered
+            )
+        )
+
     def _normalize_planned_calls(self, llm_response: LlmResponse) -> list[ToolCall]:
         """Extract planned calls and normalize explicit compatibility aliases."""
         available_tool_names = tuple(self._registry.list_names())
@@ -1070,6 +1088,7 @@ class GovernedToolExecutor:
                 # a "did you mean: X" feedback string for the next LLM
                 # turn instead of the bare "tool is not registered".
                 available_tool_names=tuple(self._registry.list_names()),
+                effective_tool_names=self._effective_tool_names(run_input),
             ),
         )
         await self._postprocess_new_envelopes(
