@@ -66,6 +66,7 @@ from agent_driver.runtime.single_agent.tool_stage.observations import (
 )
 from agent_driver.runtime.single_agent.tool_stage.planning import (
     emit_plan_lifecycle_events,
+    enforce_plan_refinement_revision,
 )
 from agent_driver.runtime.single_agent.tool_stage.research import (
     append_web_fetch_duplicate_guard,
@@ -227,6 +228,7 @@ async def execute_tool_stage_step(
         ),
     ):
         result = await host._tool_result_with_approved_override(context)
+    enforce_plan_refinement_revision(context, result)
     host._store_tool_stage_outputs(context, result)
     _emit_tool_progress_events(host, context, result)
     _post_process_tool_result(host, context, result)

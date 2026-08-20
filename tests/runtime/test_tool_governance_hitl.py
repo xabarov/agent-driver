@@ -201,6 +201,17 @@ class _MisbehavingPlanRefinementProvider(FakeProvider):
                 tool_call_id="unapproved_danger_call",
                 args={"target": "https://lab.example/"},
             )
+        elif self.calls == 4:
+            tool_call = ToolCall(
+                tool_name="exit_plan_mode_v2",
+                tool_call_id="unchanged_revised_plan_call",
+                args={
+                    "plan_id": "plan_initial",
+                    "content": "1. Active check\n2. Verify",
+                    "requested_tools": ["danger"],
+                    "target_urls": ["https://lab.example/"],
+                },
+            )
         else:
             tool_call = ToolCall(
                 tool_name="exit_plan_mode_v2",
@@ -889,7 +900,7 @@ async def test_plan_clarify_keeps_execution_locked_until_revised_approval() -> N
         )
     )
 
-    assert provider.calls == 4
+    assert provider.calls == 5
     assert all(
         {tool.get("function", {}).get("name") for tool in request.tools}
         == {"exit_plan_mode_v2"}
