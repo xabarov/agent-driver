@@ -48,6 +48,7 @@ PLANNING_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "todo_write",
         "planning_state_update",
+        "continue_without_plan",
         "enter_plan_mode",
         *EXIT_PLAN_MODE_TOOL_NAMES,
     }

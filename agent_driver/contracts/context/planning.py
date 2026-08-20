@@ -174,6 +174,7 @@ class PlanningPolicyInput(ContractModel):
     approved: bool = False
     approved_plan_id: str | None = None
     approved_plan: dict[str, Any] | None = None
+    continue_without_plan: bool = False
     # U5 enforcement — when set, the recorded approval only counts if its
     # ``approved_plan.content_hash`` equals this hash. A materially revised plan
     # (different hash) is treated as unapproved and re-gated before execution,

@@ -157,6 +157,8 @@ def test_react_chat_policy_guides_adaptive_plan_mode() -> None:
     assert "even when that first call is read-only" in policy
     assert "Never ask the user to approve a plan in ordinary assistant prose" in policy
     assert "host can present a real review decision" in policy
+    assert "planning_strategy_required" in policy
+    assert "`continue_without_plan` only for one narrow" in policy
     assert "writing deliverables such as essays, reports, drafts" in policy
     assert "напиши" in policy
     assert "Do not use `ask_user_question` as a way to avoid producing" in policy

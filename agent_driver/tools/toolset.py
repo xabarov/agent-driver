@@ -29,6 +29,7 @@ _BUILTIN_PACKS: dict[str, tuple[str, ...]] = {
         "ask_user_question",
     ),
     "planning_approval": (
+        "continue_without_plan",
         "enter_plan_mode",
         "exit_plan_mode_v2",
     ),
@@ -36,6 +37,7 @@ _BUILTIN_PACKS: dict[str, tuple[str, ...]] = {
         "planning_state_update",
         "todo_write",
         "ask_user_question",
+        "continue_without_plan",
         "enter_plan_mode",
         "exit_plan_mode_v2",
     ),

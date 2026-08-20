@@ -993,6 +993,87 @@ def test_policy_force_planning_always_for_multistep_blocks_after_threshold() -> 
     assert outcome.metadata["force_planning"]["mode"] == "always_for_multistep"
 
 
+def test_policy_strategy_gate_requires_choice_then_allows_narrow_action() -> None:
+    call = ToolCall(tool_name="web_get")
+    manifest = ToolManifest(
+        name="web_get",
+        description="GET one page",
+        risk=ToolRisk.LOW,
+        side_effect=SideEffectClass.EXTERNAL_ACTION,
+    )
+    force_planning = {
+        "mode": "strategy_required_before_execution",
+        "gated_tools": ["web_get"],
+    }
+    blocked = evaluate_tool_policy(
+        policy=ToolPolicyInput(metadata={"force_planning": force_planning}),
+        manifest=manifest,
+        call=call,
+        current_tool_calls=0,
+    )
+    assert blocked.decision.value == "deny"
+    assert "explicit model choice" in blocked.reason
+
+    force_planning["continue_without_plan"] = True
+    allowed = evaluate_tool_policy(
+        policy=ToolPolicyInput(metadata={"force_planning": force_planning}),
+        manifest=manifest,
+        call=call,
+        current_tool_calls=1,
+    )
+    assert allowed.decision.value == "allow"
+
+
+@pytest.mark.asyncio
+async def test_governed_executor_strategy_gate_returns_model_remediation() -> None:
+    registry = ToolRegistry()
+    called = False
+
+    async def _get(_args):
+        nonlocal called
+        called = True
+        return {"summary": "contacted"}
+
+    registry.register(
+        ToolManifest(
+            name="web_get",
+            description="GET one page",
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.EXTERNAL_ACTION,
+            approval_mode=ApprovalMode.NEVER,
+        ),
+        _get,
+    )
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="inspect",
+        run_id="run_strategy_gate",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            metadata={
+                "force_planning": {
+                    "mode": "strategy_required_before_execution",
+                    "gated_tools": ["web_get"],
+                }
+            }
+        ),
+    )
+    response = await FakeProvider(response_text="ok").complete(
+        llm_request_with_planned_calls(
+            planned=[ToolCall(tool_name="web_get", args={"url": "https://x"})]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert called is False
+    structured = result.envelopes[0].structured_output
+    assert structured is not None
+    assert structured["error_kind"] == "planning_strategy_required"
+    assert structured["next_tools"] == ["enter_plan_mode", "continue_without_plan"]
+
+
 @pytest.mark.asyncio
 async def test_governed_executor_force_planning_blocks_write_tool() -> None:
     """Executor should enforce force-planning denial before handler execution."""

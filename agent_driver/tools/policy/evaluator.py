@@ -20,6 +20,7 @@ from agent_driver.tools.policy.risk import is_risk_at_or_above
 
 _DEFAULT_FORCE_PLANNING_EXEMPT_TOOLS = {
     "ask_user_question",
+    "continue_without_plan",
     "enter_plan_mode",
     "exit_plan_mode_v2",
     "planning_state_update",
@@ -139,6 +140,11 @@ def _evaluate_force_planning(
     config = PlanningPolicyInput.from_metadata(policy.metadata)
     if config is None or not _force_planning_enabled(config):
         return None
+    if (
+        config.mode == PlanningPolicyMode.STRATEGY_REQUIRED_BEFORE_EXECUTION
+        and config.continue_without_plan
+    ):
+        return None
     if _force_planning_has_approved_plan(config):
         return None
     if not _force_planning_applies(
@@ -148,11 +154,18 @@ def _evaluate_force_planning(
         current_tool_calls=current_tool_calls,
     ):
         return None
+    strategy_required = (
+        config.mode == PlanningPolicyMode.STRATEGY_REQUIRED_BEFORE_EXECUTION
+    )
     return ToolPolicyOutcome(
         decision=ToolPolicyDecision.DENY,
         reason=(
-            "force planning requires an approved plan before tool "
-            f"'{call.tool_name}' can run"
+            (
+                "planning strategy requires an explicit model choice before tool "
+                if strategy_required
+                else "force planning requires an approved plan before tool "
+            )
+            + f"'{call.tool_name}' can run"
         ),
         metadata={
             "force_planning": {

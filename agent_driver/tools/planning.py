@@ -123,6 +123,7 @@ def register_planning_tool(registry: ToolRegistry) -> None:
     _register_todo_write_tool(registry)
     _register_ask_user_question_tool(registry)
     _register_wait_for_event_tool(registry)
+    _register_continue_without_plan_tool(registry)
     _register_enter_plan_mode_tool(registry)
     _register_exit_plan_mode_v2_tool(registry)
 
@@ -523,6 +524,23 @@ async def _enter_plan_mode_tool(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _continue_without_plan_tool(args: dict[str, Any]) -> dict[str, Any]:
+    reason = str(args.get("reason") or "").strip()
+    if not reason:
+        raise ValueError("reason is required to continue without a plan")
+    return {
+        "summary": f"planning strategy selected: narrow action ({reason})",
+        "applied_args": {
+            "planning_strategy": "without_plan",
+            "reason": reason,
+        },
+        "planning_strategy": {
+            "decision": "without_plan",
+            "reason": reason,
+        },
+    }
+
+
 async def _exit_plan_mode_v2_tool(args: dict[str, Any]) -> dict[str, Any]:
     reason = str(args.get("reason") or "").strip()
     content = str(args.get("content") or args.get("plan") or "").strip()
@@ -623,6 +641,41 @@ def _register_enter_plan_mode_tool(registry: ToolRegistry) -> None:
     )
 
 
+def _register_continue_without_plan_tool(registry: ToolRegistry) -> None:
+    if registry.get("continue_without_plan") is not None:
+        return
+    registry.register(
+        ToolManifest(
+            name="continue_without_plan",
+            description=(
+                "Declare that the user's requested outcome is one narrow concrete "
+                "material action that should use normal action approval instead of "
+                "approval plan mode. Never use this for broad, end-to-end, or "
+                "substantial multi-step work."
+            ),
+            risk=ToolRisk.LOW,
+            side_effect=SideEffectClass.NONE,
+            approval_mode=ApprovalMode.NEVER,
+            args_schema={
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": (
+                            "Concise reason the whole requested outcome is one narrow "
+                            "material action."
+                        ),
+                    }
+                },
+                "required": ["reason"],
+                "additionalProperties": False,
+            },
+            output_type="json",
+        ),
+        _continue_without_plan_tool,
+    )
+
+
 def _register_exit_plan_mode_v2_tool(registry: ToolRegistry) -> None:
     if registry.get("exit_plan_mode_v2") is not None:
         return
@@ -693,6 +746,7 @@ __all__ = [
     "planning_state_update_tool",
     "register_planning_tool",
     "_ask_user_question_tool",
+    "_continue_without_plan_tool",
     "_enter_plan_mode_tool",
     "_exit_plan_mode_v2_tool",
     "_todo_write_tool",

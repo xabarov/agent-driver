@@ -208,6 +208,25 @@ async def test_enter_and_exit_plan_mode_tools_return_applied_args() -> None:
 
 
 @pytest.mark.asyncio
+async def test_continue_without_plan_records_explicit_narrow_action_choice() -> None:
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    narrow = registry.get("continue_without_plan")
+    assert narrow is not None
+
+    selected = await narrow.handler({"reason": "one exact GET requested"})
+
+    assert selected["applied_args"] == {
+        "planning_strategy": "without_plan",
+        "reason": "one exact GET requested",
+    }
+    assert selected["planning_strategy"]["decision"] == "without_plan"
+
+    with pytest.raises(ValueError, match="reason is required"):
+        await narrow.handler({})
+
+
+@pytest.mark.asyncio
 async def test_exit_plan_mode_plan_only_has_no_approval_interrupt() -> None:
     registry = ToolRegistry()
     register_planning_tool(registry)

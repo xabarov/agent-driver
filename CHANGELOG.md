@@ -7,6 +7,17 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-08-20
+
+### Added
+
+- **Hosts can require an explicit model planning strategy before material
+  execution.** The new `strategy_required_before_execution` policy mode gates
+  selected tools until the model either enters approval plan mode for broad
+  work or calls `continue_without_plan` for one narrow concrete action. The
+  choice is checkpointed, remains domain-neutral, and does not classify or
+  reroute ordinary answer-only turns.
+
 ## [0.20.3] - 2026-08-20
 
 ### Fixed

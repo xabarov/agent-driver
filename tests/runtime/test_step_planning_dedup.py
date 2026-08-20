@@ -41,3 +41,37 @@ def test_apply_planning_updates_dedups_repeated_todo_write_payload() -> None:
     assert updated_second is False
     assert context.metadata.get("todo_write_deduped") is True
     assert "duplicate payload ignored" in str(second.envelopes[0].summary)
+
+
+def test_continue_without_plan_updates_checkpointed_force_planning_policy() -> None:
+    force_planning = {
+        "mode": "strategy_required_before_execution",
+        "gated_tools": ["web_get"],
+    }
+    context = SimpleNamespace(
+        metadata={},
+        run_id="run_strategy_choice",
+        run_input=SimpleNamespace(
+            tool_policy=SimpleNamespace(
+                metadata={"force_planning": force_planning}
+            )
+        ),
+    )
+    envelope = ToolResultEnvelope(
+        call=ToolCall(tool_name="continue_without_plan", args={"reason": "one GET"}),
+        decision=ToolPolicyDecision.ALLOW,
+        structured_output={
+            "summary": "narrow action",
+            "applied_args": {
+                "planning_strategy": "without_plan",
+                "reason": "one GET",
+            },
+        },
+    )
+
+    updated = apply_planning_updates_from_envelopes(
+        context, ToolExecutionResult(envelopes=[envelope])
+    )
+
+    assert updated is True
+    assert force_planning["continue_without_plan"] is True

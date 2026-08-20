@@ -23,7 +23,9 @@ from agent_driver.runtime.single_agent.context_management.todo_reminders import 
 )
 from agent_driver.tools import apply_planning_state_tool_update
 
-PLANNING_TOOL_NAMES = frozenset({"planning_state_update", "todo_write"})
+PLANNING_TOOL_NAMES = frozenset(
+    {"planning_state_update", "todo_write", "continue_without_plan"}
+)
 
 
 def apply_planning_state_seed_from_metadata(context: RunContext) -> None:
@@ -134,6 +136,16 @@ def apply_planning_updates_from_envelopes(
         planning_state = apply_planning_state_tool_update(
             planning_state, structured.get("applied_args", {})
         )
+        if envelope.call.tool_name == "continue_without_plan":
+            force_planning = context.run_input.tool_policy.metadata.get(
+                "force_planning"
+            )
+            if (
+                isinstance(force_planning, dict)
+                and force_planning.get("mode")
+                == "strategy_required_before_execution"
+            ):
+                force_planning["continue_without_plan"] = True
         if (
             envelope.call.tool_name == "todo_write"
             and not planning_runtime.is_todo_deduped()

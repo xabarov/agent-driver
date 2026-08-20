@@ -32,6 +32,7 @@ EXPECTED_BUILTIN_TOOL_NAMES = {
     "remote_trigger_tool",
     "mcp_auth",
     "exit_plan_mode_v2",
+    "continue_without_plan",
     "skill_tool",
     "skill_view",
     "send_message_tool",

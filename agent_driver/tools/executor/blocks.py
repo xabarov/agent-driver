@@ -41,6 +41,19 @@ def disallowed_management_tool_remediation(
 def _force_planning_remediation(spec: BlockSpec) -> dict[str, object] | None:
     if spec.code != "policy_denied":
         return None
+    if "planning strategy requires an explicit model choice" in spec.reason:
+        return {
+            "error_kind": "planning_strategy_required",
+            "remediation": (
+                "Reassess the user's whole requested outcome before execution. "
+                "For broad or substantial multi-step material work, call "
+                "enter_plan_mode and finish with exit_plan_mode_v2. For one "
+                "narrow concrete action, call continue_without_plan with a "
+                "concise reason, then retry the blocked tool."
+            ),
+            "next_tools": ["enter_plan_mode", "continue_without_plan"],
+            "blocked_tool": spec.call.tool_name,
+        }
     if "force planning requires an approved plan" not in spec.reason:
         return None
     return {

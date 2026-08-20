@@ -30,6 +30,7 @@ MANAGEMENT_TOOL_NAMES: frozenset[str] = frozenset(
         "todo_write",
         "planning_state_update",
         "ask_user_question",
+        "continue_without_plan",
         "enter_plan_mode",
         "exit_plan_mode_v2",
         "exit_plan_mode",

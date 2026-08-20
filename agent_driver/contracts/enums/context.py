@@ -41,6 +41,7 @@ class PlanningPolicyMode(StrEnum):
     REQUIRED_FOR_WRITES = "required_for_writes"
     REQUIRED_FOR_RISKY_TOOLS = "required_for_risky_tools"
     ALWAYS_FOR_MULTISTEP = "always_for_multistep"
+    STRATEGY_REQUIRED_BEFORE_EXECUTION = "strategy_required_before_execution"
 
 
 class ObservationSource(StrEnum):

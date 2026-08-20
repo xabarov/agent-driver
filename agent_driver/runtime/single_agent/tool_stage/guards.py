@@ -382,6 +382,7 @@ _PROGRESS_ONLY_TOOL_NAMES = {
     "planning_state_update",
     "todo_write",
     "ask_user_question",
+    "continue_without_plan",
     "enter_plan_mode",
     "exit_plan_mode_v2",
 }

@@ -40,6 +40,7 @@ _TOOL_PROMPT_FRAGMENTS: dict[str, tuple[str, ...]] = {
     "skill_view": ("react_chat_tool_policy_skills.txt",),
     "agent_tool": ("react_chat_tool_policy_subagents.txt",),
     "todo_write": ("react_chat_tool_policy_todo.txt",),
+    "continue_without_plan": ("react_chat_tool_policy_approval_planning.txt",),
     "enter_plan_mode": ("react_chat_tool_policy_approval_planning.txt",),
     "exit_plan_mode_v2": ("react_chat_tool_policy_approval_planning.txt",),
     "ask_user_question": ("react_chat_tool_policy_clarification.txt",),
