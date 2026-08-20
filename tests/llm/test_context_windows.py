@@ -91,3 +91,32 @@ def test_provider_model_hint_prefers_explicit_protocol():
 
     assert provider_model_hint(_WithHint()) == "protocol-model"
     assert provider_model_hint(_WrapperAroundHint()) == "protocol-model"
+
+
+def test_default_window_estimate_is_single_sourced():
+    # BUG-2 (c): the pre-resolution 12k default was a bare literal duplicated across
+    # config / token-pressure / build. It now lives in ONE place; assert the three
+    # field defaults all read from it so a future edit can't reintroduce drift.
+    from agent_driver.context.token_estimation import DEFAULT_CONTEXT_WINDOW_ESTIMATE
+    from agent_driver.context.token_pressure import TokenPressureInput
+    from agent_driver.runtime.single_agent.lifecycle.config_sections import (
+        DEFAULT_CONTEXT_WINDOW_ESTIMATE as CONFIG_DEFAULT,
+        TrimmingSettings,
+    )
+    from dataclasses import fields
+
+    from agent_driver.runtime.single_agent.llm_step.build import LlmRequestBuildContext
+
+    assert CONFIG_DEFAULT is DEFAULT_CONTEXT_WINDOW_ESTIMATE
+    assert TrimmingSettings().context_window_estimate == DEFAULT_CONTEXT_WINDOW_ESTIMATE
+    assert (
+        TokenPressureInput(prompt_messages=()).context_window_estimate
+        == DEFAULT_CONTEXT_WINDOW_ESTIMATE
+    )
+    # LlmRequestBuildContext requires run_input, so read its field default directly.
+    build_default = next(
+        f.default
+        for f in fields(LlmRequestBuildContext)
+        if f.name == "context_window_estimate"
+    )
+    assert build_default == DEFAULT_CONTEXT_WINDOW_ESTIMATE

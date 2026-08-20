@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from agent_driver.code_agent.contracts import CodeAgentLimits
+from agent_driver.context.token_estimation import DEFAULT_CONTEXT_WINDOW_ESTIMATE
 from agent_driver.llm.context_windows import (
     UNRESOLVED_MODEL_CONTEXT_WINDOW,
     resolve_context_window as _resolve_context_window,
@@ -116,10 +117,10 @@ class CapabilitySettings:
             return None
         return self.model_role_map.get(role)
 
-
-# Class default for the window estimate. A module constant (not type(self).attr):
-# slots-dataclass class attributes are member descriptors, not default values.
-DEFAULT_CONTEXT_WINDOW_ESTIMATE = 12000
+# ``DEFAULT_CONTEXT_WINDOW_ESTIMATE`` is single-sourced in
+# ``agent_driver.context.token_estimation`` (BUG-2) and imported above — used here as
+# a module constant (not ``type(self).attr``: slots-dataclass class attributes are
+# member descriptors, not default values).
 
 
 @dataclass(frozen=True, slots=True)

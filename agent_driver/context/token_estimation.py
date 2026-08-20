@@ -17,6 +17,14 @@ self-correcting, dependency-free calibration. A host wanting exact counts can in
 from __future__ import annotations
 
 DEFAULT_CHARS_PER_TOKEN = 4.0
+# Pre-resolution default context window (tokens), single-sourced here (BUG-2) so the
+# pressure / build / config planes never drift on the literal — it was previously a
+# bare ``12000`` repeated in three files. This is ONLY the fail-safe used before
+# per-model resolution: at run start the runtime resolves the REAL window from the
+# model id (``agent_driver.llm.context_windows.resolve_context_window``) and, for an
+# unresolved id, uses the modern 128k ``UNRESOLVED_MODEL_CONTEXT_WINDOW`` — so this
+# legacy value only ever applies to inputs that never went through resolution.
+DEFAULT_CONTEXT_WINDOW_ESTIMATE = 12_000
 # Clamp range for a calibrated ratio: below ~2 is denser than any real tokenizer,
 # above ~8 is sparser than plausible — either signals a bad datapoint, not content.
 MIN_CHARS_PER_TOKEN = 2.0

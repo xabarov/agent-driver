@@ -24,6 +24,23 @@ candidate to resolve during implementation; the research phase should decide the
 
 ## BUG-2 — `DEFAULT_CONTEXT_WINDOW_ESTIMATE = 12000` fallback is far below modern windows
 
+- **Status: FIXED.** Two parts, both closed:
+  1. *Robust resolution + modern fallback* (core, commit `c19ddff` and follow-ups):
+     `agent_driver/llm/context_windows.py` resolves the REAL window per model id
+     (catalog → family table → `None`) with a `MIN_RESOLVED_CONTEXT_WINDOW` floor;
+     `TrimmingSettings.resolved_for_model` uses the resolved window, and for an
+     **unresolved/renamed/proxied id** now falls back to the modern
+     `UNRESOLVED_MODEL_CONTEXT_WINDOW = 128_000` (source `unresolved_fallback`, a
+     runtime diagnostic fires) instead of silently keeping the legacy 12k. Tested in
+     `tests/llm/test_context_windows.py::test_unknown_model_falls_back_to_modern_window`
+     (+ catalog/family/floor/explicit-wins cases).
+  2. *Single-source the constant* (sub-item c, 2026-08-20): the pre-resolution
+     `12000` default was a bare literal duplicated in `config_sections.py`,
+     `context/token_pressure.py`, and `llm_step/build.py`. It now lives once as
+     `DEFAULT_CONTEXT_WINDOW_ESTIMATE` in `agent_driver/context/token_estimation.py`
+     (a cycle-free leaf both consumers already import) and the three field defaults
+     read from it; documented as the fail-safe that applies only before per-model
+     resolution. Drift guard: `test_default_window_estimate_is_single_sourced`.
 - **Where:** `agent_driver/runtime/single_agent/lifecycle/config_sections.py:82`
   (duplicated as literals in `agent_driver/context/token_pressure.py:19` and
   `agent_driver/runtime/single_agent/llm_step/build.py:56`).

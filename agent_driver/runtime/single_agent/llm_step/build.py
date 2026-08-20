@@ -14,7 +14,10 @@ from agent_driver.code_agent.tool_surface import (
 )
 from agent_driver.context import trim_context
 from agent_driver.context.breakdown import estimate_context_breakdown
-from agent_driver.context.token_estimation import DEFAULT_CHARS_PER_TOKEN
+from agent_driver.context.token_estimation import (
+    DEFAULT_CHARS_PER_TOKEN,
+    DEFAULT_CONTEXT_WINDOW_ESTIMATE,
+)
 from agent_driver.context.token_pressure import (
     TokenPressureInput,
     estimate_token_pressure,
@@ -57,7 +60,7 @@ class LlmRequestBuildContext:
     max_messages: int | None = 24
     max_observations: int | None = None
     protect_recent_turns: int | None = None
-    context_window_estimate: int = 12000
+    context_window_estimate: int = DEFAULT_CONTEXT_WINDOW_ESTIMATE
     warning_threshold: int = 7500
     compact_threshold: int = 9000
     blocking_threshold: int = 10500
