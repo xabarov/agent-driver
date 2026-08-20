@@ -93,6 +93,73 @@ class _PlanApprovalThenWriteProvider(FakeProvider):
         )
 
 
+class _PlanRefinementProvider(FakeProvider):
+    """Provider that first restates, then correctly revises a pending plan."""
+
+    def __init__(self, *, always_prose: bool = False) -> None:
+        super().__init__(response_text="done")
+        self.calls = 0
+        self.always_prose = always_prose
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.calls += 1
+        usage = UsageSummary(model_provider="fake", model_name="test")
+        if self.calls == 1:
+            return LlmResponse(
+                message=ChatMessage(role="assistant", content=""),
+                finish_reason=LlmFinishReason.TOOL_CALLS,
+                usage=usage,
+                provider="fake",
+                model="test",
+                metadata={
+                    "planned_tool_calls": [
+                        ToolCall(
+                            tool_name="exit_plan_mode_v2",
+                            tool_call_id="initial_plan_call",
+                            args={
+                                "plan_id": "plan_initial",
+                                "content": "1. Active check\n2. Verify",
+                                "requested_tools": ["web_request"],
+                                "target_urls": ["https://lab.example/"],
+                            },
+                        ).model_dump(mode="json")
+                    ]
+                },
+            )
+        if self.always_prose or self.calls == 2:
+            return LlmResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content="The plan is ready. Please approve it.",
+                ),
+                finish_reason=LlmFinishReason.STOP,
+                usage=usage,
+                provider="fake",
+                model="test",
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content=""),
+            finish_reason=LlmFinishReason.TOOL_CALLS,
+            usage=usage,
+            provider="fake",
+            model="test",
+            metadata={
+                "planned_tool_calls": [
+                    ToolCall(
+                        tool_name="exit_plan_mode_v2",
+                        tool_call_id="revised_plan_call",
+                        args={
+                            "plan_id": "plan_revised",
+                            "content": "1. Passive check\n2. Review before active checks",
+                            "requested_tools": ["web_request"],
+                            "target_urls": ["https://lab.example/"],
+                        },
+                    ).model_dump(mode="json")
+                ]
+            },
+        )
+
+
 @pytest.mark.asyncio
 async def test_runner_interrupts_for_high_risk_policy() -> None:
     """Runner should return paused output when policy requests interrupt."""
@@ -601,6 +668,103 @@ async def test_runner_resume_clarify_continues_with_clarification() -> None:
     )
     assert resumed.status.value == "completed"
     assert any(event.type.value == "run_resumed" for event in resumed.events)
+
+
+@pytest.mark.asyncio
+async def test_plan_clarify_requires_revised_approval_artifact() -> None:
+    """A prose restatement cannot terminally satisfy plan refinement."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    provider = _PlanRefinementProvider()
+    runner = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            )
+        ),
+    )
+    initial = await runner.run(
+        AgentRunInput(
+            input="Run a broad assessment",
+            run_id="run_plan_refinement",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        )
+    )
+    assert initial.status.value == "paused"
+    assert initial.interrupt is not None
+
+    revised = await runner.run(
+        AgentRunInput(
+            run_id="run_plan_refinement",
+            resume=ResumeCommand(
+                interrupt_id=initial.interrupt.interrupt_id,
+                action=ResumeAction.CLARIFY,
+                message="Do passive checks before active checks",
+            ),
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        )
+    )
+
+    assert provider.calls == 3
+    assert revised.status.value == "paused"
+    assert revised.interrupt is not None
+    plan = revised.interrupt.proposed_action["plan_approval"]
+    assert plan["plan_id"] == "plan_revised"
+    assert "Passive check" in plan["content"]
+    assert "plan_refinement_required" not in revised.metadata
+
+
+@pytest.mark.asyncio
+async def test_plan_clarify_fails_closed_after_bounded_prose_retries() -> None:
+    """Repeated prose cannot turn a pending plan refinement into success."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    provider = _PlanRefinementProvider(always_prose=True)
+    runner = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=InMemoryCheckpointStore(),
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            )
+        ),
+    )
+    initial = await runner.run(
+        AgentRunInput(
+            input="Run a broad assessment",
+            run_id="run_plan_refinement_fail_closed",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        )
+    )
+    assert initial.interrupt is not None
+
+    failed = await runner.run(
+        AgentRunInput(
+            run_id="run_plan_refinement_fail_closed",
+            resume=ResumeCommand(
+                interrupt_id=initial.interrupt.interrupt_id,
+                action=ResumeAction.CLARIFY,
+                message="Use a safer order",
+            ),
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        )
+    )
+
+    assert provider.calls == 4
+    assert failed.status.value == "failed"
+    assert failed.terminal_reason.value == "guardrail_blocked"
 
 
 @pytest.mark.asyncio

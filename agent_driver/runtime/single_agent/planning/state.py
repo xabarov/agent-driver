@@ -24,8 +24,74 @@ from agent_driver.runtime.single_agent.context_management.todo_reminders import 
 from agent_driver.tools import apply_planning_state_tool_update
 
 PLANNING_TOOL_NAMES = frozenset(
-    {"planning_state_update", "todo_write", "continue_without_plan"}
+    {
+        "planning_state_update",
+        "todo_write",
+        "continue_without_plan",
+        "enter_plan_mode",
+        "exit_plan_mode_v2",
+    }
 )
+
+PLAN_REFINEMENT_EXIT_TOOL = "exit_plan_mode_v2"
+
+
+def begin_plan_refinement(
+    context: RunContext,
+    *,
+    interrupt_id: str,
+    plan_payload: dict[str, object] | None,
+) -> None:
+    """Reopen plan mode and require a revised approval artifact."""
+    planning_runtime = PlanningRuntimeState(context.metadata)
+    planning_state_payload = planning_runtime.planning_state()
+    if isinstance(planning_state_payload, dict):
+        planning_state = PlanningState.model_validate(planning_state_payload)
+    else:
+        planning_state = planning_state_init(context.run_id)
+    planning_state = planning_state.model_copy(
+        update={
+            "metadata": {
+                **planning_state.metadata,
+                "planning_mode": "plan",
+            }
+        }
+    )
+    planning_runtime.set_planning_state(planning_state.model_dump(mode="json"))
+
+    payload = plan_payload or {}
+    planning_runtime.require_plan_refinement(
+        {
+            "interrupt_id": interrupt_id,
+            "plan_id": payload.get("plan_id"),
+            "content_hash": payload.get("content_hash"),
+        }
+    )
+
+    current_policy = context.run_input.tool_policy
+    policy_metadata = dict(current_policy.metadata)
+    force_planning = policy_metadata.get("force_planning")
+    if isinstance(force_planning, dict):
+        force_planning = {**force_planning, "continue_without_plan": False}
+        policy_metadata["force_planning"] = force_planning
+    denied_tools = list(current_policy.denied_tools or [])
+    if "continue_without_plan" not in denied_tools:
+        denied_tools.append("continue_without_plan")
+    context.run_input = context.run_input.model_copy(
+        update={
+            "tool_policy": current_policy.model_copy(
+                update={
+                    "metadata": policy_metadata,
+                    "denied_tools": denied_tools,
+                }
+            )
+        }
+    )
+    tool_loop_state = get_tool_loop_state(context)
+    tool_loop_state.clear_force_final_answer()
+    tool_loop_state.set_tool_choice_override(
+        {"type": "tool", "name": PLAN_REFINEMENT_EXIT_TOOL}
+    )
 
 
 def apply_planning_state_seed_from_metadata(context: RunContext) -> None:
@@ -74,9 +140,7 @@ def build_planning_snapshot(context: RunContext) -> dict[str, object] | None:
             in_progress_id = item.todo_id
         if status == PlanningTodoStatus.COMPLETED.value:
             completed += 1
-        todos.append(
-            {"id": item.todo_id, "content": item.content, "status": status}
-        )
+        todos.append({"id": item.todo_id, "content": item.content, "status": status})
     plan_title: str | None = None
     in_progress_index: int | None = None
     if in_progress_id:
@@ -136,14 +200,17 @@ def apply_planning_updates_from_envelopes(
         planning_state = apply_planning_state_tool_update(
             planning_state, structured.get("applied_args", {})
         )
+        if envelope.call.tool_name == PLAN_REFINEMENT_EXIT_TOOL and isinstance(
+            structured.get("plan_approval"), dict
+        ):
+            planning_runtime.clear_plan_refinement()
         if envelope.call.tool_name == "continue_without_plan":
             force_planning = context.run_input.tool_policy.metadata.get(
                 "force_planning"
             )
             if (
                 isinstance(force_planning, dict)
-                and force_planning.get("mode")
-                == "strategy_required_before_execution"
+                and force_planning.get("mode") == "strategy_required_before_execution"
             ):
                 force_planning["continue_without_plan"] = True
         if (
@@ -155,9 +222,7 @@ def apply_planning_updates_from_envelopes(
                 if item.status == PlanningTodoStatus.IN_PROGRESS:
                     in_progress_id = item.todo_id
                     break
-            reset_todo_write_loop_counters(
-                context, in_progress_id=in_progress_id
-            )
+            reset_todo_write_loop_counters(context, in_progress_id=in_progress_id)
         if isinstance(structured.get("planning_step"), dict):
             planning_runtime.set_planning_step(structured["planning_step"])
     planning_runtime.set_planning_state(planning_state.model_dump(mode="json"))
@@ -196,9 +261,11 @@ def update_planning_state_from_tool_results(context: RunContext) -> None:
 
 
 __all__ = [
+    "PLAN_REFINEMENT_EXIT_TOOL",
     "PLANNING_TOOL_NAMES",
     "apply_planning_state_seed_from_metadata",
     "apply_planning_updates_from_envelopes",
+    "begin_plan_refinement",
     "build_planning_snapshot",
     "update_planning_state_from_tool_results",
 ]

@@ -7,6 +7,15 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-08-20
+
+### Fixed
+
+- **Plan refinement must return to approval review.** Clarifying a pending plan
+  now reopens plan mode, blocks the narrow-action bypass, and requires a new
+  `exit_plan_mode_v2` approval artifact. Prose-only restatements receive a
+  bounded corrective retry and fail closed instead of completing the run.
+
 ## [0.21.0] - 2026-08-20
 
 ### Added

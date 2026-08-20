@@ -249,6 +249,17 @@ class PlanningRuntimeState(_MetadataView):
     def approved_plan(self) -> JsonDict | None:
         return self.dict_or_none("approved_plan")
 
+    def plan_refinement(self) -> JsonDict | None:
+        return self.dict_or_none("plan_refinement_required")
+
+    def require_plan_refinement(self, payload: JsonDict) -> None:
+        self.metadata["plan_refinement_required"] = payload
+        self.metadata["plan_refinement_revision_count"] = 0
+
+    def clear_plan_refinement(self) -> None:
+        self.metadata.pop("plan_refinement_required", None)
+        self.metadata.pop("plan_refinement_revision_count", None)
+
     def clarification(self) -> str | None:
         value = self.metadata.get("clarification")
         return value if isinstance(value, str) else None

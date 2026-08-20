@@ -37,6 +37,7 @@ from agent_driver.runtime.single_agent.lifecycle.pending import (
     pending_interrupt_from_metadata,
     serialize_pending_interrupt,
 )
+from agent_driver.runtime.single_agent.planning.state import begin_plan_refinement
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
     PendingInterruptState,
@@ -599,6 +600,12 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             if resume.message:
                 context.metadata["clarification"] = resume.message
             context.metadata["interrupt_payload"] = None
+            if pending.interrupt.reason == InterruptReason.PLAN_APPROVAL_REQUIRED:
+                begin_plan_refinement(
+                    context,
+                    interrupt_id=pending.interrupt.interrupt_id,
+                    plan_payload=_plan_approval_payload(pending),
+                )
 
     def _init_context(
         self,

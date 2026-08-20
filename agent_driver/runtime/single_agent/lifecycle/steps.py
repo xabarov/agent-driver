@@ -28,6 +28,7 @@ from agent_driver.runtime.lifecycle_hooks import (
     dispatch_run_start,
 )
 from agent_driver.runtime.metadata_state import (
+    PlanningRuntimeState,
     get_loop_control_state,
     get_tool_loop_state,
 )
@@ -39,7 +40,10 @@ from agent_driver.runtime.single_agent.context_management.compaction_stage impor
     apply_compaction_if_eligible,
 )
 from agent_driver.runtime.single_agent.llm_step import execute_llm_call_step
-from agent_driver.runtime.single_agent.planning.state import build_planning_snapshot
+from agent_driver.runtime.single_agent.planning.state import (
+    PLAN_REFINEMENT_EXIT_TOOL,
+    build_planning_snapshot,
+)
 from agent_driver.runtime.single_agent.research.gating import (
     _build_continuation_transition,
     _maybe_build_continuation_transition,
@@ -74,6 +78,7 @@ _MAX_RUBRIC_REVISIONS = 10
 # directly: generic continuation and node-contract heuristics must not insert
 # an unreviewed extra generation between the corrected draft and the gate.
 _SYNTHESIS_REVISION_PENDING_KEY = "_agent_driver_synthesis_revision_pending"
+_MAX_PLAN_REFINEMENT_REVISIONS = 2
 
 
 def _hook_event_emitter(host, context: RunContext):
@@ -177,11 +182,9 @@ class SingleAgentStepMixin:
                 )
             return await self._deps.tool_executor(
                 context.run_input, context.llm_response, **gate_kwargs
-        )
+            )
 
-    def _fence_and_stamp_envelopes(
-        self, context: RunContext, envelopes: list
-    ) -> list:
+    def _fence_and_stamp_envelopes(self, context: RunContext, envelopes: list) -> list:
         """F1/U4 enforce — stamp each result with the run's attempt epoch and drop
         any straggler stamped with an older (superseded) epoch.
 
@@ -547,9 +550,7 @@ class SingleAgentStepMixin:
         self._maybe_fail_after_step("finalize")
         return transition
 
-    def _finish_terminal(
-        self, context: RunContext, output: Any
-    ) -> RuntimeStepResult:
+    def _finish_terminal(self, context: RunContext, output: Any) -> RuntimeStepResult:
         """Common tail for a terminal finalize path (completed / guardrail-blocked):
         advance the step, route to ``done``, checkpoint the terminal output, honour
         failure injection, and stash the terminal output for the loop driver."""
@@ -724,6 +725,33 @@ class SingleAgentStepMixin:
             context.llm_response = LlmResponse.model_validate(
                 context.metadata["last_llm_response"]
             )
+        plan_refinement = PlanningRuntimeState(context.metadata).plan_refinement()
+        if plan_refinement is not None:
+            revision_count = int(
+                context.metadata.get("plan_refinement_revision_count", 0)
+            )
+            if revision_count >= _MAX_PLAN_REFINEMENT_REVISIONS:
+                return self._fail_finalize_revision_gate(
+                    context,
+                    gate_id="plan_refinement_required",
+                    revision_count=revision_count,
+                )
+            terminal_answer = self._sanitize_terminal_answer(context)
+            get_tool_loop_state(context).set_tool_choice_override(
+                {"type": "tool", "name": PLAN_REFINEMENT_EXIT_TOOL}
+            )
+            revise = _build_continuation_transition(
+                context,
+                text=terminal_answer or "",
+                nudge=(
+                    "Revise the pending approval plan using the operator's feedback "
+                    "and call exit_plan_mode_v2 with the complete revised plan, exact "
+                    "requested_tools, and exact target_urls. Do not finish with prose."
+                ),
+                reason="plan_refinement_required",
+                count_key="plan_refinement_revision_count",
+            )
+            return self._resume_after_finalize(context, revise)
         synthesis_revision_pending = (
             context.metadata.get(_SYNTHESIS_REVISION_PENDING_KEY) is True
         )
