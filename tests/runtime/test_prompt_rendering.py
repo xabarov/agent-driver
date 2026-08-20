@@ -153,6 +153,8 @@ def test_react_chat_policy_guides_adaptive_plan_mode() -> None:
     assert "Do not use approval plan mode for simple factual answers" in policy
     assert "status or self-reflection questions" in policy
     assert "external operations" in policy
+    assert "Judge scope from the user's requested outcome" in policy
+    assert "even when that first call is read-only" in policy
     assert "writing deliverables such as essays, reports, drafts" in policy
     assert "напиши" in policy
     assert "Do not use `ask_user_question` as a way to avoid producing" in policy

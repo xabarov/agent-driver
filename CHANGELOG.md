@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.20.2] - 2026-08-20
+
+### Fixed
+
+- **Adaptive planning judges the requested outcome before the first tool.** A
+  broad or end-to-end task that needs multiple material actions now tells the
+  model to enter plan mode before its first execution/data call, even when the
+  first call in isolation would be read-only. Narrow single actions remain
+  outside plan mode.
+
 ## [0.20.1] - 2026-08-20
 
 ### Fixed
