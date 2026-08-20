@@ -128,11 +128,26 @@ class _PlanRefinementProvider(FakeProvider):
                     ]
                 },
             )
-        if self.always_prose or self.calls == 2:
+        if self.always_prose:
             return LlmResponse(
                 message=ChatMessage(
                     role="assistant",
                     content="The plan is ready. Please approve it.",
+                ),
+                finish_reason=LlmFinishReason.STOP,
+                usage=usage,
+                provider="fake",
+                model="test",
+            )
+        if self.calls == 2:
+            return LlmResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    content=(
+                        "1. Perform passive checks.\n"
+                        "2. Review evidence.\n"
+                        "3. Perform active checks."
+                    ),
                 ),
                 finish_reason=LlmFinishReason.STOP,
                 usage=usage,
@@ -798,9 +813,19 @@ async def test_plan_clarify_requires_revised_approval_artifact() -> None:
     }
     assert any(
         message.role.value == "user"
-        and "full revised plan itself" in (message.content or "")
+        and "Draft the full revised approval plan itself" in (message.content or "")
         and "Do passive checks before active checks" in (message.content or "")
         for message in provider.requests[1].messages
+    )
+    assert provider.requests[1].tool_choice == "none"
+    assert provider.requests[2].tool_choice == {
+        "type": "tool",
+        "name": "exit_plan_mode_v2",
+    }
+    assert any(
+        message.role.value == "assistant"
+        and "Perform passive checks" in (message.content or "")
+        for message in provider.requests[2].messages
     )
     assert "plan" not in revised_exit["function"]["parameters"]["properties"]
     assert revised.status.value == "paused"

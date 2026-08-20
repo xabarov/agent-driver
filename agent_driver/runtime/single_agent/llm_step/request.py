@@ -240,6 +240,13 @@ def build_trimmed_request(
     artifact_refs = compaction_state.artifact_refs()
     planning_prompt = None
     planning_step_payload = get_planning_runtime_state(context).planning_step()
+    plan_refinement = get_planning_runtime_state(context).plan_refinement()
+    refinement_revision_count = int(
+        context.metadata.get("plan_refinement_revision_count", 0)
+    )
+    drafting_plan_refinement = (
+        plan_refinement is not None and refinement_revision_count == 0
+    )
     if host._config.include_planning_prompt and isinstance(planning_step_payload, dict):
         planning_prompt = render_planning_step_prompt(
             PlanningStep.model_validate(planning_step_payload)
@@ -259,13 +266,21 @@ def build_trimmed_request(
         and clarification.strip()
     ):
         clarification_prompt = f"Operator clarification:\n{clarification.strip()}"
-        if get_planning_runtime_state(context).plan_refinement() is not None:
-            clarification_prompt = (
-                "Revise the pending approval plan now. Apply the operator's exact "
-                "feedback and call exit_plan_mode_v2 with the full revised plan "
-                "itself, not commentary about the requested changes.\n\n"
-                f"Operator feedback:\n{clarification.strip()}"
-            )
+        if plan_refinement is not None:
+            if drafting_plan_refinement:
+                clarification_prompt = (
+                    "Draft the full revised approval plan itself now. Apply the "
+                    "operator's exact feedback; do not describe what you intend to "
+                    "change and do not call a tool in this drafting response.\n\n"
+                    f"Operator feedback:\n{clarification.strip()}"
+                )
+            else:
+                clarification_prompt = (
+                    "Submit the full revised plan you just drafted by calling "
+                    "exit_plan_mode_v2. Use the plan itself as content, not "
+                    "commentary about the requested changes.\n\n"
+                    f"Operator feedback:\n{clarification.strip()}"
+                )
         protocol_messages = protocol_messages + (
             ChatMessage(
                 role=ChatRole.USER,
@@ -279,7 +294,9 @@ def build_trimmed_request(
     # ``"auto"`` default applied by the provider adapters.
     tool_loop_state = get_tool_loop_state(context)
     tool_choice = tool_loop_state.tool_choice_override()
-    if tool_choice is None:
+    if drafting_plan_refinement:
+        tool_choice = "none"
+    elif tool_choice is None:
         if (
             context.run_input.app_metadata.get("chat_mode") is True
             and context.llm_step_count > 0
