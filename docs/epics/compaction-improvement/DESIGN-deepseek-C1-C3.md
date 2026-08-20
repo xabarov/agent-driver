@@ -179,11 +179,15 @@ and `llm_full` were deliberately NOT wrapped as condensers — both need a provi
 `tests/context/test_condenser_tiers.py`, `tests/runtime/test_compaction_condenser_pipeline.py`;
 flag-off path proven byte-identical by the existing suite (1439 green).
 
-**Remaining gate (not done here):** the A/B on quality-per-dollar before flipping the
-default. Run `eval compare` and the excel-ai SSB A/B (this epic's `MEASUREMENT-*.md`
-harness) with `EXCEL_*`/`RunnerConfig(compaction=CompactionSettings(use_condenser_pipeline=True))`
-as the treatment arm; only flip the default if it is neutral-or-better. Do NOT
-benchmark-fit — the lever is structure + honesty.
+**A/B gate: RUN (2026-08-20) — default stays OFF.** Added an `eval compare
+--treatment condenser_pipeline` axis (forced-pressure window so compaction fires on
+the general suite; both arms compaction-on, only the flag differs) and ran it live on
+the open-weight small tier. Result: **noise-dominated** — success_rate and latency
+flip sign between 1 and 4 repeats, cost identical, judge quality Δ −0.10 at n=12 not
+reproduced. No quality harm, but no clean neutral-or-better win to justify flipping.
+Full write-up + the decisive-re-run recipe (tool-heavy SSB) in
+[`MEASUREMENT-C2-condenser-ab.md`](MEASUREMENT-C2-condenser-ab.md). Decision: keep
+`use_condenser_pipeline` **default OFF**; the seam ships opt-in. Do NOT benchmark-fit.
 
 ### Idea
 `agent_driver/context/compaction/condenser.py` already ships the cost-ordered
