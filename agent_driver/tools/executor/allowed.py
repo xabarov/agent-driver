@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import json
+import re
 from typing import Any
 
 from agent_driver.contracts.context import PlanApprovalPayload
@@ -679,6 +680,67 @@ def _append_plan_requested_tools_block(
     )
 
 
+def _mentioned_unavailable_plan_tools(
+    content: str,
+    *,
+    current_tools: tuple[str, ...],
+    available_tools: tuple[str, ...],
+) -> list[str]:
+    allowed = set(current_tools) | MANAGEMENT_TOOL_NAMES
+    candidates = [
+        name
+        for name in dict.fromkeys(str(value).strip() for value in available_tools)
+        if name and name not in allowed
+    ]
+    if not candidates:
+        return []
+    matches: list[tuple[int, str]] = []
+    for name in sorted(candidates, key=lambda item: (-len(item), item)):
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_-]){re.escape(name)}(?![A-Za-z0-9_-])",
+            re.IGNORECASE,
+        )
+        match = pattern.search(content)
+        if match is not None:
+            matches.append((match.start(), name))
+    return [name for _, name in sorted(matches, key=lambda item: (item[0], item[1]))]
+
+
+def _append_plan_content_tools_block(
+    *,
+    spec: AllowedSpec,
+    mentioned_tools: list[str],
+    current_tools: tuple[str, ...],
+) -> None:
+    current_text = ", ".join(current_tools) if current_tools else "none"
+    mentioned_text = ", ".join(mentioned_tools) if mentioned_tools else "none"
+    append_blocked_call(
+        result=spec.result,
+        spec=BlockSpec(
+            index=spec.index,
+            call=spec.call,
+            manifest=spec.manifest,
+            code="plan_content_mentions_unavailable_tools",
+            reason=(
+                "plan content mentioned unavailable tools: "
+                f"{mentioned_text}; current executable tools: {current_text}"
+            ),
+            structured_output={
+                "error_kind": "plan_content_mentions_unavailable_tools",
+                "mentioned_unavailable_tools": mentioned_tools,
+                "current_executable_tools": list(current_tools),
+                "retry_expected": True,
+                "remediation": (
+                    "Approval-plan content must describe only work the current "
+                    "run can execute. Remove unavailable tool names from the "
+                    "plan body, or answer that broader work is outside the "
+                    "current tool surface."
+                ),
+            },
+        ),
+    )
+
+
 def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
     """Append plan approval interrupt when approval-exit tool has plan content."""
     if not isinstance(raw, dict):
@@ -701,6 +763,18 @@ def _append_plan_approval_interrupt(*, spec: AllowedSpec, raw: Any) -> bool:
         _append_plan_requested_tools_block(
             spec=spec,
             requested_tools=requested_tools,
+            current_tools=current_tools,
+        )
+        return True
+    mentioned_unavailable_tools = _mentioned_unavailable_plan_tools(
+        content,
+        current_tools=current_tools,
+        available_tools=spec.available_tool_names,
+    )
+    if mentioned_unavailable_tools:
+        _append_plan_content_tools_block(
+            spec=spec,
+            mentioned_tools=mentioned_unavailable_tools,
             current_tools=current_tools,
         )
         return True

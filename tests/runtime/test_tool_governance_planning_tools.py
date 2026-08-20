@@ -192,6 +192,58 @@ async def test_exit_plan_mode_blocks_requested_tools_outside_current_allowlist()
 
 
 @pytest.mark.asyncio
+async def test_exit_plan_mode_blocks_plan_text_that_mentions_unavailable_tools() -> None:
+    """Approval-plan body may not smuggle known non-executable tools."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+
+    async def _ok(_args):
+        return {"summary": "ok"}
+
+    registry.register(ToolManifest(name="lookup", description="Lookup"), _ok)
+    registry.register(ToolManifest(name="nuclei", description="Nuclei"), _ok)
+    executor = GovernedToolExecutor(registry=registry)
+    run_input = AgentRunInput(
+        input="approve plan",
+        run_id="run_planning_exit_invalid_text_tool",
+        agent_id="agent",
+        graph_preset="single_react",
+        tool_policy=ToolPolicyInput(
+            mode=ToolPolicyMode.ALLOW_TOOLS,
+            allowed_tools=["exit_plan_mode_v2", "lookup"],
+        ),
+    )
+    provider = FakeProvider(response_text="ok")
+    response = await provider.complete(
+        llm_request_with_planned_calls(
+            planned=[
+                ToolCall(
+                    tool_name="exit_plan_mode_v2",
+                    args={
+                        "reason": "ready",
+                        "content": "1. Lookup\n2. Run nuclei templates later\n3. Report",
+                        "requested_tools": ["lookup"],
+                        "target_urls": ["https://lab.example/"],
+                    },
+                    tool_call_id="call_invalid_plan_text",
+                )
+            ]
+        )
+    )
+
+    result = await executor.execute(run_input, response)
+
+    assert result.interrupt is None
+    assert result.envelopes[0].decision.value == "deny"
+    assert result.envelopes[0].error is not None
+    assert result.envelopes[0].error.code == "plan_content_mentions_unavailable_tools"
+    structured = result.envelopes[0].structured_output
+    assert isinstance(structured, dict)
+    assert structured["mentioned_unavailable_tools"] == ["nuclei"]
+    assert structured["current_executable_tools"] == ["lookup"]
+
+
+@pytest.mark.asyncio
 async def test_exit_plan_mode_keeps_valid_requested_tools_and_metadata() -> None:
     """A valid plan approval carries the current execution-tool truth."""
     registry = ToolRegistry()
