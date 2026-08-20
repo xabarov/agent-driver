@@ -162,6 +162,66 @@ class _PlanRefinementProvider(FakeProvider):
         )
 
 
+class _MisbehavingPlanRefinementProvider(FakeProvider):
+    """Attempts an ordinary tool after an invalid revised-plan call."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="done")
+        self.calls = 0
+        self.requests: list[LlmRequest] = []
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        self.requests.append(request)
+        self.calls += 1
+        usage = UsageSummary(model_provider="fake", model_name="test")
+        if self.calls == 1:
+            tool_call = ToolCall(
+                tool_name="exit_plan_mode_v2",
+                tool_call_id="initial_plan_call",
+                args={
+                    "plan_id": "plan_initial",
+                    "content": "1. Active check\n2. Verify",
+                    "requested_tools": ["danger"],
+                    "target_urls": ["https://lab.example/"],
+                },
+            )
+        elif self.calls == 2:
+            tool_call = ToolCall(
+                tool_name="exit_plan_mode_v2",
+                tool_call_id="invalid_revised_plan_call",
+                args={
+                    "content": "Try to bypass refinement",
+                    "requested_tools": ["continue_without_plan"],
+                    "target_urls": [],
+                },
+            )
+        elif self.calls == 3:
+            tool_call = ToolCall(
+                tool_name="danger",
+                tool_call_id="unapproved_danger_call",
+                args={"target": "https://lab.example/"},
+            )
+        else:
+            tool_call = ToolCall(
+                tool_name="exit_plan_mode_v2",
+                tool_call_id="revised_plan_call",
+                args={
+                    "plan_id": "plan_revised",
+                    "content": "1. Passive check\n2. Review before active checks",
+                    "requested_tools": ["danger"],
+                    "target_urls": ["https://lab.example/"],
+                },
+            )
+        return LlmResponse(
+            message=ChatMessage(role="assistant", content=""),
+            finish_reason=LlmFinishReason.TOOL_CALLS,
+            usage=usage,
+            provider="fake",
+            model="test",
+            metadata={"planned_tool_calls": [tool_call.model_dump(mode="json")]},
+        )
+
+
 @pytest.mark.asyncio
 async def test_runner_interrupts_for_high_risk_policy() -> None:
     """Runner should return paused output when policy requests interrupt."""
@@ -778,6 +838,73 @@ async def test_plan_clarify_fails_closed_after_bounded_prose_retries() -> None:
     assert provider.calls == 4
     assert failed.status.value == "failed"
     assert failed.terminal_reason.value == "guardrail_blocked"
+
+
+@pytest.mark.asyncio
+async def test_plan_clarify_keeps_execution_locked_until_revised_approval() -> None:
+    """Invalid refinement attempts cannot reopen ordinary tool execution."""
+    registry = ToolRegistry()
+    register_planning_tool(registry)
+    executed: list[dict[str, object]] = []
+
+    async def _danger(args: dict[str, object]) -> dict[str, object]:
+        executed.append(args)
+        return {"summary": "danger executed"}
+
+    registry.register(danger_tool_manifest(), _danger)
+    provider = _MisbehavingPlanRefinementProvider()
+    checkpoint_store = InMemoryCheckpointStore()
+    runner = FakeSingleStepRunner(
+        provider=provider,
+        checkpoint_store=checkpoint_store,
+        event_log=InMemoryEventLog(),
+        config=RunnerConfig(
+            tool_executor=wrap_governed_executor(
+                GovernedToolExecutor(registry=registry)
+            )
+        ),
+    )
+    initial = await runner.run(
+        AgentRunInput(
+            input="Run a broad assessment",
+            run_id="run_plan_refinement_lockdown",
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        )
+    )
+    assert initial.interrupt is not None
+
+    revised = await runner.run(
+        AgentRunInput(
+            run_id="run_plan_refinement_lockdown",
+            resume=ResumeCommand(
+                interrupt_id=initial.interrupt.interrupt_id,
+                action=ResumeAction.CLARIFY,
+                message="Do passive checks before active checks",
+            ),
+            agent_id="agent",
+            graph_preset="single_react",
+            tool_policy=ToolPolicyInput(mode=ToolPolicyMode.ALLOW_TOOLS),
+        )
+    )
+
+    assert provider.calls == 4
+    assert all(
+        {tool.get("function", {}).get("name") for tool in request.tools}
+        == {"exit_plan_mode_v2"}
+        for request in provider.requests[1:]
+    )
+    assert executed == []
+    assert revised.status.value == "paused"
+    assert revised.interrupt is not None
+    assert revised.interrupt.proposed_action["plan_approval"]["plan_id"] == (
+        "plan_revised"
+    )
+    assert "plan_refinement_required" not in revised.metadata
+    checkpoint = checkpoint_store.latest("run_plan_refinement_lockdown")
+    assert checkpoint is not None
+    assert checkpoint.state.run_input.tool_policy.allowed_tools is None
 
 
 @pytest.mark.asyncio
