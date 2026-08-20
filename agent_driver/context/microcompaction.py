@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent_driver.context.token_estimation import estimate_tokens
+
 
 @dataclass(slots=True)
 class MicrocompactionResult:
@@ -93,7 +95,7 @@ def microcompact_observations(
         observations=compacted,
         audit=audit,
         bytes_saved=bytes_saved,
-        estimated_tokens_saved=max(0, bytes_saved // 4),
+        estimated_tokens_saved=max(0, estimate_tokens(bytes_saved)),
     )
 
 

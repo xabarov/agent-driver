@@ -7,6 +7,21 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Changed
+
+- **Compaction token/window estimation is single-sourced (compaction epic BUG-2 &
+  BUG-6 phase-2).** The pre-resolution default context window (`12000`) now lives once
+  as `DEFAULT_CONTEXT_WINDOW_ESTIMATE` in `agent_driver/context/token_estimation.py`
+  instead of a literal duplicated across config / token-pressure / build (BUG-2's core
+  — unresolved-model fallback to a modern 128k window — was already fixed). The
+  remaining hardcoded `chars/token = 4` sites (`context/breakdown.py`,
+  `compaction/tool_history.py`, `compaction/span_collapse.py`, `microcompaction.py`,
+  `run_budget.py` default) now fold onto the shared `estimate_tokens` /
+  `DEFAULT_CHARS_PER_TOKEN` (behaviour-neutral). New optional `TokenCounter` protocol +
+  default `CalibratedTokenCounter` + `count_tokens` dispatch helper give hosts a
+  documented opt-in seam to inject an exact token counter (tiktoken/HF/provider
+  count-tokens); the default stays the dependency-free calibrated estimator.
+
 ## [0.21.3] - 2026-08-20
 
 ### Fixed

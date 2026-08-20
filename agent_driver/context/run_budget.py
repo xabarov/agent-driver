@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from agent_driver.context.token_estimation import DEFAULT_CHARS_PER_TOKEN
 from agent_driver.contracts.context.run_budget import (
     COMPACTION_WINDOW_CHAR_FRACTION,
     MAX_RUN_CONTEXT_ITEMS,
@@ -15,7 +16,9 @@ from agent_driver.contracts.context.run_budget import (
     RunContextBudget,
 )
 
-_ESTIMATED_CHARS_PER_TOKEN = 4
+# Single-sourced default (BUG-6): the fallback chars/token when a caller does not
+# pass a per-run calibrated ratio. The calibration loop still overrides this per run.
+_ESTIMATED_CHARS_PER_TOKEN = DEFAULT_CHARS_PER_TOKEN
 
 
 def _scaled_cap(

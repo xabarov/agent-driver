@@ -16,6 +16,8 @@ self-correcting, dependency-free calibration. A host wanting exact counts can in
 
 from __future__ import annotations
 
+from typing import Protocol, runtime_checkable
+
 DEFAULT_CHARS_PER_TOKEN = 4.0
 # Pre-resolution default context window (tokens), single-sourced here (BUG-2) so the
 # pressure / build / config planes never drift on the literal — it was previously a
@@ -50,6 +52,55 @@ def chars_for_tokens(
 def clamp_chars_per_token(ratio: float) -> float:
     """Clamp a ratio into the sane [MIN, MAX] range."""
     return max(MIN_CHARS_PER_TOKEN, min(MAX_CHARS_PER_TOKEN, ratio))
+
+
+@runtime_checkable
+class TokenCounter(Protocol):
+    """Optional exact token counter a host may inject (BUG-6 phase-2 seam).
+
+    The runtime default is the calibrated char-ratio estimator (dependency-free,
+    network-free — the repo ``CLAUDE.md`` rule). A host that wants exact counts can
+    supply one backed by tiktoken/HF or a provider ``count-tokens`` endpoint; it is
+    consumed only where the actual text is available (never forced onto the cheap
+    char-aggregating pressure path). Must be pure and side-effect-free.
+    """
+
+    def count_tokens(self, text: str) -> int:
+        """Return the exact token count for ``text``."""
+        ...
+
+
+class CalibratedTokenCounter:
+    """Default :class:`TokenCounter`: chars/ratio estimate at a (calibrated) ratio.
+
+    Wraps :func:`estimate_tokens` so the same self-correcting per-run ratio the
+    pressure path uses is available behind the ``TokenCounter`` interface — the
+    zero-dependency default when no exact counter is injected.
+    """
+
+    __slots__ = ("_ratio",)
+
+    def __init__(self, chars_per_token: float = DEFAULT_CHARS_PER_TOKEN) -> None:
+        self._ratio = clamp_chars_per_token(chars_per_token)
+
+    def count_tokens(self, text: str) -> int:
+        return estimate_tokens(len(text), chars_per_token=self._ratio)
+
+
+def count_tokens(
+    text: str,
+    *,
+    counter: TokenCounter | None = None,
+    chars_per_token: float = DEFAULT_CHARS_PER_TOKEN,
+) -> int:
+    """Count tokens for ``text`` via an injected counter, else the char estimate.
+
+    The single dispatch point so callers with real text can opt into an exact
+    counter without every site re-implementing the ``counter or estimate`` branch.
+    """
+    if counter is not None:
+        return counter.count_tokens(text)
+    return estimate_tokens(len(text), chars_per_token=chars_per_token)
 
 
 def calibrate_chars_per_token(

@@ -140,6 +140,27 @@ lack a documented cost/quality rationale for their absolute values.
 
 ## BUG-6 — chars/token = 4 hardcoded everywhere, no tokenizer
 
+- **Status: FIXED.** Two phases, see [`DESIGN-bug6-tokenizer.md`](DESIGN-bug6-tokenizer.md).
+  - *Phase-1* (commit `epic/compaction-bug6`, merged): a shared estimator
+    (`context/token_estimation.py`: `estimate_tokens` / `chars_for_tokens` /
+    `calibrate_chars_per_token`) with a bounded per-run EMA — after each response the
+    runtime folds the provider's ACTUAL `input_tokens` vs chars-sent into
+    `context_chars_per_token` and feeds it to the next preflight trigger + budget, so
+    the estimate self-corrects for RU/CJK/code content (dependency-free, network-free).
+  - *Phase-2* (2026-08-20): **(a)** folded the remaining hardcoded `chars/token` sites
+    onto the shared estimator, deleting their local constants — `context/breakdown.py`,
+    `compaction/tool_history.py`, `compaction/span_collapse.py`, `microcompaction.py`
+    now call `estimate_tokens`, and `run_budget.py`'s default single-sources
+    `DEFAULT_CHARS_PER_TOKEN` (floor-equivalent, behaviour-neutral). **(b)** Added the
+    optional `TokenCounter` protocol + default `CalibratedTokenCounter` + a
+    `count_tokens` dispatch helper (`token_estimation.py`) — the documented opt-in seam
+    a host uses to inject an exact counter (tiktoken/HF/provider count-tokens), consumed
+    only where real text is available; the default stays the calibrated estimator.
+    Tests: `tests/context/test_token_estimation.py`.
+  - *Deliberately out of scope:* `batch/compress.py` keeps its own int `_CHARS_PER_TOKEN`
+    (ceil semantics, a separate batch-trajectory subsystem, not the compaction/pressure
+    plane). Deep injection of a text-based `TokenCounter` into the char-aggregating
+    pressure path is a documented future option (no consumer needs it today).
 - **Where:** `run_budget.py:18/110`, `token_pressure.py:49`, `span_collapse.py`,
   `tool_history.py`, `microcompaction.py` (`_CHARS_PER_TOKEN=4` / `//4` / `*4`).
 - **What:** both char↔token conversions assume 4 chars/token with no tokenizer. For
