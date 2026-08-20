@@ -796,6 +796,11 @@ async def test_plan_clarify_requires_revised_approval_artifact() -> None:
         "requested_tools",
         "target_urls",
     }
+    assert any(
+        message.role.value == "user"
+        and "Do passive checks before active checks" in (message.content or "")
+        for message in provider.requests[1].messages
+    )
     assert "plan" not in revised_exit["function"]["parameters"]["properties"]
     assert revised.status.value == "paused"
     assert revised.interrupt is not None

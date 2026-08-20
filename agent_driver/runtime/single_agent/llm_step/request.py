@@ -253,6 +253,17 @@ def build_trimmed_request(
     protocol_messages = maybe_append_todo_reminder_to_protocol(
         context, protocol_messages
     )
+    if (
+        protocol_messages is not None
+        and isinstance(clarification, str)
+        and clarification.strip()
+    ):
+        protocol_messages = protocol_messages + (
+            ChatMessage(
+                role=ChatRole.USER,
+                content=f"Operator clarification:\n{clarification.strip()}",
+            ),
+        )
     # Inner-loop overrides (e.g. ``"none"`` to force a final answer after a
     # repeated handler error) take precedence; otherwise fall through to
     # the caller-supplied ``RunInput.tool_choice`` so the public seam can

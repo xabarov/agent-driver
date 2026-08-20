@@ -30,7 +30,7 @@ wheels = [
 
 [[package]]
 name = "agent-driver"
-version = "0.21.5"
+version = "0.21.6"
 source = { editable = "." }
 dependencies = [
     { name = "arize-phoenix-otel" },
