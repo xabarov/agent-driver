@@ -22,6 +22,16 @@ change between minor versions.
   documented opt-in seam to inject an exact token counter (tiktoken/HF/provider
   count-tokens); the default stays the dependency-free calibrated estimator.
 
+## [0.21.12] - 2026-08-22
+
+### Fixed
+
+- **Active plan mode cannot finish as ordinary prose.** When a model enters
+  plan mode and then attempts a normal final answer, the runtime now forces the
+  canonical `exit_plan_mode_v2` tool with a bounded retry budget. Persistent
+  failure stops at the guardrail instead of exposing a prose-only approval
+  request without a durable plan artifact.
+
 ## [0.21.11] - 2026-08-21
 
 ### Fixed

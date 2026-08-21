@@ -79,6 +79,7 @@ _MAX_RUBRIC_REVISIONS = 10
 # an unreviewed extra generation between the corrected draft and the gate.
 _SYNTHESIS_REVISION_PENDING_KEY = "_agent_driver_synthesis_revision_pending"
 _MAX_PLAN_REFINEMENT_REVISIONS = 2
+_MAX_PLAN_MODE_EXIT_REVISIONS = 2
 
 
 def _hook_event_emitter(host, context: RunContext):
@@ -750,6 +751,38 @@ class SingleAgentStepMixin:
                 ),
                 reason="plan_refinement_required",
                 count_key="plan_refinement_revision_count",
+            )
+            return self._resume_after_finalize(context, revise)
+        planning_state = PlanningRuntimeState(context.metadata).planning_state()
+        planning_metadata = (
+            planning_state.get("metadata") if isinstance(planning_state, dict) else None
+        )
+        if (
+            isinstance(planning_metadata, dict)
+            and planning_metadata.get("planning_mode") == "plan"
+        ):
+            revision_count = int(
+                context.metadata.get("plan_mode_exit_revision_count", 0)
+            )
+            if revision_count >= _MAX_PLAN_MODE_EXIT_REVISIONS:
+                return self._fail_finalize_revision_gate(
+                    context,
+                    gate_id="plan_mode_exit_required",
+                    revision_count=revision_count,
+                )
+            terminal_answer = self._sanitize_terminal_answer(context)
+            get_tool_loop_state(context).set_tool_choice_override(
+                {"type": "tool", "name": PLAN_REFINEMENT_EXIT_TOOL}
+            )
+            revise = _build_continuation_transition(
+                context,
+                text=terminal_answer or "",
+                nudge=(
+                    "Plan mode is active. Call exit_plan_mode_v2 now with the "
+                    "complete plan. Do not finish with prose."
+                ),
+                reason="plan_mode_exit_required",
+                count_key="plan_mode_exit_revision_count",
             )
             return self._resume_after_finalize(context, revise)
         synthesis_revision_pending = (
