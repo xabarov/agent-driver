@@ -9,6 +9,16 @@ change between minor versions.
 
 ### Added
 
+- **Reasoning-effort capability discovery + reject-before-I/O (opencode-adoption
+  EPIC-07).** New `agent_driver.llm.reasoning_effort_support` — a curated per-model
+  effort-capability table (`supported_efforts_for_model`) + `validate_effort_for_model`,
+  wired as a `_preflight_reasoning` check at the top of the OpenAI-compatible provider's
+  `complete`/`stream`. An unsupported *fine* tier (`minimal`/`xhigh`/`max`) on a model
+  known not to support it now raises `UnsupportedReasoningEffortError` (a `ValueError`)
+  **before any network call**, instead of a mid-stream OpenRouter rejection — fixing the
+  documented `contracts/reasoning` foot-gun. Universal tiers (`none`/`low`/`medium`/
+  `high`) and unknown models always pass (zero false rejects). Also the deepseek-survey
+  candidate. See `docs/epics/opencode-adoption/EPIC-07-reasoning-effort-discovery.md`.
 - **Real outward MCP client — stdio transport (opencode-adoption EPIC-06, first slice).**
   New `agent_driver.tools.mcp_client` package with a dependency-free `StdioMcpClient` that
   speaks JSON-RPC 2.0 over the MCP stdio transport (subprocess stdin/stdout): initialize
