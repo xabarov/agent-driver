@@ -43,6 +43,17 @@ class StdioMcpClient:
         self._next_id = 0
         self._closed = False
         self._server_info: dict[str, Any] = {}
+        # EPIC-06: set when the server emits ``notifications/tools/list_changed`` so a
+        # host can re-discover (see ``resync_mcp_server_tools``). Created lazily on the
+        # running loop.
+        self._tools_changed: asyncio.Event | None = None
+
+    @property
+    def tools_changed_event(self) -> asyncio.Event:
+        """An ``asyncio.Event`` set each time the server signals its tool list changed."""
+        if self._tools_changed is None:
+            self._tools_changed = asyncio.Event()
+        return self._tools_changed
 
     @property
     def server_id(self) -> str:
@@ -201,7 +212,10 @@ class StdioMcpClient:
     def _dispatch(self, message: dict[str, Any]) -> None:
         raw_id = message.get("id")
         if not isinstance(raw_id, int):
-            return  # notification or server-initiated request — ignored
+            # notification (no id) — surface only the tool-list-changed signal.
+            if message.get("method") == "notifications/tools/list_changed":
+                self.tools_changed_event.set()
+            return
         future = self._pending.pop(raw_id, None)
         if future is None or future.done():
             return

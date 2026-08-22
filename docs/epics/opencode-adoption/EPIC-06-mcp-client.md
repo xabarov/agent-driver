@@ -1,7 +1,8 @@
 # EPIC-06 — Real outward MCP client (M)
 
-Status: **stdio + streamable-HTTP DONE (2026-08-22), both live-verified; OAuth deferred.**
-Track:
+Status: **DONE (2026-08-22).** stdio + streamable-HTTP transports (both live-verified),
+OAuth2+PKCE helpers, SDK + ACP server-list wiring, and `tools/list_changed` refresh all
+shipped. Track:
 [opencode-adoption](README.md). Source idea: opencode ships a real outward MCP client
 (stdio + streamable-HTTP + SSE, OAuth2+PKCE); ours was the single biggest concrete
 capability gap — `tools/builtin/mcp.py` is a **readonly fixtures stub** that echoes static
@@ -65,23 +66,51 @@ carries no credential logic. `HttpMcpClient(config, httpx_client=…)` is a test
 header echo, id matching, error mapping, registration) + a `live` case in
 `test_mcp_client_live.py` (spawns the reference server in `streamableHttp` mode).
 
+## OAuth 2.0 + PKCE (DONE)
+
+`oauth.py` implements the **testable, non-interactive core** of the authorization-code +
+PKCE flow (all over `httpx`, `MockTransport`-testable): `generate_pkce_pair` (S256),
+`build_authorization_url`, `exchange_code_for_token` / `refresh_access_token`, and
+`bearer_headers(token)` → the `Authorization` header dict to merge into
+`HttpServerConfig.headers`. The **interactive** step (the user opening the auth URL and the
+redirect delivering the `code`) is inherently host-driven — a browser + a redirect listener
+— and is not part of a headless library: the host calls `build_authorization_url`, obtains
+the `code`, then `exchange_code_for_token`. Bearer/header auth without a full OAuth dance
+already works by putting a token straight in `HttpServerConfig.headers`. Tests:
+`tests/tools/test_mcp_oauth.py`.
+
+## SDK + ACP server-list wiring (DONE)
+
+- `agent_driver.sdk.connect_mcp_servers(agent, configs)` connects a host-declared list of
+  stdio/HTTP servers into a built agent's live tool registry (dispatching by config type,
+  registering each server's tools namespaced); `close_mcp_servers(regs)` shuts them down
+  best-effort. Async post-`create_agent` step. Tests: `tests/sdk/test_mcp_wiring.py`.
+- **ACP `mcp_servers` param.** `agent_driver/adapters/acp/mcp.py`: `acp_mcp_configs`
+  translates ACP `McpServerStdio` / `McpServerHttp` session descriptors into runtime
+  configs, and `connect_acp_mcp_servers` connects the not-yet-connected ones into the
+  adapter's shared agent (deduped by `server_id`, best-effort so a bad declared server
+  never blocks session creation). Wired into the ACP server's `new_session` /
+  `load_session` / `resume_session`. Limitation: the adapter binds one shared agent across
+  sessions, so declared servers are connected once and live for the adapter's lifetime (no
+  per-session isolation — ACP's per-session scoping isn't modelled by a single-agent
+  adapter). Tests: `tests/adapters/test_acp_mcp_wiring.py`.
+
+## tools/list_changed live refresh (DONE)
+
+The stdio client surfaces `notifications/tools/list_changed` via a `tools_changed_event`
+(`asyncio.Event`); `resync_mcp_server_tools(registry, registration)` re-runs `tools/list`,
+re-registers current tools, and **unregisters** ones the server dropped (a new
+`ToolRegistry.unregister`), returning an updated `McpRegistration` and clearing the event.
+Tests: `tests/tools/test_mcp_list_changed.py`.
+
 ## Deferred (remaining)
 
-- **OAuth2 + PKCE + dynamic registration.** Bearer/header auth is already supported via
-  `HttpServerConfig.headers`; interactive OAuth (authorization-code + PKCE, dynamic client
-  registration) is the remaining piece — it pairs with the deepseek-track
-  credential-reference seam (see the survey). The legacy `mcp_auth` fixture tool documents
-  the intended shape.
-- **SDK server-list wiring — DONE.** `agent_driver.sdk.connect_mcp_servers(agent, configs)`
-  connects a host-declared list of stdio/HTTP servers into a built agent's live tool
-  registry (dispatching by config type, registering each server's tools namespaced), and
-  `close_mcp_servers(regs)` shuts them down best-effort on exit. Connection is async (a
-  post-`create_agent` step, since the handshake + `tools/list` can't run inside sync
-  `create_agent`). Tests: `tests/sdk/test_mcp_wiring.py`. The **ACP `mcp_servers` param**
-  wiring (feeding the ACP adapter's ignored param through this helper) is the remaining
-  deferred bit.
-- **`tools/list_changed` live refresh.** Re-discover on the server's change notification
-  (the reader loop already sees notifications; today it ignores them).
+- **Interactive OAuth loopback + dynamic client registration.** The browser/redirect
+  listener and `.well-known` discovery + RFC 7591 dynamic registration are host-integration
+  concerns beyond the headless token helpers above; pairs with the deepseek-track
+  credential-reference seam.
+- **HTTP `tools/list_changed`.** Live refresh is wired for stdio; the HTTP transport would
+  need the persistent server→client GET SSE stream (we only POST request/response today).
 
 ## Live-verified against the reference server
 

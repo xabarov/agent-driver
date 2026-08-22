@@ -170,6 +170,44 @@ async def register_mcp_client(
     )
 
 
+async def resync_mcp_server_tools(
+    registry: Any, registration: McpRegistration, *, tool_allowlist: Any = None
+) -> McpRegistration:
+    """Re-discover an already-connected server's tools and reconcile the registry (EPIC-06).
+
+    Call this after the client's ``tools_changed_event`` fires
+    (``notifications/tools/list_changed``): re-runs ``tools/list``, re-registers current
+    tools (``register`` overwrites in place), and **unregisters** tools the server dropped.
+    Returns an updated :class:`McpRegistration` (same client, new ``tool_names``); clears the
+    client's change event when present.
+    """
+    client = registration.client
+    discovered = await client.list_tools()
+    new_names: set[str] = set()
+    for descriptor in discovered:
+        tool_name = str(descriptor.get("name") or "").strip()
+        if not tool_name:
+            continue
+        if tool_allowlist is not None and tool_name not in tool_allowlist:
+            continue
+        manifest = _tool_manifest(registration.server_id, descriptor)
+        registry.register(manifest, _make_handler(client, tool_name))
+        new_names.add(manifest.name)
+    unregister = getattr(registry, "unregister", None)
+    if callable(unregister):
+        for stale in set(registration.tool_names) - new_names:
+            unregister(stale)
+    event = getattr(client, "_tools_changed", None)
+    if event is not None:
+        event.clear()
+    return McpRegistration(
+        server_id=registration.server_id,
+        client=client,
+        tool_names=tuple(sorted(new_names)),
+        server_info=registration.server_info,
+    )
+
+
 async def register_stdio_mcp_server(
     registry: Any, config: StdioServerConfig
 ) -> McpRegistration:
@@ -206,4 +244,5 @@ __all__ = [
     "register_http_mcp_server",
     "register_mcp_client",
     "register_stdio_mcp_server",
+    "resync_mcp_server_tools",
 ]
