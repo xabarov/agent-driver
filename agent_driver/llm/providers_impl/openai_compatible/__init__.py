@@ -36,6 +36,10 @@ from agent_driver.llm.provider_capabilities import (
     ProviderCapabilityProfile,
     resolve_openai_compatible_capabilities,
 )
+from agent_driver.llm.reasoning_effort_support import (
+    effort_from_reasoning_envelope,
+    validate_effort_for_model,
+)
 from agent_driver.llm.provider_route_profiles import (
     ProviderRouteProfile,
     preview_provider_preflight,
@@ -265,6 +269,15 @@ class OpenAICompatibleProvider(ProviderBase):
         }
         return event.model_copy(update={"metadata": metadata})
 
+    def _preflight_reasoning(self, request: LlmRequest) -> None:
+        """Reject a known-unsupported reasoning-effort tier BEFORE any network I/O
+        (EPIC-07). Raises ``UnsupportedReasoningEffortError`` for a fine tier the target
+        model cannot honor, so the caller gets a clear pre-flight failure instead of a
+        mid-stream OpenRouter rejection. No-op for portable tiers / unknown models."""
+        tier = effort_from_reasoning_envelope(request.reasoning)
+        if tier is not None:
+            validate_effort_for_model(tier, str(request.model or self._model))
+
     def _payload(self, request: LlmRequest, *, stream: bool) -> dict[str, Any]:
         return build_openai_completion_payload(
             request,
@@ -291,6 +304,7 @@ class OpenAICompatibleProvider(ProviderBase):
 
     async def complete(self, request: LlmRequest) -> LlmResponse:
         """Execute non-streaming completion call."""
+        self._preflight_reasoning(request)
         url = f"{self._base_url}/chat/completions"
 
         async def _op() -> LlmResponse:
@@ -331,6 +345,7 @@ class OpenAICompatibleProvider(ProviderBase):
 
     async def stream(self, request: LlmRequest) -> AsyncIterator[LlmStreamEvent]:
         """Execute streaming completion call and normalize deltas."""
+        self._preflight_reasoning(request)
         url = f"{self._base_url}/chat/completions"
         handled_errors = (httpx.HTTPError, ValueError)
         stream_request = StreamRequest(
