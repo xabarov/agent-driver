@@ -122,6 +122,7 @@ class RunnerConfig:
     default_max_tool_calls_per_step: int | None
     budget_grace_enabled: bool
     repeat_call_guard_threshold: int
+    corrective_rejection_enabled: bool
     defer_primer: Callable[[Any], Any] | None
     subagent_store: SubagentStore | None
     subagent_mailbox_store: SubagentMailboxStore | None
@@ -256,6 +257,16 @@ class RunnerConfig:
         # (e.g. 3, opencode's value) for more leniency, or set 0/1 to disable. This
         # guard needs no policy profile — a bare run is protected.
         self.repeat_call_guard_threshold = kwargs.pop("repeat_call_guard_threshold", 2)
+        # opencode-adoption EPIC-04: when True, an operator REJECT that carries a
+        # ``message`` on a (non-plan) tool-approval interrupt becomes a *correcting*
+        # rejection — the tool call is denied but the run CONTINUES, folding the
+        # operator's feedback into the next model turn as steering (opencode's
+        # ``CorrectedError`` path) instead of terminating FAILED. A REJECT with no
+        # message stays a hard abort (opencode's ``RejectedError``). Default False =
+        # behaviour-neutral (every REJECT terminates, as before).
+        self.corrective_rejection_enabled = kwargs.pop(
+            "corrective_rejection_enabled", False
+        )
         # Optional defer primer: a ``Callable[[DeferPrimerInput], Iterable[str]]``
         # that, before each LLM step, selects which currently-deferred tools to
         # surface into the schema list (see ``llm_step.defer_primer``). None

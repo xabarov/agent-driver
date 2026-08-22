@@ -378,6 +378,36 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             reason=TerminalReason.APPROVAL_REJECTED,
         )
 
+    def _apply_corrective_rejection(
+        self,
+        *,
+        context: RunContext,
+        pending: PendingInterruptState,
+        resume: ResumeCommand,
+    ) -> None:
+        """EPIC-04: deny the pending tool call but CONTINUE with operator feedback.
+
+        Records the rejected call + feedback in run metadata (surfaced to the model
+        as a one-shot steering turn by the LLM-request builder) and routes the loop
+        back to ``llm_call`` so the model self-corrects — rather than terminating the
+        run as ``_apply_resume_reject`` does for a bare rejection.
+        """
+        call = pending.call
+        tool_name = getattr(call, "tool_name", None)
+        context.metadata["rejection_feedback"] = {
+            "tool_name": tool_name,
+            "feedback": (resume.message or "").strip(),
+        }
+        # The pending call never executed; give its reserved tool-call budget back so
+        # the corrective turn is not charged for a call that was denied.
+        context.tool_calls = max(0, context.tool_calls - 1)
+        context.metadata["next_step"] = "llm_call"
+        context.metadata["pending_interrupt"] = None
+        context.metadata["interrupt_payload"] = None
+        context.metadata.pop("approved_tool_call", None)
+        context.metadata.pop("force_final_answer", None)
+        context.metadata.pop("force_final_answer_reason", None)
+
     def _handle_resume_with_pending(
         self,
         *,
@@ -502,6 +532,19 @@ class SingleAgentResumeMixin:  # pylint: disable=too-few-public-methods
             return
 
         if resume.action == ResumeAction.REJECT:
+            # EPIC-04 correcting rejection: a REJECT with feedback on a (non-plan)
+            # tool-approval interrupt denies the call but CONTINUES the run, folding
+            # the operator's feedback into the next model turn as steering (opencode
+            # ``CorrectedError``). Opt-in; a bare REJECT still aborts (below).
+            if (
+                self._config.corrective_rejection_enabled
+                and (resume.message or "").strip()
+                and pending.interrupt.reason != InterruptReason.PLAN_APPROVAL_REQUIRED
+            ):
+                self._apply_corrective_rejection(
+                    context=context, pending=pending, resume=resume
+                )
+                return
             plan_payload = _plan_lifecycle_payload(
                 pending, resume=resume, context=context
             )

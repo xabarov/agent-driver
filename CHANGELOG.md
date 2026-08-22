@@ -9,6 +9,18 @@ change between minor versions.
 
 ### Added
 
+- **Correcting-rejection feedback (opencode-adoption EPIC-04).** New opt-in
+  `RunnerConfig.corrective_rejection_enabled` (default **False**). When enabled, an
+  operator `ResumeAction.REJECT` that carries a `message` on a non-plan tool-approval
+  interrupt no longer terminates the run: the pending tool call is denied (and never
+  executes), but the run **continues**, folding the operator's feedback into the next
+  model turn as a one-shot steering message so the model self-corrects (opencode's
+  `CorrectedError`). A REJECT with no message — or on a plan-approval interrupt — still
+  aborts `FAILED` as before (opencode's `RejectedError`). The forward-looking sibling
+  cascade (allow-always → auto-approve matching calls) is already covered by
+  `approved_prompts`/`AllowedPrompt`; a concurrent-ask sibling cascade is N/A in the
+  single-agent loop (exactly one interrupt is ever pending). See
+  `docs/epics/opencode-adoption/EPIC-04-correcting-rejection.md`.
 - **Host tool-decision hooks (opencode-adoption EPIC-03).** New
   `RunnerConfig.tool_decision_hooks` — an ordered tuple of host callbacks
   (`ToolDecisionHook`, in `agent_driver.tools.policy`) consulted after static policy
