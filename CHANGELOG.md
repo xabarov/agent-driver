@@ -7,6 +7,8 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.21.13] - 2026-08-22
+
 ### Changed
 
 - **Compaction token/window estimation is single-sourced (compaction epic BUG-2 &
@@ -21,6 +23,13 @@ change between minor versions.
   default `CalibratedTokenCounter` + `count_tokens` dispatch helper give hosts a
   documented opt-in seam to inject an exact token counter (tiktoken/HF/provider
   count-tokens); the default stays the dependency-free calibrated estimator.
+
+### Fixed
+
+- **Pathologically repetitive provider output is retried instead of finalized.**
+  Long non-empty responses with one dominant repeated token and very low token
+  diversity now use the existing bounded degenerate-answer recovery path. Normal
+  prose, code, and structured tables remain terminal answers.
 
 ## [0.21.12] - 2026-08-22
 

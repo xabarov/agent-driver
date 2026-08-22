@@ -19,6 +19,7 @@ over-iteration that produces the degenerate finalize is exercised separately (ep
 from __future__ import annotations
 
 import re
+from collections import Counter
 from typing import Any
 
 # A turn long enough to be a real answer rather than a hedge/stub.
@@ -41,6 +42,14 @@ _CANNED_REFUSAL_MARKERS = (
     "i'm just an ai",
     "i am just an ai",
 )
+
+# Long provider-corruption responses can be non-empty and use the requested
+# language while repeating one fragment hundreds of times. Bound the detector
+# well above ordinary short answers and require both one dominant token and
+# very low token diversity so normal prose, code, and tables remain untouched.
+_REPETITION_MIN_TOKENS = 80
+_REPETITION_DOMINANT_RATIO = 0.55
+_REPETITION_MAX_UNIQUE_RATIO = 0.20
 
 
 def _cjk_ratio(text: str) -> float:
@@ -65,7 +74,7 @@ def final_content_unusable(content: str | None, input_text: str = "") -> bool:
 
 
 def is_degenerate_refusal(answer: str | None, input_text: str = "") -> bool:
-    """A canned or wrong-language non-answer that ignores the retrieved context.
+    """A canned, wrong-language, or pathologically repetitive non-answer.
 
     Two shapes: (a) a known «I'm just an AI, I haven't learned to answer this» template, or (b) a short
     answer dominated by a script (CJK/Kana/Hangul) that mismatches a non-CJK input — e.g. a Chinese
@@ -80,6 +89,14 @@ def is_degenerate_refusal(answer: str | None, input_text: str = "") -> bool:
     low = stripped.lower()
     if any(marker in low for marker in _CANNED_REFUSAL_MARKERS):
         return True
+    tokens = re.findall(r"\S+", stripped)
+    if len(tokens) >= _REPETITION_MIN_TOKENS:
+        dominant_count = Counter(tokens).most_common(1)[0][1]
+        if (
+            dominant_count / len(tokens) >= _REPETITION_DOMINANT_RATIO
+            and len(set(tokens)) / len(tokens) <= _REPETITION_MAX_UNIQUE_RATIO
+        ):
+            return True
     if (
         len(stripped) < 400
         and _cjk_ratio(stripped) >= 0.4

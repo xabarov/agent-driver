@@ -41,6 +41,21 @@ def test_is_degenerate_refusal_ignores_real_answers_and_empty() -> None:
         is False
     )
     assert is_degenerate_refusal("", "какое НИИ?") is False
+
+
+def test_is_degenerate_refusal_rejects_long_repetitive_provider_corruption() -> None:
+    corrupted = " ".join(["...`"] * 90 + ["(->ai)"] * 5)
+
+    assert is_degenerate_refusal(corrupted, "составь план проверки") is True
+
+
+def test_is_degenerate_refusal_keeps_long_structured_answer() -> None:
+    answer = "\n".join(
+        f"| {index} | Проверка {index} | подтверждённый результат {index} |"
+        for index in range(100)
+    )
+
+    assert is_degenerate_refusal(answer, "составь отчёт") is False
     # A legitimate CJK answer to a CJK question must NOT be flagged (no script mismatch).
     assert (
         is_degenerate_refusal(
