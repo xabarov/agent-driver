@@ -274,6 +274,15 @@ class CompactionSettings:
     live_tool_prune_enabled: bool = True
     live_tool_prune_keep_recent: int = 3
     live_tool_prune_min_chars: int = 2000
+    # opencode-adoption EPIC-10: last-resort emergency payload strip on the
+    # context-overflow (413/context_length_exceeded) retry path (opencode `overflow.ts`).
+    # When the provider rejects the prompt as too long, the rebuilt retry request is
+    # aggressively shrunk — old tool results cleared + any oversized message hard-capped
+    # to ``overflow_strip_max_message_chars`` — so the single retry is materially smaller
+    # even when LLM compaction is disabled. Default ON (only fires on an actual overflow,
+    # which is already a failure state).
+    overflow_emergency_strip_enabled: bool = True
+    overflow_strip_max_message_chars: int = 20_000
 
 
 @dataclass(frozen=True, slots=True)
