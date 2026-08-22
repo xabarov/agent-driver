@@ -72,10 +72,14 @@ header echo, id matching, error mapping, registration) + a `live` case in
   registration) is the remaining piece — it pairs with the deepseek-track
   credential-reference seam (see the survey). The legacy `mcp_auth` fixture tool documents
   the intended shape.
-- **Config-driven server list + ACP `mcp_servers` wiring.** A `RunnerConfig`/SDK seam that
-  connects a declared server list at agent build time and wires the currently-ignored ACP
-  `mcp_servers` param. Deferred so the transport work lands first; hosts can already call
-  `register_stdio_mcp_server` directly.
+- **SDK server-list wiring — DONE.** `agent_driver.sdk.connect_mcp_servers(agent, configs)`
+  connects a host-declared list of stdio/HTTP servers into a built agent's live tool
+  registry (dispatching by config type, registering each server's tools namespaced), and
+  `close_mcp_servers(regs)` shuts them down best-effort on exit. Connection is async (a
+  post-`create_agent` step, since the handshake + `tools/list` can't run inside sync
+  `create_agent`). Tests: `tests/sdk/test_mcp_wiring.py`. The **ACP `mcp_servers` param**
+  wiring (feeding the ACP adapter's ignored param through this helper) is the remaining
+  deferred bit.
 - **`tools/list_changed` live refresh.** Re-discover on the server's change notification
   (the reader loop already sees notifications; today it ignores them).
 

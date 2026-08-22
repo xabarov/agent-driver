@@ -9,6 +9,15 @@ change between minor versions.
 
 ### Added
 
+- **SDK MCP server-list wiring (opencode-adoption EPIC-06 follow-on).** New
+  `agent_driver.sdk.connect_mcp_servers(agent, configs)` connects a host-declared list of
+  outward MCP servers (stdio and/or streamable-HTTP) into a built agent's live tool
+  registry — dispatching by config type and registering each server's discovered tools as
+  governed, namespaced (`mcp__<server>__<tool>`) entries — and returns the registrations;
+  `close_mcp_servers(registrations)` shuts them down best-effort on exit. Connection is an
+  async post-`create_agent` step (the handshake + `tools/list` can't run inside sync
+  `create_agent`). Turns the real MCP client from manual `register_*` calls into a
+  declarative one-liner. See `docs/epics/opencode-adoption/EPIC-06-mcp-client.md`.
 - **Streamable-HTTP MCP transport (opencode-adoption EPIC-06 follow-on).** New
   `HttpMcpClient` speaks JSON-RPC 2.0 over the MCP streamable-HTTP transport using `httpx`
   (already a dependency — no `mcp` SDK, no new dep): POSTs each request to the server's

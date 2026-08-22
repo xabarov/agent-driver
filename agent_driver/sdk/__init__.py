@@ -86,6 +86,7 @@ from agent_driver.sdk.self_consistency import (
     SelfConsistencyResult,
     run_self_consistent,
 )
+from agent_driver.sdk.mcp import close_mcp_servers, connect_mcp_servers
 from agent_driver.sdk.trace import TraceSummary, summarize_output, support_bundle
 from agent_driver.tools import (
     CustomToolDefinition,
@@ -100,6 +101,8 @@ __all__ = [
     "AgentDefaults",
     "RunAbortHandle",
     "RunnerConfig",
+    "close_mcp_servers",
+    "connect_mcp_servers",
     "SelfConsistencyResult",
     "run_self_consistent",
     "AsyncSubagentManager",
