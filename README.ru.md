@@ -10,11 +10,9 @@
 API и политики стабильности: [docs/embedding.md](docs/embedding.md). Готовые
 рецепты: [examples/cookbook](examples/cookbook/README.md).
 
-Текущая версия пакета: `0.12.1`
-
-**Релиз 0.12.1** совместимо исправляет bounded final-answer gate из `0.12.0`:
-принятая synthesis-only коррекция теперь терминальна и не заменяется лишним
-черновиком от generic continuation detector.
+Каноническая версия — в `pyproject.toml`, полная история релизов — в
+[`CHANGELOG.md`](CHANGELOG.md). Этот README намеренно **не** фиксирует номер версии,
+чтобы он не устаревал.
 
 ## Что нового в текущей итерации
 
