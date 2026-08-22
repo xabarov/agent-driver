@@ -257,6 +257,17 @@ class CompactionSettings:
     # for stateless/no-cache providers. LLM-free, idempotent, structure-preserving.
     # Default off — enable on a fallback to a no-prompt-cache backend.
     enable_tool_history_compression: bool = False
+    # opencode-adoption EPIC-08: promote ToolResultPruner to a LIVE default tier
+    # (opencode's `prune` / Anthropic `clear_tool_uses`). On token pressure, clear the
+    # CONTENT of OLD tool results (keeping the newest ``keep_recent``) in the EPHEMERAL
+    # request only — the durable log is untouched. Runs independently of
+    # ``enable_compaction`` so it fires on the deterministic-trim path the flagship
+    # consumer actually runs. Default ON but pressure-gated (neutral until pressure) and
+    # commits only when it frees at least ``live_tool_prune_min_chars`` (avoids churning
+    # the prompt-cache prefix for a negligible gain).
+    live_tool_prune_enabled: bool = True
+    live_tool_prune_keep_recent: int = 3
+    live_tool_prune_min_chars: int = 2000
 
 
 @dataclass(frozen=True, slots=True)

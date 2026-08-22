@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Added
 
+- **Live tool-result pruner (opencode-adoption EPIC-08).** Promotes the existing
+  `ToolResultPruner` to a live pre-pass (`_apply_live_tool_result_prune`) that runs in
+  `apply_compaction_if_eligible` **independently of `enable_compaction`** — like the
+  tool-arg / tool-history pre-passes. Under token pressure (`compact_recommended`/
+  `blocking`) it clears the content of OLD tool results (keeping the newest
+  `live_tool_prune_keep_recent`, default 3) in the **ephemeral request only** (the durable
+  log is untouched), committing only when it frees at least `live_tool_prune_min_chars`
+  (default 2000) so a negligible gain never churns the prompt-cache prefix. New
+  `RunnerConfig.live_tool_prune_enabled` (default **True**, but neutral until pressure).
+  This makes the highest-leverage model-free compaction fire on the deterministic-trim path
+  a consumer runs with `enable_compaction=False`. Mirrors opencode's default `prune`
+  (Anthropic `clear_tool_uses`). Audit under the `live_tool_prune` metadata key. See
+  `docs/epics/opencode-adoption/EPIC-08-live-tool-pruner.md`.
 - **Reasoning-effort capability discovery + reject-before-I/O (opencode-adoption
   EPIC-07).** New `agent_driver.llm.reasoning_effort_support` — a curated per-model
   effort-capability table (`supported_efforts_for_model`) + `validate_effort_for_model`,
