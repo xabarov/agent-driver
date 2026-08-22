@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Added
 
+- **Real outward MCP client — stdio transport (opencode-adoption EPIC-06, first slice).**
+  New `agent_driver.tools.mcp_client` package with a dependency-free `StdioMcpClient` that
+  speaks JSON-RPC 2.0 over the MCP stdio transport (subprocess stdin/stdout): initialize
+  handshake, `tools/list` (with `nextCursor` pagination), `tools/call`, `resources/list`/
+  `resources/read`, per-request timeouts, EOF/broken-pipe → `McpTransportError`, JSON-RPC
+  errors → `McpProtocolError`. `register_stdio_mcp_server(registry, StdioServerConfig)`
+  connects, discovers, and registers each server tool as a governed `ToolManifest` under a
+  namespaced name `mcp__<server_id>__<tool>` (EXTERNAL_ACTION / MEDIUM risk /
+  ON_POLICY_MATCH approval, `descriptor_provenance` metadata, `tool_allowlist` honored),
+  proxying to `tools/call`. Replaces — for the stdio path — the readonly fixtures stub in
+  `tools/builtin/mcp.py` (which stays for back-compat). HTTP/SSE transports, OAuth2+PKCE,
+  the config-driven/ACP server-list wiring, and `tools/list_changed` refresh are a
+  documented follow-on. See `docs/epics/opencode-adoption/EPIC-06-mcp-client.md`.
 - **Structured-summary work-state bucket + rolling carry-forward contract
   (opencode-adoption EPIC-05).** `build_full_compaction_prompt` now emits an explicit
   `completed_work` key (opencode's "Completed" work-state bucket, alongside the existing
