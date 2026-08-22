@@ -117,6 +117,40 @@ def _apply_tool_history_compression(
     }
 
 
+def _apply_live_tool_result_prune(
+    host: Any, *, context: RunContext, request: Any, token_pressure_state: str
+) -> None:
+    """EPIC-08: promote ``ToolResultPruner`` to a live, pressure-gated default tier.
+
+    Clears the CONTENT of OLD tool results (keeping the newest ``keep_recent``) in the
+    EPHEMERAL request only — the durable log is untouched, so nothing is permanently
+    lost and a resume rebuilds the full history. Runs independently of
+    ``enable_compaction`` (like the tool-arg/tool-history pre-passes above), but only
+    under token pressure and only when it frees at least ``live_tool_prune_min_chars``
+    (so it never churns the prompt-cache prefix for a negligible gain). Idempotent.
+    """
+    if token_pressure_state not in {"compact_recommended", "blocking"}:
+        return
+    from agent_driver.context.compaction.tool_clear import (  # pylint: disable=import-outside-toplevel
+        clear_old_tool_results,
+    )
+
+    keep_recent = int(getattr(host._config, "live_tool_prune_keep_recent", 3) or 3)
+    min_chars = int(getattr(host._config, "live_tool_prune_min_chars", 2000) or 0)
+    result = clear_old_tool_results(list(request.messages), keep_recent=keep_recent)
+    if result.cleared <= 0 or result.chars_saved < min_chars:
+        # Nothing old to clear, or the gain is below the commit threshold — leave the
+        # request (and its cache prefix) untouched.
+        return
+    request.messages = result.messages
+    context.metadata["live_tool_prune"] = {
+        "cleared": result.cleared,
+        "chars_saved": result.chars_saved,
+        "keep_recent": keep_recent,
+        "token_pressure_state": token_pressure_state,
+    }
+
+
 class CompactionStageHost(Protocol):
     """Host surface required for compaction stage helpers."""
 
@@ -618,6 +652,14 @@ async def apply_compaction_if_eligible(
         _apply_tool_arg_truncation(host, context=context, request=request)
     if getattr(host._config, "enable_tool_history_compression", False):
         _apply_tool_history_compression(host, context=context, request=request)
+    # EPIC-08: live tool-result prune — independent of enable_compaction, pressure-gated.
+    if getattr(host._config, "live_tool_prune_enabled", False):
+        _apply_live_tool_result_prune(
+            host,
+            context=context,
+            request=request,
+            token_pressure_state=token_pressure_state,
+        )
     orchestrator = host._get_compaction_orchestrator()
     session_memory = load_session_memory(
         artifact_store=host._deps.artifact_store,

@@ -424,6 +424,18 @@ class RunnerConfig:
     def tool_arg_truncation_max_chars(self) -> int:
         return self.compaction.tool_arg_truncation_max_chars
 
+    @property
+    def live_tool_prune_enabled(self) -> bool:
+        return self.compaction.live_tool_prune_enabled
+
+    @property
+    def live_tool_prune_keep_recent(self) -> int:
+        return self.compaction.live_tool_prune_keep_recent
+
+    @property
+    def live_tool_prune_min_chars(self) -> int:
+        return self.compaction.live_tool_prune_min_chars
+
     # Capability delegating accessors (grouped in CapabilitySettings; kept as
     # top-level properties so existing readers/callers are unchanged).
     @property
