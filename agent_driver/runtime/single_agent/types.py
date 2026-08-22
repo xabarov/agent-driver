@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from agent_driver.contracts.execution_lease import LeaseOwnership
     from agent_driver.execution.lease import ExecutionLeaseManager
     from agent_driver.execution.protocol import ExecutionBackend
+    from agent_driver.tools.policy.decision_hooks import ToolDecisionHook
 
 _TRIMMING_FIELDS = {item.name for item in fields(TrimmingSettings)}
 _COMPACTION_FIELDS = {item.name for item in fields(CompactionSettings)}
@@ -144,6 +145,7 @@ class RunnerConfig:
     memory_consolidation_every_n_turns: int
     capabilities: CapabilitySettings
     lifecycle_hooks: tuple[RunLifecycleHook, ...]
+    tool_decision_hooks: tuple["ToolDecisionHook", ...]
     trimming: TrimmingSettings
     compaction: CompactionSettings
     subagents: SubagentSettings
@@ -283,6 +285,8 @@ class RunnerConfig:
         )
         self.capabilities = capabilities
         self.lifecycle_hooks = tuple(kwargs.pop("lifecycle_hooks", ()) or ())
+        # EPIC-03: host tool-decision hooks (tighten allow/deny/ask around the gate).
+        self.tool_decision_hooks = tuple(kwargs.pop("tool_decision_hooks", ()) or ())
         self.trimming = trimming
         self.compaction = compaction
         self.subagents = subagents

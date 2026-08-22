@@ -9,6 +9,17 @@ change between minor versions.
 
 ### Added
 
+- **Host tool-decision hooks (opencode-adoption EPIC-03).** New
+  `RunnerConfig.tool_decision_hooks` — an ordered tuple of host callbacks
+  (`ToolDecisionHook`, in `agent_driver.tools.policy`) consulted after static policy
+  evaluation and the dynamic `ToolGate`, on every planned tool call. A hook may only
+  **tighten** the resolved decision (`allow → interrupt → deny`, never loosen past a hard
+  `deny`, never bypass policy/gate); a hook that raises fails **closed** to `deny`; an
+  optional `feedback` string is folded into the model-facing reason as steering. Lets a
+  consumer (excel-ai / Zion / PentestLens) inject domain governance without forking the
+  runtime. Default is an empty tuple → behaviour-neutral. Modelled on opencode's
+  `permission.ask` plugin hook; the companion schema-rewrite hook (`tool.definition`) is
+  deliberately deferred. See `docs/epics/opencode-adoption/EPIC-03-decision-hook-seam.md`.
 - **Configurable doom-loop repeat guard (opencode-adoption EPIC-02).** The runtime
   already forced a graceful final answer when the model emitted two identical
   consecutive tool calls (`_has_repeated_recent_tool_call`, default-on, no policy

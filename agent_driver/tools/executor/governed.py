@@ -54,6 +54,10 @@ from agent_driver.tools.executor.specs import (
 )
 from agent_driver.tools.guardrails import GuardrailPipeline
 from agent_driver.tools.policy import evaluate_tool_policy
+from agent_driver.tools.policy.decision_hooks import (
+    ToolDecisionHook,
+    apply_decision_hooks,
+)
 from agent_driver.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -96,10 +100,14 @@ class GovernedToolExecutor:
         guardrails: GuardrailPipeline | None = None,
         concurrency_limit: int | None = None,
         tool_hooks: "list[ToolHook] | tuple[ToolHook, ...] | None" = None,
+        decision_hooks: "tuple[ToolDecisionHook, ...] | None" = None,
         artifact_store: Any = None,
         per_turn_output_budget_chars: int | None = None,
     ) -> None:
         self._registry = registry
+        # EPIC-03: host-registered tool-decision hooks. Consulted after static policy +
+        # the dynamic tool gate resolve a call; may only TIGHTEN the decision.
+        self._decision_hooks: tuple[ToolDecisionHook, ...] = tuple(decision_hooks or ())
         # Epic 033 B (tier 3): aggregate per-turn tool-output budget. None/0 = off.
         self._per_turn_output_budget_chars = per_turn_output_budget_chars
         self._guardrails = guardrails or GuardrailPipeline()
@@ -863,6 +871,40 @@ class GovernedToolExecutor:
                 current_tool_calls=spec.current_tool_calls + spec.index - 1,
                 attempt_id=f"attempt_{index}",
             )
+        # EPIC-03: host decision hooks run LAST and may only tighten the resolved
+        # decision (never loosen past a DENY, never bypass policy/gate). A hook that
+        # raises is fail-closed to DENY.
+        if self._decision_hooks:
+            new_decision, new_reason, feedback = apply_decision_hooks(
+                self._decision_hooks,
+                tool_name=call.tool_name,
+                args=call.args,
+                manifest=manifest,
+                run_input=run_input,
+                decision=policy.decision,
+                reason=policy.reason,
+            )
+            if new_decision != policy.decision:
+                reason_text = new_reason or policy.reason
+                # Fold the steering feedback into the model-facing reason: on the
+                # DENY path only ``reason`` (as the blocked envelope's error message)
+                # reaches the model, so feedback kept only in metadata would be lost.
+                if feedback:
+                    reason_text = (
+                        f"{reason_text} — {feedback}" if reason_text else feedback
+                    )
+                update: dict[str, object] = {
+                    "decision": new_decision,
+                    "reason": reason_text,
+                }
+                if feedback:
+                    # Also expose it programmatically for hosts that inspect policy
+                    # metadata (e.g. the INTERRUPT path that carries metadata forward).
+                    update["metadata"] = {
+                        **(policy.metadata or {}),
+                        "decision_hook_feedback": feedback,
+                    }
+                policy = policy.model_copy(update=update)
         return policy
 
     async def _postprocess_new_envelopes(
