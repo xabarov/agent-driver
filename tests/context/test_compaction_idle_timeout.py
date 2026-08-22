@@ -16,8 +16,8 @@ from agent_driver.llm.contracts import LlmFinishReason, LlmRequest, LlmResponse,
 _VALID_SUMMARY = (
     "<persisted_summary>"
     '{"request_intent":"x","key_concepts":[],"files_code":[],"errors_fixes":[],'
-    '"problems":[],"user_messages":[],"pending_tasks":[],"current_work":"w",'
-    '"next_step":"n"}'
+    '"problems":[],"user_messages":[],"completed_work":[],"pending_tasks":[],'
+    '"current_work":"w","next_step":"n"}'
     "</persisted_summary>"
 )
 

@@ -9,6 +9,17 @@ change between minor versions.
 
 ### Added
 
+- **Structured-summary work-state bucket + rolling carry-forward contract
+  (opencode-adoption EPIC-05).** `build_full_compaction_prompt` now emits an explicit
+  `completed_work` key (opencode's "Completed" work-state bucket, alongside the existing
+  in-progress `current_work` / `problems` / `pending_tasks` + `next_step`), enforced by
+  `REQUIRED_SUMMARY_KEYS`. The B2 rolling (prior-summary fold) path carries opencode's
+  carry-forward-or-lose contract — the prior summary is discarded, so standing objectives/
+  constraints/directives/decisions must be actively re-carried; the newer slice wins on
+  conflict; finished items move into `completed_work`. A verbatim-preservation rule (exact
+  paths/symbols/commands/error-strings/URLs/identifiers) was added to the shared header.
+  Pure prompt/contract text + one JSON key; no control-flow change. See
+  `docs/epics/opencode-adoption/EPIC-05-structured-summary-template.md`.
 - **Correcting-rejection feedback (opencode-adoption EPIC-04).** New opt-in
   `RunnerConfig.corrective_rejection_enabled` (default **False**). When enabled, an
   operator `ResumeAction.REJECT` that carries a `message` on a non-plan tool-approval

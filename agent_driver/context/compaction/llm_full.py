@@ -25,6 +25,9 @@ REQUIRED_SUMMARY_KEYS = {
     "errors_fixes",
     "problems",
     "user_messages",
+    # EPIC-05: explicit "Completed" work-state bucket (opencode) alongside the
+    # existing in-progress / pending / next-move keys.
+    "completed_work",
     "pending_tasks",
     "current_work",
     "next_step",

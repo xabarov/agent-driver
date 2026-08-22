@@ -44,6 +44,7 @@ async def test_full_llm_compaction_parses_structured_payload() -> None:
         "\"errors_fixes\":[\"e\"],"
         "\"problems\":[\"p\"],"
         "\"user_messages\":[\"m\"],"
+        "\"completed_work\":[\"c\"],"
         "\"pending_tasks\":[\"t\"],"
         "\"current_work\":\"work\","
         "\"next_step\":\"next\""
@@ -72,6 +73,38 @@ async def test_full_llm_compaction_returns_failure_on_invalid_summary() -> None:
     )
     assert result.success is False
     assert summary == {}
+
+
+def test_compaction_prompt_has_work_state_buckets_and_preservation() -> None:
+    """EPIC-05: the prompt exposes the explicit Completed bucket + the verbatim
+    preservation rule (opencode structured-summary template)."""
+    prompt = build_full_compaction_prompt(history_excerpt="h", user_request="u")
+    # Completed/Active/Blocked/Next-Move buckets are all named.
+    assert "completed_work" in prompt
+    assert "current_work" in prompt
+    assert "problems" in prompt
+    assert "next_step" in prompt
+    # verbatim preservation of identifiers.
+    assert "Preserve exact file paths" in prompt
+    assert "verbatim" in prompt
+
+
+def test_compaction_prompt_rolling_carry_forward_contract() -> None:
+    """EPIC-05: the rolling (prior_summary) prompt carries opencode's
+    carry-forward-or-lose contract + conflict-resolution rule."""
+    rolling = build_full_compaction_prompt(
+        history_excerpt="NEW", user_request="u", prior_summary="PRIOR"
+    )
+    lowered = rolling.lower()
+    assert "discarded" in lowered
+    assert "is lost" in lowered
+    assert "carry forward" in lowered
+    # newer slice wins on conflict + move finished work into the Completed bucket.
+    assert "the new slice wins" in lowered
+    assert "completed_work" in rolling
+    # the plain (non-rolling) prompt has no carry-forward contract.
+    plain = build_full_compaction_prompt(history_excerpt="H", user_request="u")
+    assert "discarded" not in plain.lower()
 
 
 def test_compaction_prompt_rolling_merge_mode() -> None:
@@ -110,7 +143,8 @@ async def test_full_llm_compaction_threads_prior_summary() -> None:
         "<persisted_summary>{"
         "\"request_intent\":\"i\",\"key_concepts\":[\"a\"],\"files_code\":[\"f\"],"
         "\"errors_fixes\":[\"e\"],\"problems\":[\"p\"],\"user_messages\":[\"m\"],"
-        "\"pending_tasks\":[\"t\"],\"current_work\":\"w\",\"next_step\":\"n\""
+        "\"completed_work\":[\"c\"],\"pending_tasks\":[\"t\"],\"current_work\":\"w\","
+        "\"next_step\":\"n\""
         "}</persisted_summary>"
     )
     provider = _PromptCapturingProvider(response_text=fake_response)
