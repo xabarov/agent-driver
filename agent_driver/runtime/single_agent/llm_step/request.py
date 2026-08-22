@@ -291,6 +291,27 @@ def build_trimmed_request(
                 content=clarification_prompt,
             ),
         )
+    # EPIC-04 correcting rejection: fold a one-shot operator rejection into the next
+    # turn as a USER steering message (the operator denied a specific tool call and
+    # supplied feedback). Popped after injecting so it fires exactly once.
+    rejection = context.metadata.get("rejection_feedback")
+    if (
+        protocol_messages is not None
+        and isinstance(rejection, dict)
+        and str(rejection.get("feedback") or "").strip()
+    ):
+        rejected_tool = rejection.get("tool_name")
+        feedback_text = str(rejection["feedback"]).strip()
+        target = f"`{rejected_tool}`" if rejected_tool else "your last tool call"
+        rejection_prompt = (
+            f"The operator rejected {target} and it was NOT executed. "
+            f"Do not repeat that call. Operator feedback:\n{feedback_text}\n\n"
+            "Adjust your approach accordingly and continue."
+        )
+        protocol_messages = protocol_messages + (
+            ChatMessage(role=ChatRole.USER, content=rejection_prompt),
+        )
+        context.metadata.pop("rejection_feedback", None)
     # Inner-loop overrides (e.g. ``"none"`` to force a final answer after a
     # repeated handler error) take precedence; otherwise fall through to
     # the caller-supplied ``RunInput.tool_choice`` so the public seam can
