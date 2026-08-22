@@ -10,12 +10,9 @@ contracts.
 policy: [docs/embedding.md](docs/embedding.md). Runnable recipes:
 [examples/cookbook](examples/cookbook/README.md).
 
-Current package version: `0.12.1`
-
-**Release 0.12.1** is a backward-compatible fix for the bounded final-answer
-gate introduced in `0.12.0`: an accepted synthesis-only correction is now
-terminal and cannot be replaced by an extra draft from the generic continuation
-detector. See [CHANGELOG](CHANGELOG.md) `[0.12.1]`.
+The canonical version lives in `pyproject.toml`, and the full release history is in
+[`CHANGELOG.md`](CHANGELOG.md). This README intentionally does **not** pin a version
+number so it cannot drift out of date.
 
 ## What is new in this iteration
 
