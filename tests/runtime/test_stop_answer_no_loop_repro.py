@@ -93,6 +93,18 @@ async def test_canned_wrong_language_refusal_is_retried() -> None:
 
 
 @pytest.mark.asyncio
+async def test_long_repetitive_provider_corruption_is_retried() -> None:
+    """A non-empty but pathologically repetitive provider response is not terminal."""
+    corrupted = " ".join(["...`"] * 90 + ["(->ai)"] * 5)
+    answer, calls = await _run(
+        _ScriptProvider([_resp(corrupted), _resp(_LONG_ANSWER)])
+    )
+
+    assert answer == _LONG_ANSWER
+    assert calls == 2, f"expected one corruption retry then the answer, got {calls} calls"
+
+
+@pytest.mark.asyncio
 async def test_toolcalls_finish_without_parseable_call_does_not_infinite_loop() -> None:
     """finish_reason=TOOL_CALLS but no structured/text-form call: must not spin into a stub."""
     answer, calls = await _run(
