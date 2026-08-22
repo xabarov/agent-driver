@@ -120,6 +120,7 @@ class RunnerConfig:
     default_max_steps: int | None
     default_max_tool_calls_per_step: int | None
     budget_grace_enabled: bool
+    repeat_call_guard_threshold: int
     defer_primer: Callable[[Any], Any] | None
     subagent_store: SubagentStore | None
     subagent_mailbox_store: SubagentMailboxStore | None
@@ -246,6 +247,13 @@ class RunnerConfig:
         # return a best-effort answer instead of a bare FAILED with an empty
         # answer. Set False to restore the hard-fail-on-budget behaviour.
         self.budget_grace_enabled = kwargs.pop("budget_grace_enabled", True)
+        # Doom-loop guard (opencode-adoption EPIC-02): the number of CONSECUTIVE
+        # identical tool calls — same tool name + same canonical args, regardless of
+        # result — that force the graceful final-answer turn instead of letting the
+        # model spin. Default 2 preserves the historical always-on behaviour; raise it
+        # (e.g. 3, opencode's value) for more leniency, or set 0/1 to disable. This
+        # guard needs no policy profile — a bare run is protected.
+        self.repeat_call_guard_threshold = kwargs.pop("repeat_call_guard_threshold", 2)
         # Optional defer primer: a ``Callable[[DeferPrimerInput], Iterable[str]]``
         # that, before each LLM step, selects which currently-deferred tools to
         # surface into the schema list (see ``llm_step.defer_primer``). None

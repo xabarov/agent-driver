@@ -594,6 +594,12 @@ async def _finalize_tool_stage_transition(
     if continue_with_llm:
         loop_iterations += 1
         increment_tool_loops_since_todo_write(context)
+    # EPIC-02: make the doom-loop threshold (consecutive identical tool calls that
+    # force the final answer) configurable per run; _has_repeated_recent_tool_call
+    # reads it from metadata. Default 2 preserves the historical behaviour.
+    context.metadata.setdefault(
+        "repeat_call_guard_threshold", host._config.repeat_call_guard_threshold
+    )
     _update_tool_failure_guard(host, context, result)
     if continue_with_llm and context.run_input.agent_profile != AgentProfile.CODE_AGENT:
         _maybe_force_final_answer(context)
