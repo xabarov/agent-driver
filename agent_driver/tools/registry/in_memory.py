@@ -60,6 +60,25 @@ class ToolRegistry:
                 )
             self._alias_index[alias] = manifest.name
 
+    def unregister(self, tool_name: str) -> bool:
+        """Remove a tool (by canonical name) and its aliases. Returns True if present.
+
+        Used to retire tools that a live MCP server dropped on a
+        ``notifications/tools/list_changed`` refresh (EPIC-06). Aliases are only matched
+        via the canonical name, so pass the canonical manifest name.
+        """
+        if tool_name not in self._items:
+            return False
+        del self._items[tool_name]
+        stale_aliases = [
+            alias
+            for alias, canonical in self._alias_index.items()
+            if canonical == tool_name
+        ]
+        for alias in stale_aliases:
+            self._alias_index.pop(alias, None)
+        return True
+
     def get(self, tool_name: str) -> RegisteredTool | None:
         """Return registered tool by canonical name OR alias."""
         direct = self._items.get(tool_name)

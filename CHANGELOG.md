@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Added
 
+- **MCP client completion — OAuth2+PKCE, ACP wiring, tools/list_changed (opencode-adoption
+  EPIC-06).** Closes out the outward MCP client. (1) OAuth 2.0 + PKCE helpers
+  (`agent_driver.tools.mcp_client.oauth`): `generate_pkce_pair` (S256),
+  `build_authorization_url`, `exchange_code_for_token`/`refresh_access_token`, and
+  `bearer_headers(token)` → the header dict to merge into `HttpServerConfig.headers` (the
+  interactive browser/redirect step stays host-driven). (2) ACP `mcp_servers` wiring
+  (`agent_driver.adapters.acp.mcp`): translates ACP `McpServerStdio`/`McpServerHttp`
+  session descriptors into runtime configs and connects them (deduped by `server_id`,
+  best-effort) into the ACP adapter's shared agent, wired into `new_session`/`load_session`/
+  `resume_session`. (3) `tools/list_changed` live refresh: the stdio client surfaces the
+  notification via `tools_changed_event`, and `resync_mcp_server_tools` re-discovers and
+  reconciles the registry (new `ToolRegistry.unregister` retires dropped tools). See
+  `docs/epics/opencode-adoption/EPIC-06-mcp-client.md`.
 - **SDK MCP server-list wiring (opencode-adoption EPIC-06 follow-on).** New
   `agent_driver.sdk.connect_mcp_servers(agent, configs)` connects a host-declared list of
   outward MCP servers (stdio and/or streamable-HTTP) into a built agent's live tool

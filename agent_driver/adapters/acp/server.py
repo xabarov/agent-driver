@@ -82,6 +82,9 @@ class AgentAcpServer:
         self._client_fs_read = False
         self._client_fs_write = False
         self._client_terminal = False
+        # EPIC-06: outward MCP servers declared via ACP ``mcp_servers``, connected once
+        # into the shared agent (deduped by server_id) and kept for the adapter lifetime.
+        self._mcp_registrations: dict[str, Any] = {}
 
     # -- connection / capabilities ----------------------------------------
 
@@ -139,8 +142,25 @@ class AgentAcpServer:
         self._sessions[session_id] = AcpSession(
             session_id=session_id, thread_id=session_id, cwd=cwd
         )
+        await self._connect_mcp_servers(mcp_servers)
         await self._send(session_id, available_commands_update())
         return acp.NewSessionResponse(session_id=session_id, modes=session_mode_state())
+
+    async def _connect_mcp_servers(self, mcp_servers: list[Any] | None) -> None:
+        """EPIC-06: connect any newly-declared ACP MCP servers into the shared agent.
+
+        Deduped by server_id across sessions (the adapter shares one agent), best-effort:
+        a server that fails to connect is skipped so it never blocks session creation.
+        """
+        if not mcp_servers:
+            return
+        from agent_driver.adapters.acp.mcp import (  # noqa: PLC0415
+            connect_acp_mcp_servers,
+        )
+
+        await connect_acp_mcp_servers(
+            self._agent, mcp_servers, already_connected=self._mcp_registrations
+        )
 
     async def load_session(
         self,
@@ -160,6 +180,7 @@ class AgentAcpServer:
             self._sessions[session_id] = session
         elif cwd is not None:
             session.cwd = cwd
+        await self._connect_mcp_servers(mcp_servers)
         await self._replay_history(session_id)
         await self._send(session_id, available_commands_update())
         return acp.schema.LoadSessionResponse(modes=session_mode_state(session.mode_id))
@@ -178,6 +199,7 @@ class AgentAcpServer:
             self._sessions[session_id] = session
         elif cwd is not None:
             session.cwd = cwd
+        await self._connect_mcp_servers(mcp_servers)
         return acp.schema.ResumeSessionResponse(
             modes=session_mode_state(session.mode_id)
         )
