@@ -19,6 +19,8 @@ _SDK = {
     "Agent",
     "AgentDefaults",
     "AgentDriverSDKError",
+    "close_mcp_servers",
+    "connect_mcp_servers",
     "AsyncSubagentManager",
     "BackgroundSubagent",
     "CoordinationEvent",
