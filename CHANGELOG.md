@@ -7,6 +7,17 @@ change between minor versions.
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable doom-loop repeat guard (opencode-adoption EPIC-02).** The runtime
+  already forced a graceful final answer when the model emitted two identical
+  consecutive tool calls (`_has_repeated_recent_tool_call`, default-on, no policy
+  profile needed). That hardcoded `2` is now `RunnerConfig.repeat_call_guard_threshold`
+  — the number of consecutive identical tool calls (same name + canonical args,
+  result-independent) that trip the guard. Default **2** (behaviour-neutral); set `0`/`1`
+  to disable, or raise it (e.g. `3`) for agents that legitimately repeat a call. Seeded
+  into run metadata by the tool stage and documented in `docs/runtime-metadata.md`.
+
 ## [0.21.13] - 2026-08-22
 
 ### Changed

@@ -171,6 +171,8 @@ def _tool_loop_policy_threshold(raw: object) -> int:
     return 2
 
 
+
+
 def _current_no_progress_repeat(
     context: RunContext,
     result: ToolExecutionResult,
@@ -453,11 +455,27 @@ def _has_successful_python_result(context: RunContext) -> bool:
     return False
 
 
+def _repeat_call_guard_threshold(context: RunContext) -> int:
+    """Doom-loop threshold N (opencode-adoption EPIC-02): how many consecutive
+    identical tool calls force the final answer. Seeded from
+    ``RunnerConfig.repeat_call_guard_threshold`` into metadata by the tool stage;
+    defaults to 2 (the historical behaviour). 0 or 1 disables the guard."""
+    raw = context.metadata.get("repeat_call_guard_threshold", 2)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 2
+
+
 def _has_repeated_recent_tool_call(context: RunContext) -> bool:
-    """Detect two latest tool calls with identical tool name and args."""
-    tool_results = get_tool_loop_state(context).tool_results()
+    """Detect the last N tool calls being identical (same name + canonical args),
+    result-independent — the model stuck emitting the same call. N is the configurable
+    ``repeat_call_guard_threshold`` (default 2; 0/1 disables)."""
+    threshold = _repeat_call_guard_threshold(context)
+    if threshold < 2:
+        return False
     recent: list[tuple[str, str]] = []
-    for item in tool_results:
+    for item in get_tool_loop_state(context).tool_results():
         if not isinstance(item, dict):
             continue
         call = item.get("call")
@@ -469,6 +487,7 @@ def _has_repeated_recent_tool_call(context: RunContext) -> bool:
         args = call.get("args")
         args_key = json.dumps(args, ensure_ascii=True, sort_keys=True)
         recent.append((tool_name, args_key))
-    if len(recent) < 2:
+    if len(recent) < threshold:
         return False
-    return recent[-1] == recent[-2]
+    tail = recent[-threshold:]
+    return all(sig == tail[0] for sig in tail)
