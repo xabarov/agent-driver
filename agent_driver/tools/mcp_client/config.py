@@ -46,4 +46,38 @@ class StdioServerConfig:
             raise ValueError("timeouts must be > 0")
 
 
-__all__ = ["StdioServerConfig"]
+@dataclass(frozen=True, slots=True)
+class HttpServerConfig:
+    """A remote MCP server the agent connects to over the **streamable-HTTP** transport.
+
+    ``url`` is the single MCP endpoint (JSON-RPC POST target, e.g.
+    ``https://host/mcp``). ``headers`` carries auth/bearer tokens verbatim — the host
+    resolves any secret into it; this config holds no credential logic. The client
+    manages the ``Mcp-Session-Id`` returned by the initialize handshake automatically.
+    ``tool_allowlist`` (when set) restricts which discovered tools are registered.
+    """
+
+    server_id: str
+    url: str
+    headers: dict[str, str] | None = None
+    tool_allowlist: frozenset[str] | None = None
+    init_timeout_seconds: float = 30.0
+    request_timeout_seconds: float = 60.0
+    client_name: str = "agent-driver"
+    client_version: str = "0"
+    protocol_version: str = "2025-06-18"
+    verify_tls: bool = True
+    metadata: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.server_id or not self.server_id.strip():
+            raise ValueError("HttpServerConfig.server_id is required")
+        if not self.url or not self.url.strip():
+            raise ValueError("HttpServerConfig.url is required")
+        if not self.url.startswith(("http://", "https://")):
+            raise ValueError("HttpServerConfig.url must be an http(s) URL")
+        if self.init_timeout_seconds <= 0 or self.request_timeout_seconds <= 0:
+            raise ValueError("timeouts must be > 0")
+
+
+__all__ = ["HttpServerConfig", "StdioServerConfig"]
