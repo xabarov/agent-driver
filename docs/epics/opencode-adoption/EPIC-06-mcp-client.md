@@ -61,6 +61,21 @@ auto-discovered by `packages.find` (no packaging change).
 - **`tools/list_changed` live refresh.** Re-discover on the server's change notification
   (the reader loop already sees notifications; today it ignores them).
 
+## Live-verified against the reference server
+
+Verified end-to-end against the official `@modelcontextprotocol/server-everything`
+(reference server, v2.0.0) over `npx`: handshake + `serverInfo`, paginated `tools/list`
+(13 tools), `tools/call` (`echo`, `get-sum` → "42"), `resources/list` (7 resources), and
+the full registrar path (governed namespaced registration + handler invocation). The live
+run surfaced a real bug the fake-server tests missed: **real MCP servers use kebab-case /
+dotted tool names** (`get-sum`, `get-tiny-image`), which are not valid Python identifiers
+and were rejected by `ToolManifest`'s code-agent name check. Fixed by sanitizing the
+*manifest* name to identifier characters (`mcp__everything__get_sum`) while preserving the
+**raw** tool name for the actual `tools/call` (kept in `descriptor_provenance.tool_name`).
+Captured by a default-sweep regression (a kebab tool in the fake server) plus a
+`live`+`slow`-marked interop test (`tests/tools/test_mcp_client_live.py`, excluded from the
+default sweep; run with `-m live`).
+
 ## Kept deliberately
 
 The `tools/builtin/mcp.py` fixture stub stays registered by default (backward compat + an

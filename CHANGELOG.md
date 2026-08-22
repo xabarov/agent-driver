@@ -29,9 +29,13 @@ change between minor versions.
   namespaced name `mcp__<server_id>__<tool>` (EXTERNAL_ACTION / MEDIUM risk /
   ON_POLICY_MATCH approval, `descriptor_provenance` metadata, `tool_allowlist` honored),
   proxying to `tools/call`. Replaces — for the stdio path — the readonly fixtures stub in
-  `tools/builtin/mcp.py` (which stays for back-compat). HTTP/SSE transports, OAuth2+PKCE,
-  the config-driven/ACP server-list wiring, and `tools/list_changed` refresh are a
-  documented follow-on. See `docs/epics/opencode-adoption/EPIC-06-mcp-client.md`.
+  `tools/builtin/mcp.py` (which stays for back-compat). Verified end-to-end against the
+  official `@modelcontextprotocol/server-everything` reference server; that run surfaced
+  and fixed a real bug — kebab-case/dotted server tool names (`get-sum`) are sanitized to
+  a valid-identifier manifest name (`mcp__<server>__get_sum`) while the raw name is kept
+  for the actual `tools/call`. HTTP/SSE transports, OAuth2+PKCE, the config-driven/ACP
+  server-list wiring, and `tools/list_changed` refresh are a documented follow-on. See
+  `docs/epics/opencode-adoption/EPIC-06-mcp-client.md`.
 - **Structured-summary work-state bucket + rolling carry-forward contract
   (opencode-adoption EPIC-05).** `build_full_compaction_prompt` now emits an explicit
   `completed_work` key (opencode's "Completed" work-state bucket, alongside the existing

@@ -41,6 +41,12 @@ TOOLS_PAGE_2 = [{
     "name": "boom",
     "description": "Always returns a tool-level error.",
     "inputSchema": {"type": "object"},
+}, {
+    # kebab-case name — real MCP servers use these; the manifest name must be
+    # sanitized to a valid Python identifier while the call keeps the raw name.
+    "name": "get-sum",
+    "description": "Sum two numbers.",
+    "inputSchema": {"type": "object"},
 }]
 
 for line in sys.stdin:
@@ -79,6 +85,12 @@ for line in sys.stdin:
                 "content": [{"type": "text", "text": "kaboom"}],
                 "isError": True,
             }})
+        elif name == "get-sum":
+            total = (args.get("a") or 0) + (args.get("b") or 0)
+            send({"jsonrpc": "2.0", "id": mid, "result": {
+                "content": [{"type": "text", "text": str(total)}],
+                "isError": False,
+            }})
         else:
             send({"jsonrpc": "2.0", "id": mid,
                   "error": {"code": -32601, "message": f"unknown tool {name}"}})
@@ -106,7 +118,7 @@ async def test_client_handshake_and_list_tools(tmp_path) -> None:
         tools = await client.list_tools()
         # Two pages were transparently concatenated by cursor walking.
         names = {t["name"] for t in tools}
-        assert names == {"echo", "boom"}
+        assert names == {"echo", "boom", "get-sum"}
 
 
 @pytest.mark.asyncio
@@ -137,6 +149,7 @@ async def test_register_discovers_and_namespaces_tools(tmp_path) -> None:
         assert set(registration.tool_names) == {
             namespaced_tool_name("demo", "echo"),
             namespaced_tool_name("demo", "boom"),
+            namespaced_tool_name("demo", "get-sum"),
         }
         # The registered tool is invocable and proxies to tools/call.
         registered = registry.get(namespaced_tool_name("demo", "echo"))
@@ -148,6 +161,27 @@ async def test_register_discovers_and_namespaces_tools(tmp_path) -> None:
         prov = registered.manifest.metadata["descriptor_provenance"]
         assert prov["inventory_source"] == "mcp_stdio"
         assert prov["server_id"] == "demo"
+    finally:
+        await registration.client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_register_sanitizes_kebab_case_tool_name(tmp_path) -> None:
+    # Regression (found via a live reference server): kebab-case tool names must map to
+    # a valid-identifier manifest name while the handler still calls the RAW name.
+    registry = ToolRegistry()
+    registration = await register_stdio_mcp_server(registry, _config(tmp_path))
+    try:
+        manifest_name = namespaced_tool_name("demo", "get-sum")
+        assert manifest_name == "mcp__demo__get_sum"  # hyphen sanitized
+        assert manifest_name in registration.tool_names
+        entry = registry.get(manifest_name)
+        assert entry is not None
+        # Raw name preserved for tools/call provenance + invocation.
+        assert entry.manifest.metadata["descriptor_provenance"]["tool_name"] == "get-sum"
+        out = await entry.handler({"a": 40, "b": 2})
+        assert out["is_error"] is False
+        assert out["text"] == "42"
     finally:
         await registration.client.aclose()
 

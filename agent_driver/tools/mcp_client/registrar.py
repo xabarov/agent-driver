@@ -11,6 +11,7 @@ The caller owns the returned client's lifecycle (call ``aclose()`` on shutdown).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,11 +26,32 @@ from agent_driver.tools.mcp_client.stdio_client import StdioMcpClient
 from agent_driver.tools.registry.types import ToolHandler
 
 _NAME_PREFIX = "mcp"
+_INVALID_NAME_CHARS = re.compile(r"[^A-Za-z0-9_]")
+
+
+def _sanitize_name_part(part: str) -> str:
+    """Coerce one name segment to valid-Python-identifier chars.
+
+    Real MCP servers commonly use kebab-case / dotted tool names (``get-sum``,
+    ``fs.read``); the runtime's manifest name must be a valid Python identifier for
+    code-agent compatibility, so non-identifier characters collapse to ``_``. Only the
+    registered *manifest* name is sanitized — the original tool name is preserved for the
+    actual ``tools/call`` (see ``register_stdio_mcp_server``).
+    """
+    cleaned = _INVALID_NAME_CHARS.sub("_", part.strip())
+    return cleaned or "_"
 
 
 def namespaced_tool_name(server_id: str, tool_name: str) -> str:
-    """``mcp__<server_id>__<tool>`` — stable, collision-resistant across servers."""
-    return f"{_NAME_PREFIX}__{server_id}__{tool_name}"
+    """``mcp__<server_id>__<tool>`` — stable across servers, identifier-safe.
+
+    Both segments are sanitized to identifier characters; the ``mcp`` prefix guarantees a
+    letter start, so the whole name is always a valid Python identifier.
+    """
+    return (
+        f"{_NAME_PREFIX}__{_sanitize_name_part(server_id)}"
+        f"__{_sanitize_name_part(tool_name)}"
+    )
 
 
 @dataclass(frozen=True, slots=True)
