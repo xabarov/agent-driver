@@ -1,7 +1,8 @@
 # EPIC-11 — Durable, resumable subagent identity (L)
 
-Status: **Stage 1 (durable addressable identity) DONE (2026-08-22); Stage 2 (resume
-execution) + promote/extend deferred.** Track: [opencode-adoption](README.md). Source idea:
+Status: **Stage 1 (durable addressable identity) + the Stage-2 Postgres substrate DONE
+(2026-08-22); resume execution + promote/extend deferred.** Track:
+[opencode-adoption](README.md). Source idea:
 opencode's single biggest structural advantage — a subagent **is** a durable, resumable
 session (`task_id` resumes it) + fg→bg `promote` / running-child `extend`.
 
@@ -31,6 +32,21 @@ This turns the already-persisted child record into an **addressable durable iden
 foundation Stage 2 resumes from. Tests: `tests/subagents/test_durable_child_identity.py`
 (lookup across parents on both backends; missing/empty; survives a SQLite reopen; the Agent
 accessor). Full `tests/subagents` + SDK + export/layering sweeps green.
+
+## Stage 2 (part): PG-backed `SubagentStore` (DONE)
+
+`PostgresSubagentStore` (`agent_driver/subagents/postgres_store.py`) puts durable subagent
+run/group state on the **same Postgres control plane** as the approval / abort / plan-artifact
+stores (it reuses `_PostgresControlStoreBase` from `runtime/control/postgres.py`) — the
+substrate the epic targets for unifying the fragmented subagent stacks, instead of the
+per-process SQLite backend. It implements the full `SubagentStore` protocol, including
+Stage-1's `find_run_by_child_run_id` (an indexed `child_run_id` column + `WHERE child_run_id
+= …`, resolving across process restarts) and the idempotency-key row reuse. `psycopg` (v3) is
+imported lazily via the shared base, so importing the module is free without the
+`agent-driver[postgres]` extra. Drop-in for `RunnerConfig.subagent_store`. **Live-verified
+against `postgres:16`** (runs/find/idempotency/groups/reopen); the opt-in conformance test
+(`tests/subagents/test_postgres_subagent_store.py`, gated on `AGENT_DRIVER_RUN_POSTGRES_TESTS`)
+plus an offline protocol-surface test cover it.
 
 ## Deferred (the rest of the L)
 

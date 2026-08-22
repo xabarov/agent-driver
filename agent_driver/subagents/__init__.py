@@ -27,6 +27,7 @@ from agent_driver.subagents.status import (
     build_subagent_status_snapshot,
     collect_subagent_mailbox,
 )
+from agent_driver.subagents.postgres_store import PostgresSubagentStore
 from agent_driver.subagents.store import (
     InMemorySubagentStore,
     SqliteSubagentStore,
@@ -44,6 +45,7 @@ from agent_driver.subagents.workers import (
 __all__ = [
     "InMemorySubagentStore",
     "InMemorySubagentMailboxStore",
+    "PostgresSubagentStore",
     "SqliteSubagentStore",
     "SqliteSubagentMailboxStore",
     "SubagentMailboxStore",

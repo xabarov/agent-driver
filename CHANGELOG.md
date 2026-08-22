@@ -9,6 +9,18 @@ change between minor versions.
 
 ### Added
 
+- **Postgres-backed SubagentStore (opencode-adoption EPIC-11, Stage 2).**
+  `agent_driver.subagents.PostgresSubagentStore` puts durable subagent run/group state on
+  the same Postgres control plane as the approval / abort / plan-artifact stores (reusing
+  `_PostgresControlStoreBase`), instead of the per-process SQLite backend. It implements the
+  full `SubagentStore` protocol — including Stage-1's `find_run_by_child_run_id` (an indexed
+  `child_run_id` column, resolving across process restarts) and idempotency-key row reuse —
+  so it is a drop-in for `RunnerConfig.subagent_store`. `psycopg` is imported lazily, so the
+  module imports without the `agent-driver[postgres]` extra. Live-verified against
+  `postgres:16`; the opt-in conformance test is gated on `AGENT_DRIVER_RUN_POSTGRES_TESTS`,
+  with an offline protocol-surface test in the default sweep. The `resume_subagent`
+  checkpoint-replay execution and fg→bg promote / running-child extend remain deferred. See
+  `docs/epics/opencode-adoption/EPIC-11-durable-subagent-identity.md`.
 - **MCP client completion — OAuth2+PKCE, ACP wiring, tools/list_changed (opencode-adoption
   EPIC-06).** Closes out the outward MCP client. (1) OAuth 2.0 + PKCE helpers
   (`agent_driver.tools.mcp_client.oauth`): `generate_pkce_pair` (S256),
