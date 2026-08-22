@@ -9,6 +9,16 @@ change between minor versions.
 
 ### Added
 
+- **Addressable durable subagent identity (opencode-adoption EPIC-11, Stage 1).** The
+  runtime already persisted every spawned child as a `SubagentRun` (carrying its
+  `child_run_id` = the child agent's real run id) in the SQLite-capable `SubagentStore`,
+  but a child was only addressable by parent (`list_runs`). New
+  `SubagentStore.find_run_by_child_run_id(child_run_id)` (Protocol + `InMemorySubagentStore`
+  scan + `SqliteSubagentStore` JSON1 `json_extract`, resolving across process restarts) +
+  `Agent.find_subagent_run(child_run_id)` SDK read accessor make a child addressable by its
+  own durable id — the foundation for resume. Stage 2 (`resume_subagent`), a PG-backed
+  `SubagentStore`, and fg→bg promote / running-child extend are deferred follow-ons. See
+  `docs/epics/opencode-adoption/EPIC-11-durable-subagent-identity.md`.
 - **Emergency payload strip on context-overflow retry (opencode-adoption EPIC-10).** The
   reactive-overflow path (`is_context_window_error` + `_overflow_recovery`) already
   force-compacted and rebuilt on a `context_length_exceeded`/413-class error, but a single

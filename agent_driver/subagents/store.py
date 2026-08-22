@@ -22,6 +22,13 @@ class SubagentStore(Protocol):  # pylint: disable=too-few-public-methods
     ) -> SubagentRun: ...
     def list_runs(self, parent_run_id: str) -> list[SubagentRun]: ...
 
+    # opencode-adoption EPIC-11 (Stage 1): address a persisted child by its durable
+    # ``child_run_id`` — the runtime run_id assigned to the child agent's run — across
+    # process restarts, without knowing the parent. Returns None when unknown.
+    def find_run_by_child_run_id(
+        self, child_run_id: str
+    ) -> SubagentRun | None: ...
+
 
 @dataclass(slots=True)
 class InMemorySubagentStore:
@@ -72,6 +79,16 @@ class InMemorySubagentStore:
     def list_runs(self, parent_run_id: str) -> list[SubagentRun]:
         """List child run rows by parent run."""
         return list(self._runs_by_parent.get(parent_run_id, []))
+
+    def find_run_by_child_run_id(self, child_run_id: str) -> SubagentRun | None:
+        """Locate a persisted child run by its durable ``child_run_id`` (EPIC-11)."""
+        if not child_run_id:
+            return None
+        for rows in self._runs_by_parent.values():
+            for run in rows:
+                if run.child_run_id == child_run_id:
+                    return run
+        return None
 
 
 class SqliteSubagentStore:
@@ -182,6 +199,37 @@ class SqliteSubagentStore:
                 (parent_run_id,),
             ).fetchall()
         return [SubagentRun.model_validate_json(row["payload"]) for row in rows]
+
+    def find_run_by_child_run_id(self, child_run_id: str) -> SubagentRun | None:
+        """Locate a persisted child run by its durable ``child_run_id`` (EPIC-11).
+
+        Uses SQLite JSON1 ``json_extract`` on the payload; falls back to a Python scan
+        if JSON1 is unavailable in the build. child_run_id is not a table column, so this
+        is O(rows) — acceptable for the rare resume/lookup path.
+        """
+        if not child_run_id:
+            return None
+        with self._connect() as conn:
+            try:
+                row = conn.execute(
+                    """
+                    SELECT payload FROM subagent_runs
+                    WHERE json_extract(payload, '$.child_run_id') = ?
+                    LIMIT 1
+                    """,
+                    (child_run_id,),
+                ).fetchone()
+                if row is not None:
+                    return SubagentRun.model_validate_json(row["payload"])
+                return None
+            except sqlite3.OperationalError:
+                # JSON1 not compiled in — fall back to a full scan.
+                rows = conn.execute("SELECT payload FROM subagent_runs").fetchall()
+        for row in rows:
+            run = SubagentRun.model_validate_json(row["payload"])
+            if run.child_run_id == child_run_id:
+                return run
+        return None
 
 
 __all__ = ["InMemorySubagentStore", "SqliteSubagentStore", "SubagentStore"]
