@@ -126,7 +126,7 @@ def normalize_call_result(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _make_handler(client: StdioMcpClient, tool_name: str) -> ToolHandler:
+def _make_handler(client: Any, tool_name: str) -> ToolHandler:
     async def _handler(args: dict[str, Any]) -> dict[str, Any]:
         result = await client.call_tool(tool_name, args)
         return normalize_call_result(result)
@@ -134,38 +134,68 @@ def _make_handler(client: StdioMcpClient, tool_name: str) -> ToolHandler:
     return _handler
 
 
-async def register_stdio_mcp_server(
-    registry: Any, config: StdioServerConfig
+async def register_mcp_client(
+    registry: Any, client: Any, *, server_id: str, tool_allowlist: Any = None
 ) -> McpRegistration:
-    """Connect, discover, and register a stdio MCP server's tools into ``registry``.
+    """Transport-agnostic core: connect ``client``, discover its tools, and register each
+    as a governed namespaced ToolManifest into ``registry``.
 
-    Honors ``config.tool_allowlist`` (``None`` registers all discovered tools). On any
-    failure during connect/discovery the client is closed before the error propagates so
-    a half-open subprocess is never leaked.
+    Works with any client exposing ``start()``/``list_tools()``/``call_tool()``/
+    ``server_info``/``aclose()`` (stdio or HTTP). Honors ``tool_allowlist`` (``None`` =
+    all). On any connect/discovery failure the client is closed before the error
+    propagates so a half-open connection/subprocess is never leaked. The caller owns the
+    returned client's lifecycle.
     """
-    client = StdioMcpClient(config)
     try:
         await client.start()
         discovered = await client.list_tools()
     except BaseException:
         await client.aclose()
         raise
-    allow = config.tool_allowlist
     registered: list[str] = []
     for descriptor in discovered:
         tool_name = str(descriptor.get("name") or "").strip()
         if not tool_name:
             continue
-        if allow is not None and tool_name not in allow:
+        if tool_allowlist is not None and tool_name not in tool_allowlist:
             continue
-        manifest = _tool_manifest(config.server_id, descriptor)
+        manifest = _tool_manifest(server_id, descriptor)
         registry.register(manifest, _make_handler(client, tool_name))
         registered.append(manifest.name)
     return McpRegistration(
-        server_id=config.server_id,
+        server_id=server_id,
         client=client,
         tool_names=tuple(registered),
         server_info=client.server_info,
+    )
+
+
+async def register_stdio_mcp_server(
+    registry: Any, config: StdioServerConfig
+) -> McpRegistration:
+    """Connect, discover, and register a **stdio** MCP server's tools into ``registry``."""
+    return await register_mcp_client(
+        registry,
+        StdioMcpClient(config),
+        server_id=config.server_id,
+        tool_allowlist=config.tool_allowlist,
+    )
+
+
+async def register_http_mcp_server(registry: Any, config: Any) -> McpRegistration:
+    """Connect, discover, and register a **streamable-HTTP** MCP server's tools.
+
+    ``config`` is an :class:`~agent_driver.tools.mcp_client.config.HttpServerConfig`.
+    Imported lazily so the HTTP client (and its ``httpx`` use) is only loaded when a host
+    actually wires an HTTP server.
+    """
+    from agent_driver.tools.mcp_client.http_client import HttpMcpClient  # noqa: PLC0415
+
+    return await register_mcp_client(
+        registry,
+        HttpMcpClient(config),
+        server_id=config.server_id,
+        tool_allowlist=config.tool_allowlist,
     )
 
 
@@ -173,5 +203,7 @@ __all__ = [
     "McpRegistration",
     "namespaced_tool_name",
     "normalize_call_result",
+    "register_http_mcp_server",
+    "register_mcp_client",
     "register_stdio_mcp_server",
 ]

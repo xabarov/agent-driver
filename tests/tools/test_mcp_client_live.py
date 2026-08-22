@@ -12,12 +12,15 @@ server's tools are named ``get-sum``, ``get-tiny-image``, …).
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 
 import pytest
 
 from agent_driver.tools import ToolRegistry
 from agent_driver.tools.mcp_client import (
+    HttpMcpClient,
+    HttpServerConfig,
     StdioMcpClient,
     StdioServerConfig,
     namespaced_tool_name,
@@ -79,3 +82,68 @@ async def test_live_reference_server_registers_governed_tools() -> None:
         assert entry.manifest.metadata["descriptor_provenance"]["tool_name"] == "get-sum"
     finally:
         await registration.client.aclose()
+
+
+# -- streamable-HTTP transport (EPIC-06 HTTP follow-on) -------------------------
+
+_HTTP_PORT = 3001
+_HTTP_URL = f"http://localhost:{_HTTP_PORT}/mcp"
+
+
+async def _wait_http_ready(timeout_s: float = 60.0) -> None:
+    """Poll the MCP endpoint until an initialize handshake succeeds."""
+    deadline_steps = int(timeout_s / 0.5)
+    for _ in range(deadline_steps):
+        client = HttpMcpClient(HttpServerConfig(server_id="probe", url=_HTTP_URL))
+        try:
+            await client.start()
+            await client.aclose()
+            return
+        except Exception:  # noqa: BLE001 - server not up yet
+            await client.aclose()
+            await asyncio.sleep(0.5)
+    raise TimeoutError("reference streamableHttp server did not become ready")
+
+
+@pytest.mark.skipif(shutil.which("npx") is None, reason="npx (node) is not available")
+@pytest.mark.asyncio
+async def test_live_reference_server_http_end_to_end() -> None:
+    proc = await asyncio.create_subprocess_exec(
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-everything",
+        "streamableHttp",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        await _wait_http_ready()
+        config = HttpServerConfig(server_id="everything", url=_HTTP_URL)
+        async with HttpMcpClient(config) as client:
+            assert "everything" in str(client.server_info.get("name", "")).lower()
+            names = {t.get("name") for t in await client.list_tools()}
+            assert "echo" in names and "get-sum" in names
+            summed = await client.call_tool("get-sum", {"a": 40, "b": 2})
+            assert "42" in "".join(
+                b.get("text", "")
+                for b in summed["content"]
+                if b.get("type") == "text"
+            )
+
+        registry = ToolRegistry()
+        from agent_driver.tools.mcp_client import register_http_mcp_server
+
+        reg = await register_http_mcp_server(registry, config)
+        try:
+            entry = registry.get(namespaced_tool_name("everything", "get-sum"))
+            out = await entry.handler({"a": 7, "b": 5})
+            assert out["is_error"] is False and "12" in out["text"]
+        finally:
+            await reg.client.aclose()
+    finally:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()

@@ -1,6 +1,7 @@
 # EPIC-06 — Real outward MCP client (M)
 
-Status: **stdio slice DONE (2026-08-22); HTTP/SSE + OAuth deferred.** Track:
+Status: **stdio + streamable-HTTP DONE (2026-08-22), both live-verified; OAuth deferred.**
+Track:
 [opencode-adoption](README.md). Source idea: opencode ships a real outward MCP client
 (stdio + streamable-HTTP + SSE, OAuth2+PKCE); ours was the single biggest concrete
 capability gap — `tools/builtin/mcp.py` is a **readonly fixtures stub** that echoes static
@@ -43,17 +44,34 @@ allowlist filtering, and bad-command transport error. Import-layering guard (EPI
 export snapshot, and the full `tests/tools` sweep stay green. New subpackage is
 auto-discovered by `packages.find` (no packaging change).
 
-## Deferred (the rest of the M)
+## streamable-HTTP transport (follow-on, DONE)
 
-- **HTTP / streamable-HTTP / SSE transports.** Need an HTTP client (httpx or the Python
-  `mcp` SDK, which is **not currently a dependency**) and a live server to test against —
-  out of reach in this environment. `McpServerDescriptor.transport` already reserves
-  `"http"`/`"sse"`. When added, keep the same `McpClient` protocol shape and registrar so
-  only the transport swaps. Likely an **optional extra** (`agent-driver[mcp]`) so the core
-  stays dependency-free.
-- **OAuth2 + PKCE + dynamic registration.** Bearer/header auth first, interactive OAuth
-  second; pairs with the deepseek-track credential-reference seam (see the survey). The
-  legacy `mcp_auth` fixture tool documents the intended shape.
+`HttpMcpClient` (`http_client.py`) speaks JSON-RPC 2.0 over the MCP **streamable-HTTP**
+transport using **`httpx`** (already a project dependency — no new dep, no `mcp` SDK): each
+request is an HTTP POST of one JSON-RPC message to the server's single endpoint; the server
+answers with `application/json` or `text/event-stream` (SSE), both parsed. It captures the
+`Mcp-Session-Id` returned by the initialize handshake and echoes it (plus the negotiated
+`MCP-Protocol-Version`) on every later request; notifications post and ignore the 202. It
+exposes the **same surface** as `StdioMcpClient`, so the registrar was refactored into a
+transport-agnostic `register_mcp_client(registry, client, …)` core with thin
+`register_stdio_mcp_server` / `register_http_mcp_server` wrappers. `HttpServerConfig`
+(`server_id`, `url`, `headers` for bearer/auth, `tool_allowlist`, timeouts, `verify_tls`)
+carries no credential logic. `HttpMcpClient(config, httpx_client=…)` is a test seam for an
+`httpx.MockTransport`.
+
+**Live-verified** end-to-end against `@modelcontextprotocol/server-everything streamableHttp`
+(session-id capture, 13-tool discovery, `get-sum`/`echo` calls, resources, registrar). Tests:
+`tests/tools/test_mcp_http_client.py` (offline via `MockTransport` — SSE parse, session
+header echo, id matching, error mapping, registration) + a `live` case in
+`test_mcp_client_live.py` (spawns the reference server in `streamableHttp` mode).
+
+## Deferred (remaining)
+
+- **OAuth2 + PKCE + dynamic registration.** Bearer/header auth is already supported via
+  `HttpServerConfig.headers`; interactive OAuth (authorization-code + PKCE, dynamic client
+  registration) is the remaining piece — it pairs with the deepseek-track
+  credential-reference seam (see the survey). The legacy `mcp_auth` fixture tool documents
+  the intended shape.
 - **Config-driven server list + ACP `mcp_servers` wiring.** A `RunnerConfig`/SDK seam that
   connects a declared server list at agent build time and wires the currently-ignored ACP
   `mcp_servers` param. Deferred so the transport work lands first; hosts can already call

@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Added
 
+- **Streamable-HTTP MCP transport (opencode-adoption EPIC-06 follow-on).** New
+  `HttpMcpClient` speaks JSON-RPC 2.0 over the MCP streamable-HTTP transport using `httpx`
+  (already a dependency — no `mcp` SDK, no new dep): POSTs each request to the server's
+  single endpoint, parses both `application/json` and `text/event-stream` (SSE) replies,
+  captures/echoes the `Mcp-Session-Id` from the initialize handshake plus the negotiated
+  `MCP-Protocol-Version`. It shares the stdio client's surface, so the registrar was
+  refactored into a transport-agnostic `register_mcp_client` core with thin
+  `register_stdio_mcp_server` / `register_http_mcp_server` wrappers. New `HttpServerConfig`
+  (`url`, `headers` for bearer/auth, `tool_allowlist`, timeouts, `verify_tls`); bearer/
+  header auth works today, interactive OAuth2+PKCE is the remaining deferred piece.
+  Live-verified against `@modelcontextprotocol/server-everything streamableHttp`; offline
+  tests drive it via `httpx.MockTransport`. See
+  `docs/epics/opencode-adoption/EPIC-06-mcp-client.md`.
 - **Addressable durable subagent identity (opencode-adoption EPIC-11, Stage 1).** The
   runtime already persisted every spawned child as a `SubagentRun` (carrying its
   `child_run_id` = the child agent's real run id) in the SQLite-capable `SubagentStore`,
