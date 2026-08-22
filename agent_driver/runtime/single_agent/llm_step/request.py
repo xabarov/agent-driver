@@ -467,6 +467,9 @@ def build_trimmed_request(
             ),
             tool_defer_mode=host._config.capabilities.tool_defer_mode,
             tool_defer_threshold_pct=host._config.capabilities.tool_defer_threshold_pct,
+            tool_defer_disclosure_budget_tokens=(
+                host._config.capabilities.tool_defer_disclosure_budget_tokens
+            ),
             model_role_map=host._config.capabilities.model_role_map,
             model_router=host._config.capabilities.model_router,
             step_index=context.llm_step_count,

@@ -73,6 +73,7 @@ def test_capability_settings_field_snapshot() -> None:
         "model_router",
         "tool_defer_mode",
         "tool_defer_threshold_pct",
+        "tool_defer_disclosure_budget_tokens",
         "per_turn_output_budget_chars",
         "aux_idle_timeout_seconds",
     }

@@ -87,6 +87,10 @@ class LlmRequestBuildContext:
     # "on" always defers (historical); "off" never defers.
     tool_defer_mode: str = "on"
     tool_defer_threshold_pct: float = 10.0
+    # EPIC-09: >0 enables progressive disclosure — when deferral activates, inline a
+    # round-robin-across-namespace slice up to this many schema tokens instead of
+    # surfacing nothing. 0 keeps the historical all-or-nothing behaviour.
+    tool_defer_disclosure_budget_tokens: int = 0
     # R2: role → model map (from CapabilitySettings). Resolves ``run_input.model_role``
     # to a model when no ``forced_model`` is set. Empty = model_role stays inert.
     model_role_map: Mapping[str, str] = field(default_factory=dict)
@@ -245,6 +249,49 @@ def _request_tools_from_registry(
     return schemas
 
 
+def _tool_namespace(name: str) -> str:
+    """Namespace bucket for round-robin disclosure fairness.
+
+    ``mcp__server__tool`` -> ``"mcp__server"``; ``a__b`` -> ``"a"``; a plain builtin
+    name -> ``""`` (the default bucket). Keeps one big MCP server from crowding every
+    other namespace out of the inlined slice.
+    """
+    return name.rsplit("__", 1)[0] if "__" in name else ""
+
+
+def _round_robin_disclosure(
+    candidates: list[Any],
+    per_tool_tokens: dict[str, int],
+    *,
+    budget_tokens: int,
+) -> tuple[list[str], int]:
+    """Pick a namespace-fair slice of ``candidates`` that fits ``budget_tokens``.
+
+    Groups by namespace (insertion order preserved) and fills round-robin by rank, so
+    every namespace is offered a tool before any gets a second. A candidate that would
+    overflow the budget is skipped (a smaller one from another namespace may still fit).
+    Returns ``(surfaced_names, tokens_used)``.
+    """
+    from collections import OrderedDict
+
+    buckets: "OrderedDict[str, list[Any]]" = OrderedDict()
+    for manifest in candidates:
+        buckets.setdefault(_tool_namespace(manifest.name), []).append(manifest)
+    surfaced: list[str] = []
+    used = 0
+    max_rank = max((len(items) for items in buckets.values()), default=0)
+    for rank in range(max_rank):
+        for items in buckets.values():
+            if rank >= len(items):
+                continue
+            manifest = items[rank]
+            cost = max(0, int(per_tool_tokens.get(manifest.name, 0)))
+            if used + cost <= budget_tokens:
+                surfaced.append(manifest.name)
+                used += cost
+    return surfaced, used
+
+
 def adaptive_defer_surface(
     registry: Any | None,
     *,
@@ -254,15 +301,21 @@ def adaptive_defer_surface(
     context_window: int | None,
     mode: str,
     threshold_pct: float,
+    disclosure_budget_tokens: int = 0,
 ) -> tuple[tuple[str, ...], dict[str, Any]]:
     """Epic 033 A: decide which deferred candidates to force-surface this step.
 
     ``should_defer`` marks a *candidate*; this applies the hermes ``should_activate``
     threshold. When the candidate schemas stay under the window fraction, their names
     are returned to be surfaced (deferral is a no-op — cheaper inline than a
-    ``tool_search`` round-trip); at/above the threshold nothing extra is surfaced and
-    they defer as before. Returns ``(names_to_surface, audit)``; audit is raw-free
-    counts for observability.
+    ``tool_search`` round-trip); at/above the threshold they defer.
+
+    opencode-adoption EPIC-09 (progressive disclosure): when deferral activates AND
+    ``disclosure_budget_tokens > 0``, instead of surfacing *nothing* we inline a
+    **token-budgeted, round-robin-across-namespace** slice (a fair teaser of every
+    namespace) and defer only the tail to ``tool_search``. ``0`` (default) keeps the
+    historical all-or-nothing behaviour. Returns ``(names_to_surface, audit)``; audit is
+    raw-free counts for observability.
     """
     from agent_driver.tools.defer_policy import (
         estimate_schema_tokens,
@@ -305,6 +358,26 @@ def adaptive_defer_surface(
         "mode": mode,
     }
     if activate:
+        if disclosure_budget_tokens > 0:
+            # EPIC-09: inline a namespace-fair, token-budgeted slice instead of nothing.
+            per_tool_tokens = {
+                m.name: estimate_schema_tokens([schema])
+                for m, schema in zip(candidates, candidate_schemas)
+            }
+            surfaced_names, used = _round_robin_disclosure(
+                candidates, per_tool_tokens, budget_tokens=disclosure_budget_tokens
+            )
+            audit.update(
+                {
+                    "disclosure_mode": "round_robin",
+                    "disclosure_budget_tokens": disclosure_budget_tokens,
+                    "surfaced_count": len(surfaced_names),
+                    "deferred_count": len(candidates) - len(surfaced_names),
+                    "disclosure_tokens_used": used,
+                    "deferred_tokens_saved": max(0, candidate_tokens - used),
+                }
+            )
+            return tuple(surfaced_names), audit
         # Defer: surface nothing extra; candidates are omitted + the est. tokens
         # they'd have cost inline are the savings.
         audit["deferred_tokens_saved"] = candidate_tokens
@@ -492,6 +565,7 @@ def _resolve_request_tools_and_metadata(
         context_window=ctx.context_window_estimate,
         mode=ctx.tool_defer_mode,
         threshold_pct=ctx.tool_defer_threshold_pct,
+        disclosure_budget_tokens=ctx.tool_defer_disclosure_budget_tokens,
     )
     from agent_driver.tools.context import get_capability_snapshot
 

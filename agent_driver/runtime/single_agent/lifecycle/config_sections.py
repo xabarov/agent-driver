@@ -70,6 +70,12 @@ class CapabilitySettings:
     # never defers. Inert when no tool is marked ``should_defer``.
     tool_defer_mode: str = "auto"
     tool_defer_threshold_pct: float = 10.0
+    # opencode-adoption EPIC-09 (progressive disclosure). When deferral activates and
+    # this is > 0, inline a round-robin-across-namespace slice of the deferred
+    # candidates up to this many schema tokens (a fair teaser of every namespace)
+    # instead of surfacing nothing; the tail stays discoverable via ``tool_search``.
+    # 0 (default) keeps the historical all-or-nothing deferral — behaviour-neutral.
+    tool_defer_disclosure_budget_tokens: int = 0
     # Epic 033 B (tier 3): aggregate per-turn tool-output budget in chars. When a
     # turn's combined tool summaries exceed it, the largest are trimmed (safe_preview
     # + omission marker) until under budget. None/0 = off (historical behaviour).

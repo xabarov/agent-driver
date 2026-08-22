@@ -9,6 +9,16 @@ change between minor versions.
 
 ### Added
 
+- **Progressive tool-catalog disclosure (opencode-adoption EPIC-09).** `adaptive_defer_surface`
+  gains an opt-in `disclosure_budget_tokens`: when deferral activates on a big tool/MCP
+  catalog, instead of surfacing nothing it inlines a **token-budgeted, round-robin-across-
+  namespace** slice (a fair teaser of every namespace — `mcp__server` buckets) via the new
+  `_round_robin_disclosure`, and the tail stays discoverable through the existing
+  `tool_search` tool. New `CapabilitySettings.tool_defer_disclosure_budget_tokens` (default
+  **0** → the historical all-or-nothing deferral, behaviour-neutral). Captures ~80% of
+  code-as-action's prompt economy with zero sandbox risk; `batch_tool_call` intentionally not
+  added (`run_subagent_group` already covers fan-out). See
+  `docs/epics/opencode-adoption/EPIC-09-progressive-disclosure.md`.
 - **Live tool-result pruner (opencode-adoption EPIC-08).** Promotes the existing
   `ToolResultPruner` to a live pre-pass (`_apply_live_tool_result_prune`) that runs in
   `apply_compaction_if_eligible` **independently of `enable_compaction`** — like the
