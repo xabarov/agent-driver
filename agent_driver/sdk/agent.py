@@ -348,6 +348,21 @@ class Agent:  # pylint: disable=too-many-public-methods
             for event in self._runner.deps.event_log.list_for_run(run_id)
         )
 
+    def find_subagent_run(self, child_run_id: str):
+        """Locate a persisted subagent run by its durable ``child_run_id`` (EPIC-11).
+
+        The runtime records every spawned child in the configured ``subagent_store``
+        (SQLite/PG-durable) keyed by the ``child_run_id`` assigned to the child agent's
+        run. This read accessor addresses one by that id across process restarts —
+        returning its status/result/parent linkage — the durable-identity foundation the
+        resume flow (Stage 2) builds on. Returns ``None`` when unknown.
+        """
+        store = self._runner.deps.subagent_store
+        finder = getattr(store, "find_run_by_child_run_id", None)
+        if not callable(finder):
+            return None
+        return finder(child_run_id)
+
     def _emit_control_event(
         self,
         *,
