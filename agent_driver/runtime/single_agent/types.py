@@ -436,6 +436,14 @@ class RunnerConfig:
     def live_tool_prune_min_chars(self) -> int:
         return self.compaction.live_tool_prune_min_chars
 
+    @property
+    def overflow_emergency_strip_enabled(self) -> bool:
+        return self.compaction.overflow_emergency_strip_enabled
+
+    @property
+    def overflow_strip_max_message_chars(self) -> int:
+        return self.compaction.overflow_strip_max_message_chars
+
     # Capability delegating accessors (grouped in CapabilitySettings; kept as
     # top-level properties so existing readers/callers are unchanged).
     @property

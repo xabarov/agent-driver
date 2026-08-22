@@ -9,6 +9,19 @@ change between minor versions.
 
 ### Added
 
+- **Emergency payload strip on context-overflow retry (opencode-adoption EPIC-10).** The
+  reactive-overflow path (`is_context_window_error` + `_overflow_recovery`) already
+  force-compacted and rebuilt on a `context_length_exceeded`/413-class error, but a single
+  retry may not free enough when `enable_compaction=False` and the bulk is a large/media
+  payload. New pure `emergency_strip_oversized_payloads` (in `context_window_recovery`)
+  wholesale-clears OLD tool results (keeping the newest, default 1) and hard-caps any
+  remaining oversized message — a giant tool result or an embedded base64 blob/media in a
+  user turn — to its head plus a dropped-count marker; idempotent, `tool_call_id` pairing
+  preserved. Wired into `_overflow_recovery` on the **rebuilt** request, gated by
+  `RunnerConfig.overflow_emergency_strip_enabled` (default **True** — fires only on an
+  actual overflow) with `overflow_strip_max_message_chars` (20k). Emits the typed
+  `context_overflow_emergency_strip` audit. Mirrors opencode's `overflow.ts`. See
+  `docs/epics/opencode-adoption/EPIC-10-overflow-emergency-strip.md`.
 - **Progressive tool-catalog disclosure (opencode-adoption EPIC-09).** `adaptive_defer_surface`
   gains an opt-in `disclosure_budget_tokens`: when deferral activates on a big tool/MCP
   catalog, instead of surfacing nothing it inlines a **token-budgeted, round-robin-across-

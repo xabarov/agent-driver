@@ -162,8 +162,73 @@ def should_escalate(metadata: dict[str, Any]) -> bool:
     return reactive_compaction_count(metadata) >= REACTIVE_COMPACTION_MAX_ATTEMPTS
 
 
+# opencode-adoption EPIC-10: emergency payload strip (opencode `overflow.ts`). Markers
+# for the two strip modes, kept short so the shrink is maximal.
+_OVERFLOW_CLEARED_MARKER = "[Old tool result cleared — context overflow]"
+_OVERFLOW_TRUNCATION_SENTINEL = "chars dropped — context overflow]"
+_OVERFLOW_TRUNCATION_SUFFIX = "\n…[{dropped} " + _OVERFLOW_TRUNCATION_SENTINEL
+
+
+def emergency_strip_oversized_payloads(
+    messages: "list[Any]",
+    *,
+    keep_recent_tool_results: int = 1,
+    max_message_chars: int = 20_000,
+) -> "tuple[list[Any], dict[str, Any]]":
+    """Last-resort, aggressive strip for the context-overflow retry (opencode overflow).
+
+    More aggressive than the graduated pre-passes because the prompt is *already* over
+    the provider's hard window: wholesale-clear the content of OLD tool results (keeping
+    only the newest ``keep_recent_tool_results``), then hard-cap ANY remaining message —
+    tool result or a giant user/assistant turn carrying an embedded blob / base64 media —
+    whose content exceeds ``max_message_chars`` to its head plus a dropped-count marker.
+    Preserves message order and tool_call_id pairing (only ``content`` shrinks). Pure and
+    idempotent; returns ``(messages, audit)``.
+    """
+    from agent_driver.contracts.enums import ChatRole  # noqa: PLC0415
+
+    keep = max(0, keep_recent_tool_results)
+    tool_indices = [
+        i for i, m in enumerate(messages) if getattr(m, "role", None) == ChatRole.TOOL
+    ]
+    clear_indices = set(tool_indices[:-keep]) if keep else set(tool_indices)
+    out = list(messages)
+    cleared = 0
+    truncated = 0
+    chars_saved = 0
+    for idx, msg in enumerate(out):
+        content = getattr(msg, "content", "") or ""
+        if idx in clear_indices:
+            if content == _OVERFLOW_CLEARED_MARKER:
+                continue  # idempotent
+            chars_saved += max(0, len(content) - len(_OVERFLOW_CLEARED_MARKER))
+            out[idx] = msg.model_copy(update={"content": _OVERFLOW_CLEARED_MARKER})
+            cleared += 1
+            continue
+        if (
+            max_message_chars > 0
+            and len(content) > max_message_chars
+            and _OVERFLOW_TRUNCATION_SENTINEL not in content  # idempotent
+        ):
+            dropped = len(content) - max_message_chars
+            suffix = _OVERFLOW_TRUNCATION_SUFFIX.format(dropped=dropped)
+            new_content = content[:max_message_chars] + suffix
+            chars_saved += len(content) - len(new_content)
+            out[idx] = msg.model_copy(update={"content": new_content})
+            truncated += 1
+    audit = {
+        "cleared": cleared,
+        "truncated": truncated,
+        "chars_saved": chars_saved,
+        "keep_recent_tool_results": keep,
+        "max_message_chars": max_message_chars,
+    }
+    return out, audit
+
+
 __all__ = [
     "REACTIVE_COMPACTION_MAX_ATTEMPTS",
+    "emergency_strip_oversized_payloads",
     "is_context_window_error",
     "reactive_compaction_count",
     "record_reactive_compaction",

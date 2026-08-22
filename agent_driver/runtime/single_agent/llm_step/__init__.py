@@ -260,6 +260,27 @@ def _overflow_recovery(
         )
         observations = _microcompact_context_observations(host, context)
         rebuilt, _ = _build_trimmed_request(host, context, observations, clarification)
+        # EPIC-10: last-resort emergency strip on the REBUILT request. The prompt is
+        # genuinely over the provider's hard window, and when LLM compaction is disabled
+        # the graduated pre-passes may not free enough — so aggressively clear old tool
+        # results and hard-cap any oversized message (embedded blob / media) so the
+        # single overflow retry is materially smaller. Runs on the ephemeral request
+        # only; the durable log is untouched.
+        if getattr(host._config, "overflow_emergency_strip_enabled", False):
+            from agent_driver.runtime.single_agent.context_management.context_window_recovery import (  # noqa: PLC0415,E501
+                emergency_strip_oversized_payloads,
+            )
+
+            stripped_messages, strip_audit = emergency_strip_oversized_payloads(
+                list(getattr(rebuilt, "messages", []) or []),
+                max_message_chars=int(
+                    getattr(host._config, "overflow_strip_max_message_chars", 20_000)
+                    or 20_000
+                ),
+            )
+            if strip_audit.get("cleared") or strip_audit.get("truncated"):
+                rebuilt.messages = stripped_messages
+                context.metadata["context_overflow_emergency_strip"] = strip_audit
         return _narrow_request_tools_to_forced_choice(rebuilt)
 
     return _recover
