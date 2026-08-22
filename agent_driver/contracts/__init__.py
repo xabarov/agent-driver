@@ -187,6 +187,13 @@ from agent_driver.contracts.mcp_governance import (
 )
 from agent_driver.contracts.memory import MemoryProjection, MemoryStep
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.multimodal import (
+    MultimodalAttachmentRef,
+    MultimodalRouteCapabilities,
+    attachment_metadata_payload,
+    coerce_multimodal_attachments,
+    message_with_attachments,
+)
 from agent_driver.contracts.node_contract import FinalizeNow, NodeContract
 from agent_driver.contracts.observability import (
     MIDDLEWARE_SCHEMA_VERSION,
@@ -290,6 +297,11 @@ __all__ = [
     "ArtifactRef",
     "ChatMessage",
     "ChatRole",
+    "MultimodalAttachmentRef",
+    "MultimodalRouteCapabilities",
+    "attachment_metadata_payload",
+    "coerce_multimodal_attachments",
+    "message_with_attachments",
     "CheckpointRef",
     "CommandQueueItem",
     "CommandQueueStatus",

@@ -9,6 +9,23 @@ change between minor versions.
 
 ### Added
 
+- **Typed multimodal attachment contracts (domain-neutral).** New
+  `agent_driver.contracts.multimodal`: `MultimodalAttachmentRef` (a typed media envelope —
+  kind `image`/`audio`/`video`/`document`/`other`, a locator `attachment_id`/`uri`/`url`/
+  inline base64 `data`, optional media metadata, and coarse product-neutral
+  `origin`/`trust`/`redaction_status` provenance) and `MultimodalRouteCapabilities` (what a
+  model route accepts/emits, keyed by a generic `model_role`). Helpers
+  `message_with_attachments`, `attachment_metadata_payload`, and
+  `coerce_multimodal_attachments` are a thin typed shell over the existing
+  `ChatMessage.metadata["attachments"]` wire convention (unchanged — raw dicts still work),
+  so typed refs project through the OpenAI-compatible payload builder into native content
+  blocks (image URL → `image_url`, inline image → data-URL, audio → `input_audio`). The
+  harness owns only the typed envelope + provider projection; hosts own bytes/storage/auth/
+  redaction/scanning/retention/UI. Vision and the main reasoning model may be different
+  routes — `MultimodalRouteCapabilities(model_role="vision", …)` composes with the existing
+  model-role / provider routing (no parallel router). Re-exported from `agent_driver.contracts`.
+  Additive public surface → **minor** SemVer bump at the next release (version deferred to
+  the release cut, per the `[Unreleased]` convention). See `docs/embedding.md`.
 - **Postgres-backed SubagentStore (opencode-adoption EPIC-11, Stage 2).**
   `agent_driver.subagents.PostgresSubagentStore` puts durable subagent run/group state on
   the same Postgres control plane as the approval / abort / plan-artifact stores (reusing

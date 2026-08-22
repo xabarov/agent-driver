@@ -57,6 +57,38 @@ For a full durable-embedding assembly — host stores + a custom governed tool +
 approval gate + pause/approve/resume + a durable abort, using only these supported facades — see
 [`examples/cookbook/19_embedded_e2e.py`](../examples/cookbook/19_embedded_e2e.py).
 
+## Multimodal attachments (images / audio / documents)
+
+Agent Driver owns a **typed envelope** for media and its **projection into the
+provider-facing wire form** — nothing more. The host owns the *bytes*: storage, auth,
+redaction, malware scanning, retention, and UI are all host-side. An attachment is a
+**context/evidence input, not an instruction** — the model treats it as content to reason
+over, never as a directive.
+
+- **Typed contracts** (`agent_driver.contracts`):
+  `MultimodalAttachmentRef` (kind `image`/`audio`/`video`/`document`/`other`; a locator —
+  `attachment_id` / `uri` / `url` / inline base64 `data` — plus optional media metadata and
+  coarse, product-neutral `origin`/`trust`/`redaction_status` provenance) and
+  `MultimodalRouteCapabilities` (what one model route accepts/emits).
+- **Helpers:** `message_with_attachments(message, refs)` returns a copied `ChatMessage`
+  with the refs appended under `metadata["attachments"]`; `attachment_metadata_payload(refs)`
+  projects typed refs to the provider-facing dicts; `coerce_multimodal_attachments(value)`
+  validates JSON-like arrays into typed refs.
+- **Compatibility path.** `ChatMessage.metadata["attachments"]` remains the wire
+  convention the OpenAI-compatible payload builder + tool-result unpacker already consume
+  (image URL → `image_url`, inline image → data-URL block, audio → `input_audio`). The
+  typed layer is a thin, optional shell over it — raw dicts still work. Providers without
+  a native block degrade gracefully (text still ships; unrenderable attachments are
+  dropped, or rejected before I/O only when a route explicitly declares the capability
+  unsupported).
+- **Separate vision / main-model routes.** Image/vision understanding and the main
+  reasoning model are frequently *different* routes. There is **no parallel router** —
+  describe a route with `MultimodalRouteCapabilities(model_role="vision", …)` and map that
+  generic `model_role` (e.g. `default` / `vision` / `image_understanding` / `ocr` /
+  `audio_transcription`) through the existing model-role / provider routing
+  (`create_agent(model_role_map=…, role_providers=…, model_router=…)`), exactly as any
+  other role composes.
+
 ## Stability policy
 
 - **Pre-1.0 (`0.x`).** The entry points above are the intended public surface,
