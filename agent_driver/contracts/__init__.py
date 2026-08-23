@@ -188,11 +188,18 @@ from agent_driver.contracts.mcp_governance import (
 from agent_driver.contracts.memory import MemoryProjection, MemoryStep
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.multimodal import (
+    ImageDetail,
     MultimodalAttachmentRef,
+    MultimodalImagePreprocessSettings,
+    MultimodalModelProfile,
+    MultimodalOcrSettings,
     MultimodalRouteCapabilities,
+    OcrMode,
     attachment_metadata_payload,
+    attachment_defaults_for_profile,
     coerce_multimodal_attachments,
     message_with_attachments,
+    multimodal_profile_for_model,
 )
 from agent_driver.contracts.node_contract import FinalizeNow, NodeContract
 from agent_driver.contracts.observability import (
@@ -297,11 +304,18 @@ __all__ = [
     "ArtifactRef",
     "ChatMessage",
     "ChatRole",
+    "ImageDetail",
     "MultimodalAttachmentRef",
+    "MultimodalImagePreprocessSettings",
+    "MultimodalModelProfile",
+    "MultimodalOcrSettings",
     "MultimodalRouteCapabilities",
+    "OcrMode",
     "attachment_metadata_payload",
+    "attachment_defaults_for_profile",
     "coerce_multimodal_attachments",
     "message_with_attachments",
+    "multimodal_profile_for_model",
     "CheckpointRef",
     "CommandQueueItem",
     "CommandQueueStatus",

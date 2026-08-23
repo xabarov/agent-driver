@@ -74,13 +74,20 @@ over, never as a directive.
   with the refs appended under `metadata["attachments"]`; `attachment_metadata_payload(refs)`
   projects typed refs to the provider-facing dicts; `coerce_multimodal_attachments(value)`
   validates JSON-like arrays into typed refs.
+- **OCR / model profiles:** `MultimodalOcrSettings`, `MultimodalImagePreprocessSettings`,
+  and `MultimodalModelProfile` describe generic OCR preferences plus recognized
+  model-specific image limits and provider hints. `multimodal_profile_for_model(provider,
+  model)` returns a neutral fallback for unknown models and known Qwen visual profiles
+  when the route can be identified; `attachment_defaults_for_profile(profile, ocr=True)`
+  produces sendable attachment hints such as `detail="high"` and `max_pixels` for
+  small-text/OCR turns. The harness still does not resize, OCR, fetch, or store bytes.
 - **Compatibility path.** `ChatMessage.metadata["attachments"]` remains the wire
   convention the OpenAI-compatible payload builder + tool-result unpacker already consume
-  (image URL → `image_url`, inline image → data-URL block, audio → `input_audio`). The
-  typed layer is a thin, optional shell over it — raw dicts still work. Providers without
-  a native block degrade gracefully (text still ships; unrenderable attachments are
-  dropped, or rejected before I/O only when a route explicitly declares the capability
-  unsupported).
+  (image URL → `image_url`, inline image → data-URL block, audio → `input_audio`), now
+  preserving optional image `detail` and pixel-bound hints. The typed layer is a thin,
+  optional shell over it — raw dicts still work. Providers without a native block degrade
+  gracefully (text still ships; unrenderable attachments are dropped, or rejected before
+  I/O only when a route explicitly declares the capability unsupported).
 - **Separate vision / main-model routes.** Image/vision understanding and the main
   reasoning model are frequently *different* routes. There is **no parallel router** —
   describe a route with `MultimodalRouteCapabilities(model_role="vision", …)` and map that

@@ -104,8 +104,9 @@ def _normalize_image(raw: dict[str, Any]) -> dict[str, Any] | None:
     # through to the provider as-is; no base64 round-trip. Accept http(s)
     # and data: URLs.
     url = raw.get("url")
+    hints = _normalize_image_hints(raw)
     if isinstance(url, str) and url.startswith(("http://", "https://", "data:")):
-        return {"kind": "image", "url": url}
+        return {"kind": "image", "url": url, **hints}
     mime_type = raw.get("mime_type")
     data = raw.get("data")
     if not isinstance(mime_type, str) or "/" not in mime_type:
@@ -119,7 +120,28 @@ def _normalize_image(raw: dict[str, Any]) -> dict[str, Any] | None:
         # diagnostic marker the caller can log. Returning None signals
         # "skip this entry".
         return None
-    return {"kind": "image", "mime_type": mime_type, "data": data}
+    return {"kind": "image", "mime_type": mime_type, "data": data, **hints}
+
+
+def _normalize_image_hints(raw: dict[str, Any]) -> dict[str, Any]:
+    hints: dict[str, Any] = {}
+    detail = raw.get("detail")
+    if isinstance(detail, str) and detail in {"auto", "low", "high"}:
+        hints["detail"] = detail
+    for key in ("min_pixels", "max_pixels", "resized_width", "resized_height"):
+        value = raw.get(key)
+        if isinstance(value, int) and value > 0:
+            hints[key] = value
+    min_pixels = hints.get("min_pixels")
+    max_pixels = hints.get("max_pixels")
+    if (
+        isinstance(min_pixels, int)
+        and isinstance(max_pixels, int)
+        and min_pixels > max_pixels
+    ):
+        hints.pop("min_pixels", None)
+        hints.pop("max_pixels", None)
+    return hints
 
 
 def _normalize_audio(raw: dict[str, Any]) -> dict[str, Any] | None:
@@ -202,7 +224,24 @@ def build_openai_tool_content_list(
                 mime = attachment["mime_type"]
                 data = attachment["data"]
                 image_url = f"data:{mime};base64,{data}"
-            blocks.append({"type": "image_url", "image_url": {"url": image_url}})
+            image_url_block: dict[str, Any] = {"url": image_url}
+            detail = attachment.get("detail")
+            if isinstance(detail, str) and detail in {"auto", "low", "high"}:
+                image_url_block["detail"] = detail
+            block: dict[str, Any] = {
+                "type": "image_url",
+                "image_url": image_url_block,
+            }
+            for key in (
+                "min_pixels",
+                "max_pixels",
+                "resized_width",
+                "resized_height",
+            ):
+                value = attachment.get(key)
+                if isinstance(value, int) and value > 0:
+                    block[key] = value
+            blocks.append(block)
         elif kind == "audio":
             blocks.append(
                 {

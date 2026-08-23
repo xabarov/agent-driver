@@ -26,6 +26,15 @@ change between minor versions.
   model-role / provider routing (no parallel router). Re-exported from `agent_driver.contracts`.
   Additive public surface → **minor** SemVer bump at the next release (version deferred to
   the release cut, per the `[Unreleased]` convention). See `docs/embedding.md`.
+- **Multimodal OCR and model-profile hints.** Added domain-neutral
+  `MultimodalOcrSettings`, `MultimodalImagePreprocessSettings`, and
+  `MultimodalModelProfile` contracts plus `multimodal_profile_for_model()` and
+  `attachment_defaults_for_profile()`. The first profile table covers Qwen visual routes
+  such as `qwen/qwen3-vl-235b-a22b-*`, `qwen/qwen3.8-*`, and `qwen/qwen3.7-plus`, while
+  keeping unknown models neutral and known text-only Qwen Max routes non-visual. OpenAI-
+  compatible attachment projection preserves `detail` and pixel-bound hints so hosts can
+  request high-resolution/OCR-friendly image handling without Agent Driver owning bytes,
+  storage, redaction, or product-specific OCR semantics.
 - **Postgres-backed SubagentStore (opencode-adoption EPIC-11, Stage 2).**
   `agent_driver.subagents.PostgresSubagentStore` puts durable subagent run/group state on
   the same Postgres control plane as the approval / abort / plan-artifact stores (reusing

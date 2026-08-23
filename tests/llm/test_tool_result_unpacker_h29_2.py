@@ -21,8 +21,6 @@ from __future__ import annotations
 
 import base64
 
-import pytest
-
 from agent_driver.contracts.messages import ChatMessage, ChatRole
 from agent_driver.llm.contracts import LlmRequest
 from agent_driver.llm.providers_impl.openai_compatible import OpenAICompatibleProvider
@@ -192,6 +190,31 @@ def test_build_assembles_text_then_image_blocks():
     assert out[0] == {"type": "text", "text": '{"summary": "screenshot"}'}
     assert out[1]["type"] == "image_url"
     assert out[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_build_preserves_image_detail_and_pixel_hints():
+    out = build_openai_tool_content_list(
+        "read small UI text",
+        [
+            {
+                **_image_attachment(),
+                "detail": "high",
+                "min_pixels": 1024,
+                "max_pixels": 16_777_216,
+                "resized_width": 1280,
+                "resized_height": 720,
+            }
+        ],
+    )
+
+    assert out is not None
+    image = out[1]
+    assert image["type"] == "image_url"
+    assert image["image_url"]["detail"] == "high"
+    assert image["min_pixels"] == 1024
+    assert image["max_pixels"] == 16_777_216
+    assert image["resized_width"] == 1280
+    assert image["resized_height"] == 720
 
 
 def test_build_with_multiple_images():

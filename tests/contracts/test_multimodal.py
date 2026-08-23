@@ -8,10 +8,12 @@ from pydantic import ValidationError
 from agent_driver.contracts import (
     ChatMessage,
     MultimodalAttachmentRef,
+    attachment_defaults_for_profile,
     MultimodalRouteCapabilities,
     attachment_metadata_payload,
     coerce_multimodal_attachments,
     message_with_attachments,
+    multimodal_profile_for_model,
 )
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.llm.contracts import LlmRequest
@@ -89,7 +91,13 @@ def test_ref_metadata_must_be_json_safe() -> None:
 
 def test_attachment_metadata_payload_projects_minimal_wire() -> None:
     refs = [
-        MultimodalAttachmentRef(kind="image", url="https://x/y.png", trust="trusted"),
+        MultimodalAttachmentRef(
+            kind="image",
+            url="https://x/y.png",
+            trust="trusted",
+            detail="high",
+            max_pixels=16_777_216,
+        ),
         MultimodalAttachmentRef(kind="image", data=_B64, mime_type="image/png"),
         MultimodalAttachmentRef(kind="audio", data=_B64, format="wav"),
         # only a non-sendable locator -> projects to just {kind}
@@ -97,7 +105,12 @@ def test_attachment_metadata_payload_projects_minimal_wire() -> None:
     ]
     payload = attachment_metadata_payload(refs)
     assert payload == [
-        {"kind": "image", "url": "https://x/y.png"},
+        {
+            "kind": "image",
+            "url": "https://x/y.png",
+            "detail": "high",
+            "max_pixels": 16_777_216,
+        },
         {"kind": "image", "mime_type": "image/png", "data": _B64},
         {"kind": "audio", "data": _B64, "format": "wav"},
         {"kind": "document"},
@@ -174,6 +187,32 @@ def test_openai_payload_projects_inline_image_as_data_url() -> None:
     )
 
 
+def test_openai_payload_projects_image_detail_and_pixel_hints() -> None:
+    msg = message_with_attachments(
+        ChatMessage(role=ChatRole.USER, content="read text", metadata={}),
+        [
+            MultimodalAttachmentRef(
+                kind="image",
+                data=_B64,
+                mime_type="image/png",
+                detail="high",
+                max_pixels=16_777_216,
+            )
+        ],
+    )
+    payload = build_openai_completion_payload(
+        LlmRequest(messages=[msg]),
+        model="qwen/qwen3-vl-235b-a22b-instruct",
+        max_tokens_default=100,
+        extra_body={},
+        stream=False,
+    )
+    block = payload["messages"][0]["content"][1]
+    assert block["type"] == "image_url"
+    assert block["image_url"]["detail"] == "high"
+    assert block["max_pixels"] == 16_777_216
+
+
 # -- MultimodalRouteCapabilities ------------------------------------------------
 
 
@@ -201,15 +240,60 @@ def test_route_capabilities_positive_limits(field) -> None:
         MultimodalRouteCapabilities(**{field: 0})
 
 
+# -- model profiles ------------------------------------------------------------
+
+
+def test_qwen_vl_profile_prefers_high_resolution_ocr() -> None:
+    profile = multimodal_profile_for_model(
+        "openrouter",
+        "qwen/qwen3-vl-235b-a22b-instruct",
+        model_role="image_understanding",
+    )
+
+    assert profile.known_model is True
+    assert profile.capabilities.supports_image_input is True
+    assert profile.capabilities.supports_video_input is False
+    assert profile.capabilities.accepts_data_urls is True
+    assert profile.capabilities.max_attachment_bytes == 10 * 1024 * 1024
+    assert "image/png" in profile.capabilities.accepted_mime_types
+    assert profile.image_preprocessing.preferred_detail == "high"
+    assert profile.image_preprocessing.max_pixels == 16_777_216
+    assert profile.ocr.mode == "prefer"
+    assert profile.provider_extra_body == {"vl_high_resolution_images": True}
+    assert attachment_defaults_for_profile(profile, ocr=True) == {
+        "detail": "high",
+        "max_pixels": 16_777_216,
+    }
+
+
+def test_qwen38_max_profile_is_multimodal_but_qwen3_max_is_text_only() -> None:
+    qwen38 = multimodal_profile_for_model("openrouter", "qwen/qwen3.8-max")
+    qwen3 = multimodal_profile_for_model("openrouter", "qwen/qwen3-max")
+
+    assert qwen38.known_model is True
+    assert qwen38.capabilities.supports_image_input is True
+    assert qwen38.capabilities.supports_video_input is True
+    assert qwen38.capabilities.metadata["context_window_tokens"] == 1_000_000
+
+    assert qwen3.known_model is True
+    assert qwen3.capabilities.supports_image_input is False
+    assert qwen3.profile_id == "qwen3-text-only"
+
+
 def test_public_exports_present() -> None:
     from agent_driver import contracts
 
     for name in (
         "MultimodalAttachmentRef",
+        "MultimodalImagePreprocessSettings",
+        "MultimodalModelProfile",
+        "MultimodalOcrSettings",
         "MultimodalRouteCapabilities",
         "attachment_metadata_payload",
+        "attachment_defaults_for_profile",
         "coerce_multimodal_attachments",
         "message_with_attachments",
+        "multimodal_profile_for_model",
     ):
         assert name in contracts.__all__
         assert hasattr(contracts, name)
