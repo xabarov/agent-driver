@@ -33,8 +33,7 @@ class PostgresSubagentStore(_PostgresControlStoreBase):
         super().__init__(config=config)
 
     def _init_schema(self, cur: Any) -> None:
-        cur.execute(
-            f"""
+        cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {self._table} (
                 subagent_run_id TEXT PRIMARY KEY,
                 parent_run_id TEXT NOT NULL,
@@ -42,31 +41,24 @@ class PostgresSubagentStore(_PostgresControlStoreBase):
                 child_run_id TEXT,
                 payload JSONB NOT NULL
             )
-            """
-        )
-        cur.execute(
-            f"""
+            """)
+        cur.execute(f"""
             CREATE UNIQUE INDEX IF NOT EXISTS subagent_runs_idem_idx
             ON {self._table} (parent_run_id, idempotency_key)
             WHERE idempotency_key IS NOT NULL
-            """
-        )
-        cur.execute(
-            f"""
+            """)
+        cur.execute(f"""
             CREATE INDEX IF NOT EXISTS subagent_runs_child_idx
             ON {self._table} (child_run_id)
             WHERE child_run_id IS NOT NULL
-            """
-        )
-        cur.execute(
-            f"""
+            """)
+        cur.execute(f"""
             CREATE TABLE IF NOT EXISTS {self._groups_table} (
                 group_id TEXT PRIMARY KEY,
                 parent_run_id TEXT NOT NULL,
                 payload JSONB NOT NULL
             )
-            """
-        )
+            """)
 
     # -- groups -----------------------------------------------------------------
 

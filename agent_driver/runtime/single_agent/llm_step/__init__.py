@@ -7,6 +7,10 @@ from typing import Any, Protocol
 
 import httpx
 
+from agent_driver.context.token_estimation import (
+    DEFAULT_CHARS_PER_TOKEN,
+    calibrate_chars_per_token,
+)
 from agent_driver.contracts.control import LiveMessagePhase
 from agent_driver.contracts.enums import (
     RuntimeEventType,
@@ -17,19 +21,15 @@ from agent_driver.llm.payload_debug import (
     debug_llm_payload_enabled,
     summarize_llm_request_payload,
 )
-from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.control.live_messages import (
     live_message_receipt,
     live_message_transition_event,
 )
 from agent_driver.runtime.control.steering_framing import redirect_correction_frame
+from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.lifecycle_hooks import (
     dispatch_after_llm,
     dispatch_before_llm,
-)
-from agent_driver.context.token_estimation import (
-    DEFAULT_CHARS_PER_TOKEN,
-    calibrate_chars_per_token,
 )
 from agent_driver.runtime.metadata_state import (
     StreamingRuntimeState,
@@ -120,6 +120,51 @@ class LlmStepHost(CompactionStageHost, Protocol):
         self, context: RunContext, *, latest_output: Any, node_id: str
     ) -> Any: ...
     def _maybe_fail_after_step(self, step_name: str) -> None: ...
+
+
+def _live_message_terminal_reconciliation(item: Any) -> dict[str, Any]:
+    return {
+        "queue_id": item.queue_id,
+        "requested_semantic": (
+            item.requested_semantic.value
+            if item.requested_semantic is not None
+            else None
+        ),
+        "resolved_semantic": (
+            item.resolved_semantic.value if item.resolved_semantic is not None else None
+        ),
+        "reason_code": item.reason_code,
+    }
+
+
+def _commit_live_message_terminal_on_failure(
+    host: LlmStepHost,
+    context: RunContext,
+) -> None:
+    """Keep live-message admission/readback terminal when provider failure raises."""
+
+    command_store = getattr(host._deps, "command_queue_store", None)
+    commit_terminal = getattr(command_store, "commit_terminal", None)
+    if not callable(commit_terminal):
+        return
+    try:
+        changed = commit_terminal(context.run_id, stopped=False)
+    except Exception as exc:  # pragma: no cover - cleanup must not mask root cause
+        context.metadata["live_message_terminal_reconciliation_error"] = (
+            exc.__class__.__name__
+        )
+        return
+    if changed:
+        for item in changed:
+            emit_step_event(
+                host,
+                context,
+                event_type=live_message_transition_event(item),
+                payload=live_message_receipt(item),
+            )
+        context.metadata["live_message_terminal_reconciliation"] = [
+            _live_message_terminal_reconciliation(item) for item in changed
+        ]
 
 
 _runtime_attachment_messages = runtime_attachment_messages
@@ -329,9 +374,7 @@ def _apply_redirect_correction(
         message.metadata.get("live_message_queue_id") == queue_id
         for message in messages
     ):
-        rebuilt, _ = _build_trimmed_request(
-            host, context, observations, clarification
-        )
+        rebuilt, _ = _build_trimmed_request(host, context, observations, clarification)
         return _narrow_request_tools_to_forced_choice(rebuilt)
     # A4: preserve whatever the model had already streamed before the abort, so the
     # partial answer is not silently discarded — the model sees its own draft, then the
@@ -358,9 +401,7 @@ def _apply_redirect_correction(
     corrected = ChatMessage(
         role=ChatRole.USER,
         content=correction,
-        metadata=(
-            {"live_message_queue_id": queue_id} if queue_id is not None else {}
-        ),
+        metadata=({"live_message_queue_id": queue_id} if queue_id is not None else {}),
     )
     messages.append(corrected)
     frame = redirect_correction_frame()
@@ -451,6 +492,7 @@ def _handle_provider_rejection(
             },
         )
     )
+    _commit_live_message_terminal_on_failure(host, context)
     context.metadata["last_provider_error"] = reason
     context.metadata["last_provider_diagnostics"] = diagnostics
     raise RuntimeExecutionError("LLM completion failed") from exc
@@ -495,6 +537,7 @@ def _recover_or_fail_stream(
             },
         )
     )
+    _commit_live_message_terminal_on_failure(host, context)
     context.metadata["last_provider_error"] = transition_reason
     context.metadata["last_provider_stream_error"] = diagnostics
     raise RuntimeExecutionError("LLM completion failed") from exc

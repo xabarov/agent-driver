@@ -7,6 +7,8 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-09-02
+
 ### Added
 
 - **Typed multimodal attachment contracts (domain-neutral).** New
@@ -197,6 +199,15 @@ change between minor versions.
   result-independent) that trip the guard. Default **2** (behaviour-neutral); set `0`/`1`
   to disable, or raise it (e.g. `3`) for agents that legitimately repeat a call. Seeded
   into run metadata by the tool stage and documented in `docs/runtime-metadata.md`.
+
+### Fixed
+
+- **Provider failures terminalize durable live-message state.** HTTP rejection and
+  unrecoverable stream/fallback failure paths now reconcile an admitted live-message
+  command to its terminal phase before raising the runtime error. Host readback no longer
+  remains in `llm_in_flight` after the run has already failed; reconciliation errors are
+  fail-open diagnostics and never mask the original provider failure. The existing
+  per-step deadline path is regression-covered with the same terminal-state invariant.
 
 ## [0.21.13] - 2026-08-22
 

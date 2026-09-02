@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
 
 from agent_driver.contracts import (
@@ -12,7 +13,9 @@ from agent_driver.contracts import (
     CommandQueueStatus,
     LiveMessagePhase,
     LiveMessageSemantic,
+    RunStatus,
     RuntimeEventType,
+    TerminalReason,
     ToolCall,
 )
 from agent_driver.contracts.usage import UsageSummary
@@ -22,7 +25,9 @@ from agent_driver.runtime import InMemoryCommandQueueStore
 from agent_driver.runtime.single_agent.llm_step.streaming import (
     LlmGenerationSuperseded,
 )
+from agent_driver.runtime.single_agent.types import RunnerConfig
 from agent_driver.sdk import ToolSet, create_agent
+from agent_driver.sdk.errors import ProviderTransportError
 
 
 def _input(run_id: str) -> AgentRunInput:
@@ -152,9 +157,9 @@ async def test_durable_hard_redirect_cancels_only_llm_and_reasks() -> None:
     assert len(provider.requests) == 2
     request_messages = [message.content for message in provider.requests[1].messages]
     correction_index = request_messages.index("urgent correction")
-    assert "Оператор отправил срочную поправку" in request_messages[
-        correction_index - 1
-    ]
+    assert (
+        "Оператор отправил срочную поправку" in request_messages[correction_index - 1]
+    )
     assert receipt is not None
     assert receipt.status is CommandQueueStatus.APPLIED
     assert receipt.resolved_semantic is LiveMessageSemantic.REDIRECT_CURRENT
@@ -250,6 +255,73 @@ class _UncooperativeProvider(FakeProvider):
             self.cancel_observed.set()
             await self.release_late.wait()
         return _response("stale answer")
+
+
+class _FailingStreamingProvider(FakeProvider):
+    async def stream(self, request: LlmRequest):
+        http_request = httpx.Request("POST", "https://provider.test/chat/completions")
+        raise httpx.TransportError(
+            "synthetic provider resolution failure", request=http_request
+        )
+        yield  # pragma: no cover
+
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        http_request = httpx.Request("POST", "https://provider.test/chat/completions")
+        raise httpx.TransportError(
+            "synthetic provider fallback failure", request=http_request
+        )
+
+
+class _WedgedProvider(FakeProvider):
+    async def complete(self, request: LlmRequest) -> LlmResponse:
+        await asyncio.sleep(5)
+        return _response("unreachable")
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_terminalizes_live_message_state() -> None:
+    store = InMemoryCommandQueueStore()
+    agent = create_agent(
+        provider=_FailingStreamingProvider(),
+        tools=ToolSet.only(),
+        command_queue_store=store,
+    )
+    run_input = _input("run-provider-failure").model_copy(update={"stream": True})
+
+    with pytest.raises(ProviderTransportError):
+        await agent.run(run_input)
+
+    state = store.get_run_state("run-provider-failure")
+    assert state is not None
+    assert state.phase is LiveMessagePhase.TERMINAL
+    assert state.terminal_at is not None
+    assert any(
+        event.type is RuntimeEventType.RUN_FAILED
+        for event in agent.runner.deps.event_log.list_for_run("run-provider-failure")
+    )
+
+
+@pytest.mark.asyncio
+async def test_provider_step_timeout_terminalizes_live_message_state() -> None:
+    store = InMemoryCommandQueueStore()
+    agent = create_agent(
+        provider=_WedgedProvider(),
+        tools=ToolSet.only(),
+        command_queue_store=store,
+        config=RunnerConfig(
+            default_idle_timeout_seconds=0.01,
+            default_hard_max_seconds=None,
+        ),
+    )
+
+    output = await agent.run(_input("run-provider-timeout"))
+
+    assert output.status is RunStatus.TIMED_OUT
+    assert output.terminal_reason is TerminalReason.DEADLINE_EXCEEDED
+    state = store.get_run_state("run-provider-timeout")
+    assert state is not None
+    assert state.phase is LiveMessagePhase.TERMINAL
+    assert state.terminal_at is not None
 
 
 @pytest.mark.asyncio

@@ -25,9 +25,7 @@ class SubagentStore(Protocol):  # pylint: disable=too-few-public-methods
     # opencode-adoption EPIC-11 (Stage 1): address a persisted child by its durable
     # ``child_run_id`` — the runtime run_id assigned to the child agent's run — across
     # process restarts, without knowing the parent. Returns None when unknown.
-    def find_run_by_child_run_id(
-        self, child_run_id: str
-    ) -> SubagentRun | None: ...
+    def find_run_by_child_run_id(self, child_run_id: str) -> SubagentRun | None: ...
 
 
 @dataclass(slots=True)
