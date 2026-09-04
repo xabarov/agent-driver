@@ -78,21 +78,36 @@ class RunStream:
 
     async def events(self) -> AsyncIterator[RunStreamEvent]:
         """Yield stream events until the run finishes."""
+        failure_event_seen = False
+        final_error: Exception | None = None
         try:
             while True:
                 emitted = False
                 for event in self._handle.events(after_seq=self.cursor):
                     self.cursor = event.seq
                     emitted = True
+                    failure_event_seen = (
+                        failure_event_seen
+                        or event.event == RuntimeEventType.RUN_FAILED.value
+                    )
                     yield event
                 if self._handle.done():
                     break
                 if not emitted:
                     await asyncio.sleep(self._poll_interval_seconds)
-            await self._handle.final()
+            try:
+                await self._handle.final()
+            except Exception as exc:
+                final_error = exc
             for event in self._handle.events(after_seq=self.cursor):
                 self.cursor = event.seq
+                failure_event_seen = (
+                    failure_event_seen
+                    or event.event == RuntimeEventType.RUN_FAILED.value
+                )
                 yield event
+            if final_error is not None and not failure_event_seen:
+                raise final_error
         finally:
             await self._handle.close()
 

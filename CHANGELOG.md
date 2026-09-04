@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-09-04
+
+### Fixed
+
+- **Durable terminal failure delivery in SDK streams.** `RunStream.events()` now
+  performs its final durable-event sweep even when the background task raises. If
+  that sweep exposes `run_failed`, event consumers receive the terminal receipt
+  instead of losing it to the task exception; failures without a durable terminal
+  receipt still propagate normally.
+
 ## [0.22.0] - 2026-09-02
 
 ### Added

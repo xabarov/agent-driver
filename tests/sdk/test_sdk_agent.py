@@ -15,6 +15,7 @@ from agent_driver.contracts import (
     ControlRequest,
     LiveMessagePhase,
     RuntimeEventType,
+    RunStreamEvent,
     ToolCall,
     ToolManifest,
 )
@@ -157,6 +158,88 @@ async def test_sdk_stream_helper_yields_text_deltas_and_final_output() -> None:
     assert output.status.value == "completed"
     assert stream.cursor > 0
     stream.cancel()
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_flushes_durable_failure_written_at_task_completion() -> None:
+    """A terminal failure racing with task completion must remain observable."""
+
+    class _FailureRaceHandle:
+        run_id = "run_sdk_failure_race"
+
+        def __init__(self) -> None:
+            self.failure_visible = False
+            self.closed = False
+
+        def events(self, *, after_seq: int | None = None) -> list[RunStreamEvent]:
+            events = [
+                RunStreamEvent(
+                    stream_id=f"{self.run_id}:1",
+                    run_id=self.run_id,
+                    attempt_id="attempt_1",
+                    seq=1,
+                    event=RuntimeEventType.RUN_STARTED.value,
+                )
+            ]
+            if self.failure_visible:
+                events.append(
+                    RunStreamEvent(
+                        stream_id=f"{self.run_id}:2",
+                        run_id=self.run_id,
+                        attempt_id="attempt_1",
+                        seq=2,
+                        event=RuntimeEventType.RUN_FAILED.value,
+                    )
+                )
+            cursor = after_seq or 0
+            return [event for event in events if event.seq > cursor]
+
+        def done(self) -> bool:
+            self.failure_visible = True
+            return True
+
+        async def final(self) -> None:
+            raise RuntimeError("synthetic provider failure")
+
+        async def close(self) -> None:
+            self.closed = True
+
+    handle = _FailureRaceHandle()
+    stream = RunStream(handle)  # type: ignore[arg-type]
+
+    events = [event async for event in stream.events()]
+
+    assert [event.event for event in events] == [
+        RuntimeEventType.RUN_STARTED.value,
+        RuntimeEventType.RUN_FAILED.value,
+    ]
+    assert stream.cursor == 2
+    assert handle.closed is True
+
+
+@pytest.mark.asyncio
+async def test_sdk_stream_preserves_failure_without_durable_terminal_event() -> None:
+    """RunStream must not hide a task error without a durable failure receipt."""
+
+    class _MissingTerminalHandle:
+        run_id = "run_sdk_missing_terminal"
+
+        def events(self, *, after_seq: int | None = None) -> list[RunStreamEvent]:
+            return []
+
+        def done(self) -> bool:
+            return True
+
+        async def final(self) -> None:
+            raise RuntimeError("missing durable terminal event")
+
+        async def close(self) -> None:
+            return None
+
+    stream = RunStream(_MissingTerminalHandle())  # type: ignore[arg-type]
+
+    with pytest.raises(RuntimeError, match="missing durable terminal event"):
+        _events = [event async for event in stream.events()]
 
 
 @pytest.mark.asyncio
