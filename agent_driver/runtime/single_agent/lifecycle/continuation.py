@@ -35,6 +35,12 @@ _COMPLETION_MARKERS = re.compile(
     r"\b(done|finished|completed|complete|all set|that's all|готово|завершено|выполнено)\b",
     re.IGNORECASE,
 )
+_OPERATOR_HANDOFF_RE = re.compile(
+    r"^[\s:*—\-]*(?:ожидаю\s+(?:ваших\s+)?указаний|"
+    r"жду\s+(?:ваших\s+)?указаний|awaiting\s+(?:your\s+)?instructions|"
+    r"waiting\s+for\s+(?:your\s+)?instructions)[.!\s*]*$",
+    re.IGNORECASE,
+)
 _UNFINISHED_SUFFIXES = (
     re.compile(r"\b(and|with|the|to|of|for|in|on|that|which)\s*$", re.IGNORECASE),
     re.compile(
@@ -104,6 +110,10 @@ def analyze_continuation_intent(text: str) -> ContinuationIntent:
         if _RECOMMENDATION_QUALIFIER_RE.search(before):
             continue
         after = late[match.end() :]
+        # A next-step label handing control back to the operator is terminal,
+        # not a promise to execute another step. Keep genuine action promises.
+        if _OPERATOR_HANDOFF_RE.fullmatch(after):
+            continue
         if not _COMPLETION_MARKERS.search(after):
             return ContinuationIntent(True, "continuation_signal")
     return ContinuationIntent(False)

@@ -7,6 +7,14 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-09-13
+
+### Fixed
+
+- Terminal next-step labels that explicitly await operator instructions no
+  longer trigger an unnecessary continuation model call. Genuine action
+  promises and incomplete/tool-call drafts retain their existing guards.
+
 ## [0.22.1] - 2026-09-04
 
 ### Fixed

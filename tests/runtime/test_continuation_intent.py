@@ -7,9 +7,27 @@ from agent_driver.runtime.single_agent.lifecycle.continuation import (
 )
 
 
+def test_next_step_operator_handoff_is_terminal() -> None:
+    for ending in (
+        "- **Следующий шаг:** ожидаю указаний.",
+        "Следующий шаг: жду ваших указаний.",
+        "Next step is to: awaitING your instructions.",
+    ):
+        assert not analyze_continuation_intent(
+            "Bounded detection completed. Coverage remains incomplete.\n" + ending
+        ).should_continue
+
+
+def test_next_step_action_promise_still_continues() -> None:
+    assert analyze_continuation_intent(
+        "Следующий шаг: теперь я начинаю проверку."
+    ).should_continue
+
+
 def test_complete_answer_with_odd_fences_ending_in_prose_is_not_continuation() -> None:
     """Root cause of the MeetScript over-iteration: a complete answer that merely uses an odd number of
-    ``` fences was flagged `unclosed_code_block` and re-prompted. It must read as finished."""
+    ``` fences was flagged `unclosed_code_block` and re-prompted. It must read as finished.
+    """
     text = (
         "Вот сводка по каждой встрече:\n"
         "1. Встреча про ```офис``` — обсуждение.\n"
