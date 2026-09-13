@@ -7,6 +7,18 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-09-13
+
+### Added
+
+- Optional `OpenAICompatibleProvider.Config.transport_diagnostics` (default off).
+  Streaming calls retain content-free, per-call attempt/header/first-data/
+  first-visible/first-reasoning/end timings and a validated generation ID in
+  `provider_transport`; runner LLM completion events retain the same metadata.
+  Times measure client observations, not provider compute or queue attribution.
+  Existing streams are unchanged when disabled. No credentials, payloads or
+  private reasoning text are included in this diagnostic field.
+
 ## [0.22.2] - 2026-09-13
 
 ### Fixed

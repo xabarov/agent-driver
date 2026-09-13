@@ -28,47 +28,76 @@ from agent_driver.llm.payload_debug import (
     debug_llm_payload_enabled,
     format_payload_debug_line,
 )
-from agent_driver.llm.providers_impl.openai_compatible.payload import (
-    build_openai_completion_payload,
-    normalize_tool_choice_for_openai as _normalize_tool_choice_for_openai,
-)
 from agent_driver.llm.provider_capabilities import (
     ProviderCapabilityProfile,
     resolve_openai_compatible_capabilities,
-)
-from agent_driver.llm.reasoning_effort_support import (
-    effort_from_reasoning_envelope,
-    validate_effort_for_model,
 )
 from agent_driver.llm.provider_route_profiles import (
     ProviderRouteProfile,
     preview_provider_preflight,
     resolve_openai_compatible_route_profile,
 )
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    estimate_cost_usd as _estimate_cost_usd,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    extract_reasoning_metadata as _extract_reasoning_metadata,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    extract_usage as _extract_usage,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    extract_usage_metadata as _extract_usage_metadata,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    first_choice as _first_choice,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    forced_tool_choice_name as _forced_tool_choice_name,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    map_finish_reason as _map_finish_reason,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    normalize_openai_completion_payload,
+    normalize_openai_stream_chunk,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    parse_cost_usd_from_usage as _parse_cost_usd_from_usage,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    parse_forced_tool_args_fragment as _parse_forced_tool_args_fragment,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    parse_forced_web_search_query_fragment as _parse_forced_web_search_query_fragment,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    parse_json_object_prefix as _parse_json_object_prefix,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    planned_tool_call_from_forced_text as _planned_tool_call_from_forced_text,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    planned_tool_calls_from_openai as _planned_tool_calls_from_openai,
+)
+from agent_driver.llm.providers_impl.openai_compatible.normalization import (
+    suppress_text_form_tool_calls_when_tools_disabled as _suppress_text_form_tool_calls_when_tools_disabled,
+)
+from agent_driver.llm.providers_impl.openai_compatible.payload import (
+    build_openai_completion_payload,
+)
+from agent_driver.llm.providers_impl.openai_compatible.payload import (
+    normalize_tool_choice_for_openai as _normalize_tool_choice_for_openai,
+)
+from agent_driver.llm.reasoning_effort_support import (
+    effort_from_reasoning_envelope,
+    validate_effort_for_model,
+)
 from agent_driver.llm.tool_call_parser import (
     extract_text_form_tool_call_details,
     strip_text_form_tool_call_ranges,
 )
-from agent_driver.llm.providers_impl.openai_compatible.normalization import (
-    first_choice as _first_choice,
-    forced_tool_choice_name as _forced_tool_choice_name,
-    map_finish_reason as _map_finish_reason,
-    normalize_openai_completion_payload,
-    normalize_openai_stream_chunk,
-    parse_cost_usd_from_usage as _parse_cost_usd_from_usage,
-    planned_tool_call_from_forced_text as _planned_tool_call_from_forced_text,
-    planned_tool_calls_from_openai as _planned_tool_calls_from_openai,
-    suppress_text_form_tool_calls_when_tools_disabled as _suppress_text_form_tool_calls_when_tools_disabled,
-)
-from agent_driver.llm.providers_impl.openai_compatible.normalization import (
-    estimate_cost_usd as _estimate_cost_usd,
-    extract_reasoning_metadata as _extract_reasoning_metadata,
-    extract_usage as _extract_usage,
-    extract_usage_metadata as _extract_usage_metadata,
-    parse_forced_tool_args_fragment as _parse_forced_tool_args_fragment,
-    parse_forced_web_search_query_fragment as _parse_forced_web_search_query_fragment,
-    parse_json_object_prefix as _parse_json_object_prefix,
-)
+from agent_driver.llm.transport_timing import mark_transport, transport_snapshot
 
 _LOGGER = logging.getLogger(__name__)
 _TEXT_FORM_STREAM_HOLDBACK_CHARS = 64
@@ -170,6 +199,7 @@ class OpenAICompatibleProvider(ProviderBase):
         self._timeout_s = config.timeout_s
         self._max_tokens_default = config.max_tokens_default
         self._extra_body: dict[str, Any] = dict(config.extra_body or {})
+        self._transport_diagnostics = config.transport_diagnostics
         self._capability_profile = resolve_openai_compatible_capabilities(
             provider_name=config.name,
             base_url=config.base_url,
@@ -209,6 +239,7 @@ class OpenAICompatibleProvider(ProviderBase):
         max_tokens_default: int | None = 4096
         cost_per_1k_tokens: float = 0.0
         http_client_config: HttpClientConfig | None = None
+        transport_diagnostics: bool = False
         # Vendor-specific extra fields merged into every chat/completions
         # request body (e.g. vLLM ``chat_template_kwargs`` for Qwen3
         # ``enable_thinking``, OpenRouter ``provider`` routing hints,
@@ -234,9 +265,7 @@ class OpenAICompatibleProvider(ProviderBase):
         """Best-effort provider/model route profile."""
         return self._route_profile
 
-    def _preflight_metadata(
-        self, request: LlmRequest | None = None
-    ) -> dict[str, Any]:
+    def _preflight_metadata(self, request: LlmRequest | None = None) -> dict[str, Any]:
         preflight = preview_provider_preflight(
             provider_name=self.name,
             provider_kind=LlmProviderKind.OPENAI_COMPATIBLE,
@@ -348,6 +377,12 @@ class OpenAICompatibleProvider(ProviderBase):
         self._preflight_reasoning(request)
         url = f"{self._base_url}/chat/completions"
         handled_errors = (httpx.HTTPError, ValueError)
+        transport: dict[str, Any] = {
+            "started_at_monotonic": time.monotonic(),
+            "attempts": [],
+            "streamed": True,
+            "data_chunks": 0,
+        }
         stream_request = StreamRequest(
             timeout_s=self._timeout_s,
             method="POST",
@@ -355,6 +390,7 @@ class OpenAICompatibleProvider(ProviderBase):
             headers=self._headers(),
             json=self._payload(request, stream=True),
             handled_exceptions=handled_errors,
+            diagnostics=transport if self._transport_diagnostics else None,
         )
         async with self.stream_client_with_telemetry(stream_request) as lines:
             pending_tool_calls: dict[int, dict[str, Any]] = {}
@@ -365,9 +401,13 @@ class OpenAICompatibleProvider(ProviderBase):
                 if not line or not line.startswith("data: "):
                     continue
                 raw = line[len("data: ") :]
+                mark_transport(transport, "first_data_ms")
                 if raw.strip() == "[DONE]":
                     break
                 payload = httpx.Response(200, text=raw).json()
+                transport["data_chunks"] += 1
+                if isinstance(payload.get("id"), str):
+                    transport["generation_id"] = payload["id"]
                 choice = _first_choice(payload)
                 delta = choice.get("delta")
                 if isinstance(delta, dict):
@@ -429,6 +469,14 @@ class OpenAICompatibleProvider(ProviderBase):
                             "text_form_tool_call_holdback": True,
                         }
                     event = event.model_copy(update=update)
+                if event.delta_text:
+                    mark_transport(transport, "first_visible_ms")
+                if (
+                    event.delta_reasoning
+                    or event.metadata.get("provider_reasoning_text_present")
+                    or event.metadata.get("provider_reasoning_details_present")
+                ):
+                    mark_transport(transport, "first_reasoning_ms")
                 yield self._event_with_capability_metadata(
                     _suppress_text_form_tool_calls_when_tools_disabled(
                         event,
@@ -442,6 +490,8 @@ class OpenAICompatibleProvider(ProviderBase):
                     visible_metadata["text_form_tool_calls_suppressed"] = True
                     visible_metadata.pop("planned_tool_calls", None)
                 if visible_text or visible_metadata:
+                    if visible_text:
+                        mark_transport(transport, "first_visible_ms")
                     yield self._event_with_capability_metadata(
                         LlmStreamEvent(
                             event="delta",
@@ -488,6 +538,12 @@ class OpenAICompatibleProvider(ProviderBase):
                         LlmStreamEvent(event="tool_calls", metadata=metadata),
                         request=request,
                     )
+        if self._transport_diagnostics:
+            mark_transport(transport, "finished_ms")
+            yield LlmStreamEvent(
+                event="diagnostics",
+                metadata={"provider_transport": transport_snapshot(transport)},
+            )
 
 
 __all__ = [

@@ -300,6 +300,7 @@ def _collect_stream_item(
         )
     if isinstance(item.metadata, dict):
         for key in (
+            "provider_transport",
             "provider_profile",
             "route_profile",
             "provider_preflight",

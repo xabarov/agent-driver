@@ -581,6 +581,9 @@ def _build_llm_completed_payload(context: RunContext) -> dict[str, Any]:
     for flag in ("text_form_tool_calls_parsed", "text_form_tool_calls_suppressed"):
         if flag in context.llm_response.metadata:
             completed_payload[flag] = context.llm_response.metadata[flag]
+    transport = context.llm_response.metadata.get("provider_transport")
+    if isinstance(transport, dict):
+        completed_payload["provider_transport"] = transport
     provider_profile = context.llm_response.metadata.get("provider_profile")
     if isinstance(provider_profile, dict):
         completed_payload["provider_profile"] = provider_profile

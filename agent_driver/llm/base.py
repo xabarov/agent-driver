@@ -109,6 +109,7 @@ class StreamRequest:
     handled_exceptions: tuple[type[BaseException], ...]
     headers: dict[str, str] | None = None
     json: dict[str, Any] | None = None
+    diagnostics: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,11 +251,28 @@ class ProviderBase:
         async with self.stream_with_telemetry(
             handled_exceptions=request.handled_exceptions
         ):
+            if request.diagnostics is not None:
+                request.diagnostics.setdefault("started_at_monotonic", monotonic())
             async with self.build_async_client(timeout_s=request.timeout_s) as client:
                 status_attempt = 0
                 while True:
                     status_attempt += 1
                     for attempt in range(_STREAM_OPEN_RETRIES + 1):
+                        diagnostic = None
+                        if request.diagnostics is not None:
+                            diagnostic = {
+                                "started_ms": round(
+                                    (
+                                        monotonic()
+                                        - request.diagnostics["started_at_monotonic"]
+                                    )
+                                    * 1000,
+                                    3,
+                                )
+                            }
+                            request.diagnostics.setdefault("attempts", []).append(
+                                diagnostic
+                            )
                         stream_context = client.stream(
                             request.method,
                             request.url,
@@ -268,6 +286,8 @@ class ProviderBase:
                             httpx.ReadError,
                             OSError,
                         ) as exc:
+                            if diagnostic is not None:
+                                diagnostic["error_class"] = type(exc).__name__
                             # ``RemoteProtocolError`` / ``ReadError`` are httpx's
                             # typed transient stream-open failures. Raw TLS/socket
                             # errors (``ssl.SSLError`` and other ``OSError``
@@ -294,6 +314,19 @@ class ProviderBase:
                                 )
                             )
                             continue
+                        if diagnostic is not None:
+                            diagnostic["headers_ms"] = round(
+                                (
+                                    monotonic()
+                                    - request.diagnostics["started_at_monotonic"]
+                                )
+                                * 1000,
+                                3,
+                            )
+                            diagnostic["status_code"] = response.status_code
+                            generation_id = response.headers.get("x-generation-id")
+                            if generation_id and request.diagnostics is not None:
+                                request.diagnostics["generation_id"] = generation_id
                         # Phase 13 H25 — check status before raise_for_status so
                         # we can retry on transient server errors.
                         if response.status_code in _STATUS_RETRY_STATUSES:
@@ -302,9 +335,7 @@ class ProviderBase:
                             # ``x-should-retry: false`` fail fast instead of burning
                             # the retry budget on something the server says won't clear.
                             retry_after = strongest_retry_delay(
-                                _parse_retry_after(
-                                    response.headers.get("retry-after")
-                                ),
+                                _parse_retry_after(response.headers.get("retry-after")),
                                 rate_limit_reset_seconds(response.headers),
                             )
                             should_retry = parse_should_retry(response.headers)

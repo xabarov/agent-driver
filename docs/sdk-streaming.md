@@ -1,5 +1,16 @@
 # SDK Streaming
 
+OpenAI-compatible providers optionally accept `Config.transport_diagnostics=True`.
+The extra content-free diagnostic stream event is folded into response metadata
+and the runner's `llm_call_completed.provider_transport`. Off by default; times
+are monotonic client-observed milliseconds from that stream invocation. Attempt
+headers, first SSE data (possibly `[DONE]`), first public text, first private
+reasoning presence and stream end are distinct. A missing field is unobserved,
+not zero. This does not partition provider queue/prefill/compute; transport retries
+within a call are listed separately, and a validated generation ID enables a
+provider-side readback. No prompt, response, headers or reasoning text is stored
+in this metadata field.
+
 For object-style streaming, use `RunStream`:
 
 ```python
