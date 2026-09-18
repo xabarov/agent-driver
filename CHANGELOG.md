@@ -7,6 +7,19 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-09-18
+
+### Added
+
+- `exit_plan_mode_v2` accepts optional ordered `actions` (exact tool/args
+  envelopes, optional titles) alongside the existing prose plan, deduplicated
+  `requested_tools` and global `target_urls`. Actions are preserved in order
+  (repeated tools with different arguments stay distinct), derived into
+  `requested_tools` when omitted, carried in `plan_approval` and the plan
+  payload, and integrity-bound through `actions_sha256` (canonical JSON).
+  Legacy plans without `actions` keep the previous shape with an empty list
+  and its hash. Hosts can now execute the reviewed intent exactly instead of
+  reconstructing it from tool categories.
 ## [0.23.0] - 2026-09-13
 
 ### Added

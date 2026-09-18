@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -561,11 +563,41 @@ async def _exit_plan_mode_v2_tool(args: dict[str, Any]) -> dict[str, Any]:
             if str(value).strip()
         )
     )
+    # AD-1: ordered exact action envelopes. Repetition and per-step order
+    # are the reviewed intent; deduplicated requested_tools cannot express
+    # them. Optional for compatibility - legacy plans keep their shape.
+    actions: list[dict[str, Any]] = []
+    for index, entry in enumerate(args.get("actions") or []):
+        if not isinstance(entry, dict):
+            raise ValueError(f"actions[{index}] must be an object")
+        tool = str(entry.get("tool") or "").strip()
+        if not tool:
+            raise ValueError(f"actions[{index}].tool is required")
+        action_args = entry.get("args")
+        if action_args is not None and not isinstance(action_args, dict):
+            raise ValueError(f"actions[{index}].args must be an object")
+        entry_out: dict[str, Any] = {"tool": tool, "args": dict(action_args or {})}
+        title = str(entry.get("title") or "").strip()
+        if title:
+            entry_out["title"] = title[:200]
+        actions.append(entry_out)
+    if actions:
+        derived = list(dict.fromkeys(action["tool"] for action in actions))
+        requested_tools = list(dict.fromkeys(requested_tools + derived))
     if requested_tools and not target_urls:
         raise ValueError(
             "target_urls must contain the exact approved boundary when "
             "requested_tools is non-empty"
         )
+    actions_sha256 = (
+        hashlib.sha256(
+            json.dumps(actions, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ).hexdigest()
+        if actions
+        else hashlib.sha256(b"[]").hexdigest()
+    )
     summary = "exited plan mode"
     if reason:
         summary = f"exited plan mode: {reason}"
@@ -579,6 +611,8 @@ async def _exit_plan_mode_v2_tool(args: dict[str, Any]) -> dict[str, Any]:
             "objective": objective,
             "requested_tools": requested_tools,
             "target_urls": target_urls,
+            "actions": actions,
+            "actions_sha256": actions_sha256,
         }
     return {
         "summary": summary,
@@ -592,6 +626,8 @@ async def _exit_plan_mode_v2_tool(args: dict[str, Any]) -> dict[str, Any]:
             "objective": objective,
             "requested_tools": requested_tools,
             "target_urls": target_urls,
+            "actions": actions,
+            "actions_sha256": actions_sha256,
         },
         "plan_approval": approval_payload,
         "interrupt_reason": (
@@ -721,6 +757,25 @@ def _register_exit_plan_mode_v2_tool(registry: ToolRegistry) -> None:
                         "items": {"type": "string"},
                         "maxItems": 12,
                         "uniqueItems": True,
+                    },
+                    "actions": {
+                        "type": "array",
+                        "description": (
+                            "Ordered exact action envelopes for the reviewed "
+                            "intent. Repetition and per-step order are "
+                            "preserved and integrity-bound into the approval."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "tool": {"type": "string"},
+                                "args": {"type": "object"},
+                                "title": {"type": "string"},
+                            },
+                            "required": ["tool", "args"],
+                            "additionalProperties": False,
+                        },
+                        "maxItems": 24,
                     },
                     "target_urls": {
                         "type": "array",
