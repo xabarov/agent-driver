@@ -7,6 +7,21 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-09-19
+
+### Added
+
+- AD-3 one-shot consumable strategy grant for force planning. In
+  `strategy_required_before_execution` mode, the first denial records the
+  denied call's fingerprint (tool + canonical args); the model's explicit
+  `continue_without_plan` declaration arms a one-shot retry grant bound to
+  exactly that call, and the policy evaluator consumes it on use. The grant
+  ledger is run-scoped (installed by the runner), refuses re-arming after
+  consumption, never re-binds to a later denial, and denies changed-args
+  retries and any further gated call. Denial metadata exposes the grant
+  state. The legacy host-side `continue_without_plan` boolean keeps its
+  historical behavior for backward compatibility; hosts no longer need it.
+
 ## [0.24.0] - 2026-09-18
 
 ### Added
