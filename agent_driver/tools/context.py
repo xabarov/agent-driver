@@ -124,6 +124,127 @@ def execution_lease_scope(lease: Any | None) -> Iterator[None]:
         _execution_lease.reset(token)
 
 
+# AD-3: the run-scoped force-planning strategy grant ledger. The first
+# force-planning strategy denial records the denied call's fingerprint; the
+# model's explicit narrow-action declaration (``continue_without_plan``) arms
+# a ONE-SHOT retry grant bound to exactly that call; the policy evaluator
+# consumes it on use. The scope resets per run, so a grant can never outlive
+# the run it was declared in and no second gated action is ever covered.
+#
+# The ContextVar holds ONE MUTABLE dict per run: tool handlers and the policy
+# evaluator run in different tasks, so bottom-up state changes must mutate the
+# shared dict in place instead of rebinding the ContextVar.
+_strategy_grant_ledger: ContextVar[dict[str, Any] | None] = ContextVar(
+    "strategy_grant_ledger", default=None
+)
+
+
+def _strategy_grant_state() -> dict[str, Any]:
+    state = _strategy_grant_ledger.get()
+    if not isinstance(state, dict):
+        state = {
+            "first_denial_fingerprint": None,
+            "first_denial_tool": None,
+            "armed": False,
+            "consumed": False,
+        }
+        _strategy_grant_ledger.set(state)
+    return state
+
+
+def get_strategy_grant_ledger() -> dict[str, Any] | None:
+    """Return the run-scoped strategy grant ledger snapshot, or ``None``."""
+    return _strategy_grant_ledger.get()
+
+
+def strategy_call_fingerprint(tool_name: str, args: dict[str, Any]) -> str:
+    """Deterministic fingerprint of one planned call (tool + canonical args)."""
+    import hashlib
+    import json
+
+    payload = json.dumps(
+        {"args": args, "tool": str(tool_name)},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def record_first_strategy_denial(*, fingerprint: str, tool_name: str) -> None:
+    """Passively record the run's first force-planning strategy denial.
+
+    Later denials never re-bind the grant: it stays bound to the first
+    denied call so a model cannot shop for a different action by denying
+    twice.
+    """
+    state = _strategy_grant_state()
+    if state.get("first_denial_fingerprint"):
+        return
+    state["first_denial_fingerprint"] = str(fingerprint)
+    state["first_denial_tool"] = str(tool_name)
+
+
+def arm_strategy_grant() -> dict[str, Any]:
+    """Arm the one-shot retry grant for the run's first denied call.
+
+    Invoked by the model's explicit ``continue_without_plan`` declaration.
+    Without a recorded denial there is nothing to retry; after the grant
+    was consumed a re-declaration cannot re-arm it within the same run.
+    """
+    state = _strategy_grant_state()
+    if state.get("consumed"):
+        state["armed"] = False
+        state["arm_refused"] = "grant_already_consumed"
+    elif not state.get("first_denial_fingerprint"):
+        state["armed"] = False
+        state["arm_refused"] = "no_denied_gated_call"
+    else:
+        state["armed"] = True
+        state.pop("arm_refused", None)
+    return {
+        "armed": bool(state.get("armed")),
+        "tool": state.get("first_denial_tool"),
+        "arm_refused": state.get("arm_refused"),
+    }
+
+
+def consume_strategy_grant(fingerprint: str) -> bool:
+    """Consume the armed grant when the retried call matches its binding.
+
+    Returns ``True`` exactly once, for the granted call only.
+    """
+    state = _strategy_grant_state()
+    if not state.get("armed") or state.get("consumed"):
+        return False
+    if str(state.get("first_denial_fingerprint") or "") != str(fingerprint):
+        return False
+    state["armed"] = False
+    state["consumed"] = True
+    return True
+
+
+def reset_strategy_grant_ledger() -> None:
+    """Clear the ledger in the current scope (test/adapter convenience)."""
+    _strategy_grant_ledger.set(None)
+
+
+@contextmanager
+def strategy_grant_scope() -> Iterator[None]:
+    """Reset the strategy grant ledger for one run.
+
+    Installed by the runner so a grant armed in a previous run can never
+    leak into the next one; each run re-earns its narrow-action retry
+    through a fresh denial and a fresh declaration.
+    """
+    token = _strategy_grant_ledger.set(None)
+    try:
+        yield
+    finally:
+        _strategy_grant_ledger.reset(token)
+
+
 @contextmanager
 def capability_snapshot_scope(snapshot: Any | None) -> Iterator[None]:
     """Temporarily expose the backend capability snapshot to tool routing.

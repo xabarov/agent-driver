@@ -530,6 +530,12 @@ async def _continue_without_plan_tool(args: dict[str, Any]) -> dict[str, Any]:
     reason = str(args.get("reason") or "").strip()
     if not reason:
         raise ValueError("reason is required to continue without a plan")
+    # AD-3: the declaration arms the run-scoped one-shot retry grant bound to
+    # the call that was first denied by force planning. Without a recorded
+    # denial (or after the grant was already spent) nothing is armed.
+    from agent_driver.tools.context import arm_strategy_grant
+
+    grant = arm_strategy_grant()
     return {
         "summary": f"planning strategy selected: narrow action ({reason})",
         "applied_args": {
@@ -540,6 +546,7 @@ async def _continue_without_plan_tool(args: dict[str, Any]) -> dict[str, Any]:
             "decision": "without_plan",
             "reason": reason,
         },
+        "strategy_grant": grant,
     }
 
 

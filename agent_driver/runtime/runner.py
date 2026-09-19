@@ -73,6 +73,7 @@ from agent_driver.tools.context import (
     command_runner_scope,
     execution_lease_scope,
     fs_io_scope,
+    strategy_grant_scope,
     workspace_backend_scope,
     workspace_cwd_scope,
 )
@@ -508,6 +509,9 @@ class SingleAgentRunner(
         )
         with contextlib.ExitStack() as stack:
             stack.enter_context(workspace_cwd_scope(_pick_workspace_cwd(context)))
+            # AD-3: the strategy grant ledger is per-run; a grant armed in an
+            # earlier run never leaks into this one.
+            stack.enter_context(strategy_grant_scope())
             if backend is not None:
                 # Route the built-in bash/read/write byte transfer through the
                 # injected backend WITHOUT touching the tools: install the

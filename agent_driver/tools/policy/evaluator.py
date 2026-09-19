@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from agent_driver.contracts.context import PlanningPolicyInput
 from agent_driver.contracts.enums import (
     PlanningPolicyMode,
@@ -144,6 +146,9 @@ def _evaluate_force_planning(
         config.mode == PlanningPolicyMode.STRATEGY_REQUIRED_BEFORE_EXECUTION
         and config.continue_without_plan
     ):
+        # Deprecated host-side permanent bypass. AD-3 supersedes it with the
+        # run-scoped one-shot grant below; hosts still sending the legacy
+        # boolean keep their historical behavior.
         return None
     if _force_planning_has_approved_plan(config):
         return None
@@ -157,6 +162,48 @@ def _evaluate_force_planning(
     strategy_required = (
         config.mode == PlanningPolicyMode.STRATEGY_REQUIRED_BEFORE_EXECUTION
     )
+    strategy_grant_state: dict[str, Any] | None = None
+    if strategy_required:
+        from agent_driver.tools.context import (
+            consume_strategy_grant,
+            get_strategy_grant_ledger,
+            record_first_strategy_denial,
+            strategy_call_fingerprint,
+        )
+
+        denial_fingerprint = strategy_call_fingerprint(call.tool_name, call.args)
+        if consume_strategy_grant(denial_fingerprint):
+            # AD-3: the model declared the narrow-action strategy and this is
+            # the exact call that was first denied — the one granted attempt.
+            # The grant is consumed; any further gated call needs a plan.
+            return None
+        # Bind (or keep) the run's grant to this denial BEFORE reading the
+        # state, so the first denial reports itself as the bound call.
+        record_first_strategy_denial(
+            fingerprint=denial_fingerprint, tool_name=call.tool_name
+        )
+        ledger = get_strategy_grant_ledger()
+        if isinstance(ledger, dict):
+            strategy_grant_state = {
+                "armed": bool(ledger.get("armed"))
+                and not bool(ledger.get("consumed")),
+                "consumed": bool(ledger.get("consumed")),
+                "bound_to_this_call": (
+                    str(ledger.get("first_denial_fingerprint") or "")
+                    == denial_fingerprint
+                ),
+            }
+    metadata = {
+        "force_planning": {
+            "required": True,
+            "tool_name": call.tool_name,
+            "risk": manifest.risk.value,
+            "side_effect": manifest.side_effect.value,
+            "mode": config.mode.value,
+        }
+    }
+    if strategy_grant_state is not None:
+        metadata["force_planning"]["strategy_grant"] = strategy_grant_state
     return ToolPolicyOutcome(
         decision=ToolPolicyDecision.DENY,
         reason=(
@@ -167,15 +214,7 @@ def _evaluate_force_planning(
             )
             + f"'{call.tool_name}' can run"
         ),
-        metadata={
-            "force_planning": {
-                "required": True,
-                "tool_name": call.tool_name,
-                "risk": manifest.risk.value,
-                "side_effect": manifest.side_effect.value,
-                "mode": config.mode.value,
-            }
-        },
+        metadata=metadata,
     )
 
 
