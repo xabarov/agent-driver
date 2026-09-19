@@ -7,6 +7,19 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-09-19
+
+### Added
+
+- AD-4 deterministic finalize-hook arbitration. When several lifecycle hooks
+  request a revision, `dispatch_finalize` now selects the winner by
+  `finalize_priority` (descending, default 0 on the base hook) with
+  registration order as the tie-break - never by consultation or latency
+  order. Suppressed requests are reported in the new
+  `finalize_revision_arbitrated` event (winner, gate ids) so a losing gate's
+  demand is recorded, not silently dropped. Control-integrity gates can now
+  outrank style/quality gates deterministically.
+
 ## [0.25.0] - 2026-09-19
 
 ### Added

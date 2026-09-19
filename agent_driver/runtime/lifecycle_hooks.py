@@ -136,9 +136,16 @@ class RunLifecycleHook(Protocol):
 
 
 class BaseRunLifecycleHook:
-    """Convenience base with no-op implementations; override what you need."""
+    """Convenience base with no-op implementations; override what you need.
+
+    ``finalize_priority`` orders ``on_finalize`` arbitration when several
+    hooks request a revision (AD-4): the highest priority wins, ties keep
+    registration order. Control-integrity gates (never edit a proposed
+    plan, never drop durable evidence) should outrank style/quality gates.
+    """
 
     name: str = "base_run_lifecycle_hook"
+    finalize_priority: int = 0
 
     async def on_run_start(self, context: "RunContext") -> None:
         """No-op run-start hook; override to react to run start."""
@@ -255,10 +262,17 @@ async def dispatch_finalize(
     emit: "Callable[[str, dict[str, Any]], None] | None" = None,
     timeout: float | None = None,
 ) -> "RevisionRequest | None":
-    """Invoke ``on_finalize`` for each hook; return the first revision request.
+    """Invoke ``on_finalize`` for each hook; return ONE revision request.
 
     A hook that raises is logged and skipped (treated as "no revision"), so a
     faulty goal-gate cannot wedge the run at finalize.
+
+    Deterministic arbitration (AD-4): when several hooks request a revision,
+    the winner is chosen by (``finalize_priority`` descending, registration
+    order) -- never by whichever hook happened to be consulted first with a
+    non-``None`` result. Suppressed requests are reported in the
+    ``finalize_revision_arbitrated`` event so a losing gate's demand is
+    recorded, not silently dropped.
 
     ``emit``, when provided, receives ``(event_type, payload)`` pairs bracketing
     each hook that actually overrides ``on_finalize`` — this is what makes slow
@@ -281,13 +295,16 @@ async def dispatch_finalize(
         record_status,
     )
 
-    revision: RevisionRequest | None = None
-    for hook in hooks:
+    requests: list[tuple[int, int, str, RevisionRequest]] = []
+    arbitration_emit = None
+    for sequence, hook in enumerate(hooks):
         overrides_finalize = (
             getattr(type(hook), "on_finalize", None)
             is not BaseRunLifecycleHook.on_finalize
         )
         hook_emit = emit if (emit is not None and overrides_finalize) else None
+        if arbitration_emit is None and hook_emit is not None:
+            arbitration_emit = hook_emit
         if hook_emit is not None:
             hook_emit(
                 "lifecycle_hook_started",
@@ -343,8 +360,39 @@ async def dispatch_finalize(
                     "requested_revision": result is not None,
                 },
             )
-        if result is not None and revision is None:
-            revision = result
+        if result is not None:
+            priority = getattr(hook, "finalize_priority", 0)
+            try:
+                priority = int(priority)
+            except (TypeError, ValueError):
+                priority = 0
+            requests.append((-priority, sequence, _hook_name(hook), result))
+
+    if not requests:
+        return None
+    # Deterministic selection: highest finalize_priority wins; ties keep
+    # registration order. Registration order is itself stable for a given
+    # configuration, so the arbitration never depends on consultation
+    # timing, completion order or hook latency.
+    requests.sort(key=lambda item: (item[0], item[1]))
+    _neg_priority, _sequence, winner_name, revision = requests[0]
+    suppressed = [
+        {
+            "hook": hook_name,
+            "finalize_priority": -neg_pri,
+            "gate_id": request.gate_id,
+        }
+        for neg_pri, _sequence, hook_name, request in requests[1:]
+    ]
+    if suppressed and arbitration_emit is not None:
+        arbitration_emit(
+            "finalize_revision_arbitrated",
+            {
+                "winner": winner_name,
+                "gate_id": revision.gate_id,
+                "suppressed": suppressed,
+            },
+        )
     return revision
 
 
