@@ -7,6 +7,15 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-09-19
+
+### Added
+
+- `ApprovalConsumeRequest`, `ConsumeOutcome` and `ConsumeStatus` are exported
+  from the public `agent_driver.runtime` root (they complete the public
+  `ApprovalConsumptionStore` protocol surface). Hosts no longer need the deep
+  `agent_driver.runtime.control.approval_store` module path.
+
 ## [0.26.0] - 2026-09-19
 
 ### Added
