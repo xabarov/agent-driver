@@ -7,6 +7,16 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-09-20
+
+### Fixed
+
+- Late-stream recovery receipts no longer report the `stream-model`
+  placeholder: `recover_force_final_stream_response` now carries the
+  provider's real model id (via `provider_model_hint`) in the recovered
+  assistant payload and LlmResponse, so host route receipts can verify
+  the serving model on recovered terminals.
+
 ## [0.28.0] - 2026-09-20
 
 ### Fixed

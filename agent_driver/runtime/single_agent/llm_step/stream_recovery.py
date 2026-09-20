@@ -17,6 +17,7 @@ from agent_driver.runtime.metadata_state import (
 from agent_driver.runtime.research_artifacts import deep_research_report_artifact_exists
 from agent_driver.runtime.research_evidence import RESEARCH_DEPTH_SOURCE_VERIFIED
 from agent_driver.runtime.single_agent.lifecycle.events import emit_step_event
+from agent_driver.llm.context_windows import provider_model_hint
 from agent_driver.runtime.single_agent.llm_step.streaming import emit_token_delta_events
 from agent_driver.runtime.single_agent.types import EventSpec, RunContext
 
@@ -174,7 +175,7 @@ def recover_force_final_stream_response(
             "content": content,
             "finish_reason": LlmFinishReason.UNKNOWN.value,
             "provider": host._deps.provider.name,
-            "model": "stream-model",
+            "model": provider_model_hint(host._deps.provider) or "stream-model",
             "recovered_partial": True,
             "transition_reason": reason,
         },
@@ -183,7 +184,7 @@ def recover_force_final_stream_response(
         message=ChatMessage(role=ChatRole.ASSISTANT, content=content),
         finish_reason=LlmFinishReason.UNKNOWN,
         provider=host._deps.provider.name,
-        model="stream-model",
+        model=provider_model_hint(host._deps.provider) or "stream-model",
         metadata={
             "token_chunks_emitted": True,
             "provider_stream_partial_final_recovered": True,
