@@ -7,6 +7,20 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-09-20
+
+### Fixed
+
+- DeepSeek DSML leak sanitization. When a model nests the NEXT tool
+  call's markup inside a parameter value (or after plan content), the
+  parser now cuts the swallowed `<｜DSML｜tool_calls>…` block and drops
+  stray marker tokens from string values - the swallowed markup is never
+  legitimate payload. `exit_plan_mode_v2` additionally sanitizes its
+  plan `content`, so a proposed plan can no longer carry tool-call
+  markup into its approval contract (observed as unstartable plans in a
+  live assessment: the mirrored plan failed its executable-contract
+  qualification because of the corrupted tail).
+
 ## [0.27.0] - 2026-09-19
 
 ### Added

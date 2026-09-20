@@ -388,17 +388,40 @@ _DSML_BLOCK_RE = re.compile(
 _DSML_STRAY_RE = re.compile(
     r"</?\s*" + _DSML_PIPES + r"DSML\s*" + _DSML_PIPES + r"[^>]*>"
 )
+_DSML_LEAK_CUT_RE = re.compile(_DSML_OPEN + r"tool_calls>")
+
+
+def strip_dsml_tool_call_markup(text: str) -> str:
+    """Remove leaked DeepSeek DSML tool-call markup from extracted text.
+
+    Two model-noise shapes are observed when a parameter value or plan
+    content swallows the following tool call: a full nested
+    ``<｜DSML｜tool_calls>…`` block after the payload, and stray marker
+    tokens. Neither is ever legitimate payload: real plans never contain
+    tool-call markup. Cut at the first nested block opener, then drop any
+    leftover stray tokens.
+    """
+    if not text:
+        return text
+    cut = _DSML_LEAK_CUT_RE.search(text)
+    cleaned = text[: cut.start()] if cut else text
+    return _DSML_STRAY_RE.sub("", cleaned)
 
 
 def _coerce_dsml_value(value: str, *, is_string: bool) -> Any:
     text = value.strip()
     if is_string:
-        return text
+        return _sanitize_dsml_string_value(text)
     # Non-string (number / array / bool / null) — JSON-parse, else heuristics.
     try:
         return json.loads(text)
     except (ValueError, TypeError):
         return _coerce_xmlish_arg_value(text)
+
+
+def _sanitize_dsml_string_value(text: str) -> str:
+    cleaned = strip_dsml_tool_call_markup(text)
+    return cleaned.strip() if cleaned != text else cleaned
 
 
 def _dsml_tool_call_candidates(text: str) -> list[tuple[int, int, dict[str, Any]]]:

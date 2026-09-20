@@ -13,6 +13,7 @@ from agent_driver.context import (
     planning_state_upsert_todo,
 )
 from agent_driver.context.planning import plan_content_hash
+from agent_driver.llm.tool_call_parser import strip_dsml_tool_call_markup
 from agent_driver.contracts.context import PlanningState, PlanningStep, TodoState
 from agent_driver.contracts.enums import (
     ApprovalMode,
@@ -552,7 +553,9 @@ async def _continue_without_plan_tool(args: dict[str, Any]) -> dict[str, Any]:
 
 async def _exit_plan_mode_v2_tool(args: dict[str, Any]) -> dict[str, Any]:
     reason = str(args.get("reason") or "").strip()
-    content = str(args.get("content") or args.get("plan") or "").strip()
+    content = strip_dsml_tool_call_markup(
+        str(args.get("content") or args.get("plan") or "").strip()
+    )
     path = str(args.get("path") or "").strip() or None
     plan_id = str(args.get("plan_id") or f"plan_{uuid4().hex[:12]}").strip()
     objective = str(args.get("objective") or "").strip() or None
