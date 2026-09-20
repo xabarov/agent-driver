@@ -611,3 +611,54 @@ async def test_runner_stream_idle_timeout_ignores_empty_heartbeats() -> None:
         and event.payload.get("stream_diagnostics", {}).get("token_chunks_seen") == 0
         for event in events
     )
+
+
+def test_recovered_response_carries_provider_model_hint() -> None:
+    """P2: late-stream recovery receipts must report the provider's real
+    model id (not the 'stream-model' placeholder) so host route receipts
+    can verify the serving model on recovered terminals."""
+
+    host = _CaptureHost()
+    host._deps.provider = SimpleNamespace(
+        name="failing-stream",
+        _model="deepseek/deepseek-v4-flash-0731",
+    )
+    content = "Финальный ответ. " * 20
+    context = _force_final_stream_context(content)
+
+    response = _recover_force_final_stream_response(
+        host,
+        context,
+        reason="provider_stream_error",
+    )
+
+    assert response is not None
+    assert response.model == "deepseek/deepseek-v4-flash-0731"
+    completed = [
+        event
+        for event in host.events
+        if event.event_type == RuntimeEventType.ASSISTANT_MESSAGE_COMPLETED
+    ]
+    assert completed
+    assert (
+        completed[-1].payload["model"]
+        == "deepseek/deepseek-v4-flash-0731"
+    )
+
+
+def test_recovered_response_falls_back_without_model_hint() -> None:
+    """A provider with no model hint keeps the legacy stream-model marker."""
+
+    host = _CaptureHost()
+    host._deps.provider = SimpleNamespace(name="failing-stream")
+    content = "Финальный ответ. " * 20
+    context = _force_final_stream_context(content)
+
+    response = _recover_force_final_stream_response(
+        host,
+        context,
+        reason="provider_stream_error",
+    )
+
+    assert response is not None
+    assert response.model == "stream-model"
