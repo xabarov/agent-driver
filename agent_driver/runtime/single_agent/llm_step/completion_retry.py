@@ -119,11 +119,14 @@ def _stream_failure_retry_diagnostics(
     *,
     provider_name: str,
     transition_reason: str,
+    provider_model: str | None = None,
 ) -> dict[str, Any]:
     diagnostics: dict[str, Any] = {
         "transition_reason": transition_reason,
         "provider": provider_name,
-        "model": getattr(request, "model", None) or "stream-model",
+        "model": provider_model
+        or getattr(request, "model", None)
+        or "stream-model",
         "exception_type": type(exc).__name__,
         "exception_message": str(exc),
         "stream_events_seen": int(

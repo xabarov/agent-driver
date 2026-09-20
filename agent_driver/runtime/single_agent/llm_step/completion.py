@@ -649,6 +649,7 @@ async def _retry_stream_failure_without_streaming(
         exc,
         provider_name=provider.name,
         transition_reason=transition_reason,
+        provider_model=provider_model_hint(provider),
     )
     context.metadata["provider_stream_non_stream_fallback"] = True
     context.metadata["provider_stream_fallback_diagnostics"] = diagnostics

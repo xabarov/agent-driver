@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from agent_driver.llm.context_windows import provider_model_hint
 from agent_driver.context.token_estimation import (
     DEFAULT_CHARS_PER_TOKEN,
     calibrate_chars_per_token,
@@ -233,7 +234,9 @@ def _provider_failure_diagnostics(
     diagnostics: dict[str, Any] = {
         "transition_reason": transition_reason,
         "provider": host._deps.provider.name,
-        "model": getattr(request, "model", None) or "stream-model",
+        "model": provider_model_hint(host._deps.provider)
+        or getattr(request, "model", None)
+        or "stream-model",
         "exception_type": type(exc).__name__,
         "exception_message": str(exc),
         "assistant_stream_started": context.metadata.get("assistant_stream_started")

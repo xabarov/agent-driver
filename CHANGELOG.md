@@ -7,6 +7,15 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.28.2] - 2026-09-20
+
+### Fixed
+
+- Provider failure diagnostics in the LLM step and stream-failure retry
+  path carry the provider's real model id via `provider_model_hint`
+  instead of the `stream-model` placeholder, so recovered/retried turns
+  report the serving model to host route receipts.
+
 ## [0.28.1] - 2026-09-20
 
 ### Fixed
