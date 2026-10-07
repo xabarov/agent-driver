@@ -24,6 +24,7 @@ from agent_driver.memory.provider import (
     RecallQuery,
     render_recall_block,
 )
+from agent_driver.runtime.metadata_state import get_cost_runtime_state
 from agent_driver.runtime.lifecycle_hooks import BaseRunLifecycleHook
 from agent_driver.runtime.metadata_state import get_memory_runtime_state
 
@@ -219,6 +220,7 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
                 session_id, explicit, run_id=context.run_id
             )
             if written is not None:
+                self._record_durability_result(context, session_id)
                 context.metadata["memory_explicit_synced_count"] = written
                 return
         turn = MemoryTurn(
@@ -235,6 +237,7 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
             # Cheap store-backed sync keeps its historical contract: the run is
             # complete only once the turn is durably recorded.
             await self._provider.sync_turn(turn)
+            self._record_durability_result(context, session_id)
             return
         # Deferred: sync_turn makes an LLM call (fact extraction) and must not
         # delay the run's completion. shutdown()/next recall await stragglers.
@@ -262,7 +265,52 @@ class MemoryLifecycleHook(BaseRunLifecycleHook):
     ) -> None:
         """Persist the turn, then fire a consolidation pass if the cadence lands."""
         await self._provider.sync_turn(turn)
+        self._record_durability_result(context, turn.session_id)
         await self._maybe_consolidate(context, turn.session_id)
+
+    def _record_durability_result(
+        self, context: "RunContext", session_id: str
+    ) -> None:
+        """Project an optional provider gate receipt and usage into run metadata."""
+        consume = getattr(self._provider, "consume_durability_result", None)
+        if not callable(consume):
+            return
+        result = consume(context.run_id, session_id)
+        if not isinstance(result, dict):
+            return
+        receipt = result.get("receipt")
+        if isinstance(receipt, dict):
+            context.metadata["memory_durability"] = receipt
+            decisions = receipt.get("decisions")
+            if isinstance(decisions, list):
+                source_ref = (
+                    f"run:{context.run_id}"
+                    if context.run_id
+                    else f"session:{session_id}"
+                )
+                provenance = [
+                    {
+                        "fact_id": item.get("candidate_id"),
+                        "source_ref": source_ref,
+                        "confidence": item.get("confidence"),
+                        "freshness": "turn",
+                        "link_check_status": "present",
+                        "metadata": {
+                            "gate_schema": receipt.get("schema"),
+                            "category": item.get("category"),
+                            "action": item.get("action"),
+                        },
+                    }
+                    for item in decisions
+                    if isinstance(item, dict)
+                    and item.get("action") == "accept_durable"
+                    and isinstance(item.get("candidate_id"), str)
+                ] if receipt.get("applied", True) is not False else []
+                if provenance:
+                    context.metadata["memory_fact_provenance"] = provenance
+        usage = result.get("usage")
+        if usage is not None:
+            get_cost_runtime_state(context).accumulate(usage)
 
     def _turn_ordinal(self, context: "RunContext") -> int:
         """Durable turn number for this session, supplied by the host.

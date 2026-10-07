@@ -5,6 +5,11 @@ from agent_driver.memory.extraction import (
     parse_extracted_facts,
     supersede_by_slot,
 )
+from agent_driver.memory.durability_gate import (
+    MEMORY_DURABILITY_SCHEMA,
+    MemoryDurabilityGate,
+    MemoryGateResult,
+)
 from agent_driver.memory.factory import build_memory_provider
 from agent_driver.memory.semantic import (
     EmbeddingMemoryProvider,
@@ -31,6 +36,9 @@ __all__ = [
     "FactExtractingMemoryProvider",
     "InMemoryMemoryStore",
     "MemoryEmbedder",
+    "MemoryDurabilityGate",
+    "MemoryGateResult",
+    "MEMORY_DURABILITY_SCHEMA",
     "MemoryKind",
     "MemoryProvider",
     "MemoryRecord",

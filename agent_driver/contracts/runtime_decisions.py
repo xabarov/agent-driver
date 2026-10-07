@@ -23,6 +23,8 @@ _VALID_KINDS = frozenset(
         "scope",
         "budget",
         "final_answer",
+        "model_route",
+        "quality_gate",
     }
 )
 _VALID_ACTIONS = frozenset(
@@ -38,6 +40,8 @@ _VALID_ACTIONS = frozenset(
         "rollback",
         "warn",
         "revise",
+        "select_model_role",
+        "escalate",
     }
 )
 _VALID_STATUSES = frozenset({"proposed", "applied", "skipped", "satisfied", "failed"})

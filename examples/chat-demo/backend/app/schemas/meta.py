@@ -25,6 +25,7 @@ class HealthResponse(BaseModel):
     store_kind: str
     provider: ProviderStatusView
     tracing: dict[str, object] = Field(default_factory=dict)
+    jev: dict[str, object] = Field(default_factory=dict)
 
 
 class ProviderResponse(BaseModel):

@@ -28,6 +28,7 @@ from agent_driver.context.compaction.condenser import (
 )
 from agent_driver.context.compaction.condenser_tiers import default_condenser_tiers
 from agent_driver.contracts.messages import ChatMessage
+from agent_driver.contracts.scaffolding import is_scaffolding
 from agent_driver.runtime.single_agent.types import (
     EventSpec,
     RunContext,
@@ -52,6 +53,13 @@ from agent_driver.runtime.single_agent.context_management.compaction_helpers imp
     _result_from_payload,
     _COMPACTION_CHARS_PER_TOKEN,
     _MAX_SCALED_COMPACTION_CHARS,
+)
+from agent_driver.runtime.metadata_state import get_cost_runtime_state
+from agent_driver.llm.compaction_prepass import CompactionUnit
+from agent_driver.llm.rollout import (
+    jev_task_category,
+    observe_jev_gate,
+    resolve_jev_mode,
 )
 
 
@@ -148,6 +156,298 @@ def _apply_live_tool_result_prune(
         "chars_saved": result.chars_saved,
         "keep_recent": keep_recent,
         "token_pressure_state": token_pressure_state,
+    }
+
+
+def _compaction_prepass_units(messages: list[Any]) -> list[CompactionUnit]:
+    """Build conservative exchange and tool-chain units for the JEV pre-pass.
+
+    A user message owns the assistant/tool messages until the next user turn;
+    an assistant followed by tool results forms one tool-chain unit. The final
+    live turn and explicit evidence markers remain protected as a whole.
+    """
+    units: list[CompactionUnit] = []
+    last_index = len(messages) - 1
+    index = 0
+    while index < len(messages):
+        if is_scaffolding(messages[index]):
+            index += 1
+            continue
+        first_role = str(
+            getattr(
+                getattr(messages[index], "role", ""),
+                "value",
+                getattr(messages[index], "role", ""),
+            )
+        )
+        end = index + 1
+        if first_role == "user":
+            while end < len(messages):
+                role = str(
+                    getattr(
+                        getattr(messages[end], "role", ""),
+                        "value",
+                        getattr(messages[end], "role", ""),
+                    )
+                )
+                if role in {"user", "system"}:
+                    break
+                end += 1
+        elif first_role == "assistant":
+            while end < len(messages):
+                role = str(
+                    getattr(
+                        getattr(messages[end], "role", ""),
+                        "value",
+                        getattr(messages[end], "role", ""),
+                    )
+                )
+                if role != "tool":
+                    break
+                end += 1
+        indexes = tuple(
+            item
+            for item in range(index, end)
+            if not is_scaffolding(messages[item])
+        )
+        parts = [
+            str(getattr(messages[item], "content", "") or "").strip()
+            for item in indexes
+        ]
+        text = "\n".join(part for part in parts if part)
+        if not text.strip():
+            index = max(end, index + 1)
+            continue
+        role = "exchange" if first_role == "user" else first_role
+        digest = hashlib.sha256(
+            f"{index}:{role}:{text}".encode("utf-8")
+        ).hexdigest()
+        units.append(
+            CompactionUnit(
+                unit_id=f"u{index}_{digest[:16]}",
+                message_indexes=indexes,
+                role=role,
+                text=text,
+                protected=any(
+                    _is_protected_message(
+                        messages[item], is_last=item == last_index
+                    )
+                    for item in indexes
+                ),
+            )
+        )
+        index = max(end, index + 1)
+    return units
+
+
+def _compact_prepass_state(context: RunContext, messages: list[Any]) -> dict[str, Any]:
+    """Create a bounded active-state envelope; receipt code never stores it."""
+    planning = context.metadata.get("planning_state")
+    planning_excerpt: Any = planning
+    if isinstance(planning, dict):
+        planning_excerpt = {
+            key: str(value)[:500]
+            for key, value in planning.items()
+            if key in {"goal", "status", "next_action", "open_questions", "steps"}
+        }
+    artifact_refs = context.metadata.get("artifact_refs")
+    protected_artifacts = []
+    if isinstance(artifact_refs, list):
+        for item in artifact_refs[:12]:
+            if isinstance(item, dict):
+                ref = item.get("artifact_id") or item.get("digest_id")
+                if ref:
+                    protected_artifacts.append(str(ref)[:128])
+    last = messages[-1] if messages else None
+    last_turn = {
+        "role": str(getattr(getattr(last, "role", ""), "value", getattr(last, "role", "")))
+        if last is not None
+        else None,
+        "chars": len(str(getattr(last, "content", "") or "")) if last is not None else 0,
+    }
+    return {
+        "current_request": str(context.run_input.input or "")[:1600],
+        "planning_state": planning_excerpt,
+        "unresolved_errors": [
+            str(item)[:500]
+            for item in context.metadata.get("unresolved_errors", [])[:8]
+        ]
+        if isinstance(context.metadata.get("unresolved_errors"), list)
+        else [],
+        "protected_artifact_refs": protected_artifacts,
+        "last_turn": last_turn,
+    }
+
+
+async def _apply_jev_compaction_prepass(
+    host: CompactionStageHost,
+    *,
+    context: RunContext,
+    request: Any,
+) -> None:
+    """Run the opt-in JEV retention pass after eligibility, before compaction.
+
+    The helper fails open: a missing provider, a malformed response, or low
+    confidence leaves ``request.messages`` untouched so the legacy compactor
+    receives exactly the same view it would have received before Stage 3.
+    """
+    if not getattr(host._config, "enable_jev_compaction_prepass", False):
+        return
+    task = jev_task_category(getattr(context.run_input, "app_metadata", None))
+    rollout_mode = resolve_jev_mode(
+        getattr(host._config, "jev_rollout", None), "compaction", task=task
+    )
+    prepass = getattr(host._config, "compaction_prepass", None)
+    classify = getattr(prepass, "classify", None)
+    original_messages = list(request.messages)
+    units = _compaction_prepass_units(original_messages)
+    if rollout_mode == "off":
+        context.metadata["compaction_prepass"] = {
+            "schema": "jev-compaction.v1",
+            "source": "rollout_disabled",
+            "rollout_mode": "off",
+            "task": task,
+            "unit_count": len(units),
+            "archived_unit_sha256": [],
+        }
+        return
+    if not callable(classify):
+        observe_jev_gate(
+            getattr(host._config, "jev_rollout", None),
+            gate="compaction",
+            task=task,
+            fallback=True,
+        )
+        context.metadata["compaction_prepass"] = {
+            "schema": "jev-compaction.v1",
+            "source": "fallback",
+            "rollout_mode": rollout_mode,
+            "task": task,
+            "fallback_reason": "missing_provider",
+            "unit_count": len(units),
+            "archived_unit_sha256": [],
+        }
+        return
+    try:
+        result = await classify(
+            active_state=_compact_prepass_state(context, original_messages),
+            units=units,
+        )
+    except Exception as exc:  # noqa: BLE001 — optional pass must fail open
+        observe_jev_gate(
+            getattr(host._config, "jev_rollout", None),
+            gate="compaction",
+            task=task,
+            fallback=True,
+        )
+        context.metadata["compaction_prepass"] = {
+            "schema": "jev-compaction.v1",
+            "source": "fallback",
+            "rollout_mode": rollout_mode,
+            "task": task,
+            "fallback_reason": type(exc).__name__,
+            "unit_count": len(units),
+            "archived_unit_sha256": [],
+        }
+        return
+    usage = getattr(result, "usage", None)
+    if usage is not None:
+        get_cost_runtime_state(context).accumulate(usage)
+    receipt = getattr(result, "receipt", None)
+    if not isinstance(receipt, dict):
+        receipt = {
+            "schema": "jev-compaction.v1",
+            "source": "fallback",
+            "fallback_reason": "invalid_result",
+            "unit_count": len(units),
+            "archived_unit_sha256": [],
+        }
+        observe_jev_gate(
+            getattr(host._config, "jev_rollout", None),
+            gate="compaction",
+            task=task,
+            fallback=receipt.get("source") == "fallback",
+            cost_usd=(usage.cost_usd_estimate if usage is not None else None),
+            latency_ms=(
+                float(receipt["latency_ms"])
+                if isinstance(receipt.get("latency_ms"), (int, float))
+                else None
+            ),
+        )
+    archive_indexes = {
+        int(index)
+        for index in getattr(result, "archive_indexes", frozenset())
+        if isinstance(index, int) and 0 <= index < len(original_messages)
+    }
+    retained_indexes: set[int] = set()
+    protected_indexes: set[int] = set()
+    original_by_index = {
+        index: message for index, message in enumerate(original_messages)
+    }
+    for decision in getattr(result, "decisions", ()):
+        indexes = {
+            int(index)
+            for index in getattr(decision, "message_indexes", ())
+            if isinstance(index, int) and 0 <= index < len(original_messages)
+        }
+        if getattr(decision, "protected", False) or getattr(decision, "retention", "") == "protected":
+            protected_indexes.update(indexes)
+        if getattr(decision, "retention", "") == "retain":
+            retained_indexes.update(indexes)
+    archive_indexes -= protected_indexes
+    # Keep at least one sendable turn; the last message is normally protected,
+    # but this guard also covers custom unit providers.
+    candidate_messages = [
+        message
+        for index, message in enumerate(original_messages)
+        if index not in archive_indexes
+    ]
+    if not _has_sendable_content(candidate_messages):
+        archive_indexes.clear()
+        receipt = {**receipt, "fallback_reason": "empty_after_archive"}
+    proposed_archived_count = len(archive_indexes)
+    proposed_chars_archived = max(
+        0,
+        message_chars(original_messages)
+        - message_chars(
+            [
+                message
+                for index, message in enumerate(original_messages)
+                if index not in archive_indexes
+            ]
+        ),
+    )
+    if archive_indexes and rollout_mode == "active":
+        request.messages = [
+            message
+            for index, message in enumerate(original_messages)
+            if index not in archive_indexes
+        ]
+    if retained_indexes and rollout_mode == "active":
+        for index in retained_indexes - archive_indexes:
+            message = original_by_index.get(index)
+            if message is None:
+                continue
+            metadata = dict(getattr(message, "metadata", {}) or {})
+            metadata["jev_compaction_retain"] = True
+            message.metadata = metadata
+    before_chars = message_chars(original_messages)
+    after_chars = message_chars(list(request.messages))
+    context.metadata["compaction_prepass"] = {
+        **receipt,
+        "message_count_before": len(original_messages),
+        "message_count_after": len(request.messages),
+        "chars_before": before_chars,
+        "chars_after": after_chars,
+        "chars_archived": max(0, before_chars - after_chars),
+        "archived_message_count": len(archive_indexes) if rollout_mode == "active" else 0,
+        "protected_message_count": len(protected_indexes),
+        "retained_message_count": len(retained_indexes),
+        "proposed_archived_message_count": proposed_archived_count,
+        "proposed_chars_archived": proposed_chars_archived,
+        "applied": rollout_mode == "active",
+        "rollout_mode": rollout_mode,
+        "task": task,
     }
 
 
@@ -702,6 +1002,7 @@ async def apply_compaction_if_eligible(
         token_pressure_state=token_pressure_state,
         orchestrator=orchestrator,
     )
+    await _apply_jev_compaction_prepass(host, context=context, request=request)
     handled = await _run_compaction_mode_dispatch(
         host,
         context=context,

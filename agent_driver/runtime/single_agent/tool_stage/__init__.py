@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Protocol
 
@@ -16,10 +17,16 @@ from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.scaffolding import scaffolding_metadata
 from agent_driver.llm.contracts import LlmFinishReason
 from agent_driver.llm.reasoning_hygiene import strip_leading_think_block
+from agent_driver.llm.rollout import (
+    jev_task_category,
+    observe_jev_gate,
+    resolve_jev_mode,
+)
 from agent_driver.llm.tool_call_parser import strip_text_form_tool_calls
 from agent_driver.prompts import force_final_answer_tool_message
 from agent_driver.runtime.errors import RuntimeExecutionError
 from agent_driver.runtime.metadata_state import (
+    get_cost_runtime_state,
     get_tool_loop_state,
 )
 from agent_driver.runtime.single_agent.context_management.todo_reminders import (
@@ -141,6 +148,14 @@ _MAX_EMPTY_TOOL_CALLS_REPROMPTS = 3
 # finishing (or genuinely cannot complete the plan) is still allowed to finalize rather
 # than deadlocking. A strong nudge, not a hard block.
 _MAX_OPEN_TODOS_FINALIZE_REPROMPTS = 3
+
+# Stage 2: the quality gate may request one cheap/balanced → strong escalation
+# and at most two candidate evaluations (the second is useful after a bounded
+# request-for-tools repair). Static loop, tool, budget, and policy guards remain
+# authoritative and can still force finalization before this gate runs.
+_MAX_QUALITY_GATE_EVALUATIONS = 2
+_MAX_QUALITY_GATE_ESCALATIONS = 1
+_MAX_JEV_REPAIR_RETRIES = 1
 
 _force_web_fetch_for_source_verified_research = (
     force_web_fetch_for_source_verified_research
@@ -516,6 +531,7 @@ async def _finalize_tool_stage_transition(
                     "reprompt_count": empty_tc_reprompts + 1,
                 },
             )
+
     elif result.envelopes:
         # A real tool round happened — the model can make progress again.
         context.metadata.pop("empty_tool_calls_reprompt_count", None)
@@ -590,6 +606,18 @@ async def _finalize_tool_stage_transition(
                     "severity": "warning",
                 },
             )
+    # Stage 2: run the optional JEV quality gate only after all existing
+    # deterministic recovery and plan guards have had their say. It can add one
+    # bounded continuation/escalation, but it cannot clear a force-final marker,
+    # alter tool policy, or create an unbounded retry loop.
+    if not continue_with_llm:
+        repair_transition = await _maybe_recovery_gate(host, context, result)
+        if repair_transition:
+            continue_with_llm = True
+    if not continue_with_llm:
+        gate_transition = await _maybe_quality_gate(host, context, result)
+        if gate_transition:
+            continue_with_llm = True
     loop_iterations = int(context.metadata.get("tool_loop_iterations", 0))
     if continue_with_llm:
         loop_iterations += 1
@@ -618,6 +646,388 @@ async def _finalize_tool_stage_transition(
     await host._maybe_execute_subagent_group(context)
     host._maybe_fail_after_step("tool_stage")
     return RuntimeStepResult(next_step="llm_call" if continue_with_llm else "finalize")
+
+
+def _quality_gate_state(
+    context: RunContext, result: ToolExecutionResult
+) -> dict[str, Any]:
+    """Build a bounded state envelope for the JEV quality gate."""
+    response = context.llm_response
+    answer = response.message.content if response is not None else ""
+    tool_names: list[str] = []
+    error_codes: list[str] = []
+    denied_tools: list[str] = []
+    for envelope in result.envelopes:
+        name = getattr(getattr(envelope, "call", None), "tool_name", None)
+        if isinstance(name, str) and name and name not in tool_names:
+            tool_names.append(name)
+        error = getattr(envelope, "error", None)
+        code = getattr(error, "code", None)
+        if isinstance(code, str) and code and code not in error_codes:
+            error_codes.append(code)
+        decision = getattr(envelope, "decision", None)
+        decision_value = getattr(decision, "value", decision)
+        if decision_value in {ToolPolicyDecision.DENY, "deny"} and name:
+            if name not in denied_tools:
+                denied_tools.append(name)
+    role = context.metadata.get("llm_routed_role") or context.run_input.model_role
+    return {
+        "request": str(getattr(context.run_input, "input", "") or "")[:4000],
+        "candidate_answer": str(answer or "")[:4000],
+        "phase": "finalize_candidate",
+        "model_role": role or "default",
+        "finish_reason": (
+            response.finish_reason.value if response is not None else "unknown"
+        ),
+        "tool_names": tool_names[:16],
+        "tool_error_codes": error_codes[:8],
+        "policy_denied_tools": denied_tools[:8],
+        "tool_evidence_count": len(result.envelopes),
+        "tool_call_count": context.tool_calls,
+        "force_final": get_tool_loop_state(context).force_final_answer_enabled(),
+    }
+
+
+def _append_quality_gate_nudge(
+    context: RunContext, *, candidate: str, nudge: str
+) -> None:
+    """Preserve the candidate in protocol history and add fixed repair guidance."""
+    messages = _load_protocol_messages(context)
+    if candidate.strip() and not any(
+        item.role == ChatRole.ASSISTANT and item.content == candidate
+        for item in messages[-4:]
+    ):
+        messages.append(ChatMessage(role=ChatRole.ASSISTANT, content=candidate))
+    messages.append(
+        ChatMessage(
+            role=ChatRole.USER,
+            content=nudge,
+            metadata=scaffolding_metadata("jev_quality_gate"),
+        )
+    )
+    _normalize_protocol_messages(messages)
+    context.metadata["protocol_messages"] = [
+        item.model_dump(mode="json") for item in messages
+    ]
+
+
+def _recovery_state(context: RunContext, result: ToolExecutionResult) -> dict[str, Any]:
+    """Extend the bounded gate state with non-sensitive recovery indicators."""
+    state = _quality_gate_state(context, result)
+    response = context.llm_response
+    raw_parse_errors = response.metadata.get("tool_call_parse_errors", []) if response else []
+    parse_error_codes: list[str] = []
+    if isinstance(raw_parse_errors, list):
+        for item in raw_parse_errors:
+            code = item.get("code") if isinstance(item, dict) else None
+            if isinstance(code, str) and code and code not in parse_error_codes:
+                parse_error_codes.append(code)
+    state.update(
+        {
+            "phase": "tool_recovery",
+            "parse_error_codes": parse_error_codes[:8],
+            "provider_recovery": any(
+                context.metadata.get(key) is not None
+                for key in (
+                    "last_provider_error",
+                    "last_provider_stream_error",
+                    "provider_stream_fallback_diagnostics",
+                )
+            ),
+            "has_retryable_error": any(
+                bool(getattr(getattr(envelope, "error", None), "retryable", False))
+                for envelope in result.envelopes
+            ),
+        }
+    )
+    return state
+
+
+def _has_recovery_signal(context: RunContext, result: ToolExecutionResult) -> bool:
+    response = context.llm_response
+    if response is not None and isinstance(
+        response.metadata.get("tool_call_parse_errors"), list
+    ) and response.metadata.get("tool_call_parse_errors"):
+        return True
+    if any(
+        context.metadata.get(key) is not None
+        for key in (
+            "last_provider_error",
+            "last_provider_stream_error",
+            "provider_stream_fallback_diagnostics",
+        )
+    ):
+        return True
+    return any(getattr(envelope, "error", None) is not None for envelope in result.envelopes)
+
+
+async def _maybe_recovery_gate(
+    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
+) -> bool:
+    """Request at most one JEV-guided repair hint for a failed tool turn.
+
+    The runtime never executes the JEV-selected action directly. It only adds a
+    fixed, policy-aware prompt for the next model turn; existing deterministic
+    retry, force-final, and tool-policy guards remain in charge.
+    """
+    gate = getattr(host._config, "quality_gate", None)
+    task = jev_task_category(getattr(context.run_input, "app_metadata", None))
+    rollout_mode = resolve_jev_mode(
+        getattr(host._config, "jev_rollout", None), "quality", task=task
+    )
+    if rollout_mode == "off":
+        return False
+    classify = getattr(gate, "classify_recovery", None) if gate is not None else None
+    if not callable(classify) or not _has_recovery_signal(context, result):
+        return False
+    if get_tool_loop_state(context).force_final_answer_enabled():
+        return False
+    attempts = int(context.metadata.get("jev_repair_attempts", 0) or 0)
+    if attempts >= _MAX_JEV_REPAIR_RETRIES:
+        return False
+    context.metadata["jev_repair_attempts"] = attempts + 1
+    usage = None
+    try:
+        decision = await classify(state=_recovery_state(context, result))
+    except Exception as exc:  # noqa: BLE001 — optional recovery is fail-open
+        decision = None
+        gate_metadata = {
+            "source": "fallback",
+            "action": "accept",
+            "fallback_reason": type(exc).__name__,
+            "question_schema": "jev-recovery.v1",
+        }
+    else:
+        gate_metadata = getattr(decision, "metadata", {})
+        if not isinstance(gate_metadata, dict):
+            gate_metadata = {}
+        usage = getattr(decision, "usage", None)
+        if usage is not None:
+            get_cost_runtime_state(context).accumulate(usage)
+    if not gate_metadata:
+        gate_metadata = {
+            "source": "fallback",
+            "action": "accept",
+            "fallback_reason": "missing_recovery_metadata",
+            "question_schema": "jev-recovery.v1",
+        }
+    gate_metadata = {**gate_metadata, "rollout_mode": rollout_mode, "task": task}
+    observe_jev_gate(
+        getattr(host._config, "jev_rollout", None),
+        gate="quality",
+        task=task,
+        fallback=gate_metadata.get("source") == "fallback",
+        cost_usd=(usage.cost_usd_estimate if usage is not None else None),
+        latency_ms=(
+            float(gate_metadata["latency_ms"])
+            if isinstance(gate_metadata.get("latency_ms"), (int, float))
+            else None
+        ),
+    )
+    context.metadata["quality_gate_recovery_decision"] = dict(gate_metadata)
+    action = getattr(decision, "action", "accept") if decision is not None else "accept"
+    reason = str(getattr(decision, "reason", "recovery_gate_failed"))
+    denied = bool(_recovery_state(context, result).get("policy_denied_tools"))
+    if denied and action == "retry_tool":
+        # A JEV answer cannot convert a static deny into an executable retry.
+        action = "repair_prompt"
+        reason = "policy_denial_forces_policy_aware_repair"
+    transition = False
+    event_action = "retry"
+    if rollout_mode == "shadow":
+        event_action = "shadow_" + action
+    elif action in {"retry_tool", "repair_prompt"}:
+        _append_quality_gate_nudge(
+            context,
+            candidate=str(context.llm_response.message.content or ""),
+            nudge=(
+                "Repair the previous tool interaction using the existing error feedback. "
+                "Retry only an operation allowed by the current policy, use valid "
+                "arguments, and return a grounded answer after the bounded retry."
+            ),
+        )
+        transition = rollout_mode == "active"
+    elif action == "ask_user":
+        _append_quality_gate_nudge(
+            context,
+            candidate=str(context.llm_response.message.content or ""),
+            nudge=(
+                "The tool failure leaves a material ambiguity. Ask one concise user "
+                "clarification using the allowed clarification path."
+            ),
+        )
+        event_action = "ask_user"
+        transition = rollout_mode == "active"
+    emit = getattr(host, "_emit_runtime_decision", None)
+    if callable(emit):
+        try:
+            emit(
+                context,
+                kind="retry",
+                trigger="tool_recovery",
+                action=event_action,
+                reason=reason,
+                status=(
+                    "failed"
+                    if gate_metadata.get("source") == "fallback"
+                    else "shadow"
+                    if rollout_mode == "shadow"
+                    else "applied"
+                ),
+                redacted_metadata=dict(gate_metadata),
+            )
+        except Exception:  # pragma: no cover - telemetry cannot break a run
+            pass
+    return transition
+
+
+async def _maybe_quality_gate(
+    host: ToolStageHost, context: RunContext, result: ToolExecutionResult
+) -> bool:
+    """Apply one bounded quality-gate continuation or strong escalation.
+
+    ``False`` means the existing finalize transition remains in force. The
+    helper deliberately accepts gate failures so a missing or unhealthy JEV
+    provider cannot wedge normal runs.
+    """
+    gate = getattr(host._config, "quality_gate", None)
+    task = jev_task_category(getattr(context.run_input, "app_metadata", None))
+    rollout_mode = resolve_jev_mode(
+        getattr(host._config, "jev_rollout", None), "quality", task=task
+    )
+    if rollout_mode == "off":
+        return False
+    if gate is None or context.llm_response is None:
+        return False
+    if context.metadata.get("early_finalize_answer") is not None:
+        return False
+    tool_state = get_tool_loop_state(context)
+    if tool_state.force_final_answer_enabled():
+        return False
+    role = context.metadata.get("llm_routed_role") or context.run_input.model_role
+    strong_role = getattr(gate, "strong_role", "strong")
+    if role == strong_role:
+        return False
+    evaluations = int(context.metadata.get("quality_gate_evaluations", 0) or 0)
+    if evaluations >= _MAX_QUALITY_GATE_EVALUATIONS:
+        return False
+    evaluate = getattr(gate, "evaluate", None)
+    if not callable(evaluate):
+        return False
+    context.metadata["quality_gate_evaluations"] = evaluations + 1
+    candidate = str(context.llm_response.message.content or "")
+    usage = None
+    try:
+        decision = await evaluate(state=_quality_gate_state(context, result))
+    except Exception as exc:  # noqa: BLE001 — optional gate must be fail-open
+        decision = None
+        gate_metadata = {
+            "source": "fallback",
+            "action": "accept",
+            "fallback_reason": type(exc).__name__,
+            "question_schema": "jev-quality.v1",
+        }
+    else:
+        gate_metadata = getattr(decision, "metadata", {})
+        if not isinstance(gate_metadata, dict):
+            gate_metadata = {}
+        usage = getattr(decision, "usage", None)
+        if usage is not None:
+            get_cost_runtime_state(context).accumulate(usage)
+    if not gate_metadata:
+        gate_metadata = {
+            "source": "fallback",
+            "action": "accept",
+            "fallback_reason": "missing_gate_metadata",
+            "question_schema": "jev-quality.v1",
+        }
+    gate_metadata = {**gate_metadata, "rollout_mode": rollout_mode, "task": task}
+    observe_jev_gate(
+        getattr(host._config, "jev_rollout", None),
+        gate="quality",
+        task=task,
+        fallback=gate_metadata.get("source") == "fallback",
+        cost_usd=(usage.cost_usd_estimate if usage is not None else None),
+        latency_ms=(
+            float(gate_metadata["latency_ms"])
+            if isinstance(gate_metadata.get("latency_ms"), (int, float))
+            else None
+        ),
+    )
+    context.metadata["quality_gate_decision"] = dict(gate_metadata)
+    context.metadata["quality_gate_candidate"] = {
+        "sha256": hashlib.sha256(candidate.encode("utf-8")).hexdigest(),
+        "chars": len(candidate),
+    }
+    action = getattr(decision, "action", "accept") if decision is not None else "accept"
+    reason = str(getattr(decision, "reason", "gate_failed"))
+    event_action = "force_final"
+    transition = False
+    if rollout_mode == "shadow":
+        event_action = "shadow_" + action
+    elif action == "escalate_strong":
+        escalations = int(context.metadata.get("quality_gate_escalations", 0) or 0)
+        if escalations < _MAX_QUALITY_GATE_ESCALATIONS:
+            context.metadata["quality_gate_escalations"] = escalations + 1
+            context.metadata["llm_routed_role"] = strong_role
+            _append_quality_gate_nudge(
+                context,
+                candidate=candidate,
+                nudge=(
+                    "A stronger reasoning pass is required. Re-evaluate the original "
+                    "request and the candidate answer, then produce a corrected final "
+                    "answer. Preserve valid work and do not mention this internal gate."
+                ),
+            )
+            event_action = "select_model_role"
+            transition = rollout_mode == "active"
+        else:
+            reason = "quality_gate_escalation_budget_exhausted"
+    elif action == "continue_tools":
+        _append_quality_gate_nudge(
+            context,
+            candidate=candidate,
+            nudge=(
+                "The candidate is incomplete. Continue only with tools allowed by the "
+                "current policy, then return a grounded answer. If a required tool is "
+                "unavailable, explain the limitation."
+            ),
+        )
+        event_action = "continue"
+        transition = rollout_mode == "active"
+    elif action == "ask_user":
+        _append_quality_gate_nudge(
+            context,
+            candidate=candidate,
+            nudge=(
+                "The request has a material ambiguity. Ask one concise clarification "
+                "using the clarification tool if it is allowed; otherwise state the "
+                "ambiguity instead of inventing a missing constraint."
+            ),
+        )
+        event_action = "ask_user"
+        transition = rollout_mode == "active"
+    emit = getattr(host, "_emit_runtime_decision", None)
+    if callable(emit):
+        try:
+            emit(
+                context,
+                kind="quality_gate",
+                trigger="finalize_candidate",
+                action=event_action,
+                reason=reason,
+                status=(
+                    "failed"
+                    if gate_metadata.get("source") == "fallback"
+                    else "shadow"
+                    if rollout_mode == "shadow"
+                    else "applied"
+                ),
+                redacted_metadata=dict(gate_metadata),
+            )
+        except Exception:  # pragma: no cover - telemetry cannot break a run
+            pass
+    return transition
 
 
 async def _maybe_finalize_from_tool_evidence(

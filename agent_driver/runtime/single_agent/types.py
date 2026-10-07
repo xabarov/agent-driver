@@ -127,6 +127,16 @@ class RunnerConfig:
     subagent_store: SubagentStore | None
     subagent_mailbox_store: SubagentMailboxStore | None
     code_executor: CodeActionExecutor | None
+    # Stage 2: optional JEV quality/escalation gate. The object is intentionally
+    # duck-typed so hosts can supply a fake, a JevQualityGate, or another bounded
+    # decision implementation without adding provider dependencies to runtime.
+    quality_gate: Any | None
+    # Stage 3: optional bounded JEV compaction pre-pass. It is deliberately
+    # duck-typed so hosts can inject JevCompactionPrepass or a deterministic fake.
+    compaction_prepass: Any | None
+    # Stage 5: optional off/shadow/active rollout policy for the JEV gates.
+    # Duck-typed to keep the runtime compatible with host policy wrappers.
+    jev_rollout: Any | None
     # EPIC-01: host-injected execution backend for the built-in bash/read/write
     # tools. None keeps the default local subprocess + local-disk behavior. The
     # model never selects it; governance stays above dispatch.
@@ -275,6 +285,9 @@ class RunnerConfig:
         self.subagent_store = kwargs.pop("subagent_store", None)
         self.subagent_mailbox_store = kwargs.pop("subagent_mailbox_store", None)
         self.code_executor = kwargs.pop("code_executor", None)
+        self.quality_gate = kwargs.pop("quality_gate", None)
+        self.compaction_prepass = kwargs.pop("compaction_prepass", None)
+        self.jev_rollout = kwargs.pop("jev_rollout", None)
         self.execution_backend = kwargs.pop("execution_backend", None)
         self.execution_lease_ownership = kwargs.pop("execution_lease_ownership", None)
         self.tool_registry = kwargs.pop("tool_registry", None)
@@ -375,6 +388,10 @@ class RunnerConfig:
     @property
     def enable_llm_compaction(self) -> bool:
         return self.compaction.enable_llm_compaction
+
+    @property
+    def enable_jev_compaction_prepass(self) -> bool:
+        return self.compaction.enable_jev_compaction_prepass
 
     @property
     def enable_partial_compaction(self) -> bool:

@@ -105,6 +105,7 @@ def _is_protected_message(message: Any, *, is_last: bool) -> bool:
     metadata = message.metadata if isinstance(message.metadata, dict) else {}
     return bool(
         metadata.get("compaction_protected")
+        or metadata.get("jev_compaction_retain")
         or metadata.get("compaction_evidence")
         or metadata.get("material_fact_ids")
         or _message_material_unit_hashes(message)

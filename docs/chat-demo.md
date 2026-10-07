@@ -121,6 +121,71 @@ the deterministic scenario: direct answers should not create tools, deliverable
 turns should not pause on clarification, and subagent runs should end with a
 coordinator synthesis rather than worker-only progress.
 
+## JEV rollout check
+
+The JEV control plane is enabled in the demo only when its gates and rollout
+policy are injected into `RunnerConfig`; the default policy remains `off`.
+For the normal chat task class, configure `CHAT_DEMO_JEV_ROLLOUT_MODE=active`
+and optionally set `CHAT_DEMO_JEV_TASK_ALLOWLIST=normal_chat`; route roles resolve
+through `AGENT_DRIVER_FAST_MODEL`, `AGENT_DRIVER_BALANCED_MODEL`, and
+`AGENT_DRIVER_STRONG_MODEL`. Keep the allowlist explicit for the first rollout.
+Run the cross-surface runtime validation before enabling a low-risk task class:
+
+```bash
+python -m agent_driver.evals.jev_live_validation --live --repeats 2 \
+  --output artifacts/jev-stage5/live-validation
+```
+
+Then run the deterministic chat concepts and inspect the same routes in the live
+demo. The rollout is acceptable for selected low-risk tasks when the validation
+report is `passed: true`, shadow behavior is unchanged, the tool-policy and
+memory invariants are true, and Phoenix shows the expected route/quality events.
+Keep global `default_on` as an explicit operator choice; the selected
+`normal_chat` allowlist can be promoted independently.
+Use `CHAT_DEMO_JEV_GATE_MODES=routing=active,quality=active,compaction=shadow,memory=shadow`
+to make the canary surface split explicit.
+
+For a controlled canary, keep `normal_chat` in the task allowlist and run the
+Stage 6 evaluator after the live validation artifact is captured:
+
+```bash
+CHAT_DEMO_JEV_ROLLOUT_MODE=active \
+CHAT_DEMO_JEV_TASK_ALLOWLIST=normal_chat \
+CHAT_DEMO_JEV_GATE_MODES=routing=active,quality=active,compaction=shadow,memory=shadow \
+python -m agent_driver.evals.jev_live_validation --live --repeats 3 \
+  --output artifacts/jev-stage6/live-validation
+python -m agent_driver.evals.jev_stage6 \
+  --live-validation artifacts/jev-stage6/live-validation/report.json \
+  --stage5-report artifacts/jev-stage5/live-final/report.json \
+  --chat-demo-check artifacts/jev-stage5/chat-demo-live-check.json \
+  --output artifacts/jev-stage6/canary
+```
+
+The evaluator promotes only the configured active gates when all SLO and
+invariant checks pass. The current canary is held by the 5-second p95 latency
+limit in the initial unpooled run. The Stage 7 pooled transport calibration
+meets that target; keep the demo on an explicit task allowlist until production
+labels are collected.
+
+When JEV is enabled, `/api/health` includes a bounded `jev` object with the
+current rollout controller status and transport telemetry. The transport uses
+one pooled HTTP client per cached agent bundle; `CHAT_DEMO_JEV_MAX_LATENCY_P95_MS`,
+`CHAT_DEMO_JEV_MAX_FALLBACK_RATE`, and `CHAT_DEMO_JEV_MAX_COST_USD` control the
+runtime rollback gates.
+
+Reviewed production labels are stored as raw-free JSONL at
+`CHAT_DEMO_JEV_LABEL_LEDGER` (default `.agent-driver/jev-production-labels.jsonl`).
+The health payload reports only label count/windows; use the Stage 8 evaluator
+to decide promotion.
+
+Stage 9 active evidence for the two held gates is collected separately from
+the demo ledger. Run the live memory validation and compaction benchmark, then
+aggregate them with the reviewed routing/quality labels using
+`python -m agent_driver.evals.jev_stage9`. The report uses a calibrated
+compaction budget because its batched decision is slower and more expensive;
+it still keeps global default-on disabled until an operator approves it and
+independently reviewed production labels replace the canary evidence.
+
 Live Phoenix-backed concept probe:
 
 ```bash

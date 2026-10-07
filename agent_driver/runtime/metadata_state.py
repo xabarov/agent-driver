@@ -448,6 +448,10 @@ class CompactionRuntimeState(_MetadataView):
             "session_memory_extraction": self.metadata.get(
                 "session_memory_extraction", {}
             ),
+            "memory_durability": self.metadata.get("memory_durability", {}),
+            "memory_fact_provenance": self.metadata.get(
+                "memory_fact_provenance", []
+            ),
             "prompt_render": self.metadata.get("prompt_render"),
         }
         if "invoked_skill_refs" in self.metadata:
@@ -471,6 +475,10 @@ class CompactionRuntimeState(_MetadataView):
             "post_compact_cleanup": self.metadata.get("post_compact_cleanup", {}),
             "session_memory_extraction": self.metadata.get(
                 "session_memory_extraction", {}
+            ),
+            "memory_durability": self.metadata.get("memory_durability", {}),
+            "memory_fact_provenance": self.metadata.get(
+                "memory_fact_provenance", []
             ),
             "retained_digest_ids": self.metadata.get("retained_digest_ids", []),
             "retained_artifact_ids": self.metadata.get("retained_artifact_ids", []),
