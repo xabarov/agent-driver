@@ -31,6 +31,7 @@ PlanningMode = Literal[
     "required_for_risky_tools",
     "always_for_multistep",
 ]
+JevRolloutMode = Literal["off", "shadow", "active"]
 
 
 def _discover_env_files() -> tuple[str, ...]:
@@ -144,6 +145,18 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("AGENT_DRIVER_MODEL"),
     )
+    fast_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("AGENT_DRIVER_FAST_MODEL"),
+    )
+    balanced_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("AGENT_DRIVER_BALANCED_MODEL"),
+    )
+    strong_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("AGENT_DRIVER_STRONG_MODEL"),
+    )
     base_url: str | None = Field(
         default=None,
         validation_alias=AliasChoices("AGENT_DRIVER_BASE_URL"),
@@ -155,6 +168,42 @@ class Settings(BaseSettings):
     provider_timeout_seconds: float = Field(
         default=30.0,
         validation_alias=AliasChoices("AGENT_DRIVER_TIMEOUT_SECONDS"),
+    )
+    jev_rollout_mode: JevRolloutMode = Field(
+        default="off",
+        validation_alias=AliasChoices("CHAT_DEMO_JEV_ROLLOUT_MODE"),
+    )
+    jev_model: str = Field(
+        default="typesafe/jev-1.13",
+        validation_alias=AliasChoices("AGENT_DRIVER_JEV_MODEL", "JEV_MODEL"),
+    )
+    jev_task_allowlist: str = Field(
+        default="",
+        validation_alias=AliasChoices("CHAT_DEMO_JEV_TASK_ALLOWLIST"),
+    )
+    jev_gate_modes: str = Field(
+        default="",
+        validation_alias=AliasChoices("CHAT_DEMO_JEV_GATE_MODES"),
+    )
+    jev_max_latency_p95_ms: float = Field(
+        default=5000.0,
+        validation_alias=AliasChoices("CHAT_DEMO_JEV_MAX_LATENCY_P95_MS"),
+    )
+    jev_max_fallback_rate: float = Field(
+        default=0.05,
+        validation_alias=AliasChoices("CHAT_DEMO_JEV_MAX_FALLBACK_RATE"),
+    )
+    jev_max_cost_usd: float = Field(
+        default=0.005,
+        validation_alias=AliasChoices("CHAT_DEMO_JEV_MAX_COST_USD"),
+    )
+    jev_min_observations_for_rollback: int = Field(
+        default=5,
+        validation_alias=AliasChoices("CHAT_DEMO_JEV_MIN_OBSERVATIONS_FOR_ROLLBACK"),
+    )
+    jev_label_ledger_path: Path = Field(
+        default=Path(".agent-driver/jev-production-labels.jsonl"),
+        validation_alias=AliasChoices("CHAT_DEMO_JEV_LABEL_LEDGER"),
     )
     runtime_store_kind: str = Field(
         default="memory",

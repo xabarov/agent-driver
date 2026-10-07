@@ -221,6 +221,10 @@ class CompactionSettings:
     enable_compaction: bool = False
     enable_session_memory_compaction: bool = False
     enable_llm_compaction: bool = False
+    # Stage 3: run one bounded JEV retention pre-pass only after the existing
+    # compaction eligibility decision fires. The provider object is injected on
+    # RunnerConfig.compaction_prepass; this flag keeps the feature opt-in.
+    enable_jev_compaction_prepass: bool = False
     enable_partial_compaction: bool = True
     enable_ptl_retry: bool = True
     # Option B1b (compaction hardening C2): route transcript compaction through the

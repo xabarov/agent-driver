@@ -371,6 +371,7 @@ def build_chat_app_metadata(
         "stream_poll_interval_ms": settings.stream_poll_interval_ms,
         "llm_stream_idle_timeout_seconds": settings.llm_stream_idle_timeout_seconds,
         "chat_mode": True,
+        "jev_task": "normal_chat",
         "session_id": session_id,
         "workspace_cwd": str(resolve_session_workspace(settings, session_id)),
     }

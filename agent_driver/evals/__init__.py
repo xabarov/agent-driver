@@ -38,6 +38,14 @@ from agent_driver.evals.context_compaction_runner import (
     run_context_compaction_regression_gate,
     run_context_compaction_strategy_comparison,
 )
+from agent_driver.evals.jev_compaction_scenarios import (
+    CompactionScenario,
+    synthetic_compaction_scenarios,
+)
+from agent_driver.evals.jev_stage9 import (
+    build_active_evidence_labels,
+    evaluate_stage9,
+)
 from agent_driver.evals.contracts import (
     AnswerRubric,
     BudgetLimits,
@@ -129,4 +137,8 @@ __all__ = [
     "StrategyComparisonRow",
     "ContextQualityGatePolicy",
     "ContextQualityGateResult",
+    "CompactionScenario",
+    "synthetic_compaction_scenarios",
+    "build_active_evidence_labels",
+    "evaluate_stage9",
 ]

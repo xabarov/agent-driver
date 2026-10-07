@@ -29,4 +29,18 @@ async def health(bundle: AgentBundle = Depends(get_agent_bundle)) -> HealthRespo
             error_count=status.error_count,
         ),
         tracing=tracing_status(),
+        jev={
+            "rollout": (
+                bundle.agent.runner.config.jev_rollout.status()
+                if hasattr(bundle.agent.runner.config.jev_rollout, "status")
+                else {}
+            ),
+            "transport": (
+                bundle.jev_telemetry.snapshot() if bundle.jev_telemetry is not None else {}
+            ),
+            "labels": (
+                bundle.jev_label_ledger.snapshot()
+                if bundle.jev_label_ledger is not None else {}
+            ),
+        },
     )

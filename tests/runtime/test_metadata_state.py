@@ -149,6 +149,8 @@ def test_loop_and_compaction_state_preserve_output_shapes() -> None:
         "context_breakdown": {},
         "effective_context_budget": {},
         "provider_max_tokens_source": "provider_default",
+        "memory_durability": {},
+        "memory_fact_provenance": [],
     }
     CompactionRuntimeState(metadata).set_microcompaction(
         observations=[{"summary": "new"}],

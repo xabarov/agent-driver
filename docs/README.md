@@ -31,6 +31,9 @@ current, and tied to code that exists in the repository.
 
 - [Roadmap](roadmap.md) - short current direction, the few genuinely-open
   threads, verification loop, and quality bar. Start here.
+- [JEV decision layer plan](jev-harness-plan.md) - staged plan for model-tier
+  routing, escalation gates, compaction filtering, and memory decisions; topic
+  clustering is explicitly deferred.
 - [Execution backends and task workspaces](epics/execution-backend/README.md) -
   sequential epics for a backend-neutral local/remote tool execution plane,
   reusable task leases, recovery, and backend qualification.

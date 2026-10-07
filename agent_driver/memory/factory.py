@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_driver.memory.extraction import FactExtractingMemoryProvider
+from agent_driver.memory.durability_gate import MemoryDurabilityGate
 from agent_driver.memory.provider import MemoryProvider, StoreBackedMemoryProvider
 from agent_driver.memory.semantic import EmbeddingMemoryProvider, MemoryEmbedder
 from agent_driver.memory.stores import InMemoryMemoryStore, SqliteMemoryStore
@@ -40,6 +41,7 @@ def build_memory_provider(
     recall_min_relevance: float = 0.0,
     recall_half_life_seconds: float | None = None,
     defer_sync: bool = True,
+    durability_gate: MemoryDurabilityGate | None = None,
 ) -> MemoryProvider:
     """Build a ready-to-use long-term memory provider with sane defaults.
 
@@ -64,6 +66,11 @@ def build_memory_provider(
     each turn on its OWN short-lived loop (e.g. ``asyncio.run`` per request) must
     pass ``defer_sync=False`` so the sync completes inline before that loop
     closes; otherwise the deferred task is cancelled and nothing is persisted.
+
+    ``durability_gate`` is an optional bounded JEV policy layer. When supplied
+    with an extractor, only candidates classified as durable and free of an
+    unresolved contradiction are persisted; sensitive, obsolete, session-only,
+    and uncertain candidates are excluded from long-term storage.
     """
     if path and path != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +93,7 @@ def build_memory_provider(
             recall_min_relevance=recall_min_relevance,
             recall_half_life_seconds=recall_half_life_seconds,
             defer_sync=defer_sync,
+            durability_gate=durability_gate,
         )
     return StoreBackedMemoryProvider(
         store,

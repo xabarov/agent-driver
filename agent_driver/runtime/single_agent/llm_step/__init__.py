@@ -18,6 +18,11 @@ from agent_driver.contracts.enums import (
     TerminalReason,
 )
 from agent_driver.llm.base import provider_request_id as _provider_request_id
+from agent_driver.llm.rollout import (
+    jev_task_category,
+    observe_jev_gate,
+    resolve_jev_mode,
+)
 from agent_driver.llm.payload_debug import (
     debug_llm_payload_enabled,
     summarize_llm_request_payload,
@@ -640,12 +645,35 @@ async def _maybe_llm_route(host: "LlmStepHost", context: RunContext) -> None:
     aroute = getattr(router, "aroute", None)
     if aroute is None:
         return
+    task = jev_task_category(getattr(context.run_input, "app_metadata", None))
+    rollout_mode = resolve_jev_mode(
+        getattr(host._config, "jev_rollout", None), "routing", task=task
+    )
+    if rollout_mode == "off":
+        return
     text = _run_user_text(context.run_input)
     if not text.strip():
         return
     from agent_driver.llm.model_router import RouteContext
 
     default_role = context.run_input.model_role or "default"
+    token_pressure_state = get_compaction_runtime_state(context).token_pressure_state()
+    app_metadata = context.run_input.app_metadata
+    risk_class = (
+        app_metadata.get("risk_class") if isinstance(app_metadata, dict) else None
+    )
+    if not isinstance(risk_class, str):
+        risk_class = None
+    unresolved_contradiction = isinstance(app_metadata, dict) and (
+        app_metadata.get("unresolved_contradiction") is True
+        or bool(app_metadata.get("unresolved_contradictions"))
+    )
+    cost_budget = context.run_input.cost_budget_usd
+    remaining_budget = None
+    if cost_budget is not None:
+        remaining_budget = max(
+            0.0, cost_budget - get_cost_runtime_state(context).total_cost_usd()
+        )
     try:
         role = await aroute(
             RouteContext(
@@ -653,12 +681,68 @@ async def _maybe_llm_route(host: "LlmStepHost", context: RunContext) -> None:
                 run_input=context.run_input,
                 default_role=default_role,
                 step_index=context.llm_step_count,
+                phase="planning" if context.llm_step_count == 0 else "tool_loop",
+                risk_class=risk_class,
+                context_pressure=token_pressure_state,
+                remaining_budget_usd=remaining_budget,
+                unresolved_contradiction=unresolved_contradiction,
             )
         )
     except Exception:  # noqa: BLE001 — routing must never break a run
         return
-    if isinstance(role, str) and role:
+    if isinstance(role, str) and role and rollout_mode == "active":
         context.metadata["llm_routed_role"] = role
+    decision_metadata = getattr(router, "last_decision_metadata", None)
+    if isinstance(decision_metadata, dict) and decision_metadata:
+        if getattr(host._config, "jev_rollout", None) is not None:
+            decision_metadata = {
+                **decision_metadata,
+                "rollout_mode": rollout_mode,
+                "task": task,
+                **(
+                    {"shadow_role": role}
+                    if rollout_mode == "shadow" and isinstance(role, str)
+                    else {}
+                ),
+            }
+        context.metadata["llm_route_decision"] = dict(decision_metadata)
+        observe_jev_gate(
+            getattr(host._config, "jev_rollout", None),
+            gate="routing",
+            task=task,
+            fallback=decision_metadata.get("source") == "fallback",
+            cost_usd=(
+                float(decision_metadata["cost_usd"])
+                if isinstance(decision_metadata.get("cost_usd"), (int, float))
+                else None
+            ),
+            latency_ms=(
+                float(decision_metadata["latency_ms"])
+                if isinstance(decision_metadata.get("latency_ms"), (int, float))
+                else None
+            ),
+        )
+        decision_usage = getattr(router, "last_decision_usage", None)
+        if decision_usage is not None:
+            get_cost_runtime_state(context).accumulate(decision_usage)
+        emit_runtime_decision = getattr(host, "_emit_runtime_decision", None)
+        if callable(emit_runtime_decision):
+            try:
+                emit_runtime_decision(
+                    context,
+                    kind="model_route",
+                    trigger="run_start",
+                    action="select_model_role",
+                    reason=str(
+                        decision_metadata.get("fallback_reason")
+                        or decision_metadata.get("source")
+                        or "router"
+                    ),
+                    status="shadow" if rollout_mode == "shadow" else "applied",
+                    redacted_metadata=dict(decision_metadata),
+                )
+            except Exception:  # pragma: no cover - telemetry must not break a run
+                pass
 
 
 async def execute_llm_call_step(

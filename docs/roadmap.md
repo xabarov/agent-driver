@@ -32,42 +32,49 @@ drove the last cycles are now shipped and archived (see
 [Unified work plan](archive/unified-work-plan-2026-05-31.md) keeps the slim record of
 what is left from those cycles. The active threads are:
 
-1. Execution backends and task workspaces.
+1. JEV decision layer for the agent harness.
+   The [staged implementation plan](jev-harness-plan.md) covers a separate
+   decision-provider substrate, model-tier routing, quality/escalation gates,
+   compaction relevance filtering, and memory durability checks. Conversation
+   topic clustering is deferred until the first stages have replay and live
+   quality metrics.
+
+2. Execution backends and task workspaces.
    The [standalone epic package](epics/execution-backend/README.md) defines the
    domain-neutral Agent Driver side of prepared local/remote environments:
    public backend contracts, truthful capabilities, reusable task leases,
    execution events and controls, and a backend compliance kit. Execute one
    epic at a time; concrete container/worker infrastructure remains external.
 
-2. Deep Research hard-profile hardening.
+3. Deep Research hard-profile hardening.
    Real page-aware PDF extraction ships behind the optional `[pdf]` extra
    (`pdf_read`, 2026-06-23). Hard claim auditing (`research/claims.jsonl`) is now
    enforceable at final-readiness via `hard_options.enforce_claims_audit`
    (opt-in, 2026-06-23). Remaining: turn the opt-in on by default only behind a
    green chat-demo health check; the phase gate stays soft/optional by design.
 
-3. Live cost discipline for the eval harness.
+4. Live cost discipline for the eval harness.
    The deterministic artifact/rewrite-loop scenarios pass; the live
    GPT-5.5 cost-regression gate is operational work, not code. Keep the live
    ladder cheap-to-expensive and record run IDs only when they explain a current
    regression or acceptance result.
 
-4. Deferred-by-choice (decide before building).
+5. Deferred-by-choice (decide before building).
    N7 heavy platform adapters (Telegram/Slack + delivery routing) and the
    remaining ACP client methods (`tool_terminal_ref`, `session/set_model`,
    `elicitation/*`) wait on explicit demand + a scope/dependency decision.
 
-5. Keep closed work closed.
+6. Keep closed work closed.
    Skills, SDK P0/P1, context pressure, structural splits, the E1–E8 /
    review-cycle / platform-adapter / node-contract plans and old OpenClaude/
    Hermes plans are archived decision records — do not reopen them from stale
    checkboxes unless fresh traces show a regression.
 
-6. Keep docs short and current.
+7. Keep docs short and current.
    Add concise pages for live concepts; avoid restoring old exploratory notes
    or active-looking checklists in reference docs.
 
-7. Keep provider diagnostics cheap and redaction-safe.
+8. Keep provider diagnostics cheap and redaction-safe.
    Route/profile preflight belongs before live model spend. Support bundles and
    harness artifacts should carry profile/preflight shape, not raw provider
    payloads or secrets.

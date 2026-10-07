@@ -13,6 +13,7 @@ from agent_driver.contracts.runtime import AgentRunInput
 from agent_driver.contracts.usage import UsageSummary
 from agent_driver.llm.contracts import LlmFinishReason, LlmResponse
 from agent_driver.llm.model_router import LlmDifficultyRouter
+from agent_driver.llm.rollout import JevRolloutSettings
 from agent_driver.runtime.single_agent.llm_step import _maybe_llm_route, _run_user_text
 from agent_driver.runtime.single_agent.llm_step.build import (
     LlmRequestBuildContext,
@@ -106,6 +107,95 @@ async def test_error_is_swallowed_and_leaves_role_unset():
     context = _context("hi")
     await _maybe_llm_route(_host(Boom()), context)
     assert "llm_routed_role" not in context.metadata
+
+
+@pytest.mark.asyncio
+async def test_route_metadata_is_projected_without_raw_request():
+    class Router:
+        last_decision_metadata = {
+            "source": "jev",
+            "role": "balanced",
+            "confidence": 0.9,
+        }
+
+        async def aroute(self, ctx):
+            return "balanced"
+
+    context = _context("keep this private request")
+    await _maybe_llm_route(_host(Router()), context)
+    assert context.metadata["llm_routed_role"] == "balanced"
+    assert context.metadata["llm_route_decision"] == {
+        "source": "jev",
+        "role": "balanced",
+        "confidence": 0.9,
+    }
+    assert "private request" not in str(context.metadata["llm_route_decision"])
+
+
+@pytest.mark.asyncio
+async def test_route_shadow_records_role_without_applying_it():
+    class Router:
+        last_decision_metadata = {
+            "source": "jev",
+            "role": "strong",
+            "confidence": 0.9,
+        }
+
+        async def aroute(self, ctx):
+            return "strong"
+
+    host = _host(Router())
+    host._config.jev_rollout = JevRolloutSettings(mode="shadow")
+    context = _context("shadow route")
+
+    await _maybe_llm_route(host, context)
+
+    assert "llm_routed_role" not in context.metadata
+    assert context.metadata["llm_route_decision"]["shadow_role"] == "strong"
+    assert context.metadata["llm_route_decision"]["rollout_mode"] == "shadow"
+
+
+@pytest.mark.asyncio
+async def test_jev_route_usage_is_added_to_cost_ledger_and_event_is_safe():
+    class Router:
+        last_decision_metadata = {
+            "source": "jev",
+            "role": "balanced",
+            "model": "typesafe/jev-1.13-20260917",
+            "cost_usd": 0.002,
+        }
+        last_decision_usage = UsageSummary(
+            input_tokens=12,
+            output_tokens=3,
+            cost_usd_estimate=0.002,
+            model_provider="TypeSafe",
+            model_name="typesafe/jev-1.13-20260917",
+        )
+
+        async def aroute(self, ctx):
+            return "balanced"
+
+    class Host:
+        _config = SimpleNamespace(model_router=Router())
+
+        def __init__(self):
+            self.events = []
+
+        def _emit_runtime_decision(self, context, **kwargs):
+            self.events.append(kwargs)
+
+    context = _context("route this safely")
+    host = Host()
+    await _maybe_llm_route(host, context)
+
+    assert (
+        context.metadata["cost_ledger"]["per_model"]["typesafe/jev-1.13-20260917"][
+            "cost_usd"
+        ]
+        == 0.002
+    )
+    assert host.events[0]["kind"] == "model_route"
+    assert host.events[0]["redacted_metadata"]["role"] == "balanced"
 
 
 # --- build consumes the cached role -------------------------------------------------

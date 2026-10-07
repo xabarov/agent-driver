@@ -7,7 +7,7 @@ import os
 
 from agent_driver.code_agent.backends import create_python_backend
 from agent_driver.contracts.runtime import AgentRunOutput
-from agent_driver.llm.model_router import ModelRouter
+from agent_driver.llm.model_router import AsyncModelRouter, ModelRouter
 from agent_driver.llm.providers import LlmProvider
 from agent_driver.memory.provider import MemoryProvider
 from agent_driver.runtime.checkpoints import InMemoryCheckpointStore
@@ -71,7 +71,9 @@ def create_agent(
     agent_id: str = "agent",
     graph_preset: str = "single_react",
     model_role_map: dict[str, str] | None = None,
-    model_router: ModelRouter | None = None,
+    model_router: ModelRouter | AsyncModelRouter | None = None,
+    quality_gate: object | None = None,
+    compaction_prepass: object | None = None,
     role_providers: dict[str, LlmProvider] | None = None,
 ) -> Agent:
     """Create SDK Agent facade with filtered tool registry.
@@ -81,8 +83,10 @@ def create_agent(
     permission gate is wired once instead of on every call.
 
     ``model_role_map`` (R2, role→model), ``model_router`` (R5/R6, a
-    :class:`~agent_driver.llm.model_router.ModelRouter` that picks the role per
-    turn) and ``role_providers`` (R3, role→provider) are build-path sugar for the
+    synchronous or asynchronous router that picks the role per turn) and
+    ``quality_gate`` (Stage 2, optional bounded JEV answer gate),
+    ``compaction_prepass`` (Stage 3, optional bounded JEV retention pass) and
+    ``role_providers`` (R3, role→provider) are build-path sugar for the
     R-track: pass them here instead of hand-constructing a ``RunnerConfig``. Each
     is applied only when non-``None`` and overrides the same field on ``config``
     (the capabilities object is replaced, never mutated, so a caller's shared
@@ -106,6 +110,10 @@ def create_agent(
         )
     if role_providers is not None:
         config_copy.role_providers = dict(role_providers)
+    if quality_gate is not None:
+        config_copy.quality_gate = quality_gate
+    if compaction_prepass is not None:
+        config_copy.compaction_prepass = compaction_prepass
     effective_memory = memory_provider
     if effective_memory is None and config is not None:
         effective_memory = getattr(config, "memory_provider", None)

@@ -56,8 +56,165 @@ equivalent, and `config.<field>` reads work either way.
 | `budget_grace_enabled` | grants one bounded no-tools final-answer window after soft step/tool budgets | cost ceilings still hard-stop |
 | `defer_primer` | surfaces relevant deferred tools before each LLM step | `keyword_relevance_primer()` is the generic default helper; `None` keeps pure `tool_search` behavior |
 
+### JEV model-tier routing
+
+The runtime can route one run to a configured semantic role before the first
+LLM request. `JevTierRouter` asks a pinned decision model to choose `fast`,
+`balanced`, or `strong`; `model_role_map` resolves those roles to the actual
+generation models. The selected role is reused through the inner tool loop,
+and provider errors or low confidence fall back to the heuristic router.
+
+```python
+import os
+
+from agent_driver.llm import JevTierRouter, OpenRouterDecisionClient
+from agent_driver.sdk import create_agent
+
+decision_client = OpenRouterDecisionClient(
+    api_key=os.environ["OPENROUTER_API_KEY"],
+    model="typesafe/jev-1.13",
+)
+router = JevTierRouter(decision_provider=decision_client)
+
+agent = create_agent(
+    # primary_provider is the existing LlmProvider for normal generation.
+    provider=primary_provider,
+    model_router=router,
+    model_role_map={
+        "fast": "provider/cheap-fast-model",
+        "balanced": "provider/mid-tier-model",
+        "strong": "provider/frontier-model",
+    },
+)
+```
+
+The decision response is projected into raw-free `llm_route_decision` runtime
+metadata with the selected role, model version, confidence, request ID, and
+usage. Static tool and permission policy remains authoritative.
+
+For an opt-in post-response gate, reuse the same decision client:
+
+```python
+from agent_driver.llm import JevQualityGate
+
+quality_gate = JevQualityGate(
+    decision_provider=decision_client,
+    model="typesafe/jev-1.13",
+    strong_role="strong",
+)
+
+agent = create_agent(
+    provider=primary_provider,
+    model_router=router,
+    model_role_map={
+        "fast": "provider/cheap-fast-model",
+        "balanced": "provider/mid-tier-model",
+        "strong": "provider/frontier-model",
+    },
+    quality_gate=quality_gate,
+)
+```
+
+The gate runs only for a candidate from a non-strong role. A low-confidence or
+insufficient answer gets at most one strong escalation; a recovery or
+clarification request adds a fixed, policy-aware prompt for the next model turn.
+JEV cannot change denied tools, approvals, retry limits, or irreversible-action
+guards. Gate failures accept the existing deterministic result.
+
+### JEV compaction pre-pass
+
+When compaction is already eligible, `JevCompactionPrepass` can archive only
+high-confidence, low-relevance exchanges before the existing compactor runs.
+It is opt-in and fail-open; configure the provider object on `RunnerConfig` and
+enable `enable_jev_compaction_prepass`:
+
+```python
+from agent_driver.llm import JevCompactionPrepass
+from agent_driver.runtime import RunnerConfig
+
+prepass = JevCompactionPrepass(
+    decision_provider=decision_client,
+    model="typesafe/jev-1.13",
+)
+config = RunnerConfig(
+    enable_compaction=True,
+    enable_jev_compaction_prepass=True,
+    compaction_prepass=prepass,
+)
+agent = create_agent(provider=primary_provider, config=config)
+```
+
+Protected system/evidence/material-fact messages and the live turn always stay
+in the request. `compaction_prepass` stores unit IDs, retention classes,
+thresholds, hashes, usage, and reduction metrics without transcript text; JEV
+failure or low confidence leaves the legacy compaction view unchanged.
+
 Tool-arg truncation (a cheap pre-compaction pass) lives in `CompactionSettings`
 (`enable_tool_arg_truncation`, `tool_arg_truncation_max_chars`).
+
+### JEV memory durability gate
+
+The fact-extraction provider can use the same decision client to screen writes
+before they reach a durable memory store:
+
+```python
+from agent_driver.memory import MemoryDurabilityGate, build_memory_provider
+
+memory = build_memory_provider(
+    path="memory.sqlite",
+    extractor=primary_provider,
+    durability_gate=MemoryDurabilityGate(
+        decision_provider=decision_client,
+        model="typesafe/jev-1.13",
+    ),
+)
+agent = create_agent(provider=primary_provider, memory_provider=memory)
+```
+
+The gate classifies each bounded candidate as durable, session-only, obsolete,
+sensitive, or uncertain, then checks durable candidates for contradictions with
+existing memory. Only accepted durable facts are written; secrets are redacted
+before the decision request, and failures hold candidates instead of falling
+back to raw durable turns. The run metadata contains a raw-free
+`memory_durability` receipt and `memory_fact_provenance` for accepted facts.
+
+### JEV rollout modes
+
+Stage 5 keeps rollout separate from provider construction. Attach a policy to
+`RunnerConfig` while the individual gates remain injected as above:
+
+```python
+from agent_driver.llm import JevRolloutSettings
+from agent_driver.runtime import RunnerConfig
+
+config = RunnerConfig(
+    jev_rollout=JevRolloutSettings(
+        mode="shadow",
+        task_allowlist=("low_risk",),
+        gate_modes={"memory": "active"},
+        pinned_models={"routing": "typesafe/jev-1.13"},
+        max_fallback_rate=0.20,
+        max_latency_p95_ms=5000.0,
+        min_observations_for_rollback=20,
+    ),
+)
+agent = create_agent(provider=primary_provider, config=config)
+```
+
+`shadow` evaluates and records decisions without changing routing, tool-loop
+transitions, or compaction input. `active` applies the bounded decision. A
+controller can switch every gate off after the configured fallback, cost, or
+p95 latency threshold is breached.
+
+For the bounded Stage 6 task canary, use `JevCanarySettings` from
+`agent_driver.evals.jev_stage6`. It keeps `normal_chat` allowlisted, promotes
+routing and quality first, and holds compaction and memory in shadow while
+calibrating live labels.
+
+Stage 8 reviewed labels use `JevProductionLabelLedger` and
+`JevOutcomeLabel`. The promotion evaluator requires independent labels across
+multiple windows and never enables global default-on without an explicit
+operator approval.
 
 Permission gating is wired once at construction:
 `create_agent(..., tool_gate=build_permission_gate(PermissionPolicy(mode=...)))`.

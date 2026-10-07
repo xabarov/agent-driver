@@ -30,6 +30,13 @@ from typing import Any, Protocol, runtime_checkable
 
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.contracts.runtime import AgentRunInput
+from agent_driver.contracts.usage import UsageSummary
+from agent_driver.llm.decisions import (
+    DecisionProtocolError,
+    DecisionQuestion,
+    DecisionProvider,
+    DecisionResponse,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +53,13 @@ class RouteContext:
     # Completed LLM iterations so far in this run; 0 = the first (planning) turn. Enables
     # phase-based routing (R5 PlanExecuteRouter).
     step_index: int = 0
+    # Optional bounded control-plane signals. Hosts may populate these without exposing
+    # the full transcript to a decision model.
+    phase: str | None = None
+    risk_class: str | None = None
+    context_pressure: str | None = None
+    remaining_budget_usd: float | None = None
+    unresolved_contradiction: bool = False
 
 
 @runtime_checkable
@@ -245,9 +259,233 @@ class LlmDifficultyRouter:
         return self._fallback.route(ctx)  # unparseable → heuristic
 
 
+def _build_jev_tier_questions(
+    *, fast_role: str, balanced_role: str, strong_role: str
+) -> dict[str, DecisionQuestion]:
+    """Build tier questions with the caller's semantic role names."""
+    return {
+        "tier": DecisionQuestion(
+            type="choice",
+            instructions=(
+                "Which model tier should handle this request? Choose the least "
+                "powerful tier that can complete it reliably."
+            ),
+            criteria={
+                fast_role: (
+                    "Short, low-risk, one-step work with little ambiguity or reasoning."
+                ),
+                balanced_role: (
+                    "Normal agent work, moderate tool use, or a request with some ambiguity."
+                ),
+                strong_role: (
+                    "Planning, debugging, design, refactoring, derivation, conflicting "
+                    "constraints, or high-impact work."
+                ),
+            },
+        ),
+        "requires_strong": DecisionQuestion(
+            type="noul",
+            instructions=(
+                "Does this request require strong reasoning, careful planning, or "
+                "a high-impact response?"
+            ),
+        ),
+    }
+
+
+class JevTierRouter:
+    """Route a run to a configured ``fast``/``balanced``/``strong`` role.
+
+    The decision model sees a bounded request envelope, not the complete
+    transcript. The chosen role is cached by the runtime for the inner tool loop;
+    an explicit escalation boundary can invoke the router again. Provider errors,
+    malformed answers, and low confidence fall back to the existing heuristic
+    router so routing can never break a run.
+    """
+
+    def __init__(
+        self,
+        *,
+        decision_provider: DecisionProvider,
+        model: str = "typesafe/jev-1.13",
+        fast_role: str = "fast",
+        balanced_role: str = "balanced",
+        strong_role: str = "strong",
+        fallback: ModelRouter | None = None,
+        min_confidence: float = 0.55,
+        strong_threshold: float = 0.65,
+        max_input_chars: int = 4000,
+    ) -> None:
+        roles = (fast_role, balanced_role, strong_role)
+        if any(not isinstance(role, str) or not role.strip() for role in roles):
+            raise ValueError("model roles must be non-empty strings")
+        if len(set(roles)) != 3:
+            raise ValueError("fast, balanced and strong roles must be distinct")
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("decision model must be a non-empty string")
+        if not 0.0 <= min_confidence <= 1.0:
+            raise ValueError("min_confidence must be between 0 and 1")
+        if not 0.0 <= strong_threshold <= 1.0:
+            raise ValueError("strong_threshold must be between 0 and 1")
+        if max_input_chars <= 0:
+            raise ValueError("max_input_chars must be positive")
+        self._decision_provider = decision_provider
+        self.model = model
+        self.fast_role = fast_role
+        self.balanced_role = balanced_role
+        self.strong_role = strong_role
+        self.min_confidence = min_confidence
+        self.strong_threshold = strong_threshold
+        self.max_input_chars = max_input_chars
+        self._questions = _build_jev_tier_questions(
+            fast_role=fast_role,
+            balanced_role=balanced_role,
+            strong_role=strong_role,
+        )
+        self._fallback = fallback or HeuristicDifficultyRouter(
+            simple_role=fast_role,
+            strong_role=strong_role,
+            simple_max_chars=max_input_chars,
+        )
+        self._last_decision_metadata: dict[str, Any] = {}
+        self._last_decision_usage: UsageSummary | None = None
+
+    @property
+    def last_decision_metadata(self) -> dict[str, Any]:
+        """Return raw-free metadata for the most recent routing attempt."""
+        return dict(self._last_decision_metadata)
+
+    @property
+    def last_decision_usage(self) -> UsageSummary | None:
+        """Return usage for the most recent JEV call, when one completed."""
+        if self._last_decision_usage is None:
+            return None
+        return self._last_decision_usage.model_copy(deep=True)
+
+    def _fallback_route(self, ctx: RouteContext, *, reason: str) -> str:
+        try:
+            role = self._fallback.route(ctx)
+        except Exception:  # noqa: BLE001 — fallback routing must remain bounded
+            role = self.balanced_role
+        if not isinstance(role, str) or not role:
+            role = self.balanced_role
+        prior = (
+            dict(self._last_decision_metadata)
+            if self._last_decision_metadata.get("source") == "jev"
+            else {}
+        )
+        self._last_decision_metadata = {
+            **prior,
+            "source": "fallback",
+            "fallback_reason": reason,
+            "role": role,
+            "question_schema": "jev-tier.v1",
+        }
+        return role
+
+    def _state(self, ctx: RouteContext, text: str) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "request": text[: self.max_input_chars],
+            "phase": ctx.phase or ("planning" if ctx.step_index == 0 else "tool_loop"),
+            "step_index": ctx.step_index,
+            "default_role": ctx.default_role,
+            "candidate_roles": {
+                self.fast_role: "fast / low-risk",
+                self.balanced_role: "balanced / ordinary agent work",
+                self.strong_role: "strong / complex or high-impact work",
+            },
+        }
+        if ctx.risk_class:
+            state["risk_class"] = ctx.risk_class
+        if ctx.context_pressure:
+            state["context_pressure"] = ctx.context_pressure
+        if ctx.remaining_budget_usd is not None:
+            state["remaining_budget_usd"] = max(0.0, ctx.remaining_budget_usd)
+        if ctx.unresolved_contradiction:
+            state["unresolved_contradiction"] = True
+        return state
+
+    async def aroute(self, ctx: RouteContext) -> str:
+        # A router instance may be reused across runs; never carry a prior call's
+        # billing receipt into a fallback or empty request.
+        self._last_decision_usage = None
+        self._last_decision_metadata = {}
+        text = last_user_text(ctx.messages)
+        if not text.strip():
+            self._last_decision_metadata = {
+                "source": "default",
+                "fallback_reason": "empty_request",
+                "role": ctx.default_role,
+                "question_schema": "jev-tier.v1",
+            }
+            return ctx.default_role
+        try:
+            response = await self._decision_provider.decide(
+                state=self._state(ctx, text),
+                questions=self._questions,
+                model=self.model,
+            )
+            if not isinstance(response, DecisionResponse):
+                raise DecisionProtocolError()
+            decision_usage = response.usage(task="model_router")
+        except Exception as exc:  # noqa: BLE001 — routing must never break a run
+            return self._fallback_route(ctx, reason=type(exc).__name__)
+        self._last_decision_usage = decision_usage
+        decision_metadata = {
+            "source": "jev",
+            "requested_model": self.model,
+            "model": response.model,
+            "model_version": response.model_version,
+            "request_id": response.request_id,
+            "latency_ms": response.latency_ms,
+            "attempts": response.attempts,
+            "confidence": response.answers.get("tier").confidence
+            if response.answers.get("tier") is not None
+            else None,
+            "cost_usd": response.cost_usd,
+            "input_tokens": response.input_tokens,
+            "output_tokens": response.output_tokens,
+            "usage_known": response.cost_usd is not None,
+            "question_schema": "jev-tier.v1",
+        }
+        self._last_decision_metadata = decision_metadata
+        tier = response.answers.get("tier")
+        requires_strong = response.answers.get("requires_strong")
+        valid_roles = {self.fast_role, self.balanced_role, self.strong_role}
+        if tier is None or tier.type != "choice" or tier.choice not in valid_roles:
+            return self._fallback_route(ctx, reason="invalid_tier_answer")
+        if requires_strong is not None and requires_strong.type != "noul":
+            return self._fallback_route(ctx, reason="invalid_strong_answer")
+        strong_probability = requires_strong.noul if requires_strong else None
+        forced_strong = (
+            ctx.risk_class in {"high", "irreversible"}
+            or ctx.unresolved_contradiction
+            or any(keyword in text.lower() for keyword in _DEFAULT_STRONG_KEYWORDS)
+            or (
+                strong_probability is not None
+                and strong_probability >= self.strong_threshold
+            )
+        )
+        self._last_decision_metadata["strong_probability"] = strong_probability
+        confidence = tier.confidence
+        if not forced_strong and (
+            confidence is None or confidence < self.min_confidence
+        ):
+            return self._fallback_route(ctx, reason="low_confidence")
+        role = self.strong_role if forced_strong else str(tier.choice)
+        self._last_decision_metadata = {
+            **decision_metadata,
+            "role": role,
+            "confidence": confidence,
+            "strong_probability": strong_probability,
+        }
+        return role
+
+
 __all__ = [
     "AsyncModelRouter",
     "HeuristicDifficultyRouter",
+    "JevTierRouter",
     "LlmDifficultyRouter",
     "ModelRouter",
     "PlanExecuteRouter",

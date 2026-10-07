@@ -8,10 +8,13 @@ When a later turn produces a fact with the same slot (the user changed their
 preference), recall keeps only the newest record per slot — append-only
 supersede, no store mutation API required.
 
-Fail-open discipline: memory must never take a run down. Any extraction
-failure (provider error, unparseable output) falls back to the raw-turn
-behavior of :class:`StoreBackedMemoryProvider` (configurable) or skips
-persistence entirely — it never raises into the run lifecycle.
+Fail-open discipline: memory must never take a run down. Without a durability
+gate, any extraction failure (provider error, unparseable output) falls back to
+the raw-turn behavior of :class:`StoreBackedMemoryProvider` (configurable) or
+skips persistence entirely — it never raises into the run lifecycle. When a
+durability gate is configured, its policy is fail-closed for durable memory:
+failed or uncertain candidates are held and are never written as raw durable
+turns.
 """
 
 from __future__ import annotations
@@ -19,12 +22,17 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from agent_driver.contracts.enums import ChatRole
 from agent_driver.contracts.messages import ChatMessage
 from agent_driver.llm.structured import structured_completion
 from agent_driver.memory.consolidation import consolidate_session
+from agent_driver.memory.durability_gate import (
+    MemoryDurabilityGate,
+    MemoryGateResult,
+)
 from agent_driver.memory.guidance import MEMORY_WRITE_GATING
 from agent_driver.memory.provider import (
     ConsolidationResult,
@@ -188,6 +196,7 @@ class FactExtractingMemoryProvider(MemoryProvider):
         recall_min_relevance: float = 0.0,
         recall_half_life_seconds: float | None = None,
         consolidation_max_records: int = 200,
+        durability_gate: MemoryDurabilityGate | None = None,
         defer_sync: bool = True,
     ) -> None:
         # Deferral moves the extraction LLM call off the run's completion path so
@@ -212,6 +221,8 @@ class FactExtractingMemoryProvider(MemoryProvider):
         self._recall_half_life_seconds = recall_half_life_seconds
         # Epic 031: backstop cap for the consolidation rewrite.
         self._consolidation_max_records = consolidation_max_records
+        self._durability_gate = durability_gate
+        self._durability_results: dict[str, dict[str, Any]] = {}
 
     @property
     def store(self) -> MemoryStore:
@@ -236,13 +247,21 @@ class FactExtractingMemoryProvider(MemoryProvider):
             facts = await self._extract_facts(turn)
         except Exception:  # noqa: BLE001 - deliberate fail-open boundary
             logger.warning("memory fact extraction failed; falling back", exc_info=True)
-            if self._fallback_raw:
+            if self._durability_gate is None and self._fallback_raw:
                 await self._sync_raw_turn(turn)
+            elif self._durability_gate is not None:
+                self._record_durability_failure(turn, "extraction_failed")
             return
-        for fact in facts:
+        accepted = facts
+        if self._durability_gate is not None:
+            gate_result = await self._classify_durability(turn, facts)
+            self._record_durability_result(turn, gate_result)
+            accepted = list(gate_result.accepted)
+        for fact in accepted:
             metadata: dict[str, Any] = {"source": "fact_extraction", **turn.metadata}
             if "slot" in fact:
                 metadata["slot"] = fact["slot"]
+            self._add_fact_provenance(metadata, turn=turn, fact=fact)
             if turn.run_id is not None:
                 metadata.setdefault("run_id", turn.run_id)
             self._store.append(
@@ -253,6 +272,120 @@ class FactExtractingMemoryProvider(MemoryProvider):
                     metadata=metadata,
                 )
             )
+
+    async def record_explicit_writes(
+        self,
+        session_id: str,
+        writes: list[dict[str, Any]],
+        *,
+        run_id: str | None = None,
+    ) -> int | None:
+        """Apply the durability gate to model-authored ``remember`` writes."""
+        if self._durability_gate is None:
+            return await super().record_explicit_writes(
+                session_id, writes, run_id=run_id
+            )
+        candidates: list[dict[str, str]] = []
+        for write in writes:
+            text = sanitize_memory_text(str(write.get("text") or "").strip())
+            if not text:
+                continue
+            item: dict[str, str] = {"text": text}
+            slot = write.get("slot")
+            if isinstance(slot, str) and slot.strip():
+                item["slot"] = slot.strip()
+            candidates.append(item)
+        turn = MemoryTurn(session_id=session_id, run_id=run_id)
+        result = await self._classify_durability(turn, candidates)
+        self._record_durability_result(turn, result)
+        if not result.accepted:
+            return 0
+        stamped = datetime.now(tz=timezone.utc).isoformat()
+        count = 0
+        for item in result.accepted:
+            metadata: dict[str, Any] = {
+                "source": "model_explicit",
+                "created_at": stamped,
+                "memory_scope": "durable",
+                "durability_category": "durable",
+            }
+            if "slot" in item:
+                metadata["slot"] = item["slot"]
+            if run_id is not None:
+                metadata["run_id"] = run_id
+                metadata["source_ref"] = f"run:{run_id}"
+            self._add_fact_provenance(metadata, turn=turn, fact=item)
+            self._store.append(
+                MemoryRecord(
+                    session_id=session_id,
+                    text=item["text"],
+                    kind=MemoryKind.FACT,
+                    metadata=metadata,
+                )
+            )
+            count += 1
+        return count
+
+    async def _classify_durability(
+        self, turn: MemoryTurn, facts: list[dict[str, str]]
+    ) -> MemoryGateResult:
+        existing = self._store.list_for_session(
+            turn.session_id, limit=self._durability_gate.max_existing_records
+        )
+        return await self._durability_gate.classify(
+            turn=turn, candidates=facts, existing_records=existing
+        )
+
+    @staticmethod
+    def _add_fact_provenance(
+        metadata: dict[str, Any], *, turn: MemoryTurn, fact: dict[str, str]
+    ) -> None:
+        import hashlib
+
+        source_ref = (
+            f"run:{turn.run_id}" if turn.run_id else f"session:{turn.session_id}"
+        )
+        payload = f"{fact.get('slot', '')}\x00{fact['text']}".encode()
+        metadata.update(
+            {
+                "fact_id": f"fact_{hashlib.sha256(payload).hexdigest()[:20]}",
+                "source_ref": source_ref,
+                "memory_scope": "durable",
+                "durability_category": "durable",
+            }
+        )
+
+    def _durability_key(self, run_id: str | None, session_id: str) -> str:
+        return run_id or f"session:{session_id}"
+
+    def _record_durability_result(
+        self, turn: MemoryTurn, result: MemoryGateResult
+    ) -> None:
+        key = self._durability_key(turn.run_id, turn.session_id)
+        self._durability_results[key] = {
+            "receipt": result.receipt,
+            "usage": result.usage,
+        }
+
+    def _record_durability_failure(self, turn: MemoryTurn, reason: str) -> None:
+        key = self._durability_key(turn.run_id, turn.session_id)
+        self._durability_results[key] = {
+            "receipt": {
+                "schema": "jev-memory-durability.v1",
+                "source": "fallback",
+                "fallback_reason": reason,
+                "accepted_count": 0,
+                "held_count": 0,
+            },
+            "usage": None,
+        }
+
+    def consume_durability_result(
+        self, run_id: str | None, session_id: str | None = None
+    ) -> dict[str, Any] | None:
+        """Return and clear the raw-free receipt captured for one completed run."""
+        key = self._durability_key(run_id, session_id or "")
+        return self._durability_results.pop(key, None)
 
     async def _extract_facts(self, turn: MemoryTurn) -> list[dict[str, str]]:
         parts = []

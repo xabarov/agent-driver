@@ -31,6 +31,16 @@ from agent_driver.runtime.single_agent.config_sections import (
     TrimmingSettings,
 )
 from agent_driver.runtime.single_agent.types import RunnerConfig
+from agent_driver.llm import (
+    DecisionClientSettings,
+    DecisionTelemetry,
+    JevProductionLabelLedger,
+    JevQualityGate,
+    JevRolloutController,
+    JevRolloutSettings,
+    JevTierRouter,
+    OpenRouterDecisionClient,
+)
 from agent_driver.runtime.storage import CheckpointStore, RuntimeEventLog
 from agent_driver.sdk import Agent, create_agent
 
@@ -74,6 +84,9 @@ class AgentBundle:
     session_store: SessionStore
     manifests: tuple[ToolManifest, ...]
     store_kind: str
+    jev_decision_client: OpenRouterDecisionClient | None = None
+    jev_telemetry: DecisionTelemetry | None = None
+    jev_label_ledger: JevProductionLabelLedger | None = None
 
 
 def _tool_config_from_preset(preset: ToolPreset) -> CliToolConfig:
@@ -206,6 +219,68 @@ def create_agent_bundle(
         "compaction_notice",
         "compaction_after_skill_invocation",
     }
+    jev_rollout = None
+    jev_router = None
+    jev_quality_gate = None
+    jev_decision_client = None
+    jev_telemetry = None
+    jev_label_ledger = JevProductionLabelLedger(settings.jev_label_ledger_path)
+    jev_model_map: dict[str, str] = {}
+    if settings.jev_rollout_mode != "off" and settings.api_key and settings.base_url:
+        jev_telemetry = DecisionTelemetry()
+        decision_provider = OpenRouterDecisionClient(
+            api_key=settings.api_key,
+            model=settings.jev_model,
+            base_url=settings.base_url,
+            settings=DecisionClientSettings(
+                timeout_s=min(settings.provider_timeout_seconds, 30.0),
+                max_attempts=1,
+            ),
+            reuse_connections=True,
+            telemetry=jev_telemetry,
+        )
+        jev_decision_client = decision_provider
+        allowlist = tuple(
+            item.strip()
+            for item in settings.jev_task_allowlist.split(",")
+            if item.strip()
+        )
+        gate_modes = {}
+        for item in settings.jev_gate_modes.split(","):
+            if "=" not in item:
+                continue
+            gate, mode = (part.strip() for part in item.split("=", 1))
+            if gate and mode:
+                gate_modes[gate] = mode
+        rollout_settings = JevRolloutSettings(
+            mode=settings.jev_rollout_mode,
+            task_allowlist=allowlist,
+            gate_modes=gate_modes,
+            pinned_models={
+                "routing": settings.jev_model,
+                "quality": settings.jev_model,
+            },
+            max_fallback_rate=settings.jev_max_fallback_rate,
+            max_latency_p95_ms=settings.jev_max_latency_p95_ms,
+            max_cost_usd=settings.jev_max_cost_usd,
+            min_observations_for_rollback=settings.jev_min_observations_for_rollback,
+        )
+        jev_rollout = JevRolloutController(rollout_settings)
+        jev_router = JevTierRouter(
+            decision_provider=decision_provider,
+            model=settings.jev_model,
+        )
+        jev_quality_gate = JevQualityGate(
+            decision_provider=decision_provider,
+            model=settings.jev_model,
+        )
+        for role, role_model in (
+            ("fast", settings.fast_model or settings.model),
+            ("balanced", settings.balanced_model or settings.model),
+            ("strong", settings.strong_model or settings.model),
+        ):
+            if role_model:
+                jev_model_map[role] = role_model
     runner_config = RunnerConfig(
         cancellation_probe=cancellation_probe,
         trimming=(
@@ -232,6 +307,10 @@ def create_agent_bundle(
             enable_subagents=True,
             max_child_runs=settings.max_child_runs,
         ),
+        model_role_map=jev_model_map,
+        model_router=jev_router,
+        quality_gate=jev_quality_gate,
+        jev_rollout=jev_rollout,
     )
     agent = create_agent(
         provider=provider,
@@ -254,4 +333,7 @@ def create_agent_bundle(
         session_store=session_store,
         manifests=manifests,
         store_kind=runtime_store_config.kind,
+        jev_decision_client=jev_decision_client,
+        jev_telemetry=jev_telemetry,
+        jev_label_ledger=jev_label_ledger,
     )
