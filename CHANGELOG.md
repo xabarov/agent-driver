@@ -7,6 +7,24 @@ change between minor versions.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-10-07
+
+### Added
+
+- Opt-in JEV decision control plane with typed decision contracts, an
+  OpenRouter decision client, bounded timeouts and circuit breaking, and
+  telemetry that omits raw prompts and answers.
+- `JevTierRouter` selects a model role before generation with heuristic
+  fallback. `JevQualityGate` supports a bounded strong-model escalation,
+  recovery, or clarification while preserving tool and approval policy.
+- `JevCompactionPrepass` classifies context retention before compaction;
+  `MemoryDurabilityGate` screens extracted facts and contradictions before
+  durable writes. Both expose decision receipts in runtime metadata.
+- Per-task and per-gate rollout settings for off, shadow, and active modes,
+  rollback thresholds, and reviewed production outcome labels.
+- JEV evaluation helpers for compaction benchmarks, live validation, canary
+  rollout, calibration, and promotion evidence, plus SDK and chat-demo wiring.
+
 ## [0.28.2] - 2026-09-20
 
 ### Fixed
